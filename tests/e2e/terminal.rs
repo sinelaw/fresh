@@ -4,9 +4,11 @@
 //! - Opening/closing terminals
 //! - Terminal buffer creation
 //! - Terminal mode switching
+//! - ANSI escape sequence handling (cursor, colors, attributes)
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::services::terminal::TerminalState;
 
 /// Test opening a terminal creates a buffer and switches to it
 #[test]
@@ -188,4 +190,192 @@ fn test_terminal_input() {
     // The input should have been sent (we can't easily verify the output
     // without async processing, but we verify no panic)
     assert!(harness.editor().is_terminal_mode());
+}
+
+/// Test terminal content rendering via get_terminal_content
+#[test]
+fn test_terminal_content_rendering() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+
+    // Get terminal content for the buffer
+    let buffer_id = harness.editor().active_buffer_id();
+    let content = harness.editor().get_terminal_content(buffer_id);
+
+    // Content should be available
+    assert!(content.is_some());
+
+    // Content should have rows
+    let content = content.unwrap();
+    assert!(!content.is_empty());
+
+    // Each row should have cells
+    assert!(!content[0].is_empty());
+}
+
+/// Test terminal handles ANSI escape sequences for cursor positioning
+/// Uses direct terminal state processing (synchronous) instead of PTY
+#[test]
+fn test_terminal_ansi_cursor_positioning() {
+    // Create a terminal state directly (bypassing PTY for synchronous testing)
+    let mut state = TerminalState::new(80, 24);
+
+    // Get initial cursor position
+    let initial_pos = state.cursor_position();
+    assert_eq!(initial_pos, (0, 0), "Initial cursor should be at origin");
+
+    // Process ANSI escape sequence to move cursor to row 5, col 10
+    // ESC [ 5 ; 10 H (1-indexed in ANSI, 0-indexed internally)
+    state.process_output(b"\x1b[5;10H");
+
+    // Check cursor moved (ANSI coordinates are 1-based, internal are 0-based)
+    let new_pos = state.cursor_position();
+    assert_eq!(new_pos.0, 9, "Cursor column should be 9 (10-1 for 0-indexing)");
+    assert_eq!(new_pos.1, 4, "Cursor row should be 4 (5-1 for 0-indexing)");
+}
+
+/// Test terminal handles ANSI color codes
+/// Uses direct terminal state processing (synchronous) instead of PTY
+#[test]
+fn test_terminal_ansi_colors() {
+    // Create a terminal state directly (bypassing PTY for synchronous testing)
+    let mut state = TerminalState::new(80, 24);
+
+    // Process text with red color escape sequence
+    // ESC[31m = set foreground red
+    state.process_output(b"\x1b[31mRED TEXT\x1b[0m");
+
+    // Get the first row which should contain the colored text
+    let row = state.get_line(0);
+
+    // Find the 'R' cell and verify it has red foreground
+    let r_cell = &row[0];
+    assert_eq!(r_cell.c, 'R');
+    assert!(r_cell.fg.is_some(), "Cell should have foreground color");
+
+    // Red color should be roughly (205, 49, 49) based on the ANSI palette
+    let (r, g, b) = r_cell.fg.unwrap();
+    assert!(r > 150, "Red component should be high");
+    assert!(g < 100, "Green component should be low");
+    assert!(b < 100, "Blue component should be low");
+}
+
+/// Test terminal mode key forwarding via handle_key
+#[test]
+fn test_terminal_key_forwarding() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+
+    // Verify in terminal mode
+    assert!(harness.editor().is_terminal_mode());
+
+    // Send regular key through handle_key (should be forwarded to terminal)
+    harness.editor_mut().handle_key(KeyCode::Char('x'), KeyModifiers::NONE).unwrap();
+
+    // Should still be in terminal mode (key was forwarded, not processed)
+    assert!(harness.editor().is_terminal_mode());
+}
+
+/// Test Ctrl+\ via handle_key exits terminal mode
+#[test]
+fn test_ctrl_backslash_via_handle_key() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+
+    // Verify in terminal mode
+    assert!(harness.editor().is_terminal_mode());
+
+    // Send Ctrl+\ through handle_key (should exit terminal mode)
+    harness.editor_mut().handle_key(KeyCode::Char('\\'), KeyModifiers::CONTROL).unwrap();
+
+    // Should have exited terminal mode
+    assert!(!harness.editor().is_terminal_mode());
+}
+
+/// Test terminal state is initialized correctly after opening
+#[test]
+fn test_terminal_state_initialization() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+
+    // Get terminal state
+    let buffer_id = harness.editor().active_buffer_id();
+    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let handle = harness.editor().terminal_manager().get(terminal_id).unwrap();
+
+    // Terminal should be alive
+    assert!(handle.is_alive());
+
+    // Terminal state should be accessible
+    let state = handle.state.lock().unwrap();
+
+    // Cursor should be at a valid position
+    let (col, row) = state.cursor_position();
+    let (cols, rows) = state.size();
+    assert!(col < cols);
+    assert!(row < rows);
+
+    // Cursor should be visible
+    assert!(state.cursor_visible());
+}
+
+/// Test terminal bold text attribute
+/// Uses direct terminal state processing (synchronous) instead of PTY
+#[test]
+fn test_terminal_bold_attribute() {
+    // Create a terminal state directly (bypassing PTY for synchronous testing)
+    let mut state = TerminalState::new(80, 24);
+
+    // Process text with bold escape sequence
+    // ESC[1m = set bold, ESC[0m = reset
+    state.process_output(b"\x1b[1mBOLD\x1b[0m");
+
+    // Get the first row which should contain the bold text
+    let row = state.get_line(0);
+
+    // Find the 'B' cell and verify it has bold attribute
+    let b_cell = &row[0];
+    assert_eq!(b_cell.c, 'B');
+    assert!(b_cell.bold, "Cell should have bold attribute");
+
+    // The 'O', 'L', 'D' cells should also be bold
+    assert!(row[1].bold, "O should be bold");
+    assert!(row[2].bold, "L should be bold");
+    assert!(row[3].bold, "D should be bold");
+}
+
+/// Test terminal resize functionality
+#[test]
+fn test_terminal_resize() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+
+    let buffer_id = harness.editor().active_buffer_id();
+    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+
+    // Get initial size
+    let handle = harness.editor().terminal_manager().get(terminal_id).unwrap();
+    let (initial_cols, initial_rows) = handle.size();
+
+    // Resize the terminal
+    harness.editor_mut().resize_terminal(buffer_id, 120, 40);
+
+    // Get new size
+    let handle = harness.editor().terminal_manager().get(terminal_id).unwrap();
+    let (new_cols, new_rows) = handle.size();
+
+    // Size should have changed
+    assert_eq!(new_cols, 120);
+    assert_eq!(new_rows, 40);
+    assert!(new_cols != initial_cols || new_rows != initial_rows);
 }
