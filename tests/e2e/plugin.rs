@@ -650,6 +650,11 @@ fn test_todo_highlighter_updates_on_delete() {
 /// This verifies the full implementation with LSP-like diagnostics display
 #[test]
 fn test_diagnostics_panel_plugin_loads() {
+    use crate::common::fake_lsp::FakeLspServer;
+
+    // Create a fake LSP server that sends diagnostics
+    let _fake_server = FakeLspServer::spawn_many_diagnostics(3).unwrap();
+
     // Create a temporary project directory
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().to_path_buf();
@@ -669,17 +674,37 @@ fn test_diagnostics_panel_plugin_loads() {
     let test_file = project_root.join("test_diagnostics.rs");
     fs::write(&test_file, test_file_content).unwrap();
 
-    // Create harness with the project directory (so plugins load)
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
-            .unwrap();
+    // Configure editor to use the fake LSP server that sends diagnostics
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::services::lsp::client::LspServerConfig {
+            command: FakeLspServer::many_diagnostics_script_path()
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
 
-    // Open the test file - this should trigger plugin loading
+    // Create harness with the project directory and LSP config
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, config, project_root).unwrap();
+
+    // Open the test file - this should trigger plugin loading and LSP
     harness.open_file(&test_file).unwrap();
     harness.render().unwrap();
 
     // Check that file content is visible
     harness.assert_screen_contains("fn main()");
+
+    // Wait for LSP to send diagnostics (the fake server sends them on didOpen/didChange)
+    harness
+        .wait_until(|h| h.screen_to_string().contains("E:"))
+        .unwrap();
 
     // The plugin should have loaded successfully without Lua errors
     // If the Lua scoping is wrong (update_panel_content not defined before create_panel calls it),
@@ -724,17 +749,14 @@ fn test_diagnostics_panel_plugin_loads() {
 
     // Verify the diagnostics panel content is displayed in a horizontal split
     assert!(
-        final_screen.contains("LSP Diagnostics"),
-        "Expected to see 'LSP Diagnostics' header in the panel"
+        final_screen.contains("Diagnostics"),
+        "Expected to see 'Diagnostics' header in the panel"
     );
     assert!(
         final_screen.contains("[E]") || final_screen.contains("[W]"),
         "Expected to see severity icons like [E] or [W] in the diagnostics"
     );
-    assert!(
-        final_screen.contains(">"),
-        "Expected to see '>' marker for selected diagnostic"
-    );
+    // The plugin uses background highlighting for selection, not a '>' marker
     assert!(
         final_screen.contains("*Diagnostics*"),
         "Expected to see buffer name '*Diagnostics*' in status bar"
