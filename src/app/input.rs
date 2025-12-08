@@ -36,6 +36,23 @@ impl Editor {
             modifiers
         );
 
+        // Special handling for terminal mode - forward keys directly to terminal
+        // unless it's an escape sequence (Ctrl+\) to exit terminal mode
+        if self.terminal_mode {
+            // Check for Ctrl+\ to exit terminal mode
+            if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                if let crossterm::event::KeyCode::Char('\\') = code {
+                    self.terminal_mode = false;
+                    self.key_context = crate::input::keybindings::KeyContext::Normal;
+                    self.set_status_message("Terminal mode disabled".to_string());
+                    return Ok(());
+                }
+            }
+            // Forward all other keys to the terminal
+            self.send_terminal_key(code, modifiers);
+            return Ok(());
+        }
+
         // Clear skip_ensure_visible flag so cursor becomes visible after key press
         // (scroll actions will set it again if needed)
         let active_split = self.split_manager.active_split();

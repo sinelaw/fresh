@@ -302,6 +302,10 @@ impl Editor {
                 hovered_tab,
                 hovered_close_split,
             );
+
+        // Render terminal content on top of split content for terminal buffers
+        self.render_terminal_splits(frame, &split_areas);
+
         self.cached_layout.split_areas = split_areas;
         self.cached_layout.tab_areas = tab_areas;
         self.cached_layout.close_split_areas = close_split_areas;

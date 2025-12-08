@@ -228,6 +228,54 @@ impl Editor {
     pub fn active_buffer_id(&self) -> BufferId {
         self.active_buffer
     }
+
+    /// Render terminal content for all terminal buffers in split areas
+    pub fn render_terminal_splits(
+        &self,
+        frame: &mut ratatui::Frame,
+        split_areas: &[(
+            crate::model::event::SplitId,
+            BufferId,
+            ratatui::layout::Rect,
+            ratatui::layout::Rect,
+            usize,
+            usize,
+        )],
+    ) {
+        for (_split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
+            split_areas
+        {
+            // Check if this buffer is a terminal buffer
+            if let Some(&terminal_id) = self.terminal_buffers.get(buffer_id) {
+                // Get terminal content and cursor info
+                if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                    if let Ok(state) = handle.state.lock() {
+                        let cursor_pos = state.cursor_position();
+                        let cursor_visible = state.cursor_visible();
+                        let (_, rows) = state.size();
+
+                        // Collect content
+                        let mut content = Vec::with_capacity(rows as usize);
+                        for row in 0..rows {
+                            content.push(state.get_line(row));
+                        }
+
+                        // Clear the content area first
+                        frame.render_widget(ratatui::widgets::Clear, *content_rect);
+
+                        // Render terminal content
+                        render::render_terminal_content(
+                            &content,
+                            cursor_pos,
+                            cursor_visible,
+                            *content_rect,
+                            frame.buffer_mut(),
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Terminal rendering utilities
