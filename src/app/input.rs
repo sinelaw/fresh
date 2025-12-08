@@ -37,15 +37,33 @@ impl Editor {
         );
 
         // Special handling for terminal mode - forward keys directly to terminal
-        // unless it's an escape sequence (Ctrl+\) to exit terminal mode
+        // unless it's an escape sequence to exit terminal mode
         if self.terminal_mode {
-            // Check for Ctrl+\ to exit terminal mode
+            // Check for escape sequences to exit terminal mode:
+            // - Ctrl+Space - easy to press escape
+            // - Ctrl+] (close bracket) - like telnet escape
+            // - Ctrl+` (backtick) - alternative escape
+            // - Ctrl+Shift+P - open command palette from terminal
+            // Note: Ctrl+\ sends SIGQUIT on Unix and is not received by the application
             if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
-                if let crossterm::event::KeyCode::Char('\\') = code {
-                    self.terminal_mode = false;
-                    self.key_context = crate::input::keybindings::KeyContext::Normal;
-                    self.set_status_message("Terminal mode disabled".to_string());
-                    return Ok(());
+                match code {
+                    crossterm::event::KeyCode::Char(' ')
+                    | crossterm::event::KeyCode::Char(']')
+                    | crossterm::event::KeyCode::Char('`') => {
+                        self.terminal_mode = false;
+                        self.key_context = crate::input::keybindings::KeyContext::Normal;
+                        self.set_status_message("Terminal mode disabled".to_string());
+                        return Ok(());
+                    }
+                    crossterm::event::KeyCode::Char('P') | crossterm::event::KeyCode::Char('p')
+                        if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) =>
+                    {
+                        // Ctrl+Shift+P opens command palette even from terminal mode
+                        self.terminal_mode = false;
+                        self.key_context = crate::input::keybindings::KeyContext::Normal;
+                        return self.handle_action(Action::CommandPalette);
+                    }
+                    _ => {}
                 }
             }
             // Forward all other keys to the terminal

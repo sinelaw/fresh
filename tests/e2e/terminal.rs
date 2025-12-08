@@ -63,9 +63,9 @@ fn test_terminal_mode_toggle() {
     // Should be in terminal mode
     assert!(harness.editor().is_terminal_mode());
 
-    // Exit terminal mode via Ctrl+\
+    // Exit terminal mode via Ctrl+]
     harness.editor_mut().handle_terminal_key(
-        KeyCode::Char('\\'),
+        KeyCode::Char(']'),
         KeyModifiers::CONTROL,
     );
     harness.render().unwrap();
@@ -130,9 +130,9 @@ fn test_close_terminal_not_viewing() {
     harness.assert_screen_contains("Not viewing");
 }
 
-/// Test Ctrl+\ exits terminal mode
+/// Test Ctrl+] exits terminal mode
 #[test]
-fn test_ctrl_backslash_exits_terminal() {
+fn test_ctrl_bracket_exits_terminal() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Open a terminal
@@ -142,9 +142,10 @@ fn test_ctrl_backslash_exits_terminal() {
     // Should be in terminal mode
     assert!(harness.editor().is_terminal_mode());
 
-    // Send Ctrl+\ to exit terminal mode
+    // Send Ctrl+] to exit terminal mode
+    // Note: Ctrl+\ sends SIGQUIT on Unix, so we use Ctrl+] instead
     let handled = harness.editor_mut().handle_terminal_key(
-        KeyCode::Char('\\'),
+        KeyCode::Char(']'),
         KeyModifiers::CONTROL,
     );
 
@@ -280,9 +281,9 @@ fn test_terminal_key_forwarding() {
     assert!(harness.editor().is_terminal_mode());
 }
 
-/// Test Ctrl+\ via handle_key exits terminal mode
+/// Test Ctrl+] via handle_key exits terminal mode
 #[test]
-fn test_ctrl_backslash_via_handle_key() {
+fn test_ctrl_bracket_via_handle_key() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Open a terminal
@@ -291,8 +292,9 @@ fn test_ctrl_backslash_via_handle_key() {
     // Verify in terminal mode
     assert!(harness.editor().is_terminal_mode());
 
-    // Send Ctrl+\ through handle_key (should exit terminal mode)
-    harness.editor_mut().handle_key(KeyCode::Char('\\'), KeyModifiers::CONTROL).unwrap();
+    // Send Ctrl+] through handle_key (should exit terminal mode)
+    // Note: Ctrl+\ sends SIGQUIT on Unix, so we use Ctrl+] instead
+    harness.editor_mut().handle_key(KeyCode::Char(']'), KeyModifiers::CONTROL).unwrap();
 
     // Should have exited terminal mode
     assert!(!harness.editor().is_terminal_mode());

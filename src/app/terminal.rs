@@ -38,7 +38,10 @@ impl Editor {
                 self.terminal_mode = true;
                 self.key_context = crate::input::keybindings::KeyContext::Terminal;
 
-                self.set_status_message(format!("Terminal {} opened", terminal_id));
+                self.set_status_message(format!(
+                    "Terminal {} opened (Ctrl+Space to exit)",
+                    terminal_id
+                ));
                 tracing::info!("Opened terminal {:?} with buffer {:?}", terminal_id, buffer_id);
             }
             Err(e) => {
@@ -176,15 +179,20 @@ impl Editor {
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> bool {
-        // Check for escape sequence to exit terminal mode
-        // Ctrl+\ (backslash) is a common escape from terminal mode
+        // Check for escape sequences to exit terminal mode
+        // Ctrl+Space, Ctrl+], or Ctrl+` to exit (Ctrl+\ sends SIGQUIT on Unix)
         if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
-            if let crossterm::event::KeyCode::Char('\\') = code {
-                // Exit terminal mode
-                self.terminal_mode = false;
-                self.key_context = crate::input::keybindings::KeyContext::Normal;
-                self.set_status_message("Terminal mode disabled".to_string());
-                return true;
+            match code {
+                crossterm::event::KeyCode::Char(' ')
+                | crossterm::event::KeyCode::Char(']')
+                | crossterm::event::KeyCode::Char('`') => {
+                    // Exit terminal mode
+                    self.terminal_mode = false;
+                    self.key_context = crate::input::keybindings::KeyContext::Normal;
+                    self.set_status_message("Terminal mode disabled".to_string());
+                    return true;
+                }
+                _ => {}
             }
         }
 
