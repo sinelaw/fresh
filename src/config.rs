@@ -11,6 +11,10 @@ pub struct Config {
     #[serde(default = "default_theme_name")]
     pub theme: String,
 
+    /// Check for new versions on quit (default: true)
+    #[serde(default = "default_true")]
+    pub check_for_updates: bool,
+
     /// Editor behavior settings (indentation, line numbers, wrapping, etc.)
     #[serde(default)]
     pub editor: EditorConfig,
@@ -373,6 +377,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             theme: default_theme_name(),
+            check_for_updates: true,
             editor: EditorConfig::default(),
             file_explorer: FileExplorerConfig::default(),
             keybindings: vec![], // User customizations only; defaults come from active_keybinding_map

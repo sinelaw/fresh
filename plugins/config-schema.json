@@ -10,6 +10,10 @@
           "type": "string",
           "description": "Active keybinding map name (e.g., \"default\", \"emacs\", \"vscode\", or a custom name)"
         },
+        "check_for_updates": {
+          "type": "boolean",
+          "description": "Check for new versions on quit (default: true)"
+        },
         "editor": {
           "$ref": "#/$defs/EditorConfig",
           "description": "Editor behavior settings (indentation, line numbers, wrapping, etc.)"

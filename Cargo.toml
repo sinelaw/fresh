@@ -68,6 +68,7 @@ arboard = { version = "3.6", default-features = false }  # Disable `image` suppo
 notify = { version = "8.2.0" }
 schemars = "1.1"  # JSON Schema generation for config editor
 syntect = "5.2"
+ureq = { version = "2.10", default-features = false, features = ["tls"] }  # Minimal HTTP client for release checking
 # tree-sitter-markdown = "0.7.1"  # Disabled due to tree-sitter version conflict (uses 0.19.5 instead of 0.25.x)
 
 [dev-dependencies]
