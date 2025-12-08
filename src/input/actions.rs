@@ -1736,7 +1736,11 @@ pub fn action_to_events(
         | Action::ScrollTabsRight
         | Action::SelectTheme
         | Action::Revert
-        | Action::ToggleAutoRevert => return None,
+        | Action::ToggleAutoRevert
+        | Action::OpenTerminal
+        | Action::CloseTerminal
+        | Action::FocusTerminal
+        | Action::TerminalEscape => return None,
 
         // Block/rectangular selection actions
         Action::BlockSelectLeft => {

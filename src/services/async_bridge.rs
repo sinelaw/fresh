@@ -10,6 +10,7 @@
 //! - Computation should be sync (editing, rendering)
 //! - Main loop remains responsive and simple
 
+use crate::services::terminal::TerminalId;
 use crate::view::file_tree::{FileTreeView, NodeId};
 use lsp_types::{
     CodeActionOrCommand, CompletionItem, Diagnostic, InlayHint, Location, SignatureHelp,
@@ -190,6 +191,12 @@ pub enum AsyncMessage {
 
     /// File open dialog: directory listing completed
     FileOpenDirectoryLoaded(std::io::Result<Vec<crate::services::fs::FsEntry>>),
+
+    /// Terminal output received (triggers redraw)
+    TerminalOutput { terminal_id: TerminalId },
+
+    /// Terminal process exited
+    TerminalExited { terminal_id: TerminalId },
 }
 
 /// LSP progress value types

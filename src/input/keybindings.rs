@@ -161,6 +161,8 @@ pub enum KeyContext {
     FileExplorer,
     /// Menu bar is active
     Menu,
+    /// Terminal has focus
+    Terminal,
 }
 
 impl KeyContext {
@@ -178,6 +180,7 @@ impl KeyContext {
             "fileExplorer" | "file_explorer" => Some(KeyContext::FileExplorer),
             "normal" => Some(KeyContext::Normal),
             "menu" => Some(KeyContext::Menu),
+            "terminal" => Some(KeyContext::Terminal),
             _ => None,
         }
     }
@@ -191,6 +194,7 @@ impl KeyContext {
             KeyContext::Popup => "popup",
             KeyContext::FileExplorer => "fileExplorer",
             KeyContext::Menu => "menu",
+            KeyContext::Terminal => "terminal",
         }
     }
 }
@@ -459,6 +463,12 @@ pub enum Action {
 
     // Plugin custom actions
     PluginAction(String),
+
+    // Terminal operations
+    OpenTerminal,      // Open a new terminal in the current split
+    CloseTerminal,     // Close the current terminal
+    FocusTerminal,     // Focus the terminal buffer (if viewing terminal, focus input)
+    TerminalEscape,    // Escape from terminal mode back to editor
 
     // No-op
     None,
@@ -733,6 +743,12 @@ impl Action {
                 let map_name = args.get("map")?.as_str()?;
                 Some(Action::SwitchKeybindingMap(map_name.to_string()))
             }
+
+            // Terminal actions
+            "open_terminal" => Some(Action::OpenTerminal),
+            "close_terminal" => Some(Action::CloseTerminal),
+            "focus_terminal" => Some(Action::FocusTerminal),
+            "terminal_escape" => Some(Action::TerminalEscape),
 
             _ => None,
         }
@@ -1542,6 +1558,10 @@ impl KeybindingResolver {
             Action::SelectTheme => "Select theme".to_string(),
             Action::SwitchToPreviousTab => "Switch to previous tab".to_string(),
             Action::SwitchToTabByName => "Switch to tab by name".to_string(),
+            Action::OpenTerminal => "Open terminal".to_string(),
+            Action::CloseTerminal => "Close terminal".to_string(),
+            Action::FocusTerminal => "Focus terminal".to_string(),
+            Action::TerminalEscape => "Exit terminal mode".to_string(),
             Action::None => "No action".to_string(),
         }
     }

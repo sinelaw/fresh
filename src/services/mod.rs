@@ -14,5 +14,6 @@ pub mod process_limits;
 pub mod recovery;
 pub mod release_checker;
 pub mod signal_handler;
+pub mod terminal;
 pub mod tracing_setup;
 pub mod warning_log;

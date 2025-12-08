@@ -403,6 +403,15 @@ pub struct Editor {
 
     /// Periodic update checker (checks for new releases every hour)
     update_checker: Option<crate::services::release_checker::PeriodicUpdateChecker>,
+
+    /// Terminal manager for built-in terminal support
+    terminal_manager: crate::services::terminal::TerminalManager,
+
+    /// Maps buffer ID to terminal ID (for terminal buffers)
+    terminal_buffers: HashMap<BufferId, crate::services::terminal::TerminalId>,
+
+    /// Whether terminal mode is active (input goes to terminal)
+    terminal_mode: bool,
 }
 
 impl Editor {
@@ -777,6 +786,9 @@ impl Editor {
             active_custom_contexts: HashSet::new(),
             warning_log: None,
             update_checker,
+            terminal_manager: crate::services::terminal::TerminalManager::new(),
+            terminal_buffers: HashMap::new(),
+            terminal_mode: false,
         })
     }
 
@@ -4558,6 +4570,24 @@ impl Editor {
                 }
                 AsyncMessage::FileOpenDirectoryLoaded(result) => {
                     self.handle_file_open_directory_loaded(result);
+                }
+                AsyncMessage::TerminalOutput { terminal_id } => {
+                    // Terminal output received - just mark for redraw
+                    // The actual rendering happens in the render loop
+                    tracing::trace!("Terminal output received for {:?}", terminal_id);
+                }
+                AsyncMessage::TerminalExited { terminal_id } => {
+                    tracing::info!("Terminal {:?} exited", terminal_id);
+                    // Find and close the buffer associated with this terminal
+                    if let Some((&buffer_id, _)) = self
+                        .terminal_buffers
+                        .iter()
+                        .find(|(_, &tid)| tid == terminal_id)
+                    {
+                        self.terminal_buffers.remove(&buffer_id);
+                        self.set_status_message(format!("Terminal {} exited", terminal_id));
+                    }
+                    self.terminal_manager.close(terminal_id);
                 }
             }
         }

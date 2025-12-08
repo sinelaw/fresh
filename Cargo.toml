@@ -71,6 +71,10 @@ syntect = "5.2"
 ureq = { version = "2.10", default-features = false, features = ["tls"] }  # Minimal HTTP client for release checking
 # tree-sitter-markdown = "0.7.1"  # Disabled due to tree-sitter version conflict (uses 0.19.5 instead of 0.25.x)
 
+# Terminal emulation
+alacritty_terminal = "0.25"
+portable-pty = "0.9"
+
 [dev-dependencies]
 proptest = "1.9"
 tempfile = "3.23.0"
