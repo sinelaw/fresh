@@ -1927,7 +1927,10 @@ editor.setStatus("Test diagnostics plugin loaded");
     assert_eq!(stored.len(), 1, "Expected diagnostics for one file");
 
     // Get the diagnostics for our file
-    let file_uri = format!("file://{}", test_file.to_string_lossy());
+    // Note: On macOS, temp paths like /var/folders/... get canonicalized to /private/var/folders/...
+    // so we need to canonicalize the path before constructing the URI
+    let canonical_path = test_file.canonicalize().unwrap_or_else(|_| test_file.clone());
+    let file_uri = format!("file://{}", canonical_path.to_string_lossy());
     let diags = stored
         .get(&file_uri)
         .expect("Should have diagnostics for test file");
