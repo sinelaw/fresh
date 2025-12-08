@@ -380,6 +380,9 @@ impl Editor {
         let keybindings_cloned = self.keybindings.clone(); // Clone the keybindings
         let chord_state_cloned = self.chord_state.clone(); // Clone the chord state
 
+        // Get update availability info
+        let update_available = self.latest_version().map(|v| v.to_string());
+
         // Render status bar (hidden when suggestions or file browser popup is shown)
         if !has_suggestions && !has_file_browser {
             StatusBarRenderer::render_status_bar(
@@ -391,8 +394,9 @@ impl Editor {
                 &lsp_status,
                 &theme,
                 &display_name,
-                &keybindings_cloned, // Pass the cloned keybindings
-                &chord_state_cloned, // Pass the cloned chord state
+                &keybindings_cloned,         // Pass the cloned keybindings
+                &chord_state_cloned,         // Pass the cloned chord state
+                update_available.as_deref(), // Pass update availability
             );
         }
 

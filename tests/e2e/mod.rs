@@ -52,5 +52,6 @@ pub mod theme;
 pub mod theme_editor;
 pub mod undo_redo;
 pub mod unicode_cursor;
+pub mod update_notification;
 pub mod virtual_lines;
 pub mod visual_regression;

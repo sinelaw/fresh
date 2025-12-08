@@ -161,6 +161,7 @@ impl StatusBarRenderer {
     /// * `theme` - The active theme for colors
     /// * `display_name` - The display name for the file (project-relative path)
     /// * `chord_state` - Current chord sequence state (for multi-key bindings)
+    /// * `update_available` - Optional new version string if an update is available
     pub fn render_status_bar(
         frame: &mut Frame,
         area: Rect,
@@ -172,6 +173,7 @@ impl StatusBarRenderer {
         display_name: &str,
         keybindings: &crate::input::keybindings::KeybindingResolver,
         chord_state: &[(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
+        update_available: Option<&str>,
     ) {
         Self::render_status(
             frame,
@@ -184,6 +186,7 @@ impl StatusBarRenderer {
             display_name,
             keybindings,
             chord_state,
+            update_available,
         );
     }
 
@@ -347,6 +350,7 @@ impl StatusBarRenderer {
         display_name: &str,
         keybindings: &crate::input::keybindings::KeybindingResolver,
         chord_state: &[(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
+        update_available: Option<&str>,
     ) {
         // Use the pre-computed display name from buffer metadata
         let filename = display_name;
@@ -465,6 +469,10 @@ impl StatusBarRenderer {
         );
         let left_status = format!("{base_status}{chord_display}{message_suffix}");
 
+        // Build update indicator for right side (if update available)
+        let update_indicator = update_available.map(|version| format!(" Update: v{} ", version));
+        let update_width = update_indicator.as_ref().map(|s| s.len()).unwrap_or(0);
+
         // Build Command Palette indicator for right side
         // Always show Command Palette indicator on the right side
         let cmd_palette_shortcut = keybindings
@@ -476,15 +484,16 @@ impl StatusBarRenderer {
         let cmd_palette_indicator = format!("Palette: {}", cmd_palette_shortcut);
         let padded_cmd_palette = format!(" {} ", cmd_palette_indicator);
 
-        // Calculate available width - always reserve space for command palette indicator
+        // Calculate available width - reserve space for right side indicators
         let available_width = area.width as usize;
         let cmd_palette_width = padded_cmd_palette.len();
+        let right_side_width = update_width + cmd_palette_width;
 
         // Only show command palette indicator if there's enough space (at least 15 chars for minimal display)
         let spans = if available_width >= 15 {
-            // Reserve space for command palette indicator
-            let left_max_width = if available_width > cmd_palette_width + 1 {
-                available_width - cmd_palette_width - 1 // -1 for at least one space separator
+            // Reserve space for right side indicators
+            let left_max_width = if available_width > right_side_width + 1 {
+                available_width - right_side_width - 1 // -1 for at least one space separator
             } else {
                 1 // Minimal space
             };
@@ -514,9 +523,9 @@ impl StatusBarRenderer {
 
             let displayed_left_len = displayed_left.chars().count();
 
-            // Add spacing to push command palette indicator to the right
-            if displayed_left_len + cmd_palette_width < available_width {
-                let padding_len = available_width - displayed_left_len - cmd_palette_width;
+            // Add spacing to push right side indicators to the right
+            if displayed_left_len + right_side_width < available_width {
+                let padding_len = available_width - displayed_left_len - right_side_width;
                 spans.push(Span::styled(
                     " ".repeat(padding_len),
                     Style::default()
@@ -533,6 +542,16 @@ impl StatusBarRenderer {
                 ));
             }
 
+            // Add update indicator if available (with highlighted styling)
+            if let Some(ref update_text) = update_indicator {
+                spans.push(Span::styled(
+                    update_text.clone(),
+                    Style::default()
+                        .fg(theme.menu_highlight_fg)
+                        .bg(theme.menu_dropdown_bg),
+                ));
+            }
+
             // Add command palette indicator with distinct styling and padding
             spans.push(Span::styled(
                 padded_cmd_palette.clone(),
@@ -543,14 +562,14 @@ impl StatusBarRenderer {
 
             // Calculate total width covered by spans
             let total_width = displayed_left_len
-                + if displayed_left_len + cmd_palette_width < available_width {
-                    available_width - displayed_left_len - cmd_palette_width
+                + if displayed_left_len + right_side_width < available_width {
+                    available_width - displayed_left_len - right_side_width
                 } else if displayed_left_len < available_width {
                     1
                 } else {
                     0
                 }
-                + cmd_palette_width;
+                + right_side_width;
 
             // Add final padding to fill exactly to area width if needed
             if total_width < available_width {

@@ -306,9 +306,6 @@ fn main() -> io::Result<()> {
     // Get directory context from system (data dir, config dir, etc.)
     let dir_context = DirectoryContext::from_system()?;
 
-    // Save update check setting before config is moved into Editor
-    let check_for_updates = config.check_for_updates;
-
     // Create editor with actual terminal size and working directory
     let mut editor = if args.no_plugins {
         Editor::with_plugins_disabled(config, size.width, size.height, working_dir, dir_context)?
@@ -388,18 +385,7 @@ fn main() -> io::Result<()> {
         tracing::warn!("Failed to start recovery session: {}", e);
     }
 
-    // Start background update check (will be queried on shutdown)
-    let update_check = if check_for_updates {
-        tracing::debug!("Update checking enabled, starting background check");
-        Some(release_checker::start_update_check(
-            release_checker::DEFAULT_RELEASES_URL,
-        ))
-    } else {
-        tracing::debug!("Update checking disabled by config");
-        None
-    };
-
-    // Run the editor
+    // Run the editor (update checking is now handled internally by Editor)
     #[cfg(target_os = "linux")]
     let result = run_event_loop(&mut editor, &mut terminal, session_enabled, gpm_client);
     #[cfg(not(target_os = "linux"))]
@@ -417,26 +403,24 @@ fn main() -> io::Result<()> {
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
 
-    // Check for updates after terminal is restored
-    if let Some(handle) = update_check {
-        if let Some(Ok(update_result)) = handle.try_get_result() {
-            if update_result.update_available {
-                eprintln!();
+    // Check for updates after terminal is restored (using Editor's cached result)
+    if let Some(update_result) = editor.get_update_result() {
+        if update_result.update_available {
+            eprintln!();
+            eprintln!(
+                "A new version of fresh is available: {} -> {}",
+                release_checker::CURRENT_VERSION,
+                update_result.latest_version
+            );
+            if let Some(cmd) = update_result.install_method.update_command() {
+                eprintln!("Update with: {}", cmd);
+            } else {
                 eprintln!(
-                    "A new version of fresh is available: {} -> {}",
-                    release_checker::CURRENT_VERSION,
+                    "Download from: https://github.com/sinelaw/fresh/releases/tag/v{}",
                     update_result.latest_version
                 );
-                if let Some(cmd) = update_result.install_method.update_command() {
-                    eprintln!("Update with: {}", cmd);
-                } else {
-                    eprintln!(
-                        "Download from: https://github.com/sinelaw/fresh/releases/tag/v{}",
-                        update_result.latest_version
-                    );
-                }
-                eprintln!();
             }
+            eprintln!();
         }
     }
 

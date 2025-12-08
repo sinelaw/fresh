@@ -396,6 +396,9 @@ pub struct Editor {
 
     /// Warning log receiver and path (for opening warning log when warnings occur)
     warning_log: Option<(std::sync::mpsc::Receiver<()>, PathBuf)>,
+
+    /// Periodic update checker (checks for new releases every hour)
+    update_checker: Option<crate::services::release_checker::PeriodicUpdateChecker>,
 }
 
 impl Editor {
@@ -629,6 +632,20 @@ impl Editor {
         let file_explorer_width = config.file_explorer.width;
         let recovery_enabled = config.editor.recovery_enabled;
         let auto_save_interval_secs = config.editor.auto_save_interval_secs;
+        let check_for_updates = config.check_for_updates;
+
+        // Start periodic update checker if enabled
+        let update_checker = if check_for_updates {
+            tracing::debug!("Update checking enabled, starting periodic checker");
+            Some(
+                crate::services::release_checker::start_periodic_update_check(
+                    crate::services::release_checker::DEFAULT_RELEASES_URL,
+                ),
+            )
+        } else {
+            tracing::debug!("Update checking disabled by config");
+            None
+        };
 
         Ok(Editor {
             buffers,
@@ -754,6 +771,7 @@ impl Editor {
             last_auto_save: std::time::Instant::now(),
             active_custom_contexts: HashSet::new(),
             warning_log: None,
+            update_checker,
         })
     }
 
@@ -866,6 +884,42 @@ impl Editor {
     /// Returns a reference to the diagnostics map keyed by file URI
     pub fn get_stored_diagnostics(&self) -> &HashMap<String, Vec<lsp_types::Diagnostic>> {
         &self.stored_diagnostics
+    }
+
+    /// Check if an update is available
+    pub fn is_update_available(&self) -> bool {
+        self.update_checker
+            .as_ref()
+            .map(|c| c.is_update_available())
+            .unwrap_or(false)
+    }
+
+    /// Get the latest version string if an update is available
+    pub fn latest_version(&self) -> Option<&str> {
+        self.update_checker
+            .as_ref()
+            .and_then(|c| c.latest_version())
+    }
+
+    /// Get the cached release check result (for shutdown notification)
+    pub fn get_update_result(
+        &self,
+    ) -> Option<&crate::services::release_checker::ReleaseCheckResult> {
+        self.update_checker
+            .as_ref()
+            .and_then(|c| c.get_cached_result())
+    }
+
+    /// Set a custom update checker (for testing)
+    ///
+    /// This allows injecting a custom PeriodicUpdateChecker that points to a mock server,
+    /// enabling E2E tests for the update notification UI.
+    #[doc(hidden)]
+    pub fn set_update_checker(
+        &mut self,
+        checker: crate::services::release_checker::PeriodicUpdateChecker,
+    ) {
+        self.update_checker = Some(checker);
     }
 
     /// Configure LSP server for a specific language
@@ -4408,6 +4462,12 @@ impl Editor {
         // Check and clear the plugin render request flag
         let plugin_render = self.plugin_render_requested;
         self.plugin_render_requested = false;
+
+        // Poll periodic update checker for new results
+        if let Some(ref mut checker) = self.update_checker {
+            // Poll for results but don't act on them - just cache
+            let _ = checker.poll_result();
+        }
 
         // Trigger render if any async messages, plugin commands were processed, or plugin requested render
         needs_render || processed_any_commands || plugin_render
