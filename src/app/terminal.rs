@@ -213,6 +213,23 @@ impl Editor {
     }
 }
 
+impl Editor {
+    /// Check if terminal mode is active (for testing)
+    pub fn is_terminal_mode(&self) -> bool {
+        self.terminal_mode
+    }
+
+    /// Get read-only access to the terminal manager (for testing)
+    pub fn terminal_manager(&self) -> &crate::services::terminal::TerminalManager {
+        &self.terminal_manager
+    }
+
+    /// Get the currently active buffer ID
+    pub fn active_buffer_id(&self) -> BufferId {
+        self.active_buffer
+    }
+}
+
 /// Terminal rendering utilities
 pub mod render {
     use crate::services::terminal::TerminalCell;

@@ -46,6 +46,7 @@ pub mod split_tabs;
 pub mod split_view;
 pub mod split_view_expectations;
 pub mod tab_scrolling;
+pub mod terminal;
 pub mod terminal_resize;
 pub mod test_scrollbar_keybinds_cursor;
 pub mod theme;
