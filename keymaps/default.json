@@ -1512,9 +1512,9 @@
       "when": "terminal"
     },
     {
-      "comment": "Terminal context - Toggle keyboard capture (Ctrl+`)",
-      "key": "`",
-      "modifiers": ["ctrl"],
+      "comment": "Terminal context - Toggle keyboard capture (F9)",
+      "key": "F9",
+      "modifiers": [],
       "action": "toggle_keyboard_capture",
       "args": {},
       "when": "terminal"

@@ -1064,6 +1064,14 @@ fn test_session_restore_terminal_active_buffer() {
 /// When keyboard capture is ON, all keys go to terminal.
 #[test]
 fn test_keyboard_capture_toggle() {
+    use tracing_subscriber::EnvFilter;
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()),
+        )
+        .with_test_writer()
+        .try_init();
+
     let mut harness = harness_or_return!(120, 30);
 
     // Open a terminal
@@ -1077,29 +1085,61 @@ fn test_keyboard_capture_toggle() {
         "Keyboard capture should be OFF by default"
     );
 
-    // Toggle keyboard capture ON with Ctrl+`
+    // Ctrl+P should open command palette when keyboard capture is OFF
     harness
-        .send_key(KeyCode::Char('`'), KeyModifiers::CONTROL)
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Command:");
+    // Close the command palette
+    harness
+        .send_key(KeyCode::Esc, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Toggle keyboard capture ON with F9
+    tracing::info!("=== Toggling keyboard capture ON ===");
+    harness
+        .send_key(KeyCode::F(9), KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
     assert!(
         harness.editor().is_keyboard_capture(),
-        "Keyboard capture should be ON after Ctrl+`"
+        "Keyboard capture should be ON after F9"
     );
     harness.assert_screen_contains("Keyboard capture ON");
 
-    // Toggle keyboard capture OFF with Ctrl+`
+    // Ctrl+P should NOT open command palette when keyboard capture is ON
+    // (key should go to terminal instead)
     harness
-        .send_key(KeyCode::Char('`'), KeyModifiers::CONTROL)
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        !harness.screen_to_string().contains("Command:"),
+        "Command palette should NOT open when keyboard capture is ON"
+    );
+
+    // Toggle keyboard capture OFF with F9
+    tracing::info!("=== Toggling keyboard capture OFF ===");
+    harness
+        .send_key(KeyCode::F(9), KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
     assert!(
         !harness.editor().is_keyboard_capture(),
-        "Keyboard capture should be OFF after second Ctrl+`"
+        "Keyboard capture should be OFF after second F9"
     );
     harness.assert_screen_contains("Keyboard capture OFF");
+
+    // Ctrl+P should open command palette again now that keyboard capture is OFF
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Command:");
 }
 
 /// Test that UI bindings (like next_split with Alt+]) work in terminal mode
@@ -1177,9 +1217,9 @@ fn test_ui_bindings_blocked_with_keyboard_capture() {
 
     let terminal_buffer = harness.editor().active_buffer_id();
 
-    // Turn keyboard capture ON
+    // Turn keyboard capture ON with F9
     harness
-        .send_key(KeyCode::Char('`'), KeyModifiers::CONTROL)
+        .send_key(KeyCode::F(9), KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
     assert!(harness.editor().is_keyboard_capture());

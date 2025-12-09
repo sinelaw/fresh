@@ -46,19 +46,29 @@ impl Editor {
         // unless it's an escape sequence or UI keybinding
         // Skip if we're in a prompt/popup (those need to handle keys normally)
         if self.terminal_mode && !in_prompt_or_popup {
-            // Ctrl+` always toggles keyboard capture mode
-            if modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
-                && code == crossterm::event::KeyCode::Char('`')
-            {
+            tracing::trace!(
+                "Terminal mode key handling: code={:?}, modifiers={:?}, keyboard_capture={}",
+                code,
+                modifiers,
+                self.keyboard_capture
+            );
+
+            // F9 always toggles keyboard capture mode (works even when capture is ON)
+            let is_toggle_capture = code == crossterm::event::KeyCode::F(9);
+            tracing::trace!("is_toggle_capture (F9)={}", is_toggle_capture);
+            if is_toggle_capture {
                 self.keyboard_capture = !self.keyboard_capture;
+                tracing::info!(
+                    "Toggled keyboard_capture to {}",
+                    self.keyboard_capture
+                );
                 if self.keyboard_capture {
                     self.set_status_message(
-                        "Keyboard capture ON - all keys go to terminal (Ctrl+` to toggle)"
-                            .to_string(),
+                        "Keyboard capture ON - all keys go to terminal (F9 to toggle)".to_string(),
                     );
                 } else {
                     self.set_status_message(
-                        "Keyboard capture OFF - UI bindings active (Ctrl+` to toggle)".to_string(),
+                        "Keyboard capture OFF - UI bindings active (F9 to toggle)".to_string(),
                     );
                 }
                 return Ok(());
@@ -66,6 +76,7 @@ impl Editor {
 
             // When keyboard capture is ON, forward ALL keys to terminal
             if self.keyboard_capture {
+                tracing::trace!("Forwarding key to terminal (keyboard capture ON)");
                 self.send_terminal_key(code, modifiers);
                 return Ok(());
             }
@@ -1582,13 +1593,12 @@ impl Editor {
                     self.keyboard_capture = !self.keyboard_capture;
                     if self.keyboard_capture {
                         self.set_status_message(
-                            "Keyboard capture ON - all keys go to terminal (Ctrl+` to toggle)"
+                            "Keyboard capture ON - all keys go to terminal (F9 to toggle)"
                                 .to_string(),
                         );
                     } else {
                         self.set_status_message(
-                            "Keyboard capture OFF - UI bindings active (Ctrl+` to toggle)"
-                                .to_string(),
+                            "Keyboard capture OFF - UI bindings active (F9 to toggle)".to_string(),
                         );
                     }
                 }
