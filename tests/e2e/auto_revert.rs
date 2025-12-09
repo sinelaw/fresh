@@ -1,5 +1,7 @@
 use crate::common::harness::EditorTestHarness;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
+use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
@@ -7,6 +9,22 @@ use std::time::Duration;
 /// - Many filesystems (ext4, HFS+) have 1-second mtime granularity
 /// - macOS FSEvents has 500ms-2s coalescing latency by default
 const FILE_CHANGE_DELAY: Duration = Duration::from_millis(2100);
+
+/// Write content to a file and sync to disk to ensure filesystem notifications fire.
+/// macOS sometimes buffers events until fsync/sync_all is called.
+fn write_and_sync(path: &Path, content: &str) {
+    let mut file = File::create(path).unwrap();
+    file.write_all(content.as_bytes()).unwrap();
+    file.sync_all().unwrap();
+    drop(file);
+
+    // Also sync the parent directory to ensure the directory entry is flushed
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
+}
 
 /// Test that the notify-based auto-revert flow works correctly.
 /// This test validates that external file changes are detected and
@@ -21,7 +39,7 @@ fn test_auto_revert_multiple_external_edits() {
     let file_path = project_dir.join("test_revert.txt");
 
     // Create initial file content
-    fs::write(&file_path, "Initial content v1").unwrap();
+    write_and_sync(&file_path, "Initial content v1");
 
     // Open the file - auto_revert is enabled by default
     harness.open_file(&file_path).unwrap();
@@ -34,7 +52,7 @@ fn test_auto_revert_multiple_external_edits() {
         thread::sleep(FILE_CHANGE_DELAY);
 
         // Write new content externally (simulating another process editing the file)
-        fs::write(&file_path, &new_content).unwrap();
+        write_and_sync(&file_path, &new_content);
 
         // Wait until the buffer content matches the new file content
         // This uses semantic waiting - no arbitrary timeouts
@@ -60,7 +78,7 @@ fn test_auto_revert_file_grows() {
     let file_path = project_dir.join("growing_file.txt");
 
     // Start with a small file
-    fs::write(&file_path, "Line 1").unwrap();
+    write_and_sync(&file_path, "Line 1");
 
     harness.open_file(&file_path).unwrap();
     harness.assert_buffer_content("Line 1");
@@ -74,7 +92,7 @@ fn test_auto_revert_file_grows() {
             .collect::<Vec<_>>()
             .join("\n");
 
-        fs::write(&file_path, &content).unwrap();
+        write_and_sync(&file_path, &content);
 
         let expected = content.clone();
         harness
@@ -97,7 +115,7 @@ fn test_auto_revert_file_shrinks() {
         .map(|i| format!("Line {}", i))
         .collect::<Vec<_>>()
         .join("\n");
-    fs::write(&file_path, &initial_content).unwrap();
+    write_and_sync(&file_path, &initial_content);
 
     harness.open_file(&file_path).unwrap();
     harness.assert_buffer_content(&initial_content);
@@ -111,7 +129,7 @@ fn test_auto_revert_file_shrinks() {
             .collect::<Vec<_>>()
             .join("\n");
 
-        fs::write(&file_path, &content).unwrap();
+        write_and_sync(&file_path, &content);
 
         let expected = content.clone();
         harness
@@ -134,7 +152,7 @@ fn test_auto_revert_preserves_scroll_position() {
         .map(|i| format!("Line number {}", i))
         .collect::<Vec<_>>()
         .join("\n");
-    fs::write(&file_path, &content).unwrap();
+    write_and_sync(&file_path, &content);
 
     harness.open_file(&file_path).unwrap();
 
@@ -163,7 +181,7 @@ fn test_auto_revert_preserves_scroll_position() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    fs::write(&file_path, &modified_content).unwrap();
+    write_and_sync(&file_path, &modified_content);
 
     // Wait for auto-revert
     let expected = modified_content.clone();
@@ -181,7 +199,7 @@ fn test_auto_revert_skipped_when_buffer_modified() {
     let project_dir = harness.project_dir().unwrap();
     let file_path = project_dir.join("modified_buffer.txt");
 
-    fs::write(&file_path, "Original content").unwrap();
+    write_and_sync(&file_path, "Original content");
 
     harness.open_file(&file_path).unwrap();
     harness.assert_buffer_content("Original content");
@@ -196,7 +214,7 @@ fn test_auto_revert_skipped_when_buffer_modified() {
 
     // Modify the file externally
     thread::sleep(FILE_CHANGE_DELAY);
-    fs::write(&file_path, "External change").unwrap();
+    write_and_sync(&file_path, "External change");
 
     // Process events - but buffer should NOT be reverted
     // because it has local modifications
@@ -224,14 +242,14 @@ fn test_auto_revert_rapid_changes() {
     let project_dir = harness.project_dir().unwrap();
     let file_path = project_dir.join("rapid_changes.txt");
 
-    fs::write(&file_path, "v0").unwrap();
+    write_and_sync(&file_path, "v0");
 
     harness.open_file(&file_path).unwrap();
 
     // Make rapid consecutive changes
     for i in 1..=10 {
         thread::sleep(Duration::from_millis(30));
-        fs::write(&file_path, format!("v{}", i)).unwrap();
+        write_and_sync(&file_path, &format!("v{}", i));
     }
 
     // Wait for the final version to appear
@@ -251,7 +269,7 @@ fn test_auto_revert_preserves_cursor_position() {
 
     // Create a file with some lines
     let content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5";
-    fs::write(&file_path, content).unwrap();
+    write_and_sync(&file_path, content);
 
     harness.open_file(&file_path).unwrap();
 
@@ -269,7 +287,7 @@ fn test_auto_revert_preserves_cursor_position() {
     // Modify the file externally (but keep same structure so cursor position is valid)
     thread::sleep(FILE_CHANGE_DELAY);
     let modified_content = "Line 1\nLine 2\nLine X\nLine 4\nLine 5"; // Same length, just changed content
-    fs::write(&file_path, modified_content).unwrap();
+    write_and_sync(&file_path, modified_content);
 
     // Wait for auto-revert
     let expected = modified_content.to_string();
@@ -294,14 +312,14 @@ fn test_auto_revert_not_disabled_by_external_save() {
     let project_dir = harness.project_dir().unwrap();
     let file_path = project_dir.join("save_test.txt");
 
-    fs::write(&file_path, "Initial content").unwrap();
+    write_and_sync(&file_path, "Initial content");
 
     harness.open_file(&file_path).unwrap();
     harness.assert_buffer_content("Initial content");
 
     // Simulate an external save (like when another process saves the file)
     thread::sleep(FILE_CHANGE_DELAY);
-    fs::write(&file_path, "Changed by external save").unwrap();
+    write_and_sync(&file_path, "Changed by external save");
 
     // Wait for auto-revert
     harness
@@ -312,7 +330,7 @@ fn test_auto_revert_not_disabled_by_external_save() {
     thread::sleep(Duration::from_millis(600)); // Beyond debounce window
 
     // Make another external change - auto-revert should still be enabled
-    fs::write(&file_path, "Second external change").unwrap();
+    write_and_sync(&file_path, "Second external change");
 
     // This should also be auto-reverted (auto-revert should not have been disabled)
     harness
@@ -333,7 +351,7 @@ fn test_auto_revert_with_temp_rename_save() {
     let file_path = project_dir.join("temp_rename_test.txt");
 
     // Create initial file
-    fs::write(&file_path, "Initial content v1").unwrap();
+    write_and_sync(&file_path, "Initial content v1");
 
     harness.open_file(&file_path).unwrap();
     harness.assert_buffer_content("Initial content v1");
@@ -348,8 +366,12 @@ fn test_auto_revert_with_temp_rename_save() {
         // Write to a temp file first, then rename (atomic save pattern)
         // This changes the file's inode, which can break inotify watches
         let temp_path = project_dir.join(format!(".temp_rename_test.txt.{}", version));
-        fs::write(&temp_path, &new_content).unwrap();
+        write_and_sync(&temp_path, &new_content);
         fs::rename(&temp_path, &file_path).unwrap();
+        // Sync directory after rename to ensure the rename is visible
+        if let Ok(dir) = File::open(&project_dir) {
+            let _ = dir.sync_all();
+        }
 
         // Wait for the buffer to update
         let expected = new_content.clone();
