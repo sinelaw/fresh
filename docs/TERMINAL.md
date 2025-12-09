@@ -313,7 +313,82 @@ terminal = ["alacritty_terminal", "portable-pty"]
 
 ---
 
-## 6. Key Decisions Needed
+## 6. Known Issues and Bugs (Current Implementation)
+
+Testing conducted via tmux automation on 2025-12-09.
+
+### Critical Issues
+
+#### 1. "Read-only" Mode is Not Read-Only
+**Severity:** Critical
+**Steps to reproduce:**
+1. Open a terminal (`Open Terminal` from command palette)
+2. Run some commands
+3. Press `Ctrl+Space` to exit terminal mode
+4. Status bar shows "Terminal mode disabled - read only (Ctrl+Space to resume)"
+5. Type any text (e.g., "gg")
+
+**Expected:** Text input should be rejected in read-only mode
+**Actual:** Text is inserted into the buffer, modifying it
+
+#### 2. Keybindings Don't Work in "Read-Only" Terminal Buffer Mode
+**Severity:** Critical
+**Steps to reproduce:**
+1. Exit terminal mode with `Ctrl+Space`
+2. Press `Escape`, `u` (undo), or navigation keys like `gg`
+
+**Expected:** Editor keybindings should work (undo, navigation, etc.)
+**Actual:** All keys are typed as text into the buffer instead of executing keybindings
+
+#### 3. View Doesn't Scroll to Cursor When Resuming Terminal Mode
+**Severity:** High
+**Steps to reproduce:**
+1. Generate scrollback output: `for i in {1..50}; do echo "Line $i"; done`
+2. Press `Shift+PageUp` to enter scrollback mode
+3. Scroll up with `PageUp`
+4. Press `Ctrl+Space` to resume terminal mode
+
+**Expected:** View should scroll to show current shell prompt (cursor position)
+**Actual:** View stays at the scrolled position; user cannot see what they're typing
+
+### Design Issues
+
+#### 4. Inconsistent Display Between Terminal Mode and Exit Mode
+**Severity:** Medium
+**Description:** Exiting and re-entering terminal mode should be seamless with identical rendering. Currently:
+- In terminal mode: Shows live terminal output without line numbers
+- After `Ctrl+Space`: Shows line numbers, different content layout
+- After `Shift+PageUp` scrollback: Shows line numbers, proper content
+
+The `Ctrl+Space` exit mode and `Shift+PageUp` scrollback mode behave differently.
+
+### Working Features (Verified)
+
+The following features work correctly:
+- Basic command execution (echo, ls, pwd, cat)
+- Tab completion
+- Command history (arrow keys)
+- Ctrl+C interrupt (sends SIGINT)
+- Ctrl+U (clear line)
+- Interactive TUI programs: vim, htop, less
+- Alternate screen buffer handling (vim/htop restore screen on exit)
+- Scrollback viewing via `Shift+PageUp`
+- PageUp/PageDown navigation in scrollback mode
+- Terminal resize (stty size reports correct dimensions)
+
+### Recommendations
+
+1. **Fix read-only mode**: The buffer should truly be read-only when terminal mode is disabled, or rename the mode to avoid confusion.
+
+2. **Unify exit modes**: Consider merging `Ctrl+Space` exit and `Shift+PageUp` scrollback into a single consistent mode.
+
+3. **Auto-scroll on resume**: When resuming terminal mode, automatically scroll to show the cursor/prompt position.
+
+4. **Ensure keybindings work**: When not in terminal mode, standard editor keybindings should function normally.
+
+---
+
+## 8. Key Decisions Needed
 
 1. **Plugin API vs Core Only?**
    - Expose terminal creation to plugins?
@@ -341,7 +416,7 @@ terminal = ["alacritty_terminal", "portable-pty"]
 
 ---
 
-## 7. References
+## 9. References
 
 - [VS Code Terminal Advanced](https://code.visualstudio.com/docs/terminal/advanced)
 - [Zed Terminal Architecture](https://deepwiki.com/zed-industries/zed/3.3-terminal)

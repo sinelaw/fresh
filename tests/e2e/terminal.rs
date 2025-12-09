@@ -519,3 +519,186 @@ fn test_ctrl_space_toggle() {
         "Ctrl+Space should toggle back into terminal mode"
     );
 }
+
+// ============================================================================
+// Bug reproduction tests - Known issues documented in docs/TERMINAL.md
+// ============================================================================
+
+/// BUG: "Read-only" mode should reject text input but doesn't
+/// When terminal mode is disabled, the status bar says "read only" but
+/// typing characters actually inserts them into the buffer.
+#[test]
+#[ignore] // Remove ignore when bug is fixed
+fn test_bug_readonly_mode_rejects_input() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open a terminal and write some content
+    harness.editor_mut().open_terminal();
+    let buffer_id = harness.editor().active_buffer_id();
+
+    // Write content to terminal
+    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
+        if let Ok(mut state) = handle.state.lock() {
+            state.process_output(b"Line 1\r\n");
+            state.process_output(b"Line 2\r\n");
+        }
+    }
+
+    // Exit terminal mode (enters "read-only" mode)
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    // Get buffer content before typing
+    let content_before = harness.editor().get_buffer_content(buffer_id);
+
+    // Try to type text - this SHOULD be rejected in read-only mode
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char('x'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char('y'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char('z'), KeyModifiers::NONE)
+        .unwrap();
+
+    // Get buffer content after typing
+    let content_after = harness.editor().get_buffer_content(buffer_id);
+
+    // BUG: Content should be unchanged in read-only mode
+    // Currently fails because text is being inserted
+    assert_eq!(
+        content_before, content_after,
+        "Buffer content should not change in read-only terminal mode"
+    );
+}
+
+/// BUG: Keybindings don't work in "read-only" terminal buffer mode
+/// When terminal mode is disabled, pressing keys like 'g' twice (gg) should
+/// navigate to the top, but instead the characters are typed into the buffer.
+#[test]
+#[ignore] // Remove ignore when bug is fixed
+fn test_bug_keybindings_work_in_readonly_mode() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open a terminal and write multiple lines of content
+    harness.editor_mut().open_terminal();
+    let buffer_id = harness.editor().active_buffer_id();
+
+    // Write content to terminal
+    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
+        if let Ok(mut state) = handle.state.lock() {
+            for i in 1..=20 {
+                state.process_output(format!("Line {}\r\n", i).as_bytes());
+            }
+        }
+    }
+
+    // Exit terminal mode
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    // Get buffer content before attempting navigation
+    let content_before = harness.editor().get_buffer_content(buffer_id);
+
+    // Try to use 'gg' navigation (go to top of file)
+    // This should be a navigation command, not text insertion
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char('g'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char('g'), KeyModifiers::NONE)
+        .unwrap();
+
+    // Get buffer content after
+    let content_after = harness.editor().get_buffer_content(buffer_id);
+
+    // BUG: Content should be unchanged - 'gg' is navigation not text
+    // Currently fails because 'gg' is typed into the buffer
+    assert_eq!(
+        content_before, content_after,
+        "Pressing 'gg' should navigate, not insert text"
+    );
+}
+
+/// BUG: View doesn't scroll to cursor when resuming terminal mode from scrollback
+/// After scrolling up in scrollback mode and resuming terminal mode, the view
+/// should auto-scroll to show the cursor position (shell prompt).
+///
+/// NOTE: This test passes in the e2e harness but the bug was observed in real
+/// tmux testing. The harness may not fully replicate the real UI render path.
+/// Manual testing showed the view stays stuck at the scrolled position.
+#[test]
+fn test_bug_view_scrolls_to_cursor_on_resume() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open a terminal and generate lots of output
+    harness.editor_mut().open_terminal();
+    let buffer_id = harness.editor().active_buffer_id();
+
+    // Write many lines to terminal (more than visible area)
+    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
+        if let Ok(mut state) = handle.state.lock() {
+            for i in 1..=100 {
+                state.process_output(format!("Line {}\r\n", i).as_bytes());
+            }
+            // Add a unique prompt at the end that we can search for
+            state.process_output(b"PROMPT_MARKER_XYZ$ ");
+        }
+    }
+
+    // Render to ensure terminal content is displayed
+    harness.render().unwrap();
+
+    // In terminal mode, we should see the prompt marker (bottom of terminal)
+    harness.assert_screen_contains("PROMPT_MARKER_XYZ");
+
+    // Exit terminal mode to enter scrollback
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    // Scroll up significantly (simulating user looking at history)
+    for _ in 0..10 {
+        harness
+            .editor_mut()
+            .handle_key(KeyCode::PageUp, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // After scrolling up, the prompt marker should NOT be visible
+    // (we're looking at earlier content like "Line 1", "Line 2", etc.)
+    harness.assert_screen_not_contains("PROMPT_MARKER_XYZ");
+    // But early lines should be visible
+    harness.assert_screen_contains("Line 1");
+
+    // Re-enter terminal mode
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(harness.editor().is_terminal_mode());
+    harness.render().unwrap();
+
+    // BUG: After resuming terminal mode, the prompt marker should be visible again
+    // because the view should auto-scroll to show the cursor position.
+    // Currently fails because view stays at the scrolled-up position.
+    harness.assert_screen_contains("PROMPT_MARKER_XYZ");
+}
