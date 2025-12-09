@@ -7151,7 +7151,7 @@ mod tests {
 
         let id = editor.new_buffer();
         assert_eq!(editor.buffers.len(), 2);
-        assert_eq!(editor.active_buffer, id);
+        assert_eq!(editor.active_buffer(), id);
     }
 
     #[test]
@@ -8299,7 +8299,7 @@ mod tests {
         // Simulate LSP rename batch: rename "val" to "value" in two places
         // Applied in reverse order (from end of file to start)
         let cursor_id = editor.active_state().cursors.primary_id();
-        let buffer_id = editor.active_buffer;
+        let buffer_id = editor.active_buffer();
 
         let batch = Event::Batch {
             events: vec![
@@ -8381,7 +8381,7 @@ mod tests {
         editor.active_state_mut().buffer = Buffer::from_str(initial, 1024 * 1024);
 
         let cursor_id = editor.active_state().cursors.primary_id();
-        let buffer_id = editor.active_buffer;
+        let buffer_id = editor.active_buffer();
 
         // === FIRST RENAME: "val" -> "value" ===
         // Create batch for first rename (applied in reverse order)
