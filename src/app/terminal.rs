@@ -504,6 +504,11 @@ impl Editor {
         self.keyboard_capture
     }
 
+    /// Set terminal jump_to_end_on_output config option (for testing)
+    pub fn set_terminal_jump_to_end_on_output(&mut self, value: bool) {
+        self.config.terminal.jump_to_end_on_output = value;
+    }
+
     /// Get read-only access to the terminal manager (for testing)
     pub fn terminal_manager(&self) -> &crate::services::terminal::TerminalManager {
         &self.terminal_manager

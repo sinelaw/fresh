@@ -1225,6 +1225,35 @@ fn test_command_palette_works_in_terminal_mode() {
     harness.assert_screen_contains("Command:");
 }
 
+/// Test that typing in prompts works correctly when terminal buffer is active.
+/// Regression test for: Letters typed in command palette were being sent to terminal
+/// instead of the prompt input.
+#[test]
+fn test_prompt_typing_works_in_terminal_mode() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Open command palette with Ctrl+P
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify command palette is open
+    harness.assert_screen_contains("Command:");
+
+    // Type something in the prompt - this should go to the prompt, not the terminal
+    harness.type_text("quit").unwrap();
+    harness.render().unwrap();
+
+    // The prompt should show what we typed
+    harness.assert_screen_contains("quit");
+}
+
 /// Test that switching from terminal split to another split exits terminal mode
 /// and allows the new buffer to receive keystrokes.
 ///
@@ -1244,6 +1273,11 @@ fn test_terminal_split_switch_exits_terminal_mode() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
+
+    // Disable jump_to_end_on_output so terminal output doesn't re-enter terminal mode
+    harness
+        .editor_mut()
+        .set_terminal_jump_to_end_on_output(false);
 
     // Now we have two splits. Open a terminal in the current (right) split
     harness.editor_mut().open_terminal();
