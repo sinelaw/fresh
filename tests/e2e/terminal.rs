@@ -1416,6 +1416,154 @@ fn test_terminal_split_switch_exits_terminal_mode() {
     );
 }
 
+/// Test clicking between splits with terminal preserves correct focus behavior
+/// When terminal is active in one split and file in another, clicking between them
+/// should properly transfer focus and clicking back on terminal should restore terminal mode.
+#[test]
+fn test_click_between_splits_terminal_focus() {
+    let mut harness = harness_or_return!(120, 30);
+
+    // Create a vertical split via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Disable jump_to_end_on_output so terminal output doesn't interfere
+    harness
+        .editor_mut()
+        .set_terminal_jump_to_end_on_output(false);
+
+    // Now we have two splits. Open a terminal in the current (right) split
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    // Verify we're in terminal mode
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Should be in terminal mode after opening terminal"
+    );
+
+    let terminal_buffer = harness.editor().active_buffer_id();
+    assert!(
+        harness.editor().is_terminal_buffer(terminal_buffer),
+        "Active buffer should be terminal"
+    );
+
+    // Screen is 120 wide, split vertically means left split is ~60 cols, right split is ~60 cols
+    // Left split content area starts around column 8 (after gutter)
+    // Right split content area starts around column 68
+    let left_split_col: u16 = 10;
+    let right_split_col: u16 = 100;
+    let content_row: u16 = 15;
+
+    // Repeat the click cycle 3 times to ensure consistent behavior
+    for iteration in 1..=3 {
+        // Currently on terminal (right split), terminal mode is active
+        assert!(
+            harness.editor().is_terminal_mode(),
+            "Iteration {}: Should be in terminal mode before clicking file split",
+            iteration
+        );
+        assert!(
+            harness.editor().is_terminal_buffer(harness.editor().active_buffer_id()),
+            "Iteration {}: Active buffer should be terminal before clicking file split",
+            iteration
+        );
+
+        // Click on the left split (file buffer)
+        harness
+            .send_mouse(crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: left_split_col,
+                row: content_row,
+                modifiers: KeyModifiers::NONE,
+            })
+            .unwrap();
+        harness.render().unwrap();
+
+        // Terminal mode should be OFF (we clicked on a file split)
+        assert!(
+            !harness.editor().is_terminal_mode(),
+            "Iteration {}: Terminal mode should be OFF after clicking on file split",
+            iteration
+        );
+
+        // Active buffer should be the file (non-terminal)
+        assert!(
+            !harness.editor().is_terminal_buffer(harness.editor().active_buffer_id()),
+            "Iteration {}: Active buffer should be file (non-terminal) after clicking file split",
+            iteration
+        );
+
+        // Click back on the right split (terminal)
+        harness
+            .send_mouse(crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: right_split_col,
+                row: content_row,
+                modifiers: KeyModifiers::NONE,
+            })
+            .unwrap();
+        harness.render().unwrap();
+
+        // Terminal mode should be restored (we clicked on terminal split)
+        assert!(
+            harness.editor().is_terminal_mode(),
+            "Iteration {}: Terminal mode should be restored after clicking back on terminal split",
+            iteration
+        );
+
+        // Active buffer should be the terminal again
+        assert!(
+            harness.editor().is_terminal_buffer(harness.editor().active_buffer_id()),
+            "Iteration {}: Active buffer should be terminal after clicking terminal split",
+            iteration
+        );
+    }
+
+    // Final verification: type in terminal to confirm it's truly active
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('e'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('c'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('h'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('o'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char(' '), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('O'), KeyModifiers::SHIFT);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('K'), KeyModifiers::SHIFT);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Enter, KeyModifiers::NONE);
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("OK") || screen.contains("echo"),
+        "Terminal should show command output after repeated split switching. Screen:\n{}",
+        screen
+    );
+}
+
 /// Test that closing a terminal tab transfers keyboard focus to remaining tab
 #[test]
 fn test_close_terminal_tab_transfers_focus_to_remaining_tab() {

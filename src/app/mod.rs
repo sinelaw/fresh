@@ -2575,12 +2575,10 @@ impl Editor {
         let split_changed = previous_split != split_id;
 
         if split_changed {
-            // Switching to a different split - exit terminal mode if active,
-            // but DON'T use set_active_buffer (which would add to resume set)
+            // Switching to a different split - exit terminal mode if active
             if self.terminal_mode && self.is_terminal_buffer(previous_buffer) {
                 self.terminal_mode = false;
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
-                // Don't add to resume set - user explicitly clicked on another split
             }
 
             // Update split manager to focus this split
@@ -2588,6 +2586,12 @@ impl Editor {
 
             // Update the buffer in the new split
             self.split_manager.set_active_buffer_id(buffer_id);
+
+            // If switching TO a terminal split, enter terminal mode
+            if self.is_terminal_buffer(buffer_id) {
+                self.terminal_mode = true;
+                self.key_context = crate::input::keybindings::KeyContext::Terminal;
+            }
 
             // Handle buffer change side effects
             if previous_buffer != buffer_id {
