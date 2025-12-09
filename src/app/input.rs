@@ -729,6 +729,9 @@ impl Editor {
                     self.set_status_message("Buffer closed".to_string());
                 }
             }
+            Action::CloseTab => {
+                self.close_tab();
+            }
             Action::Revert => {
                 // Check if buffer has unsaved changes - prompt for confirmation
                 if self.active_state().buffer.is_modified() {
@@ -3066,24 +3069,9 @@ impl Editor {
         if let Some((split_id, clicked_buffer, clicked_close)) = tab_click {
             self.focus_split(split_id, clicked_buffer);
 
-            // Handle close button click
+            // Handle close button click - use close_tab logic
             if clicked_close {
-                if let Some(state) = self.buffers.get(&clicked_buffer) {
-                    if state.buffer.is_modified() {
-                        // Buffer has unsaved changes - prompt for confirmation
-                        let name = self.get_buffer_display_name(clicked_buffer);
-                        self.start_prompt(
-                            format!("'{}' modified. (s)ave, (d)iscard, (C)ancel? ", name),
-                            PromptType::ConfirmCloseBuffer {
-                                buffer_id: clicked_buffer,
-                            },
-                        );
-                    } else if let Err(e) = self.force_close_buffer(clicked_buffer) {
-                        self.set_status_message(format!("Cannot close buffer: {}", e));
-                    } else {
-                        self.set_status_message("Buffer closed".to_string());
-                    }
-                }
+                self.close_tab_in_split(clicked_buffer, split_id);
                 return Ok(());
             }
             return Ok(());

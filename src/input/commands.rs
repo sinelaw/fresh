@@ -167,6 +167,14 @@ pub fn get_all_commands() -> Vec<Command> {
             source: CommandSource::Builtin,
         },
         Command {
+            name: "Close Tab".to_string(),
+            description: "Close the current tab in the current split".to_string(),
+            action: Action::CloseTab,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
             name: "Revert File".to_string(),
             description: "Discard changes and reload from disk".to_string(),
             action: Action::Revert,

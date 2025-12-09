@@ -1594,6 +1594,7 @@ pub fn action_to_events(
         | Action::Open
         | Action::New
         | Action::Close
+        | Action::CloseTab
         | Action::GotoLine
         | Action::NextBuffer
         | Action::PrevBuffer

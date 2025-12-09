@@ -76,7 +76,7 @@
       "comment": "Normal context - Close tab",
       "key": "w",
       "modifiers": ["alt"],
-      "action": "close",
+      "action": "close_tab",
       "args": {},
       "when": "normal"
     },
