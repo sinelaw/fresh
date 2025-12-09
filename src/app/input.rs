@@ -52,7 +52,11 @@ impl Editor {
                     | crossterm::event::KeyCode::Char('`') => {
                         self.terminal_mode = false;
                         self.key_context = crate::input::keybindings::KeyContext::Normal;
-                        self.set_status_message("Terminal mode disabled".to_string());
+                        // Sync terminal content to buffer for read-only viewing
+                        self.sync_terminal_to_buffer(self.active_buffer);
+                        self.set_status_message(
+                            "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
+                        );
                         return Ok(());
                     }
                     crossterm::event::KeyCode::Char('P') | crossterm::event::KeyCode::Char('p')
@@ -69,6 +73,21 @@ impl Editor {
             // Forward all other keys to the terminal
             self.send_terminal_key(code, modifiers);
             return Ok(());
+        }
+
+        // Toggle back into terminal mode when viewing a terminal buffer
+        if self.is_terminal_buffer(self.active_buffer) {
+            if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                match code {
+                    crossterm::event::KeyCode::Char(' ')
+                    | crossterm::event::KeyCode::Char(']')
+                    | crossterm::event::KeyCode::Char('`') => {
+                        self.enter_terminal_mode();
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
         }
 
         // Clear skip_ensure_visible flag so cursor becomes visible after key press

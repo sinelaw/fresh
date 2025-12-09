@@ -186,10 +186,13 @@ impl Editor {
                 crossterm::event::KeyCode::Char(' ')
                 | crossterm::event::KeyCode::Char(']')
                 | crossterm::event::KeyCode::Char('`') => {
-                    // Exit terminal mode
+                    // Exit terminal mode and sync buffer
                     self.terminal_mode = false;
                     self.key_context = crate::input::keybindings::KeyContext::Normal;
-                    self.set_status_message("Terminal mode disabled".to_string());
+                    self.sync_terminal_to_buffer(self.active_buffer);
+                    self.set_status_message(
+                        "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
+                    );
                     return true;
                 }
                 _ => {}
@@ -199,6 +202,55 @@ impl Editor {
         // Send the key to the terminal
         self.send_terminal_key(code, modifiers);
         true
+    }
+
+    /// Sync terminal content to the text buffer for read-only viewing/selection
+    pub fn sync_terminal_to_buffer(&mut self, buffer_id: BufferId) {
+        if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
+            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                if let Ok(state) = handle.state.lock() {
+                    // Get terminal content as text (including scrollback history)
+                    let content = state.full_content_string();
+
+                    // Update the buffer with terminal content
+                    if let Some(editor_state) = self.buffers.get_mut(&buffer_id) {
+                        // Clear existing content and insert new content
+                        let total = editor_state.buffer.total_bytes();
+                        if total > 0 {
+                            editor_state.buffer.delete_bytes(0, total);
+                        }
+                        editor_state.buffer.insert(0, &content);
+
+                        // Move cursor to end of buffer
+                        let total = editor_state.buffer.total_bytes();
+                        editor_state.primary_cursor_mut().position = total;
+
+                        // Terminal buffers should never be considered "modified"
+                        editor_state.buffer.set_modified(false);
+                    }
+
+                    // Mark buffer as read-only while in non-terminal mode
+                    if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+                        metadata.read_only = true;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Re-enter terminal mode from read-only buffer view
+    pub fn enter_terminal_mode(&mut self) {
+        if self.is_terminal_buffer(self.active_buffer) {
+            self.terminal_mode = true;
+            self.key_context = crate::input::keybindings::KeyContext::Terminal;
+
+            // Mark buffer as not read-only when in terminal mode
+            if let Some(metadata) = self.buffer_metadata.get_mut(&self.active_buffer) {
+                metadata.read_only = false;
+            }
+
+            self.set_status_message("Terminal mode enabled".to_string());
+        }
     }
 
     /// Get terminal content for rendering
@@ -235,6 +287,20 @@ impl Editor {
     /// Get the currently active buffer ID
     pub fn active_buffer_id(&self) -> BufferId {
         self.active_buffer
+    }
+
+    /// Get buffer content as a string (for testing)
+    pub fn get_buffer_content(&self, buffer_id: BufferId) -> Option<String> {
+        self.buffers
+            .get(&buffer_id)
+            .and_then(|state| state.buffer.to_string())
+    }
+
+    /// Get cursor position for a buffer (for testing)
+    pub fn get_cursor_position(&self, buffer_id: BufferId) -> Option<usize> {
+        self.buffers
+            .get(&buffer_id)
+            .map(|state| state.primary_cursor().position)
     }
 
     /// Render terminal content for all terminal buffers in split areas

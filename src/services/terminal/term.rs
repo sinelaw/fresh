@@ -158,6 +158,50 @@ impl TerminalState {
         result
     }
 
+    /// Get all content including scrollback history as a string
+    /// Lines are in chronological order (oldest first)
+    pub fn full_content_string(&self) -> String {
+        use alacritty_terminal::grid::Dimensions;
+        use alacritty_terminal::index::{Column, Line};
+
+        let grid = self.term.grid();
+        let history_size = grid.history_size();
+        let mut result = String::new();
+
+        // First, add scrollback history (negative line indices)
+        // History lines go from -(history_size) to -1
+        for i in (1..=history_size).rev() {
+            let line = Line(-(i as i32));
+            let row_data = &grid[line];
+            let mut line_str = String::new();
+            for col in 0..self.cols as usize {
+                line_str.push(row_data[Column(col)].c);
+            }
+            let trimmed = line_str.trim_end();
+            result.push_str(trimmed);
+            result.push('\n');
+        }
+
+        // Then add visible screen content (line indices 0 to rows-1)
+        for row in 0..self.rows {
+            let line = self.get_line(row);
+            let line_str: String = line.iter().map(|c| c.c).collect();
+            let trimmed = line_str.trim_end();
+            result.push_str(trimmed);
+            if row < self.rows - 1 {
+                result.push('\n');
+            }
+        }
+
+        result
+    }
+
+    /// Get the number of scrollback history lines
+    pub fn history_size(&self) -> usize {
+        use alacritty_terminal::grid::Dimensions;
+        self.term.grid().history_size()
+    }
+
     /// Get the title (if set by escape sequence)
     pub fn title(&self) -> &str {
         &self.terminal_title

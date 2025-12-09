@@ -381,3 +381,141 @@ fn test_terminal_resize() {
     assert_eq!(new_rows, 40);
     assert!(new_cols != initial_cols || new_rows != initial_rows);
 }
+
+/// Test that buffer content is synced when exiting terminal mode
+#[test]
+fn test_terminal_buffer_sync_on_exit() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    let buffer_id = harness.editor().active_buffer_id();
+
+    // Write some content to the terminal
+    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
+        if let Ok(mut state) = handle.state.lock() {
+            state.process_output(b"Hello Terminal World\r\n");
+            state.process_output(b"Line 2\r\n");
+            state.process_output(b"Line 3\r\n");
+        }
+    }
+
+    // Exit terminal mode
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(']'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Buffer should now have the synced content
+    let buffer_content = harness.editor().get_buffer_content(buffer_id);
+    assert!(
+        buffer_content.is_some(),
+        "Buffer should have content after sync"
+    );
+
+    let content = buffer_content.unwrap();
+    assert!(
+        content.contains("Hello") || content.contains("Terminal"),
+        "Buffer should contain terminal output"
+    );
+}
+
+/// Test cursor movement in terminal buffer when mode is disabled
+#[test]
+fn test_terminal_buffer_cursor_movement() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    let buffer_id = harness.editor().active_buffer_id();
+
+    // Write some content to the terminal
+    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
+        if let Ok(mut state) = handle.state.lock() {
+            state.process_output(b"Line 1\r\n");
+            state.process_output(b"Line 2\r\n");
+            state.process_output(b"Line 3\r\n");
+        }
+    }
+
+    // Exit terminal mode
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(']'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    assert!(!harness.editor().is_terminal_mode());
+
+    // Get initial cursor position
+    let initial_pos = harness.editor().get_cursor_position(buffer_id);
+
+    // Move cursor up
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Up, KeyModifiers::NONE)
+        .unwrap();
+
+    let pos_after_up = harness.editor().get_cursor_position(buffer_id);
+
+    // Cursor should have moved (different position)
+    assert_ne!(
+        initial_pos, pos_after_up,
+        "Cursor should move when pressing Up in disabled terminal mode"
+    );
+}
+
+/// Test toggle back into terminal mode with same keybinding
+#[test]
+fn test_terminal_mode_toggle_back() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Exit terminal mode
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(']'), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    // Toggle back into terminal mode with same key
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(']'), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Should toggle back into terminal mode"
+    );
+}
+
+/// Test Ctrl+Space toggles terminal mode both ways
+#[test]
+fn test_ctrl_space_toggle() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Exit with Ctrl+Space
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    // Re-enter with Ctrl+Space
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Ctrl+Space should toggle back into terminal mode"
+    );
+}
