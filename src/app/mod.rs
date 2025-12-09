@@ -411,6 +411,9 @@ pub struct Editor {
     /// Maps buffer ID to terminal ID (for terminal buffers)
     terminal_buffers: HashMap<BufferId, crate::services::terminal::TerminalId>,
 
+    /// Maps terminal ID to backing file path (for terminal content storage)
+    terminal_backing_files: HashMap<crate::services::terminal::TerminalId, std::path::PathBuf>,
+
     /// Whether terminal mode is active (input goes to terminal)
     terminal_mode: bool,
 }
@@ -789,6 +792,7 @@ impl Editor {
             update_checker,
             terminal_manager: crate::services::terminal::TerminalManager::new(),
             terminal_buffers: HashMap::new(),
+            terminal_backing_files: HashMap::new(),
             terminal_mode: false,
         })
     }

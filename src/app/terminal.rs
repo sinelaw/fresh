@@ -7,7 +7,6 @@
 //! - Handling terminal input
 
 use super::{BufferId, BufferMetadata, Editor};
-use crate::model::buffer::TextBuffer;
 use crate::services::terminal::TerminalId;
 use crate::state::EditorState;
 
@@ -59,29 +58,34 @@ impl Editor {
         // Get config values
         let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
 
-        // Create an empty text buffer (terminal content is rendered separately)
-        let buffer = TextBuffer::new(large_file_threshold);
+        // Create a temp file for terminal content backing store
+        let backing_file = std::env::temp_dir().join(format!("fresh-terminal-{}.txt", terminal_id.0));
 
-        // Create editor state for the buffer
-        let state = EditorState::new(
+        // Write empty content to create the file
+        if let Err(e) = std::fs::write(&backing_file, "") {
+            tracing::warn!("Failed to create terminal backing file: {}", e);
+        }
+
+        // Store the backing file path
+        self.terminal_backing_files.insert(terminal_id, backing_file.clone());
+
+        // Create editor state with the backing file
+        let mut state = EditorState::new(
             self.terminal_width,
             self.terminal_height,
             large_file_threshold,
         );
+        state.buffer.set_file_path(backing_file.clone());
         self.buffers.insert(buffer_id, state);
 
-        // Create terminal-specific metadata
-        let metadata = BufferMetadata::virtual_buffer(
-            format!("*Terminal {}*", terminal_id.0),
-            "terminal".to_string(),
-            false, // Not read-only - we accept input
-        );
+        // Create file-backed metadata (not virtual) so buffer features work
+        let metadata = BufferMetadata::with_file(backing_file, &self.working_dir);
         self.buffer_metadata.insert(buffer_id, metadata);
 
         // Map buffer to terminal
         self.terminal_buffers.insert(buffer_id, terminal_id);
 
-        // Initialize event log for undo/redo (though terminals don't really use it)
+        // Initialize event log for undo/redo
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
@@ -102,6 +106,11 @@ impl Editor {
             // Close the terminal
             self.terminal_manager.close(terminal_id);
             self.terminal_buffers.remove(&buffer_id);
+
+            // Clean up backing file
+            if let Some(backing_file) = self.terminal_backing_files.remove(&terminal_id) {
+                let _ = std::fs::remove_file(&backing_file);
+            }
 
             // Exit terminal mode
             self.terminal_mode = false;
@@ -207,33 +216,46 @@ impl Editor {
     /// Sync terminal content to the text buffer for read-only viewing/selection
     pub fn sync_terminal_to_buffer(&mut self, buffer_id: BufferId) {
         if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
+            // Get the backing file path
+            let backing_file = match self.terminal_backing_files.get(&terminal_id) {
+                Some(path) => path.clone(),
+                None => return,
+            };
+
+            // Get terminal content and write to backing file
             if let Some(handle) = self.terminal_manager.get(terminal_id) {
                 if let Ok(state) = handle.state.lock() {
-                    // Get terminal content as text (including scrollback history)
                     let content = state.full_content_string();
-
-                    // Update the buffer with terminal content
-                    if let Some(editor_state) = self.buffers.get_mut(&buffer_id) {
-                        // Clear existing content and insert new content
-                        let total = editor_state.buffer.total_bytes();
-                        if total > 0 {
-                            editor_state.buffer.delete_bytes(0, total);
-                        }
-                        editor_state.buffer.insert(0, &content);
-
-                        // Move cursor to end of buffer
-                        let total = editor_state.buffer.total_bytes();
-                        editor_state.primary_cursor_mut().position = total;
-
-                        // Terminal buffers should never be considered "modified"
-                        editor_state.buffer.set_modified(false);
-                    }
-
-                    // Mark buffer as read-only while in non-terminal mode
-                    if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                        metadata.read_only = true;
+                    if let Err(e) = std::fs::write(&backing_file, &content) {
+                        tracing::error!("Failed to write terminal content to backing file: {}", e);
+                        return;
                     }
                 }
+            }
+
+            // Reload buffer from the backing file (reusing existing file loading)
+            let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
+            if let Ok(new_state) = EditorState::from_file(
+                &backing_file,
+                self.terminal_width,
+                self.terminal_height,
+                large_file_threshold,
+                &self.grammar_registry,
+            ) {
+                // Replace buffer state
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    *state = new_state;
+                    // Move cursor to end of buffer
+                    let total = state.buffer.total_bytes();
+                    state.primary_cursor_mut().position = total;
+                    // Terminal buffers should never be considered "modified"
+                    state.buffer.set_modified(false);
+                }
+            }
+
+            // Mark buffer as read-only while in non-terminal mode
+            if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+                metadata.read_only = true;
             }
         }
     }
@@ -377,10 +399,20 @@ impl Editor {
             usize,
         )],
     ) {
+        // Only render terminal content when in terminal mode
+        // In read-only mode, the buffer content is rendered by normal buffer rendering
+        if !self.terminal_mode {
+            return;
+        }
+
         for (_split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
             split_areas
         {
-            // Check if this buffer is a terminal buffer
+            // Check if this buffer is the active terminal buffer
+            if *buffer_id != self.active_buffer {
+                continue;
+            }
+
             if let Some(&terminal_id) = self.terminal_buffers.get(buffer_id) {
                 // Get terminal content and cursor info
                 if let Some(handle) = self.terminal_manager.get(terminal_id) {

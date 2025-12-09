@@ -213,46 +213,6 @@ impl TerminalState {
         self.terminal_title = title;
     }
 
-    /// Get all content including scrollback history as a string
-    pub fn full_content_string(&self) -> String {
-        use alacritty_terminal::index::{Column, Line};
-
-        let grid = self.term.grid();
-        let mut result = String::new();
-
-        // Get history lines (negative line indices)
-        let history_len = grid.history_size();
-        for i in (0..history_len).rev() {
-            let line_idx = -(i as i32 + 1);
-            let line = Line(line_idx);
-            if let Some(row) = grid.get(line) {
-                for col in 0..self.cols as usize {
-                    if let Some(cell) = row.get(Column(col)) {
-                        result.push(cell.c);
-                    }
-                }
-                // Trim trailing spaces and add newline
-                let trimmed = result.trim_end_matches(' ');
-                result.truncate(trimmed.len());
-                result.push('\n');
-            }
-        }
-
-        // Get visible lines (positive line indices starting at 0)
-        for row in 0..self.rows {
-            let line = self.get_line(row);
-            for cell in line {
-                result.push(cell.c);
-            }
-            // Trim trailing spaces
-            let trimmed = result.trim_end_matches(' ');
-            result.truncate(trimmed.len());
-            result.push('\n');
-        }
-
-        result
-    }
-
     /// Scroll up in terminal history (increases display offset)
     pub fn scroll_up(&mut self, lines: usize) {
         self.term.scroll_display(Scroll::Delta(lines as i32));
