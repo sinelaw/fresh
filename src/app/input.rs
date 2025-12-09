@@ -70,19 +70,20 @@ impl Editor {
                     _ => {}
                 }
             }
-            // Handle scrollback keys in terminal mode
-            if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
-                match code {
-                    crossterm::event::KeyCode::PageUp => {
-                        self.terminal_scroll_up(self.active_buffer);
-                        return Ok(());
-                    }
-                    crossterm::event::KeyCode::PageDown => {
-                        self.terminal_scroll_down(self.active_buffer);
-                        return Ok(());
-                    }
-                    _ => {}
-                }
+            // Handle scrollback: Shift+PageUp exits terminal mode and uses file-backed buffer
+            if modifiers.contains(crossterm::event::KeyModifiers::SHIFT)
+                && code == crossterm::event::KeyCode::PageUp
+            {
+                // Sync terminal content to buffer and exit terminal mode
+                self.terminal_mode = false;
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
+                self.sync_terminal_to_buffer(self.active_buffer);
+                self.set_status_message(
+                    "Scrollback mode - use PageUp/Down to scroll (Ctrl+Space to resume)"
+                        .to_string(),
+                );
+                // Now scroll up using normal buffer scrolling
+                return self.handle_action(crate::input::keybindings::Action::MovePageUp);
             }
             // Forward all other keys to the terminal
             self.send_terminal_key(code, modifiers);

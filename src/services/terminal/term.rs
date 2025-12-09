@@ -218,27 +218,11 @@ impl TerminalState {
         self.terminal_title = title;
     }
 
-    /// Scroll up in terminal history (increases display offset)
-    pub fn scroll_up(&mut self, lines: usize) {
-        self.term.scroll_display(Scroll::Delta(lines as i32));
-        self.dirty = true;
-    }
-
-    /// Scroll down in terminal history (decreases display offset)
-    pub fn scroll_down(&mut self, lines: usize) {
-        self.term.scroll_display(Scroll::Delta(-(lines as i32)));
-        self.dirty = true;
-    }
-
     /// Scroll to the bottom of the terminal (display offset = 0)
+    /// Used when re-entering terminal mode from scrollback view
     pub fn scroll_to_bottom(&mut self) {
         self.term.scroll_display(Scroll::Bottom);
         self.dirty = true;
-    }
-
-    /// Get the current scroll offset (0 = at bottom, higher = scrolled up)
-    pub fn scroll_offset(&self) -> usize {
-        self.term.grid().display_offset()
     }
 }
 

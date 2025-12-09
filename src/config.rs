@@ -23,6 +23,10 @@ pub struct Config {
     #[serde(default)]
     pub file_explorer: FileExplorerConfig,
 
+    /// Terminal settings
+    #[serde(default)]
+    pub terminal: TerminalConfig,
+
     /// Custom keybindings (overrides for the active map)
     #[serde(default)]
     pub keybindings: Vec<Keybinding>,
@@ -248,6 +252,23 @@ fn default_explorer_width() -> f32 {
     0.3 // 30% of screen width
 }
 
+/// Terminal configuration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TerminalConfig {
+    /// When viewing terminal scrollback and new output arrives,
+    /// automatically jump back to terminal mode (default: true)
+    #[serde(default = "default_true")]
+    pub jump_to_end_on_output: bool,
+}
+
+impl Default for TerminalConfig {
+    fn default() -> Self {
+        Self {
+            jump_to_end_on_output: true,
+        }
+    }
+}
+
 impl Default for FileExplorerConfig {
     fn default() -> Self {
         Self {
@@ -400,6 +421,7 @@ impl Default for Config {
             check_for_updates: true,
             editor: EditorConfig::default(),
             file_explorer: FileExplorerConfig::default(),
+            terminal: TerminalConfig::default(),
             keybindings: vec![], // User customizations only; defaults come from active_keybinding_map
             keybinding_maps: HashMap::new(), // User-defined maps go here
             active_keybinding_map: default_keybinding_map_name(),

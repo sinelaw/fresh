@@ -4577,9 +4577,21 @@ impl Editor {
                     self.handle_file_open_directory_loaded(result);
                 }
                 AsyncMessage::TerminalOutput { terminal_id } => {
-                    // Terminal output received - just mark for redraw
-                    // The actual rendering happens in the render loop
+                    // Terminal output received - check if we should auto-jump back to terminal mode
                     tracing::trace!("Terminal output received for {:?}", terminal_id);
+
+                    // If viewing scrollback for this terminal and jump_to_end_on_output is enabled,
+                    // automatically re-enter terminal mode
+                    if self.config.terminal.jump_to_end_on_output && !self.terminal_mode {
+                        // Check if active buffer is this terminal
+                        if let Some(&active_terminal_id) =
+                            self.terminal_buffers.get(&self.active_buffer)
+                        {
+                            if active_terminal_id == terminal_id {
+                                self.enter_terminal_mode();
+                            }
+                        }
+                    }
                 }
                 AsyncMessage::TerminalExited { terminal_id } => {
                     tracing::info!("Terminal {:?} exited", terminal_id);

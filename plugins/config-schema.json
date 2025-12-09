@@ -54,6 +54,10 @@
           "$ref": "#/$defs/MenuConfig",
           "description": "Menu bar configuration"
         },
+        "terminal": {
+          "$ref": "#/$defs/TerminalConfig",
+          "description": "Terminal settings"
+        },
         "theme": {
           "type": "string",
           "description": "Color theme name (e.g., \"high-contrast\", \"monokai\", \"solarized-dark\")"
@@ -431,6 +435,16 @@
         }
       },
       "description": "Configuration for process resource limits"
+    },
+    "TerminalConfig": {
+      "type": "object",
+      "properties": {
+        "jump_to_end_on_output": {
+          "type": "boolean",
+          "description": "When viewing terminal scrollback and new output arrives,\nautomatically jump back to terminal mode (default: true)"
+        }
+      },
+      "description": "Terminal configuration"
     }
   }
 }
