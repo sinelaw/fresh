@@ -11,6 +11,9 @@ use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config as TermConfig, Term};
 use alacritty_terminal::vte::ansi::Processor;
 
+// Keep a generous scrollback so sync-to-buffer can include deep history.
+const SCROLLBACK_LINES: usize = 200_000;
+
 /// Event listener that does nothing (we handle events ourselves)
 struct NullListener;
 
@@ -40,7 +43,8 @@ impl TerminalState {
     /// Create a new terminal state
     pub fn new(cols: u16, rows: u16) -> Self {
         let size = TermSize::new(cols as usize, rows as usize);
-        let config = TermConfig::default();
+        let mut config = TermConfig::default();
+        config.scrolling_history = SCROLLBACK_LINES;
         let term = Term::new(config, &size, NullListener);
 
         Self {

@@ -392,6 +392,8 @@ The following features work correctly:
 
 4. **Ensure keybindings work**: When not in terminal mode, standard editor keybindings should function normally.
 
+5. **Persist full session output to disk**: Today, scrollback is populated from the emulator’s in-memory history at the moment we call `sync_terminal_to_buffer`, so very old output can be evicted. To capture the entire session, append PTY output bytes in the reader loop to the terminal’s backing file (or a dedicated log) as they arrive. Keep rendering from the emulator for live view, but use the ever-growing log for deep history and postmortem scrollback. Consider rotation/limits and graceful handling of disk errors.
+
 ---
 
 ## 7. E2E Test Status
