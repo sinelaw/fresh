@@ -2570,28 +2570,11 @@ impl Editor {
     ///
     /// Use this instead of calling set_active_split directly when switching focus.
     pub(super) fn focus_split(&mut self, split_id: crate::model::event::SplitId, buffer_id: BufferId) {
-        let previous_buffer = self.active_buffer();
-        let buffer_changed = previous_buffer != buffer_id;
-
-        // Exit terminal mode if leaving a terminal buffer
-        if buffer_changed && self.terminal_mode && self.is_terminal_buffer(previous_buffer) {
-            self.terminal_mode = false;
-            self.key_context = crate::input::keybindings::KeyContext::Normal;
-        }
-
-        // Update split manager
+        // Update split manager to focus this split
         self.split_manager.set_active_split(split_id);
 
-        // Handle buffer change side effects
-        if buffer_changed {
-            self.position_history.commit_pending_movement();
-            let active_split = self.split_manager.active_split();
-            if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-                view_state.add_buffer(buffer_id);
-                view_state.previous_buffer = Some(previous_buffer);
-            }
-            self.sync_file_explorer_to_active_file();
-        }
+        // Use set_active_buffer to properly handle buffer switching (includes terminal mode resume)
+        self.set_active_buffer(buffer_id);
     }
 
     /// Get the currently active buffer state

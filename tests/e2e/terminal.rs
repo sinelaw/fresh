@@ -1606,6 +1606,89 @@ fn test_terminal_mode_preserved_when_switching_tabs() {
         harness.editor().is_terminal_mode(),
         "Terminal mode should be restored after second switch back"
     );
+
+    // === Now test switching tabs via mouse clicks ===
+    use crate::common::harness::layout;
+
+    // Get the tab bar to find tab positions
+    let screen = harness.screen_to_string();
+    let tab_row: String = screen
+        .lines()
+        .nth(layout::TAB_BAR_ROW)
+        .unwrap_or("")
+        .to_string();
+
+    // Find the position of "file1.txt" in the tab bar (clicking on it should switch to it)
+    // Tab format is something like: " file1.txt × | *Terminal 0* × "
+    let file_tab_pos = tab_row
+        .find("file1")
+        .expect("Should find file1.txt tab in tab bar");
+
+    // We're currently on terminal (in terminal mode), click on file tab
+    harness
+        .mouse_click(file_tab_pos as u16, layout::TAB_BAR_ROW as u16)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should now be viewing file content
+    harness.assert_screen_contains("File content");
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "Should not be in terminal mode after clicking file tab"
+    );
+
+    // Get updated tab bar for terminal position
+    let screen = harness.screen_to_string();
+    let tab_row: String = screen
+        .lines()
+        .nth(layout::TAB_BAR_ROW)
+        .unwrap_or("")
+        .to_string();
+
+    // Find terminal tab position (look for "Terminal" text)
+    let terminal_tab_pos = tab_row
+        .find("Terminal")
+        .expect("Should find Terminal tab in tab bar");
+
+    // Click on terminal tab to switch back
+    harness
+        .mouse_click(terminal_tab_pos as u16, layout::TAB_BAR_ROW as u16)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should see terminal tab is active again
+    harness.assert_screen_contains("*Terminal 0*");
+
+    // Terminal mode should be restored when clicking back to terminal
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Terminal mode should be restored when clicking terminal tab"
+    );
+
+    // Verify keyboard input works after clicking - type something in terminal
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('p'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('w'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('d'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Enter, KeyModifiers::NONE);
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // The terminal should show pwd command was executed (shows path or "pwd")
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("pwd") || screen.contains("/"),
+        "Terminal should show pwd command or path output after click switch. Screen:\n{}",
+        screen
+    );
 }
 
 /// Test that closing terminal tab via mouse click (while in terminal mode) transfers focus
