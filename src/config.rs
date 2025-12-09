@@ -1084,6 +1084,34 @@ impl Config {
                     },
                     MenuItem::Separator { separator: true },
                     MenuItem::Submenu {
+                        label: "Terminal".to_string(),
+                        items: vec![
+                            MenuItem::Action {
+                                label: "Open Terminal".to_string(),
+                                action: "open_terminal".to_string(),
+                                args: HashMap::new(),
+                                when: None,
+                                checkbox: None,
+                            },
+                            MenuItem::Action {
+                                label: "Close Terminal".to_string(),
+                                action: "close_terminal".to_string(),
+                                args: HashMap::new(),
+                                when: None,
+                                checkbox: None,
+                            },
+                            MenuItem::Separator { separator: true },
+                            MenuItem::Action {
+                                label: "Toggle Keyboard Capture".to_string(),
+                                action: "toggle_keyboard_capture".to_string(),
+                                args: HashMap::new(),
+                                when: None,
+                                checkbox: None,
+                            },
+                        ],
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Submenu {
                         label: "Keybinding Style".to_string(),
                         items: vec![
                             MenuItem::Action {

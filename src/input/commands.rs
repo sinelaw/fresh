@@ -997,6 +997,14 @@ pub fn get_all_commands() -> Vec<Command> {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
         },
+        Command {
+            name: "Toggle Keyboard Capture".to_string(),
+            description: "Lock all keyboard input to terminal (bypass editor shortcuts)".to_string(),
+            action: Action::ToggleKeyboardCapture,
+            contexts: vec![KeyContext::Terminal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
     ]
 }
 
