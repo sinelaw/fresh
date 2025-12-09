@@ -90,6 +90,8 @@ impl Editor {
                 if matches!(ui_action, Action::TerminalEscape) {
                     self.terminal_mode = false;
                     self.key_context = crate::input::keybindings::KeyContext::Normal;
+                    // User explicitly exited - don't auto-resume when switching back
+                    self.terminal_mode_resume.remove(&self.active_buffer());
                     self.sync_terminal_to_buffer(self.active_buffer());
                     self.set_status_message(
                         "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),

@@ -1494,6 +1494,120 @@ fn test_close_terminal_tab_transfers_focus_to_remaining_tab() {
     );
 }
 
+/// Test switching between terminal and file tabs preserves terminal mode
+#[test]
+fn test_terminal_mode_preserved_when_switching_tabs() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Create a temp file to work with
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("file1.txt");
+    std::fs::write(&file1, "File content").unwrap();
+
+    // Open the file first
+    harness.open_file(&file1).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("file1.txt");
+
+    // Open a terminal - should enter terminal mode automatically
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Should be in terminal mode after opening terminal"
+    );
+
+    // Switch to file tab while in terminal mode (using Ctrl+PageUp which works in terminal mode)
+    // This should temporarily exit terminal mode
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Verify we're on file1 and not in terminal mode
+    harness.assert_screen_contains("File content");
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "Should not be in terminal mode when viewing file"
+    );
+
+    // Switch back to terminal tab - should automatically restore terminal mode
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should see terminal tab is active
+    harness.assert_screen_contains("*Terminal 0*");
+
+    // Terminal mode should be automatically restored since we were in terminal mode before
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Terminal mode should be restored when switching back to terminal"
+    );
+
+    // Now test executing a command in the terminal
+    // Type a simple command (echo) - this tests that terminal input works
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('e'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('c'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('h'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('o'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char(' '), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('H'), KeyModifiers::SHIFT);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('I'), KeyModifiers::SHIFT);
+    harness.render().unwrap();
+
+    // Execute the command
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Enter, KeyModifiers::NONE);
+
+    // Wait a bit for command to execute and render
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // The terminal should show "HI" in the output (from echo HI)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("HI") || screen.contains("echo"),
+        "Terminal should show command output or the typed command. Screen:\n{}",
+        screen
+    );
+
+    // Test the full cycle again: switch away and back multiple times
+    // Switch to file
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.assert_screen_contains("File content");
+
+    // Switch back to terminal - should restore terminal mode
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Terminal mode should be restored after second switch back"
+    );
+}
+
 /// Test that closing terminal tab via mouse click (while in terminal mode) transfers focus
 #[test]
 fn test_close_terminal_tab_in_terminal_mode_via_mouse() {

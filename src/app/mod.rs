@@ -424,6 +424,11 @@ pub struct Editor {
     /// When true, ALL keys go to the terminal (except Ctrl+` to toggle).
     /// When false, UI keybindings (split nav, palette, etc.) are processed first.
     keyboard_capture: bool,
+
+    /// Set of terminal buffer IDs that should auto-resume terminal mode when switched back to.
+    /// When leaving a terminal while in terminal mode, its ID is added here.
+    /// When switching to a terminal in this set, terminal mode is automatically re-entered.
+    terminal_mode_resume: std::collections::HashSet<BufferId>,
 }
 
 impl Editor {
@@ -803,6 +808,7 @@ impl Editor {
             terminal_log_files: HashMap::new(),
             terminal_mode: false,
             keyboard_capture: false,
+            terminal_mode_resume: std::collections::HashSet::new(),
         })
     }
 
@@ -2514,14 +2520,21 @@ impl Editor {
         // Track the previous buffer for "Switch to Previous Tab" command
         let previous = self.active_buffer();
 
-        // If leaving a terminal buffer while in terminal mode, exit terminal mode
+        // If leaving a terminal buffer while in terminal mode, remember it should resume
         if self.terminal_mode && self.is_terminal_buffer(previous) {
+            self.terminal_mode_resume.insert(previous);
             self.terminal_mode = false;
             self.key_context = crate::input::keybindings::KeyContext::Normal;
         }
 
         // Update split manager (single source of truth)
         self.split_manager.set_active_buffer_id(buffer_id);
+
+        // If switching to a terminal buffer that should resume terminal mode, re-enter it
+        if self.terminal_mode_resume.contains(&buffer_id) && self.is_terminal_buffer(buffer_id) {
+            self.terminal_mode = true;
+            self.key_context = crate::input::keybindings::KeyContext::Terminal;
+        }
 
         // Add buffer to the active split's open_buffers (tabs) if not already there
         let active_split = self.split_manager.active_split();
