@@ -102,6 +102,9 @@ impl Editor {
                     }
                     _ => {}
                 }
+            } else if code == crossterm::event::KeyCode::Char('q') {
+                self.enter_terminal_mode();
+                return Ok(());
             }
         }
 

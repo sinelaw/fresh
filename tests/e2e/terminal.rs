@@ -545,6 +545,30 @@ fn test_terminal_mode_toggle_back() {
     );
 }
 
+/// Test toggling back into terminal mode via 'q' when in read-only view
+#[test]
+fn test_terminal_mode_toggle_with_q() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal and exit to read-only mode
+    harness.editor_mut().open_terminal();
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(']'), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    // Press 'q' to return to terminal mode
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Pressing 'q' in read-only terminal view should re-enter terminal mode"
+    );
+}
+
 /// Test Ctrl+Space toggles terminal mode both ways
 #[test]
 fn test_ctrl_space_toggle() {
