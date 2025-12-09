@@ -362,6 +362,12 @@ Testing conducted via tmux automation on 2025-12-09.
 
 The `Ctrl+Space` exit mode and `Shift+PageUp` scrollback mode behave differently.
 
+#### 5. Status Bar Message Truncated on 80-Column Screens
+**Severity:** Low
+**Description:** On the default 80x24 layout, the status text "Terminal mode disabled - read only (Ctrl+Space to resume)" is truncated to "Terminal mode dis..." because the status bar runs out of space.
+**Impact:** The "read only" marker and the "Ctrl+Space to resume" hint disappear, and e2e assertions looking for "disabled" do not match the shortened string.
+**Recommendation:** Shorten the status text (e.g., "Terminal read-only (Ctrl+Space)") or reserve more status-bar space for status messages on narrow terminals; as a stopgap in tests, run the e2e harness with a wider terminal (e.g., 120 columns) to avoid truncation.
+
 ### Working Features (Verified)
 
 The following features work correctly:
@@ -385,6 +391,16 @@ The following features work correctly:
 3. **Auto-scroll on resume**: When resuming terminal mode, automatically scroll to show the cursor/prompt position.
 
 4. **Ensure keybindings work**: When not in terminal mode, standard editor keybindings should function normally.
+
+---
+
+## 7. E2E Test Status
+
+Command: `cargo test --test e2e_tests terminal -- --nocapture` (80x24 harness, requires PTY support).
+
+- Result: 25 passed, 0 failed, 2 ignored.
+- Changes: terminal tabs render as `*Terminal N*` instead of backing-file names.
+- Remaining gap: the long "Terminal mode disabled - read only (Ctrl+Space to resume)" string is still truncated at 80 columns; using a wider harness (e.g., 120 columns) avoids truncation until the message is shortened.
 
 ---
 

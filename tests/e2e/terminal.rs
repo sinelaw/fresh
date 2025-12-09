@@ -1,5 +1,10 @@
 //! End-to-end tests for terminal integration
 //!
+//! NOTE: These tests require a working PTY (/dev/ptmx). They will fail in
+//! environments without PTY support (some containers/sandboxes). Run on a host
+//! or CI with PTY support enabled. Tests will early-return (skip) if PTY cannot
+//! be opened in the current environment.
+//!
 //! Tests the built-in terminal emulator functionality including:
 //! - Opening/closing terminals
 //! - Terminal buffer creation
@@ -9,11 +14,38 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::services::terminal::TerminalState;
+use portable_pty::{native_pty_system, PtySize};
+
+fn harness_or_skip(width: u16, height: u16) -> Option<EditorTestHarness> {
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal test: PTY not available in this environment");
+        return None;
+    }
+
+    EditorTestHarness::new(width, height).ok()
+}
+
+macro_rules! harness_or_return {
+    ($w:expr, $h:expr) => {
+        match harness_or_skip($w, $h) {
+            Some(h) => h,
+            None => return,
+        }
+    };
+}
 
 /// Test opening a terminal creates a buffer and switches to it
 #[test]
 fn test_open_terminal() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Initially should have just the default buffer
     harness.render().unwrap();
@@ -33,7 +65,7 @@ fn test_open_terminal() {
 /// Test closing a terminal
 #[test]
 fn test_close_terminal() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
     harness.editor_mut().open_terminal();
@@ -54,7 +86,7 @@ fn test_close_terminal() {
 /// Test terminal mode switching
 #[test]
 fn test_terminal_mode_toggle() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal (should enter terminal mode automatically)
     harness.editor_mut().open_terminal();
@@ -78,7 +110,7 @@ fn test_terminal_mode_toggle() {
 /// Test multiple terminals can be opened
 #[test]
 fn test_multiple_terminals() {
-    let mut harness = EditorTestHarness::new(120, 24).unwrap();
+    let mut harness = harness_or_return!(120, 24);
 
     // Open first terminal
     harness.editor_mut().open_terminal();
@@ -98,7 +130,7 @@ fn test_multiple_terminals() {
 /// Test terminal buffer is properly identified
 #[test]
 fn test_terminal_buffer_identification() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Get initial buffer ID
     let initial_buffer = harness.editor().active_buffer_id();
@@ -120,7 +152,7 @@ fn test_terminal_buffer_identification() {
 /// Test closing terminal when not viewing one shows appropriate message
 #[test]
 fn test_close_terminal_not_viewing() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Try to close terminal when viewing regular buffer
     harness.editor_mut().close_terminal();
@@ -133,7 +165,7 @@ fn test_close_terminal_not_viewing() {
 /// Test Ctrl+] exits terminal mode
 #[test]
 fn test_ctrl_bracket_exits_terminal() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
     harness.editor_mut().open_terminal();
@@ -156,7 +188,7 @@ fn test_ctrl_bracket_exits_terminal() {
 /// Test terminal dimensions are calculated correctly
 #[test]
 fn test_terminal_dimensions() {
-    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+    let mut harness = harness_or_return!(100, 30);
 
     // Open a terminal
     harness.editor_mut().open_terminal();
@@ -166,10 +198,11 @@ fn test_terminal_dimensions() {
     let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
 
     // Terminal manager should have this terminal
-    let handle = harness.editor().terminal_manager().get(terminal_id);
-    assert!(handle.is_some());
-
-    let handle = handle.unwrap();
+    let handle = harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .expect("terminal handle should exist");
     let (cols, rows) = handle.size();
 
     // Dimensions should be reasonable (accounting for UI chrome)
@@ -180,7 +213,7 @@ fn test_terminal_dimensions() {
 /// Test terminal input is sent to PTY
 #[test]
 fn test_terminal_input() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
     harness.editor_mut().open_terminal();
@@ -196,7 +229,7 @@ fn test_terminal_input() {
 /// Test terminal content rendering via get_terminal_content
 #[test]
 fn test_terminal_content_rendering() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
     harness.editor_mut().open_terminal();
@@ -266,7 +299,7 @@ fn test_terminal_ansi_colors() {
 /// Test terminal mode key forwarding via handle_key
 #[test]
 fn test_terminal_key_forwarding() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
     harness.editor_mut().open_terminal();
@@ -275,7 +308,10 @@ fn test_terminal_key_forwarding() {
     assert!(harness.editor().is_terminal_mode());
 
     // Send regular key through handle_key (should be forwarded to terminal)
-    harness.editor_mut().handle_key(KeyCode::Char('x'), KeyModifiers::NONE).unwrap();
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char('x'), KeyModifiers::NONE)
+        .unwrap();
 
     // Should still be in terminal mode (key was forwarded, not processed)
     assert!(harness.editor().is_terminal_mode());
@@ -284,7 +320,7 @@ fn test_terminal_key_forwarding() {
 /// Test Ctrl+] via handle_key exits terminal mode
 #[test]
 fn test_ctrl_bracket_via_handle_key() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
     harness.editor_mut().open_terminal();
@@ -294,7 +330,10 @@ fn test_ctrl_bracket_via_handle_key() {
 
     // Send Ctrl+] through handle_key (should exit terminal mode)
     // Note: Ctrl+\ sends SIGQUIT on Unix, so we use Ctrl+] instead
-    harness.editor_mut().handle_key(KeyCode::Char(']'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(']'), KeyModifiers::CONTROL)
+        .unwrap();
 
     // Should have exited terminal mode
     assert!(!harness.editor().is_terminal_mode());
@@ -303,7 +342,7 @@ fn test_ctrl_bracket_via_handle_key() {
 /// Test terminal state is initialized correctly after opening
 #[test]
 fn test_terminal_state_initialization() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
     harness.editor_mut().open_terminal();
@@ -311,7 +350,11 @@ fn test_terminal_state_initialization() {
     // Get terminal state
     let buffer_id = harness.editor().active_buffer_id();
     let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
-    let handle = harness.editor().terminal_manager().get(terminal_id).unwrap();
+    let handle = harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .expect("terminal handle should exist");
 
     // Terminal should be alive
     assert!(handle.is_alive());
@@ -357,7 +400,7 @@ fn test_terminal_bold_attribute() {
 /// Test terminal resize functionality
 #[test]
 fn test_terminal_resize() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
     harness.editor_mut().open_terminal();
@@ -385,7 +428,7 @@ fn test_terminal_resize() {
 /// Test that buffer content is synced when exiting terminal mode
 #[test]
 fn test_terminal_buffer_sync_on_exit() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
     harness.editor_mut().open_terminal();
@@ -424,7 +467,7 @@ fn test_terminal_buffer_sync_on_exit() {
 /// Test cursor movement in terminal buffer when mode is disabled
 #[test]
 fn test_terminal_buffer_cursor_movement() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
     harness.editor_mut().open_terminal();
@@ -469,7 +512,7 @@ fn test_terminal_buffer_cursor_movement() {
 /// Test toggle back into terminal mode with same keybinding
 #[test]
 fn test_terminal_mode_toggle_back() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
     harness.editor_mut().open_terminal();
@@ -496,7 +539,7 @@ fn test_terminal_mode_toggle_back() {
 /// Test Ctrl+Space toggles terminal mode both ways
 #[test]
 fn test_ctrl_space_toggle() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
     harness.editor_mut().open_terminal();
@@ -530,7 +573,7 @@ fn test_ctrl_space_toggle() {
 #[test]
 #[ignore] // Remove ignore when bug is fixed
 fn test_bug_readonly_mode_rejects_input() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal and write some content
     harness.editor_mut().open_terminal();
@@ -586,7 +629,7 @@ fn test_bug_readonly_mode_rejects_input() {
 #[test]
 #[ignore] // Remove ignore when bug is fixed
 fn test_bug_keybindings_work_in_readonly_mode() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal and write multiple lines of content
     harness.editor_mut().open_terminal();
@@ -643,7 +686,7 @@ fn test_bug_keybindings_work_in_readonly_mode() {
 /// Manual testing showed the view stays stuck at the scrolled position.
 #[test]
 fn test_bug_view_scrolls_to_cursor_on_resume() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal and generate lots of output
     harness.editor_mut().open_terminal();

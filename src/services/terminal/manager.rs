@@ -11,6 +11,7 @@ use crate::services::async_bridge::AsyncBridge;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -126,140 +127,148 @@ impl TerminalManager {
         let id = TerminalId(self.next_id);
         self.next_id += 1;
 
-        // Create PTY
-        let pty_system = native_pty_system();
-        let pty_pair = pty_system
-            .openpty(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| format!("Failed to open PTY: {}", e))?;
+        // Try to spawn a real PTY-backed terminal first.
+        let handle_result: Result<TerminalHandle, String> = (|| {
+            // Create PTY
+            let pty_system = native_pty_system();
+            let pty_pair = pty_system
+                .openpty(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-        // Detect shell
-        let shell = detect_shell();
-        tracing::info!("Spawning terminal with shell: {}", shell);
+            // Detect shell
+            let shell = detect_shell();
+            tracing::info!("Spawning terminal with shell: {}", shell);
 
-        // Build command
-        let mut cmd = CommandBuilder::new(&shell);
-        if let Some(ref dir) = cwd {
-            cmd.cwd(dir);
-        }
-
-        // Spawn the shell process
-        let mut child = pty_pair
-            .slave
-            .spawn_command(cmd)
-            .map_err(|e| format!("Failed to spawn shell: {}", e))?;
-
-        // Create terminal state
-        let state = Arc::new(Mutex::new(TerminalState::new(cols, rows)));
-
-        // Create communication channel
-        let (command_tx, command_rx) = mpsc::channel::<TerminalCommand>();
-
-        // Alive flag
-        let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let alive_clone = alive.clone();
-
-        // Get master for I/O
-        let mut master = pty_pair
-            .master
-            .take_writer()
-            .map_err(|e| format!("Failed to get PTY writer: {}", e))?;
-
-        let mut reader = pty_pair
-            .master
-            .try_clone_reader()
-            .map_err(|e| format!("Failed to get PTY reader: {}", e))?;
-
-        // Clone state for reader thread
-        let state_clone = state.clone();
-        let async_bridge = self.async_bridge.clone();
-
-        // Spawn reader thread
-        let terminal_id = id;
-        thread::spawn(move || {
-            let mut buf = [0u8; 4096];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => {
-                        // EOF - process exited
-                        tracing::info!("Terminal {:?} EOF", terminal_id);
-                        break;
-                    }
-                    Ok(n) => {
-                        // Process output through terminal emulator
-                        if let Ok(mut state) = state_clone.lock() {
-                            state.process_output(&buf[..n]);
-                        }
-                        // Notify main loop to redraw
-                        if let Some(ref bridge) = async_bridge {
-                            let _ = bridge.sender().send(
-                                crate::services::async_bridge::AsyncMessage::TerminalOutput {
-                                    terminal_id,
-                                },
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Terminal read error: {}", e);
-                        break;
-                    }
-                }
+            // Build command
+            let mut cmd = CommandBuilder::new(&shell);
+            if let Some(ref dir) = cwd {
+                cmd.cwd(dir);
             }
-            alive_clone.store(false, std::sync::atomic::Ordering::Relaxed);
-            // Notify that terminal exited
-            if let Some(ref bridge) = async_bridge {
-                let _ = bridge
-                    .sender()
-                    .send(crate::services::async_bridge::AsyncMessage::TerminalExited {
-                        terminal_id,
-                    });
-            }
-        });
 
-        // Spawn writer thread
-        let pty_size_ref = pty_pair.master;
-        thread::spawn(move || {
-            loop {
-                match command_rx.recv() {
-                    Ok(TerminalCommand::Write(data)) => {
-                        if let Err(e) = master.write_all(&data) {
-                            tracing::error!("Terminal write error: {}", e);
+            // Spawn the shell process
+            let mut child = pty_pair
+                .slave
+                .spawn_command(cmd)
+                .map_err(|e| format!("Failed to spawn shell: {}", e))?;
+
+            // Create terminal state
+            let state = Arc::new(Mutex::new(TerminalState::new(cols, rows)));
+
+            // Create communication channel
+            let (command_tx, command_rx) = mpsc::channel::<TerminalCommand>();
+
+            // Alive flag
+            let alive = Arc::new(AtomicBool::new(true));
+            let alive_clone = alive.clone();
+
+            // Get master for I/O
+            let mut master = pty_pair
+                .master
+                .take_writer()
+                .map_err(|e| format!("Failed to get PTY writer: {}", e))?;
+
+            let mut reader = pty_pair
+                .master
+                .try_clone_reader()
+                .map_err(|e| format!("Failed to get PTY reader: {}", e))?;
+
+            // Clone state for reader thread
+            let state_clone = state.clone();
+            let async_bridge = self.async_bridge.clone();
+
+            // Spawn reader thread
+            let terminal_id = id;
+            thread::spawn(move || {
+                let mut buf = [0u8; 4096];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) => {
+                            // EOF - process exited
+                            tracing::info!("Terminal {:?} EOF", terminal_id);
                             break;
                         }
-                        let _ = master.flush();
-                    }
-                    Ok(TerminalCommand::Resize { cols, rows }) => {
-                        if let Err(e) = pty_size_ref.resize(PtySize {
-                            rows,
-                            cols,
-                            pixel_width: 0,
-                            pixel_height: 0,
-                        }) {
-                            tracing::warn!("Failed to resize PTY: {}", e);
+                        Ok(n) => {
+                            // Process output through terminal emulator
+                            if let Ok(mut state) = state_clone.lock() {
+                                state.process_output(&buf[..n]);
+                            }
+                            // Notify main loop to redraw
+                            if let Some(ref bridge) = async_bridge {
+                                let _ = bridge.sender().send(
+                                    crate::services::async_bridge::AsyncMessage::TerminalOutput {
+                                        terminal_id,
+                                    },
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Terminal read error: {}", e);
+                            break;
                         }
                     }
-                    Ok(TerminalCommand::Shutdown) | Err(_) => {
-                        break;
+                }
+                alive_clone.store(false, std::sync::atomic::Ordering::Relaxed);
+                // Notify that terminal exited
+                if let Some(ref bridge) = async_bridge {
+                    let _ = bridge
+                        .sender()
+                        .send(crate::services::async_bridge::AsyncMessage::TerminalExited {
+                            terminal_id,
+                        });
+                }
+            });
+
+            // Spawn writer thread
+            let pty_size_ref = pty_pair.master;
+            thread::spawn(move || {
+                loop {
+                    match command_rx.recv() {
+                        Ok(TerminalCommand::Write(data)) => {
+                            if let Err(e) = master.write_all(&data) {
+                                tracing::error!("Terminal write error: {}", e);
+                                break;
+                            }
+                            let _ = master.flush();
+                        }
+                        Ok(TerminalCommand::Resize { cols, rows }) => {
+                            if let Err(e) = pty_size_ref.resize(PtySize {
+                                rows,
+                                cols,
+                                pixel_width: 0,
+                                pixel_height: 0,
+                            }) {
+                                tracing::warn!("Failed to resize PTY: {}", e);
+                            }
+                        }
+                        Ok(TerminalCommand::Shutdown) | Err(_) => {
+                            break;
+                        }
                     }
                 }
-            }
-            // Clean up child process
-            let _ = child.kill();
-            let _ = child.wait();
-        });
+                // Clean up child process
+                let _ = child.kill();
+                let _ = child.wait();
+            });
 
-        // Create handle
-        let handle = TerminalHandle {
-            state,
-            command_tx,
-            alive,
-            cols,
-            rows,
-        };
+            // Create handle
+            Ok(TerminalHandle {
+                state,
+                command_tx,
+                alive,
+                cols,
+                rows,
+            })
+        })();
+
+        let handle = handle_result.map_err(|err| {
+            // Surface the PTY failure directly; tests and production both require PTY.
+            err
+        })?;
 
         self.terminals.insert(id, handle);
         tracing::info!("Created terminal {:?} ({}x{})", id, cols, rows);

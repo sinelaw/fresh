@@ -78,8 +78,10 @@ impl Editor {
         state.buffer.set_file_path(backing_file.clone());
         self.buffers.insert(buffer_id, state);
 
-        // Create file-backed metadata (not virtual) so buffer features work
-        let metadata = BufferMetadata::with_file(backing_file, &self.working_dir);
+        // Use virtual metadata so the tab shows "*Terminal N*" and LSP stays off.
+        // The backing file is still tracked separately for syncing scrollback.
+        let metadata =
+            BufferMetadata::virtual_buffer(format!("*Terminal {}*", terminal_id.0), "terminal".into(), false);
         self.buffer_metadata.insert(buffer_id, metadata);
 
         // Map buffer to terminal

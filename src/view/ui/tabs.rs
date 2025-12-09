@@ -130,13 +130,23 @@ impl TabsRenderer {
             };
             rendered_buffer_ids.push(*id);
 
-            let name = state
-                .buffer
-                .file_path()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .or_else(|| buffer_metadata.get(id).map(|m| m.display_name.as_str()))
-                .unwrap_or("[No Name]");
+            let meta = buffer_metadata.get(id);
+            let is_terminal = meta
+                .and_then(|m| m.virtual_mode())
+                .map(|mode| mode == "terminal")
+                .unwrap_or(false);
+
+            let name = if is_terminal {
+                meta.map(|m| m.display_name.as_str())
+            } else {
+                state
+                    .buffer
+                    .file_path()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .or_else(|| meta.map(|m| m.display_name.as_str()))
+            }
+            .unwrap_or("[No Name]");
 
             let modified = if state.buffer.is_modified() { "*" } else { "" };
             let binary_indicator = if buffer_metadata.get(id).map(|m| m.binary).unwrap_or(false) {
