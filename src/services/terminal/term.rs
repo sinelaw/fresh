@@ -102,12 +102,17 @@ impl TerminalState {
     ///
     /// Returns cells as (char, foreground_color, background_color, flags) tuples.
     /// Colors are ANSI color indices (0-255) or None for default.
+    /// Accounts for scroll offset (display_offset) when accessing lines.
     pub fn get_line(&self, row: u16) -> Vec<TerminalCell> {
         use alacritty_terminal::index::{Column, Line};
         use alacritty_terminal::term::cell::Flags;
 
         let grid = self.term.grid();
-        let line = Line(row as i32);
+        let display_offset = grid.display_offset();
+
+        // Adjust line index for scroll offset
+        // When scrolled up by N lines, row 0 should show content from N lines back in history
+        let line = Line(row as i32 - display_offset as i32);
 
         // Check if line is in valid range (use rows as the limit)
         if row >= self.rows {
