@@ -1059,6 +1059,172 @@ fn test_session_restore_terminal_active_buffer() {
     }
 }
 
+/// Test keyboard capture mode toggle with Ctrl+`
+/// When keyboard capture is OFF (default), UI bindings work in terminal mode.
+/// When keyboard capture is ON, all keys go to terminal.
+#[test]
+fn test_keyboard_capture_toggle() {
+    let mut harness = harness_or_return!(120, 30);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // By default keyboard capture should be OFF
+    assert!(
+        !harness.editor().is_keyboard_capture(),
+        "Keyboard capture should be OFF by default"
+    );
+
+    // Toggle keyboard capture ON with Ctrl+`
+    harness
+        .send_key(KeyCode::Char('`'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.editor().is_keyboard_capture(),
+        "Keyboard capture should be ON after Ctrl+`"
+    );
+    harness.assert_screen_contains("Keyboard capture ON");
+
+    // Toggle keyboard capture OFF with Ctrl+`
+    harness
+        .send_key(KeyCode::Char('`'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness.editor().is_keyboard_capture(),
+        "Keyboard capture should be OFF after second Ctrl+`"
+    );
+    harness.assert_screen_contains("Keyboard capture OFF");
+}
+
+/// Test that UI bindings (like next_split with Alt+]) work in terminal mode
+/// when keyboard capture is OFF.
+#[test]
+fn test_ui_bindings_work_in_terminal_mode() {
+    let mut harness = harness_or_return!(120, 30);
+
+    // Create a vertical split
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Open a terminal in the current (right) split
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    assert!(harness.editor().is_terminal_mode());
+    assert!(
+        !harness.editor().is_keyboard_capture(),
+        "Keyboard capture should be OFF"
+    );
+
+    let terminal_buffer = harness.editor().active_buffer_id();
+    assert!(harness.editor().is_terminal_buffer(terminal_buffer));
+
+    // Use Alt+[ to switch to previous split (this should work in terminal mode
+    // because it's a UI binding and keyboard capture is OFF)
+    harness
+        .send_key(KeyCode::Char('['), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should have switched to the left split (non-terminal buffer)
+    let new_buffer = harness.editor().active_buffer_id();
+    assert!(
+        !harness.editor().is_terminal_buffer(new_buffer),
+        "Should have switched to non-terminal buffer via Alt+["
+    );
+
+    // Terminal mode should be OFF now (since we switched splits)
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "Terminal mode should be OFF after switching splits"
+    );
+}
+
+/// Test that UI bindings DON'T work when keyboard capture is ON
+#[test]
+fn test_ui_bindings_blocked_with_keyboard_capture() {
+    let mut harness = harness_or_return!(120, 30);
+
+    // Create a vertical split
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Open a terminal in the current split
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    assert!(harness.editor().is_terminal_mode());
+
+    let terminal_buffer = harness.editor().active_buffer_id();
+
+    // Turn keyboard capture ON
+    harness
+        .send_key(KeyCode::Char('`'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(harness.editor().is_keyboard_capture());
+
+    // Now Alt+[ should NOT switch splits - it should go to terminal
+    harness
+        .send_key(KeyCode::Char('['), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should still be in terminal mode with same buffer
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Should still be in terminal mode (keyboard capture ON)"
+    );
+    assert_eq!(
+        harness.editor().active_buffer_id(),
+        terminal_buffer,
+        "Should still have same terminal buffer (Alt+[ went to terminal, not processed as UI binding)"
+    );
+}
+
+/// Test that command palette (Ctrl+P) works in terminal mode
+/// This is a UI binding that should always work
+#[test]
+fn test_command_palette_works_in_terminal_mode() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Ctrl+P should open command palette
+    // This tests the UI binding resolution in terminal mode
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The command palette should be open now
+    // The prompt shows "Command:"
+    harness.assert_screen_contains("Command:");
+}
+
 /// Test that switching from terminal split to another split exits terminal mode
 /// and allows the new buffer to receive keystrokes.
 ///

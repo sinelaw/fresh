@@ -499,6 +499,11 @@ impl Editor {
         self.terminal_mode
     }
 
+    /// Check if keyboard capture is enabled in terminal mode (for testing)
+    pub fn is_keyboard_capture(&self) -> bool {
+        self.keyboard_capture
+    }
+
     /// Get read-only access to the terminal manager (for testing)
     pub fn terminal_manager(&self) -> &crate::services::terminal::TerminalManager {
         &self.terminal_manager

@@ -419,6 +419,11 @@ pub struct Editor {
 
     /// Whether terminal mode is active (input goes to terminal)
     terminal_mode: bool,
+
+    /// Whether keyboard capture is enabled in terminal mode.
+    /// When true, ALL keys go to the terminal (except Ctrl+` to toggle).
+    /// When false, UI keybindings (split nav, palette, etc.) are processed first.
+    keyboard_capture: bool,
 }
 
 impl Editor {
@@ -797,6 +802,7 @@ impl Editor {
             terminal_backing_files: HashMap::new(),
             terminal_log_files: HashMap::new(),
             terminal_mode: false,
+            keyboard_capture: false,
         })
     }
 

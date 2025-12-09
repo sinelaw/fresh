@@ -1741,7 +1741,8 @@ pub fn action_to_events(
         | Action::OpenTerminal
         | Action::CloseTerminal
         | Action::FocusTerminal
-        | Action::TerminalEscape => return None,
+        | Action::TerminalEscape
+        | Action::ToggleKeyboardCapture => return None,
 
         // Block/rectangular selection actions
         Action::BlockSelectLeft => {

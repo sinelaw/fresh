@@ -859,6 +859,13 @@
       "when": "normal"
     },
     {
+      "key": "[",
+      "modifiers": ["alt"],
+      "action": "prev_split",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Normal context - Set Bookmarks (Ctrl+Shift+0-9)",
       "key": "0",
       "modifiers": ["ctrl", "shift"],
@@ -1487,6 +1494,30 @@
       "action": "menu_close",
       "args": {},
       "when": "menu"
+    },
+    {
+      "comment": "Terminal context - Exit terminal mode (Ctrl+Space)",
+      "key": " ",
+      "modifiers": ["ctrl"],
+      "action": "terminal_escape",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "comment": "Terminal context - Exit terminal mode (Ctrl+])",
+      "key": "]",
+      "modifiers": ["ctrl"],
+      "action": "terminal_escape",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "comment": "Terminal context - Toggle keyboard capture (Ctrl+`)",
+      "key": "`",
+      "modifiers": ["ctrl"],
+      "action": "toggle_keyboard_capture",
+      "args": {},
+      "when": "terminal"
     }
   ]
 }

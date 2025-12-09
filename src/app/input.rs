@@ -37,39 +37,60 @@ impl Editor {
         );
 
         // Special handling for terminal mode - forward keys directly to terminal
-        // unless it's an escape sequence to exit terminal mode
+        // unless it's an escape sequence or UI keybinding
         if self.terminal_mode {
-            // Check for escape sequences to exit terminal mode:
-            // - Ctrl+Space - easy to press escape
-            // - Ctrl+] (close bracket) - like telnet escape
-            // - Ctrl+` (backtick) - alternative escape
-            // - Ctrl+Shift+P - open command palette from terminal
-            // Note: Ctrl+\ sends SIGQUIT on Unix and is not received by the application
-            if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
-                match code {
-                    crossterm::event::KeyCode::Char(' ')
-                    | crossterm::event::KeyCode::Char(']')
-                    | crossterm::event::KeyCode::Char('`') => {
-                        self.terminal_mode = false;
-                        self.key_context = crate::input::keybindings::KeyContext::Normal;
-                        // Sync terminal content to buffer for read-only viewing
-                        self.sync_terminal_to_buffer(self.active_buffer());
-                        self.set_status_message(
-                            "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
-                        );
-                        return Ok(());
-                    }
-                    crossterm::event::KeyCode::Char('P') | crossterm::event::KeyCode::Char('p')
-                        if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) =>
-                    {
-                        // Ctrl+Shift+P opens command palette even from terminal mode
-                        self.terminal_mode = false;
-                        self.key_context = crate::input::keybindings::KeyContext::Normal;
-                        return self.handle_action(Action::CommandPalette);
-                    }
-                    _ => {}
+            // Ctrl+` always toggles keyboard capture mode
+            if modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+                && code == crossterm::event::KeyCode::Char('`')
+            {
+                self.keyboard_capture = !self.keyboard_capture;
+                if self.keyboard_capture {
+                    self.set_status_message(
+                        "Keyboard capture ON - all keys go to terminal (Ctrl+` to toggle)"
+                            .to_string(),
+                    );
+                } else {
+                    self.set_status_message(
+                        "Keyboard capture OFF - UI bindings active (Ctrl+` to toggle)".to_string(),
+                    );
                 }
+                return Ok(());
             }
+
+            // When keyboard capture is ON, forward ALL keys to terminal
+            if self.keyboard_capture {
+                self.send_terminal_key(code, modifiers);
+                return Ok(());
+            }
+
+            // When keyboard capture is OFF, check for UI keybindings first
+            let key_event = crossterm::event::KeyEvent::new(code, modifiers);
+            let ui_action = self.keybindings.resolve_terminal_ui_action(&key_event);
+
+            if !matches!(ui_action, Action::None) {
+                // Handle terminal escape specially - exits terminal mode
+                if matches!(ui_action, Action::TerminalEscape) {
+                    self.terminal_mode = false;
+                    self.key_context = crate::input::keybindings::KeyContext::Normal;
+                    self.sync_terminal_to_buffer(self.active_buffer());
+                    self.set_status_message(
+                        "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
+                    );
+                    return Ok(());
+                }
+
+                // For split navigation, exit terminal mode first
+                if matches!(
+                    ui_action,
+                    Action::NextSplit | Action::PrevSplit | Action::CloseSplit
+                ) {
+                    self.terminal_mode = false;
+                    self.key_context = crate::input::keybindings::KeyContext::Normal;
+                }
+
+                return self.handle_action(ui_action);
+            }
+
             // Handle scrollback: Shift+PageUp exits terminal mode and uses file-backed buffer
             if modifiers.contains(crossterm::event::KeyModifiers::SHIFT)
                 && code == crossterm::event::KeyCode::PageUp
@@ -85,6 +106,7 @@ impl Editor {
                 // Now scroll up using normal buffer scrolling
                 return self.handle_action(crate::input::keybindings::Action::MovePageUp);
             }
+
             // Forward all other keys to the terminal
             self.send_terminal_key(code, modifiers);
             return Ok(());
@@ -1544,6 +1566,23 @@ impl Editor {
                     self.terminal_mode = false;
                     self.key_context = KeyContext::Normal;
                     self.set_status_message("Terminal mode disabled".to_string());
+                }
+            }
+            Action::ToggleKeyboardCapture => {
+                // Toggle keyboard capture mode in terminal
+                if self.terminal_mode {
+                    self.keyboard_capture = !self.keyboard_capture;
+                    if self.keyboard_capture {
+                        self.set_status_message(
+                            "Keyboard capture ON - all keys go to terminal (Ctrl+` to toggle)"
+                                .to_string(),
+                        );
+                    } else {
+                        self.set_status_message(
+                            "Keyboard capture OFF - UI bindings active (Ctrl+` to toggle)"
+                                .to_string(),
+                        );
+                    }
                 }
             }
             Action::PromptConfirm => {
