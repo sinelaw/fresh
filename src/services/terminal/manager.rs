@@ -219,6 +219,9 @@ impl TerminalManager {
                                 if let Err(e) = w.write_all(&buf[..n]) {
                                     tracing::warn!("Terminal log write error: {}", e);
                                     log_writer = None; // stop logging on error
+                                } else if let Err(e) = w.flush() {
+                                    tracing::warn!("Terminal log flush error: {}", e);
+                                    log_writer = None;
                                 }
                             }
                             // Notify main loop to redraw
