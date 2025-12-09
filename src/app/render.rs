@@ -2539,7 +2539,8 @@ impl Editor {
     /// Toggle comment on the current line or selection
     pub(super) fn toggle_comment(&mut self) {
         // Determine comment prefix based on file extension
-        let comment_prefix = if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer()) {
+        let comment_prefix = if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer())
+        {
             if let Some(path) = metadata.file_path() {
                 match path.extension().and_then(|e| e.to_str()) {
                     Some("rs") | Some("c") | Some("cpp") | Some("h") | Some("hpp") | Some("js")
@@ -3068,8 +3069,7 @@ impl Editor {
         self.set_active_buffer(buffer_id);
         self.set_status_message(format!(
             "Macro '{}' shown in buffer ({} actions) - save as .json for persistence",
-            key,
-            actions_len
+            key, actions_len
         ));
     }
 

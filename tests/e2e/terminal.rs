@@ -996,9 +996,15 @@ fn test_session_restore_terminal_active_buffer() {
         let session = harness.editor().capture_session();
         let split_state = session.split_states.values().next().unwrap();
         eprintln!("Session open_tabs: {:?}", split_state.open_tabs);
-        eprintln!("Session active_tab_index: {:?}", split_state.active_tab_index);
+        eprintln!(
+            "Session active_tab_index: {:?}",
+            split_state.active_tab_index
+        );
         eprintln!("Session open_files: {:?}", split_state.open_files);
-        eprintln!("Session active_file_index: {}", split_state.active_file_index);
+        eprintln!(
+            "Session active_file_index: {}",
+            split_state.active_file_index
+        );
 
         // active_tab_index should point to the terminal
         assert_eq!(

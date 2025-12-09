@@ -107,7 +107,6 @@ pub struct Editor {
     // NOTE: There is no `active_buffer` field. The active buffer is derived from
     // `split_manager.active_buffer_id()` to maintain a single source of truth.
     // Use `self.active_buffer()` to get the active buffer ID.
-
     /// Event log per buffer (for undo/redo)
     event_logs: HashMap<BufferId, EventLog>,
 
