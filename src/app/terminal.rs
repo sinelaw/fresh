@@ -76,6 +76,8 @@ impl Editor {
             large_file_threshold,
         );
         state.buffer.set_file_path(backing_file.clone());
+        // Terminal buffers should never show line numbers
+        state.margins.set_line_numbers(false);
         self.buffers.insert(buffer_id, state);
 
         // Use virtual metadata so the tab shows "*Terminal N*" and LSP stays off.
@@ -95,6 +97,8 @@ impl Editor {
         let active_split = self.split_manager.active_split();
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
             view_state.open_buffers.push(buffer_id);
+            // Terminal buffers should not wrap lines so escape sequences stay intact
+            view_state.viewport.line_wrap_enabled = false;
         }
 
         buffer_id
@@ -258,6 +262,15 @@ impl Editor {
             // Mark buffer as editing-disabled while in non-terminal mode
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 state.editing_disabled = true;
+                state.margins.set_line_numbers(false);
+            }
+
+            // In read-only view, keep line wrapping disabled for terminal buffers
+            if let Some(view_state) = self
+                .split_view_states
+                .get_mut(&self.split_manager.active_split())
+            {
+                view_state.viewport.line_wrap_enabled = false;
             }
         }
     }
@@ -271,6 +284,13 @@ impl Editor {
             // Re-enable editing when in terminal mode (input goes to PTY)
             if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
                 state.editing_disabled = false;
+                state.margins.set_line_numbers(false);
+            }
+            if let Some(view_state) = self
+                .split_view_states
+                .get_mut(&self.split_manager.active_split())
+            {
+                view_state.viewport.line_wrap_enabled = false;
             }
 
             // Scroll terminal to bottom when re-entering
