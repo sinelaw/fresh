@@ -96,10 +96,9 @@ fn test_terminal_mode_toggle() {
     assert!(harness.editor().is_terminal_mode());
 
     // Exit terminal mode via Ctrl+]
-    harness.editor_mut().handle_terminal_key(
-        KeyCode::Char(']'),
-        KeyModifiers::CONTROL,
-    );
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char(']'), KeyModifiers::CONTROL);
     harness.render().unwrap();
 
     // Should no longer be in terminal mode
@@ -176,10 +175,9 @@ fn test_ctrl_bracket_exits_terminal() {
 
     // Send Ctrl+] to exit terminal mode
     // Note: Ctrl+\ sends SIGQUIT on Unix, so we use Ctrl+] instead
-    let handled = harness.editor_mut().handle_terminal_key(
-        KeyCode::Char(']'),
-        KeyModifiers::CONTROL,
-    );
+    let handled = harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char(']'), KeyModifiers::CONTROL);
 
     assert!(handled);
     assert!(!harness.editor().is_terminal_mode());
@@ -266,7 +264,10 @@ fn test_terminal_ansi_cursor_positioning() {
 
     // Check cursor moved (ANSI coordinates are 1-based, internal are 0-based)
     let new_pos = state.cursor_position();
-    assert_eq!(new_pos.0, 9, "Cursor column should be 9 (10-1 for 0-indexing)");
+    assert_eq!(
+        new_pos.0, 9,
+        "Cursor column should be 9 (10-1 for 0-indexing)"
+    );
     assert_eq!(new_pos.1, 4, "Cursor row should be 4 (5-1 for 0-indexing)");
 }
 
@@ -409,14 +410,22 @@ fn test_terminal_resize() {
     let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
 
     // Get initial size
-    let handle = harness.editor().terminal_manager().get(terminal_id).unwrap();
+    let handle = harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .unwrap();
     let (initial_cols, initial_rows) = handle.size();
 
     // Resize the terminal
     harness.editor_mut().resize_terminal(buffer_id, 120, 40);
 
     // Get new size
-    let handle = harness.editor().terminal_manager().get(terminal_id).unwrap();
+    let handle = harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .unwrap();
     let (new_cols, new_rows) = handle.size();
 
     // Size should have changed

@@ -109,6 +109,11 @@ impl TerminalManager {
         self.async_bridge = Some(bridge);
     }
 
+    /// Peek at the next terminal ID that would be assigned.
+    pub fn next_terminal_id(&self) -> TerminalId {
+        TerminalId(self.next_id)
+    }
+
     /// Spawn a new terminal session
     ///
     /// # Arguments
@@ -123,6 +128,7 @@ impl TerminalManager {
         cols: u16,
         rows: u16,
         cwd: Option<std::path::PathBuf>,
+        log_path: Option<std::path::PathBuf>,
     ) -> Result<TerminalId, String> {
         let id = TerminalId(self.next_id);
         self.next_id += 1;
@@ -180,6 +186,17 @@ impl TerminalManager {
             // Clone state for reader thread
             let state_clone = state.clone();
             let async_bridge = self.async_bridge.clone();
+            // Optional raw log writer for full-session capture
+            let mut log_writer = log_path
+                .as_ref()
+                .and_then(|p| {
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(p)
+                        .ok()
+                })
+                .map(std::io::BufWriter::new);
 
             // Spawn reader thread
             let terminal_id = id;
@@ -197,6 +214,13 @@ impl TerminalManager {
                             if let Ok(mut state) = state_clone.lock() {
                                 state.process_output(&buf[..n]);
                             }
+                            // Append raw bytes to log if available
+                            if let Some(w) = log_writer.as_mut() {
+                                if let Err(e) = w.write_all(&buf[..n]) {
+                                    tracing::warn!("Terminal log write error: {}", e);
+                                    log_writer = None; // stop logging on error
+                                }
+                            }
                             // Notify main loop to redraw
                             if let Some(ref bridge) = async_bridge {
                                 let _ = bridge.sender().send(
@@ -213,13 +237,14 @@ impl TerminalManager {
                     }
                 }
                 alive_clone.store(false, std::sync::atomic::Ordering::Relaxed);
+                if let Some(mut w) = log_writer {
+                    let _ = w.flush();
+                }
                 // Notify that terminal exited
                 if let Some(ref bridge) = async_bridge {
-                    let _ = bridge
-                        .sender()
-                        .send(crate::services::async_bridge::AsyncMessage::TerminalExited {
-                            terminal_id,
-                        });
+                    let _ = bridge.sender().send(
+                        crate::services::async_bridge::AsyncMessage::TerminalExited { terminal_id },
+                    );
                 }
             });
 

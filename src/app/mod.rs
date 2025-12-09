@@ -414,6 +414,9 @@ pub struct Editor {
     /// Maps terminal ID to backing file path (for terminal content storage)
     terminal_backing_files: HashMap<crate::services::terminal::TerminalId, std::path::PathBuf>,
 
+    /// Maps terminal ID to raw log file path (full PTY capture)
+    terminal_log_files: HashMap<crate::services::terminal::TerminalId, std::path::PathBuf>,
+
     /// Whether terminal mode is active (input goes to terminal)
     terminal_mode: bool,
 }
@@ -793,6 +796,7 @@ impl Editor {
             terminal_manager: crate::services::terminal::TerminalManager::new(),
             terminal_buffers: HashMap::new(),
             terminal_backing_files: HashMap::new(),
+            terminal_log_files: HashMap::new(),
             terminal_mode: false,
         })
     }

@@ -465,10 +465,10 @@ pub enum Action {
     PluginAction(String),
 
     // Terminal operations
-    OpenTerminal,      // Open a new terminal in the current split
-    CloseTerminal,     // Close the current terminal
-    FocusTerminal,     // Focus the terminal buffer (if viewing terminal, focus input)
-    TerminalEscape,    // Escape from terminal mode back to editor
+    OpenTerminal,   // Open a new terminal in the current split
+    CloseTerminal,  // Close the current terminal
+    FocusTerminal,  // Focus the terminal buffer (if viewing terminal, focus input)
+    TerminalEscape, // Escape from terminal mode back to editor
 
     // No-op
     None,

@@ -21,12 +21,22 @@ impl Editor {
             self.terminal_manager.set_async_bridge(bridge.clone());
         }
 
+        // Precompute log path using the next terminal ID so we capture from the first byte
+        let predicted_terminal_id = self.terminal_manager.next_terminal_id();
+        let log_path =
+            std::env::temp_dir().join(format!("fresh-terminal-{}.log", predicted_terminal_id.0));
+
         // Spawn terminal
-        match self
-            .terminal_manager
-            .spawn(cols, rows, Some(self.working_dir.clone()))
-        {
+        match self.terminal_manager.spawn(
+            cols,
+            rows,
+            Some(self.working_dir.clone()),
+            Some(log_path.clone()),
+        ) {
             Ok(terminal_id) => {
+                // Track log file path (use actual ID in case it differs)
+                self.terminal_log_files.insert(terminal_id, log_path);
+
                 // Create a buffer for this terminal
                 let buffer_id = self.create_terminal_buffer(terminal_id);
 
@@ -41,7 +51,11 @@ impl Editor {
                     "Terminal {} opened (Ctrl+Space to exit)",
                     terminal_id
                 ));
-                tracing::info!("Opened terminal {:?} with buffer {:?}", terminal_id, buffer_id);
+                tracing::info!(
+                    "Opened terminal {:?} with buffer {:?}",
+                    terminal_id,
+                    buffer_id
+                );
             }
             Err(e) => {
                 self.set_status_message(format!("Failed to open terminal: {}", e));
@@ -59,7 +73,8 @@ impl Editor {
         let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
 
         // Create a temp file for terminal content backing store
-        let backing_file = std::env::temp_dir().join(format!("fresh-terminal-{}.txt", terminal_id.0));
+        let backing_file =
+            std::env::temp_dir().join(format!("fresh-terminal-{}.txt", terminal_id.0));
 
         // Write empty content to create the file
         if let Err(e) = std::fs::write(&backing_file, "") {
@@ -67,7 +82,8 @@ impl Editor {
         }
 
         // Store the backing file path
-        self.terminal_backing_files.insert(terminal_id, backing_file.clone());
+        self.terminal_backing_files
+            .insert(terminal_id, backing_file.clone());
 
         // Create editor state with the backing file
         let mut state = EditorState::new(
@@ -82,8 +98,11 @@ impl Editor {
 
         // Use virtual metadata so the tab shows "*Terminal N*" and LSP stays off.
         // The backing file is still tracked separately for syncing scrollback.
-        let metadata =
-            BufferMetadata::virtual_buffer(format!("*Terminal {}*", terminal_id.0), "terminal".into(), false);
+        let metadata = BufferMetadata::virtual_buffer(
+            format!("*Terminal {}*", terminal_id.0),
+            "terminal".into(),
+            false,
+        );
         self.buffer_metadata.insert(buffer_id, metadata);
 
         // Map buffer to terminal
@@ -113,9 +132,13 @@ impl Editor {
             self.terminal_manager.close(terminal_id);
             self.terminal_buffers.remove(&buffer_id);
 
-            // Clean up backing file
+            // Clean up backing/rendering file
             if let Some(backing_file) = self.terminal_backing_files.remove(&terminal_id) {
                 let _ = std::fs::remove_file(&backing_file);
+            }
+            // Clean up raw log file
+            if let Some(log_file) = self.terminal_log_files.remove(&terminal_id) {
+                let _ = std::fs::remove_file(&log_file);
             }
 
             // Exit terminal mode
@@ -222,40 +245,69 @@ impl Editor {
     /// Sync terminal content to the text buffer for read-only viewing/selection
     pub fn sync_terminal_to_buffer(&mut self, buffer_id: BufferId) {
         if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
-            // Get the backing file path
+            // Get the backing (rendered) file path and raw log path
             let backing_file = match self.terminal_backing_files.get(&terminal_id) {
                 Some(path) => path.clone(),
                 None => return,
             };
+            let log_file = self.terminal_log_files.get(&terminal_id).cloned();
 
-            // Get terminal content and write to backing file
-            if let Some(handle) = self.terminal_manager.get(terminal_id) {
-                if let Ok(state) = handle.state.lock() {
-                    let content = state.full_content_string();
-                    if let Err(e) = std::fs::write(&backing_file, &content) {
-                        tracing::error!("Failed to write terminal content to backing file: {}", e);
-                        return;
+            // Render content either from the raw log (preferred) or the live emulator state
+            let content = if let (Some(log_path), Some(handle)) =
+                (log_file, self.terminal_manager.get(terminal_id))
+            {
+                // Replay the raw log through a fresh terminal state to capture full history
+                let (cols, rows) = handle.size();
+                let mut state = crate::services::terminal::TerminalState::new(cols, rows);
+                if let Ok(mut file) = std::fs::File::open(&log_path) {
+                    use std::io::Read;
+                    let mut buf = [0u8; 4096];
+                    while let Ok(n) = file.read(&mut buf) {
+                        if n == 0 {
+                            break;
+                        }
+                        state.process_output(&buf[..n]);
                     }
+                    Some(state.full_content_string())
+                } else {
+                    None
                 }
+            } else {
+                None
             }
+            .or_else(|| {
+                // Fallback: use current emulator state
+                self.terminal_manager
+                    .get(terminal_id)
+                    .and_then(|handle| handle.state.lock().ok())
+                    .map(|state| state.full_content_string())
+            });
 
-            // Reload buffer from the backing file (reusing existing file loading)
-            let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
-            if let Ok(new_state) = EditorState::from_file(
-                &backing_file,
-                self.terminal_width,
-                self.terminal_height,
-                large_file_threshold,
-                &self.grammar_registry,
-            ) {
-                // Replace buffer state
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    *state = new_state;
-                    // Move cursor to end of buffer
-                    let total = state.buffer.total_bytes();
-                    state.primary_cursor_mut().position = total;
-                    // Terminal buffers should never be considered "modified"
-                    state.buffer.set_modified(false);
+            // Write rendered content to the backing file if we have it
+            if let Some(content) = content {
+                if let Err(e) = std::fs::write(&backing_file, &content) {
+                    tracing::error!("Failed to write terminal content to backing file: {}", e);
+                    return;
+                }
+
+                // Reload buffer from the backing file (reusing existing file loading)
+                let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
+                if let Ok(new_state) = EditorState::from_file(
+                    &backing_file,
+                    self.terminal_width,
+                    self.terminal_height,
+                    large_file_threshold,
+                    &self.grammar_registry,
+                ) {
+                    // Replace buffer state
+                    if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                        *state = new_state;
+                        // Move cursor to end of buffer
+                        let total = state.buffer.total_bytes();
+                        state.primary_cursor_mut().position = total;
+                        // Terminal buffers should never be considered "modified"
+                        state.buffer.set_modified(false);
+                    }
                 }
             }
 

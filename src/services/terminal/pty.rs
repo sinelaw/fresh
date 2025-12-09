@@ -31,7 +31,7 @@ pub fn key_to_pty_bytes(code: KeyCode, modifiers: KeyModifiers) -> Option<Vec<u8
                 '_' | '7' => return Some(vec![0x1f]),
                 '@' | '2' => return Some(vec![0x00]), // NUL
                 ' ' => return Some(vec![0x00]),       // Ctrl+Space = NUL
-                '?' => return Some(vec![0x7f]),      // DEL
+                '?' => return Some(vec![0x7f]),       // DEL
                 _ => {}
             }
         }

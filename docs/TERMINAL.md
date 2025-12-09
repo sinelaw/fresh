@@ -396,7 +396,18 @@ The following features work correctly:
 
 ---
 
-## 7. E2E Test Status
+## 7. Scrollback + Logging Plan (Current Work)
+
+- PTY is now required; the headless fallback has been removed. Run the e2e harness in a real terminal (tmux works) so `portable-pty` can allocate a PTY. Add a note in PTY-dependent tests that they must run with a PTY.
+- Each terminal session writes raw PTY bytes to `/tmp/fresh-terminal-{id}.log` from the moment it is spawned. This log captures everything emitted by the PTY (escape sequences included), not just what remains in the emulator’s in-memory scrollback.
+- `sync_terminal_to_buffer` replays the raw log through a fresh `alacritty_terminal::Term` to rebuild the full grid before writing the read-only backing file; it falls back to the live emulator state if the log is missing.
+- Rendering and scrollback still use `alacritty_terminal`; no extra Alacritty-specific API is needed beyond feeding the captured bytes back through `Term`.
+- Terminal buffers keep line numbers hidden and line wrapping disabled both live and when terminal mode is toggled off, so the read-only view matches the live terminal layout.
+- Follow-ups: decide on log retention/rotation and whether users can opt out or relocate the log files.
+
+---
+
+## 8. E2E Test Status
 
 Command: `cargo test --test e2e_tests terminal -- --nocapture` (80x24 harness, requires PTY support).
 
@@ -406,7 +417,7 @@ Command: `cargo test --test e2e_tests terminal -- --nocapture` (80x24 harness, r
 
 ---
 
-## 8. Key Decisions Needed
+## 9. Key Decisions Needed
 
 1. **Plugin API vs Core Only?**
    - Expose terminal creation to plugins?
@@ -434,7 +445,7 @@ Command: `cargo test --test e2e_tests terminal -- --nocapture` (80x24 harness, r
 
 ---
 
-## 9. References
+## 10. References
 
 - [VS Code Terminal Advanced](https://code.visualstudio.com/docs/terminal/advanced)
 - [Zed Terminal Architecture](https://deepwiki.com/zed-industries/zed/3.3-terminal)
