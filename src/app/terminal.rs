@@ -253,9 +253,9 @@ impl Editor {
                 }
             }
 
-            // Mark buffer as read-only while in non-terminal mode
-            if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                metadata.read_only = true;
+            // Mark buffer as editing-disabled while in non-terminal mode
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                state.editing_disabled = true;
             }
         }
     }
@@ -266,9 +266,9 @@ impl Editor {
             self.terminal_mode = true;
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
 
-            // Mark buffer as not read-only when in terminal mode
-            if let Some(metadata) = self.buffer_metadata.get_mut(&self.active_buffer) {
-                metadata.read_only = false;
+            // Re-enable editing when in terminal mode (input goes to PTY)
+            if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+                state.editing_disabled = false;
             }
 
             // Scroll terminal to bottom when re-entering
