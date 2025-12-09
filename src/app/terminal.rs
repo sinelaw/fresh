@@ -249,6 +249,15 @@ impl Editor {
                 metadata.read_only = false;
             }
 
+            // Scroll terminal to bottom when re-entering
+            if let Some(&terminal_id) = self.terminal_buffers.get(&self.active_buffer) {
+                if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                    if let Ok(mut state) = handle.state.lock() {
+                        state.scroll_to_bottom();
+                    }
+                }
+            }
+
             self.set_status_message("Terminal mode enabled".to_string());
         }
     }
@@ -301,6 +310,58 @@ impl Editor {
         self.buffers
             .get(&buffer_id)
             .map(|state| state.primary_cursor().position)
+    }
+
+    /// Scroll up in terminal history
+    pub fn terminal_scroll_up(&mut self, buffer_id: BufferId) {
+        let message = if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
+            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                if let Ok(mut state) = handle.state.lock() {
+                    let (_, rows) = state.size();
+                    let scroll_amount = (rows / 2).max(1) as usize;
+                    state.scroll_up(scroll_amount);
+                    let offset = state.scroll_offset();
+                    Some(format!("Scrollback: {} lines up", offset))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(msg) = message {
+            self.set_status_message(msg);
+        }
+    }
+
+    /// Scroll down in terminal history
+    pub fn terminal_scroll_down(&mut self, buffer_id: BufferId) {
+        let message = if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
+            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                if let Ok(mut state) = handle.state.lock() {
+                    let (_, rows) = state.size();
+                    let scroll_amount = (rows / 2).max(1) as usize;
+                    state.scroll_down(scroll_amount);
+                    let offset = state.scroll_offset();
+                    if offset == 0 {
+                        Some("At bottom of scrollback".to_string())
+                    } else {
+                        Some(format!("Scrollback: {} lines up", offset))
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(msg) = message {
+            self.set_status_message(msg);
+        }
     }
 
     /// Render terminal content for all terminal buffers in split areas

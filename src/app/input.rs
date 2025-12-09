@@ -70,6 +70,20 @@ impl Editor {
                     _ => {}
                 }
             }
+            // Handle scrollback keys in terminal mode
+            if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+                match code {
+                    crossterm::event::KeyCode::PageUp => {
+                        self.terminal_scroll_up(self.active_buffer);
+                        return Ok(());
+                    }
+                    crossterm::event::KeyCode::PageDown => {
+                        self.terminal_scroll_down(self.active_buffer);
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
             // Forward all other keys to the terminal
             self.send_terminal_key(code, modifiers);
             return Ok(());
