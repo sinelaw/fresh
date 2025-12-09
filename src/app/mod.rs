@@ -1752,6 +1752,12 @@ impl Editor {
     /// Used by mouse click handler on tab close button.
     /// Returns true if the tab was closed without needing a prompt.
     pub fn close_tab_in_split(&mut self, buffer_id: BufferId, split_id: SplitId) -> bool {
+        // If closing a terminal buffer while in terminal mode, exit terminal mode
+        if self.terminal_mode && self.is_terminal_buffer(buffer_id) {
+            self.terminal_mode = false;
+            self.key_context = crate::input::keybindings::KeyContext::Normal;
+        }
+
         // Count how many splits have this buffer in their open_buffers
         let buffer_in_other_splits = self
             .split_view_states

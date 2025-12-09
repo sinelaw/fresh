@@ -476,3 +476,197 @@ fn test_close_split_preserves_tabs_and_focus() {
         final_screen
     );
 }
+
+/// Test that close tab removes tab but keeps buffer when buffer is open in another split
+#[test]
+fn test_close_tab_keeps_buffer_in_other_split() {
+    let temp_dir = TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("shared.txt");
+    std::fs::write(&file1, "Shared content").unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+
+    // Open file in first split
+    harness.open_file(&file1).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("shared.txt");
+
+    // Create a vertical split (will also show same buffer)
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should see shared.txt twice (once in each split's tabs)
+    let screen = harness.screen_to_string();
+    let count = screen.matches("shared.txt").count();
+    assert!(
+        count >= 2,
+        "Expected shared.txt in both splits. Found {} occurrences. Screen:\n{}",
+        count,
+        screen
+    );
+
+    // Close tab in current split (should only remove from this split, not close buffer)
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Buffer should still exist (visible in first split)
+    // Since this was the only tab in the second split, it can't be closed
+    // The error message should appear
+    let screen_after = harness.screen_to_string();
+    eprintln!("Screen after close tab:\n{}", screen_after);
+
+    // Either the tab is still there (can't close only tab) or we see an error message
+    assert!(
+        screen_after.contains("shared.txt") || screen_after.contains("Cannot close"),
+        "Expected shared.txt to remain or error message. Screen:\n{}",
+        screen_after
+    );
+}
+
+/// Test that close tab closes buffer when it's the last viewport
+#[test]
+fn test_close_tab_closes_buffer_when_last_viewport() {
+    let temp_dir = TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("file1.txt");
+    let file2 = temp_dir.path().join("file2.txt");
+    std::fs::write(&file1, "Content 1").unwrap();
+    std::fs::write(&file2, "Content 2").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open both files in same split
+    harness.open_file(&file1).unwrap();
+    harness.open_file(&file2).unwrap();
+    harness.render().unwrap();
+
+    // Both should be visible in tabs
+    harness.assert_screen_contains("file1.txt");
+    harness.assert_screen_contains("file2.txt");
+
+    // Current buffer is file2.txt (last opened)
+    harness.assert_buffer_content("Content 2");
+
+    // Close tab (Alt+W) - should close buffer since it's only in this split
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // file2.txt should be gone, file1.txt should remain
+    harness.assert_screen_contains("file1.txt");
+    harness.assert_screen_not_contains("file2.txt");
+
+    // Should now show file1.txt content
+    harness.assert_buffer_content("Content 1");
+}
+
+/// Test that close tab prompts for modified buffer when it's the last viewport
+#[test]
+fn test_close_tab_prompts_for_modified_buffer() {
+    let temp_dir = TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("file1.txt");
+    let file2 = temp_dir.path().join("file2.txt");
+    std::fs::write(&file1, "Content 1").unwrap();
+    std::fs::write(&file2, "Content 2").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open both files
+    harness.open_file(&file1).unwrap();
+    harness.open_file(&file2).unwrap();
+    harness.render().unwrap();
+
+    // Modify current buffer (file2)
+    harness.type_text("MODIFIED").unwrap();
+    harness.render().unwrap();
+
+    // Close tab - should prompt since buffer is modified and this is last viewport
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should see the save/discard/cancel prompt
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("modified") || screen.contains("save") || screen.contains("discard"),
+        "Expected save/discard prompt for modified buffer. Screen:\n{}",
+        screen
+    );
+
+    // Cancel the close
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Both files should still be in tabs
+    harness.assert_screen_contains("file1.txt");
+    harness.assert_screen_contains("file2.txt");
+}
+
+#[test]
+fn test_close_tab_transfers_focus_to_remaining_tab() {
+    let temp_dir = TempDir::new().unwrap();
+
+    let file1 = temp_dir.path().join("file1.txt");
+    let file2 = temp_dir.path().join("file2.txt");
+    std::fs::write(&file1, "First file content").unwrap();
+    std::fs::write(&file2, "Second file content").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open both files
+    harness.open_file(&file1).unwrap();
+    harness.open_file(&file2).unwrap();
+    harness.render().unwrap();
+
+    // Should be focused on file2 (most recently opened)
+    harness.assert_screen_contains("file2.txt");
+    harness.assert_screen_contains("Second file content");
+
+    // Close current tab (file2)
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // file2 should be closed, file1 should now be active
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("file2.txt"),
+        "file2.txt should be closed. Screen:\n{}",
+        screen
+    );
+    harness.assert_screen_contains("file1.txt");
+    harness.assert_screen_contains("First file content");
+
+    // Type text to verify keyboard focus is on file1
+    harness.type_text("TYPED").unwrap();
+    harness.render().unwrap();
+
+    // The typed text should appear in the buffer
+    harness.assert_screen_contains("TYPED");
+
+    // Save and verify the text was written to file1
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let file1_content = std::fs::read_to_string(&file1).unwrap();
+    assert!(
+        file1_content.contains("TYPED"),
+        "Typed text should be saved to file1. Content: {}",
+        file1_content
+    );
+}

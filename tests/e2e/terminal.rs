@@ -1415,3 +1415,171 @@ fn test_terminal_split_switch_exits_terminal_mode() {
         content_after
     );
 }
+
+/// Test that closing a terminal tab transfers keyboard focus to remaining tab
+#[test]
+fn test_close_terminal_tab_transfers_focus_to_remaining_tab() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Create a temp file to work with
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("file1.txt");
+    std::fs::write(&file1, "File content here").unwrap();
+
+    // Open the file first
+    harness.open_file(&file1).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("file1.txt");
+
+    // Open a terminal - this should become the active tab
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+
+    // Verify we're in terminal mode
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Should be in terminal mode after opening terminal"
+    );
+
+    // Close the terminal tab using Alt+W (close_tab)
+    // First exit terminal mode to be able to use normal keybindings
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char(']'), KeyModifiers::CONTROL);
+    harness.render().unwrap();
+
+    // Now close the tab
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Terminal should be closed
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Terminal 0"),
+        "Terminal tab should be closed. Screen:\n{}",
+        screen
+    );
+
+    // file1 should now be active
+    harness.assert_screen_contains("file1.txt");
+    harness.assert_screen_contains("File content here");
+
+    // Should NOT be in terminal mode anymore
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "Should not be in terminal mode after closing terminal"
+    );
+
+    // Type text to verify keyboard focus is on file1
+    harness.type_text("TYPED").unwrap();
+    harness.render().unwrap();
+
+    // The typed text should appear in the buffer
+    harness.assert_screen_contains("TYPED");
+
+    // Save and verify the text was written to file1
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let file1_content = std::fs::read_to_string(&file1).unwrap();
+    assert!(
+        file1_content.contains("TYPED"),
+        "Typed text should be saved to file1. Content: {}",
+        file1_content
+    );
+}
+
+/// Test that closing terminal tab via mouse click (while in terminal mode) transfers focus
+#[test]
+fn test_close_terminal_tab_in_terminal_mode_via_mouse() {
+    use crate::common::harness::layout;
+
+    let mut harness = harness_or_return!(80, 24);
+
+    // Create a temp file to work with
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("file1.txt");
+    std::fs::write(&file1, "File content here").unwrap();
+
+    // Open the file first
+    harness.open_file(&file1).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("file1.txt");
+
+    // Open a terminal - this should become the active tab and enter terminal mode
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+
+    // Verify we're in terminal mode
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Should be in terminal mode after opening terminal"
+    );
+
+    // Find the × button for the terminal tab in the tab bar
+    let screen = harness.screen_to_string();
+    let tab_row: String = screen
+        .lines()
+        .nth(layout::TAB_BAR_ROW)
+        .unwrap_or("")
+        .to_string();
+
+    // Find the position of the × for Terminal 0 tab (should be after "Terminal 0")
+    // The tab bar shows tabs like: "file1.txt × | *Terminal 0* ×"
+    // We want the second × (the one for the terminal tab)
+    let terminal_x_pos = tab_row
+        .rmatch_indices('×')
+        .next()
+        .map(|(pos, _)| pos)
+        .expect("Could not find × close button for terminal tab");
+
+    // Click on the × button while still in terminal mode
+    harness
+        .mouse_click(terminal_x_pos as u16, layout::TAB_BAR_ROW as u16)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Terminal should be closed
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Terminal 0"),
+        "Terminal tab should be closed. Screen:\n{}",
+        screen
+    );
+
+    // file1 should now be active
+    harness.assert_screen_contains("file1.txt");
+    harness.assert_screen_contains("File content here");
+
+    // Should NOT be in terminal mode anymore
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "Should not be in terminal mode after closing terminal via mouse"
+    );
+
+    // Type text to verify keyboard focus is on file1
+    harness.type_text("TYPED").unwrap();
+    harness.render().unwrap();
+
+    // The typed text should appear in the buffer
+    harness.assert_screen_contains("TYPED");
+
+    // Save and verify the text was written to file1
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let file1_content = std::fs::read_to_string(&file1).unwrap();
+    assert!(
+        file1_content.contains("TYPED"),
+        "Typed text should be saved to file1. Content: {}",
+        file1_content
+    );
+}
