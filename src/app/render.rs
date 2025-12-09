@@ -375,7 +375,7 @@ impl Editor {
         // Clone all immutable values before the mutable borrow
         let display_name = self
             .buffer_metadata
-            .get(&self.active_buffer)
+            .get(&self.active_buffer())
             .map(|m| m.display_name.clone())
             .unwrap_or_else(|| "[No Name]".to_string());
         let status_message = self.status_message.clone();
@@ -558,7 +558,7 @@ impl Editor {
         use crate::view::ui::context_keys;
         let line_numbers = self
             .buffers
-            .get(&self.active_buffer)
+            .get(&self.active_buffer())
             .map(|state| state.margins.show_line_numbers)
             .unwrap_or(true);
         let line_wrap = {
@@ -570,7 +570,7 @@ impl Editor {
         };
         let compose_mode = self
             .buffers
-            .get(&self.active_buffer)
+            .get(&self.active_buffer())
             .map(|state| state.view_mode == crate::state::ViewMode::Compose)
             .unwrap_or(false);
         let file_explorer_exists = self.file_explorer.is_some();
@@ -581,7 +581,7 @@ impl Editor {
         // Check if LSP is enabled for this buffer AND the server is running and ready
         let lsp_available = self
             .buffer_metadata
-            .get(&self.active_buffer)
+            .get(&self.active_buffer())
             .and_then(|metadata| {
                 if !metadata.lsp_enabled {
                     return None;
@@ -985,12 +985,12 @@ impl Editor {
     /// the current file so it can provide features like diagnostics.
     fn notify_lsp_current_file_opened(&mut self, language: &str) {
         // Get buffer metadata for the active buffer
-        let metadata = match self.buffer_metadata.get(&self.active_buffer) {
+        let metadata = match self.buffer_metadata.get(&self.active_buffer()) {
             Some(m) => m,
             None => {
                 tracing::debug!(
                     "notify_lsp_current_file_opened: no metadata for buffer {:?}",
-                    self.active_buffer
+                    self.active_buffer()
                 );
                 return;
             }
@@ -1042,15 +1042,18 @@ impl Editor {
             return;
         }
 
-        // Get the buffer text
-        let text = if let Some(state) = self.buffers.get(&self.active_buffer) {
-            match state.buffer.to_string() {
+        // Get the buffer text and line count before borrowing lsp
+        let active_buffer = self.active_buffer();
+        let (text, line_count) = if let Some(state) = self.buffers.get(&active_buffer) {
+            let text = match state.buffer.to_string() {
                 Some(t) => t,
                 None => {
                     tracing::debug!("notify_lsp_current_file_opened: buffer not fully loaded");
                     return;
                 }
-            }
+            };
+            let line_count = state.buffer.line_count().unwrap_or(1000);
+            (text, line_count)
         } else {
             tracing::debug!("notify_lsp_current_file_opened: no buffer state");
             return;
@@ -1085,13 +1088,8 @@ impl Editor {
                         self.next_lsp_request_id += 1;
                         self.pending_inlay_hints_request = Some(request_id);
 
-                        let (last_line, last_char) =
-                            if let Some(state) = self.buffers.get(&self.active_buffer) {
-                                let line_count = state.buffer.line_count().unwrap_or(1000);
-                                (line_count.saturating_sub(1) as u32, 10000)
-                            } else {
-                                (999, 10000)
-                            };
+                        let last_line = line_count.saturating_sub(1) as u32;
+                        let last_char = 10000u32;
 
                         if let Err(e) =
                             client.inlay_hints(request_id, uri.clone(), 0, 0, last_line, last_char)
@@ -1178,12 +1176,12 @@ impl Editor {
         }
 
         // Check if LSP is enabled for this buffer
-        let metadata = match self.buffer_metadata.get(&self.active_buffer) {
+        let metadata = match self.buffer_metadata.get(&self.active_buffer()) {
             Some(m) => m,
             None => {
                 tracing::debug!(
                     "notify_lsp_change: no metadata for buffer {:?}",
-                    self.active_buffer
+                    self.active_buffer()
                 );
                 return;
             }
@@ -1415,12 +1413,12 @@ impl Editor {
     /// Notify LSP of a file save
     pub(super) fn notify_lsp_save(&mut self) {
         // Check if LSP is enabled for this buffer
-        let metadata = match self.buffer_metadata.get(&self.active_buffer) {
+        let metadata = match self.buffer_metadata.get(&self.active_buffer()) {
             Some(m) => m,
             None => {
                 tracing::debug!(
                     "notify_lsp_save: no metadata for buffer {:?}",
-                    self.active_buffer
+                    self.active_buffer()
                 );
                 return;
             }
@@ -1729,12 +1727,13 @@ impl Editor {
         let match_pos = matches[current_match_index];
         {
             let active_split = self.split_manager.active_split();
+            let active_buffer = self.active_buffer();
             let state = self.active_state_mut();
             state.cursors.primary_mut().position = match_pos;
             state.cursors.primary_mut().anchor = None;
             // Ensure cursor is visible - get viewport from SplitViewState
             if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-                let state = self.buffers.get_mut(&self.active_buffer).unwrap();
+                let state = self.buffers.get_mut(&active_buffer).unwrap();
                 view_state
                     .viewport
                     .ensure_visible(&mut state.buffer, state.cursors.primary());
@@ -1795,12 +1794,13 @@ impl Editor {
 
             {
                 let active_split = self.split_manager.active_split();
+                let active_buffer = self.active_buffer();
                 let state = self.active_state_mut();
                 state.cursors.primary_mut().position = match_pos;
                 state.cursors.primary_mut().anchor = None;
                 // Ensure cursor is visible - get viewport from SplitViewState
                 if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-                    let state = self.buffers.get_mut(&self.active_buffer).unwrap();
+                    let state = self.buffers.get_mut(&active_buffer).unwrap();
                     view_state
                         .viewport
                         .ensure_visible(&mut state.buffer, state.cursors.primary());
@@ -1836,12 +1836,13 @@ impl Editor {
 
             {
                 let active_split = self.split_manager.active_split();
+                let active_buffer = self.active_buffer();
                 let state = self.active_state_mut();
                 state.cursors.primary_mut().position = match_pos;
                 state.cursors.primary_mut().anchor = None;
                 // Ensure cursor is visible - get viewport from SplitViewState
                 if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-                    let state = self.buffers.get_mut(&self.active_buffer).unwrap();
+                    let state = self.buffers.get_mut(&active_buffer).unwrap();
                     view_state
                         .viewport
                         .ensure_visible(&mut state.buffer, state.cursors.primary());
@@ -1993,6 +1994,7 @@ impl Editor {
 
         // Move cursor to first match
         let active_split = self.split_manager.active_split();
+        let active_buffer = self.active_buffer();
         {
             let state = self.active_state_mut();
             state.cursors.primary_mut().position = first_match_pos;
@@ -2000,7 +2002,7 @@ impl Editor {
         }
         // Ensure cursor is visible - get viewport from SplitViewState
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-            let state = self.buffers.get_mut(&self.active_buffer).unwrap();
+            let state = self.buffers.get_mut(&active_buffer).unwrap();
             view_state
                 .viewport
                 .ensure_visible(&mut state.buffer, state.cursors.primary());
@@ -2277,6 +2279,7 @@ impl Editor {
     pub(super) fn move_to_current_match(&mut self, ir_state: &InteractiveReplaceState) {
         let match_pos = ir_state.current_match_pos;
         let active_split = self.split_manager.active_split();
+        let active_buffer = self.active_buffer();
         {
             let state = self.active_state_mut();
             state.cursors.primary_mut().position = match_pos;
@@ -2284,7 +2287,7 @@ impl Editor {
         }
         // Ensure cursor is visible - get viewport from SplitViewState
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-            let state = self.buffers.get_mut(&self.active_buffer).unwrap();
+            let state = self.buffers.get_mut(&active_buffer).unwrap();
             view_state
                 .viewport
                 .ensure_visible(&mut state.buffer, state.cursors.primary());
@@ -2536,7 +2539,7 @@ impl Editor {
     /// Toggle comment on the current line or selection
     pub(super) fn toggle_comment(&mut self) {
         // Determine comment prefix based on file extension
-        let comment_prefix = if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer) {
+        let comment_prefix = if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer()) {
             if let Some(path) = metadata.file_path() {
                 match path.extension().and_then(|e| e.to_str()) {
                     Some("rs") | Some("c") | Some("cpp") | Some("h") | Some("hpp") | Some("js")
@@ -3001,68 +3004,73 @@ impl Editor {
 
     /// Show a macro in a buffer as JSON
     pub(super) fn show_macro_in_buffer(&mut self, key: char) {
-        if let Some(actions) = self.macros.get(&key) {
-            // Serialize the macro to JSON
-            let json = match serde_json::to_string_pretty(actions) {
-                Ok(json) => json,
-                Err(e) => {
-                    self.set_status_message(format!("Failed to serialize macro: {}", e));
-                    return;
-                }
-            };
+        // Get macro data and cache what we need before any mutable borrows
+        let (json, actions_len) = match self.macros.get(&key) {
+            Some(actions) => {
+                let json = match serde_json::to_string_pretty(actions) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        self.set_status_message(format!("Failed to serialize macro: {}", e));
+                        return;
+                    }
+                };
+                (json, actions.len())
+            }
+            None => {
+                self.set_status_message(format!("No macro recorded for '{}'", key));
+                return;
+            }
+        };
 
-            // Create header with macro info
-            let content = format!(
-                "// Macro '{}' ({} actions)\n// This buffer can be saved as a .json file for persistence\n\n{}",
-                key,
-                actions.len(),
-                json
-            );
+        // Create header with macro info
+        let content = format!(
+            "// Macro '{}' ({} actions)\n// This buffer can be saved as a .json file for persistence\n\n{}",
+            key,
+            actions_len,
+            json
+        );
 
-            // Create a new buffer for the macro
-            let buffer_id = BufferId(self.next_buffer_id);
-            self.next_buffer_id += 1;
+        // Create a new buffer for the macro
+        let buffer_id = BufferId(self.next_buffer_id);
+        self.next_buffer_id += 1;
 
-            let state = EditorState::new(
-                self.terminal_width.into(),
-                self.terminal_height.into(),
+        let state = EditorState::new(
+            self.terminal_width.into(),
+            self.terminal_height.into(),
+            self.config.editor.large_file_threshold_bytes as usize,
+        );
+
+        self.buffers.insert(buffer_id, state);
+        self.event_logs.insert(buffer_id, EventLog::new());
+
+        // Set buffer content
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.buffer = crate::model::buffer::Buffer::from_str(
+                &content,
                 self.config.editor.large_file_threshold_bytes as usize,
             );
-
-            self.buffers.insert(buffer_id, state);
-            self.event_logs.insert(buffer_id, EventLog::new());
-
-            // Set buffer content
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                state.buffer = crate::model::buffer::Buffer::from_str(
-                    &content,
-                    self.config.editor.large_file_threshold_bytes as usize,
-                );
-            }
-
-            // Set metadata
-            let metadata = BufferMetadata {
-                kind: BufferKind::Virtual {
-                    mode: "macro-view".to_string(),
-                },
-                display_name: format!("*Macro {}*", key),
-                lsp_enabled: false,
-                lsp_disabled_reason: Some("Virtual macro buffer".to_string()),
-                read_only: false, // Allow editing for saving
-                binary: false,
-            };
-            self.buffer_metadata.insert(buffer_id, metadata);
-
-            // Switch to the new buffer
-            self.active_buffer = buffer_id;
-            self.set_status_message(format!(
-                "Macro '{}' shown in buffer ({} actions) - save as .json for persistence",
-                key,
-                actions.len()
-            ));
-        } else {
-            self.set_status_message(format!("No macro recorded for '{}'", key));
         }
+
+        // Set metadata
+        let metadata = BufferMetadata {
+            kind: BufferKind::Virtual {
+                mode: "macro-view".to_string(),
+            },
+            display_name: format!("*Macro {}*", key),
+            lsp_enabled: false,
+            lsp_disabled_reason: Some("Virtual macro buffer".to_string()),
+            read_only: false, // Allow editing for saving
+            binary: false,
+        };
+        self.buffer_metadata.insert(buffer_id, metadata);
+
+        // Switch to the new buffer
+        self.set_active_buffer(buffer_id);
+        self.set_status_message(format!(
+            "Macro '{}' shown in buffer ({} actions) - save as .json for persistence",
+            key,
+            actions_len
+        ));
     }
 
     /// List all recorded macros in a buffer
@@ -3129,13 +3137,13 @@ impl Editor {
         self.buffer_metadata.insert(buffer_id, metadata);
 
         // Switch to the new buffer
-        self.active_buffer = buffer_id;
+        self.set_active_buffer(buffer_id);
         self.set_status_message(format!("Showing {} recorded macro(s)", self.macros.len()));
     }
 
     /// Set a bookmark at the current position
     pub(super) fn set_bookmark(&mut self, key: char) {
-        let buffer_id = self.active_buffer;
+        let buffer_id = self.active_buffer();
         let position = self.active_state().cursors.primary().position;
         self.bookmarks.insert(
             key,
@@ -3151,9 +3159,9 @@ impl Editor {
     pub(super) fn jump_to_bookmark(&mut self, key: char) {
         if let Some(bookmark) = self.bookmarks.get(&key).cloned() {
             // Switch to the buffer if needed
-            if bookmark.buffer_id != self.active_buffer {
+            if bookmark.buffer_id != self.active_buffer() {
                 if self.buffers.contains_key(&bookmark.buffer_id) {
-                    self.active_buffer = bookmark.buffer_id;
+                    self.set_active_buffer(bookmark.buffer_id);
                 } else {
                     self.set_status_message(format!("Bookmark '{}': buffer no longer exists", key));
                     self.bookmarks.remove(&key);

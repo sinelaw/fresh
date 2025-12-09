@@ -104,8 +104,9 @@ pub struct Editor {
     /// All open buffers
     buffers: HashMap<BufferId, EditorState>,
 
-    /// Currently active buffer
-    active_buffer: BufferId,
+    // NOTE: There is no `active_buffer` field. The active buffer is derived from
+    // `split_manager.active_buffer_id()` to maintain a single source of truth.
+    // Use `self.active_buffer()` to get the active buffer ID.
 
     /// Event log per buffer (for undo/redo)
     event_logs: HashMap<BufferId, EventLog>,
@@ -669,7 +670,6 @@ impl Editor {
 
         Ok(Editor {
             buffers,
-            active_buffer: buffer_id,
             event_logs,
             next_buffer_id: 1,
             config,
@@ -838,16 +838,27 @@ impl Editor {
         &self.mode_registry
     }
 
+    /// Get the currently active buffer ID.
+    ///
+    /// This is derived from the split manager (single source of truth).
+    /// The editor always has at least one buffer, so this never fails.
+    #[inline]
+    pub fn active_buffer(&self) -> BufferId {
+        self.split_manager
+            .active_buffer_id()
+            .expect("Editor always has at least one buffer")
+    }
+
     /// Get the mode name for the active buffer (if it's a virtual buffer)
     pub fn active_buffer_mode(&self) -> Option<&str> {
         self.buffer_metadata
-            .get(&self.active_buffer)
+            .get(&self.active_buffer())
             .and_then(|meta| meta.virtual_mode())
     }
 
     /// Check if the active buffer is read-only
     pub fn is_active_buffer_read_only(&self) -> bool {
-        if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer) {
+        if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer()) {
             if metadata.read_only {
                 return true;
             }
@@ -985,7 +996,7 @@ impl Editor {
 
     /// Log keystroke for debugging
     pub fn log_keystroke(&mut self, key_code: &str, modifiers: &str) {
-        if let Some(event_log) = self.event_logs.get_mut(&self.active_buffer) {
+        if let Some(event_log) = self.event_logs.get_mut(&self.active_buffer()) {
             event_log.log_keystroke(key_code, modifiers);
         }
     }
@@ -1145,7 +1156,7 @@ impl Editor {
 
         if let Some(id) = already_open {
             // Commit pending movement before switching to existing buffer
-            if id != self.active_buffer {
+            if id != self.active_buffer() {
                 self.position_history.commit_pending_movement();
                 self.set_active_buffer(id);
             }
@@ -1154,7 +1165,7 @@ impl Editor {
 
         // If the current buffer is empty and unmodified, replace it instead of creating a new one
         let replace_current = {
-            let current_state = self.buffers.get(&self.active_buffer).unwrap();
+            let current_state = self.buffers.get(&self.active_buffer()).unwrap();
             current_state.buffer.is_empty()
                 && !current_state.buffer.is_modified()
                 && current_state.buffer.file_path().is_none()
@@ -1162,7 +1173,7 @@ impl Editor {
 
         let buffer_id = if replace_current {
             // Reuse the current empty buffer
-            self.active_buffer
+            self.active_buffer()
         } else {
             // Create new buffer for this file
             let id = BufferId(self.next_buffer_id);
@@ -1230,7 +1241,7 @@ impl Editor {
             let position = current_state.cursors.primary().position;
             let anchor = current_state.cursors.primary().anchor;
             self.position_history
-                .record_movement(self.active_buffer, position, anchor);
+                .record_movement(self.active_buffer(), position, anchor);
             self.position_history.commit_pending_movement();
         }
 
@@ -1283,7 +1294,7 @@ impl Editor {
             return; // Line numbers are 1-indexed
         }
 
-        let buffer_id = self.active_buffer;
+        let buffer_id = self.active_buffer();
         let estimated_line_length = self.config.editor.estimated_line_length;
 
         if let Some(state) = self.buffers.get(&buffer_id) {
@@ -1348,7 +1359,7 @@ impl Editor {
         let position = current_state.cursors.primary().position;
         let anchor = current_state.cursors.primary().anchor;
         self.position_history
-            .record_movement(self.active_buffer, position, anchor);
+            .record_movement(self.active_buffer(), position, anchor);
         self.position_history.commit_pending_movement();
 
         let buffer_id = BufferId(self.next_buffer_id);
@@ -1577,7 +1588,7 @@ impl Editor {
     pub fn get_text_properties_at_cursor(
         &self,
     ) -> Option<Vec<&crate::primitives::text_property::TextProperty>> {
-        let state = self.buffers.get(&self.active_buffer)?;
+        let state = self.buffers.get(&self.active_buffer())?;
         let cursor_pos = state.cursors.primary().position;
         Some(state.text_properties.get_at(cursor_pos))
     }
@@ -1632,7 +1643,7 @@ impl Editor {
         }
 
         // Switch to another buffer if we closed the active one
-        if self.active_buffer == id {
+        if self.active_buffer() == id {
             self.set_active_buffer(replacement_buffer);
         }
 
@@ -1641,7 +1652,7 @@ impl Editor {
 
     /// Switch to the given buffer
     pub fn switch_buffer(&mut self, id: BufferId) {
-        if self.buffers.contains_key(&id) && id != self.active_buffer {
+        if self.buffers.contains_key(&id) && id != self.active_buffer() {
             // Save current position before switching buffers
             self.position_history.commit_pending_movement();
 
@@ -1650,7 +1661,7 @@ impl Editor {
             let position = current_state.cursors.primary().position;
             let anchor = current_state.cursors.primary().anchor;
             self.position_history
-                .record_movement(self.active_buffer, position, anchor);
+                .record_movement(self.active_buffer(), position, anchor);
             self.position_history.commit_pending_movement();
 
             self.set_active_buffer(id);
@@ -1674,9 +1685,9 @@ impl Editor {
             return;
         }
 
-        if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer) {
+        if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer()) {
             let next_idx = (idx + 1) % ids.len();
-            if ids[next_idx] != self.active_buffer {
+            if ids[next_idx] != self.active_buffer() {
                 // Save current position before switching
                 self.position_history.commit_pending_movement();
 
@@ -1685,7 +1696,7 @@ impl Editor {
                 let position = current_state.cursors.primary().position;
                 let anchor = current_state.cursors.primary().anchor;
                 self.position_history
-                    .record_movement(self.active_buffer, position, anchor);
+                    .record_movement(self.active_buffer(), position, anchor);
                 self.position_history.commit_pending_movement();
 
                 self.set_active_buffer(ids[next_idx]);
@@ -1710,9 +1721,9 @@ impl Editor {
             return;
         }
 
-        if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer) {
+        if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer()) {
             let prev_idx = if idx == 0 { ids.len() - 1 } else { idx - 1 };
-            if ids[prev_idx] != self.active_buffer {
+            if ids[prev_idx] != self.active_buffer() {
                 // Save current position before switching
                 self.position_history.commit_pending_movement();
 
@@ -1721,7 +1732,7 @@ impl Editor {
                 let position = current_state.cursors.primary().position;
                 let anchor = current_state.cursors.primary().anchor;
                 self.position_history
-                    .record_movement(self.active_buffer, position, anchor);
+                    .record_movement(self.active_buffer(), position, anchor);
                 self.position_history.commit_pending_movement();
 
                 self.set_active_buffer(ids[prev_idx]);
@@ -1744,7 +1755,7 @@ impl Editor {
             let position = current_state.cursors.primary().position;
             let anchor = current_state.cursors.primary().anchor;
             self.position_history
-                .record_movement(self.active_buffer, position, anchor);
+                .record_movement(self.active_buffer(), position, anchor);
             self.position_history.commit_pending_movement();
         }
 
@@ -1824,7 +1835,7 @@ impl Editor {
         self.save_current_split_view_state();
 
         // Share the current buffer with the new split (Emacs-style)
-        let current_buffer_id = self.active_buffer;
+        let current_buffer_id = self.active_buffer();
 
         // Split the pane
         match self.split_manager.split_active(
@@ -1857,7 +1868,7 @@ impl Editor {
         self.save_current_split_view_state();
 
         // Share the current buffer with the new split (Emacs-style)
-        let current_buffer_id = self.active_buffer;
+        let current_buffer_id = self.active_buffer();
 
         // Split the pane
         match self.split_manager.split_active(
@@ -1913,10 +1924,7 @@ impl Editor {
                     }
                 }
 
-                // Update active_buffer to match the new active split's buffer
-                if let Some(buffer_id) = self.split_manager.active_buffer_id() {
-                    self.active_buffer = buffer_id;
-                }
+                // NOTE: active_buffer is now derived from split_manager, no sync needed
 
                 // Sync the view state to editor state
                 self.sync_split_view_state_to_editor_state();
@@ -1948,7 +1956,7 @@ impl Editor {
     /// Save the current split's cursor state (viewport is owned by SplitViewState)
     fn save_current_split_view_state(&mut self) {
         let split_id = self.split_manager.active_split();
-        if let Some(buffer_state) = self.buffers.get(&self.active_buffer) {
+        if let Some(buffer_state) = self.buffers.get(&self.active_buffer()) {
             if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
                 view_state.cursors = buffer_state.cursors.clone();
                 // Note: viewport is now owned by SplitViewState, no sync needed
@@ -1959,15 +1967,12 @@ impl Editor {
     /// Restore the current split's cursor state (viewport is owned by SplitViewState)
     fn restore_current_split_view_state(&mut self) {
         let split_id = self.split_manager.active_split();
-        // Update active_buffer based on the new split's buffer
-        if let Some(buffer_id) = self.split_manager.active_buffer_id() {
-            self.active_buffer = buffer_id;
-        }
+        // NOTE: active_buffer is now derived from split_manager, no sync needed
         // Restore cursor from split view state (viewport stays in SplitViewState)
         self.sync_split_view_state_to_editor_state();
         // Ensure the active tab is visible in the newly active split
         // Use effective_tabs_width() to account for file explorer taking 30% of width
-        self.ensure_active_tab_visible(split_id, self.active_buffer, self.effective_tabs_width());
+        self.ensure_active_tab_visible(split_id, self.active_buffer(), self.effective_tabs_width());
     }
 
     /// Sync SplitViewState's cursors to EditorState
@@ -1976,7 +1981,7 @@ impl Editor {
     fn sync_split_view_state_to_editor_state(&mut self) {
         let split_id = self.split_manager.active_split();
         if let Some(view_state) = self.split_view_states.get(&split_id) {
-            if let Some(buffer_state) = self.buffers.get_mut(&self.active_buffer) {
+            if let Some(buffer_state) = self.buffers.get_mut(&self.active_buffer()) {
                 buffer_state.cursors = view_state.cursors.clone();
                 // Note: viewport is now owned by SplitViewState, no sync needed
             }
@@ -2012,7 +2017,7 @@ impl Editor {
         }
 
         // Get the current buffer and split
-        let current_buffer_id = self.active_buffer;
+        let current_buffer_id = self.active_buffer();
         let current_split_id = self.split_manager.active_split();
 
         // Find all other splits that share the same buffer
@@ -2092,7 +2097,7 @@ impl Editor {
 
     /// Toggle line numbers in the gutter for the active buffer
     pub fn toggle_line_numbers(&mut self) {
-        if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+        if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
             let currently_shown = state.margins.show_line_numbers;
             state.margins.set_line_numbers(!currently_shown);
             if currently_shown {
@@ -2178,7 +2183,7 @@ impl Editor {
         }
 
         // Get metadata for the active buffer
-        let metadata = match self.buffer_metadata.get(&self.active_buffer) {
+        let metadata = match self.buffer_metadata.get(&self.active_buffer()) {
             Some(m) => m,
             None => return,
         };
@@ -2199,7 +2204,7 @@ impl Editor {
         };
 
         // Get line count from buffer state
-        let line_count = if let Some(state) = self.buffers.get(&self.active_buffer) {
+        let line_count = if let Some(state) = self.buffers.get(&self.active_buffer()) {
             state.buffer.line_count().unwrap_or(1000)
         } else {
             return;
@@ -2316,15 +2321,14 @@ impl Editor {
     /// Set the active buffer and trigger all necessary side effects
     ///
     /// This is the centralized method for switching buffers. It:
-    /// - Updates self.active_buffer
-    /// - Updates split manager
+    /// - Updates split manager (single source of truth for active buffer)
     /// - Adds buffer to active split's tabs (if not already there)
     /// - Syncs file explorer to the new active file (if visible)
     ///
-    /// Use this instead of directly setting self.active_buffer to ensure
-    /// all side effects happen consistently.
+    /// Use this instead of directly calling split_manager.set_active_buffer_id()
+    /// to ensure all side effects happen consistently.
     fn set_active_buffer(&mut self, buffer_id: BufferId) {
-        if self.active_buffer == buffer_id {
+        if self.active_buffer() == buffer_id {
             return; // No change
         }
 
@@ -2333,11 +2337,9 @@ impl Editor {
         self.cancel_search_prompt_if_active();
 
         // Track the previous buffer for "Switch to Previous Tab" command
-        let previous = self.active_buffer;
+        let previous = self.active_buffer();
 
-        self.active_buffer = buffer_id;
-
-        // Update split manager to show this buffer
+        // Update split manager (single source of truth)
         self.split_manager.set_active_buffer_id(buffer_id);
 
         // Add buffer to the active split's open_buffers (tabs) if not already there
@@ -2365,12 +2367,12 @@ impl Editor {
 
     /// Get the currently active buffer state
     pub fn active_state(&self) -> &EditorState {
-        self.buffers.get(&self.active_buffer).unwrap()
+        self.buffers.get(&self.active_buffer()).unwrap()
     }
 
     /// Get the currently active buffer state (mutable)
     pub fn active_state_mut(&mut self) -> &mut EditorState {
-        self.buffers.get_mut(&self.active_buffer).unwrap()
+        self.buffers.get_mut(&self.active_buffer()).unwrap()
     }
 
     /// Get the viewport for the active split
@@ -2453,14 +2455,14 @@ impl Editor {
         // Note: recovery_pending is set automatically by the buffer on edits
         match event {
             Event::Insert { .. } | Event::Delete { .. } => {
-                self.invalidate_layouts_for_buffer(self.active_buffer);
+                self.invalidate_layouts_for_buffer(self.active_buffer());
             }
             Event::Batch { events, .. } => {
                 let has_edits = events
                     .iter()
                     .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
                 if has_edits {
-                    self.invalidate_layouts_for_buffer(self.active_buffer);
+                    self.invalidate_layouts_for_buffer(self.active_buffer());
                 }
             }
             _ => {}
@@ -2496,13 +2498,13 @@ impl Editor {
         self.trigger_plugin_hooks_for_event(event, line_info);
 
         // 4. Notify LSP of the change using pre-calculated positions
-        self.send_lsp_changes_for_buffer(self.active_buffer, lsp_changes);
+        self.send_lsp_changes_for_buffer(self.active_buffer(), lsp_changes);
     }
 
     /// Trigger plugin hooks for an event (if any)
     /// line_info contains pre-calculated line numbers from BEFORE buffer modification
     fn trigger_plugin_hooks_for_event(&mut self, event: &Event, line_info: EventLineInfo) {
-        let buffer_id = self.active_buffer;
+        let buffer_id = self.active_buffer();
 
         // Convert event to hook args and fire the appropriate hook
         let hook_args = match event {
@@ -2655,7 +2657,7 @@ impl Editor {
         use crate::view::ui::view_pipeline::ViewLineIterator;
 
         let active_split = self.split_manager.active_split();
-        let buffer_id = self.active_buffer;
+        let buffer_id = self.active_buffer();
 
         // Get view_transform tokens from SplitViewState (if any)
         let view_transform_tokens = self
@@ -2697,7 +2699,7 @@ impl Editor {
     /// Handle SetViewport event using SplitViewState's viewport
     fn handle_set_viewport_event(&mut self, top_line: usize) {
         let active_split = self.split_manager.active_split();
-        let buffer_id = self.active_buffer;
+        let buffer_id = self.active_buffer();
 
         // Get mutable references to both buffer and view state
         let buffer = self.buffers.get_mut(&buffer_id).map(|s| &mut s.buffer);
@@ -2713,7 +2715,7 @@ impl Editor {
     /// Handle Recenter event using SplitViewState's viewport and cursors
     fn handle_recenter_event(&mut self) {
         let active_split = self.split_manager.active_split();
-        let buffer_id = self.active_buffer;
+        let buffer_id = self.active_buffer();
 
         // Get cursor position from SplitViewState's cursors
         let cursor_position = self
@@ -2766,7 +2768,7 @@ impl Editor {
     /// Note: Viewport is now owned by SplitViewState, no sync needed.
     fn sync_editor_state_to_split_view_state(&mut self) {
         let split_id = self.split_manager.active_split();
-        if let Some(buffer_state) = self.buffers.get(&self.active_buffer) {
+        if let Some(buffer_state) = self.buffers.get(&self.active_buffer()) {
             if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
                 view_state.cursors = buffer_state.cursors.clone();
                 // Note: viewport is now owned by SplitViewState, no sync needed
@@ -2776,12 +2778,12 @@ impl Editor {
 
     /// Get the event log for the active buffer
     pub fn active_event_log(&self) -> &EventLog {
-        self.event_logs.get(&self.active_buffer).unwrap()
+        self.event_logs.get(&self.active_buffer()).unwrap()
     }
 
     /// Get the event log for the active buffer (mutable)
     pub fn active_event_log_mut(&mut self) -> &mut EventLog {
-        self.event_logs.get_mut(&self.active_buffer).unwrap()
+        self.event_logs.get_mut(&self.active_buffer()).unwrap()
     }
 
     /// Update the buffer's modified flag based on event log position
@@ -2790,11 +2792,11 @@ impl Editor {
     pub(super) fn update_modified_from_event_log(&mut self) {
         let is_at_saved = self
             .event_logs
-            .get(&self.active_buffer)
+            .get(&self.active_buffer())
             .map(|log| log.is_at_saved_position())
             .unwrap_or(false);
 
-        if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+        if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
             state.buffer.set_modified(!is_at_saved);
         }
     }
@@ -3021,7 +3023,7 @@ impl Editor {
         self.notify_lsp_save();
 
         // Delete recovery file (buffer is now saved)
-        let _ = self.delete_buffer_recovery(self.active_buffer);
+        let _ = self.delete_buffer_recovery(self.active_buffer());
 
         // Emit control event
         if let Some(ref p) = path {
@@ -3036,7 +3038,7 @@ impl Editor {
         // Fire AfterFileSave hook for plugins
         if let Some(ref p) = path {
             if let Some(ref ts_manager) = self.ts_plugin_manager {
-                let buffer_id = self.active_buffer;
+                let buffer_id = self.active_buffer();
                 let hook_args = crate::services::plugins::hooks::HookArgs::AfterFileSave {
                     buffer_id,
                     path: p.clone(),
@@ -3093,7 +3095,7 @@ impl Editor {
         new_state.cursors = restored_cursors;
 
         // Replace the current buffer with the new state
-        let buffer_id = self.active_buffer;
+        let buffer_id = self.active_buffer();
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             *state = new_state;
             // Note: line_wrap_enabled is now in SplitViewState.viewport
@@ -3490,8 +3492,9 @@ impl Editor {
                 }
 
                 // Temporarily switch to this buffer to revert it
-                let current_active = self.active_buffer;
-                self.active_buffer = buffer_id;
+                let current_active = self.active_buffer();
+                // Temporarily switch buffer for revert (no side effects needed)
+                self.split_manager.set_active_buffer_id(buffer_id);
 
                 if let Err(e) = self.revert_file() {
                     tracing::error!("Failed to auto-revert file {:?}: {}", path, e);
@@ -3500,7 +3503,7 @@ impl Editor {
                 }
 
                 // Switch back to original buffer
-                self.active_buffer = current_active;
+                self.split_manager.set_active_buffer_id(current_active);
 
                 // Update the modification time tracking for this file
                 self.watch_file(&path);
@@ -3834,7 +3837,7 @@ impl Editor {
     /// Check if the active buffer is marked dirty for recovery auto-save
     /// Used for testing to verify that edits properly trigger recovery tracking
     pub fn is_active_buffer_recovery_dirty(&self) -> bool {
-        if let Some(state) = self.buffers.get(&self.active_buffer) {
+        if let Some(state) = self.buffers.get(&self.active_buffer()) {
             state.buffer.is_recovery_pending()
         } else {
             false
@@ -4589,7 +4592,7 @@ impl Editor {
                     if self.config.terminal.jump_to_end_on_output && !self.terminal_mode {
                         // Check if active buffer is this terminal
                         if let Some(&active_terminal_id) =
-                            self.terminal_buffers.get(&self.active_buffer)
+                            self.terminal_buffers.get(&self.active_buffer())
                         {
                             if active_terminal_id == terminal_id {
                                 self.enter_terminal_mode();
@@ -4708,7 +4711,7 @@ impl Editor {
             let mut snapshot = snapshot_handle.write().unwrap();
 
             // Update active buffer ID
-            snapshot.active_buffer_id = self.active_buffer;
+            snapshot.active_buffer_id = self.active_buffer();
 
             // Update active split ID
             snapshot.active_split_id = self.split_manager.active_split().0;
@@ -4762,7 +4765,7 @@ impl Editor {
             }
 
             // Update cursor information for active buffer
-            if let Some(active_state) = self.buffers.get_mut(&self.active_buffer) {
+            if let Some(active_state) = self.buffers.get_mut(&self.active_buffer()) {
                 // Primary cursor
                 let primary = active_state.cursors.primary();
                 let primary_position = primary.position;
@@ -5233,7 +5236,9 @@ impl Editor {
                             let splits = self.split_manager.splits_for_buffer(existing_buffer_id);
                             if let Some(&split_id) = splits.first() {
                                 self.split_manager.set_active_split(split_id);
-                                self.active_buffer = existing_buffer_id;
+                                // NOTE: active_buffer is derived from split_manager,
+                                // but we need to ensure the split shows the right buffer
+                                self.split_manager.set_active_buffer_id(existing_buffer_id);
                                 tracing::debug!(
                                     "Focused split {:?} containing panel buffer",
                                     split_id
@@ -5322,7 +5327,7 @@ impl Editor {
 
                             // Focus the new split (the diagnostics panel)
                             self.split_manager.set_active_split(new_split_id);
-                            self.active_buffer = buffer_id;
+                            // NOTE: split tree was updated by split_active, active_buffer derives from it
 
                             tracing::info!(
                                 "Created {:?} split with virtual buffer {:?}",
@@ -5414,9 +5419,9 @@ impl Editor {
                     // Fall back to just switching to the buffer
                     self.set_active_buffer(buffer_id);
                 } else {
-                    // Focus the target split
+                    // Focus the target split and set its buffer
                     self.split_manager.set_active_split(split_id);
-                    self.active_buffer = buffer_id;
+                    self.split_manager.set_active_buffer_id(buffer_id);
                     tracing::info!(
                         "Displayed virtual buffer {:?} in split {:?}",
                         buffer_id,
@@ -5682,7 +5687,7 @@ impl Editor {
     /// Send a cancel request to the LSP server for a specific request ID
     fn send_lsp_cancel_request(&mut self, request_id: u64) {
         // Get the current file path to determine language
-        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let metadata = self.buffer_metadata.get(&self.active_buffer());
         let file_path = metadata.and_then(|meta| meta.file_path());
 
         if let Some(path) = file_path {
@@ -5710,7 +5715,7 @@ impl Editor {
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
 
         // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let metadata = self.buffer_metadata.get(&self.active_buffer());
         let (uri, file_path) = if let Some(meta) = metadata {
             (meta.file_uri(), meta.file_path())
         } else {
@@ -5758,7 +5763,7 @@ impl Editor {
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
 
         // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let metadata = self.buffer_metadata.get(&self.active_buffer());
         let (uri, file_path) = if let Some(meta) = metadata {
             (meta.file_uri(), meta.file_path())
         } else {
@@ -5816,7 +5821,7 @@ impl Editor {
         }
 
         // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let metadata = self.buffer_metadata.get(&self.active_buffer());
         let (uri, file_path) = if let Some(meta) = metadata {
             (meta.file_uri(), meta.file_path())
         } else {
@@ -5872,7 +5877,7 @@ impl Editor {
         }
 
         // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let metadata = self.buffer_metadata.get(&self.active_buffer());
         let (uri, file_path) = if let Some(meta) = metadata {
             (meta.file_uri(), meta.file_path())
         } else {
@@ -5968,7 +5973,7 @@ impl Editor {
             };
             self.apply_event_to_active_buffer(&event);
             // Store the handle for later removal
-            if let Some(state) = self.buffers.get(&self.active_buffer) {
+            if let Some(state) = self.buffers.get(&self.active_buffer()) {
                 self.hover_symbol_overlay = state.overlays.all().last().map(|o| o.handle.clone());
             }
         } else {
@@ -6004,7 +6009,7 @@ impl Editor {
         popup.background_style = Style::default().bg(self.theme.popup_bg);
 
         // Show the popup
-        if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+        if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
             state.popups.show(popup);
             tracing::info!("Showing hover popup (markdown={})", is_markdown);
         }
@@ -6137,7 +6142,7 @@ impl Editor {
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
 
         // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let metadata = self.buffer_metadata.get(&self.active_buffer());
         let (uri, file_path) = if let Some(meta) = metadata {
             (meta.file_uri(), meta.file_path())
         } else {
@@ -6187,7 +6192,7 @@ impl Editor {
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
 
         // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let metadata = self.buffer_metadata.get(&self.active_buffer());
         let (uri, file_path) = if let Some(meta) = metadata {
             (meta.file_uri(), meta.file_path())
         } else {
@@ -6332,7 +6337,7 @@ impl Editor {
         popup.background_style = Style::default().bg(self.theme.popup_bg);
 
         // Show the popup
-        if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+        if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
             state.popups.show(popup);
             tracing::info!(
                 "Showing signature help popup for {} signatures",
@@ -6365,7 +6370,7 @@ impl Editor {
         let diagnostics = Vec::new();
 
         // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let metadata = self.buffer_metadata.get(&self.active_buffer());
         let (uri, file_path) = if let Some(meta) = metadata {
             (meta.file_uri(), meta.file_path())
         } else {
@@ -6458,7 +6463,7 @@ impl Editor {
         popup.background_style = Style::default().bg(self.theme.popup_bg);
 
         // Show the popup
-        if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+        if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
             state.popups.show(popup);
             tracing::info!("Showing code actions popup with {} actions", actions.len());
         }
@@ -6770,10 +6775,11 @@ impl Editor {
         // The byte positions in the events are relative to the ORIGINAL buffer,
         // so we must convert them to LSP positions before modifying the buffer.
         // Otherwise, the LSP server will receive incorrect position information.
-        let original_active = self.active_buffer;
-        self.active_buffer = buffer_id;
+        let original_active = self.active_buffer();
+        // Temporarily switch buffer for LSP change collection (no side effects needed)
+        self.split_manager.set_active_buffer_id(buffer_id);
         let lsp_changes = self.collect_lsp_changes(&batch);
-        self.active_buffer = original_active;
+        self.split_manager.set_active_buffer_id(original_active);
 
         // Save cursor position before applying batch
         // The batch will move the cursor to each edit location, but we want to
@@ -7011,7 +7017,7 @@ impl Editor {
         let (line, character) = state.buffer.position_to_lsp_position(rename_pos);
 
         // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let metadata = self.buffer_metadata.get(&self.active_buffer());
         let (uri, file_path) = if let Some(meta) = metadata {
             (meta.file_uri(), meta.file_path())
         } else {

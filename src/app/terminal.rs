@@ -202,7 +202,7 @@ impl Editor {
 
     /// Close the current terminal (if viewing a terminal buffer)
     pub fn close_terminal(&mut self) {
-        let buffer_id = self.active_buffer;
+        let buffer_id = self.active_buffer();
 
         if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
             // Close the terminal
@@ -248,14 +248,14 @@ impl Editor {
     pub fn get_active_terminal_state(
         &self,
     ) -> Option<std::sync::MutexGuard<'_, crate::services::terminal::TerminalState>> {
-        let terminal_id = self.terminal_buffers.get(&self.active_buffer)?;
+        let terminal_id = self.terminal_buffers.get(&self.active_buffer())?;
         let handle = self.terminal_manager.get(*terminal_id)?;
         handle.state.lock().ok()
     }
 
     /// Send input to the active terminal
     pub fn send_terminal_input(&mut self, data: &[u8]) {
-        if let Some(&terminal_id) = self.terminal_buffers.get(&self.active_buffer) {
+        if let Some(&terminal_id) = self.terminal_buffers.get(&self.active_buffer()) {
             if let Some(handle) = self.terminal_manager.get(terminal_id) {
                 handle.write(data);
             }
@@ -307,7 +307,7 @@ impl Editor {
                     // Exit terminal mode and sync buffer
                     self.terminal_mode = false;
                     self.key_context = crate::input::keybindings::KeyContext::Normal;
-                    self.sync_terminal_to_buffer(self.active_buffer);
+                    self.sync_terminal_to_buffer(self.active_buffer());
                     self.set_status_message(
                         "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
                     );
@@ -409,12 +409,12 @@ impl Editor {
 
     /// Re-enter terminal mode from read-only buffer view
     pub fn enter_terminal_mode(&mut self) {
-        if self.is_terminal_buffer(self.active_buffer) {
+        if self.is_terminal_buffer(self.active_buffer()) {
             self.terminal_mode = true;
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
 
             // Re-enable editing when in terminal mode (input goes to PTY)
-            if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+            if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
                 state.editing_disabled = false;
                 state.margins.set_line_numbers(false);
             }
@@ -426,7 +426,7 @@ impl Editor {
             }
 
             // Scroll terminal to bottom when re-entering
-            if let Some(&terminal_id) = self.terminal_buffers.get(&self.active_buffer) {
+            if let Some(&terminal_id) = self.terminal_buffers.get(&self.active_buffer()) {
                 if let Some(handle) = self.terminal_manager.get(terminal_id) {
                     if let Ok(mut state) = handle.state.lock() {
                         state.scroll_to_bottom();
@@ -471,7 +471,7 @@ impl Editor {
 
     /// Get the currently active buffer ID
     pub fn active_buffer_id(&self) -> BufferId {
-        self.active_buffer
+        self.active_buffer()
     }
 
     /// Get buffer content as a string (for testing)
@@ -511,7 +511,7 @@ impl Editor {
             split_areas
         {
             // Check if this buffer is the active terminal buffer
-            if *buffer_id != self.active_buffer {
+            if *buffer_id != self.active_buffer() {
                 continue;
             }
 

@@ -784,3 +784,269 @@ fn test_bug_view_scrolls_to_cursor_on_resume() {
     // Currently fails because view stays at the scrolled-up position.
     harness.assert_screen_contains("PROMPT_MARKER_XYZ");
 }
+
+/// Test that rendering doesn't panic when cursor is at the last row
+/// Regression test for: panic "index outside of buffer: the area is Rect { x: 0, y: 0, width: 242, height: 60 } but index is (105, 60)"
+///
+/// The panic happens when:
+/// 1. Terminal has 60 rows
+/// 2. Content fills all rows with cursor at the end
+/// 3. The cursor position reported by alacritty is y=60 (one past the last valid index 59)
+#[test]
+fn test_cursor_at_last_row_no_panic() {
+    let mut harness = harness_or_return!(242, 64); // Width 242, extra height for status bar etc.
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    let buffer_id = harness.editor().active_buffer_id();
+
+    // Get the terminal and fill the screen to force cursor to the last row
+    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
+        if let Ok(mut state) = handle.state.lock() {
+            // Get the actual terminal size
+            let (cols, rows) = state.size();
+            eprintln!("Terminal size: {}x{}", cols, rows);
+
+            // Fill every row to push cursor to the bottom
+            for i in 0..rows {
+                let line = format!("Line {:04}\r\n", i);
+                state.process_output(line.as_bytes());
+            }
+
+            // Cursor position after filling should be at row=rows (past the last row)
+            // or at row=rows-1. Either way, rendering should not panic.
+            let (col, row) = state.cursor_position();
+            eprintln!("Cursor position after fill: ({}, {})", col, row);
+            eprintln!(
+                "Terminal rows: {}, Cursor row == rows: {}",
+                rows,
+                row == rows
+            );
+        }
+    }
+
+    // This render should NOT panic even if cursor is at y=rows
+    let result = harness.render();
+    assert!(result.is_ok(), "Rendering should not panic");
+}
+
+/// Test that terminal rendering is robust when cursor position equals height
+/// This simulates the exact conditions from the panic report
+#[test]
+fn test_terminal_cursor_boundary_condition() {
+    let mut harness = harness_or_return!(242, 64);
+
+    harness.editor_mut().open_terminal();
+    let buffer_id = harness.editor().active_buffer_id();
+
+    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
+        if let Ok(mut state) = handle.state.lock() {
+            let (_, rows) = state.size();
+
+            // Use cursor movement escape codes to position cursor at the last row
+            // ESC[H = move to home, ESC[<row>;<col>H = move to position
+            // Move cursor to the last row
+            let move_to_bottom = format!("\x1b[{};1H", rows);
+            state.process_output(move_to_bottom.as_bytes());
+
+            // Now write text that might push cursor past the bottom
+            state.process_output(b"Text at bottom line\r\n");
+
+            let (col, row) = state.cursor_position();
+            eprintln!("After bottom line + newline: cursor at ({}, {})", col, row);
+        }
+    }
+
+    // Should not panic
+    harness.render().expect("render should not panic");
+}
+
+/// Test that terminal rendering handles resize correctly when cursor is at bottom
+/// Regression test for: panic "index outside of buffer: the area is Rect { x: 0, y: 0, width: 242, height: 60 } but index is (105, 60)"
+///
+/// The bug could occur when:
+/// 1. Terminal is larger (e.g., 70 rows)
+/// 2. Cursor is at row 60
+/// 3. Terminal is resized to 60 rows
+/// 4. Cursor position isn't updated to be within new bounds
+#[test]
+fn test_terminal_resize_cursor_out_of_bounds() {
+    let mut harness = harness_or_return!(242, 74); // Start larger
+
+    harness.editor_mut().open_terminal();
+    let buffer_id = harness.editor().active_buffer_id();
+
+    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+
+    // First, position cursor at row 60 in a 70-row terminal
+    if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
+        if let Ok(mut state) = handle.state.lock() {
+            let (cols, rows) = state.size();
+            eprintln!("Initial terminal size: {}x{}", cols, rows);
+
+            // Move cursor to row 61 (1-indexed, so row 60 in 0-indexed)
+            state.process_output(b"\x1b[61;106H"); // Move to row 61, column 106
+
+            let (col, row) = state.cursor_position();
+            eprintln!("Cursor after move: ({}, {})", col, row);
+
+            // Now resize terminal to smaller size (60 rows)
+            state.resize(cols, 60);
+
+            let (new_cols, new_rows) = state.size();
+            eprintln!("After resize: {}x{}", new_cols, new_rows);
+
+            let (col, row) = state.cursor_position();
+            eprintln!(
+                "Cursor after resize: ({}, {}), new_rows: {}",
+                col, row, new_rows
+            );
+
+            // Check if cursor is out of bounds
+            if row >= new_rows {
+                eprintln!("BUG: Cursor row {} >= terminal rows {}", row, new_rows);
+            }
+        }
+    }
+
+    // This should not panic even if cursor is out of bounds
+    let result = harness.render();
+    assert!(result.is_ok(), "Rendering should not panic after resize");
+}
+
+// ============================================================================
+// Session restoration tests
+// ============================================================================
+
+/// BUG: When session is saved with terminal as active tab, restoration shows
+/// the terminal as selected but input goes to a different buffer.
+///
+/// Root cause: There are TWO sources of truth for "active buffer":
+/// 1. split_manager's split tree (SplitNode::Leaf { buffer_id }) - used for RENDERING
+/// 2. self.active_buffer field - used for INPUT HANDLING
+///
+/// During session restore:
+/// - restore_split_view_state() correctly updates the split tree via set_split_buffer()
+/// - BUT apply_session() then sets self.active_buffer from open_files[active_file_index]
+/// - Terminals are NOT in open_files (only in open_tabs), so it falls back to first file
+///
+/// The fix should use active_tab_index with open_tabs (not active_file_index with open_files)
+/// in apply_session() lines 391-405, just like restore_split_view_state() does.
+#[test]
+fn test_session_restore_terminal_active_buffer() {
+    use fresh::config::Config;
+    use portable_pty::{native_pty_system, PtySize};
+    use tempfile::TempDir;
+
+    // Skip if PTY not available
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal session test: PTY not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    // Create a test file
+    let file1 = project_dir.join("test.txt");
+    std::fs::write(&file1, "File content here").unwrap();
+
+    // First session: open file, open terminal, terminal should be active
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // Open the file first
+        harness.open_file(&file1).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains("test.txt");
+
+        // Now open a terminal - this should make terminal the active buffer
+        harness.editor_mut().open_terminal();
+        harness.render().unwrap();
+        harness.assert_screen_contains("*Terminal 0*");
+
+        // Verify terminal is active
+        let active_buffer_before = harness.editor().active_buffer_id();
+        assert!(
+            harness.editor().is_terminal_buffer(active_buffer_before),
+            "Terminal should be active buffer before save"
+        );
+
+        // Save session
+        harness.editor_mut().save_session().unwrap();
+
+        // Verify the session was captured with terminal as active
+        let session = harness.editor().capture_session();
+        let split_state = session.split_states.values().next().unwrap();
+        eprintln!("Session open_tabs: {:?}", split_state.open_tabs);
+        eprintln!("Session active_tab_index: {:?}", split_state.active_tab_index);
+        eprintln!("Session open_files: {:?}", split_state.open_files);
+        eprintln!("Session active_file_index: {}", split_state.active_file_index);
+
+        // active_tab_index should point to the terminal
+        assert_eq!(
+            split_state.active_tab_index,
+            Some(1),
+            "active_tab_index should point to terminal (index 1)"
+        );
+    }
+
+    // Second session: restore and verify terminal is still active
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // Restore session
+        let restored = harness.editor_mut().try_restore_session().unwrap();
+        assert!(restored, "Session should have been restored");
+        harness.render().unwrap();
+
+        // Check what buffer is active according to Editor's active_buffer field (for INPUT)
+        let active_buffer_for_input = harness.editor().active_buffer_id();
+        let input_is_terminal = harness.editor().is_terminal_buffer(active_buffer_for_input);
+
+        eprintln!(
+            "After restore: active_buffer (for input) = {:?}, is_terminal = {}",
+            active_buffer_for_input, input_is_terminal
+        );
+
+        // Screen should show terminal as the visually active tab (rendering uses split tree)
+        // The asterisks around "Terminal 0" indicate it's the selected tab
+        harness.assert_screen_contains("*Terminal 0*");
+
+        // BUG: The terminal tab is shown as selected (rendering is correct),
+        // but active_buffer points to a file buffer (input target is wrong)!
+        //
+        // This means:
+        // - User sees the terminal tab highlighted as "active"
+        // - But any keystrokes go to the file buffer instead
+        assert!(
+            input_is_terminal,
+            "BUG: active_buffer should be terminal but is file buffer {:?}. \
+             The terminal appears selected but input goes elsewhere!",
+            active_buffer_for_input
+        );
+    }
+}

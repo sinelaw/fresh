@@ -402,10 +402,7 @@ impl Editor {
     /// Handle FocusSplit command
     pub(super) fn handle_focus_split(&mut self, split_id: SplitId) {
         if self.split_manager.set_active_split(split_id) {
-            // Update active buffer to match the split's buffer
-            if let Some(buffer_id) = self.split_manager.active_buffer_id() {
-                self.active_buffer = buffer_id;
-            }
+            // NOTE: active_buffer is derived from split_manager, no sync needed
             tracing::info!("Focused split {:?}", split_id);
         } else {
             tracing::warn!("Split {:?} not found", split_id);
@@ -663,8 +660,9 @@ impl Editor {
 
         // Ensure the position is visible in the active split's viewport
         let active_split = self.split_manager.active_split();
+        let active_buffer = self.active_buffer();
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-            let state = self.buffers.get_mut(&self.active_buffer).unwrap();
+            let state = self.buffers.get_mut(&active_buffer).unwrap();
             view_state
                 .viewport
                 .ensure_visible(&mut state.buffer, state.cursors.primary());
@@ -724,7 +722,7 @@ impl Editor {
     /// Handle OpenFileInBackground command
     pub(super) fn handle_open_file_in_background(&mut self, path: std::path::PathBuf) {
         // Open file in a new tab without switching to it
-        let current_buffer = self.active_buffer;
+        let current_buffer = self.active_buffer();
         if let Err(e) = self.open_file(&path) {
             tracing::error!("Failed to open file in background: {}", e);
         } else {

@@ -76,7 +76,7 @@ impl Editor {
             return;
         }
 
-        if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer) {
+        if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer()) {
             if let Some(file_path) = metadata.file_path() {
                 let target_path = file_path.clone();
                 let working_dir = self.working_dir.clone();

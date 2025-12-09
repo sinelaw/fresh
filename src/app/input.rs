@@ -53,7 +53,7 @@ impl Editor {
                         self.terminal_mode = false;
                         self.key_context = crate::input::keybindings::KeyContext::Normal;
                         // Sync terminal content to buffer for read-only viewing
-                        self.sync_terminal_to_buffer(self.active_buffer);
+                        self.sync_terminal_to_buffer(self.active_buffer());
                         self.set_status_message(
                             "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
                         );
@@ -77,7 +77,7 @@ impl Editor {
                 // Sync terminal content to buffer and exit terminal mode
                 self.terminal_mode = false;
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
-                self.sync_terminal_to_buffer(self.active_buffer);
+                self.sync_terminal_to_buffer(self.active_buffer());
                 self.set_status_message(
                     "Scrollback mode - use PageUp/Down to scroll (Ctrl+Space to resume)"
                         .to_string(),
@@ -91,7 +91,7 @@ impl Editor {
         }
 
         // Toggle back into terminal mode when viewing a terminal buffer
-        if self.is_terminal_buffer(self.active_buffer) {
+        if self.is_terminal_buffer(self.active_buffer()) {
             if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
                 match code {
                     crossterm::event::KeyCode::Char(' ')
@@ -157,7 +157,7 @@ impl Editor {
                     return self.handle_action(action);
                 } else if command_name == "close-buffer" {
                     // Handle built-in mode commands
-                    let buffer_id = self.active_buffer;
+                    let buffer_id = self.active_buffer();
                     return self.close_buffer(buffer_id);
                 } else if command_name == "revert-buffer" {
                     // Refresh the buffer (for virtual buffers, this would re-query data)
@@ -674,7 +674,7 @@ impl Editor {
                 self.new_buffer();
             }
             Action::Close => {
-                let buffer_id = self.active_buffer;
+                let buffer_id = self.active_buffer();
                 if self.active_state().buffer.is_modified() {
                     // Buffer has unsaved changes - prompt for confirmation
                     let name = self.get_buffer_display_name(buffer_id);
@@ -927,7 +927,7 @@ impl Editor {
             }
             Action::LspRestart => {
                 // Get the language for the current buffer
-                if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer) {
+                if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer()) {
                     if let Some(path) = metadata.file_path() {
                         if let Some(language) = crate::services::lsp::manager::detect_language(
                             path,
@@ -1126,7 +1126,7 @@ impl Editor {
                     // After manual scroll, re-evaluate to clamp and show indicators
                     self.ensure_active_tab_visible(
                         active_split_id,
-                        self.active_buffer,
+                        self.active_buffer(),
                         self.terminal_width,
                     );
                     self.set_status_message("Scrolled tabs left".to_string());
@@ -1139,7 +1139,7 @@ impl Editor {
                     // After manual scroll, re-evaluate to clamp and show indicators
                     self.ensure_active_tab_visible(
                         active_split_id,
-                        self.active_buffer,
+                        self.active_buffer(),
                         self.terminal_width,
                     );
                     self.set_status_message("Scrolled tabs right".to_string());
@@ -1187,8 +1187,9 @@ impl Editor {
 
                     // Ensure the primary cursor is visible after removing secondary cursors
                     let active_split = self.split_manager.active_split();
+                    let active_buffer = self.active_buffer();
                     if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-                        let state = self.buffers.get_mut(&self.active_buffer).unwrap();
+                        let state = self.buffers.get_mut(&active_buffer).unwrap();
                         let primary = *state.cursors.primary();
                         view_state
                             .viewport
@@ -1530,7 +1531,7 @@ impl Editor {
             }
             Action::FocusTerminal => {
                 // If viewing a terminal buffer, switch to terminal mode
-                if self.is_terminal_buffer(self.active_buffer) {
+                if self.is_terminal_buffer(self.active_buffer()) {
                     self.terminal_mode = true;
                     self.key_context = KeyContext::Terminal;
                     self.set_status_message("Terminal mode enabled".to_string());
@@ -1600,7 +1601,7 @@ impl Editor {
                                         full_path.clone(),
                                         &self.working_dir,
                                     );
-                                    self.buffer_metadata.insert(self.active_buffer, metadata);
+                                    self.buffer_metadata.insert(self.active_buffer(), metadata);
 
                                     // Mark the event log position as saved (for undo modified tracking)
                                     self.active_event_log_mut().mark_saved();
@@ -1631,7 +1632,7 @@ impl Editor {
                                     if let Some(ref ts_manager) = self.ts_plugin_manager {
                                         let hook_args =
                                             crate::services::plugins::hooks::HookArgs::AfterFileSave {
-                                                buffer_id: self.active_buffer,
+                                                buffer_id: self.active_buffer(),
                                                 path: full_path.clone(),
                                             };
                                         ts_manager.run_hook("after_file_save", hook_args);
@@ -1755,7 +1756,7 @@ impl Editor {
                             }
                         }
                         PromptType::SetComposeWidth => {
-                            let buffer_id = self.active_buffer;
+                            let buffer_id = self.active_buffer();
                             let active_split = self.split_manager.active_split();
                             let trimmed = input.trim();
                             if trimmed.is_empty() {
@@ -1891,7 +1892,7 @@ impl Editor {
 
                                     if has_path {
                                         // Save the buffer
-                                        let old_active = self.active_buffer;
+                                        let old_active = self.active_buffer();
                                         self.set_active_buffer(buffer_id);
                                         if let Err(e) = self.save() {
                                             self.set_status_message(format!(
@@ -2251,7 +2252,7 @@ impl Editor {
                                 } = event
                                 {
                                     self.position_history.record_movement(
-                                        self.active_buffer,
+                                        self.active_buffer(),
                                         *new_position,
                                         *new_anchor,
                                     );
@@ -2274,7 +2275,7 @@ impl Editor {
                                 } = event
                                 {
                                     self.position_history.record_movement(
-                                        self.active_buffer,
+                                        self.active_buffer(),
                                         new_position,
                                         new_anchor,
                                     );
@@ -2872,7 +2873,7 @@ impl Editor {
         if let Some((split_id, buffer_id, scrollbar_rect, is_on_thumb)) = scrollbar_hit {
             // Focus this split
             self.split_manager.set_active_split(split_id);
-            if buffer_id != self.active_buffer {
+            if buffer_id != self.active_buffer() {
                 self.position_history.commit_pending_movement();
                 self.set_active_buffer(buffer_id);
             }
@@ -2995,7 +2996,7 @@ impl Editor {
             }
 
             // Switch to the clicked buffer
-            if clicked_buffer != self.active_buffer {
+            if clicked_buffer != self.active_buffer() {
                 self.position_history.commit_pending_movement();
                 self.set_active_buffer(clicked_buffer);
             }
@@ -3295,7 +3296,7 @@ impl Editor {
         // Get mutable references to both buffer and view state
         let buffer = self
             .buffers
-            .get_mut(&self.active_buffer)
+            .get_mut(&self.active_buffer())
             .map(|s| &mut s.buffer);
         let view_state = self.split_view_states.get_mut(&active_split);
 
@@ -3747,7 +3748,7 @@ impl Editor {
 
         // Focus this split
         self.split_manager.set_active_split(split_id);
-        if buffer_id != self.active_buffer {
+        if buffer_id != self.active_buffer() {
             self.position_history.commit_pending_movement();
             self.set_active_buffer(buffer_id);
         }
@@ -3987,7 +3988,7 @@ impl Editor {
                 .get(&active_split)
                 .is_some_and(|vs| vs.open_buffers.contains(&prev_id));
 
-            if is_valid && prev_id != self.active_buffer {
+            if is_valid && prev_id != self.active_buffer() {
                 // Save current position before switching
                 self.position_history.commit_pending_movement();
 
@@ -3995,7 +3996,7 @@ impl Editor {
                 let position = current_state.cursors.primary().position;
                 let anchor = current_state.cursors.primary().anchor;
                 self.position_history
-                    .record_movement(self.active_buffer, position, anchor);
+                    .record_movement(self.active_buffer(), position, anchor);
                 self.position_history.commit_pending_movement();
 
                 self.set_active_buffer(prev_id);
@@ -4024,7 +4025,7 @@ impl Editor {
         // Find the current buffer's index
         let current_index = open_buffers
             .iter()
-            .position(|&id| id == self.active_buffer)
+            .position(|&id| id == self.active_buffer())
             .unwrap_or(0);
 
         let suggestions: Vec<crate::input::commands::Suggestion> = open_buffers
@@ -4036,7 +4037,7 @@ impl Editor {
                     .map(|m| m.display_name.clone())
                     .unwrap_or_else(|| format!("Buffer {:?}", buffer_id));
 
-                let is_current = buffer_id == self.active_buffer;
+                let is_current = buffer_id == self.active_buffer();
                 let is_modified = self
                     .buffers
                     .get(&buffer_id)
@@ -4087,7 +4088,7 @@ impl Editor {
             return;
         }
 
-        if buffer_id != self.active_buffer {
+        if buffer_id != self.active_buffer() {
             // Save current position before switching
             self.position_history.commit_pending_movement();
 
@@ -4095,7 +4096,7 @@ impl Editor {
             let position = current_state.cursors.primary().position;
             let anchor = current_state.cursors.primary().anchor;
             self.position_history
-                .record_movement(self.active_buffer, position, anchor);
+                .record_movement(self.active_buffer(), position, anchor);
             self.position_history.commit_pending_movement();
 
             self.set_active_buffer(buffer_id);

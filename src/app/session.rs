@@ -386,23 +386,10 @@ impl Editor {
         );
 
         // Set the active split based on the saved active_split_id
+        // NOTE: active_buffer is now derived from split_manager, which was already
+        // correctly set up by restore_split_view_state() via set_split_buffer()
         if let Some(&new_active_split) = split_id_map.get(&session.active_split_id) {
             self.split_manager.set_active_split(new_active_split);
-            // Also update active_buffer based on the active_file_index for that split
-            if let Some(split_state) = session.split_states.get(&session.active_split_id) {
-                if let Some(view_state) = self.split_view_states.get(&new_active_split) {
-                    // Use active_file_index to find the correct buffer
-                    let active_buffer = split_state
-                        .open_files
-                        .get(split_state.active_file_index)
-                        .and_then(|rel_path| path_to_buffer.get(rel_path))
-                        .copied()
-                        .or_else(|| view_state.open_buffers.first().copied());
-                    if let Some(buffer_id) = active_buffer {
-                        self.active_buffer = buffer_id;
-                    }
-                }
-            }
         }
 
         // 7. Restore bookmarks
@@ -552,7 +539,7 @@ impl Editor {
                 let buffer_id = file_path
                     .as_ref()
                     .and_then(|p| path_to_buffer.get(p).copied())
-                    .unwrap_or(self.active_buffer);
+                    .unwrap_or(self.active_buffer());
 
                 let current_split_id = if is_first_leaf {
                     // First leaf reuses the existing split
@@ -583,7 +570,7 @@ impl Editor {
                 let buffer_id = terminal_buffers
                     .get(terminal_index)
                     .copied()
-                    .unwrap_or(self.active_buffer);
+                    .unwrap_or(self.active_buffer());
 
                 let current_split_id = if is_first_leaf {
                     let split_id_val = self.split_manager.active_split();
@@ -627,7 +614,7 @@ impl Editor {
                 // Get the buffer for the second child's first leaf
                 let second_buffer_id =
                     get_first_leaf_buffer(second, path_to_buffer, terminal_buffers)
-                        .unwrap_or(self.active_buffer);
+                        .unwrap_or(self.active_buffer());
 
                 // Convert direction
                 let split_direction = match direction {
