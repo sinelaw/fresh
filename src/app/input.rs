@@ -1608,6 +1608,14 @@ impl Editor {
                     }
                 }
             }
+            Action::TerminalPaste => {
+                // Paste clipboard contents into terminal as a single batch
+                if self.terminal_mode {
+                    if let Some(text) = self.clipboard.paste() {
+                        self.send_terminal_input(text.as_bytes());
+                    }
+                }
+            }
             Action::PromptConfirm => {
                 // Handle prompt confirmation (same logic as in handle_key)
                 if let Some((input, prompt_type, selected_index)) = self.confirm_prompt() {

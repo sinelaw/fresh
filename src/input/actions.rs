@@ -1743,7 +1743,8 @@ pub fn action_to_events(
         | Action::CloseTerminal
         | Action::FocusTerminal
         | Action::TerminalEscape
-        | Action::ToggleKeyboardCapture => return None,
+        | Action::ToggleKeyboardCapture
+        | Action::TerminalPaste => return None,
 
         // Block/rectangular selection actions
         Action::BlockSelectLeft => {

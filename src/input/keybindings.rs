@@ -472,6 +472,7 @@ pub enum Action {
     FocusTerminal,         // Focus the terminal buffer (if viewing terminal, focus input)
     TerminalEscape,        // Escape from terminal mode back to editor
     ToggleKeyboardCapture, // Toggle keyboard capture mode (all keys go to terminal)
+    TerminalPaste,         // Paste clipboard contents into terminal as a single batch
 
     // No-op
     None,
@@ -755,6 +756,7 @@ impl Action {
             "focus_terminal" => Some(Action::FocusTerminal),
             "terminal_escape" => Some(Action::TerminalEscape),
             "toggle_keyboard_capture" => Some(Action::ToggleKeyboardCapture),
+            "terminal_paste" => Some(Action::TerminalPaste),
 
             _ => None,
         }
@@ -994,6 +996,7 @@ impl KeybindingResolver {
                 | Action::ToggleKeyboardCapture
                 | Action::OpenTerminal
                 | Action::CloseTerminal
+                | Action::TerminalPaste
                 // File explorer
                 | Action::ToggleFileExplorer
         )
@@ -1657,6 +1660,7 @@ impl KeybindingResolver {
             Action::FocusTerminal => "Focus terminal".to_string(),
             Action::TerminalEscape => "Exit terminal mode".to_string(),
             Action::ToggleKeyboardCapture => "Toggle keyboard capture (terminal)".to_string(),
+            Action::TerminalPaste => "Paste into terminal".to_string(),
             Action::None => "No action".to_string(),
         }
     }

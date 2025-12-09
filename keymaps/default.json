@@ -1518,6 +1518,14 @@
       "action": "toggle_keyboard_capture",
       "args": {},
       "when": "terminal"
+    },
+    {
+      "comment": "Terminal context - Paste clipboard contents (Ctrl+V)",
+      "key": "v",
+      "modifiers": ["ctrl"],
+      "action": "terminal_paste",
+      "args": {},
+      "when": "terminal"
     }
   ]
 }
