@@ -400,7 +400,7 @@ The following features work correctly:
 
 - PTY is now required; the headless fallback has been removed. Run the e2e harness in a real terminal (tmux works) so `portable-pty` can allocate a PTY. Add a note in PTY-dependent tests that they must run with a PTY.
 - Each terminal session writes raw PTY bytes to `/tmp/fresh-terminal-{id}.log` from the moment it is spawned. This log captures everything emitted by the PTY (escape sequences included).
-- The read-only backing buffer is still built from the live emulator state; the log exists for postmortem/full-history needs but is not read during sync-to-buffer. Rendering and scrollback remain `alacritty_terminal`-based.
+- The terminal buffer’s file path now points at that raw log file; when you leave terminal mode we simply reload the file (no sync/write step), so the read-only view is a normal file-backed buffer fed by the live log appends.
 - Terminal buffers keep line numbers hidden and line wrapping disabled both live and when terminal mode is toggled off, so the read-only view matches the live terminal layout.
 - Follow-ups: decide on log retention/rotation and whether users can opt out or relocate the log files, and whether to offer a separate “replay from log” view for very long sessions.
 

@@ -72,13 +72,22 @@ impl Editor {
         // Get config values
         let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
 
-        // Create a temp file for terminal content backing store
-        let backing_file =
-            std::env::temp_dir().join(format!("fresh-terminal-{}.txt", terminal_id.0));
+        // Use the raw log file as the backing store for read-only viewing
+        let backing_file = self
+            .terminal_log_files
+            .get(&terminal_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                std::env::temp_dir().join(format!("fresh-terminal-{}.log", terminal_id.0))
+            });
 
-        // Write empty content to create the file
-        if let Err(e) = std::fs::write(&backing_file, "") {
-            tracing::warn!("Failed to create terminal backing file: {}", e);
+        // Ensure the file exists
+        if let Err(e) = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&backing_file)
+        {
+            tracing::warn!("Failed to create terminal backing/log file: {}", e);
         }
 
         // Store the backing file path
@@ -133,12 +142,15 @@ impl Editor {
             self.terminal_buffers.remove(&buffer_id);
 
             // Clean up backing/rendering file
-            if let Some(backing_file) = self.terminal_backing_files.remove(&terminal_id) {
-                let _ = std::fs::remove_file(&backing_file);
+            let backing_file = self.terminal_backing_files.remove(&terminal_id);
+            if let Some(ref path) = backing_file {
+                let _ = std::fs::remove_file(path);
             }
             // Clean up raw log file
             if let Some(log_file) = self.terminal_log_files.remove(&terminal_id) {
-                let _ = std::fs::remove_file(&log_file);
+                if backing_file.as_ref() != Some(&log_file) {
+                    let _ = std::fs::remove_file(&log_file);
+                }
             }
 
             // Exit terminal mode
@@ -251,38 +263,23 @@ impl Editor {
                 None => return,
             };
 
-            // Render content from the live emulator state
-            let content = self
-                .terminal_manager
-                .get(terminal_id)
-                .and_then(|handle| handle.state.lock().ok())
-                .map(|state| state.full_content_string());
-
-            // Write rendered content to the backing file if we have it
-            if let Some(content) = content {
-                if let Err(e) = std::fs::write(&backing_file, &content) {
-                    tracing::error!("Failed to write terminal content to backing file: {}", e);
-                    return;
-                }
-
-                // Reload buffer from the backing file (reusing existing file loading)
-                let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
-                if let Ok(new_state) = EditorState::from_file(
-                    &backing_file,
-                    self.terminal_width,
-                    self.terminal_height,
-                    large_file_threshold,
-                    &self.grammar_registry,
-                ) {
-                    // Replace buffer state
-                    if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                        *state = new_state;
-                        // Move cursor to end of buffer
-                        let total = state.buffer.total_bytes();
-                        state.primary_cursor_mut().position = total;
-                        // Terminal buffers should never be considered "modified"
-                        state.buffer.set_modified(false);
-                    }
+            // Reload buffer from the backing file (reusing existing file loading)
+            let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
+            if let Ok(new_state) = EditorState::from_file(
+                &backing_file,
+                self.terminal_width,
+                self.terminal_height,
+                large_file_threshold,
+                &self.grammar_registry,
+            ) {
+                // Replace buffer state
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    *state = new_state;
+                    // Move cursor to end of buffer
+                    let total = state.buffer.total_bytes();
+                    state.primary_cursor_mut().position = total;
+                    // Terminal buffers should never be considered "modified"
+                    state.buffer.set_modified(false);
                 }
             }
 
