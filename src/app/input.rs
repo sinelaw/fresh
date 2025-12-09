@@ -58,10 +58,7 @@ impl Editor {
             tracing::trace!("is_toggle_capture (F9)={}", is_toggle_capture);
             if is_toggle_capture {
                 self.keyboard_capture = !self.keyboard_capture;
-                tracing::info!(
-                    "Toggled keyboard_capture to {}",
-                    self.keyboard_capture
-                );
+                tracing::info!("Toggled keyboard_capture to {}", self.keyboard_capture);
                 if self.keyboard_capture {
                     self.set_status_message(
                         "Keyboard capture ON - all keys go to terminal (F9 to toggle)".to_string(),

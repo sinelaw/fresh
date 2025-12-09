@@ -1733,11 +1733,7 @@ impl Editor {
                 .iter()
                 .position(|&id| id == buffer_id)
                 .unwrap_or(0);
-            let replacement_idx = if current_idx > 0 {
-                current_idx - 1
-            } else {
-                1
-            };
+            let replacement_idx = if current_idx > 0 { current_idx - 1 } else { 1 };
             let replacement_buffer = current_split_tabs[replacement_idx];
 
             // Remove buffer from this split's tabs
@@ -1811,11 +1807,7 @@ impl Editor {
                 .iter()
                 .position(|&id| id == buffer_id)
                 .unwrap_or(0);
-            let replacement_idx = if current_idx > 0 {
-                current_idx - 1
-            } else {
-                1
-            };
+            let replacement_idx = if current_idx > 0 { current_idx - 1 } else { 1 };
             let replacement_buffer = split_tabs[replacement_idx];
 
             // Remove buffer from this split's tabs
@@ -1824,7 +1816,9 @@ impl Editor {
             }
 
             // Update the split to show the replacement buffer
-            let _ = self.split_manager.set_split_buffer(split_id, replacement_buffer);
+            let _ = self
+                .split_manager
+                .set_split_buffer(split_id, replacement_buffer);
 
             self.set_status_message("Tab closed".to_string());
         }
@@ -2581,7 +2575,11 @@ impl Editor {
     /// - Syncing file explorer
     ///
     /// Use this instead of calling set_active_split directly when switching focus.
-    pub(super) fn focus_split(&mut self, split_id: crate::model::event::SplitId, buffer_id: BufferId) {
+    pub(super) fn focus_split(
+        &mut self,
+        split_id: crate::model::event::SplitId,
+        buffer_id: BufferId,
+    ) {
         let previous_split = self.split_manager.active_split();
         let previous_buffer = self.active_buffer(); // Get BEFORE changing split
         let split_changed = previous_split != split_id;

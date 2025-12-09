@@ -1066,9 +1066,7 @@ fn test_session_restore_terminal_active_buffer() {
 fn test_keyboard_capture_toggle() {
     use tracing_subscriber::EnvFilter;
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()),
-        )
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
         .with_test_writer()
         .try_init();
 
@@ -1092,16 +1090,12 @@ fn test_keyboard_capture_toggle() {
     harness.render().unwrap();
     harness.assert_screen_contains("Command:");
     // Close the command palette
-    harness
-        .send_key(KeyCode::Esc, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Toggle keyboard capture ON with F9
     tracing::info!("=== Toggling keyboard capture ON ===");
-    harness
-        .send_key(KeyCode::F(9), KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::F(9), KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     assert!(
@@ -1123,9 +1117,7 @@ fn test_keyboard_capture_toggle() {
 
     // Toggle keyboard capture OFF with F9
     tracing::info!("=== Toggling keyboard capture OFF ===");
-    harness
-        .send_key(KeyCode::F(9), KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::F(9), KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     assert!(
@@ -1218,9 +1210,7 @@ fn test_ui_bindings_blocked_with_keyboard_capture() {
     let terminal_buffer = harness.editor().active_buffer_id();
 
     // Turn keyboard capture ON with F9
-    harness
-        .send_key(KeyCode::F(9), KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::F(9), KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     assert!(harness.editor().is_keyboard_capture());
 
@@ -1365,8 +1355,8 @@ fn test_terminal_split_switch_exits_terminal_mode() {
     harness
         .send_mouse(crossterm::event::MouseEvent {
             kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            column: 10,  // column - well into left split
-            row: 15,     // row - middle of content area
+            column: 10, // column - well into left split
+            row: 15,    // row - middle of content area
             modifiers: KeyModifiers::NONE,
         })
         .unwrap();
@@ -1471,7 +1461,9 @@ fn test_click_between_splits_terminal_focus() {
             iteration
         );
         assert!(
-            harness.editor().is_terminal_buffer(harness.editor().active_buffer_id()),
+            harness
+                .editor()
+                .is_terminal_buffer(harness.editor().active_buffer_id()),
             "Iteration {}: Active buffer should be terminal before clicking file split",
             iteration
         );
@@ -1496,7 +1488,9 @@ fn test_click_between_splits_terminal_focus() {
 
         // Active buffer should be the file (non-terminal)
         assert!(
-            !harness.editor().is_terminal_buffer(harness.editor().active_buffer_id()),
+            !harness
+                .editor()
+                .is_terminal_buffer(harness.editor().active_buffer_id()),
             "Iteration {}: Active buffer should be file (non-terminal) after clicking file split",
             iteration
         );
@@ -1521,7 +1515,9 @@ fn test_click_between_splits_terminal_focus() {
 
         // Active buffer should be the terminal again
         assert!(
-            harness.editor().is_terminal_buffer(harness.editor().active_buffer_id()),
+            harness
+                .editor()
+                .is_terminal_buffer(harness.editor().active_buffer_id()),
             "Iteration {}: Active buffer should be terminal after clicking terminal split",
             iteration
         );
