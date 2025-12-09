@@ -399,8 +399,8 @@ The following features work correctly:
 ## 7. Scrollback + Logging Plan (Current Work)
 
 - PTY is now required; the headless fallback has been removed. Run the e2e harness in a real terminal (tmux works) so `portable-pty` can allocate a PTY. Add a note in PTY-dependent tests that they must run with a PTY.
-- Each terminal session writes raw PTY bytes to `/tmp/fresh-terminal-{id}.log` from the moment it is spawned. This log captures everything emitted by the PTY (escape sequences included).
-- When leaving terminal mode, we replay the log through a fresh `alacritty_terminal::Term` to render a plain-text snapshot into a separate backing file; the read-only buffer reloads from that rendered file while the raw log remains intact for full-fidelity capture.
+- Each terminal session writes raw PTY bytes to per-project storage under `$XDG_DATA_HOME/fresh/terminals/{encoded_workdir}/fresh-terminal-{id}.log` from the moment it is spawned. This log captures everything emitted by the PTY (escape sequences included) and is kept for session restore.
+- When leaving terminal mode, we replay the log through a fresh `alacritty_terminal::Term` to render a plain-text snapshot into a separate backing file in the same directory; the read-only buffer reloads from that rendered file while the raw log remains intact for full-fidelity capture and session restore.
 - Terminal buffers keep line numbers hidden and line wrapping disabled both live and when terminal mode is toggled off, so the read-only view matches the live terminal layout.
 - Follow-ups: decide on log retention/rotation and whether users can opt out or relocate the log files, and whether to offer a separate “replay from log” view for very long sessions.
 

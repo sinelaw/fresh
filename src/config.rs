@@ -1569,6 +1569,17 @@ impl DirectoryContext {
         self.data_dir.join("replace_history.json")
     }
 
+    /// Get the terminals root directory
+    pub fn terminals_dir(&self) -> std::path::PathBuf {
+        self.data_dir.join("terminals")
+    }
+
+    /// Get the terminal directory for a specific working directory
+    pub fn terminal_dir_for(&self, working_dir: &std::path::Path) -> std::path::PathBuf {
+        let encoded = crate::session::encode_path_for_filename(working_dir);
+        self.terminals_dir().join(encoded)
+    }
+
     /// Get the config file path
     pub fn config_path(&self) -> std::path::PathBuf {
         self.config_dir.join("config.json")

@@ -13,5 +13,5 @@ mod manager;
 pub mod pty;
 pub mod term;
 
-pub use manager::{TerminalId, TerminalManager};
+pub use manager::{detect_shell, TerminalId, TerminalManager};
 pub use term::{TerminalCell, TerminalState};

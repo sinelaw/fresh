@@ -21,10 +21,18 @@ impl Editor {
             self.terminal_manager.set_async_bridge(bridge.clone());
         }
 
-        // Precompute log path using the next terminal ID so we capture from the first byte
+        // Prepare persistent storage paths under the user's data directory
+        let terminal_root = self.dir_context.terminal_dir_for(&self.working_dir);
+        let _ = std::fs::create_dir_all(&terminal_root);
+        // Precompute paths using the next terminal ID so we capture from the first byte
         let predicted_terminal_id = self.terminal_manager.next_terminal_id();
         let log_path =
-            std::env::temp_dir().join(format!("fresh-terminal-{}.log", predicted_terminal_id.0));
+            terminal_root.join(format!("fresh-terminal-{}.log", predicted_terminal_id.0));
+        let backing_path =
+            terminal_root.join(format!("fresh-terminal-{}.txt", predicted_terminal_id.0));
+        // Stash backing path now so buffer creation can reuse it
+        self.terminal_backing_files
+            .insert(predicted_terminal_id, backing_path);
 
         // Spawn terminal
         match self.terminal_manager.spawn(
@@ -35,10 +43,23 @@ impl Editor {
         ) {
             Ok(terminal_id) => {
                 // Track log file path (use actual ID in case it differs)
-                self.terminal_log_files.insert(terminal_id, log_path);
+                let actual_log_path = log_path.clone();
+                self.terminal_log_files
+                    .insert(terminal_id, actual_log_path.clone());
+                // If predicted differs, move backing path entry
+                if terminal_id != predicted_terminal_id {
+                    self.terminal_backing_files.remove(&predicted_terminal_id);
+                    let backing_path =
+                        terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0));
+                    self.terminal_backing_files
+                        .insert(terminal_id, backing_path);
+                }
 
                 // Create a buffer for this terminal
-                let buffer_id = self.create_terminal_buffer(terminal_id);
+                let buffer_id = self.create_terminal_buffer_attached(
+                    terminal_id,
+                    self.split_manager.active_split(),
+                );
 
                 // Switch to the terminal buffer
                 self.set_active_buffer(buffer_id);
@@ -65,16 +86,27 @@ impl Editor {
     }
 
     /// Create a buffer for a terminal session
-    fn create_terminal_buffer(&mut self, terminal_id: TerminalId) -> BufferId {
+    fn create_terminal_buffer_attached(
+        &mut self,
+        terminal_id: TerminalId,
+        split_id: crate::model::event::SplitId,
+    ) -> BufferId {
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
 
         // Get config values
         let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
 
-        // Rendered backing file for scrollback view
-        let backing_file =
-            std::env::temp_dir().join(format!("fresh-terminal-{}.txt", terminal_id.0));
+        // Rendered backing file for scrollback view (reuse if already recorded)
+        let backing_file = self
+            .terminal_backing_files
+            .get(&terminal_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                let root = self.dir_context.terminal_dir_for(&self.working_dir);
+                let _ = std::fs::create_dir_all(&root);
+                root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
+            });
 
         // Ensure the file exists
         if let Err(e) = std::fs::write(&backing_file, "") {
@@ -113,12 +145,57 @@ impl Editor {
             .insert(buffer_id, crate::model::event::EventLog::new());
 
         // Set up split view state
-        let active_split = self.split_manager.active_split();
-        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+        if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
             view_state.open_buffers.push(buffer_id);
             // Terminal buffers should not wrap lines so escape sequences stay intact
             view_state.viewport.line_wrap_enabled = false;
         }
+
+        buffer_id
+    }
+
+    /// Create a terminal buffer without attaching it to any split (used during session restore).
+    pub(crate) fn create_terminal_buffer_detached(&mut self, terminal_id: TerminalId) -> BufferId {
+        let buffer_id = BufferId(self.next_buffer_id);
+        self.next_buffer_id += 1;
+
+        // Get config values
+        let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
+
+        let backing_file = self
+            .terminal_backing_files
+            .get(&terminal_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                let root = self.dir_context.terminal_dir_for(&self.working_dir);
+                let _ = std::fs::create_dir_all(&root);
+                root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
+            });
+
+        // Ensure the file exists
+        if let Err(e) = std::fs::write(&backing_file, "") {
+            tracing::warn!("Failed to create terminal backing file: {}", e);
+        }
+
+        // Create editor state with the backing file
+        let mut state = EditorState::new(
+            self.terminal_width,
+            self.terminal_height,
+            large_file_threshold,
+        );
+        state.buffer.set_file_path(backing_file.clone());
+        state.margins.set_line_numbers(false);
+        self.buffers.insert(buffer_id, state);
+
+        let metadata = BufferMetadata::virtual_buffer(
+            format!("*Terminal {}*", terminal_id.0),
+            "terminal".into(),
+            false,
+        );
+        self.buffer_metadata.insert(buffer_id, metadata);
+        self.terminal_buffers.insert(buffer_id, terminal_id);
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
 
         buffer_id
     }

@@ -47,6 +47,10 @@ pub struct TerminalHandle {
     /// Current dimensions
     cols: u16,
     rows: u16,
+    /// Working directory used for the terminal
+    cwd: Option<std::path::PathBuf>,
+    /// Shell executable used to spawn the terminal
+    shell: String,
 }
 
 impl TerminalHandle {
@@ -81,6 +85,16 @@ impl TerminalHandle {
     /// Get current dimensions
     pub fn size(&self) -> (u16, u16) {
         (self.cols, self.rows)
+    }
+
+    /// Get the working directory configured for the terminal
+    pub fn cwd(&self) -> Option<std::path::PathBuf> {
+        self.cwd.clone()
+    }
+
+    /// Get the shell executable path used for this terminal
+    pub fn shell(&self) -> &str {
+        &self.shell
     }
 }
 
@@ -290,6 +304,8 @@ impl TerminalManager {
                 alive,
                 cols,
                 rows,
+                cwd: cwd.clone(),
+                shell,
             })
         })();
 
@@ -371,7 +387,7 @@ impl Drop for TerminalManager {
 }
 
 /// Detect the user's shell
-fn detect_shell() -> String {
+pub fn detect_shell() -> String {
     // Try $SHELL environment variable first
     if let Ok(shell) = std::env::var("SHELL") {
         if !shell.is_empty() {

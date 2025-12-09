@@ -71,6 +71,10 @@ pub struct Session {
     #[serde(default)]
     pub bookmarks: HashMap<char, SerializedBookmark>,
 
+    /// Open terminal sessions (for restoration)
+    #[serde(default)]
+    pub terminals: Vec<SerializedTerminalSession>,
+
     /// Timestamp when session was saved (Unix epoch seconds)
     pub saved_at: u64,
 }
@@ -81,6 +85,10 @@ pub enum SerializedSplitNode {
     Leaf {
         /// File path relative to working_dir (None for scratch buffers)
         file_path: Option<PathBuf>,
+        split_id: usize,
+    },
+    Terminal {
+        terminal_index: usize,
         split_id: usize,
     },
     Split {
@@ -101,10 +109,21 @@ pub enum SerializedSplitDirection {
 /// Per-split view state
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedSplitViewState {
+    /// Open tabs in tab order (files or terminals)
+    #[serde(default)]
+    pub open_tabs: Vec<SerializedTabRef>,
+
+    /// Active tab index in open_tabs (if present)
+    #[serde(default)]
+    pub active_tab_index: Option<usize>,
+
     /// Open files in tab order (paths relative to working_dir)
+    /// Deprecated; retained for backward compatibility.
+    #[serde(default)]
     pub open_files: Vec<PathBuf>,
 
     /// Active file index in open_files
+    #[serde(default)]
     pub active_file_index: usize,
 
     /// Per-file cursor and scroll state
@@ -247,6 +266,25 @@ pub struct SerializedBookmark {
     pub position: usize,
 }
 
+/// Reference to an open tab (file path or terminal index)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SerializedTabRef {
+    File(PathBuf),
+    Terminal(usize),
+}
+
+/// Persisted metadata for a terminal session
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedTerminalSession {
+    pub terminal_index: usize,
+    pub cwd: Option<PathBuf>,
+    pub shell: String,
+    pub cols: u16,
+    pub rows: u16,
+    pub log_path: PathBuf,
+    pub backing_path: PathBuf,
+}
+
 // ============================================================================
 // Session file management
 // ============================================================================
@@ -263,7 +301,7 @@ pub fn get_sessions_dir() -> io::Result<PathBuf> {
 /// Percent-encodes other special characters as %XX.
 ///
 /// Example: `/home/user/my project` -> `home_user_my%20project`
-fn encode_path_for_filename(path: &Path) -> String {
+pub fn encode_path_for_filename(path: &Path) -> String {
     let path_str = path.to_string_lossy();
     let mut result = String::with_capacity(path_str.len() * 2);
 
@@ -525,6 +563,7 @@ impl Session {
             histories: SessionHistories::default(),
             search_options: SearchOptions::default(),
             bookmarks: HashMap::new(),
+            terminals: Vec::new(),
             saved_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
@@ -763,6 +802,11 @@ mod tests {
         session.split_states.insert(
             1,
             SerializedSplitViewState {
+                open_tabs: vec![
+                    SerializedTabRef::File(PathBuf::from("README.md")),
+                    SerializedTabRef::File(PathBuf::from("src/lib.rs")),
+                ],
+                active_tab_index: Some(0),
                 open_files: vec![PathBuf::from("README.md"), PathBuf::from("src/lib.rs")],
                 active_file_index: 0,
                 file_states: HashMap::new(),
