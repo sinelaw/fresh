@@ -245,43 +245,18 @@ impl Editor {
     /// Sync terminal content to the text buffer for read-only viewing/selection
     pub fn sync_terminal_to_buffer(&mut self, buffer_id: BufferId) {
         if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
-            // Get the backing (rendered) file path and raw log path
+            // Get the backing (rendered) file path
             let backing_file = match self.terminal_backing_files.get(&terminal_id) {
                 Some(path) => path.clone(),
                 None => return,
             };
-            let log_file = self.terminal_log_files.get(&terminal_id).cloned();
 
-            // Render content either from the raw log (preferred) or the live emulator state
-            let content = if let (Some(log_path), Some(handle)) =
-                (log_file, self.terminal_manager.get(terminal_id))
-            {
-                // Replay the raw log through a fresh terminal state to capture full history
-                let (cols, rows) = handle.size();
-                let mut state = crate::services::terminal::TerminalState::new(cols, rows);
-                if let Ok(mut file) = std::fs::File::open(&log_path) {
-                    use std::io::Read;
-                    let mut buf = [0u8; 4096];
-                    while let Ok(n) = file.read(&mut buf) {
-                        if n == 0 {
-                            break;
-                        }
-                        state.process_output(&buf[..n]);
-                    }
-                    Some(state.full_content_string())
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-            .or_else(|| {
-                // Fallback: use current emulator state
-                self.terminal_manager
-                    .get(terminal_id)
-                    .and_then(|handle| handle.state.lock().ok())
-                    .map(|state| state.full_content_string())
-            });
+            // Render content from the live emulator state
+            let content = self
+                .terminal_manager
+                .get(terminal_id)
+                .and_then(|handle| handle.state.lock().ok())
+                .map(|state| state.full_content_string());
 
             // Write rendered content to the backing file if we have it
             if let Some(content) = content {
