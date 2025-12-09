@@ -2570,11 +2570,38 @@ impl Editor {
     ///
     /// Use this instead of calling set_active_split directly when switching focus.
     pub(super) fn focus_split(&mut self, split_id: crate::model::event::SplitId, buffer_id: BufferId) {
-        // Update split manager to focus this split
-        self.split_manager.set_active_split(split_id);
+        let previous_split = self.split_manager.active_split();
+        let previous_buffer = self.active_buffer(); // Get BEFORE changing split
+        let split_changed = previous_split != split_id;
 
-        // Use set_active_buffer to properly handle buffer switching (includes terminal mode resume)
-        self.set_active_buffer(buffer_id);
+        if split_changed {
+            // Switching to a different split - exit terminal mode if active,
+            // but DON'T use set_active_buffer (which would add to resume set)
+            if self.terminal_mode && self.is_terminal_buffer(previous_buffer) {
+                self.terminal_mode = false;
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
+                // Don't add to resume set - user explicitly clicked on another split
+            }
+
+            // Update split manager to focus this split
+            self.split_manager.set_active_split(split_id);
+
+            // Update the buffer in the new split
+            self.split_manager.set_active_buffer_id(buffer_id);
+
+            // Handle buffer change side effects
+            if previous_buffer != buffer_id {
+                self.position_history.commit_pending_movement();
+                if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                    view_state.add_buffer(buffer_id);
+                    view_state.previous_buffer = Some(previous_buffer);
+                }
+                self.sync_file_explorer_to_active_file();
+            }
+        } else {
+            // Same split, different buffer (tab switch) - use set_active_buffer for terminal resume
+            self.set_active_buffer(buffer_id);
+        }
     }
 
     /// Get the currently active buffer state
