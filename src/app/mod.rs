@@ -2102,18 +2102,30 @@ impl Editor {
 
     /// Switch to next split
     pub fn next_split(&mut self) {
-        self.save_current_split_view_state();
-        self.split_manager.next_split();
-        self.restore_current_split_view_state();
+        self.switch_split(true);
         self.set_status_message("Switched to next split".to_string());
     }
 
     /// Switch to previous split
     pub fn prev_split(&mut self) {
-        self.save_current_split_view_state();
-        self.split_manager.prev_split();
-        self.restore_current_split_view_state();
+        self.switch_split(false);
         self.set_status_message("Switched to previous split".to_string());
+    }
+
+    /// Common split switching logic
+    fn switch_split(&mut self, next: bool) {
+        self.save_current_split_view_state();
+        if next {
+            self.split_manager.next_split();
+        } else {
+            self.split_manager.prev_split();
+        }
+        self.restore_current_split_view_state();
+        // Enter terminal mode if switching to a terminal split
+        if self.is_terminal_buffer(self.active_buffer()) {
+            self.terminal_mode = true;
+            self.key_context = crate::input::keybindings::KeyContext::Terminal;
+        }
     }
 
     /// Save the current split's cursor state (viewport is owned by SplitViewState)
