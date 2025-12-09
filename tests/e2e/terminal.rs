@@ -443,15 +443,15 @@ fn test_terminal_buffer_sync_on_exit() {
     harness.editor_mut().open_terminal();
     let buffer_id = harness.editor().active_buffer_id();
 
-    // Write some content to the terminal
-    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
-    if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
-        if let Ok(mut state) = handle.state.lock() {
-            state.process_output(b"Hello Terminal World\r\n");
-            state.process_output(b"Line 2\r\n");
-            state.process_output(b"Line 3\r\n");
-        }
-    }
+    // Send commands to the shell to generate output
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo 'SYNC_TEST_MARKER'\n");
+
+    // Wait for the output to appear on screen
+    harness
+        .wait_until(|h| h.screen_to_string().contains("SYNC_TEST_MARKER"))
+        .unwrap();
 
     // Exit terminal mode
     harness
@@ -468,8 +468,9 @@ fn test_terminal_buffer_sync_on_exit() {
 
     let content = buffer_content.unwrap();
     assert!(
-        content.contains("Hello") || content.contains("Terminal"),
-        "Buffer should contain terminal output"
+        content.contains("SYNC_TEST_MARKER"),
+        "Buffer should contain terminal output, got: {}",
+        &content[..content.len().min(200)]
     );
 }
 
@@ -721,24 +722,29 @@ fn test_bug_keybindings_work_in_readonly_mode() {
 fn test_bug_view_scrolls_to_cursor_on_resume() {
     let mut harness = harness_or_return!(80, 24);
 
-    // Open a terminal and generate lots of output
+    // Open a terminal
     harness.editor_mut().open_terminal();
-    let buffer_id = harness.editor().active_buffer_id();
 
-    // Write many lines to terminal (more than visible area)
-    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
-    if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
-        if let Ok(mut state) = handle.state.lock() {
-            for i in 1..=100 {
-                state.process_output(format!("Line {}\r\n", i).as_bytes());
-            }
-            // Add a unique prompt at the end that we can search for
-            state.process_output(b"PROMPT_MARKER_XYZ$ ");
-        }
-    }
+    // Generate lots of output via shell command (more than visible area)
+    // Use printf to generate numbered lines
+    harness
+        .editor_mut()
+        .send_terminal_input(b"for i in $(seq 1 100); do echo \"Line $i\"; done\n");
 
-    // Render to ensure terminal content is displayed
-    harness.render().unwrap();
+    // Wait for the last line to appear
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Line 100"))
+        .unwrap();
+
+    // Add a unique marker at the prompt that we can search for
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo 'PROMPT_MARKER_XYZ'\n");
+
+    // Wait for the marker to appear
+    harness
+        .wait_until(|h| h.screen_to_string().contains("PROMPT_MARKER_XYZ"))
+        .unwrap();
 
     // In terminal mode, we should see the prompt marker (bottom of terminal)
     harness.assert_screen_contains("PROMPT_MARKER_XYZ");
