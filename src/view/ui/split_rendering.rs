@@ -418,6 +418,8 @@ impl SplitRenderer {
         hide_cursor: bool,
         hovered_tab: Option<(BufferId, crate::model::event::SplitId, bool)>, // (buffer_id, split_id, is_close_button)
         hovered_close_split: Option<crate::model::event::SplitId>,
+        hovered_maximize_split: Option<crate::model::event::SplitId>,
+        is_maximized: bool,
     ) -> (
         Vec<(
             crate::model::event::SplitId,
@@ -429,6 +431,7 @@ impl SplitRenderer {
         )>,
         Vec<(crate::model::event::SplitId, BufferId, u16, u16, u16, u16)>,
         Vec<(crate::model::event::SplitId, u16, u16, u16)>, // close split button areas
+        Vec<(crate::model::event::SplitId, u16, u16, u16)>, // maximize split button areas
         HashMap<crate::model::event::SplitId, Vec<ViewLineMapping>>, // view line mappings for mouse clicks
     ) {
         let _span = tracing::trace_span!("render_content").entered();
@@ -442,6 +445,7 @@ impl SplitRenderer {
         let mut split_areas = Vec::new();
         let mut all_tab_areas = Vec::new();
         let mut close_split_areas = Vec::new();
+        let mut maximize_split_areas = Vec::new();
         let mut view_line_mappings: HashMap<crate::model::event::SplitId, Vec<ViewLineMapping>> =
             HashMap::new();
 
@@ -482,20 +486,49 @@ impl SplitRenderer {
                 all_tab_areas.push((split_id, buf_id, tab_row, start_col, end_col, close_start));
             }
 
-            // Render close split button "×" at the right side of tabs row (when multiple splits)
-            if has_multiple_splits {
-                let close_x = layout.tabs_rect.x + layout.tabs_rect.width.saturating_sub(2);
-                let is_hovered = hovered_close_split == Some(split_id);
-                let close_fg = if is_hovered {
-                    theme.tab_close_hover_fg
-                } else {
-                    theme.line_number_fg
-                };
-                let close_button = Paragraph::new("×")
-                    .style(Style::default().fg(close_fg).bg(theme.tab_separator_bg));
-                let close_area = Rect::new(close_x, tab_row, 1, 1);
-                frame.render_widget(close_button, close_area);
-                close_split_areas.push((split_id, tab_row, close_x, close_x + 1));
+            // Render split control buttons at the right side of tabs row
+            // Show maximize/unmaximize button when: multiple splits exist OR we're currently maximized
+            // Show close button when: multiple splits exist AND we're not maximized
+            let show_maximize_btn = has_multiple_splits || is_maximized;
+            let show_close_btn = has_multiple_splits && !is_maximized;
+
+            if show_maximize_btn || show_close_btn {
+                // Calculate button positions from right edge
+                // Layout: [maximize] [space] [close] |
+                let mut btn_x = layout.tabs_rect.x + layout.tabs_rect.width.saturating_sub(2);
+
+                // Render close button first (rightmost) if visible
+                if show_close_btn {
+                    let is_hovered = hovered_close_split == Some(split_id);
+                    let close_fg = if is_hovered {
+                        theme.tab_close_hover_fg
+                    } else {
+                        theme.line_number_fg
+                    };
+                    let close_button = Paragraph::new("×")
+                        .style(Style::default().fg(close_fg).bg(theme.tab_separator_bg));
+                    let close_area = Rect::new(btn_x, tab_row, 1, 1);
+                    frame.render_widget(close_button, close_area);
+                    close_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
+                    btn_x = btn_x.saturating_sub(2); // Move left with 1 space for next button
+                }
+
+                // Render maximize/unmaximize button
+                if show_maximize_btn {
+                    let is_hovered = hovered_maximize_split == Some(split_id);
+                    let max_fg = if is_hovered {
+                        theme.tab_close_hover_fg
+                    } else {
+                        theme.line_number_fg
+                    };
+                    // Use □ for maximize, ⧉ for unmaximize (restore)
+                    let icon = if is_maximized { "⧉" } else { "□" };
+                    let max_button = Paragraph::new(icon)
+                        .style(Style::default().fg(max_fg).bg(theme.tab_separator_bg));
+                    let max_area = Rect::new(btn_x, tab_row, 1, 1);
+                    frame.render_widget(max_button, max_area);
+                    maximize_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
+                }
             }
 
             // Get references separately to avoid double borrow
@@ -622,6 +655,7 @@ impl SplitRenderer {
             split_areas,
             all_tab_areas,
             close_split_areas,
+            maximize_split_areas,
             view_line_mappings,
         )
     }

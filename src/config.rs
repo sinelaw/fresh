@@ -1075,6 +1075,13 @@ impl Config {
                         when: None,
                         checkbox: None,
                     },
+                    MenuItem::Action {
+                        label: "Toggle Maximize Split".to_string(),
+                        action: "toggle_maximize_split".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
                     MenuItem::Separator { separator: true },
                     MenuItem::Submenu {
                         label: "Keybinding Style".to_string(),

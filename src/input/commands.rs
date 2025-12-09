@@ -451,6 +451,14 @@ pub fn get_all_commands() -> Vec<Command> {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
         },
+        Command {
+            name: "Toggle Maximize Split".to_string(),
+            description: "Maximize or restore the current split".to_string(),
+            action: Action::ToggleMaximizeSplit,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
         // View toggles
         Command {
             name: "Toggle Line Numbers".to_string(),

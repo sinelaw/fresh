@@ -2045,6 +2045,24 @@ impl Editor {
             self.set_status_message(format!("Cannot adjust split size: {}", e));
         } else {
             self.set_status_message(format!("Adjusted split size by {:.0}%", delta * 100.0));
+            // Resize visible terminals to match new split dimensions
+            self.resize_visible_terminals();
+        }
+    }
+
+    /// Toggle maximize state for the active split
+    pub fn toggle_maximize_split(&mut self) {
+        match self.split_manager.toggle_maximize() {
+            Ok(maximized) => {
+                if maximized {
+                    self.set_status_message("Maximized split".to_string());
+                } else {
+                    self.set_status_message("Restored all splits".to_string());
+                }
+                // Resize visible terminals to match new split dimensions
+                self.resize_visible_terminals();
+            }
+            Err(e) => self.set_status_message(e),
         }
     }
 
@@ -3906,6 +3924,9 @@ impl Editor {
         for view_state in self.split_view_states.values_mut() {
             view_state.viewport.resize(width, height);
         }
+
+        // Resize visible terminal PTYs to match new dimensions
+        self.resize_visible_terminals();
     }
 
     // Prompt/Minibuffer control methods

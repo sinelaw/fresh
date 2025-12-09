@@ -291,6 +291,41 @@ impl Editor {
         }
     }
 
+    /// Resize all visible terminal PTYs to match their current split dimensions.
+    /// Call this after operations that change split layout (maximize, resize, etc.)
+    pub fn resize_visible_terminals(&mut self) {
+        // Get the content area excluding file explorer
+        let file_explorer_width = if self.file_explorer_visible {
+            (self.terminal_width as f32 * self.file_explorer_width_percent) as u16
+        } else {
+            0
+        };
+        let editor_width = self.terminal_width.saturating_sub(file_explorer_width);
+        let editor_area = ratatui::layout::Rect::new(
+            file_explorer_width,
+            1, // menu bar
+            editor_width,
+            self.terminal_height.saturating_sub(2), // menu bar + status bar
+        );
+
+        // Get visible buffers with their areas
+        let visible_buffers = self.split_manager.get_visible_buffers(editor_area);
+
+        // Resize each terminal buffer to match its split content area
+        for (_split_id, buffer_id, split_area) in visible_buffers {
+            if self.terminal_buffers.contains_key(&buffer_id) {
+                // Calculate content dimensions (accounting for tab bar and borders)
+                // Tab bar takes 1 row, and we leave 1 for scrollbar width on right
+                let content_height = split_area.height.saturating_sub(2);
+                let content_width = split_area.width.saturating_sub(2);
+
+                if content_width > 0 && content_height > 0 {
+                    self.resize_terminal(buffer_id, content_width, content_height);
+                }
+            }
+        }
+    }
+
     /// Handle terminal input when in terminal mode
     pub fn handle_terminal_key(
         &mut self,

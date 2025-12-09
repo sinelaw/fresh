@@ -1154,6 +1154,7 @@ impl Editor {
             Action::PrevSplit => self.prev_split(),
             Action::IncreaseSplitSize => self.adjust_split_size(0.05),
             Action::DecreaseSplitSize => self.adjust_split_size(-0.05),
+            Action::ToggleMaximizeSplit => self.toggle_maximize_split(),
             Action::ToggleFileExplorer => self.toggle_file_explorer(),
             Action::ToggleLineNumbers => self.toggle_line_numbers(),
             Action::ToggleMouseCapture => self.toggle_mouse_capture(),
@@ -2335,6 +2336,9 @@ impl Editor {
                 needs_render = true;
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                // Check if we were dragging a separator to trigger terminal resize
+                let was_dragging_separator = self.mouse_state.dragging_separator.is_some();
+
                 // Stop dragging and clear drag state
                 self.mouse_state.dragging_scrollbar = None;
                 self.mouse_state.drag_start_row = None;
@@ -2348,6 +2352,12 @@ impl Editor {
                 self.mouse_state.dragging_text_selection = false;
                 self.mouse_state.drag_selection_split = None;
                 self.mouse_state.drag_selection_anchor = None;
+
+                // If we finished dragging a separator, resize visible terminals
+                if was_dragging_separator {
+                    self.resize_visible_terminals();
+                }
+
                 needs_render = true;
             }
             MouseEventKind::Moved => {
@@ -2641,10 +2651,16 @@ impl Editor {
         }
 
         // Check tab areas using cached hit regions (computed during rendering)
-        // Check close split buttons first (they're on top of the tab row)
+        // Check split control buttons first (they're on top of the tab row)
         for (split_id, btn_row, start_col, end_col) in &self.cached_layout.close_split_areas {
             if row == *btn_row && col >= *start_col && col < *end_col {
                 return Some(HoverTarget::CloseSplitButton(*split_id));
+            }
+        }
+
+        for (split_id, btn_row, start_col, end_col) in &self.cached_layout.maximize_split_areas {
+            if row == *btn_row && col >= *start_col && col < *end_col {
+                return Some(HoverTarget::MaximizeSplitButton(*split_id));
             }
         }
 
@@ -2949,6 +2965,31 @@ impl Editor {
                     self.set_active_buffer(buffer_id);
                 }
                 self.set_status_message("Split closed".to_string());
+            }
+            return Ok(());
+        }
+
+        // Check if click is on a maximize split button
+        let maximize_split_click = self
+            .cached_layout
+            .maximize_split_areas
+            .iter()
+            .find(|(_, btn_row, start_col, end_col)| {
+                row == *btn_row && col >= *start_col && col < *end_col
+            })
+            .map(|(split_id, _, _, _)| *split_id);
+
+        if let Some(_split_id) = maximize_split_click {
+            // Toggle maximize state
+            match self.split_manager.toggle_maximize() {
+                Ok(maximized) => {
+                    if maximized {
+                        self.set_status_message("Maximized split".to_string());
+                    } else {
+                        self.set_status_message("Restored all splits".to_string());
+                    }
+                }
+                Err(e) => self.set_status_message(e),
             }
             return Ok(());
         }

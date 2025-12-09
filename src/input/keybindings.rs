@@ -358,6 +358,7 @@ pub enum Action {
     PrevSplit,
     IncreaseSplitSize,
     DecreaseSplitSize,
+    ToggleMaximizeSplit,
 
     // Prompt mode actions
     PromptConfirm,
@@ -645,6 +646,7 @@ impl Action {
             "prev_split" => Some(Action::PrevSplit),
             "increase_split_size" => Some(Action::IncreaseSplitSize),
             "decrease_split_size" => Some(Action::DecreaseSplitSize),
+            "toggle_maximize_split" => Some(Action::ToggleMaximizeSplit),
 
             "prompt_confirm" => Some(Action::PromptConfirm),
             "prompt_cancel" => Some(Action::PromptCancel),
@@ -1468,6 +1470,7 @@ impl KeybindingResolver {
             Action::PrevSplit => "Previous split".to_string(),
             Action::IncreaseSplitSize => "Increase split size".to_string(),
             Action::DecreaseSplitSize => "Decrease split size".to_string(),
+            Action::ToggleMaximizeSplit => "Toggle maximize split".to_string(),
             Action::PromptConfirm => "Confirm prompt".to_string(),
             Action::PromptCancel => "Cancel prompt".to_string(),
             Action::PromptBackspace => "Prompt backspace".to_string(),

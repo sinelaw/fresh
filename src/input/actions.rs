@@ -1619,6 +1619,7 @@ pub fn action_to_events(
         | Action::SetComposeWidth
         | Action::IncreaseSplitSize
         | Action::DecreaseSplitSize
+        | Action::ToggleMaximizeSplit
         | Action::Undo
         | Action::Redo
         | Action::GoToMatchingBracket

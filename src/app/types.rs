@@ -297,6 +297,8 @@ pub enum HoverTarget {
     TabCloseButton(BufferId, SplitId),
     /// Hovering over a close split button (split_id)
     CloseSplitButton(SplitId),
+    /// Hovering over a maximize/unmaximize split button (split_id)
+    MaximizeSplitButton(SplitId),
     /// Hovering over the file explorer close button
     FileExplorerCloseButton,
 }
@@ -376,6 +378,9 @@ pub(super) struct CachedLayout {
     /// Close split button hit areas
     /// (split_id, row, start_col, end_col)
     pub close_split_areas: Vec<(SplitId, u16, u16, u16)>,
+    /// Maximize split button hit areas
+    /// (split_id, row, start_col, end_col)
+    pub maximize_split_areas: Vec<(SplitId, u16, u16, u16)>,
     /// View line mappings for accurate mouse click positioning per split
     /// Maps visual row index to character position mappings
     /// Used to translate screen coordinates to buffer byte positions

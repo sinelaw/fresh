@@ -445,6 +445,9 @@ pub struct SplitManager {
 
     /// Next split ID to assign
     next_split_id: usize,
+
+    /// Currently maximized split (if any). When set, only this split is visible.
+    maximized_split: Option<SplitId>,
 }
 
 impl SplitManager {
@@ -455,6 +458,7 @@ impl SplitManager {
             root: SplitNode::leaf(buffer_id, split_id),
             active_split: split_id,
             next_split_id: 1,
+            maximized_split: None,
         }
     }
 
@@ -607,6 +611,11 @@ impl SplitManager {
             return Err("Cannot close the only split".to_string());
         }
 
+        // If the split being closed is maximized, unmaximize first
+        if self.maximized_split == Some(split_id) {
+            self.maximized_split = None;
+        }
+
         // Find the parent of the split to close
         // This requires a parent-tracking traversal
         let result = self.remove_split_node(split_id);
@@ -677,12 +686,25 @@ impl SplitManager {
 
     /// Get all visible buffer views with their rectangles
     pub fn get_visible_buffers(&self, viewport_rect: Rect) -> Vec<(SplitId, BufferId, Rect)> {
+        // If a split is maximized, only show that split taking up the full viewport
+        if let Some(maximized_id) = self.maximized_split {
+            if let Some(node) = self.root.find(maximized_id) {
+                if let Some(buffer_id) = node.buffer_id() {
+                    return vec![(maximized_id, buffer_id, viewport_rect)];
+                }
+            }
+            // Maximized split no longer exists, clear it and fall through
+        }
         self.root.get_leaves_with_rects(viewport_rect)
     }
 
     /// Get all split separator positions for rendering borders
     /// Returns (direction, x, y, length) tuples
     pub fn get_separators(&self, viewport_rect: Rect) -> Vec<(SplitDirection, u16, u16, u16)> {
+        // No separators when a split is maximized
+        if self.maximized_split.is_some() {
+            return vec![];
+        }
         self.root.get_separators(viewport_rect)
     }
 
@@ -692,6 +714,10 @@ impl SplitManager {
         &self,
         viewport_rect: Rect,
     ) -> Vec<(SplitId, SplitDirection, u16, u16, u16)> {
+        // No separators when a split is maximized
+        if self.maximized_split.is_some() {
+            return vec![];
+        }
         self.root.get_separators_with_ids(viewport_rect)
     }
 
@@ -801,6 +827,58 @@ impl SplitManager {
             .into_iter()
             .find(|(split_id, _, _)| *split_id == target_split_id)
             .map(|(_, buffer_id, _)| buffer_id)
+    }
+
+    /// Maximize the active split (hide all other splits temporarily)
+    /// Returns Ok(()) if successful, Err if there's only one split
+    pub fn maximize_split(&mut self) -> Result<(), String> {
+        // Can't maximize if there's only one split
+        if self.root.count_leaves() <= 1 {
+            return Err("Cannot maximize: only one split exists".to_string());
+        }
+
+        // Can't maximize if already maximized
+        if self.maximized_split.is_some() {
+            return Err("A split is already maximized".to_string());
+        }
+
+        // Maximize the active split
+        self.maximized_split = Some(self.active_split);
+        Ok(())
+    }
+
+    /// Unmaximize the currently maximized split (restore all splits)
+    /// Returns Ok(()) if successful, Err if no split is maximized
+    pub fn unmaximize_split(&mut self) -> Result<(), String> {
+        if self.maximized_split.is_none() {
+            return Err("No split is maximized".to_string());
+        }
+
+        self.maximized_split = None;
+        Ok(())
+    }
+
+    /// Check if a split is currently maximized
+    pub fn is_maximized(&self) -> bool {
+        self.maximized_split.is_some()
+    }
+
+    /// Get the currently maximized split ID (if any)
+    pub fn maximized_split(&self) -> Option<SplitId> {
+        self.maximized_split
+    }
+
+    /// Toggle maximize state for the active split
+    /// If maximized, unmaximize. If not maximized, maximize.
+    /// Returns true if maximized, false if unmaximized.
+    pub fn toggle_maximize(&mut self) -> Result<bool, String> {
+        if self.is_maximized() {
+            self.unmaximize_split()?;
+            Ok(false)
+        } else {
+            self.maximize_split()?;
+            Ok(true)
+        }
     }
 }
 

@@ -283,7 +283,15 @@ impl Editor {
             _ => None,
         };
 
-        let (split_areas, tab_areas, close_split_areas, view_line_mappings) =
+        // Get hovered maximize split button
+        let hovered_maximize_split = match &self.mouse_state.hover_target {
+            Some(HoverTarget::MaximizeSplitButton(split_id)) => Some(*split_id),
+            _ => None,
+        };
+
+        let is_maximized = self.split_manager.is_maximized();
+
+        let (split_areas, tab_areas, close_split_areas, maximize_split_areas, view_line_mappings) =
             SplitRenderer::render_content(
                 frame,
                 editor_content_area,
@@ -303,6 +311,8 @@ impl Editor {
                 hide_cursor,
                 hovered_tab,
                 hovered_close_split,
+                hovered_maximize_split,
+                is_maximized,
             );
 
         // Render terminal content on top of split content for terminal buffers
@@ -311,6 +321,7 @@ impl Editor {
         self.cached_layout.split_areas = split_areas;
         self.cached_layout.tab_areas = tab_areas;
         self.cached_layout.close_split_areas = close_split_areas;
+        self.cached_layout.maximize_split_areas = maximize_split_areas;
         self.cached_layout.view_line_mappings = view_line_mappings;
         self.cached_layout.separator_areas = self
             .split_manager
