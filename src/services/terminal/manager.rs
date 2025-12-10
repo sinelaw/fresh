@@ -194,6 +194,18 @@ impl TerminalManager {
             // Create terminal state
             let state = Arc::new(Mutex::new(TerminalState::new(cols, rows)));
 
+            // Initialize backing_file_history_end if backing file already exists (session restore)
+            // This ensures enter_terminal_mode doesn't truncate existing history to 0
+            if let Some(ref p) = backing_path {
+                if let Ok(metadata) = std::fs::metadata(p) {
+                    if metadata.len() > 0 {
+                        if let Ok(mut s) = state.lock() {
+                            s.set_backing_file_history_end(metadata.len());
+                        }
+                    }
+                }
+            }
+
             // Create communication channel
             let (command_tx, command_rx) = mpsc::channel::<TerminalCommand>();
 
@@ -230,8 +242,8 @@ impl TerminalManager {
 
             // Backing file writer for incremental scrollback streaming
             // During session restore, the backing file may already contain scrollback content.
-            // In that case, we don't want to truncate it - the existing content will be loaded
-            // separately into the buffer. For new terminals, we start fresh with truncate.
+            // We open for append to continue streaming new scrollback after the existing content.
+            // For new terminals, append mode also works (creates file if needed).
             let mut backing_writer = backing_path
                 .as_ref()
                 .and_then(|p| {
@@ -240,10 +252,14 @@ impl TerminalManager {
                         p.exists() && std::fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false);
 
                     if existing_has_content {
-                        // Session restore: don't open for writing yet.
-                        // The existing content will be loaded into the buffer.
-                        // When user re-enters terminal mode, the file will be truncated then.
-                        None
+                        // Session restore: open for append to continue streaming new scrollback
+                        // The existing content is preserved and loaded into buffer separately.
+                        // Note: enter_terminal_mode will truncate when user re-enters terminal.
+                        std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(p)
+                            .ok()
                     } else {
                         // New terminal: start fresh with truncate
                         std::fs::OpenOptions::new()

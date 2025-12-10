@@ -2202,6 +2202,194 @@ fn test_session_restore_terminal_scrollback() {
     }
 }
 
+/// Test that NEW scrollback generated after session restore is captured.
+///
+/// This reproduces a bug where `backing_writer` is set to None when the backing file
+/// already exists (from the first session), causing all new scrollback to be lost.
+///
+/// The test:
+/// 1. First session: create terminal, generate scrollback with FIRST_MARKER, save
+/// 2. Second session: restore, generate NEW scrollback with SECOND_MARKER
+/// 3. Verify SECOND_MARKER appears in scrollback (proves new content is captured)
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_scrollback_captured_after_session_restore() {
+    use fresh::config::{Config, DirectoryContext};
+    use portable_pty::{native_pty_system, PtySize};
+    use tempfile::TempDir;
+
+    // Skip if PTY not available
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal session test: PTY not available");
+        return;
+    }
+
+    // Create temp directories that persist across both sessions
+    let data_temp_dir = TempDir::new().unwrap();
+    let project_temp_dir = TempDir::new().unwrap();
+    let project_dir = project_temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    // Create a shared DirectoryContext that both sessions will use
+    let dir_context = DirectoryContext::for_testing(data_temp_dir.path());
+
+    let backing_path_for_check: std::path::PathBuf;
+
+    // First session: open terminal and generate scrollback content
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Open a terminal
+        harness.editor_mut().open_terminal();
+        harness.render().unwrap();
+        assert!(harness.editor().is_terminal_mode());
+
+        // Generate scrollback content with FIRST marker
+        harness
+            .editor_mut()
+            .send_terminal_input(b"echo 'FIRST_SESSION_MARKER_AAA'\n");
+
+        // Wait for the marker to appear
+        let result =
+            harness.wait_until(|h| h.screen_to_string().contains("FIRST_SESSION_MARKER_AAA"));
+        assert!(
+            result.is_ok(),
+            "Terminal should show first marker. Screen:\n{}",
+            harness.screen_to_string()
+        );
+
+        // Exit terminal mode to sync content to backing file
+        harness
+            .editor_mut()
+            .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+        assert!(!harness.editor().is_terminal_mode());
+
+        // Save session
+        harness.editor_mut().save_session().unwrap();
+
+        // Get the backing file path for later verification
+        let buffer_id = harness.editor().active_buffer_id();
+        let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+        backing_path_for_check = harness
+            .editor()
+            .terminal_backing_files()
+            .get(&terminal_id)
+            .cloned()
+            .unwrap();
+
+        // Verify backing file has first marker
+        let backing_content = std::fs::read_to_string(&backing_path_for_check).unwrap_or_default();
+        assert!(
+            backing_content.contains("FIRST_SESSION_MARKER_AAA"),
+            "Backing file should contain first marker after save"
+        );
+    }
+
+    // Second session: restore and generate NEW scrollback
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Restore session
+        let restored = harness.editor_mut().try_restore_session().unwrap();
+        assert!(restored, "Session should have been restored");
+        harness.render().unwrap();
+
+        // Re-enter terminal mode to interact with the restored terminal
+        let buffer_id = harness.editor().active_buffer_id();
+        if !harness.editor().is_terminal_mode() {
+            harness
+                .editor_mut()
+                .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+                .unwrap();
+            harness.render().unwrap();
+        }
+        assert!(
+            harness.editor().is_terminal_mode(),
+            "Should be in terminal mode"
+        );
+
+        // Generate enough output to push content into scrollback
+        // Use many lines to ensure SECOND_MARKER gets pushed into scrollback history
+        harness
+            .editor_mut()
+            .send_terminal_input(b"echo 'SECOND_SESSION_MARKER_BBB'\n");
+
+        harness
+            .wait_until(|h| h.screen_to_string().contains("SECOND_SESSION_MARKER_BBB"))
+            .unwrap();
+
+        // Generate more output to push SECOND_MARKER into scrollback
+        harness
+            .editor_mut()
+            .send_terminal_input(b"for i in $(seq 1 50); do echo \"Post-restore line $i\"; done\n");
+
+        harness
+            .wait_until(|h| h.screen_to_string().contains("Post-restore line 50"))
+            .unwrap();
+
+        // Disable jump_to_end_on_output so we can stay in scrollback mode
+        harness
+            .editor_mut()
+            .set_terminal_jump_to_end_on_output(false);
+
+        // Exit terminal mode to enter scrollback view
+        harness
+            .editor_mut()
+            .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Get the full buffer content
+        let content = harness
+            .editor()
+            .get_buffer_content(buffer_id)
+            .unwrap_or_default();
+
+        // CRITICAL: The SECOND marker should be in the scrollback
+        // This fails if backing_writer was None after restore
+        assert!(
+            content.contains("SECOND_SESSION_MARKER_BBB"),
+            "BUG: Scrollback should contain SECOND marker (generated after restore).\n\
+             This fails if backing_writer is None for restored sessions.\n\
+             Content length: {}\nContent:\n{}",
+            content.len(),
+            &content[..content.len().min(2000)]
+        );
+
+        // Also verify first marker is still there
+        assert!(
+            content.contains("FIRST_SESSION_MARKER_AAA"),
+            "Scrollback should still contain FIRST marker from original session.\nContent:\n{}",
+            &content[..content.len().min(2000)]
+        );
+    }
+}
+
 /// Test that scrollback content is stable and accessible after repeated mode toggles.
 ///
 /// This test verifies:
@@ -2221,6 +2409,12 @@ fn test_scrollback_stable_after_multiple_mode_toggles() {
     harness.editor_mut().open_terminal();
     harness.render().unwrap();
     assert!(harness.editor().is_terminal_mode());
+
+    // Disable jump_to_end_on_output so we can stay in scrollback mode
+    // while the shell may still be producing output
+    harness
+        .editor_mut()
+        .set_terminal_jump_to_end_on_output(false);
 
     let buffer_id = harness.editor().active_buffer_id();
 
