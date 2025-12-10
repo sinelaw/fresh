@@ -4855,6 +4855,15 @@ impl Editor {
                             }
                         }
                     }
+
+                    // When in terminal mode, ensure display stays at bottom (follows new output)
+                    if self.terminal_mode {
+                        if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                            if let Ok(mut state) = handle.state.lock() {
+                                state.scroll_to_bottom();
+                            }
+                        }
+                    }
                 }
                 AsyncMessage::TerminalExited { terminal_id } => {
                     tracing::info!("Terminal {:?} exited", terminal_id);
