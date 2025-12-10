@@ -23,6 +23,7 @@ pub mod merge_conflict;
 pub mod mouse;
 pub mod movement;
 pub mod multicursor;
+pub mod open_folder;
 #[cfg(feature = "plugins")]
 pub mod plugins;
 pub mod position_history;
