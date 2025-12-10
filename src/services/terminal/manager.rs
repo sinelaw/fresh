@@ -229,15 +229,30 @@ impl TerminalManager {
                 .map(std::io::BufWriter::new);
 
             // Backing file writer for incremental scrollback streaming
+            // During session restore, the backing file may already contain scrollback content.
+            // In that case, we don't want to truncate it - the existing content will be loaded
+            // separately into the buffer. For new terminals, we start fresh with truncate.
             let mut backing_writer = backing_path
                 .as_ref()
                 .and_then(|p| {
-                    std::fs::OpenOptions::new()
-                        .create(true)
-                        .write(true)
-                        .truncate(true) // Start fresh
-                        .open(p)
-                        .ok()
+                    // Check if backing file exists and has content (session restore case)
+                    let existing_has_content = p.exists()
+                        && std::fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false);
+
+                    if existing_has_content {
+                        // Session restore: don't open for writing yet.
+                        // The existing content will be loaded into the buffer.
+                        // When user re-enters terminal mode, the file will be truncated then.
+                        None
+                    } else {
+                        // New terminal: start fresh with truncate
+                        std::fs::OpenOptions::new()
+                            .create(true)
+                            .write(true)
+                            .truncate(true)
+                            .open(p)
+                            .ok()
+                    }
                 })
                 .map(std::io::BufWriter::new);
 

@@ -197,9 +197,11 @@ impl Editor {
                 root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
             });
 
-        // Ensure the file exists
-        if let Err(e) = std::fs::write(&backing_file, "") {
-            tracing::warn!("Failed to create terminal backing file: {}", e);
+        // Create the file only if it doesn't exist (preserve existing scrollback for restore)
+        if !backing_file.exists() {
+            if let Err(e) = std::fs::write(&backing_file, "") {
+                tracing::warn!("Failed to create terminal backing file: {}", e);
+            }
         }
 
         // Create editor state with the backing file
@@ -555,6 +557,13 @@ impl Editor {
     /// Get read-only access to the terminal manager (for testing)
     pub fn terminal_manager(&self) -> &crate::services::terminal::TerminalManager {
         &self.terminal_manager
+    }
+
+    /// Get read-only access to terminal backing files map (for testing)
+    pub fn terminal_backing_files(
+        &self,
+    ) -> &std::collections::HashMap<crate::services::terminal::TerminalId, std::path::PathBuf> {
+        &self.terminal_backing_files
     }
 
     /// Get the currently active buffer ID

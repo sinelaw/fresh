@@ -2036,3 +2036,168 @@ fn test_terminal_resize_on_enter_mode() {
     );
     assert_eq!(rows1, rows2, "Terminal rows should match after re-entering");
 }
+
+/// Test that terminal scrollback content is restored when session is restored.
+///
+/// This verifies the bug where terminal scrollback was empty after session restore
+/// because create_terminal_buffer_detached was overwriting the backing file.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_session_restore_terminal_scrollback() {
+    use fresh::config::{Config, DirectoryContext};
+    use portable_pty::{native_pty_system, PtySize};
+    use tempfile::TempDir;
+
+    // Skip if PTY not available
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal session test: PTY not available");
+        return;
+    }
+
+    // Create temp directories that persist across both sessions
+    let data_temp_dir = TempDir::new().unwrap();
+    let project_temp_dir = TempDir::new().unwrap();
+    let project_dir = project_temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    // Create a shared DirectoryContext that both sessions will use
+    let dir_context = DirectoryContext::for_testing(data_temp_dir.path());
+
+    let backing_path_for_check: std::path::PathBuf;
+
+    // First session: open terminal and generate scrollback content
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Open a terminal
+        harness.editor_mut().open_terminal();
+        harness.render().unwrap();
+        assert!(harness.editor().is_terminal_mode());
+
+        // Generate unique scrollback content
+        harness
+            .editor_mut()
+            .send_terminal_input(b"echo 'SCROLLBACK_MARKER_12345'\n");
+
+        // Wait for the marker to appear
+        let result =
+            harness.wait_until(|h| h.screen_to_string().contains("SCROLLBACK_MARKER_12345"));
+        assert!(
+            result.is_ok(),
+            "Terminal should show scrollback marker. Screen:\n{}",
+            harness.screen_to_string()
+        );
+
+        // Exit terminal mode to enter scrollback view (this syncs content to backing file)
+        harness
+            .editor_mut()
+            .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+        assert!(!harness.editor().is_terminal_mode());
+
+        // Verify content is in buffer before saving
+        let buffer_id = harness.editor().active_buffer_id();
+        let content_before_save = harness.editor().get_buffer_content(buffer_id);
+        assert!(
+            content_before_save
+                .as_ref()
+                .map(|c| c.contains("SCROLLBACK_MARKER_12345"))
+                .unwrap_or(false),
+            "Buffer should contain scrollback marker before save. Content: {:?}",
+            content_before_save
+        );
+
+        // Save session
+        harness.editor_mut().save_session().unwrap();
+
+        // Get the backing file path for later verification
+        let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+        backing_path_for_check = harness
+            .editor()
+            .terminal_backing_files()
+            .get(&terminal_id)
+            .cloned()
+            .unwrap();
+
+        // Verify backing file content after save
+        let backing_content = std::fs::read_to_string(&backing_path_for_check).unwrap_or_default();
+        assert!(
+            backing_content.contains("SCROLLBACK_MARKER_12345"),
+            "Backing file should contain marker after save"
+        );
+    }
+
+    // Verify backing file still exists and has content before restore
+    let pre_restore_content = std::fs::read_to_string(&backing_path_for_check).unwrap_or_default();
+    assert!(
+        pre_restore_content.contains("SCROLLBACK_MARKER_12345"),
+        "Backing file should still contain marker before second session"
+    );
+
+    // Second session: restore and verify scrollback content is preserved
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Restore session
+        let restored = harness.editor_mut().try_restore_session().unwrap();
+        assert!(restored, "Session should have been restored");
+
+        // Verify backing file was NOT overwritten during restore
+        let post_restore_content =
+            std::fs::read_to_string(&backing_path_for_check).unwrap_or_default();
+        assert!(
+            post_restore_content.contains("SCROLLBACK_MARKER_12345"),
+            "Backing file should still contain marker after restore (must not be truncated)"
+        );
+
+        harness.render().unwrap();
+
+        // Find the terminal buffer
+        let buffer_id = harness.editor().active_buffer_id();
+        let is_terminal = harness.editor().is_terminal_buffer(buffer_id);
+
+        if is_terminal {
+            // Get buffer content - CRITICAL: The scrollback content should be restored
+            let content_after_restore = harness.editor().get_buffer_content(buffer_id);
+            assert!(
+                content_after_restore
+                    .as_ref()
+                    .map(|c| c.contains("SCROLLBACK_MARKER_12345"))
+                    .unwrap_or(false),
+                "BUG: Terminal scrollback should contain marker after restore. Content: {:?}",
+                content_after_restore
+            );
+        } else {
+            // If terminal wasn't the active buffer, the terminal tab should still exist
+            let screen = harness.screen_to_string();
+            assert!(
+                screen.contains("Terminal"),
+                "Terminal tab should be restored. Screen:\n{}",
+                screen
+            );
+        }
+    }
+}
