@@ -745,6 +745,10 @@ impl Editor {
                 self.prefill_open_file_prompt();
                 self.init_file_open_state();
             }
+            Action::OpenFolder => {
+                self.start_prompt("Open folder: ".to_string(), PromptType::OpenFolder);
+                self.init_folder_open_state();
+            }
             Action::GotoLine => self.start_prompt("Go to line: ".to_string(), PromptType::GotoLine),
             Action::New => {
                 self.new_buffer();
@@ -1700,6 +1704,23 @@ impl Editor {
                             } else {
                                 self.set_status_message(format!(
                                     "Opened {}",
+                                    resolved_path.display()
+                                ));
+                            }
+                        }
+                        PromptType::OpenFolder => {
+                            let input_path = Path::new(&input);
+                            let resolved_path = if input_path.is_absolute() {
+                                normalize_path(input_path)
+                            } else {
+                                normalize_path(&self.working_dir.join(input_path))
+                            };
+
+                            if resolved_path.is_dir() {
+                                self.change_working_dir(resolved_path);
+                            } else {
+                                self.set_status_message(format!(
+                                    "Not a directory: {}",
                                     resolved_path.display()
                                 ));
                             }

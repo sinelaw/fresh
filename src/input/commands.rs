@@ -135,6 +135,14 @@ pub fn get_all_commands() -> Vec<Command> {
             source: CommandSource::Builtin,
         },
         Command {
+            name: "Open Folder".to_string(),
+            description: "Switch to a different project folder".to_string(),
+            action: Action::OpenFolder,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
             name: "Save File".to_string(),
             description: "Save the current buffer to disk".to_string(),
             action: Action::Save,

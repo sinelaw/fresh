@@ -1,7 +1,7 @@
 //! Input handling for the file open dialog
 //!
 //! This module handles keyboard and mouse input specifically for the file
-//! browser popup when the Open File prompt is active.
+//! browser popup when the Open File or Open Folder prompt is active.
 
 use super::file_open::{FileOpenSection, SortMode};
 use super::Editor;
@@ -9,13 +9,21 @@ use crate::input::keybindings::Action;
 use crate::view::prompt::PromptType;
 
 impl Editor {
-    /// Check if the file open dialog is active
+    /// Check if the file open dialog is active (for both OpenFile and OpenFolder)
     pub fn is_file_open_active(&self) -> bool {
         self.prompt
             .as_ref()
-            .map(|p| p.prompt_type == PromptType::OpenFile)
+            .map(|p| matches!(p.prompt_type, PromptType::OpenFile | PromptType::OpenFolder))
             .unwrap_or(false)
             && self.file_open_state.is_some()
+    }
+
+    /// Check if we're in folder-only selection mode
+    fn is_folder_open_mode(&self) -> bool {
+        self.prompt
+            .as_ref()
+            .map(|p| p.prompt_type == PromptType::OpenFolder)
+            .unwrap_or(false)
     }
 
     /// Handle action for file open dialog
@@ -128,6 +136,7 @@ impl Editor {
 
     /// Confirm selection in file open dialog
     fn file_open_confirm(&mut self) {
+        let is_folder_mode = self.is_folder_open_mode();
         let prompt_input = self
             .prompt
             .as_ref()
@@ -159,10 +168,16 @@ impl Editor {
             };
 
             if expanded_path.is_dir() {
-                self.file_open_navigate_to(expanded_path);
+                if is_folder_mode {
+                    // In folder mode, selecting a directory switches to it as the project root
+                    self.file_open_select_folder(expanded_path);
+                } else {
+                    self.file_open_navigate_to(expanded_path);
+                }
                 return;
-            } else if expanded_path.is_file() {
+            } else if expanded_path.is_file() && !is_folder_mode {
                 // File exists - open it directly (handles pasted paths before async load completes)
+                // Only allowed in file mode, not folder mode
                 self.file_open_open_file(expanded_path);
                 return;
             }
@@ -174,24 +189,52 @@ impl Editor {
         let (path, is_dir) = {
             let state = match &self.file_open_state {
                 Some(s) => s,
-                None => return,
+                None => {
+                    // If no file is selected but we're in folder mode, use the current directory
+                    if is_folder_mode {
+                        self.file_open_select_folder(current_dir);
+                    }
+                    return;
+                }
             };
 
             let path = match state.get_selected_path() {
                 Some(p) => p,
-                None => return,
+                None => {
+                    // If no file is selected but we're in folder mode, use the current directory
+                    if is_folder_mode {
+                        self.file_open_select_folder(current_dir);
+                    }
+                    return;
+                }
             };
 
             (path, state.selected_is_dir())
         };
 
         if is_dir {
-            // Navigate into directory
-            self.file_open_navigate_to(path);
-        } else {
-            // Open the file
+            if is_folder_mode {
+                // In folder mode, selecting a directory switches to it as the project root
+                self.file_open_select_folder(path);
+            } else {
+                // Navigate into directory
+                self.file_open_navigate_to(path);
+            }
+        } else if !is_folder_mode {
+            // Open the file (only in file mode)
             self.file_open_open_file(path);
         }
+        // In folder mode, selecting a file does nothing
+    }
+
+    /// Select a folder as the new project root (for OpenFolder mode)
+    fn file_open_select_folder(&mut self, path: std::path::PathBuf) {
+        // Close the file browser
+        self.file_open_state = None;
+        self.prompt = None;
+
+        // Change the working directory
+        self.change_working_dir(path);
     }
 
     /// Navigate to a directory in the file browser

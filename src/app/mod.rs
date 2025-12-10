@@ -4223,7 +4223,7 @@ impl Editor {
         // Check if we need to update suggestions after creating the prompt
         let needs_suggestions = matches!(
             prompt_type,
-            PromptType::OpenFile | PromptType::SaveFileAs | PromptType::Command
+            PromptType::OpenFile | PromptType::OpenFolder | PromptType::SaveFileAs | PromptType::Command
         );
 
         self.prompt = Some(Prompt::with_suggestions(message, prompt_type, suggestions));
@@ -4331,6 +4331,52 @@ impl Editor {
         self.load_file_open_directory(initial_dir);
     }
 
+    /// Initialize the folder open dialog state
+    ///
+    /// Called when the Open Folder prompt is started. Starts from the current working
+    /// directory and triggers async directory loading.
+    fn init_folder_open_state(&mut self) {
+        // Start from the current working directory
+        let initial_dir = self.working_dir.clone();
+
+        // Create the file open state
+        self.file_open_state = Some(file_open::FileOpenState::new(initial_dir.clone()));
+
+        // Start async directory loading
+        self.load_file_open_directory(initial_dir);
+    }
+
+    /// Change the working directory to a new path
+    ///
+    /// This updates the project root, reinitializes the file explorer,
+    /// and notifies the user of the change.
+    pub fn change_working_dir(&mut self, new_path: PathBuf) {
+        // Canonicalize the path to resolve symlinks and normalize
+        let new_path = new_path.canonicalize().unwrap_or(new_path);
+
+        // Update working directory
+        let old_path = std::mem::replace(&mut self.working_dir, new_path.clone());
+
+        // Reinitialize file explorer with new root
+        self.file_explorer = None;
+        if self.file_explorer_visible {
+            self.init_file_explorer();
+        }
+
+        // Update status message
+        self.set_status_message(format!(
+            "Switched to project: {}",
+            self.working_dir.display()
+        ));
+
+        // Log the change
+        tracing::info!(
+            "Changed working directory from {} to {}",
+            old_path.display(),
+            self.working_dir.display()
+        );
+    }
+
     /// Load directory contents for the file open dialog
     fn load_file_open_directory(&mut self, path: PathBuf) {
         // Update state to loading
@@ -4420,7 +4466,7 @@ impl Editor {
                     };
                     self.apply_event_to_active_buffer(&remove_overlay_event);
                 }
-                PromptType::OpenFile => {
+                PromptType::OpenFile | PromptType::OpenFolder => {
                     // Clear file browser state
                     self.file_open_state = None;
                     self.file_browser_layout = None;
@@ -4446,6 +4492,7 @@ impl Editor {
                 prompt.prompt_type,
                 PromptType::Command
                     | PromptType::OpenFile
+                    | PromptType::OpenFolder
                     | PromptType::SaveFileAs
                     | PromptType::StopLspServer
                     | PromptType::SelectTheme
@@ -4586,8 +4633,8 @@ impl Editor {
                 // Update incremental search highlights as user types
                 self.update_search_highlights(&input);
             }
-            PromptType::OpenFile => {
-                // For OpenFile, update the file browser filter (native implementation)
+            PromptType::OpenFile | PromptType::OpenFolder => {
+                // For OpenFile/OpenFolder, update the file browser filter (native implementation)
                 self.update_file_open_filter();
             }
             PromptType::SaveFileAs => {

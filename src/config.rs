@@ -859,6 +859,13 @@ impl Config {
                         when: None,
                         checkbox: None,
                     },
+                    MenuItem::Action {
+                        label: "Open Folder...".to_string(),
+                        action: "open_folder".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
                         label: "Save".to_string(),

@@ -10,6 +10,8 @@ use crate::primitives::word_navigation::{
 pub enum PromptType {
     /// Open a file
     OpenFile,
+    /// Open a folder (switch project root)
+    OpenFolder,
     /// Save current buffer to a new file
     SaveFileAs,
     /// Search for text in buffer
