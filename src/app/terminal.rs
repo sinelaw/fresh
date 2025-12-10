@@ -411,7 +411,10 @@ impl Editor {
                         use std::io::BufWriter;
                         let mut writer = BufWriter::new(&mut file);
                         if let Err(e) = state.append_visible_screen(&mut writer) {
-                            tracing::error!("Failed to append visible screen to backing file: {}", e);
+                            tracing::error!(
+                                "Failed to append visible screen to backing file: {}",
+                                e
+                            );
                         }
                     }
                 }
@@ -483,9 +486,8 @@ impl Editor {
                         if let Ok(state) = handle.state.lock() {
                             let truncate_pos = state.backing_file_history_end();
                             if truncate_pos > 0 {
-                                if let Ok(file) = std::fs::OpenOptions::new()
-                                    .write(true)
-                                    .open(backing_path)
+                                if let Ok(file) =
+                                    std::fs::OpenOptions::new().write(true).open(backing_path)
                                 {
                                     if let Err(e) = file.set_len(truncate_pos) {
                                         tracing::warn!(

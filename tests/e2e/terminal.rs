@@ -2034,8 +2034,5 @@ fn test_terminal_resize_on_enter_mode() {
         cols1, cols2,
         "Terminal columns should match after re-entering"
     );
-    assert_eq!(
-        rows1, rows2,
-        "Terminal rows should match after re-entering"
-    );
+    assert_eq!(rows1, rows2, "Terminal rows should match after re-entering");
 }

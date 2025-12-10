@@ -521,7 +521,11 @@ pub fn get_all_commands() -> Vec<Command> {
             name: "Toggle File Explorer".to_string(),
             description: "Show or hide the file explorer".to_string(),
             action: Action::ToggleFileExplorer,
-            contexts: vec![KeyContext::Normal, KeyContext::FileExplorer, KeyContext::Terminal],
+            contexts: vec![
+                KeyContext::Normal,
+                KeyContext::FileExplorer,
+                KeyContext::Terminal,
+            ],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
         },
