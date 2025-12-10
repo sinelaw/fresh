@@ -236,8 +236,8 @@ impl TerminalManager {
                 .as_ref()
                 .and_then(|p| {
                     // Check if backing file exists and has content (session restore case)
-                    let existing_has_content = p.exists()
-                        && std::fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false);
+                    let existing_has_content =
+                        p.exists() && std::fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false);
 
                     if existing_has_content {
                         // Session restore: don't open for writing yet.

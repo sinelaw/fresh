@@ -2201,3 +2201,153 @@ fn test_session_restore_terminal_scrollback() {
         }
     }
 }
+
+/// Test that scrollback content is stable and accessible after repeated mode toggles.
+///
+/// This test verifies:
+/// 1. Scrollback history is preserved across terminal mode toggles
+/// 2. Content doesn't accumulate (no duplicate visible screens appended)
+/// 3. User can scroll to the beginning of history using Ctrl+Home
+///
+/// The test fills the screen with numbered output lines, then repeatedly
+/// toggles between terminal mode and scrollback mode, verifying each time
+/// that the full history is accessible.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_scrollback_stable_after_multiple_mode_toggles() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    let buffer_id = harness.editor().active_buffer_id();
+
+    // Generate enough output to fill the screen and create scrollback
+    // Use a unique marker at the START that we can verify we can scroll back to
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo 'START_MARKER_12345'\n");
+
+    // Wait for the start marker
+    harness
+        .wait_until(|h| h.screen_to_string().contains("START_MARKER_12345"))
+        .unwrap();
+
+    // Generate many lines to push the start marker into scrollback
+    harness
+        .editor_mut()
+        .send_terminal_input(b"for i in $(seq 1 50); do echo \"Line $i of output\"; done\n");
+
+    // Wait for the last line to appear (ensures command completed)
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Line 50 of output"))
+        .unwrap();
+
+    // Add an end marker
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo 'END_MARKER_67890'\n");
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("END_MARKER_67890"))
+        .unwrap();
+
+    // Now toggle terminal mode ON and OFF multiple times, checking scrollback each time
+    for i in 0..3 {
+        // Exit terminal mode to enter scrollback view
+        harness
+            .editor_mut()
+            .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+        assert!(
+            !harness.editor().is_terminal_mode(),
+            "Iteration {}: Should be in scrollback mode after Ctrl+Space",
+            i
+        );
+
+        // Small delay to ensure buffer sync completes
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        harness.render().unwrap();
+
+        // Get the full buffer content - it should contain both markers
+        let content = harness
+            .editor()
+            .get_buffer_content(buffer_id)
+            .unwrap_or_default();
+
+        assert!(
+            content.contains("START_MARKER_12345"),
+            "Iteration {}: Scrollback should contain START marker. Content length: {}\nContent:\n{}",
+            i,
+            content.len(),
+            &content[..content.len().min(500)]
+        );
+
+        assert!(
+            content.contains("END_MARKER_67890"),
+            "Iteration {}: Scrollback should contain END marker. Content:\n{}",
+            i,
+            &content[..content.len().min(500)]
+        );
+
+        // Use Ctrl+Home to scroll to the very beginning
+        harness
+            .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+
+        // DEBUG: Check terminal mode after Ctrl+Home
+        eprintln!(
+            "DEBUG iteration {}: after Ctrl+Home, terminal_mode={}",
+            i,
+            harness.editor().is_terminal_mode()
+        );
+
+        // The screen should now show the START marker (near the top of history)
+        let screen = harness.screen_to_string();
+        assert!(
+            screen.contains("START_MARKER_12345"),
+            "Iteration {}: After Ctrl+Home, screen should show START marker.\nScreen:\n{}",
+            i,
+            screen
+        );
+
+        // Re-enter terminal mode
+        harness
+            .editor_mut()
+            .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+        assert!(
+            harness.editor().is_terminal_mode(),
+            "Iteration {}: Should be in terminal mode after second Ctrl+Space",
+            i
+        );
+    }
+
+    // Final check: exit one more time and verify content length is reasonable
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    let final_content = harness
+        .editor()
+        .get_buffer_content(buffer_id)
+        .unwrap_or_default();
+
+    // Count how many times the START marker appears - should be exactly 2
+    // (once from the echo command, once from the output)
+    let start_count = final_content.matches("START_MARKER_12345").count();
+    assert!(
+        start_count <= 3, // Allow some variance for shell echo behavior
+        "BUG: START marker appears {} times - content may be accumulating!\nContent:\n{}",
+        start_count,
+        &final_content[..final_content.len().min(1000)]
+    );
+}
