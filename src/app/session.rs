@@ -3,9 +3,10 @@
 //! This module provides conversion between live Editor state and serialized Session data.
 
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+use crate::state::EditorState;
 
 use crate::model::event::{BufferId, SplitDirection, SplitId};
 use crate::services::terminal::TerminalId;
@@ -246,9 +247,56 @@ impl Editor {
     }
 
     /// Save the current session to disk
-    pub fn save_session(&self) -> Result<(), SessionError> {
+    ///
+    /// Ensures all active terminals have their visible screen synced to
+    /// backing files before capturing the session.
+    pub fn save_session(&mut self) -> Result<(), SessionError> {
+        // Ensure all terminal backing files have complete state before saving
+        self.sync_all_terminal_backing_files();
         let session = self.capture_session();
         session.save()
+    }
+
+    /// Sync all active terminal visible screens to their backing files.
+    ///
+    /// Called before session save to ensure backing files contain complete
+    /// terminal state (scrollback + visible screen).
+    fn sync_all_terminal_backing_files(&mut self) {
+        use std::io::BufWriter;
+
+        // Collect terminal IDs and their backing paths
+        let terminals_to_sync: Vec<_> = self
+            .terminal_buffers
+            .values()
+            .copied()
+            .filter_map(|terminal_id| {
+                self.terminal_backing_files
+                    .get(&terminal_id)
+                    .map(|path| (terminal_id, path.clone()))
+            })
+            .collect();
+
+        for (terminal_id, backing_path) in terminals_to_sync {
+            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                if let Ok(state) = handle.state.lock() {
+                    // Append visible screen to backing file
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&backing_path)
+                    {
+                        let mut writer = BufWriter::new(&mut file);
+                        if let Err(e) = state.append_visible_screen(&mut writer) {
+                            tracing::warn!(
+                                "Failed to sync terminal {:?} to backing file: {}",
+                                terminal_id,
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Try to load and apply a session for the current working directory
@@ -419,6 +467,13 @@ impl Editor {
     }
 
     /// Restore a terminal from serialized session metadata.
+    ///
+    /// Uses the incremental streaming architecture for fast restore:
+    /// 1. Load backing file directly as read-only buffer (lazy load)
+    /// 2. Skip log replay entirely - user sees last session state immediately
+    /// 3. Spawn new PTY for live terminal when user re-enters terminal mode
+    ///
+    /// Performance: O(1) for restore vs O(total_history) with log replay
     fn restore_terminal_from_session(
         &mut self,
         terminal: &SerializedTerminalSession,
@@ -450,12 +505,13 @@ impl Editor {
         self.terminal_backing_files
             .insert(predicted_id, backing_path.clone());
 
-        // Spawn the terminal
+        // Spawn the terminal with backing file for incremental scrollback
         let terminal_id = match self.terminal_manager.spawn(
             terminal.cols,
             terminal.rows,
             terminal.cwd.clone(),
             Some(log_path.clone()),
+            Some(backing_path.clone()),
         ) {
             Ok(id) => id,
             Err(e) => {
@@ -481,26 +537,41 @@ impl Editor {
         // Create buffer for this terminal
         let buffer_id = self.create_terminal_buffer_detached(terminal_id);
 
-        // Replay log into terminal emulator for immediate display
-        self.replay_terminal_log_into_state(terminal_id, &log_path);
-        // Sync rendered content to backing file/buffer
-        self.sync_terminal_to_buffer(buffer_id);
+        // Load backing file directly as read-only buffer (skip log replay)
+        // The backing file already contains complete terminal state from last session
+        self.load_terminal_backing_file_as_buffer(buffer_id, &backing_path);
 
         Some(buffer_id)
     }
 
-    fn replay_terminal_log_into_state(&self, terminal_id: TerminalId, log_path: &Path) {
-        if let Some(handle) = self.terminal_manager.get(terminal_id) {
-            if let Ok(mut state) = handle.state.lock() {
-                if let Ok(mut file) = std::fs::File::open(log_path) {
-                    let mut buf = [0u8; 4096];
-                    while let Ok(n) = file.read(&mut buf) {
-                        if n == 0 {
-                            break;
-                        }
-                        state.process_output(&buf[..n]);
-                    }
-                }
+    /// Load a terminal backing file directly as a read-only buffer.
+    ///
+    /// This is used for fast session restore - we load the pre-rendered backing
+    /// file instead of replaying the raw log through the VTE parser.
+    fn load_terminal_backing_file_as_buffer(&mut self, buffer_id: BufferId, backing_path: &Path) {
+        // Check if backing file exists; if not, terminal starts empty
+        if !backing_path.exists() {
+            return;
+        }
+
+        let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
+        if let Ok(new_state) = EditorState::from_file(
+            backing_path,
+            self.terminal_width,
+            self.terminal_height,
+            large_file_threshold,
+            &self.grammar_registry,
+        ) {
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                *state = new_state;
+                // Move cursor to end of buffer
+                let total = state.buffer.total_bytes();
+                state.primary_cursor_mut().position = total;
+                // Terminal buffers should never be considered "modified"
+                state.buffer.set_modified(false);
+                // Start in scrollback mode (editing disabled)
+                state.editing_disabled = true;
+                state.margins.set_line_numbers(false);
             }
         }
     }

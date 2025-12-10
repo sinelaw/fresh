@@ -134,6 +134,8 @@ impl TerminalManager {
     /// * `cols` - Initial terminal width in columns
     /// * `rows` - Initial terminal height in rows
     /// * `cwd` - Optional working directory (defaults to current directory)
+    /// * `log_path` - Optional path for raw PTY log (for session restore)
+    /// * `backing_path` - Optional path for rendered scrollback (incremental streaming)
     ///
     /// # Returns
     /// The terminal ID if successful
@@ -143,6 +145,7 @@ impl TerminalManager {
         rows: u16,
         cwd: Option<std::path::PathBuf>,
         log_path: Option<std::path::PathBuf>,
+        backing_path: Option<std::path::PathBuf>,
     ) -> Result<TerminalId, String> {
         let id = TerminalId(self.next_id);
         self.next_id += 1;
@@ -200,13 +203,27 @@ impl TerminalManager {
             // Clone state for reader thread
             let state_clone = state.clone();
             let async_bridge = self.async_bridge.clone();
-            // Optional raw log writer for full-session capture
+
+            // Optional raw log writer for full-session capture (for live terminal resume)
             let mut log_writer = log_path
                 .as_ref()
                 .and_then(|p| {
                     std::fs::OpenOptions::new()
                         .create(true)
                         .append(true)
+                        .open(p)
+                        .ok()
+                })
+                .map(std::io::BufWriter::new);
+
+            // Backing file writer for incremental scrollback streaming
+            let mut backing_writer = backing_path
+                .as_ref()
+                .and_then(|p| {
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true) // Start fresh
                         .open(p)
                         .ok()
                 })
@@ -224,11 +241,34 @@ impl TerminalManager {
                             break;
                         }
                         Ok(n) => {
-                            // Process output through terminal emulator
+                            // Process output through terminal emulator and stream scrollback
                             if let Ok(mut state) = state_clone.lock() {
                                 state.process_output(&buf[..n]);
+
+                                // Incrementally stream new scrollback lines to backing file
+                                if let Some(ref mut writer) = backing_writer {
+                                    match state.flush_new_scrollback(writer) {
+                                        Ok(lines_written) => {
+                                            if lines_written > 0 {
+                                                // Update the history end offset
+                                                if let Ok(pos) = writer.get_ref().metadata() {
+                                                    state.set_backing_file_history_end(pos.len());
+                                                }
+                                                let _ = writer.flush();
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "Terminal backing file write error: {}",
+                                                e
+                                            );
+                                            backing_writer = None;
+                                        }
+                                    }
+                                }
                             }
-                            // Append raw bytes to log if available
+
+                            // Append raw bytes to log if available (for session restore replay)
                             if let Some(w) = log_writer.as_mut() {
                                 if let Err(e) = w.write_all(&buf[..n]) {
                                     tracing::warn!("Terminal log write error: {}", e);
@@ -238,6 +278,7 @@ impl TerminalManager {
                                     log_writer = None;
                                 }
                             }
+
                             // Notify main loop to redraw
                             if let Some(ref bridge) = async_bridge {
                                 let _ = bridge.sender().send(
@@ -255,6 +296,9 @@ impl TerminalManager {
                 }
                 alive_clone.store(false, std::sync::atomic::Ordering::Relaxed);
                 if let Some(mut w) = log_writer {
+                    let _ = w.flush();
+                }
+                if let Some(mut w) = backing_writer {
                     let _ = w.flush();
                 }
                 // Notify that terminal exited

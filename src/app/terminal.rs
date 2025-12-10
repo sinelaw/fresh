@@ -34,12 +34,17 @@ impl Editor {
         self.terminal_backing_files
             .insert(predicted_terminal_id, backing_path);
 
-        // Spawn terminal
+        // Spawn terminal with incremental scrollback streaming
+        let backing_path_for_spawn = self
+            .terminal_backing_files
+            .get(&predicted_terminal_id)
+            .cloned();
         match self.terminal_manager.spawn(
             cols,
             rows,
             Some(self.working_dir.clone()),
             Some(log_path.clone()),
+            backing_path_for_spawn,
         ) {
             Ok(terminal_id) => {
                 // Track log file path (use actual ID in case it differs)
@@ -358,51 +363,37 @@ impl Editor {
     }
 
     /// Sync terminal content to the text buffer for read-only viewing/selection
+    ///
+    /// This uses the incremental streaming architecture:
+    /// 1. Scrollback has already been streamed to the backing file during PTY reads
+    /// 2. We just append the visible screen (~50 lines) to the backing file
+    /// 3. Reload the buffer from the backing file (lazy load for large files)
+    ///
+    /// Performance: O(screen_size) instead of O(total_history)
     pub fn sync_terminal_to_buffer(&mut self, buffer_id: BufferId) {
         if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
-            // Get the backing (rendered) file path and raw log path
+            // Get the backing file path
             let backing_file = match self.terminal_backing_files.get(&terminal_id) {
                 Some(path) => path.clone(),
                 None => return,
             };
-            let log_file = self.terminal_log_files.get(&terminal_id).cloned();
 
-            // Render content either from the raw log (preferred) or the live emulator state
-            let content = if let (Some(log_path), Some(handle)) =
-                (log_file, self.terminal_manager.get(terminal_id))
-            {
-                // Replay the raw log through a fresh terminal state to capture full history
-                let (cols, rows) = handle.size();
-                let mut state = crate::services::terminal::TerminalState::new(cols, rows);
-                if let Ok(mut file) = std::fs::File::open(&log_path) {
-                    use std::io::Read;
-                    let mut buf = [0u8; 4096];
-                    while let Ok(n) = file.read(&mut buf) {
-                        if n == 0 {
-                            break;
+            // Append visible screen to backing file
+            // The scrollback has already been incrementally streamed by the PTY read loop
+            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                if let Ok(state) = handle.state.lock() {
+                    // Open backing file in append mode to add visible screen
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&backing_file)
+                    {
+                        use std::io::BufWriter;
+                        let mut writer = BufWriter::new(&mut file);
+                        if let Err(e) = state.append_visible_screen(&mut writer) {
+                            tracing::error!("Failed to append visible screen to backing file: {}", e);
                         }
-                        state.process_output(&buf[..n]);
                     }
-                    Some(state.full_content_string())
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-            .or_else(|| {
-                // Fallback: use current emulator state
-                self.terminal_manager
-                    .get(terminal_id)
-                    .and_then(|handle| handle.state.lock().ok())
-                    .map(|state| state.full_content_string())
-            });
-
-            // Write rendered content to the backing file if we have it
-            if let Some(content) = content {
-                if let Err(e) = std::fs::write(&backing_file, &content) {
-                    tracing::error!("Failed to write terminal content to backing file: {}", e);
-                    return;
                 }
             }
 
@@ -443,6 +434,10 @@ impl Editor {
     }
 
     /// Re-enter terminal mode from read-only buffer view
+    ///
+    /// This truncates the backing file to remove the visible screen tail
+    /// that was appended when we exited terminal mode, leaving only the
+    /// incrementally-streamed scrollback history.
     pub fn enter_terminal_mode(&mut self) {
         if self.is_terminal_buffer(self.active_buffer()) {
             self.terminal_mode = true;
@@ -460,8 +455,31 @@ impl Editor {
                 view_state.viewport.line_wrap_enabled = false;
             }
 
-            // Scroll terminal to bottom when re-entering
+            // Truncate backing file to remove visible screen tail and scroll to bottom
             if let Some(&terminal_id) = self.terminal_buffers.get(&self.active_buffer()) {
+                // Truncate backing file to remove visible screen that was appended
+                if let Some(backing_path) = self.terminal_backing_files.get(&terminal_id) {
+                    if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                        if let Ok(state) = handle.state.lock() {
+                            let truncate_pos = state.backing_file_history_end();
+                            if truncate_pos > 0 {
+                                if let Ok(file) = std::fs::OpenOptions::new()
+                                    .write(true)
+                                    .open(backing_path)
+                                {
+                                    if let Err(e) = file.set_len(truncate_pos) {
+                                        tracing::warn!(
+                                            "Failed to truncate terminal backing file: {}",
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Scroll terminal to bottom when re-entering
                 if let Some(handle) = self.terminal_manager.get(terminal_id) {
                     if let Ok(mut state) = handle.state.lock() {
                         state.scroll_to_bottom();

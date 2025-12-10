@@ -4,12 +4,15 @@
 //! - VT100/ANSI escape sequence parsing
 //! - Terminal grid management
 //! - Cursor state tracking
+//! - Incremental scrollback streaming to backing file
 
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config as TermConfig, Term};
 use alacritty_terminal::vte::ansi::Processor;
+use std::io::{self, Write};
 
 // Keep a generous scrollback so sync-to-buffer can include deep history.
 const SCROLLBACK_LINES: usize = 200_000;
@@ -37,6 +40,10 @@ pub struct TerminalState {
     dirty: bool,
     /// Terminal title (set via escape sequences)
     terminal_title: String,
+    /// Number of scrollback lines already written to backing file
+    synced_history_lines: usize,
+    /// Byte offset in backing file where scrollback ends (for truncation)
+    backing_file_history_end: u64,
 }
 
 impl TerminalState {
@@ -54,6 +61,8 @@ impl TerminalState {
             rows,
             dirty: true,
             terminal_title: String::new(),
+            synced_history_lines: 0,
+            backing_file_history_end: 0,
         }
     }
 
@@ -170,6 +179,12 @@ impl TerminalState {
 
     /// Get all content including scrollback history as a string
     /// Lines are in chronological order (oldest first)
+    ///
+    /// WARNING: This is O(total_history) and should NOT be used in hot paths.
+    /// For mode switching, use the incremental streaming architecture instead:
+    /// - `flush_new_scrollback()` during PTY reads
+    /// - `append_visible_screen()` on mode exit
+    #[allow(dead_code)]
     pub fn full_content_string(&self) -> String {
         use alacritty_terminal::grid::Dimensions;
         use alacritty_terminal::index::{Column, Line};
@@ -227,6 +242,97 @@ impl TerminalState {
     pub fn scroll_to_bottom(&mut self) {
         self.term.scroll_display(Scroll::Bottom);
         self.dirty = true;
+    }
+
+    // =========================================================================
+    // Incremental scrollback streaming
+    // =========================================================================
+
+    /// Flush any new scrollback lines to the writer.
+    ///
+    /// Call this after `process_output()` to incrementally stream scrollback
+    /// to the backing file. Returns the number of new lines written.
+    ///
+    /// This is the core of the incremental streaming architecture: scrollback
+    /// lines are written once as they scroll off the screen, avoiding O(n)
+    /// work on mode switches.
+    pub fn flush_new_scrollback<W: Write>(&mut self, writer: &mut W) -> io::Result<usize> {
+        use alacritty_terminal::grid::Dimensions;
+
+        let grid = self.term.grid();
+        let current_history = grid.history_size();
+
+        if current_history <= self.synced_history_lines {
+            return Ok(0);
+        }
+
+        let new_count = current_history - self.synced_history_lines;
+
+        // New scrollback lines are at indices from -(current_history) to -(synced+1)
+        // We write oldest-first to maintain append order
+        for i in 0..new_count {
+            // Line index: oldest unsynced line first
+            let line_idx = -((current_history - i) as i32);
+            self.write_grid_line(writer, Line(line_idx))?;
+        }
+
+        self.synced_history_lines = current_history;
+        // Update the byte offset where scrollback ends
+        // The writer should be positioned at end, so we can query position
+        // For simplicity, we track this separately when we know the file position
+
+        Ok(new_count)
+    }
+
+    /// Append the visible screen content to the writer.
+    ///
+    /// Call this when exiting terminal mode to add the current screen
+    /// to the backing file. The visible screen is the "rewritable tail"
+    /// that gets overwritten each time we exit terminal mode.
+    pub fn append_visible_screen<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        for row in 0..self.rows as i32 {
+            self.write_grid_line(writer, Line(row))?;
+        }
+        Ok(())
+    }
+
+    /// Write a single grid line to the writer, trimming trailing whitespace.
+    fn write_grid_line<W: Write>(&self, writer: &mut W, line: Line) -> io::Result<()> {
+        let grid = self.term.grid();
+        let row_data = &grid[line];
+
+        let mut line_str = String::with_capacity(self.cols as usize);
+        for col in 0..self.cols as usize {
+            line_str.push(row_data[Column(col)].c);
+        }
+
+        writeln!(writer, "{}", line_str.trim_end())
+    }
+
+    /// Get the byte offset where scrollback history ends in the backing file.
+    ///
+    /// Used for truncating the file when re-entering terminal mode
+    /// (to remove the visible screen portion).
+    pub fn backing_file_history_end(&self) -> u64 {
+        self.backing_file_history_end
+    }
+
+    /// Set the byte offset where scrollback history ends.
+    ///
+    /// Call this after flushing scrollback to record the file position.
+    pub fn set_backing_file_history_end(&mut self, offset: u64) {
+        self.backing_file_history_end = offset;
+    }
+
+    /// Get the number of scrollback lines that have been synced to the backing file.
+    pub fn synced_history_lines(&self) -> usize {
+        self.synced_history_lines
+    }
+
+    /// Reset sync state (e.g., when starting fresh or after truncation).
+    pub fn reset_sync_state(&mut self) {
+        self.synced_history_lines = 0;
+        self.backing_file_history_end = 0;
     }
 }
 
