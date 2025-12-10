@@ -442,23 +442,40 @@ impl Default for MenuConfig {
 
 impl Config {
     /// Get the default config file path
-    pub fn default_config_path() -> Option<std::path::PathBuf> {
-        dirs::config_dir().map(|d| d.join("fresh").join("config.json"))
+    pub fn default_config_paths() -> Vec<std::path::PathBuf> {
+        let mut paths = Vec::with_capacity(2);
+
+        // macOS: Prioritize ~/.config/fresh/config.json
+        #[cfg(target_os = "macos")]
+        if let Some(home) = dirs::home_dir() {
+            let path = home.join(".config").join("fresh").join("config.json");
+            if path.exists() {
+                paths.push(path);
+            }
+        }
+
+        // Standard system paths (XDG on Linux, AppSupport on macOS, Roaming on Windows)
+        if let Some(config_dir) = dirs::config_dir() {
+            let path = config_dir.join("fresh").join("config.json");
+            if !paths.contains(&path) && path.exists() {
+                paths.push(path);
+            }
+        }
+
+        paths
     }
 
     /// Load configuration from the default location, falling back to defaults if not found
     pub fn load_or_default() -> Self {
-        if let Some(config_path) = Self::default_config_path() {
-            if config_path.exists() {
-                match Self::load_from_file(&config_path) {
-                    Ok(config) => return config,
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to load config from {}: {}, using defaults",
-                            config_path.display(),
-                            e
-                        );
-                    }
+        for path in Self::default_config_paths() {
+            match Self::load_from_file(&path) {
+                Ok(config) => return config,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load config from {}: {}, trying next option",
+                        path.display(),
+                        e
+                    );
                 }
             }
         }
@@ -1519,7 +1536,7 @@ impl DirectoryContext {
             })?
             .join("fresh");
 
-        let config_dir = dirs::config_dir()
+        let mut config_dir = dirs::config_dir()
             .ok_or_else(|| {
                 std::io::Error::new(
                     std::io::ErrorKind::NotFound,
@@ -1527,6 +1544,15 @@ impl DirectoryContext {
                 )
             })?
             .join("fresh");
+
+        // macOS: Prioritize ~/.config/fresh if it exists
+        #[cfg(target_os = "macos")]
+        if let Some(home) = dirs::home_dir() {
+            let xdg_config = home.join(".config").join("fresh");
+            if xdg_config.exists() {
+                config_dir = xdg_config;
+            }
+        }
 
         Ok(Self {
             data_dir,
