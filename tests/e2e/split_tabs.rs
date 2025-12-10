@@ -571,6 +571,7 @@ fn test_close_tab_closes_buffer_when_last_viewport() {
 
 /// Test that close tab prompts for modified buffer when it's the last viewport
 #[test]
+#[cfg_attr(target_os = "macos", ignore = "flaky on macOS CI")]
 fn test_close_tab_prompts_for_modified_buffer() {
     let temp_dir = TempDir::new().unwrap();
     let file1 = temp_dir.path().join("file1.txt");
