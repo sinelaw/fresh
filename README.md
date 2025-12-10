@@ -45,6 +45,7 @@ Fresh is engineered for speed. It delivers a low-latency experience, with text a
 | npm | [npm / npx](#npm) |
 | Rust users (Fast) | [cargo-binstall](#using-cargo-binstall) |
 | Rust users | [crates.io](#from-cratesio) |
+| Nix | [Nix flakes](#nix-flakes) |
 | Developers | [From source](#from-source) |
 
 ### macOS (Homebrew)
@@ -110,6 +111,18 @@ Then install fresh
 
 ```bash
 cargo binstall fresh-editor
+```
+
+### Nix flakes
+
+Run without installing:
+```bash
+nix run github:sinelaw/fresh
+```
+
+Or install to your profile:
+```bash
+nix profile install github:sinelaw/fresh
 ```
 
 ### From crates.io
