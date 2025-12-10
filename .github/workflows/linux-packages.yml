@@ -103,7 +103,7 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
     steps:
       - name: Download .deb package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: artifacts-linux-packages-amd64
           path: packages/
@@ -154,7 +154,7 @@ jobs:
       image: ${{ matrix.distro }}
     steps:
       - name: Download .rpm package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: artifacts-linux-packages-amd64
           path: packages/
