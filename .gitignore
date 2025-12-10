@@ -28,3 +28,7 @@ perf.data.old
 \#*#
 # Generated TypeScript types - OLD location (now in plugins/lib, committed for distribution)
 types/fresh.d.ts
+
+# Nix/direnv
+.direnv/
+result
