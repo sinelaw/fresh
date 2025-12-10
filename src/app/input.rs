@@ -2437,6 +2437,25 @@ impl Editor {
 
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // detect double clicks, 500 ms is arbitrary but reasonable
+                if let Some(previous_click_time) = self.previous_click_time {
+                    let now = std::time::Instant::now();
+                    if now.duration_since(previous_click_time)
+                        < std::time::Duration::from_millis(500)
+                    {
+                        // Double click detected
+                        self.handle_mouse_double_click(col, row)?;
+                        self.previous_click_time = None; // Reset
+                        needs_render = true;
+                        return Ok(needs_render);
+                    } else {
+                        // Not a double click, update time
+                        self.previous_click_time = Some(now);
+                    }
+                } else {
+                    // First click, store time
+                    self.previous_click_time = Some(std::time::Instant::now());
+                }
                 self.handle_mouse_click(col, row)?;
                 needs_render = true;
             }
@@ -2812,6 +2831,18 @@ impl Editor {
         None
     }
 
+    /// Handle mouse double click (down event)
+    pub(super) fn handle_mouse_double_click(&mut self, col: u16, row: u16) -> std::io::Result<()> {
+        tracing::debug!("handle_mouse_double_click at col={}, row={}", col, row);
+
+        // is it in the file open dialog?
+        if self.handle_file_open_double_click(col, row) {
+            return Ok(());
+        }
+
+        // no - is it meant for the ???
+        Ok(())
+    }
     /// Handle mouse click (down event)
     pub(super) fn handle_mouse_click(&mut self, col: u16, row: u16) -> std::io::Result<()> {
         // Check if click is on suggestions (command palette, autocomplete)

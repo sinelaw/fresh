@@ -431,6 +431,9 @@ pub struct Editor {
     /// When leaving a terminal while in terminal mode, its ID is added here.
     /// When switching to a terminal in this set, terminal mode is automatically re-entered.
     terminal_mode_resume: std::collections::HashSet<BufferId>,
+
+    /// Timestamp of the previous mouse click (for double-click detection)
+    previous_click_time: Option<std::time::Instant>,
 }
 
 impl Editor {
@@ -798,6 +801,7 @@ impl Editor {
             terminal_mode: false,
             keyboard_capture: false,
             terminal_mode_resume: std::collections::HashSet::new(),
+            previous_click_time: None,
         })
     }
 
