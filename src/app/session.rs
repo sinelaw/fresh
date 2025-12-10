@@ -1,6 +1,26 @@
 //! Session persistence integration for the Editor
 //!
 //! This module provides conversion between live Editor state and serialized Session data.
+//!
+//! # Role in Incremental Streaming Architecture
+//!
+//! This module handles session save/restore for terminals.
+//! See `crate::services::terminal` for the full architecture diagram.
+//!
+//! ## Session Save
+//!
+//! [`Editor::save_session`] calls [`Editor::sync_all_terminal_backing_files`] to ensure
+//! all terminal backing files contain complete state (scrollback + visible screen)
+//! before serializing session metadata.
+//!
+//! ## Session Restore
+//!
+//! [`Editor::restore_terminal_from_session`] loads the backing file directly as a
+//! read-only buffer, skipping the expensive log replay. The user starts in scrollback
+//! mode viewing the last session state. A new PTY is spawned when they re-enter
+//! terminal mode.
+//!
+//! Performance: O(1) ≈ 10ms (lazy load) vs O(n) ≈ 1000ms (log replay)
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

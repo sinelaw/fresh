@@ -5,6 +5,27 @@
 //! - Terminal grid management
 //! - Cursor state tracking
 //! - Incremental scrollback streaming to backing file
+//!
+//! # Role in Incremental Streaming Architecture
+//!
+//! This module provides the core state management and streaming methods.
+//! See `super` module docs for the full architecture overview.
+//!
+//! ## Key Methods
+//!
+//! - `process_output`: Feed PTY bytes into the terminal emulator
+//! - `flush_new_scrollback`: Stream new scrollback lines to backing file
+//! - `append_visible_screen`: Append visible screen on mode exit
+//! - `backing_file_history_end`: Get truncation point for mode re-entry
+//!
+//! ## State Tracking
+//!
+//! `synced_history_lines` tracks how many scrollback lines have been written to the
+//! backing file. When `grid.history_size() > synced_history_lines`, new lines need
+//! to be flushed.
+//!
+//! `backing_file_history_end` tracks the byte offset where scrollback ends in the
+//! backing file, used for truncation when re-entering terminal mode.
 
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Scroll;

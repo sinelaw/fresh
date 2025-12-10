@@ -5,6 +5,23 @@
 //! - Closing terminals
 //! - Rendering terminal content
 //! - Handling terminal input
+//!
+//! # Role in Incremental Streaming Architecture
+//!
+//! This module handles mode switching between terminal and scrollback modes.
+//! See `crate::services::terminal` for the full architecture diagram.
+//!
+//! ## Mode Switching Methods
+//!
+//! - [`Editor::sync_terminal_to_buffer`]: Terminal → Scrollback mode
+//!   - Appends visible screen (~50 lines) to backing file
+//!   - Loads backing file as read-only buffer
+//!   - Performance: O(screen_size) ≈ 5ms
+//!
+//! - [`Editor::enter_terminal_mode`]: Scrollback → Terminal mode
+//!   - Truncates backing file to remove visible screen tail
+//!   - Resumes live terminal rendering
+//!   - Performance: O(1) ≈ 1ms
 
 use super::{BufferId, BufferMetadata, Editor};
 use crate::services::terminal::TerminalId;

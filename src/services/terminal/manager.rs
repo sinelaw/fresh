@@ -5,6 +5,18 @@
 //! - Manages multiple concurrent terminals
 //! - Routes input/output between the editor and terminal processes
 //! - Handles terminal resize events
+//!
+//! # Role in Incremental Streaming Architecture
+//!
+//! The manager owns the PTY read loop which is the entry point for incremental
+//! scrollback streaming. See `super` module docs for the full architecture overview.
+//!
+//! ## PTY Read Loop
+//!
+//! The read loop in `spawn()` performs incremental streaming: for each PTY read,
+//! it calls `process_output()` to update the terminal grid, then `flush_new_scrollback()`
+//! to append any new scrollback lines to the backing file. This ensures scrollback is
+//! written incrementally as lines scroll off screen, avoiding O(n) work on mode switches.
 
 use super::term::TerminalState;
 use crate::services::async_bridge::AsyncBridge;
