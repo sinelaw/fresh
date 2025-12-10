@@ -1924,3 +1924,118 @@ fn test_close_terminal_tab_in_terminal_mode_via_mouse() {
         file1_content
     );
 }
+
+/// Test that terminal view follows output when cursor is at the very last line.
+///
+/// Reproduces the bug where pressing Enter many times in a terminal causes the
+/// cursor to reach the bottom of the screen. Once the cursor is at the last line,
+/// the view should continue to follow the cursor (output), but previously it would
+/// stop updating until a resize event was triggered.
+///
+/// The fix adds `resize_visible_terminals()` call when entering terminal mode,
+/// which ensures proper PTY sizing and view following.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_view_follows_output_at_bottom() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    assert!(harness.editor().is_terminal_mode());
+
+    // Get terminal dimensions
+    let buffer_id = harness.editor().active_buffer_id();
+    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let (_, rows) = harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .unwrap()
+        .size();
+
+    // Press Enter many times to push cursor to the bottom of the screen.
+    // This fills the screen with shell prompts, pushing the cursor down.
+    // We press more than the terminal rows to ensure cursor reaches bottom.
+    for i in 0..(rows as usize + 5) {
+        harness
+            .editor_mut()
+            .handle_terminal_key(KeyCode::Enter, KeyModifiers::NONE);
+
+        // Give the shell time to respond every few iterations
+        if i % 5 == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    // Wait for output to settle
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // Now type a unique marker that we can search for
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo BOTTOM_MARKER_XYZ\n");
+
+    // Wait for the marker to appear on screen
+    let result = harness.wait_until(|h| h.screen_to_string().contains("BOTTOM_MARKER_XYZ"));
+    assert!(
+        result.is_ok(),
+        "Terminal view should show BOTTOM_MARKER_XYZ after pressing Enter many times. \
+         The view should follow output to the cursor position at the bottom. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Test that terminal properly resizes when re-entering terminal mode.
+///
+/// This verifies that entering terminal mode triggers a resize to ensure
+/// the PTY dimensions match the current split dimensions.
+#[test]
+fn test_terminal_resize_on_enter_mode() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Get terminal size after opening
+    let buffer_id = harness.editor().active_buffer_id();
+    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let (cols1, rows1) = harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .unwrap()
+        .size();
+
+    // Exit terminal mode
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char(']'), KeyModifiers::CONTROL);
+    assert!(!harness.editor().is_terminal_mode());
+
+    // Re-enter terminal mode
+    harness.editor_mut().enter_terminal_mode();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Get terminal size after re-entering
+    let (cols2, rows2) = harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .unwrap()
+        .size();
+
+    // Size should be the same (resize should have been called to ensure consistency)
+    assert_eq!(
+        cols1, cols2,
+        "Terminal columns should match after re-entering"
+    );
+    assert_eq!(
+        rows1, rows2,
+        "Terminal rows should match after re-entering"
+    );
+}

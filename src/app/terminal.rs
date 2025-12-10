@@ -90,6 +90,9 @@ impl Editor {
                 self.terminal_mode = true;
                 self.key_context = crate::input::keybindings::KeyContext::Terminal;
 
+                // Resize terminal to match actual split content area
+                self.resize_visible_terminals();
+
                 self.set_status_message(format!(
                     "Terminal {} opened (Ctrl+Space to exit)",
                     terminal_id
@@ -503,6 +506,9 @@ impl Editor {
                     }
                 }
             }
+
+            // Ensure terminal PTY is sized correctly for current split dimensions
+            self.resize_visible_terminals();
 
             self.set_status_message("Terminal mode enabled".to_string());
         }
