@@ -160,7 +160,7 @@ Fresh ships `plugins/clangd_support.ts` with the source tree; see `plugins/clang
 
 Fresh is configured using a `config.json` file located in:
 
-* `~/.config/fresh/config.json` on Unix-like systems.
+* `~/.config/fresh/config.json` on Unix-like systems, like Linux and macOS.
 * `%APPDATA%\fresh\config.json` on Windows.
 
 ### Example Configuration
