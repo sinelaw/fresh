@@ -3,9 +3,16 @@
 
 // Initialize V8 early - must happen before any Editor/JsRuntime is created
 // and only once per process. Using ctor ensures this runs at test startup.
+// Only needed when the plugins feature is enabled.
+#[cfg(feature = "plugins")]
 #[ctor::ctor]
 fn init_v8_for_tests() {
     fresh::v8_init::init();
+}
+
+// Common initialization (non-plugin related)
+#[ctor::ctor]
+fn init_keybindings_for_tests() {
     // Force Linux-style keybindings (Ctrl/Alt/Shift instead of ⌘/⌥/⇧)
     // to ensure consistent visual test output across platforms
     fresh::input::keybindings::set_force_linux_keybindings(true);

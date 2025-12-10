@@ -1,3 +1,9 @@
+//! Plugin-related tests
+//!
+//! These tests are only compiled when the `plugins` feature is enabled.
+
+#![cfg(feature = "plugins")]
+
 use crate::common::fake_lsp::FakeLspServer;
 use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;

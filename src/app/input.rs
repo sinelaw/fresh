@@ -348,7 +348,8 @@ impl Editor {
                 }
             }
             Action::PromptSelectPrev => {
-                if let Some(prompt) = self.prompt_mut() {
+                // Extract hook data before borrowing prompt mutably
+                let hook_data = if let Some(prompt) = self.prompt_mut() {
                     if !prompt.suggestions.is_empty() {
                         // Suggestions exist: navigate suggestions
                         if let Some(selected) = prompt.selected_suggestion {
@@ -362,18 +363,36 @@ impl Editor {
                                     prompt.cursor_pos = prompt.input.len();
                                 }
                             }
-                            // Fire selection changed hook for plugin prompts
+                            // Extract data for plugin hook
                             if let PromptType::Plugin { ref custom_type } = prompt.prompt_type {
-                                let hook_args = HookArgs::PromptSelectionChanged {
-                                    prompt_type: custom_type.clone(),
-                                    selected_index: new_selected,
-                                };
-                                if let Some(ref ts_manager) = self.ts_plugin_manager {
-                                    ts_manager.run_hook("prompt_selection_changed", hook_args);
-                                }
+                                Some((custom_type.clone(), new_selected))
+                            } else {
+                                None
                             }
+                        } else {
+                            None
                         }
                     } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Fire selection changed hook for plugin prompts (outside the borrow)
+                if let Some((custom_type, new_selected)) = hook_data {
+                    self.plugin_manager.run_hook(
+                        "prompt_selection_changed",
+                        HookArgs::PromptSelectionChanged {
+                            prompt_type: custom_type,
+                            selected_index: new_selected,
+                        },
+                    );
+                }
+
+                // Handle history navigation for prompts without suggestions
+                if let Some(prompt) = self.prompt_mut() {
+                    if prompt.suggestions.is_empty() {
                         // No suggestions: navigate history (Up arrow)
                         let prompt_type = prompt.prompt_type.clone();
                         let current_input = prompt.input.clone();
@@ -411,7 +430,8 @@ impl Editor {
                 }
             }
             Action::PromptSelectNext => {
-                if let Some(prompt) = self.prompt_mut() {
+                // Extract hook data before borrowing prompt mutably
+                let hook_data = if let Some(prompt) = self.prompt_mut() {
                     if !prompt.suggestions.is_empty() {
                         // Suggestions exist: navigate suggestions
                         if let Some(selected) = prompt.selected_suggestion {
@@ -425,18 +445,36 @@ impl Editor {
                                     prompt.cursor_pos = prompt.input.len();
                                 }
                             }
-                            // Fire selection changed hook for plugin prompts
+                            // Extract data for plugin hook
                             if let PromptType::Plugin { ref custom_type } = prompt.prompt_type {
-                                let hook_args = HookArgs::PromptSelectionChanged {
-                                    prompt_type: custom_type.clone(),
-                                    selected_index: new_selected,
-                                };
-                                if let Some(ref ts_manager) = self.ts_plugin_manager {
-                                    ts_manager.run_hook("prompt_selection_changed", hook_args);
-                                }
+                                Some((custom_type.clone(), new_selected))
+                            } else {
+                                None
                             }
+                        } else {
+                            None
                         }
                     } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Fire selection changed hook for plugin prompts (outside the borrow)
+                if let Some((custom_type, new_selected)) = hook_data {
+                    self.plugin_manager.run_hook(
+                        "prompt_selection_changed",
+                        HookArgs::PromptSelectionChanged {
+                            prompt_type: custom_type,
+                            selected_index: new_selected,
+                        },
+                    );
+                }
+
+                // Handle history navigation for prompts without suggestions
+                if let Some(prompt) = self.prompt_mut() {
+                    if prompt.suggestions.is_empty() {
                         // No suggestions: navigate history (Down arrow)
                         let prompt_type = prompt.prompt_type.clone();
 
@@ -648,11 +686,9 @@ impl Editor {
     }
 
     fn dispatch_plugin_hook(&mut self, hook_name: &str, args: HookArgs, fallback: &str) {
-        if let Some(ts_manager) = &self.ts_plugin_manager {
-            if ts_manager.has_hook_handlers(hook_name) {
-                ts_manager.run_hook(hook_name, args);
-                return;
-            }
+        if self.plugin_manager.has_hook_handlers(hook_name) {
+            self.plugin_manager.run_hook(hook_name, args);
+            return;
         }
         self.set_status_message(fallback.to_string());
     }
@@ -1551,8 +1587,9 @@ impl Editor {
             Action::PluginAction(action_name) => {
                 // Execute the plugin callback via TypeScript plugin thread
                 // Use non-blocking version to avoid deadlock with async plugin ops
-                if let Some(ref manager) = self.ts_plugin_manager {
-                    match manager.execute_action_async(&action_name) {
+                #[cfg(feature = "plugins")]
+                if let Some(result) = self.plugin_manager.execute_action_async(&action_name) {
+                    match result {
                         Ok(receiver) => {
                             // Store pending action for processing in main loop
                             self.pending_plugin_actions
@@ -1565,6 +1602,11 @@ impl Editor {
                     }
                 } else {
                     self.set_status_message("Plugin manager not available".to_string());
+                }
+                #[cfg(not(feature = "plugins"))]
+                {
+                    let _ = action_name;
+                    self.set_status_message("Plugins not available (compiled without plugin support)".to_string());
                 }
             }
             Action::OpenTerminal => {
@@ -1697,14 +1739,13 @@ impl Editor {
                                     );
 
                                     // Fire AfterFileSave hook for plugins
-                                    if let Some(ref ts_manager) = self.ts_plugin_manager {
-                                        let hook_args =
-                                            crate::services::plugins::hooks::HookArgs::AfterFileSave {
-                                                buffer_id: self.active_buffer(),
-                                                path: full_path.clone(),
-                                            };
-                                        ts_manager.run_hook("after_file_save", hook_args);
-                                    }
+                                    self.plugin_manager.run_hook(
+                                        "after_file_save",
+                                        crate::services::plugins::hooks::HookArgs::AfterFileSave {
+                                            buffer_id: self.active_buffer(),
+                                            path: full_path.clone(),
+                                        },
+                                    );
 
                                     // Check if we should close the buffer after saving
                                     if let Some(buffer_to_close) = self.pending_close_buffer.take()
@@ -1915,15 +1956,14 @@ impl Editor {
                             }
                         }
                         PromptType::Plugin { custom_type } => {
-                            let hook_args = HookArgs::PromptConfirmed {
-                                prompt_type: custom_type,
-                                input,
-                                selected_index,
-                            };
-
-                            if let Some(ref ts_manager) = self.ts_plugin_manager {
-                                ts_manager.run_hook("prompt_confirmed", hook_args);
-                            }
+                            self.plugin_manager.run_hook(
+                                "prompt_confirmed",
+                                HookArgs::PromptConfirmed {
+                                    prompt_type: custom_type,
+                                    input,
+                                    selected_index,
+                                },
+                            );
                         }
                         PromptType::ConfirmRevert => {
                             let input_lower = input.trim().to_lowercase();
@@ -2429,7 +2469,7 @@ impl Editor {
             }
             MouseEventKind::Moved => {
                 // Dispatch MouseMove hook to plugins (fire-and-forget, no blocking check)
-                if let Some(ts_manager) = &self.ts_plugin_manager {
+                {
                     // Find content rect for the split under the mouse
                     let content_rect = self
                         .cached_layout
@@ -2445,13 +2485,15 @@ impl Editor {
 
                     let (content_x, content_y) = content_rect.map(|r| (r.x, r.y)).unwrap_or((0, 0));
 
-                    let hook_args = HookArgs::MouseMove {
-                        column: col,
-                        row,
-                        content_x,
-                        content_y,
-                    };
-                    ts_manager.run_hook("mouse_move", hook_args);
+                    self.plugin_manager.run_hook(
+                        "mouse_move",
+                        HookArgs::MouseMove {
+                            column: col,
+                            row,
+                            content_x,
+                            content_y,
+                        },
+                    );
                 }
 
                 // Only re-render if hover target actually changed
@@ -3813,18 +3855,18 @@ impl Editor {
 
         // Dispatch MouseClick hook to plugins
         // Plugins can handle clicks on their virtual buffers
-        if let Some(ts_manager) = &self.ts_plugin_manager {
-            if ts_manager.has_hook_handlers("mouse_click") {
-                let hook_args = HookArgs::MouseClick {
+        if self.plugin_manager.has_hook_handlers("mouse_click") {
+            self.plugin_manager.run_hook(
+                "mouse_click",
+                HookArgs::MouseClick {
                     column: col,
                     row,
                     button: "left".to_string(),
                     modifiers: String::new(),
                     content_x: content_rect.x,
                     content_y: content_rect.y,
-                };
-                ts_manager.run_hook("mouse_click", hook_args);
-            }
+                },
+            );
         }
 
         // Focus this split (handles terminal mode exit, tab state, etc.)

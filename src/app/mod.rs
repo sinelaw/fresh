@@ -65,7 +65,7 @@ use crate::services::fs::{FsBackend, FsManager, LocalFsBackend};
 use crate::services::lsp::client::LspServerConfig;
 use crate::services::lsp::manager::{detect_language, LspManager, LspSpawnResult};
 use crate::services::plugins::api::{BufferSavedDiff, PluginCommand};
-use crate::services::plugins::thread::PluginThreadHandle;
+use crate::services::plugins::PluginManager;
 use crate::services::recovery::{RecoveryConfig, RecoveryService};
 use crate::state::EditorState;
 use crate::view::file_tree::{FileTree, FileTreeView};
@@ -283,8 +283,8 @@ pub struct Editor {
     /// Command registry for dynamic commands
     command_registry: Arc<RwLock<CommandRegistry>>,
 
-    /// TypeScript plugin thread handle
-    ts_plugin_manager: Option<PluginThreadHandle>,
+    /// Plugin manager (handles both enabled and disabled cases)
+    plugin_manager: PluginManager,
 
     /// Track which byte ranges have been seen per buffer (for lines_changed optimization)
     /// Maps buffer_id -> set of (byte_start, byte_end) ranges that have been processed
@@ -345,12 +345,14 @@ pub struct Editor {
     last_macro_register: Option<char>,
 
     /// Pending plugin action receivers (for async action execution)
+    #[cfg(feature = "plugins")]
     pending_plugin_actions: Vec<(
         String,
         crate::services::plugins::thread::oneshot::Receiver<anyhow::Result<()>>,
     )>,
 
     /// Flag set by plugin commands that need a render (e.g., RefreshLines)
+    #[cfg(feature = "plugins")]
     plugin_render_requested: bool,
 
     /// Pending chord sequence for multi-key bindings (e.g., C-x C-s in Emacs)
@@ -589,31 +591,16 @@ impl Editor {
         let fs_backend = fs_backend.unwrap_or_else(|| Arc::new(LocalFsBackend::new()));
         let fs_manager = Arc::new(FsManager::new(fs_backend));
 
-        // Initialize plugin system
+        // Initialize command registry (always available, used by both plugins and core)
         let command_registry = Arc::new(RwLock::new(CommandRegistry::new()));
 
-        // Initialize TypeScript plugin thread (skip if plugins are disabled)
-        let ts_plugin_manager = if enable_plugins {
-            match PluginThreadHandle::spawn(Arc::clone(&command_registry)) {
-                Ok(handle) => Some(handle),
-                Err(e) => {
-                    tracing::error!("Failed to spawn TypeScript plugin thread: {}", e);
-                    // In debug/test builds, panic to surface the error
-                    #[cfg(debug_assertions)]
-                    panic!("TypeScript plugin thread creation failed: {}", e);
-                    #[cfg(not(debug_assertions))]
-                    None
-                }
-            }
-        } else {
-            tracing::info!("Plugins disabled via --no-plugins flag");
-            None
-        };
+        // Initialize plugin manager (handles both enabled and disabled cases internally)
+        let plugin_manager = PluginManager::new(enable_plugins, Arc::clone(&command_registry));
 
         // Load TypeScript plugins from multiple directories:
         // 1. Next to the executable (for cargo-dist installations)
         // 2. In the working directory (for development/local usage)
-        if let Some(ref manager) = ts_plugin_manager {
+        if plugin_manager.is_active() {
             let mut plugin_dirs: Vec<std::path::PathBuf> = vec![];
 
             // Check next to executable first (for cargo-dist installations)
@@ -642,7 +629,7 @@ impl Editor {
             // Load from all found plugin directories
             for plugin_dir in plugin_dirs {
                 tracing::info!("Loading TypeScript plugins from: {:?}", plugin_dir);
-                let errors = manager.load_plugins_from_dir(&plugin_dir);
+                let errors = plugin_manager.load_plugins_from_dir(&plugin_dir);
                 if !errors.is_empty() {
                     for err in &errors {
                         tracing::error!("TypeScript plugin load error: {}", err);
@@ -740,7 +727,7 @@ impl Editor {
             mouse_state: MouseState::default(),
             cached_layout: CachedLayout::default(),
             command_registry,
-            ts_plugin_manager,
+            plugin_manager,
             seen_byte_ranges: HashMap::new(),
             panel_ids: HashMap::new(),
             search_history: {
@@ -778,7 +765,9 @@ impl Editor {
             macros: HashMap::new(),
             macro_recording: None,
             last_macro_register: None,
+            #[cfg(feature = "plugins")]
             pending_plugin_actions: Vec::new(),
+            #[cfg(feature = "plugins")]
             plugin_render_requested: false,
             chord_state: Vec::new(),
             pending_lsp_confirmation: None,
@@ -829,9 +818,7 @@ impl Editor {
 
     /// Send a response to a plugin for an async operation
     fn send_plugin_response(&self, response: crate::services::plugins::api::PluginResponse) {
-        if let Some(ref manager) = self.ts_plugin_manager {
-            manager.deliver_response(response);
-        }
+        self.plugin_manager.deliver_response(response);
     }
 
     /// Get all keybindings as (key, action) pairs
@@ -1310,13 +1297,13 @@ impl Editor {
         self.watch_file(path);
 
         // Fire AfterFileOpen hook for plugins
-        if let Some(ref ts_manager) = self.ts_plugin_manager {
-            let hook_args = crate::services::plugins::hooks::HookArgs::AfterFileOpen {
+        self.plugin_manager.run_hook(
+            "after_file_open",
+            crate::services::plugins::hooks::HookArgs::AfterFileOpen {
                 buffer_id,
                 path: path.to_path_buf(),
-            };
-            ts_manager.run_hook("after_file_open", hook_args);
-        }
+            },
+        );
 
         Ok(buffer_id)
     }
@@ -2584,11 +2571,10 @@ impl Editor {
         self.sync_file_explorer_to_active_file();
 
         // Emit buffer_activated hook for plugins
-        if let Some(ref ts_manager) = self.ts_plugin_manager {
-            let hook_args =
-                crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id };
-            ts_manager.run_hook("buffer_activated", hook_args);
-        }
+        self.plugin_manager.run_hook(
+            "buffer_activated",
+            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
+        );
     }
 
     /// Focus a split and its buffer, handling all side effects including terminal mode.
@@ -2919,11 +2905,10 @@ impl Editor {
             // Update the full plugin state snapshot BEFORE firing the hook
             // This ensures the plugin can read up-to-date state (diff, cursors, viewport, etc.)
             // Without this, there's a race condition where the async hook might read stale data
+            #[cfg(feature = "plugins")]
             self.update_plugin_state_snapshot();
 
-            if let Some(ref ts_manager) = self.ts_plugin_manager {
-                ts_manager.run_hook(hook_name, args);
-            }
+            self.plugin_manager.run_hook(hook_name, args);
         }
     }
 
@@ -3316,14 +3301,14 @@ impl Editor {
 
         // Fire AfterFileSave hook for plugins
         if let Some(ref p) = path {
-            if let Some(ref ts_manager) = self.ts_plugin_manager {
-                let buffer_id = self.active_buffer();
-                let hook_args = crate::services::plugins::hooks::HookArgs::AfterFileSave {
+            let buffer_id = self.active_buffer();
+            self.plugin_manager.run_hook(
+                "after_file_save",
+                crate::services::plugins::hooks::HookArgs::AfterFileSave {
                     buffer_id,
                     path: p.clone(),
-                };
-                ts_manager.run_hook("after_file_save", hook_args);
-            }
+                },
+            );
         }
 
         Ok(())
@@ -4414,14 +4399,13 @@ impl Editor {
                 PromptType::Plugin { custom_type } => {
                     // Fire plugin hook for prompt cancellation
                     use crate::services::plugins::hooks::HookArgs;
-                    let hook_args = HookArgs::PromptCancelled {
-                        prompt_type: custom_type.clone(),
-                        input: prompt.input.clone(),
-                    };
-
-                    if let Some(ref ts_manager) = self.ts_plugin_manager {
-                        ts_manager.run_hook("prompt_cancelled", hook_args);
-                    }
+                    self.plugin_manager.run_hook(
+                        "prompt_cancelled",
+                        HookArgs::PromptCancelled {
+                            prompt_type: custom_type.clone(),
+                            input: prompt.input.clone(),
+                        },
+                    );
                 }
                 PromptType::LspRename { overlay_handle, .. } => {
                     // Remove the rename overlay when cancelling
@@ -4606,26 +4590,24 @@ impl Editor {
                 // Commands (SetPromptSuggestions) will be picked up by the main loop's
                 // process_async_messages() -> process_plugin_commands() on the next frame.
                 use crate::services::plugins::hooks::HookArgs;
-                let hook_args = HookArgs::PromptChanged {
-                    prompt_type: "save-file-as".to_string(),
-                    input,
-                };
-
-                if let Some(ref ts_manager) = self.ts_plugin_manager {
-                    ts_manager.run_hook("prompt_changed", hook_args);
-                }
+                self.plugin_manager.run_hook(
+                    "prompt_changed",
+                    HookArgs::PromptChanged {
+                        prompt_type: "save-file-as".to_string(),
+                        input,
+                    },
+                );
             }
             PromptType::Plugin { custom_type } => {
                 // Fire plugin hook for prompt input change
                 use crate::services::plugins::hooks::HookArgs;
-                let hook_args = HookArgs::PromptChanged {
-                    prompt_type: custom_type,
-                    input,
-                };
-
-                if let Some(ref ts_manager) = self.ts_plugin_manager {
-                    ts_manager.run_hook("prompt_changed", hook_args);
-                }
+                self.plugin_manager.run_hook(
+                    "prompt_changed",
+                    HookArgs::PromptChanged {
+                        prompt_type: custom_type,
+                        input,
+                    },
+                );
             }
             PromptType::SwitchToTab | PromptType::SelectTheme | PromptType::StopLspServer => {
                 // Filter suggestions using fuzzy matching
@@ -4910,20 +4892,28 @@ impl Editor {
 
         // Update plugin state snapshot BEFORE processing commands
         // This ensures plugins have access to current editor state (cursor positions, etc.)
+        #[cfg(feature = "plugins")]
         self.update_plugin_state_snapshot();
 
         // Process TypeScript plugin commands
         let processed_any_commands = self.process_plugin_commands();
 
         // Process pending plugin action completions
+        #[cfg(feature = "plugins")]
         self.process_pending_plugin_actions();
 
         // Process pending LSP server restarts (with exponential backoff)
         self.process_pending_lsp_restarts();
 
         // Check and clear the plugin render request flag
-        let plugin_render = self.plugin_render_requested;
-        self.plugin_render_requested = false;
+        #[cfg(feature = "plugins")]
+        let plugin_render = {
+            let render = self.plugin_render_requested;
+            self.plugin_render_requested = false;
+            render
+        };
+        #[cfg(not(feature = "plugins"))]
+        let plugin_render = false;
 
         // Poll periodic update checker for new results
         if let Some(ref mut checker) = self.update_checker {
@@ -4994,12 +4984,11 @@ impl Editor {
     }
 
     /// Update the plugin state snapshot with current editor state
+    #[cfg(feature = "plugins")]
     fn update_plugin_state_snapshot(&mut self) {
         // Update TypeScript plugin manager state
-        if let Some(ref manager) = self.ts_plugin_manager {
+        if let Some(snapshot_handle) = self.plugin_manager.state_snapshot_handle() {
             use crate::services::plugins::api::{BufferInfo, CursorInfo, ViewportInfo};
-
-            let snapshot_handle = manager.state_snapshot_handle();
             let mut snapshot = snapshot_handle.write().unwrap();
 
             // Update active buffer ID
@@ -6819,13 +6808,13 @@ impl Editor {
         self.set_status_message(format!("Found {} reference(s) for '{}'", count, symbol));
 
         // Fire the lsp_references hook so plugins can display the results
-        let args = crate::services::plugins::hooks::HookArgs::LspReferences {
-            symbol: symbol.clone(),
-            locations: lsp_locations,
-        };
-        if let Some(ref ts_manager) = self.ts_plugin_manager {
-            ts_manager.run_hook("lsp_references", args);
-        }
+        self.plugin_manager.run_hook(
+            "lsp_references",
+            crate::services::plugins::hooks::HookArgs::LspReferences {
+                symbol: symbol.clone(),
+                locations: lsp_locations,
+            },
+        );
 
         tracing::info!(
             "Fired lsp_references hook with {} locations for symbol '{}'",

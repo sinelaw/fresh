@@ -812,7 +812,10 @@ impl Editor {
         // process lines that were already marked as seen.
         self.seen_byte_ranges.remove(&buffer_id);
         // Request a render so the lines_changed hook fires
-        self.plugin_render_requested = true;
+        #[cfg(feature = "plugins")]
+        {
+            self.plugin_render_requested = true;
+        }
     }
 
     /// Handle SetLineIndicator command
@@ -873,14 +876,13 @@ impl Editor {
         // Fire the prompt_changed hook immediately with empty input
         // This allows plugins to initialize the prompt state
         use crate::services::plugins::hooks::HookArgs;
-        let hook_args = HookArgs::PromptChanged {
-            prompt_type: prompt_type.clone(),
-            input: String::new(),
-        };
-
-        if let Some(ref ts_manager) = self.ts_plugin_manager {
-            ts_manager.run_hook("prompt_changed", hook_args);
-        }
+        self.plugin_manager.run_hook(
+            "prompt_changed",
+            HookArgs::PromptChanged {
+                prompt_type: prompt_type.clone(),
+                input: String::new(),
+            },
+        );
     }
 
     /// Handle StartPromptWithInitial command
@@ -902,14 +904,13 @@ impl Editor {
 
         // Fire the prompt_changed hook immediately with the initial value
         use crate::services::plugins::hooks::HookArgs;
-        let hook_args = HookArgs::PromptChanged {
-            prompt_type: prompt_type.clone(),
-            input: initial_value,
-        };
-
-        if let Some(ref ts_manager) = self.ts_plugin_manager {
-            ts_manager.run_hook("prompt_changed", hook_args);
-        }
+        self.plugin_manager.run_hook(
+            "prompt_changed",
+            HookArgs::PromptChanged {
+                prompt_type: prompt_type.clone(),
+                input: initial_value,
+            },
+        );
     }
 
     /// Handle SetPromptSuggestions command

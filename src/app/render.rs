@@ -143,7 +143,7 @@ impl Editor {
         // This allows plugins to add overlays before rendering
         // Only lines that haven't been seen before are sent (batched for efficiency)
         // Use non-blocking hooks to avoid deadlock when actions are awaiting
-        if let Some(ref mut ts_manager) = self.ts_plugin_manager {
+        if self.plugin_manager.is_active() {
             let hooks_start = std::time::Instant::now();
             // Get visible buffers and their areas
             let visible_buffers = self.split_manager.get_visible_buffers(editor_content_area);
@@ -159,9 +159,10 @@ impl Editor {
 
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     // Fire render_start hook once per buffer
-                    let render_start_args =
-                        crate::services::plugins::hooks::HookArgs::RenderStart { buffer_id };
-                    ts_manager.run_hook("render_start", render_start_args);
+                    self.plugin_manager.run_hook(
+                        "render_start",
+                        crate::services::plugins::hooks::HookArgs::RenderStart { buffer_id },
+                    );
 
                     // Fire view_transform_request hook with base tokens
                     // This allows plugins to transform the view (e.g., soft breaks for markdown)
@@ -180,15 +181,16 @@ impl Editor {
                         .last()
                         .and_then(|t| t.source_offset)
                         .unwrap_or(viewport_start);
-                    let transform_args =
+                    self.plugin_manager.run_hook(
+                        "view_transform_request",
                         crate::services::plugins::hooks::HookArgs::ViewTransformRequest {
                             buffer_id,
                             split_id,
                             viewport_start,
                             viewport_end,
                             tokens: base_tokens,
-                        };
-                    ts_manager.run_hook("view_transform_request", transform_args);
+                        },
+                    );
 
                     // Use the split area height as visible line count
                     let visible_count = split_area.height as usize;
@@ -231,11 +233,13 @@ impl Editor {
                     // Send batched hook if there are new lines
                     if !new_lines.is_empty() {
                         total_new_lines += new_lines.len();
-                        let hook_args = crate::services::plugins::hooks::HookArgs::LinesChanged {
-                            buffer_id,
-                            lines: new_lines,
-                        };
-                        ts_manager.run_hook("lines_changed", hook_args);
+                        self.plugin_manager.run_hook(
+                            "lines_changed",
+                            crate::services::plugins::hooks::HookArgs::LinesChanged {
+                                buffer_id,
+                                lines: new_lines,
+                            },
+                        );
                     }
                 }
             }
@@ -248,7 +252,7 @@ impl Editor {
             );
 
             // Process any plugin commands (like AddOverlay) that resulted from the hooks
-            let commands = ts_manager.process_commands();
+            let commands = self.plugin_manager.process_commands();
             for command in commands {
                 if let Err(e) = self.handle_plugin_command(command) {
                     tracing::error!("Error handling plugin command: {}", e);

@@ -18,6 +18,10 @@ path = "src/main.rs"
 name = "fresh"
 path = "src/lib.rs"
 
+[features]
+default = ["plugins"]
+plugins = ["dep:deno_core", "dep:deno_ast", "dep:deno_error"]
+
 [dependencies]
 crossterm = { version = "0.29.0", features = ["osc52"] }
 ratatui = "0.29.0"
@@ -34,7 +38,7 @@ tree-sitter-rust = "0.24.0"
 
 lsp-types = { version = "0.97", default-features = false } # Disable default features for consistency; this crate has few anyway.
 url = "2.5"
-tokio = { version = "1.48" } # Feature list removed; will be determined by deno_core's minimal requirements.
+tokio = { version = "1.48", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"] } # Core async runtime features
 async-trait = "0.1"
 lru = "0.16"
 ignore = { version = "0.4", default-features = false } # Disable multithreading via `crossbeam` for potentially smaller builds.
@@ -42,9 +46,9 @@ regex = "1.12"
 libc = "0.2"
 libloading = "0.9"  # Dynamic library loading for optional GPM support
 nix = { version = "0.30", features = ["signal", "pthread", "resource", "poll", "fs"] }
-deno_core = { version = "0.372.0", default-features = false, features = ["v8_use_custom_libcxx"] }  # Disable ICU data but keep custom libcxx for cross-compilation.
-deno_ast = { version = "0.51.0", default-features = false, features = ["transpiling"] }  # EXPERIMENT: Slim down SWC toolchain, keeping only transpiling.
-deno_error = "0.7"  # Error types for deno_core ops (matches deno_core's dependency)
+deno_core = { version = "0.372.0", default-features = false, features = ["v8_use_custom_libcxx"], optional = true }  # Disable ICU data but keep custom libcxx for cross-compilation.
+deno_ast = { version = "0.51.0", default-features = false, features = ["transpiling"], optional = true }  # EXPERIMENT: Slim down SWC toolchain, keeping only transpiling.
+deno_error = { version = "0.7", optional = true }  # Error types for deno_core ops (matches deno_core's dependency)
 tree-sitter-python = "0.25.0"
 tree-sitter-javascript = "0.25.0"
 tree-sitter-typescript = "0.23.2"
