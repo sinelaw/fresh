@@ -651,7 +651,10 @@ mod tests {
 
         let history1 = state.term.grid().history_size();
         eprintln!("After Batch1: history_size={}", history1);
-        assert_eq!(history1, 6, "After 10 lines in 5-row terminal, 6 should be in history");
+        assert_eq!(
+            history1, 6,
+            "After 10 lines in 5-row terminal, 6 should be in history"
+        );
 
         // First flush - should get lines 1-6
         let mut buffer1 = Vec::new();
@@ -662,7 +665,10 @@ mod tests {
         assert_eq!(count1, 6);
         assert!(output1.contains("Batch1-Line1"));
         assert!(output1.contains("Batch1-Line6"));
-        assert!(!output1.contains("Batch1-Line7"), "Line 7 should still be visible, not in scrollback");
+        assert!(
+            !output1.contains("Batch1-Line7"),
+            "Line 7 should still be visible, not in scrollback"
+        );
 
         // Second flush without new output should return 0
         let mut buffer2 = Vec::new();
@@ -687,13 +693,22 @@ mod tests {
 
         assert_eq!(count3, 10, "Should flush 10 new lines");
         // Should include Batch1 lines 7-10 (they weren't flushed before, were still visible)
-        assert!(output3.contains("Batch1-Line7"), "Batch1-Line7 should be in third flush (was visible, now scrolled)");
+        assert!(
+            output3.contains("Batch1-Line7"),
+            "Batch1-Line7 should be in third flush (was visible, now scrolled)"
+        );
         assert!(output3.contains("Batch1-Line10"));
         // Should include Batch2 lines 1-6 (new content that scrolled off)
         assert!(output3.contains("Batch2-Line1"));
         assert!(output3.contains("Batch2-Line6"));
         // Should NOT include Batch1-Line1-6 (already flushed)
-        assert!(!output3.contains("Batch1-Line1\n"), "Batch1-Line1 was already flushed, shouldn't appear again");
-        assert!(!output3.contains("Batch1-Line6\n"), "Batch1-Line6 was already flushed, shouldn't appear again");
+        assert!(
+            !output3.contains("Batch1-Line1\n"),
+            "Batch1-Line1 was already flushed, shouldn't appear again"
+        );
+        assert!(
+            !output3.contains("Batch1-Line6\n"),
+            "Batch1-Line6 was already flushed, shouldn't appear again"
+        );
     }
 }
