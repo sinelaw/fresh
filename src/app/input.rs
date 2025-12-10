@@ -1606,7 +1606,9 @@ impl Editor {
                 #[cfg(not(feature = "plugins"))]
                 {
                     let _ = action_name;
-                    self.set_status_message("Plugins not available (compiled without plugin support)".to_string());
+                    self.set_status_message(
+                        "Plugins not available (compiled without plugin support)".to_string(),
+                    );
                 }
             }
             Action::OpenTerminal => {

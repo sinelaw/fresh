@@ -139,12 +139,8 @@ done
     );
 
     // Create harness with config and working directory
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
-        100,
-        30,
-        config,
-        project_root.clone(),
-    )?;
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(100, 30, config, project_root.clone())?;
 
     // Open the test file
     harness.open_file(&test_file)?;
@@ -289,12 +285,8 @@ fn main() {
     let config = fresh::config::Config::default();
 
     // Create harness with config and working directory
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
-        120,
-        40,
-        config,
-        project_root.clone(),
-    )?;
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, config, project_root.clone())?;
 
     // Open the test file
     harness.open_file(&main_rs_path)?;

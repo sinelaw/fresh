@@ -135,9 +135,7 @@ impl PluginManager {
 
     /// Get the state snapshot handle for updating editor state.
     #[cfg(feature = "plugins")]
-    pub fn state_snapshot_handle(
-        &self,
-    ) -> Option<Arc<RwLock<super::api::EditorStateSnapshot>>> {
+    pub fn state_snapshot_handle(&self) -> Option<Arc<RwLock<super::api::EditorStateSnapshot>>> {
         self.inner.as_ref().map(|m| m.state_snapshot_handle())
     }
 
