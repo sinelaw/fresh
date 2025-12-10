@@ -86,6 +86,7 @@ By default, most editor keybindings (like `Ctrl+P` for command palette) still wo
 
 *   **`F9`**: Toggle keyboard capture mode
 *   When keyboard capture is enabled (status bar shows "Terminal [capture]"), all keys except `F9` are sent to the terminal
+*   **Visual indicator:** The UI dims (menu bar, status bar, other splits) to clearly show focus is exclusively on the terminal
 
 #### Scrollback Navigation
 
