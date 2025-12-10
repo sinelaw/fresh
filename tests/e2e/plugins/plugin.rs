@@ -1,3 +1,5 @@
+//! Plugin-related tests
+
 use crate::common::fake_lsp::FakeLspServer;
 use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
@@ -744,6 +746,15 @@ fn test_diagnostics_panel_plugin_loads() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
+
+    // Wait for the async panel creation to complete
+    // The panel shows "Diagnostics" header when open
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("*Diagnostics*") || screen.contains("Diagnostics (")
+        })
+        .unwrap();
 
     let final_screen = harness.screen_to_string();
     println!("Final screen after executing command:\n{}", final_screen);

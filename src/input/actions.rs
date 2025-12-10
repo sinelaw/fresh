@@ -1594,6 +1594,7 @@ pub fn action_to_events(
         | Action::Open
         | Action::New
         | Action::Close
+        | Action::CloseTab
         | Action::GotoLine
         | Action::NextBuffer
         | Action::PrevBuffer
@@ -1619,6 +1620,7 @@ pub fn action_to_events(
         | Action::SetComposeWidth
         | Action::IncreaseSplitSize
         | Action::DecreaseSplitSize
+        | Action::ToggleMaximizeSplit
         | Action::Undo
         | Action::Redo
         | Action::GoToMatchingBracket
@@ -1740,7 +1742,9 @@ pub fn action_to_events(
         | Action::OpenTerminal
         | Action::CloseTerminal
         | Action::FocusTerminal
-        | Action::TerminalEscape => return None,
+        | Action::TerminalEscape
+        | Action::ToggleKeyboardCapture
+        | Action::TerminalPaste => return None,
 
         // Block/rectangular selection actions
         Action::BlockSelectLeft => {

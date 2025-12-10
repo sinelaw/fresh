@@ -5,6 +5,18 @@
 //! - Manages multiple concurrent terminals
 //! - Routes input/output between the editor and terminal processes
 //! - Handles terminal resize events
+//!
+//! # Role in Incremental Streaming Architecture
+//!
+//! The manager owns the PTY read loop which is the entry point for incremental
+//! scrollback streaming. See `super` module docs for the full architecture overview.
+//!
+//! ## PTY Read Loop
+//!
+//! The read loop in `spawn()` performs incremental streaming: for each PTY read,
+//! it calls `process_output()` to update the terminal grid, then `flush_new_scrollback()`
+//! to append any new scrollback lines to the backing file. This ensures scrollback is
+//! written incrementally as lines scroll off screen, avoiding O(n) work on mode switches.
 
 use super::term::TerminalState;
 use crate::services::async_bridge::AsyncBridge;
@@ -134,6 +146,8 @@ impl TerminalManager {
     /// * `cols` - Initial terminal width in columns
     /// * `rows` - Initial terminal height in rows
     /// * `cwd` - Optional working directory (defaults to current directory)
+    /// * `log_path` - Optional path for raw PTY log (for session restore)
+    /// * `backing_path` - Optional path for rendered scrollback (incremental streaming)
     ///
     /// # Returns
     /// The terminal ID if successful
@@ -143,6 +157,7 @@ impl TerminalManager {
         rows: u16,
         cwd: Option<std::path::PathBuf>,
         log_path: Option<std::path::PathBuf>,
+        backing_path: Option<std::path::PathBuf>,
     ) -> Result<TerminalId, String> {
         let id = TerminalId(self.next_id);
         self.next_id += 1;
@@ -179,6 +194,18 @@ impl TerminalManager {
             // Create terminal state
             let state = Arc::new(Mutex::new(TerminalState::new(cols, rows)));
 
+            // Initialize backing_file_history_end if backing file already exists (session restore)
+            // This ensures enter_terminal_mode doesn't truncate existing history to 0
+            if let Some(ref p) = backing_path {
+                if let Ok(metadata) = std::fs::metadata(p) {
+                    if metadata.len() > 0 {
+                        if let Ok(mut s) = state.lock() {
+                            s.set_backing_file_history_end(metadata.len());
+                        }
+                    }
+                }
+            }
+
             // Create communication channel
             let (command_tx, command_rx) = mpsc::channel::<TerminalCommand>();
 
@@ -200,7 +227,8 @@ impl TerminalManager {
             // Clone state for reader thread
             let state_clone = state.clone();
             let async_bridge = self.async_bridge.clone();
-            // Optional raw log writer for full-session capture
+
+            // Optional raw log writer for full-session capture (for live terminal resume)
             let mut log_writer = log_path
                 .as_ref()
                 .and_then(|p| {
@@ -209,6 +237,38 @@ impl TerminalManager {
                         .append(true)
                         .open(p)
                         .ok()
+                })
+                .map(std::io::BufWriter::new);
+
+            // Backing file writer for incremental scrollback streaming
+            // During session restore, the backing file may already contain scrollback content.
+            // We open for append to continue streaming new scrollback after the existing content.
+            // For new terminals, append mode also works (creates file if needed).
+            let mut backing_writer = backing_path
+                .as_ref()
+                .and_then(|p| {
+                    // Check if backing file exists and has content (session restore case)
+                    let existing_has_content =
+                        p.exists() && std::fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false);
+
+                    if existing_has_content {
+                        // Session restore: open for append to continue streaming new scrollback
+                        // The existing content is preserved and loaded into buffer separately.
+                        // Note: enter_terminal_mode will truncate when user re-enters terminal.
+                        std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(p)
+                            .ok()
+                    } else {
+                        // New terminal: start fresh with truncate
+                        std::fs::OpenOptions::new()
+                            .create(true)
+                            .write(true)
+                            .truncate(true)
+                            .open(p)
+                            .ok()
+                    }
                 })
                 .map(std::io::BufWriter::new);
 
@@ -224,11 +284,34 @@ impl TerminalManager {
                             break;
                         }
                         Ok(n) => {
-                            // Process output through terminal emulator
+                            // Process output through terminal emulator and stream scrollback
                             if let Ok(mut state) = state_clone.lock() {
                                 state.process_output(&buf[..n]);
+
+                                // Incrementally stream new scrollback lines to backing file
+                                if let Some(ref mut writer) = backing_writer {
+                                    match state.flush_new_scrollback(writer) {
+                                        Ok(lines_written) => {
+                                            if lines_written > 0 {
+                                                // Update the history end offset
+                                                if let Ok(pos) = writer.get_ref().metadata() {
+                                                    state.set_backing_file_history_end(pos.len());
+                                                }
+                                                let _ = writer.flush();
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "Terminal backing file write error: {}",
+                                                e
+                                            );
+                                            backing_writer = None;
+                                        }
+                                    }
+                                }
                             }
-                            // Append raw bytes to log if available
+
+                            // Append raw bytes to log if available (for session restore replay)
                             if let Some(w) = log_writer.as_mut() {
                                 if let Err(e) = w.write_all(&buf[..n]) {
                                     tracing::warn!("Terminal log write error: {}", e);
@@ -238,6 +321,7 @@ impl TerminalManager {
                                     log_writer = None;
                                 }
                             }
+
                             // Notify main loop to redraw
                             if let Some(ref bridge) = async_bridge {
                                 let _ = bridge.sender().send(
@@ -255,6 +339,9 @@ impl TerminalManager {
                 }
                 alive_clone.store(false, std::sync::atomic::Ordering::Relaxed);
                 if let Some(mut w) = log_writer {
+                    let _ = w.flush();
+                }
+                if let Some(mut w) = backing_writer {
                     let _ = w.flush();
                 }
                 // Notify that terminal exited

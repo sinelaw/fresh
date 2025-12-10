@@ -3,9 +3,16 @@
 
 // Initialize V8 early - must happen before any Editor/JsRuntime is created
 // and only once per process. Using ctor ensures this runs at test startup.
+// Only needed when the plugins feature is enabled.
+#[cfg(feature = "plugins")]
 #[ctor::ctor]
 fn init_v8_for_tests() {
     fresh::v8_init::init();
+}
+
+// Common initialization (non-plugin related)
+#[ctor::ctor]
+fn init_keybindings_for_tests() {
     // Force Linux-style keybindings (Ctrl/Alt/Shift instead of ⌘/⌥/⇧)
     // to ensure consistent visual test output across platforms
     fresh::input::keybindings::set_force_linux_keybindings(true);
@@ -279,6 +286,41 @@ impl EditorTestHarness {
         let mut config = Config::default();
         config.editor.line_wrap = false;
         Self::with_config(width, height, config)
+    }
+
+    /// Create with custom config, working directory, and shared DirectoryContext.
+    /// This is useful for session restore tests that need to share state directories
+    /// across multiple Editor instances.
+    pub fn with_shared_dir_context(
+        width: u16,
+        height: u16,
+        config: Config,
+        working_dir: std::path::PathBuf,
+        dir_context: DirectoryContext,
+    ) -> io::Result<Self> {
+        let backend = TestBackend::new(width, height);
+        let terminal = Terminal::new(backend)?;
+
+        // Create editor - it will create its own tokio runtime for async operations
+        let mut editor =
+            Editor::with_working_dir(config, width, height, Some(working_dir), dir_context)?;
+
+        // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
+        editor.process_async_messages();
+
+        Ok(EditorTestHarness {
+            editor,
+            terminal,
+            _temp_dir: None, // No owned temp dir - caller manages the shared context
+            fs_metrics: None,
+            _tokio_runtime: None,
+            shadow_string: String::new(),
+            shadow_cursor: 0,
+            enable_shadow_validation: false,
+            vt100_parser: vt100::Parser::new(height, width, 0),
+            term_width: width,
+            term_height: height,
+        })
     }
 
     /// Create a test harness with a slow filesystem backend for performance testing

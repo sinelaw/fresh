@@ -1,6 +1,63 @@
 # Release Notes
 
-## 0.1.27 - Unreleased
+## 0.1.28 - Unreleased
+
+### Features
+
+* **Integrated Terminal**: Full terminal emulation using alacritty_terminal. Open a terminal split with "Open Terminal" command, run shell commands, and interact with TUI applications. Supports:
+  - Keyboard capture mode (F9) for sending all keys to terminal
+  - Scrollback history with file-backed storage
+  - Session persistence - terminals restore across editor restarts
+  - Paste support (Ctrl+V)
+  - Click to focus terminal splits
+  - Auto-restore terminal mode when switching back to terminal tabs
+  - Dimmed UI indication when keyboard capture is active
+
+* **Mouse Hover for LSP**: Hover over symbols to see LSP hover information (type info, documentation). Configurable delay before showing hover popup.
+
+* **Toggle Maximize Split**: New command to maximize/restore the current split view.
+
+* **Close Tab Command**: New command to close a tab without closing the underlying buffer.
+
+* **C# Language Support**: Added C# language configuration with LSP support (csharp-ls or csharp-language-server) and auto-indent. Includes proactive `dotnet restore` on C# file open.
+
+* **Config Editor Improvements**: New `getConfig`/`getUserConfig` plugin APIs. Config editor now properly merges user config with defaults for LSP and languages sections. Timestamped backups created before saving config.
+
+* **LSP Menu**: New LSP menu in menu bar with common LSP actions. Menu items are disabled when LSP server is not ready.
+
+* **Common LSP Keybindings**: Added default keybindings for common LSP operations.
+
+* **C/C++ Language Support**: Added C and C++ language configurations to defaults.
+
+### Bug Fixes
+
+* **LSP Focus Stealing**: Fixed LSP error and warning buffers stealing focus from the active buffer.
+
+* **Terminal Scrollback**: Fixed multiple issues with terminal scrollback not being captured, restored, or displayed correctly after session restore and mode toggles.
+
+* **Terminal View Following**: Fixed terminal view not following output when at the bottom of the screen.
+
+* **Config Editor**: Fixed config editor saving null instead of user changes. Fixed undefined defaultValue reference.
+
+* **Duplicate LSP didOpen**: Fixed duplicate didOpen notifications being sent to strict LSP servers.
+
+* **LSP didChange Race**: Fixed LSP didChange notification being sent before didOpen.
+
+### Internal
+
+* **Musl Builds**: Added musl builds without plugins for fully static Linux binaries.
+
+* **Plugin Build Flag**: Added cargo feature (`no-plugins`) to disable plugins at the dependency level, reducing binary size and startup time.
+
+* **Test Organization**: Moved plugin-related and LSP find_references tests to dedicated plugins directory.
+
+* **Test Reliability**: Fixed flaky e2e tests, skipped platform-specific tests on Windows/macOS where appropriate.
+
+* **Terminal Architecture**: Implemented incremental streaming architecture for terminal scrollback with PTY logging and file-backed buffers.
+
+---
+
+## 0.1.27
 
 ### Features
 

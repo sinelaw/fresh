@@ -147,7 +147,7 @@ impl TextMateEngine {
         let parse_start = viewport_start.saturating_sub(context_bytes);
         let parse_end = (viewport_end + context_bytes).min(buffer.len());
 
-        if parse_end - parse_start > MAX_PARSE_BYTES {
+        if parse_end <= parse_start || parse_end - parse_start > MAX_PARSE_BYTES {
             return Vec::new();
         }
 
@@ -510,5 +510,33 @@ mod tests {
         // Might be none or might find something via syntect
         // Just verify it doesn't panic
         let _ = engine.backend_name();
+    }
+
+    #[test]
+    fn test_highlight_viewport_empty_buffer_no_panic() {
+        // Regression test: calling highlight_viewport with an empty buffer
+        // and non-zero viewport range previously caused subtraction overflow panic.
+        //
+        // The bug occurred when:
+        // - buffer is empty (len = 0)
+        // - viewport_start > context_bytes (so parse_start > 0 after saturating_sub)
+        // - parse_end = min(viewport_end + context_bytes, buffer.len()) = 0
+        // - parse_end - parse_start would underflow (0 - positive = overflow)
+        let registry = GrammarRegistry::load();
+
+        let mut engine = HighlightEngine::for_file(Path::new("test.rs"), &registry);
+
+        // Create empty buffer
+        let buffer = Buffer::from_str("", 0);
+        let theme = Theme::default();
+
+        // Test the specific case that triggered the overflow:
+        // viewport_start=100, context_bytes=10 => parse_start=90, parse_end=0
+        // 0 - 90 = overflow!
+        if let HighlightEngine::TextMate(ref mut tm) = engine {
+            // Small context_bytes so parse_start remains > 0
+            let spans = tm.highlight_viewport(&buffer, 100, 200, &theme, 10);
+            assert!(spans.is_empty());
+        }
     }
 }

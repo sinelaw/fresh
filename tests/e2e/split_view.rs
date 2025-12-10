@@ -250,3 +250,117 @@ fn test_split_with_file_operations() {
     harness.assert_screen_contains("file1.txt");
     harness.assert_screen_contains("file2.txt");
 }
+
+/// Test toggle maximize split via command palette (maximize)
+#[test]
+fn test_toggle_maximize_split() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Type in first buffer
+    harness.type_text("Buffer 1").unwrap();
+
+    // Create vertical split via command palette (like test_split_horizontal)
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Both splits should show "Buffer 1" (Emacs-style)
+    harness.assert_screen_contains("Split pane vertically");
+
+    // Toggle maximize the current split via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("togmax").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Should see status message
+    harness.render().unwrap();
+    harness.assert_screen_contains("Maximized split");
+}
+
+/// Test toggle maximize split to unmaximize via command palette
+#[test]
+fn test_toggle_unmaximize_split() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+    let file1 = project_dir.join("file1.txt");
+    let file2 = project_dir.join("file2.txt");
+
+    std::fs::write(&file1, "File 1 content").unwrap();
+    std::fs::write(&file2, "File 2 content").unwrap();
+
+    // Open first file and create a split via command palette
+    harness.open_file(&file1).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Open second file in the new split
+    harness.open_file(&file2).unwrap();
+    harness.render().unwrap();
+
+    // Toggle maximize the current split (first toggle = maximize)
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("togmax").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Toggle again to unmaximize (second toggle = unmaximize)
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("togmax").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should see status message
+    harness.assert_screen_contains("Restored all splits");
+
+    // Both files should be visible again
+    harness.assert_screen_contains("file1.txt");
+    harness.assert_screen_contains("file2.txt");
+}
+
+/// Test cannot toggle maximize when only one split exists
+#[test]
+fn test_cannot_toggle_maximize_single_split() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Try to toggle maximize the only split via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("togmax").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should see error message (may be truncated in status bar)
+    harness.assert_screen_contains("Cannot maximize");
+}

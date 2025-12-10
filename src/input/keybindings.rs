@@ -278,6 +278,7 @@ pub enum Action {
     Open,
     New,
     Close,
+    CloseTab,
     Quit,
     Revert,
     ToggleAutoRevert,
@@ -358,6 +359,7 @@ pub enum Action {
     PrevSplit,
     IncreaseSplitSize,
     DecreaseSplitSize,
+    ToggleMaximizeSplit,
 
     // Prompt mode actions
     PromptConfirm,
@@ -465,10 +467,12 @@ pub enum Action {
     PluginAction(String),
 
     // Terminal operations
-    OpenTerminal,   // Open a new terminal in the current split
-    CloseTerminal,  // Close the current terminal
-    FocusTerminal,  // Focus the terminal buffer (if viewing terminal, focus input)
-    TerminalEscape, // Escape from terminal mode back to editor
+    OpenTerminal,          // Open a new terminal in the current split
+    CloseTerminal,         // Close the current terminal
+    FocusTerminal,         // Focus the terminal buffer (if viewing terminal, focus input)
+    TerminalEscape,        // Escape from terminal mode back to editor
+    ToggleKeyboardCapture, // Toggle keyboard capture mode (all keys go to terminal)
+    TerminalPaste,         // Paste clipboard contents into terminal as a single batch
 
     // No-op
     None,
@@ -549,6 +553,7 @@ impl Action {
             "open" => Some(Action::Open),
             "new" => Some(Action::New),
             "close" => Some(Action::Close),
+            "close_tab" => Some(Action::CloseTab),
             "quit" => Some(Action::Quit),
             "revert" => Some(Action::Revert),
             "toggle_auto_revert" => Some(Action::ToggleAutoRevert),
@@ -645,6 +650,7 @@ impl Action {
             "prev_split" => Some(Action::PrevSplit),
             "increase_split_size" => Some(Action::IncreaseSplitSize),
             "decrease_split_size" => Some(Action::DecreaseSplitSize),
+            "toggle_maximize_split" => Some(Action::ToggleMaximizeSplit),
 
             "prompt_confirm" => Some(Action::PromptConfirm),
             "prompt_cancel" => Some(Action::PromptCancel),
@@ -749,6 +755,8 @@ impl Action {
             "close_terminal" => Some(Action::CloseTerminal),
             "focus_terminal" => Some(Action::FocusTerminal),
             "terminal_escape" => Some(Action::TerminalEscape),
+            "toggle_keyboard_capture" => Some(Action::ToggleKeyboardCapture),
+            "terminal_paste" => Some(Action::TerminalPaste),
 
             _ => None,
         }
@@ -957,6 +965,43 @@ impl KeybindingResolver {
         )
     }
 
+    /// Check if an action is a UI action that should work in terminal mode
+    /// (without keyboard capture). These are general navigation and UI actions
+    /// that don't involve text editing.
+    pub fn is_terminal_ui_action(action: &Action) -> bool {
+        matches!(
+            action,
+            // Global UI actions
+            Action::CommandPalette
+                | Action::MenuActivate
+                | Action::MenuOpen(_)
+                | Action::ShowHelp
+                | Action::ShowKeyboardShortcuts
+                | Action::Quit
+                // Split navigation
+                | Action::NextSplit
+                | Action::PrevSplit
+                | Action::SplitHorizontal
+                | Action::SplitVertical
+                | Action::CloseSplit
+                | Action::ToggleMaximizeSplit
+                // Tab/buffer navigation
+                | Action::NextBuffer
+                | Action::PrevBuffer
+                | Action::Close
+                | Action::ScrollTabsLeft
+                | Action::ScrollTabsRight
+                // Terminal control
+                | Action::TerminalEscape
+                | Action::ToggleKeyboardCapture
+                | Action::OpenTerminal
+                | Action::CloseTerminal
+                | Action::TerminalPaste
+                // File explorer
+                | Action::ToggleFileExplorer
+        )
+    }
+
     /// Resolve a key event with chord state to check for multi-key sequences
     /// Returns:
     /// - Complete(action): The sequence is complete, execute the action
@@ -1108,6 +1153,56 @@ impl KeybindingResolver {
         }
 
         tracing::trace!("  -> No binding found, returning Action::None");
+        Action::None
+    }
+
+    /// Resolve a key event to a UI action for terminal mode.
+    /// Only returns actions that are classified as UI actions (is_terminal_ui_action).
+    /// Returns Action::None if the key doesn't map to a UI action.
+    pub fn resolve_terminal_ui_action(&self, event: &KeyEvent) -> Action {
+        tracing::trace!(
+            "KeybindingResolver.resolve_terminal_ui_action: code={:?}, modifiers={:?}",
+            event.code,
+            event.modifiers
+        );
+
+        // Check Terminal context bindings first (highest priority for terminal mode)
+        for bindings in [&self.bindings, &self.default_bindings] {
+            if let Some(terminal_bindings) = bindings.get(&KeyContext::Terminal) {
+                if let Some(action) = terminal_bindings.get(&(event.code, event.modifiers)) {
+                    if Self::is_terminal_ui_action(action) {
+                        tracing::trace!("  -> Found UI action in terminal bindings: {:?}", action);
+                        return action.clone();
+                    }
+                }
+            }
+        }
+
+        // Check Global bindings (work in all contexts)
+        for bindings in [&self.bindings, &self.default_bindings] {
+            if let Some(global_bindings) = bindings.get(&KeyContext::Global) {
+                if let Some(action) = global_bindings.get(&(event.code, event.modifiers)) {
+                    if Self::is_terminal_ui_action(action) {
+                        tracing::trace!("  -> Found UI action in global bindings: {:?}", action);
+                        return action.clone();
+                    }
+                }
+            }
+        }
+
+        // Check Normal context bindings (for actions like next_split that are in Normal context)
+        for bindings in [&self.bindings, &self.default_bindings] {
+            if let Some(normal_bindings) = bindings.get(&KeyContext::Normal) {
+                if let Some(action) = normal_bindings.get(&(event.code, event.modifiers)) {
+                    if Self::is_terminal_ui_action(action) {
+                        tracing::trace!("  -> Found UI action in normal bindings: {:?}", action);
+                        return action.clone();
+                    }
+                }
+            }
+        }
+
+        tracing::trace!("  -> No UI action found");
         Action::None
     }
 
@@ -1415,6 +1510,7 @@ impl KeybindingResolver {
             Action::Open => "Open file".to_string(),
             Action::New => "New file".to_string(),
             Action::Close => "Close file".to_string(),
+            Action::CloseTab => "Close tab".to_string(),
             Action::Quit => "Quit editor".to_string(),
             Action::Revert => "Revert to saved file".to_string(),
             Action::ToggleAutoRevert => "Toggle auto-revert mode".to_string(),
@@ -1468,6 +1564,7 @@ impl KeybindingResolver {
             Action::PrevSplit => "Previous split".to_string(),
             Action::IncreaseSplitSize => "Increase split size".to_string(),
             Action::DecreaseSplitSize => "Decrease split size".to_string(),
+            Action::ToggleMaximizeSplit => "Toggle maximize split".to_string(),
             Action::PromptConfirm => "Confirm prompt".to_string(),
             Action::PromptCancel => "Cancel prompt".to_string(),
             Action::PromptBackspace => "Prompt backspace".to_string(),
@@ -1562,6 +1659,8 @@ impl KeybindingResolver {
             Action::CloseTerminal => "Close terminal".to_string(),
             Action::FocusTerminal => "Focus terminal".to_string(),
             Action::TerminalEscape => "Exit terminal mode".to_string(),
+            Action::ToggleKeyboardCapture => "Toggle keyboard capture (terminal)".to_string(),
+            Action::TerminalPaste => "Paste into terminal".to_string(),
             Action::None => "No action".to_string(),
         }
     }

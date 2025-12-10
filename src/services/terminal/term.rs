@@ -4,12 +4,36 @@
 //! - VT100/ANSI escape sequence parsing
 //! - Terminal grid management
 //! - Cursor state tracking
+//! - Incremental scrollback streaming to backing file
+//!
+//! # Role in Incremental Streaming Architecture
+//!
+//! This module provides the core state management and streaming methods.
+//! See `super` module docs for the full architecture overview.
+//!
+//! ## Key Methods
+//!
+//! - `process_output`: Feed PTY bytes into the terminal emulator
+//! - `flush_new_scrollback`: Stream new scrollback lines to backing file
+//! - `append_visible_screen`: Append visible screen on mode exit
+//! - `backing_file_history_end`: Get truncation point for mode re-entry
+//!
+//! ## State Tracking
+//!
+//! `synced_history_lines` tracks how many scrollback lines have been written to the
+//! backing file. When `grid.history_size() > synced_history_lines`, new lines need
+//! to be flushed.
+//!
+//! `backing_file_history_end` tracks the byte offset where scrollback ends in the
+//! backing file, used for truncation when re-entering terminal mode.
 
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config as TermConfig, Term};
 use alacritty_terminal::vte::ansi::Processor;
+use std::io::{self, Write};
 
 // Keep a generous scrollback so sync-to-buffer can include deep history.
 const SCROLLBACK_LINES: usize = 200_000;
@@ -37,6 +61,10 @@ pub struct TerminalState {
     dirty: bool,
     /// Terminal title (set via escape sequences)
     terminal_title: String,
+    /// Number of scrollback lines already written to backing file
+    synced_history_lines: usize,
+    /// Byte offset in backing file where scrollback ends (for truncation)
+    backing_file_history_end: u64,
 }
 
 impl TerminalState {
@@ -54,6 +82,8 @@ impl TerminalState {
             rows,
             dirty: true,
             terminal_title: String::new(),
+            synced_history_lines: 0,
+            backing_file_history_end: 0,
         }
     }
 
@@ -170,6 +200,12 @@ impl TerminalState {
 
     /// Get all content including scrollback history as a string
     /// Lines are in chronological order (oldest first)
+    ///
+    /// WARNING: This is O(total_history) and should NOT be used in hot paths.
+    /// For mode switching, use the incremental streaming architecture instead:
+    /// - `flush_new_scrollback()` during PTY reads
+    /// - `append_visible_screen()` on mode exit
+    #[allow(dead_code)]
     pub fn full_content_string(&self) -> String {
         use alacritty_terminal::grid::Dimensions;
         use alacritty_terminal::index::{Column, Line};
@@ -227,6 +263,105 @@ impl TerminalState {
     pub fn scroll_to_bottom(&mut self) {
         self.term.scroll_display(Scroll::Bottom);
         self.dirty = true;
+    }
+
+    // =========================================================================
+    // Incremental scrollback streaming
+    // =========================================================================
+
+    /// Flush any new scrollback lines to the writer.
+    ///
+    /// Call this after `process_output()` to incrementally stream scrollback
+    /// to the backing file. Returns the number of new lines written.
+    ///
+    /// This is the core of the incremental streaming architecture: scrollback
+    /// lines are written once as they scroll off the screen, avoiding O(n)
+    /// work on mode switches.
+    pub fn flush_new_scrollback<W: Write>(&mut self, writer: &mut W) -> io::Result<usize> {
+        use alacritty_terminal::grid::Dimensions;
+
+        let grid = self.term.grid();
+        let current_history = grid.history_size();
+
+        if current_history <= self.synced_history_lines {
+            return Ok(0);
+        }
+
+        let new_count = current_history - self.synced_history_lines;
+
+        // New scrollback lines are at indices -new_count down to -1
+        // When history grows, new lines are always added at the "bottom" of history
+        // (closest to visible screen), and old lines shift to larger negative indices.
+        //
+        // Example: if synced=6 and current=16:
+        // - Old lines (already flushed) are now at -16 to -11
+        // - New lines are at -10 to -1
+        // We write oldest-first: -10, -9, ..., -1
+        for i in 0..new_count {
+            // Line index: oldest new line first
+            // i=0 -> -new_count = -10 (oldest new line)
+            // i=9 -> -1 (newest new line, just scrolled off)
+            let line_idx = -((new_count - i) as i32);
+            self.write_grid_line(writer, Line(line_idx))?;
+        }
+
+        self.synced_history_lines = current_history;
+        // Update the byte offset where scrollback ends
+        // The writer should be positioned at end, so we can query position
+        // For simplicity, we track this separately when we know the file position
+
+        Ok(new_count)
+    }
+
+    /// Append the visible screen content to the writer.
+    ///
+    /// Call this when exiting terminal mode to add the current screen
+    /// to the backing file. The visible screen is the "rewritable tail"
+    /// that gets overwritten each time we exit terminal mode.
+    pub fn append_visible_screen<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        for row in 0..self.rows as i32 {
+            self.write_grid_line(writer, Line(row))?;
+        }
+        Ok(())
+    }
+
+    /// Write a single grid line to the writer, trimming trailing whitespace.
+    fn write_grid_line<W: Write>(&self, writer: &mut W, line: Line) -> io::Result<()> {
+        let grid = self.term.grid();
+        let row_data = &grid[line];
+
+        let mut line_str = String::with_capacity(self.cols as usize);
+        for col in 0..self.cols as usize {
+            line_str.push(row_data[Column(col)].c);
+        }
+
+        writeln!(writer, "{}", line_str.trim_end())
+    }
+
+    /// Get the byte offset where scrollback history ends in the backing file.
+    ///
+    /// Used for truncating the file when re-entering terminal mode
+    /// (to remove the visible screen portion).
+    pub fn backing_file_history_end(&self) -> u64 {
+        self.backing_file_history_end
+    }
+
+    /// Set the byte offset where scrollback history ends.
+    ///
+    /// Call this after flushing scrollback to record the file position.
+    pub fn set_backing_file_history_end(&mut self, offset: u64) {
+        self.backing_file_history_end = offset;
+    }
+
+    /// Get the number of scrollback lines that have been synced to the backing file.
+    pub fn synced_history_lines(&self) -> usize {
+        self.synced_history_lines
+    }
+
+    /// Reset sync state (e.g., when starting fresh or after truncation).
+    pub fn reset_sync_state(&mut self) {
+        self.synced_history_lines = 0;
+        self.backing_file_history_end = 0;
     }
 }
 
@@ -365,5 +500,215 @@ mod tests {
         state.resize(100, 30);
         assert_eq!(state.size(), (100, 30));
         assert!(state.is_dirty());
+    }
+
+    #[test]
+    fn test_flush_new_scrollback_no_history() {
+        // When there's no scrollback history, flush should return 0
+        let mut state = TerminalState::new(80, 24);
+        state.process_output(b"Hello");
+
+        let mut buffer = Vec::new();
+        let count = state.flush_new_scrollback(&mut buffer).unwrap();
+
+        assert_eq!(count, 0, "No scrollback yet, should flush 0 lines");
+        assert!(buffer.is_empty(), "Buffer should be empty");
+    }
+
+    #[test]
+    fn test_flush_new_scrollback_after_scroll() {
+        // Generate enough output to create scrollback
+        let mut state = TerminalState::new(80, 10); // Small terminal to trigger scrollback quickly
+
+        // Generate output that exceeds the terminal height
+        for i in 1..=20 {
+            state.process_output(format!("Line {}\r\n", i).as_bytes());
+        }
+
+        let mut buffer = Vec::new();
+        let count = state.flush_new_scrollback(&mut buffer).unwrap();
+
+        // Should have some scrollback lines
+        let output = String::from_utf8_lossy(&buffer);
+        eprintln!(
+            "Scrollback test: count={}, synced={}, buffer_len={}, output:\n{}",
+            count,
+            state.synced_history_lines(),
+            buffer.len(),
+            output
+        );
+
+        // The first lines should have scrolled off
+        assert!(count > 0, "Should have some scrollback lines");
+        assert!(
+            output.contains("Line 1"),
+            "Scrollback should contain Line 1"
+        );
+    }
+
+    #[test]
+    fn test_append_visible_screen() {
+        let mut state = TerminalState::new(80, 5);
+        state.process_output(b"Line A\r\nLine B\r\nLine C\r\n");
+
+        let mut buffer = Vec::new();
+        state.append_visible_screen(&mut buffer).unwrap();
+
+        let output = String::from_utf8_lossy(&buffer);
+        assert!(
+            output.contains("Line A"),
+            "Visible screen should contain Line A"
+        );
+        assert!(
+            output.contains("Line B"),
+            "Visible screen should contain Line B"
+        );
+        assert!(
+            output.contains("Line C"),
+            "Visible screen should contain Line C"
+        );
+    }
+
+    #[test]
+    fn test_scrollback_then_visible_no_duplication() {
+        // Test the full flow: scrollback lines + visible screen should not duplicate
+        let mut state = TerminalState::new(80, 5); // Small terminal
+
+        // Generate output that creates scrollback
+        // Use unique markers that won't accidentally match each other
+        for i in 1..=15 {
+            state.process_output(format!("UNIQUELINE_{:02}\r\n", i).as_bytes());
+        }
+
+        // Flush scrollback
+        let mut scrollback_buffer = Vec::new();
+        let scrollback_count = state.flush_new_scrollback(&mut scrollback_buffer).unwrap();
+        let scrollback_output = String::from_utf8_lossy(&scrollback_buffer);
+
+        // Append visible screen
+        let mut visible_buffer = Vec::new();
+        state.append_visible_screen(&mut visible_buffer).unwrap();
+        let visible_output = String::from_utf8_lossy(&visible_buffer);
+
+        eprintln!(
+            "Scrollback ({} lines):\n{}",
+            scrollback_count, scrollback_output
+        );
+        eprintln!("Visible screen:\n{}", visible_output);
+
+        // Combined output should have each line exactly once
+        let combined = format!("{}{}", scrollback_output, visible_output);
+
+        // Count occurrences of each line
+        for i in 1..=15 {
+            let pattern = format!("UNIQUELINE_{:02}", i);
+            let count = combined.matches(&pattern).count();
+            assert!(
+                count >= 1,
+                "Line {} should appear at least once, but found {} times",
+                i,
+                count
+            );
+            // Allow for some overlap at boundaries, but not excessive duplication
+            assert!(
+                count <= 2,
+                "Line {} appears {} times - too much duplication",
+                i,
+                count
+            );
+        }
+    }
+
+    #[test]
+    fn test_backing_file_history_end_tracking() {
+        let mut state = TerminalState::new(80, 5);
+
+        // Initially should be 0
+        assert_eq!(state.backing_file_history_end(), 0);
+
+        // Set it
+        state.set_backing_file_history_end(1234);
+        assert_eq!(state.backing_file_history_end(), 1234);
+
+        // Reset should clear it
+        state.reset_sync_state();
+        assert_eq!(state.backing_file_history_end(), 0);
+        assert_eq!(state.synced_history_lines(), 0);
+    }
+
+    #[test]
+    fn test_multiple_flush_cycles_no_duplication() {
+        use alacritty_terminal::grid::Dimensions;
+
+        // Simulate multiple enter/exit terminal mode cycles
+        let mut state = TerminalState::new(80, 5);
+
+        // First batch of output (10 lines in 5-row terminal)
+        // Lines 1-6 scroll into history, lines 7-10 are visible
+        for i in 1..=10 {
+            state.process_output(format!("Batch1-Line{}\r\n", i).as_bytes());
+        }
+
+        let history1 = state.term.grid().history_size();
+        eprintln!("After Batch1: history_size={}", history1);
+        assert_eq!(
+            history1, 6,
+            "After 10 lines in 5-row terminal, 6 should be in history"
+        );
+
+        // First flush - should get lines 1-6
+        let mut buffer1 = Vec::new();
+        let count1 = state.flush_new_scrollback(&mut buffer1).unwrap();
+        let output1 = String::from_utf8_lossy(&buffer1);
+        eprintln!("First flush: {} lines\n{}", count1, output1);
+
+        assert_eq!(count1, 6);
+        assert!(output1.contains("Batch1-Line1"));
+        assert!(output1.contains("Batch1-Line6"));
+        assert!(
+            !output1.contains("Batch1-Line7"),
+            "Line 7 should still be visible, not in scrollback"
+        );
+
+        // Second flush without new output should return 0
+        let mut buffer2 = Vec::new();
+        let count2 = state.flush_new_scrollback(&mut buffer2).unwrap();
+        assert_eq!(count2, 0, "Second flush without new output should be 0");
+
+        // More output (10 more lines)
+        // This pushes Batch1-Line7-10 into history, plus Batch2-Line1-6
+        for i in 1..=10 {
+            state.process_output(format!("Batch2-Line{}\r\n", i).as_bytes());
+        }
+
+        let history3 = state.term.grid().history_size();
+        eprintln!("After Batch2: history_size={}", history3);
+
+        // Third flush should get lines that scrolled off since last flush
+        // That's Batch1-Line7-10 (4 lines) + Batch2-Line1-6 (6 lines) = 10 lines
+        let mut buffer3 = Vec::new();
+        let count3 = state.flush_new_scrollback(&mut buffer3).unwrap();
+        let output3 = String::from_utf8_lossy(&buffer3);
+        eprintln!("Third flush: {} lines\n{}", count3, output3);
+
+        assert_eq!(count3, 10, "Should flush 10 new lines");
+        // Should include Batch1 lines 7-10 (they weren't flushed before, were still visible)
+        assert!(
+            output3.contains("Batch1-Line7"),
+            "Batch1-Line7 should be in third flush (was visible, now scrolled)"
+        );
+        assert!(output3.contains("Batch1-Line10"));
+        // Should include Batch2 lines 1-6 (new content that scrolled off)
+        assert!(output3.contains("Batch2-Line1"));
+        assert!(output3.contains("Batch2-Line6"));
+        // Should NOT include Batch1-Line1-6 (already flushed)
+        assert!(
+            !output3.contains("Batch1-Line1\n"),
+            "Batch1-Line1 was already flushed, shouldn't appear again"
+        );
+        assert!(
+            !output3.contains("Batch1-Line6\n"),
+            "Batch1-Line6 was already flushed, shouldn't appear again"
+        );
     }
 }

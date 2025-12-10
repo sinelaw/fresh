@@ -260,9 +260,23 @@ fn test_click_tab_close_button() {
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    // Create a second buffer so we can close one
-    harness.new_buffer().unwrap();
+    // Create two temp files
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file1_path = temp_dir.path().join("first.txt");
+    let file2_path = temp_dir.path().join("to_close.txt");
+    std::fs::write(&file1_path, "First file content").unwrap();
+    std::fs::write(&file2_path, "UNIQUE_CONTENT_TO_CLOSE").unwrap();
+
+    // Open first file
+    harness.open_file(&file1_path).unwrap();
     harness.render().unwrap();
+
+    // Open second file as a new tab
+    harness.open_file(&file2_path).unwrap();
+    harness.render().unwrap();
+
+    // Verify the content is visible before closing
+    harness.assert_screen_contains("UNIQUE_CONTENT_TO_CLOSE");
 
     // Find the × character position in the tab bar (row 1)
     let screen = harness.screen_to_string();
@@ -272,19 +286,36 @@ fn test_click_tab_close_button() {
         .unwrap_or("")
         .to_string();
 
-    // Find the position of the first × in the tab bar
-    if let Some(x_pos) = tab_row.find('×') {
-        // Click on the × button
-        harness
-            .mouse_click(x_pos as u16, layout::TAB_BAR_ROW as u16)
-            .unwrap();
-        harness.render().unwrap();
+    // Count tabs before close (count × characters)
+    let tabs_before = tab_row.matches('×').count();
+    assert_eq!(tabs_before, 2, "Should have 2 tabs before close");
 
-        // Should close the buffer (show "closed" message)
-        harness.assert_screen_contains("Buffer closed");
-    } else {
-        panic!("Could not find × close button in tab bar");
-    }
+    // Find the position of the second × in the tab bar (active tab's close button)
+    // The active tab is the one we just opened with content
+    let x_positions: Vec<usize> = tab_row.match_indices('×').map(|(i, _)| i).collect();
+    let x_pos = x_positions[1]; // Second tab (the one with content)
+
+    // Click on the × button
+    harness
+        .mouse_click(x_pos as u16, layout::TAB_BAR_ROW as u16)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify the content is no longer visible
+    let screen_after = harness.screen_to_string();
+    assert!(
+        !screen_after.contains("UNIQUE_CONTENT_TO_CLOSE"),
+        "Content should no longer be visible after closing tab"
+    );
+
+    // Verify there's only one tab now
+    let tab_row_after: String = screen_after
+        .lines()
+        .nth(layout::TAB_BAR_ROW)
+        .unwrap_or("")
+        .to_string();
+    let tabs_after = tab_row_after.matches('×').count();
+    assert_eq!(tabs_after, 1, "Should have 1 tab after close");
 }
 
 /// Test clicking X on modified buffer shows confirmation prompt

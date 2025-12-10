@@ -1,5 +1,6 @@
 // Editor library - exposes all core modules for testing
 
+#[cfg(feature = "plugins")]
 pub mod v8_init;
 
 // Core modules at root level

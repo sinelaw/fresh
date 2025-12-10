@@ -143,7 +143,7 @@ impl Editor {
         // This allows plugins to add overlays before rendering
         // Only lines that haven't been seen before are sent (batched for efficiency)
         // Use non-blocking hooks to avoid deadlock when actions are awaiting
-        if let Some(ref mut ts_manager) = self.ts_plugin_manager {
+        if self.plugin_manager.is_active() {
             let hooks_start = std::time::Instant::now();
             // Get visible buffers and their areas
             let visible_buffers = self.split_manager.get_visible_buffers(editor_content_area);
@@ -159,9 +159,10 @@ impl Editor {
 
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     // Fire render_start hook once per buffer
-                    let render_start_args =
-                        crate::services::plugins::hooks::HookArgs::RenderStart { buffer_id };
-                    ts_manager.run_hook("render_start", render_start_args);
+                    self.plugin_manager.run_hook(
+                        "render_start",
+                        crate::services::plugins::hooks::HookArgs::RenderStart { buffer_id },
+                    );
 
                     // Fire view_transform_request hook with base tokens
                     // This allows plugins to transform the view (e.g., soft breaks for markdown)
@@ -180,15 +181,16 @@ impl Editor {
                         .last()
                         .and_then(|t| t.source_offset)
                         .unwrap_or(viewport_start);
-                    let transform_args =
+                    self.plugin_manager.run_hook(
+                        "view_transform_request",
                         crate::services::plugins::hooks::HookArgs::ViewTransformRequest {
                             buffer_id,
                             split_id,
                             viewport_start,
                             viewport_end,
                             tokens: base_tokens,
-                        };
-                    ts_manager.run_hook("view_transform_request", transform_args);
+                        },
+                    );
 
                     // Use the split area height as visible line count
                     let visible_count = split_area.height as usize;
@@ -231,11 +233,13 @@ impl Editor {
                     // Send batched hook if there are new lines
                     if !new_lines.is_empty() {
                         total_new_lines += new_lines.len();
-                        let hook_args = crate::services::plugins::hooks::HookArgs::LinesChanged {
-                            buffer_id,
-                            lines: new_lines,
-                        };
-                        ts_manager.run_hook("lines_changed", hook_args);
+                        self.plugin_manager.run_hook(
+                            "lines_changed",
+                            crate::services::plugins::hooks::HookArgs::LinesChanged {
+                                buffer_id,
+                                lines: new_lines,
+                            },
+                        );
                     }
                 }
             }
@@ -248,7 +252,7 @@ impl Editor {
             );
 
             // Process any plugin commands (like AddOverlay) that resulted from the hooks
-            let commands = ts_manager.process_commands();
+            let commands = self.plugin_manager.process_commands();
             for command in commands {
                 if let Err(e) = self.handle_plugin_command(command) {
                     tracing::error!("Error handling plugin command: {}", e);
@@ -283,7 +287,15 @@ impl Editor {
             _ => None,
         };
 
-        let (split_areas, tab_areas, close_split_areas, view_line_mappings) =
+        // Get hovered maximize split button
+        let hovered_maximize_split = match &self.mouse_state.hover_target {
+            Some(HoverTarget::MaximizeSplitButton(split_id)) => Some(*split_id),
+            _ => None,
+        };
+
+        let is_maximized = self.split_manager.is_maximized();
+
+        let (split_areas, tab_areas, close_split_areas, maximize_split_areas, view_line_mappings) =
             SplitRenderer::render_content(
                 frame,
                 editor_content_area,
@@ -303,6 +315,8 @@ impl Editor {
                 hide_cursor,
                 hovered_tab,
                 hovered_close_split,
+                hovered_maximize_split,
+                is_maximized,
             );
 
         // Render terminal content on top of split content for terminal buffers
@@ -311,6 +325,7 @@ impl Editor {
         self.cached_layout.split_areas = split_areas;
         self.cached_layout.tab_areas = tab_areas;
         self.cached_layout.close_split_areas = close_split_areas;
+        self.cached_layout.maximize_split_areas = maximize_split_areas;
         self.cached_layout.view_line_mappings = view_line_mappings;
         self.cached_layout.separator_areas = self
             .split_manager
@@ -647,6 +662,94 @@ impl Editor {
                     if let Some(cell) = buf.cell_mut((col, row)) {
                         cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
                     }
+                }
+            }
+        }
+
+        // When keyboard capture mode is active, dim all UI elements outside the terminal
+        // to visually indicate that focus is exclusively on the terminal
+        if self.keyboard_capture && self.terminal_mode {
+            // Find the active split's content area
+            let active_split = self.split_manager.active_split();
+            let active_split_area = self
+                .cached_layout
+                .split_areas
+                .iter()
+                .find(|(split_id, _, _, _, _, _)| *split_id == active_split)
+                .map(|(_, _, content_rect, _, _, _)| *content_rect);
+
+            if let Some(terminal_area) = active_split_area {
+                self.apply_keyboard_capture_dimming(frame, terminal_area);
+            }
+        }
+    }
+
+    /// Apply dimming effect to UI elements outside the focused terminal area
+    /// This visually indicates that keyboard capture mode is active
+    fn apply_keyboard_capture_dimming(
+        &self,
+        frame: &mut Frame,
+        terminal_area: ratatui::layout::Rect,
+    ) {
+        use ratatui::style::Color;
+
+        let size = frame.area();
+        let buf = frame.buffer_mut();
+
+        // Helper to dim a color by reducing its brightness
+        let dim_color = |color: Color| -> Color {
+            match color {
+                Color::Rgb(r, g, b) => {
+                    // Reduce brightness by 60%
+                    Color::Rgb(r / 3, g / 3, b / 3)
+                }
+                Color::Indexed(idx) => {
+                    // For indexed colors, just use dark gray
+                    if idx == 0 {
+                        Color::Rgb(10, 10, 10)
+                    } else {
+                        Color::Rgb(40, 40, 40)
+                    }
+                }
+                Color::Black => Color::Rgb(10, 10, 10),
+                Color::White => Color::Rgb(85, 85, 85),
+                Color::Red => Color::Rgb(60, 20, 20),
+                Color::Green => Color::Rgb(20, 60, 20),
+                Color::Yellow => Color::Rgb(60, 60, 20),
+                Color::Blue => Color::Rgb(20, 20, 60),
+                Color::Magenta => Color::Rgb(60, 20, 60),
+                Color::Cyan => Color::Rgb(20, 60, 60),
+                Color::Gray => Color::Rgb(40, 40, 40),
+                Color::DarkGray => Color::Rgb(20, 20, 20),
+                Color::LightRed => Color::Rgb(80, 30, 30),
+                Color::LightGreen => Color::Rgb(30, 80, 30),
+                Color::LightYellow => Color::Rgb(80, 80, 30),
+                Color::LightBlue => Color::Rgb(30, 30, 80),
+                Color::LightMagenta => Color::Rgb(80, 30, 80),
+                Color::LightCyan => Color::Rgb(30, 80, 80),
+                Color::Reset => Color::Rgb(30, 30, 30),
+            }
+        };
+
+        // Dim all cells outside the active terminal's content area
+        // This includes: menu bar, status bar, other splits, file explorer, tabs
+        for y in 0..size.height {
+            for x in 0..size.width {
+                // Skip cells inside the terminal content area (preserve terminal display)
+                if x >= terminal_area.x
+                    && x < terminal_area.x + terminal_area.width
+                    && y >= terminal_area.y
+                    && y < terminal_area.y + terminal_area.height
+                {
+                    continue;
+                }
+
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    let style = cell.style();
+                    let new_fg = style.fg.map(dim_color).unwrap_or(Color::Rgb(40, 40, 40));
+                    let new_bg = style.bg.map(dim_color).unwrap_or(Color::Rgb(15, 15, 15));
+                    cell.set_fg(new_fg);
+                    cell.set_bg(new_bg);
                 }
             }
         }

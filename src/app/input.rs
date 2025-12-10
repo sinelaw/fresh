@@ -36,40 +36,78 @@ impl Editor {
             modifiers
         );
 
+        // Check if we're in a prompt or popup - these take priority over terminal handling
+        // so that command palette, open file dialog, etc. work correctly
+        let in_prompt_or_popup = self.is_prompting()
+            || self.active_state().popups.is_visible()
+            || self.menu_state.active_menu.is_some();
+
         // Special handling for terminal mode - forward keys directly to terminal
-        // unless it's an escape sequence to exit terminal mode
-        if self.terminal_mode {
-            // Check for escape sequences to exit terminal mode:
-            // - Ctrl+Space - easy to press escape
-            // - Ctrl+] (close bracket) - like telnet escape
-            // - Ctrl+` (backtick) - alternative escape
-            // - Ctrl+Shift+P - open command palette from terminal
-            // Note: Ctrl+\ sends SIGQUIT on Unix and is not received by the application
-            if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
-                match code {
-                    crossterm::event::KeyCode::Char(' ')
-                    | crossterm::event::KeyCode::Char(']')
-                    | crossterm::event::KeyCode::Char('`') => {
-                        self.terminal_mode = false;
-                        self.key_context = crate::input::keybindings::KeyContext::Normal;
-                        // Sync terminal content to buffer for read-only viewing
-                        self.sync_terminal_to_buffer(self.active_buffer());
-                        self.set_status_message(
-                            "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
-                        );
-                        return Ok(());
-                    }
-                    crossterm::event::KeyCode::Char('P') | crossterm::event::KeyCode::Char('p')
-                        if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) =>
-                    {
-                        // Ctrl+Shift+P opens command palette even from terminal mode
-                        self.terminal_mode = false;
-                        self.key_context = crate::input::keybindings::KeyContext::Normal;
-                        return self.handle_action(Action::CommandPalette);
-                    }
-                    _ => {}
+        // unless it's an escape sequence or UI keybinding
+        // Skip if we're in a prompt/popup (those need to handle keys normally)
+        if self.terminal_mode && !in_prompt_or_popup {
+            tracing::trace!(
+                "Terminal mode key handling: code={:?}, modifiers={:?}, keyboard_capture={}",
+                code,
+                modifiers,
+                self.keyboard_capture
+            );
+
+            // F9 always toggles keyboard capture mode (works even when capture is ON)
+            let is_toggle_capture = code == crossterm::event::KeyCode::F(9);
+            tracing::trace!("is_toggle_capture (F9)={}", is_toggle_capture);
+            if is_toggle_capture {
+                self.keyboard_capture = !self.keyboard_capture;
+                tracing::info!("Toggled keyboard_capture to {}", self.keyboard_capture);
+                if self.keyboard_capture {
+                    self.set_status_message(
+                        "Keyboard capture ON - all keys go to terminal (F9 to toggle)".to_string(),
+                    );
+                } else {
+                    self.set_status_message(
+                        "Keyboard capture OFF - UI bindings active (F9 to toggle)".to_string(),
+                    );
                 }
+                return Ok(());
             }
+
+            // When keyboard capture is ON, forward ALL keys to terminal
+            if self.keyboard_capture {
+                tracing::trace!("Forwarding key to terminal (keyboard capture ON)");
+                self.send_terminal_key(code, modifiers);
+                return Ok(());
+            }
+
+            // When keyboard capture is OFF, check for UI keybindings first
+            let key_event = crossterm::event::KeyEvent::new(code, modifiers);
+            let ui_action = self.keybindings.resolve_terminal_ui_action(&key_event);
+
+            if !matches!(ui_action, Action::None) {
+                // Handle terminal escape specially - exits terminal mode
+                if matches!(ui_action, Action::TerminalEscape) {
+                    self.terminal_mode = false;
+                    self.key_context = crate::input::keybindings::KeyContext::Normal;
+                    // User explicitly exited - don't auto-resume when switching back
+                    self.terminal_mode_resume.remove(&self.active_buffer());
+                    self.sync_terminal_to_buffer(self.active_buffer());
+                    self.set_status_message(
+                        "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
+                    );
+                    return Ok(());
+                }
+
+                // For split navigation, exit terminal mode first
+                if matches!(
+                    ui_action,
+                    Action::NextSplit | Action::PrevSplit | Action::CloseSplit
+                ) {
+                    self.terminal_mode = false;
+                    self.key_context = crate::input::keybindings::KeyContext::Normal;
+                }
+
+                return self.handle_action(ui_action);
+            }
+
             // Handle scrollback: Shift+PageUp exits terminal mode and uses file-backed buffer
             if modifiers.contains(crossterm::event::KeyModifiers::SHIFT)
                 && code == crossterm::event::KeyCode::PageUp
@@ -85,13 +123,15 @@ impl Editor {
                 // Now scroll up using normal buffer scrolling
                 return self.handle_action(crate::input::keybindings::Action::MovePageUp);
             }
+
             // Forward all other keys to the terminal
             self.send_terminal_key(code, modifiers);
             return Ok(());
         }
 
         // Toggle back into terminal mode when viewing a terminal buffer
-        if self.is_terminal_buffer(self.active_buffer()) {
+        // Skip if we're in a prompt/popup (those need to handle keys normally)
+        if self.is_terminal_buffer(self.active_buffer()) && !in_prompt_or_popup {
             if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
                 match code {
                     crossterm::event::KeyCode::Char(' ')
@@ -308,7 +348,8 @@ impl Editor {
                 }
             }
             Action::PromptSelectPrev => {
-                if let Some(prompt) = self.prompt_mut() {
+                // Extract hook data before borrowing prompt mutably
+                let hook_data = if let Some(prompt) = self.prompt_mut() {
                     if !prompt.suggestions.is_empty() {
                         // Suggestions exist: navigate suggestions
                         if let Some(selected) = prompt.selected_suggestion {
@@ -322,18 +363,36 @@ impl Editor {
                                     prompt.cursor_pos = prompt.input.len();
                                 }
                             }
-                            // Fire selection changed hook for plugin prompts
+                            // Extract data for plugin hook
                             if let PromptType::Plugin { ref custom_type } = prompt.prompt_type {
-                                let hook_args = HookArgs::PromptSelectionChanged {
-                                    prompt_type: custom_type.clone(),
-                                    selected_index: new_selected,
-                                };
-                                if let Some(ref ts_manager) = self.ts_plugin_manager {
-                                    ts_manager.run_hook("prompt_selection_changed", hook_args);
-                                }
+                                Some((custom_type.clone(), new_selected))
+                            } else {
+                                None
                             }
+                        } else {
+                            None
                         }
                     } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Fire selection changed hook for plugin prompts (outside the borrow)
+                if let Some((custom_type, new_selected)) = hook_data {
+                    self.plugin_manager.run_hook(
+                        "prompt_selection_changed",
+                        HookArgs::PromptSelectionChanged {
+                            prompt_type: custom_type,
+                            selected_index: new_selected,
+                        },
+                    );
+                }
+
+                // Handle history navigation for prompts without suggestions
+                if let Some(prompt) = self.prompt_mut() {
+                    if prompt.suggestions.is_empty() {
                         // No suggestions: navigate history (Up arrow)
                         let prompt_type = prompt.prompt_type.clone();
                         let current_input = prompt.input.clone();
@@ -371,7 +430,8 @@ impl Editor {
                 }
             }
             Action::PromptSelectNext => {
-                if let Some(prompt) = self.prompt_mut() {
+                // Extract hook data before borrowing prompt mutably
+                let hook_data = if let Some(prompt) = self.prompt_mut() {
                     if !prompt.suggestions.is_empty() {
                         // Suggestions exist: navigate suggestions
                         if let Some(selected) = prompt.selected_suggestion {
@@ -385,18 +445,36 @@ impl Editor {
                                     prompt.cursor_pos = prompt.input.len();
                                 }
                             }
-                            // Fire selection changed hook for plugin prompts
+                            // Extract data for plugin hook
                             if let PromptType::Plugin { ref custom_type } = prompt.prompt_type {
-                                let hook_args = HookArgs::PromptSelectionChanged {
-                                    prompt_type: custom_type.clone(),
-                                    selected_index: new_selected,
-                                };
-                                if let Some(ref ts_manager) = self.ts_plugin_manager {
-                                    ts_manager.run_hook("prompt_selection_changed", hook_args);
-                                }
+                                Some((custom_type.clone(), new_selected))
+                            } else {
+                                None
                             }
+                        } else {
+                            None
                         }
                     } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Fire selection changed hook for plugin prompts (outside the borrow)
+                if let Some((custom_type, new_selected)) = hook_data {
+                    self.plugin_manager.run_hook(
+                        "prompt_selection_changed",
+                        HookArgs::PromptSelectionChanged {
+                            prompt_type: custom_type,
+                            selected_index: new_selected,
+                        },
+                    );
+                }
+
+                // Handle history navigation for prompts without suggestions
+                if let Some(prompt) = self.prompt_mut() {
+                    if prompt.suggestions.is_empty() {
                         // No suggestions: navigate history (Down arrow)
                         let prompt_type = prompt.prompt_type.clone();
 
@@ -608,11 +686,9 @@ impl Editor {
     }
 
     fn dispatch_plugin_hook(&mut self, hook_name: &str, args: HookArgs, fallback: &str) {
-        if let Some(ts_manager) = &self.ts_plugin_manager {
-            if ts_manager.has_hook_handlers(hook_name) {
-                ts_manager.run_hook(hook_name, args);
-                return;
-            }
+        if self.plugin_manager.has_hook_handlers(hook_name) {
+            self.plugin_manager.run_hook(hook_name, args);
+            return;
         }
         self.set_status_message(fallback.to_string());
     }
@@ -687,6 +763,9 @@ impl Editor {
                 } else {
                     self.set_status_message("Buffer closed".to_string());
                 }
+            }
+            Action::CloseTab => {
+                self.close_tab();
             }
             Action::Revert => {
                 // Check if buffer has unsaved changes - prompt for confirmation
@@ -1154,6 +1233,7 @@ impl Editor {
             Action::PrevSplit => self.prev_split(),
             Action::IncreaseSplitSize => self.adjust_split_size(0.05),
             Action::DecreaseSplitSize => self.adjust_split_size(-0.05),
+            Action::ToggleMaximizeSplit => self.toggle_maximize_split(),
             Action::ToggleFileExplorer => self.toggle_file_explorer(),
             Action::ToggleLineNumbers => self.toggle_line_numbers(),
             Action::ToggleMouseCapture => self.toggle_mouse_capture(),
@@ -1507,8 +1587,9 @@ impl Editor {
             Action::PluginAction(action_name) => {
                 // Execute the plugin callback via TypeScript plugin thread
                 // Use non-blocking version to avoid deadlock with async plugin ops
-                if let Some(ref manager) = self.ts_plugin_manager {
-                    match manager.execute_action_async(&action_name) {
+                #[cfg(feature = "plugins")]
+                if let Some(result) = self.plugin_manager.execute_action_async(&action_name) {
+                    match result {
                         Ok(receiver) => {
                             // Store pending action for processing in main loop
                             self.pending_plugin_actions
@@ -1521,6 +1602,13 @@ impl Editor {
                     }
                 } else {
                     self.set_status_message("Plugin manager not available".to_string());
+                }
+                #[cfg(not(feature = "plugins"))]
+                {
+                    let _ = action_name;
+                    self.set_status_message(
+                        "Plugins not available (compiled without plugin support)".to_string(),
+                    );
                 }
             }
             Action::OpenTerminal => {
@@ -1543,6 +1631,30 @@ impl Editor {
                     self.terminal_mode = false;
                     self.key_context = KeyContext::Normal;
                     self.set_status_message("Terminal mode disabled".to_string());
+                }
+            }
+            Action::ToggleKeyboardCapture => {
+                // Toggle keyboard capture mode in terminal
+                if self.terminal_mode {
+                    self.keyboard_capture = !self.keyboard_capture;
+                    if self.keyboard_capture {
+                        self.set_status_message(
+                            "Keyboard capture ON - all keys go to terminal (F9 to toggle)"
+                                .to_string(),
+                        );
+                    } else {
+                        self.set_status_message(
+                            "Keyboard capture OFF - UI bindings active (F9 to toggle)".to_string(),
+                        );
+                    }
+                }
+            }
+            Action::TerminalPaste => {
+                // Paste clipboard contents into terminal as a single batch
+                if self.terminal_mode {
+                    if let Some(text) = self.clipboard.paste() {
+                        self.send_terminal_input(text.as_bytes());
+                    }
                 }
             }
             Action::PromptConfirm => {
@@ -1629,14 +1741,13 @@ impl Editor {
                                     );
 
                                     // Fire AfterFileSave hook for plugins
-                                    if let Some(ref ts_manager) = self.ts_plugin_manager {
-                                        let hook_args =
-                                            crate::services::plugins::hooks::HookArgs::AfterFileSave {
-                                                buffer_id: self.active_buffer(),
-                                                path: full_path.clone(),
-                                            };
-                                        ts_manager.run_hook("after_file_save", hook_args);
-                                    }
+                                    self.plugin_manager.run_hook(
+                                        "after_file_save",
+                                        crate::services::plugins::hooks::HookArgs::AfterFileSave {
+                                            buffer_id: self.active_buffer(),
+                                            path: full_path.clone(),
+                                        },
+                                    );
 
                                     // Check if we should close the buffer after saving
                                     if let Some(buffer_to_close) = self.pending_close_buffer.take()
@@ -1847,15 +1958,14 @@ impl Editor {
                             }
                         }
                         PromptType::Plugin { custom_type } => {
-                            let hook_args = HookArgs::PromptConfirmed {
-                                prompt_type: custom_type,
-                                input,
-                                selected_index,
-                            };
-
-                            if let Some(ref ts_manager) = self.ts_plugin_manager {
-                                ts_manager.run_hook("prompt_confirmed", hook_args);
-                            }
+                            self.plugin_manager.run_hook(
+                                "prompt_confirmed",
+                                HookArgs::PromptConfirmed {
+                                    prompt_type: custom_type,
+                                    input,
+                                    selected_index,
+                                },
+                            );
                         }
                         PromptType::ConfirmRevert => {
                             let input_lower = input.trim().to_lowercase();
@@ -2335,6 +2445,9 @@ impl Editor {
                 needs_render = true;
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                // Check if we were dragging a separator to trigger terminal resize
+                let was_dragging_separator = self.mouse_state.dragging_separator.is_some();
+
                 // Stop dragging and clear drag state
                 self.mouse_state.dragging_scrollbar = None;
                 self.mouse_state.drag_start_row = None;
@@ -2348,11 +2461,17 @@ impl Editor {
                 self.mouse_state.dragging_text_selection = false;
                 self.mouse_state.drag_selection_split = None;
                 self.mouse_state.drag_selection_anchor = None;
+
+                // If we finished dragging a separator, resize visible terminals
+                if was_dragging_separator {
+                    self.resize_visible_terminals();
+                }
+
                 needs_render = true;
             }
             MouseEventKind::Moved => {
                 // Dispatch MouseMove hook to plugins (fire-and-forget, no blocking check)
-                if let Some(ts_manager) = &self.ts_plugin_manager {
+                {
                     // Find content rect for the split under the mouse
                     let content_rect = self
                         .cached_layout
@@ -2368,13 +2487,15 @@ impl Editor {
 
                     let (content_x, content_y) = content_rect.map(|r| (r.x, r.y)).unwrap_or((0, 0));
 
-                    let hook_args = HookArgs::MouseMove {
-                        column: col,
-                        row,
-                        content_x,
-                        content_y,
-                    };
-                    ts_manager.run_hook("mouse_move", hook_args);
+                    self.plugin_manager.run_hook(
+                        "mouse_move",
+                        HookArgs::MouseMove {
+                            column: col,
+                            row,
+                            content_x,
+                            content_y,
+                        },
+                    );
                 }
 
                 // Only re-render if hover target actually changed
@@ -2641,10 +2762,16 @@ impl Editor {
         }
 
         // Check tab areas using cached hit regions (computed during rendering)
-        // Check close split buttons first (they're on top of the tab row)
+        // Check split control buttons first (they're on top of the tab row)
         for (split_id, btn_row, start_col, end_col) in &self.cached_layout.close_split_areas {
             if row == *btn_row && col >= *start_col && col < *end_col {
                 return Some(HoverTarget::CloseSplitButton(*split_id));
+            }
+        }
+
+        for (split_id, btn_row, start_col, end_col) in &self.cached_layout.maximize_split_areas {
+            if row == *btn_row && col >= *start_col && col < *end_col {
+                return Some(HoverTarget::MaximizeSplitButton(*split_id));
             }
         }
 
@@ -2953,6 +3080,31 @@ impl Editor {
             return Ok(());
         }
 
+        // Check if click is on a maximize split button
+        let maximize_split_click = self
+            .cached_layout
+            .maximize_split_areas
+            .iter()
+            .find(|(_, btn_row, start_col, end_col)| {
+                row == *btn_row && col >= *start_col && col < *end_col
+            })
+            .map(|(split_id, _, _, _)| *split_id);
+
+        if let Some(_split_id) = maximize_split_click {
+            // Toggle maximize state
+            match self.split_manager.toggle_maximize() {
+                Ok(maximized) => {
+                    if maximized {
+                        self.set_status_message("Maximized split".to_string());
+                    } else {
+                        self.set_status_message("Restored all splits".to_string());
+                    }
+                }
+                Err(e) => self.set_status_message(e),
+            }
+            return Ok(());
+        }
+
         // Check if click is on a tab using cached hit areas (computed during rendering)
         let tab_click = self.cached_layout.tab_areas.iter().find_map(
             |(split_id, buffer_id, tab_row, start_col, end_col, close_start)| {
@@ -2968,24 +3120,9 @@ impl Editor {
         if let Some((split_id, clicked_buffer, clicked_close)) = tab_click {
             self.focus_split(split_id, clicked_buffer);
 
-            // Handle close button click
+            // Handle close button click - use close_tab logic
             if clicked_close {
-                if let Some(state) = self.buffers.get(&clicked_buffer) {
-                    if state.buffer.is_modified() {
-                        // Buffer has unsaved changes - prompt for confirmation
-                        let name = self.get_buffer_display_name(clicked_buffer);
-                        self.start_prompt(
-                            format!("'{}' modified. (s)ave, (d)iscard, (C)ancel? ", name),
-                            PromptType::ConfirmCloseBuffer {
-                                buffer_id: clicked_buffer,
-                            },
-                        );
-                    } else if let Err(e) = self.force_close_buffer(clicked_buffer) {
-                        self.set_status_message(format!("Cannot close buffer: {}", e));
-                    } else {
-                        self.set_status_message("Buffer closed".to_string());
-                    }
-                }
+                self.close_tab_in_split(clicked_buffer, split_id);
                 return Ok(());
             }
             return Ok(());
@@ -3720,18 +3857,18 @@ impl Editor {
 
         // Dispatch MouseClick hook to plugins
         // Plugins can handle clicks on their virtual buffers
-        if let Some(ts_manager) = &self.ts_plugin_manager {
-            if ts_manager.has_hook_handlers("mouse_click") {
-                let hook_args = HookArgs::MouseClick {
+        if self.plugin_manager.has_hook_handlers("mouse_click") {
+            self.plugin_manager.run_hook(
+                "mouse_click",
+                HookArgs::MouseClick {
                     column: col,
                     row,
                     button: "left".to_string(),
                     modifiers: String::new(),
                     content_x: content_rect.x,
                     content_y: content_rect.y,
-                };
-                ts_manager.run_hook("mouse_click", hook_args);
-            }
+                },
+            );
         }
 
         // Focus this split (handles terminal mode exit, tab state, etc.)

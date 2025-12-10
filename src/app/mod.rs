@@ -65,7 +65,7 @@ use crate::services::fs::{FsBackend, FsManager, LocalFsBackend};
 use crate::services::lsp::client::LspServerConfig;
 use crate::services::lsp::manager::{detect_language, LspManager, LspSpawnResult};
 use crate::services::plugins::api::{BufferSavedDiff, PluginCommand};
-use crate::services::plugins::thread::PluginThreadHandle;
+use crate::services::plugins::PluginManager;
 use crate::services::recovery::{RecoveryConfig, RecoveryService};
 use crate::state::EditorState;
 use crate::view::file_tree::{FileTree, FileTreeView};
@@ -283,8 +283,8 @@ pub struct Editor {
     /// Command registry for dynamic commands
     command_registry: Arc<RwLock<CommandRegistry>>,
 
-    /// TypeScript plugin thread handle
-    ts_plugin_manager: Option<PluginThreadHandle>,
+    /// Plugin manager (handles both enabled and disabled cases)
+    plugin_manager: PluginManager,
 
     /// Track which byte ranges have been seen per buffer (for lines_changed optimization)
     /// Maps buffer_id -> set of (byte_start, byte_end) ranges that have been processed
@@ -345,12 +345,14 @@ pub struct Editor {
     last_macro_register: Option<char>,
 
     /// Pending plugin action receivers (for async action execution)
+    #[cfg(feature = "plugins")]
     pending_plugin_actions: Vec<(
         String,
         crate::services::plugins::thread::oneshot::Receiver<anyhow::Result<()>>,
     )>,
 
     /// Flag set by plugin commands that need a render (e.g., RefreshLines)
+    #[cfg(feature = "plugins")]
     plugin_render_requested: bool,
 
     /// Pending chord sequence for multi-key bindings (e.g., C-x C-s in Emacs)
@@ -419,6 +421,16 @@ pub struct Editor {
 
     /// Whether terminal mode is active (input goes to terminal)
     terminal_mode: bool,
+
+    /// Whether keyboard capture is enabled in terminal mode.
+    /// When true, ALL keys go to the terminal (except Ctrl+` to toggle).
+    /// When false, UI keybindings (split nav, palette, etc.) are processed first.
+    keyboard_capture: bool,
+
+    /// Set of terminal buffer IDs that should auto-resume terminal mode when switched back to.
+    /// When leaving a terminal while in terminal mode, its ID is added here.
+    /// When switching to a terminal in this set, terminal mode is automatically re-entered.
+    terminal_mode_resume: std::collections::HashSet<BufferId>,
 }
 
 impl Editor {
@@ -579,31 +591,16 @@ impl Editor {
         let fs_backend = fs_backend.unwrap_or_else(|| Arc::new(LocalFsBackend::new()));
         let fs_manager = Arc::new(FsManager::new(fs_backend));
 
-        // Initialize plugin system
+        // Initialize command registry (always available, used by both plugins and core)
         let command_registry = Arc::new(RwLock::new(CommandRegistry::new()));
 
-        // Initialize TypeScript plugin thread (skip if plugins are disabled)
-        let ts_plugin_manager = if enable_plugins {
-            match PluginThreadHandle::spawn(Arc::clone(&command_registry)) {
-                Ok(handle) => Some(handle),
-                Err(e) => {
-                    tracing::error!("Failed to spawn TypeScript plugin thread: {}", e);
-                    // In debug/test builds, panic to surface the error
-                    #[cfg(debug_assertions)]
-                    panic!("TypeScript plugin thread creation failed: {}", e);
-                    #[cfg(not(debug_assertions))]
-                    None
-                }
-            }
-        } else {
-            tracing::info!("Plugins disabled via --no-plugins flag");
-            None
-        };
+        // Initialize plugin manager (handles both enabled and disabled cases internally)
+        let plugin_manager = PluginManager::new(enable_plugins, Arc::clone(&command_registry));
 
         // Load TypeScript plugins from multiple directories:
         // 1. Next to the executable (for cargo-dist installations)
         // 2. In the working directory (for development/local usage)
-        if let Some(ref manager) = ts_plugin_manager {
+        if plugin_manager.is_active() {
             let mut plugin_dirs: Vec<std::path::PathBuf> = vec![];
 
             // Check next to executable first (for cargo-dist installations)
@@ -632,7 +629,7 @@ impl Editor {
             // Load from all found plugin directories
             for plugin_dir in plugin_dirs {
                 tracing::info!("Loading TypeScript plugins from: {:?}", plugin_dir);
-                let errors = manager.load_plugins_from_dir(&plugin_dir);
+                let errors = plugin_manager.load_plugins_from_dir(&plugin_dir);
                 if !errors.is_empty() {
                     for err in &errors {
                         tracing::error!("TypeScript plugin load error: {}", err);
@@ -730,7 +727,7 @@ impl Editor {
             mouse_state: MouseState::default(),
             cached_layout: CachedLayout::default(),
             command_registry,
-            ts_plugin_manager,
+            plugin_manager,
             seen_byte_ranges: HashMap::new(),
             panel_ids: HashMap::new(),
             search_history: {
@@ -768,7 +765,9 @@ impl Editor {
             macros: HashMap::new(),
             macro_recording: None,
             last_macro_register: None,
+            #[cfg(feature = "plugins")]
             pending_plugin_actions: Vec::new(),
+            #[cfg(feature = "plugins")]
             plugin_render_requested: false,
             chord_state: Vec::new(),
             pending_lsp_confirmation: None,
@@ -797,6 +796,8 @@ impl Editor {
             terminal_backing_files: HashMap::new(),
             terminal_log_files: HashMap::new(),
             terminal_mode: false,
+            keyboard_capture: false,
+            terminal_mode_resume: std::collections::HashSet::new(),
         })
     }
 
@@ -817,9 +818,7 @@ impl Editor {
 
     /// Send a response to a plugin for an async operation
     fn send_plugin_response(&self, response: crate::services::plugins::api::PluginResponse) {
-        if let Some(ref manager) = self.ts_plugin_manager {
-            manager.deliver_response(response);
-        }
+        self.plugin_manager.deliver_response(response);
     }
 
     /// Get all keybindings as (key, action) pairs
@@ -1024,9 +1023,9 @@ impl Editor {
         }
 
         if has_warnings {
-            // Open the warning log file
+            // Open the warning log file in background (don't steal focus)
             let path = path.clone();
-            if let Err(e) = self.open_file(&path) {
+            if let Err(e) = self.open_file_no_focus(&path) {
                 tracing::error!("Failed to open warning log: {}", e);
             } else {
                 self.set_status_message("Warnings detected - see log".to_string());
@@ -1116,6 +1115,59 @@ impl Editor {
     /// If the file doesn't exist, creates an unsaved buffer with that filename.
     /// Saving the buffer will create the file.
     pub fn open_file(&mut self, path: &Path) -> io::Result<BufferId> {
+        let buffer_id = self.open_file_no_focus(path)?;
+
+        // Check if this was an already-open buffer or a new one
+        // For already-open buffers, just switch to them
+        // For new buffers, record position history before switching
+        let is_new_buffer = self.active_buffer() != buffer_id;
+
+        if is_new_buffer {
+            // Save current position before switching to new buffer
+            self.position_history.commit_pending_movement();
+
+            // Explicitly record current position before switching
+            let current_state = self.active_state();
+            let position = current_state.cursors.primary().position;
+            let anchor = current_state.cursors.primary().anchor;
+            self.position_history
+                .record_movement(self.active_buffer(), position, anchor);
+            self.position_history.commit_pending_movement();
+        }
+
+        self.set_active_buffer(buffer_id);
+
+        // Use display_name from metadata for relative path display
+        let display_name = self
+            .buffer_metadata
+            .get(&buffer_id)
+            .map(|m| m.display_name.clone())
+            .unwrap_or_else(|| path.display().to_string());
+
+        // Check if buffer is binary for status message
+        let is_binary = self
+            .buffers
+            .get(&buffer_id)
+            .map(|s| s.buffer.is_binary())
+            .unwrap_or(false);
+
+        // Show appropriate status message for binary vs regular files
+        if is_binary {
+            self.status_message = Some(format!("Opened {} [binary file, read-only]", display_name));
+        } else {
+            self.status_message = Some(format!("Opened {}", display_name));
+        }
+
+        Ok(buffer_id)
+    }
+
+    /// Open a file without switching focus to it
+    ///
+    /// Creates a new buffer for the file (or returns existing buffer ID if already open)
+    /// but does not change the active buffer. Useful for opening files in background tabs.
+    ///
+    /// If the file doesn't exist, creates an unsaved buffer with that filename.
+    pub fn open_file_no_focus(&mut self, path: &Path) -> io::Result<BufferId> {
         // Determine if we're opening a non-existent file (for creating new files)
         let file_exists = path.exists();
 
@@ -1146,7 +1198,7 @@ impl Editor {
         };
         let path = canonical_path.as_path();
 
-        // Check if file is already open
+        // Check if file is already open - return existing buffer without switching
         let already_open = self
             .buffers
             .iter()
@@ -1154,11 +1206,6 @@ impl Editor {
             .map(|(id, _)| *id);
 
         if let Some(id) = already_open {
-            // Commit pending movement before switching to existing buffer
-            if id != self.active_buffer() {
-                self.position_history.commit_pending_movement();
-                self.set_active_buffer(id);
-            }
             return Ok(id);
         }
 
@@ -1231,32 +1278,10 @@ impl Editor {
         // Store metadata for this buffer
         self.buffer_metadata.insert(buffer_id, metadata);
 
-        // Save current position before switching to new buffer (if not replacing current)
-        if !replace_current {
-            self.position_history.commit_pending_movement();
-
-            // Explicitly record current position before switching
-            let current_state = self.active_state();
-            let position = current_state.cursors.primary().position;
-            let anchor = current_state.cursors.primary().anchor;
-            self.position_history
-                .record_movement(self.active_buffer(), position, anchor);
-            self.position_history.commit_pending_movement();
-        }
-
-        self.set_active_buffer(buffer_id);
-        // Use display_name from metadata for relative path display
-        let display_name = self
-            .buffer_metadata
-            .get(&buffer_id)
-            .map(|m| m.display_name.clone())
-            .unwrap_or_else(|| path.display().to_string());
-
-        // Show appropriate status message for binary vs regular files
-        if is_binary {
-            self.status_message = Some(format!("Opened {} [binary file, read-only]", display_name));
-        } else {
-            self.status_message = Some(format!("Opened {}", display_name));
+        // Add buffer to the active split's tabs (but don't switch to it)
+        let active_split = self.split_manager.active_split();
+        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.add_buffer(buffer_id);
         }
 
         // Emit control event
@@ -1272,13 +1297,13 @@ impl Editor {
         self.watch_file(path);
 
         // Fire AfterFileOpen hook for plugins
-        if let Some(ref ts_manager) = self.ts_plugin_manager {
-            let hook_args = crate::services::plugins::hooks::HookArgs::AfterFileOpen {
+        self.plugin_manager.run_hook(
+            "after_file_open",
+            crate::services::plugins::hooks::HookArgs::AfterFileOpen {
                 buffer_id,
                 path: path.to_path_buf(),
-            };
-            ts_manager.run_hook("after_file_open", hook_args);
-        }
+            },
+        );
 
         Ok(buffer_id)
     }
@@ -1667,6 +1692,152 @@ impl Editor {
         }
     }
 
+    /// Close the current tab in the current split view.
+    /// If the tab is the last viewport of the underlying buffer, do the same as close_buffer
+    /// (including triggering the save/discard prompt for modified buffers).
+    pub fn close_tab(&mut self) {
+        let buffer_id = self.active_buffer();
+        let active_split = self.split_manager.active_split();
+
+        // Count how many splits have this buffer in their open_buffers
+        let buffer_in_other_splits = self
+            .split_view_states
+            .iter()
+            .filter(|(&split_id, view_state)| {
+                split_id != active_split && view_state.has_buffer(buffer_id)
+            })
+            .count();
+
+        // Get current split's open buffers
+        let current_split_tabs = self
+            .split_view_states
+            .get(&active_split)
+            .map(|vs| vs.open_buffers.clone())
+            .unwrap_or_default();
+
+        // If this is the only tab in this split and there are no other splits with this buffer,
+        // this is the last viewport - behave like close_buffer
+        let is_last_viewport = buffer_in_other_splits == 0;
+
+        if is_last_viewport {
+            // Last viewport of this buffer - close the buffer entirely
+            if self.active_state().buffer.is_modified() {
+                // Buffer has unsaved changes - prompt for confirmation
+                let name = self.get_buffer_display_name(buffer_id);
+                self.start_prompt(
+                    format!("'{}' modified. (s)ave, (d)iscard, (C)ancel? ", name),
+                    PromptType::ConfirmCloseBuffer { buffer_id },
+                );
+            } else if let Err(e) = self.close_buffer(buffer_id) {
+                self.set_status_message(format!("Cannot close buffer: {}", e));
+            } else {
+                self.set_status_message("Tab closed".to_string());
+            }
+        } else {
+            // There are other viewports of this buffer - just remove from current split's tabs
+            if current_split_tabs.len() <= 1 {
+                // This is the only tab in this split - can't close it
+                self.set_status_message("Cannot close the only tab in this split".to_string());
+                return;
+            }
+
+            // Find replacement buffer for this split
+            let current_idx = current_split_tabs
+                .iter()
+                .position(|&id| id == buffer_id)
+                .unwrap_or(0);
+            let replacement_idx = if current_idx > 0 { current_idx - 1 } else { 1 };
+            let replacement_buffer = current_split_tabs[replacement_idx];
+
+            // Remove buffer from this split's tabs
+            if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+                view_state.remove_buffer(buffer_id);
+            }
+
+            // Update the split to show the replacement buffer
+            let _ = self
+                .split_manager
+                .set_split_buffer(active_split, replacement_buffer);
+
+            self.set_status_message("Tab closed".to_string());
+        }
+    }
+
+    /// Close a specific tab (buffer) in a specific split.
+    /// Used by mouse click handler on tab close button.
+    /// Returns true if the tab was closed without needing a prompt.
+    pub fn close_tab_in_split(&mut self, buffer_id: BufferId, split_id: SplitId) -> bool {
+        // If closing a terminal buffer while in terminal mode, exit terminal mode
+        if self.terminal_mode && self.is_terminal_buffer(buffer_id) {
+            self.terminal_mode = false;
+            self.key_context = crate::input::keybindings::KeyContext::Normal;
+        }
+
+        // Count how many splits have this buffer in their open_buffers
+        let buffer_in_other_splits = self
+            .split_view_states
+            .iter()
+            .filter(|(&sid, view_state)| sid != split_id && view_state.has_buffer(buffer_id))
+            .count();
+
+        // Get the split's open buffers
+        let split_tabs = self
+            .split_view_states
+            .get(&split_id)
+            .map(|vs| vs.open_buffers.clone())
+            .unwrap_or_default();
+
+        let is_last_viewport = buffer_in_other_splits == 0;
+
+        if is_last_viewport {
+            // Last viewport of this buffer - need to close buffer entirely
+            if let Some(state) = self.buffers.get(&buffer_id) {
+                if state.buffer.is_modified() {
+                    // Buffer has unsaved changes - prompt for confirmation
+                    let name = self.get_buffer_display_name(buffer_id);
+                    self.start_prompt(
+                        format!("'{}' modified. (s)ave, (d)iscard, (C)ancel? ", name),
+                        PromptType::ConfirmCloseBuffer { buffer_id },
+                    );
+                    return false;
+                }
+            }
+            if let Err(e) = self.close_buffer(buffer_id) {
+                self.set_status_message(format!("Cannot close buffer: {}", e));
+            } else {
+                self.set_status_message("Tab closed".to_string());
+            }
+        } else {
+            // There are other viewports of this buffer - just remove from this split's tabs
+            if split_tabs.len() <= 1 {
+                // This is the only tab in this split - can't close it
+                self.set_status_message("Cannot close the only tab in this split".to_string());
+                return false;
+            }
+
+            // Find replacement buffer for this split
+            let current_idx = split_tabs
+                .iter()
+                .position(|&id| id == buffer_id)
+                .unwrap_or(0);
+            let replacement_idx = if current_idx > 0 { current_idx - 1 } else { 1 };
+            let replacement_buffer = split_tabs[replacement_idx];
+
+            // Remove buffer from this split's tabs
+            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                view_state.remove_buffer(buffer_id);
+            }
+
+            // Update the split to show the replacement buffer
+            let _ = self
+                .split_manager
+                .set_split_buffer(split_id, replacement_buffer);
+
+            self.set_status_message("Tab closed".to_string());
+        }
+        true
+    }
+
     /// Switch to next buffer in current split's tabs
     pub fn next_buffer(&mut self) {
         // Get the current split's open buffers
@@ -1938,18 +2109,30 @@ impl Editor {
 
     /// Switch to next split
     pub fn next_split(&mut self) {
-        self.save_current_split_view_state();
-        self.split_manager.next_split();
-        self.restore_current_split_view_state();
+        self.switch_split(true);
         self.set_status_message("Switched to next split".to_string());
     }
 
     /// Switch to previous split
     pub fn prev_split(&mut self) {
-        self.save_current_split_view_state();
-        self.split_manager.prev_split();
-        self.restore_current_split_view_state();
+        self.switch_split(false);
         self.set_status_message("Switched to previous split".to_string());
+    }
+
+    /// Common split switching logic
+    fn switch_split(&mut self, next: bool) {
+        self.save_current_split_view_state();
+        if next {
+            self.split_manager.next_split();
+        } else {
+            self.split_manager.prev_split();
+        }
+        self.restore_current_split_view_state();
+        // Enter terminal mode if switching to a terminal split
+        if self.is_terminal_buffer(self.active_buffer()) {
+            self.terminal_mode = true;
+            self.key_context = crate::input::keybindings::KeyContext::Terminal;
+        }
     }
 
     /// Save the current split's cursor state (viewport is owned by SplitViewState)
@@ -2045,6 +2228,24 @@ impl Editor {
             self.set_status_message(format!("Cannot adjust split size: {}", e));
         } else {
             self.set_status_message(format!("Adjusted split size by {:.0}%", delta * 100.0));
+            // Resize visible terminals to match new split dimensions
+            self.resize_visible_terminals();
+        }
+    }
+
+    /// Toggle maximize state for the active split
+    pub fn toggle_maximize_split(&mut self) {
+        match self.split_manager.toggle_maximize() {
+            Ok(maximized) => {
+                if maximized {
+                    self.set_status_message("Maximized split".to_string());
+                } else {
+                    self.set_status_message("Restored all splits".to_string());
+                }
+                // Resize visible terminals to match new split dimensions
+                self.resize_visible_terminals();
+            }
+            Err(e) => self.set_status_message(e),
         }
     }
 
@@ -2338,14 +2539,21 @@ impl Editor {
         // Track the previous buffer for "Switch to Previous Tab" command
         let previous = self.active_buffer();
 
-        // If leaving a terminal buffer while in terminal mode, exit terminal mode
+        // If leaving a terminal buffer while in terminal mode, remember it should resume
         if self.terminal_mode && self.is_terminal_buffer(previous) {
+            self.terminal_mode_resume.insert(previous);
             self.terminal_mode = false;
             self.key_context = crate::input::keybindings::KeyContext::Normal;
         }
 
         // Update split manager (single source of truth)
         self.split_manager.set_active_buffer_id(buffer_id);
+
+        // If switching to a terminal buffer that should resume terminal mode, re-enter it
+        if self.terminal_mode_resume.contains(&buffer_id) && self.is_terminal_buffer(buffer_id) {
+            self.terminal_mode = true;
+            self.key_context = crate::input::keybindings::KeyContext::Terminal;
+        }
 
         // Add buffer to the active split's open_buffers (tabs) if not already there
         let active_split = self.split_manager.active_split();
@@ -2363,11 +2571,10 @@ impl Editor {
         self.sync_file_explorer_to_active_file();
 
         // Emit buffer_activated hook for plugins
-        if let Some(ref ts_manager) = self.ts_plugin_manager {
-            let hook_args =
-                crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id };
-            ts_manager.run_hook("buffer_activated", hook_args);
-        }
+        self.plugin_manager.run_hook(
+            "buffer_activated",
+            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
+        );
     }
 
     /// Focus a split and its buffer, handling all side effects including terminal mode.
@@ -2380,28 +2587,46 @@ impl Editor {
     /// - Syncing file explorer
     ///
     /// Use this instead of calling set_active_split directly when switching focus.
-    pub(super) fn focus_split(&mut self, split_id: crate::model::event::SplitId, buffer_id: BufferId) {
-        let previous_buffer = self.active_buffer();
-        let buffer_changed = previous_buffer != buffer_id;
+    pub(super) fn focus_split(
+        &mut self,
+        split_id: crate::model::event::SplitId,
+        buffer_id: BufferId,
+    ) {
+        let previous_split = self.split_manager.active_split();
+        let previous_buffer = self.active_buffer(); // Get BEFORE changing split
+        let split_changed = previous_split != split_id;
 
-        // Exit terminal mode if leaving a terminal buffer
-        if buffer_changed && self.terminal_mode && self.is_terminal_buffer(previous_buffer) {
-            self.terminal_mode = false;
-            self.key_context = crate::input::keybindings::KeyContext::Normal;
-        }
-
-        // Update split manager
-        self.split_manager.set_active_split(split_id);
-
-        // Handle buffer change side effects
-        if buffer_changed {
-            self.position_history.commit_pending_movement();
-            let active_split = self.split_manager.active_split();
-            if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-                view_state.add_buffer(buffer_id);
-                view_state.previous_buffer = Some(previous_buffer);
+        if split_changed {
+            // Switching to a different split - exit terminal mode if active
+            if self.terminal_mode && self.is_terminal_buffer(previous_buffer) {
+                self.terminal_mode = false;
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
             }
-            self.sync_file_explorer_to_active_file();
+
+            // Update split manager to focus this split
+            self.split_manager.set_active_split(split_id);
+
+            // Update the buffer in the new split
+            self.split_manager.set_active_buffer_id(buffer_id);
+
+            // If switching TO a terminal split, enter terminal mode
+            if self.is_terminal_buffer(buffer_id) {
+                self.terminal_mode = true;
+                self.key_context = crate::input::keybindings::KeyContext::Terminal;
+            }
+
+            // Handle buffer change side effects
+            if previous_buffer != buffer_id {
+                self.position_history.commit_pending_movement();
+                if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                    view_state.add_buffer(buffer_id);
+                    view_state.previous_buffer = Some(previous_buffer);
+                }
+                self.sync_file_explorer_to_active_file();
+            }
+        } else {
+            // Same split, different buffer (tab switch) - use set_active_buffer for terminal resume
+            self.set_active_buffer(buffer_id);
         }
     }
 
@@ -2680,11 +2905,10 @@ impl Editor {
             // Update the full plugin state snapshot BEFORE firing the hook
             // This ensures the plugin can read up-to-date state (diff, cursors, viewport, etc.)
             // Without this, there's a race condition where the async hook might read stale data
+            #[cfg(feature = "plugins")]
             self.update_plugin_state_snapshot();
 
-            if let Some(ref ts_manager) = self.ts_plugin_manager {
-                ts_manager.run_hook(hook_name, args);
-            }
+            self.plugin_manager.run_hook(hook_name, args);
         }
     }
 
@@ -3077,14 +3301,14 @@ impl Editor {
 
         // Fire AfterFileSave hook for plugins
         if let Some(ref p) = path {
-            if let Some(ref ts_manager) = self.ts_plugin_manager {
-                let buffer_id = self.active_buffer();
-                let hook_args = crate::services::plugins::hooks::HookArgs::AfterFileSave {
+            let buffer_id = self.active_buffer();
+            self.plugin_manager.run_hook(
+                "after_file_save",
+                crate::services::plugins::hooks::HookArgs::AfterFileSave {
                     buffer_id,
                     path: p.clone(),
-                };
-                ts_manager.run_hook("after_file_save", hook_args);
-            }
+                },
+            );
         }
 
         Ok(())
@@ -3906,6 +4130,9 @@ impl Editor {
         for view_state in self.split_view_states.values_mut() {
             view_state.viewport.resize(width, height);
         }
+
+        // Resize visible terminal PTYs to match new dimensions
+        self.resize_visible_terminals();
     }
 
     // Prompt/Minibuffer control methods
@@ -4172,14 +4399,13 @@ impl Editor {
                 PromptType::Plugin { custom_type } => {
                     // Fire plugin hook for prompt cancellation
                     use crate::services::plugins::hooks::HookArgs;
-                    let hook_args = HookArgs::PromptCancelled {
-                        prompt_type: custom_type.clone(),
-                        input: prompt.input.clone(),
-                    };
-
-                    if let Some(ref ts_manager) = self.ts_plugin_manager {
-                        ts_manager.run_hook("prompt_cancelled", hook_args);
-                    }
+                    self.plugin_manager.run_hook(
+                        "prompt_cancelled",
+                        HookArgs::PromptCancelled {
+                            prompt_type: custom_type.clone(),
+                            input: prompt.input.clone(),
+                        },
+                    );
                 }
                 PromptType::LspRename { overlay_handle, .. } => {
                     // Remove the rename overlay when cancelling
@@ -4364,26 +4590,24 @@ impl Editor {
                 // Commands (SetPromptSuggestions) will be picked up by the main loop's
                 // process_async_messages() -> process_plugin_commands() on the next frame.
                 use crate::services::plugins::hooks::HookArgs;
-                let hook_args = HookArgs::PromptChanged {
-                    prompt_type: "save-file-as".to_string(),
-                    input,
-                };
-
-                if let Some(ref ts_manager) = self.ts_plugin_manager {
-                    ts_manager.run_hook("prompt_changed", hook_args);
-                }
+                self.plugin_manager.run_hook(
+                    "prompt_changed",
+                    HookArgs::PromptChanged {
+                        prompt_type: "save-file-as".to_string(),
+                        input,
+                    },
+                );
             }
             PromptType::Plugin { custom_type } => {
                 // Fire plugin hook for prompt input change
                 use crate::services::plugins::hooks::HookArgs;
-                let hook_args = HookArgs::PromptChanged {
-                    prompt_type: custom_type,
-                    input,
-                };
-
-                if let Some(ref ts_manager) = self.ts_plugin_manager {
-                    ts_manager.run_hook("prompt_changed", hook_args);
-                }
+                self.plugin_manager.run_hook(
+                    "prompt_changed",
+                    HookArgs::PromptChanged {
+                        prompt_type: custom_type,
+                        input,
+                    },
+                );
             }
             PromptType::SwitchToTab | PromptType::SelectTheme | PromptType::StopLspServer => {
                 // Filter suggestions using fuzzy matching
@@ -4456,11 +4680,12 @@ impl Editor {
                     self.status_message = Some(format!("LSP error ({}): {}", language, error));
 
                     // Open stderr log as read-only buffer if it exists and has content
+                    // Opens in background (new tab) without stealing focus
                     if let Some(log_path) = stderr_log_path {
                         let has_content = log_path.metadata().map(|m| m.len() > 0).unwrap_or(false);
                         if has_content {
-                            tracing::info!("Opening LSP stderr log: {:?}", log_path);
-                            match self.open_file(&log_path) {
+                            tracing::info!("Opening LSP stderr log in background: {:?}", log_path);
+                            match self.open_file_no_focus(&log_path) {
                                 Ok(buffer_id) => {
                                     // Make the buffer read-only
                                     if let Some(state) = self.buffers.get_mut(&buffer_id) {
@@ -4639,6 +4864,15 @@ impl Editor {
                             }
                         }
                     }
+
+                    // When in terminal mode, ensure display stays at bottom (follows new output)
+                    if self.terminal_mode {
+                        if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                            if let Ok(mut state) = handle.state.lock() {
+                                state.scroll_to_bottom();
+                            }
+                        }
+                    }
                 }
                 AsyncMessage::TerminalExited { terminal_id } => {
                     tracing::info!("Terminal {:?} exited", terminal_id);
@@ -4658,20 +4892,28 @@ impl Editor {
 
         // Update plugin state snapshot BEFORE processing commands
         // This ensures plugins have access to current editor state (cursor positions, etc.)
+        #[cfg(feature = "plugins")]
         self.update_plugin_state_snapshot();
 
         // Process TypeScript plugin commands
         let processed_any_commands = self.process_plugin_commands();
 
         // Process pending plugin action completions
+        #[cfg(feature = "plugins")]
         self.process_pending_plugin_actions();
 
         // Process pending LSP server restarts (with exponential backoff)
         self.process_pending_lsp_restarts();
 
         // Check and clear the plugin render request flag
-        let plugin_render = self.plugin_render_requested;
-        self.plugin_render_requested = false;
+        #[cfg(feature = "plugins")]
+        let plugin_render = {
+            let render = self.plugin_render_requested;
+            self.plugin_render_requested = false;
+            render
+        };
+        #[cfg(not(feature = "plugins"))]
+        let plugin_render = false;
 
         // Poll periodic update checker for new results
         if let Some(ref mut checker) = self.update_checker {
@@ -4742,12 +4984,11 @@ impl Editor {
     }
 
     /// Update the plugin state snapshot with current editor state
+    #[cfg(feature = "plugins")]
     fn update_plugin_state_snapshot(&mut self) {
         // Update TypeScript plugin manager state
-        if let Some(ref manager) = self.ts_plugin_manager {
+        if let Some(snapshot_handle) = self.plugin_manager.state_snapshot_handle() {
             use crate::services::plugins::api::{BufferInfo, CursorInfo, ViewportInfo};
-
-            let snapshot_handle = manager.state_snapshot_handle();
             let mut snapshot = snapshot_handle.write().unwrap();
 
             // Update active buffer ID
@@ -6566,13 +6807,13 @@ impl Editor {
         self.set_status_message(format!("Found {} reference(s) for '{}'", count, symbol));
 
         // Fire the lsp_references hook so plugins can display the results
-        let args = crate::services::plugins::hooks::HookArgs::LspReferences {
-            symbol: symbol.clone(),
-            locations: lsp_locations,
-        };
-        if let Some(ref ts_manager) = self.ts_plugin_manager {
-            ts_manager.run_hook("lsp_references", args);
-        }
+        self.plugin_manager.run_hook(
+            "lsp_references",
+            crate::services::plugins::hooks::HookArgs::LspReferences {
+                symbol: symbol.clone(),
+                locations: lsp_locations,
+            },
+        );
 
         tracing::info!(
             "Fired lsp_references hook with {} locations for symbol '{}'",

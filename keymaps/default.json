@@ -76,7 +76,7 @@
       "comment": "Normal context - Close tab",
       "key": "w",
       "modifiers": ["alt"],
-      "action": "close",
+      "action": "close_tab",
       "args": {},
       "when": "normal"
     },
@@ -851,6 +851,21 @@
       "when": "normal"
     },
     {
+      "comment": "Normal context - Split navigation",
+      "key": "]",
+      "modifiers": ["alt"],
+      "action": "next_split",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "[",
+      "modifiers": ["alt"],
+      "action": "prev_split",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Normal context - Set Bookmarks (Ctrl+Shift+0-9)",
       "key": "0",
       "modifiers": ["ctrl", "shift"],
@@ -1479,6 +1494,38 @@
       "action": "menu_close",
       "args": {},
       "when": "menu"
+    },
+    {
+      "comment": "Terminal context - Exit terminal mode (Ctrl+Space)",
+      "key": " ",
+      "modifiers": ["ctrl"],
+      "action": "terminal_escape",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "comment": "Terminal context - Exit terminal mode (Ctrl+])",
+      "key": "]",
+      "modifiers": ["ctrl"],
+      "action": "terminal_escape",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "comment": "Terminal context - Toggle keyboard capture (F9)",
+      "key": "F9",
+      "modifiers": [],
+      "action": "toggle_keyboard_capture",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "comment": "Terminal context - Paste clipboard contents (Ctrl+V)",
+      "key": "v",
+      "modifiers": ["ctrl"],
+      "action": "terminal_paste",
+      "args": {},
+      "when": "terminal"
     }
   ]
 }

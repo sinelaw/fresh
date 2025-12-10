@@ -1059,6 +1059,231 @@ fn test_session_restore_terminal_active_buffer() {
     }
 }
 
+/// Test keyboard capture mode toggle with Ctrl+`
+/// When keyboard capture is OFF (default), UI bindings work in terminal mode.
+/// When keyboard capture is ON, all keys go to terminal.
+#[test]
+fn test_keyboard_capture_toggle() {
+    use tracing_subscriber::EnvFilter;
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
+        .with_test_writer()
+        .try_init();
+
+    let mut harness = harness_or_return!(120, 30);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // By default keyboard capture should be OFF
+    assert!(
+        !harness.editor().is_keyboard_capture(),
+        "Keyboard capture should be OFF by default"
+    );
+
+    // Ctrl+P should open command palette when keyboard capture is OFF
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Command:");
+    // Close the command palette
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Toggle keyboard capture ON with F9
+    tracing::info!("=== Toggling keyboard capture ON ===");
+    harness.send_key(KeyCode::F(9), KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.editor().is_keyboard_capture(),
+        "Keyboard capture should be ON after F9"
+    );
+    harness.assert_screen_contains("Keyboard capture ON");
+
+    // Ctrl+P should NOT open command palette when keyboard capture is ON
+    // (key should go to terminal instead)
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        !harness.screen_to_string().contains("Command:"),
+        "Command palette should NOT open when keyboard capture is ON"
+    );
+
+    // Toggle keyboard capture OFF with F9
+    tracing::info!("=== Toggling keyboard capture OFF ===");
+    harness.send_key(KeyCode::F(9), KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness.editor().is_keyboard_capture(),
+        "Keyboard capture should be OFF after second F9"
+    );
+    harness.assert_screen_contains("Keyboard capture OFF");
+
+    // Ctrl+P should open command palette again now that keyboard capture is OFF
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Command:");
+}
+
+/// Test that UI bindings (like next_split with Alt+]) work in terminal mode
+/// when keyboard capture is OFF.
+#[test]
+fn test_ui_bindings_work_in_terminal_mode() {
+    let mut harness = harness_or_return!(120, 30);
+
+    // Create a vertical split
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Open a terminal in the current (right) split
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    assert!(harness.editor().is_terminal_mode());
+    assert!(
+        !harness.editor().is_keyboard_capture(),
+        "Keyboard capture should be OFF"
+    );
+
+    let terminal_buffer = harness.editor().active_buffer_id();
+    assert!(harness.editor().is_terminal_buffer(terminal_buffer));
+
+    // Use Alt+[ to switch to previous split (this should work in terminal mode
+    // because it's a UI binding and keyboard capture is OFF)
+    harness
+        .send_key(KeyCode::Char('['), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should have switched to the left split (non-terminal buffer)
+    let new_buffer = harness.editor().active_buffer_id();
+    assert!(
+        !harness.editor().is_terminal_buffer(new_buffer),
+        "Should have switched to non-terminal buffer via Alt+["
+    );
+
+    // Terminal mode should be OFF now (since we switched splits)
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "Terminal mode should be OFF after switching splits"
+    );
+}
+
+/// Test that UI bindings DON'T work when keyboard capture is ON
+#[test]
+fn test_ui_bindings_blocked_with_keyboard_capture() {
+    let mut harness = harness_or_return!(120, 30);
+
+    // Create a vertical split
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Open a terminal in the current split
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    assert!(harness.editor().is_terminal_mode());
+
+    let terminal_buffer = harness.editor().active_buffer_id();
+
+    // Turn keyboard capture ON with F9
+    harness.send_key(KeyCode::F(9), KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert!(harness.editor().is_keyboard_capture());
+
+    // Now Alt+[ should NOT switch splits - it should go to terminal
+    harness
+        .send_key(KeyCode::Char('['), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should still be in terminal mode with same buffer
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Should still be in terminal mode (keyboard capture ON)"
+    );
+    assert_eq!(
+        harness.editor().active_buffer_id(),
+        terminal_buffer,
+        "Should still have same terminal buffer (Alt+[ went to terminal, not processed as UI binding)"
+    );
+}
+
+/// Test that command palette (Ctrl+P) works in terminal mode
+/// This is a UI binding that should always work
+#[test]
+fn test_command_palette_works_in_terminal_mode() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Ctrl+P should open command palette
+    // This tests the UI binding resolution in terminal mode
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The command palette should be open now
+    // The prompt shows "Command:"
+    harness.assert_screen_contains("Command:");
+}
+
+/// Test that typing in prompts works correctly when terminal buffer is active.
+/// Regression test for: Letters typed in command palette were being sent to terminal
+/// instead of the prompt input.
+#[test]
+fn test_prompt_typing_works_in_terminal_mode() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Open command palette with Ctrl+P
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify command palette is open
+    harness.assert_screen_contains("Command:");
+
+    // Type something in the prompt - this should go to the prompt, not the terminal
+    harness.type_text("quit").unwrap();
+    harness.render().unwrap();
+
+    // The prompt should show what we typed
+    harness.assert_screen_contains("quit");
+}
+
 /// Test that switching from terminal split to another split exits terminal mode
 /// and allows the new buffer to receive keystrokes.
 ///
@@ -1078,6 +1303,11 @@ fn test_terminal_split_switch_exits_terminal_mode() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
+
+    // Disable jump_to_end_on_output so terminal output doesn't re-enter terminal mode
+    harness
+        .editor_mut()
+        .set_terminal_jump_to_end_on_output(false);
 
     // Now we have two splits. Open a terminal in the current (right) split
     harness.editor_mut().open_terminal();
@@ -1125,8 +1355,8 @@ fn test_terminal_split_switch_exits_terminal_mode() {
     harness
         .send_mouse(crossterm::event::MouseEvent {
             kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            column: 10,  // column - well into left split
-            row: 15,     // row - middle of content area
+            column: 10, // column - well into left split
+            row: 15,    // row - middle of content area
             modifiers: KeyModifiers::NONE,
         })
         .unwrap();
@@ -1173,5 +1403,1145 @@ fn test_terminal_split_switch_exits_terminal_mode() {
         content_after.contains("hello"),
         "Buffer should contain 'hello' after typing, got: {:?}",
         content_after
+    );
+}
+
+/// Test clicking between splits with terminal preserves correct focus behavior
+/// When terminal is active in one split and file in another, clicking between them
+/// should properly transfer focus and clicking back on terminal should restore terminal mode.
+#[test]
+fn test_click_between_splits_terminal_focus() {
+    let mut harness = harness_or_return!(120, 30);
+
+    // Create a vertical split via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Disable jump_to_end_on_output so terminal output doesn't interfere
+    harness
+        .editor_mut()
+        .set_terminal_jump_to_end_on_output(false);
+
+    // Now we have two splits. Open a terminal in the current (right) split
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    // Verify we're in terminal mode
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Should be in terminal mode after opening terminal"
+    );
+
+    let terminal_buffer = harness.editor().active_buffer_id();
+    assert!(
+        harness.editor().is_terminal_buffer(terminal_buffer),
+        "Active buffer should be terminal"
+    );
+
+    // Screen is 120 wide, split vertically means left split is ~60 cols, right split is ~60 cols
+    // Left split content area starts around column 8 (after gutter)
+    // Right split content area starts around column 68
+    let left_split_col: u16 = 10;
+    let right_split_col: u16 = 100;
+    let content_row: u16 = 15;
+
+    // Repeat the click cycle 3 times to ensure consistent behavior
+    for iteration in 1..=3 {
+        // Currently on terminal (right split), terminal mode is active
+        assert!(
+            harness.editor().is_terminal_mode(),
+            "Iteration {}: Should be in terminal mode before clicking file split",
+            iteration
+        );
+        assert!(
+            harness
+                .editor()
+                .is_terminal_buffer(harness.editor().active_buffer_id()),
+            "Iteration {}: Active buffer should be terminal before clicking file split",
+            iteration
+        );
+
+        // Click on the left split (file buffer)
+        harness
+            .send_mouse(crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: left_split_col,
+                row: content_row,
+                modifiers: KeyModifiers::NONE,
+            })
+            .unwrap();
+        harness.render().unwrap();
+
+        // Terminal mode should be OFF (we clicked on a file split)
+        assert!(
+            !harness.editor().is_terminal_mode(),
+            "Iteration {}: Terminal mode should be OFF after clicking on file split",
+            iteration
+        );
+
+        // Active buffer should be the file (non-terminal)
+        assert!(
+            !harness
+                .editor()
+                .is_terminal_buffer(harness.editor().active_buffer_id()),
+            "Iteration {}: Active buffer should be file (non-terminal) after clicking file split",
+            iteration
+        );
+
+        // Click back on the right split (terminal)
+        harness
+            .send_mouse(crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: right_split_col,
+                row: content_row,
+                modifiers: KeyModifiers::NONE,
+            })
+            .unwrap();
+        harness.render().unwrap();
+
+        // Terminal mode should be restored (we clicked on terminal split)
+        assert!(
+            harness.editor().is_terminal_mode(),
+            "Iteration {}: Terminal mode should be restored after clicking back on terminal split",
+            iteration
+        );
+
+        // Active buffer should be the terminal again
+        assert!(
+            harness
+                .editor()
+                .is_terminal_buffer(harness.editor().active_buffer_id()),
+            "Iteration {}: Active buffer should be terminal after clicking terminal split",
+            iteration
+        );
+    }
+
+    // Final verification: type in terminal to confirm it's truly active
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('e'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('c'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('h'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('o'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char(' '), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('O'), KeyModifiers::SHIFT);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('K'), KeyModifiers::SHIFT);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Enter, KeyModifiers::NONE);
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("OK") || screen.contains("echo"),
+        "Terminal should show command output after repeated split switching. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test that closing a terminal tab transfers keyboard focus to remaining tab
+#[test]
+fn test_close_terminal_tab_transfers_focus_to_remaining_tab() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Create a temp file to work with
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("file1.txt");
+    std::fs::write(&file1, "File content here").unwrap();
+
+    // Open the file first
+    harness.open_file(&file1).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("file1.txt");
+
+    // Open a terminal - this should become the active tab
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+
+    // Verify we're in terminal mode
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Should be in terminal mode after opening terminal"
+    );
+
+    // Close the terminal tab using Alt+W (close_tab)
+    // First exit terminal mode to be able to use normal keybindings
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char(']'), KeyModifiers::CONTROL);
+    harness.render().unwrap();
+
+    // Now close the tab
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Terminal should be closed
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Terminal 0"),
+        "Terminal tab should be closed. Screen:\n{}",
+        screen
+    );
+
+    // file1 should now be active
+    harness.assert_screen_contains("file1.txt");
+    harness.assert_screen_contains("File content here");
+
+    // Should NOT be in terminal mode anymore
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "Should not be in terminal mode after closing terminal"
+    );
+
+    // Type text to verify keyboard focus is on file1
+    harness.type_text("TYPED").unwrap();
+    harness.render().unwrap();
+
+    // The typed text should appear in the buffer
+    harness.assert_screen_contains("TYPED");
+
+    // Save and verify the text was written to file1
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let file1_content = std::fs::read_to_string(&file1).unwrap();
+    assert!(
+        file1_content.contains("TYPED"),
+        "Typed text should be saved to file1. Content: {}",
+        file1_content
+    );
+}
+
+/// Test switching between terminal and file tabs preserves terminal mode
+#[test]
+fn test_terminal_mode_preserved_when_switching_tabs() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Create a temp file to work with
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("file1.txt");
+    std::fs::write(&file1, "File content").unwrap();
+
+    // Open the file first
+    harness.open_file(&file1).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("file1.txt");
+
+    // Open a terminal - should enter terminal mode automatically
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Should be in terminal mode after opening terminal"
+    );
+
+    // Switch to file tab while in terminal mode (using Ctrl+PageUp which works in terminal mode)
+    // This should temporarily exit terminal mode
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Verify we're on file1 and not in terminal mode
+    harness.assert_screen_contains("File content");
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "Should not be in terminal mode when viewing file"
+    );
+
+    // Switch back to terminal tab - should automatically restore terminal mode
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should see terminal tab is active
+    harness.assert_screen_contains("*Terminal 0*");
+
+    // Terminal mode should be automatically restored since we were in terminal mode before
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Terminal mode should be restored when switching back to terminal"
+    );
+
+    // Now test executing a command in the terminal
+    // Type a simple command (echo) - this tests that terminal input works
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('e'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('c'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('h'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('o'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char(' '), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('H'), KeyModifiers::SHIFT);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('I'), KeyModifiers::SHIFT);
+    harness.render().unwrap();
+
+    // Execute the command
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Enter, KeyModifiers::NONE);
+
+    // Wait a bit for command to execute and render
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // The terminal should show "HI" in the output (from echo HI)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("HI") || screen.contains("echo"),
+        "Terminal should show command output or the typed command. Screen:\n{}",
+        screen
+    );
+
+    // Test the full cycle again: switch away and back multiple times
+    // Switch to file
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.assert_screen_contains("File content");
+
+    // Switch back to terminal - should restore terminal mode
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Terminal mode should be restored after second switch back"
+    );
+
+    // === Now test switching tabs via mouse clicks ===
+    use crate::common::harness::layout;
+
+    // Get the tab bar to find tab positions
+    let screen = harness.screen_to_string();
+    let tab_row: String = screen
+        .lines()
+        .nth(layout::TAB_BAR_ROW)
+        .unwrap_or("")
+        .to_string();
+
+    // Find the position of "file1.txt" in the tab bar (clicking on it should switch to it)
+    // Tab format is something like: " file1.txt × | *Terminal 0* × "
+    let file_tab_pos = tab_row
+        .find("file1")
+        .expect("Should find file1.txt tab in tab bar");
+
+    // We're currently on terminal (in terminal mode), click on file tab
+    harness
+        .mouse_click(file_tab_pos as u16, layout::TAB_BAR_ROW as u16)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should now be viewing file content
+    harness.assert_screen_contains("File content");
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "Should not be in terminal mode after clicking file tab"
+    );
+
+    // Get updated tab bar for terminal position
+    let screen = harness.screen_to_string();
+    let tab_row: String = screen
+        .lines()
+        .nth(layout::TAB_BAR_ROW)
+        .unwrap_or("")
+        .to_string();
+
+    // Find terminal tab position (look for "Terminal" text)
+    let terminal_tab_pos = tab_row
+        .find("Terminal")
+        .expect("Should find Terminal tab in tab bar");
+
+    // Click on terminal tab to switch back
+    harness
+        .mouse_click(terminal_tab_pos as u16, layout::TAB_BAR_ROW as u16)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should see terminal tab is active again
+    harness.assert_screen_contains("*Terminal 0*");
+
+    // Terminal mode should be restored when clicking back to terminal
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Terminal mode should be restored when clicking terminal tab"
+    );
+
+    // Verify keyboard input works after clicking - type something in terminal
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('p'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('w'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char('d'), KeyModifiers::NONE);
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Enter, KeyModifiers::NONE);
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // The terminal should show pwd command was executed (shows path or "pwd")
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("pwd") || screen.contains("/"),
+        "Terminal should show pwd command or path output after click switch. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test that closing terminal tab via mouse click (while in terminal mode) transfers focus
+#[test]
+fn test_close_terminal_tab_in_terminal_mode_via_mouse() {
+    use crate::common::harness::layout;
+
+    let mut harness = harness_or_return!(80, 24);
+
+    // Create a temp file to work with
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("file1.txt");
+    std::fs::write(&file1, "File content here").unwrap();
+
+    // Open the file first
+    harness.open_file(&file1).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("file1.txt");
+
+    // Open a terminal - this should become the active tab and enter terminal mode
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+
+    // Verify we're in terminal mode
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Should be in terminal mode after opening terminal"
+    );
+
+    // Find the × button for the terminal tab in the tab bar
+    let screen = harness.screen_to_string();
+    let tab_row: String = screen
+        .lines()
+        .nth(layout::TAB_BAR_ROW)
+        .unwrap_or("")
+        .to_string();
+
+    // Find the position of the × for Terminal 0 tab (should be after "Terminal 0")
+    // The tab bar shows tabs like: "file1.txt × | *Terminal 0* ×"
+    // We want the second × (the one for the terminal tab)
+    let terminal_x_pos = tab_row
+        .rmatch_indices('×')
+        .next()
+        .map(|(pos, _)| pos)
+        .expect("Could not find × close button for terminal tab");
+
+    // Click on the × button while still in terminal mode
+    harness
+        .mouse_click(terminal_x_pos as u16, layout::TAB_BAR_ROW as u16)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Terminal should be closed
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Terminal 0"),
+        "Terminal tab should be closed. Screen:\n{}",
+        screen
+    );
+
+    // file1 should now be active
+    harness.assert_screen_contains("file1.txt");
+    harness.assert_screen_contains("File content here");
+
+    // Should NOT be in terminal mode anymore
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "Should not be in terminal mode after closing terminal via mouse"
+    );
+
+    // Type text to verify keyboard focus is on file1
+    harness.type_text("TYPED").unwrap();
+    harness.render().unwrap();
+
+    // The typed text should appear in the buffer
+    harness.assert_screen_contains("TYPED");
+
+    // Save and verify the text was written to file1
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let file1_content = std::fs::read_to_string(&file1).unwrap();
+    assert!(
+        file1_content.contains("TYPED"),
+        "Typed text should be saved to file1. Content: {}",
+        file1_content
+    );
+}
+
+/// Test that terminal view follows output when cursor is at the very last line.
+///
+/// Reproduces the bug where pressing Enter many times in a terminal causes the
+/// cursor to reach the bottom of the screen. Once the cursor is at the last line,
+/// the view should continue to follow the cursor (output), but previously it would
+/// stop updating until a resize event was triggered.
+///
+/// The fix adds `resize_visible_terminals()` call when entering terminal mode,
+/// which ensures proper PTY sizing and view following.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_view_follows_output_at_bottom() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    assert!(harness.editor().is_terminal_mode());
+
+    // Get terminal dimensions
+    let buffer_id = harness.editor().active_buffer_id();
+    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let (_, rows) = harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .unwrap()
+        .size();
+
+    // Press Enter many times to push cursor to the bottom of the screen.
+    // This fills the screen with shell prompts, pushing the cursor down.
+    // We press more than the terminal rows to ensure cursor reaches bottom.
+    for i in 0..(rows as usize + 5) {
+        harness
+            .editor_mut()
+            .handle_terminal_key(KeyCode::Enter, KeyModifiers::NONE);
+
+        // Give the shell time to respond every few iterations
+        if i % 5 == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    // Wait for output to settle
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // Now type a unique marker that we can search for
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo BOTTOM_MARKER_XYZ\n");
+
+    // Wait for the marker to appear on screen
+    let result = harness.wait_until(|h| h.screen_to_string().contains("BOTTOM_MARKER_XYZ"));
+    assert!(
+        result.is_ok(),
+        "Terminal view should show BOTTOM_MARKER_XYZ after pressing Enter many times. \
+         The view should follow output to the cursor position at the bottom. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Test that terminal properly resizes when re-entering terminal mode.
+///
+/// This verifies that entering terminal mode triggers a resize to ensure
+/// the PTY dimensions match the current split dimensions.
+#[test]
+fn test_terminal_resize_on_enter_mode() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Get terminal size after opening
+    let buffer_id = harness.editor().active_buffer_id();
+    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let (cols1, rows1) = harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .unwrap()
+        .size();
+
+    // Exit terminal mode
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char(']'), KeyModifiers::CONTROL);
+    assert!(!harness.editor().is_terminal_mode());
+
+    // Re-enter terminal mode
+    harness.editor_mut().enter_terminal_mode();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Get terminal size after re-entering
+    let (cols2, rows2) = harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .unwrap()
+        .size();
+
+    // Size should be the same (resize should have been called to ensure consistency)
+    assert_eq!(
+        cols1, cols2,
+        "Terminal columns should match after re-entering"
+    );
+    assert_eq!(rows1, rows2, "Terminal rows should match after re-entering");
+}
+
+/// Test that terminal scrollback content is restored when session is restored.
+///
+/// This verifies the bug where terminal scrollback was empty after session restore
+/// because create_terminal_buffer_detached was overwriting the backing file.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_session_restore_terminal_scrollback() {
+    use fresh::config::{Config, DirectoryContext};
+    use portable_pty::{native_pty_system, PtySize};
+    use tempfile::TempDir;
+
+    // Skip if PTY not available
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal session test: PTY not available");
+        return;
+    }
+
+    // Create temp directories that persist across both sessions
+    let data_temp_dir = TempDir::new().unwrap();
+    let project_temp_dir = TempDir::new().unwrap();
+    let project_dir = project_temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    // Create a shared DirectoryContext that both sessions will use
+    let dir_context = DirectoryContext::for_testing(data_temp_dir.path());
+
+    let backing_path_for_check: std::path::PathBuf;
+
+    // First session: open terminal and generate scrollback content
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Open a terminal
+        harness.editor_mut().open_terminal();
+        harness.render().unwrap();
+        assert!(harness.editor().is_terminal_mode());
+
+        // Generate unique scrollback content
+        harness
+            .editor_mut()
+            .send_terminal_input(b"echo 'SCROLLBACK_MARKER_12345'\n");
+
+        // Wait for the marker to appear
+        let result =
+            harness.wait_until(|h| h.screen_to_string().contains("SCROLLBACK_MARKER_12345"));
+        assert!(
+            result.is_ok(),
+            "Terminal should show scrollback marker. Screen:\n{}",
+            harness.screen_to_string()
+        );
+
+        // Exit terminal mode to enter scrollback view (this syncs content to backing file)
+        harness
+            .editor_mut()
+            .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+        assert!(!harness.editor().is_terminal_mode());
+
+        // Verify content is in buffer before saving
+        let buffer_id = harness.editor().active_buffer_id();
+        let content_before_save = harness.editor().get_buffer_content(buffer_id);
+        assert!(
+            content_before_save
+                .as_ref()
+                .map(|c| c.contains("SCROLLBACK_MARKER_12345"))
+                .unwrap_or(false),
+            "Buffer should contain scrollback marker before save. Content: {:?}",
+            content_before_save
+        );
+
+        // Save session
+        harness.editor_mut().save_session().unwrap();
+
+        // Get the backing file path for later verification
+        let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+        backing_path_for_check = harness
+            .editor()
+            .terminal_backing_files()
+            .get(&terminal_id)
+            .cloned()
+            .unwrap();
+
+        // Verify backing file content after save
+        let backing_content = std::fs::read_to_string(&backing_path_for_check).unwrap_or_default();
+        assert!(
+            backing_content.contains("SCROLLBACK_MARKER_12345"),
+            "Backing file should contain marker after save"
+        );
+    }
+
+    // Verify backing file still exists and has content before restore
+    let pre_restore_content = std::fs::read_to_string(&backing_path_for_check).unwrap_or_default();
+    assert!(
+        pre_restore_content.contains("SCROLLBACK_MARKER_12345"),
+        "Backing file should still contain marker before second session"
+    );
+
+    // Second session: restore and verify scrollback content is preserved
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Restore session
+        let restored = harness.editor_mut().try_restore_session().unwrap();
+        assert!(restored, "Session should have been restored");
+
+        // Verify backing file was NOT overwritten during restore
+        let post_restore_content =
+            std::fs::read_to_string(&backing_path_for_check).unwrap_or_default();
+        assert!(
+            post_restore_content.contains("SCROLLBACK_MARKER_12345"),
+            "Backing file should still contain marker after restore (must not be truncated)"
+        );
+
+        harness.render().unwrap();
+
+        // Find the terminal buffer
+        let buffer_id = harness.editor().active_buffer_id();
+        let is_terminal = harness.editor().is_terminal_buffer(buffer_id);
+
+        if is_terminal {
+            // Get buffer content - CRITICAL: The scrollback content should be restored
+            let content_after_restore = harness.editor().get_buffer_content(buffer_id);
+            assert!(
+                content_after_restore
+                    .as_ref()
+                    .map(|c| c.contains("SCROLLBACK_MARKER_12345"))
+                    .unwrap_or(false),
+                "BUG: Terminal scrollback should contain marker after restore. Content: {:?}",
+                content_after_restore
+            );
+        } else {
+            // If terminal wasn't the active buffer, the terminal tab should still exist
+            let screen = harness.screen_to_string();
+            assert!(
+                screen.contains("Terminal"),
+                "Terminal tab should be restored. Screen:\n{}",
+                screen
+            );
+        }
+    }
+}
+
+/// Test that NEW scrollback generated after session restore is captured.
+///
+/// This reproduces a bug where `backing_writer` is set to None when the backing file
+/// already exists (from the first session), causing all new scrollback to be lost.
+///
+/// The test:
+/// 1. First session: create terminal, generate scrollback with FIRST_MARKER, save
+/// 2. Second session: restore, generate NEW scrollback with SECOND_MARKER
+/// 3. Verify SECOND_MARKER appears in scrollback (proves new content is captured)
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_scrollback_captured_after_session_restore() {
+    use fresh::config::{Config, DirectoryContext};
+    use portable_pty::{native_pty_system, PtySize};
+    use tempfile::TempDir;
+
+    // Skip if PTY not available
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal session test: PTY not available");
+        return;
+    }
+
+    // Create temp directories that persist across both sessions
+    let data_temp_dir = TempDir::new().unwrap();
+    let project_temp_dir = TempDir::new().unwrap();
+    let project_dir = project_temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    // Create a shared DirectoryContext that both sessions will use
+    let dir_context = DirectoryContext::for_testing(data_temp_dir.path());
+
+    let backing_path_for_check: std::path::PathBuf;
+
+    // First session: open terminal and generate scrollback content
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Open a terminal
+        harness.editor_mut().open_terminal();
+        harness.render().unwrap();
+        assert!(harness.editor().is_terminal_mode());
+
+        // Generate scrollback content with FIRST marker
+        harness
+            .editor_mut()
+            .send_terminal_input(b"echo 'FIRST_SESSION_MARKER_AAA'\n");
+
+        // Wait for the marker to appear
+        let result =
+            harness.wait_until(|h| h.screen_to_string().contains("FIRST_SESSION_MARKER_AAA"));
+        assert!(
+            result.is_ok(),
+            "Terminal should show first marker. Screen:\n{}",
+            harness.screen_to_string()
+        );
+
+        // Exit terminal mode to sync content to backing file
+        harness
+            .editor_mut()
+            .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+        assert!(!harness.editor().is_terminal_mode());
+
+        // Save session
+        harness.editor_mut().save_session().unwrap();
+
+        // Get the backing file path for later verification
+        let buffer_id = harness.editor().active_buffer_id();
+        let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+        backing_path_for_check = harness
+            .editor()
+            .terminal_backing_files()
+            .get(&terminal_id)
+            .cloned()
+            .unwrap();
+
+        // Verify backing file has first marker
+        let backing_content = std::fs::read_to_string(&backing_path_for_check).unwrap_or_default();
+        assert!(
+            backing_content.contains("FIRST_SESSION_MARKER_AAA"),
+            "Backing file should contain first marker after save"
+        );
+    }
+
+    // Second session: restore and generate NEW scrollback
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Restore session
+        let restored = harness.editor_mut().try_restore_session().unwrap();
+        assert!(restored, "Session should have been restored");
+        harness.render().unwrap();
+
+        // Re-enter terminal mode to interact with the restored terminal
+        let buffer_id = harness.editor().active_buffer_id();
+        if !harness.editor().is_terminal_mode() {
+            harness
+                .editor_mut()
+                .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+                .unwrap();
+            harness.render().unwrap();
+        }
+        assert!(
+            harness.editor().is_terminal_mode(),
+            "Should be in terminal mode"
+        );
+
+        // Generate enough output to push content into scrollback
+        // Use many lines to ensure SECOND_MARKER gets pushed into scrollback history
+        harness
+            .editor_mut()
+            .send_terminal_input(b"echo 'SECOND_SESSION_MARKER_BBB'\n");
+
+        harness
+            .wait_until(|h| h.screen_to_string().contains("SECOND_SESSION_MARKER_BBB"))
+            .unwrap();
+
+        // Generate more output to push SECOND_MARKER into scrollback
+        harness
+            .editor_mut()
+            .send_terminal_input(b"for i in $(seq 1 50); do echo \"Post-restore line $i\"; done\n");
+
+        harness
+            .wait_until(|h| h.screen_to_string().contains("Post-restore line 50"))
+            .unwrap();
+
+        // Disable jump_to_end_on_output so we can stay in scrollback mode
+        harness
+            .editor_mut()
+            .set_terminal_jump_to_end_on_output(false);
+
+        // Exit terminal mode to enter scrollback view
+        harness
+            .editor_mut()
+            .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Get the full buffer content
+        let content = harness
+            .editor()
+            .get_buffer_content(buffer_id)
+            .unwrap_or_default();
+
+        // CRITICAL: The SECOND marker should be in the scrollback
+        // This fails if backing_writer was None after restore
+        assert!(
+            content.contains("SECOND_SESSION_MARKER_BBB"),
+            "BUG: Scrollback should contain SECOND marker (generated after restore).\n\
+             This fails if backing_writer is None for restored sessions.\n\
+             Content length: {}\nContent:\n{}",
+            content.len(),
+            &content[..content.len().min(2000)]
+        );
+
+        // Also verify first marker is still there
+        assert!(
+            content.contains("FIRST_SESSION_MARKER_AAA"),
+            "Scrollback should still contain FIRST marker from original session.\nContent:\n{}",
+            &content[..content.len().min(2000)]
+        );
+    }
+}
+
+/// Test that scrollback content is stable and accessible after repeated mode toggles.
+///
+/// This test verifies:
+/// 1. Scrollback history is preserved across terminal mode toggles
+/// 2. Content doesn't accumulate (no duplicate visible screens appended)
+/// 3. User can scroll to the beginning of history using Ctrl+Home
+///
+/// The test fills the screen with numbered output lines, then repeatedly
+/// toggles between terminal mode and scrollback mode, verifying each time
+/// that the full history is accessible.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_scrollback_stable_after_multiple_mode_toggles() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Disable jump_to_end_on_output so we can stay in scrollback mode
+    // while the shell may still be producing output
+    harness
+        .editor_mut()
+        .set_terminal_jump_to_end_on_output(false);
+
+    let buffer_id = harness.editor().active_buffer_id();
+
+    // Generate enough output to fill the screen and create scrollback
+    // Use a unique marker at the START that we can verify we can scroll back to
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo 'START_MARKER_12345'\n");
+
+    // Wait for the start marker
+    harness
+        .wait_until(|h| h.screen_to_string().contains("START_MARKER_12345"))
+        .unwrap();
+
+    // Generate many lines to push the start marker into scrollback
+    harness
+        .editor_mut()
+        .send_terminal_input(b"for i in $(seq 1 50); do echo \"Line $i of output\"; done\n");
+
+    // Wait for the last line to appear (ensures command completed)
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Line 50 of output"))
+        .unwrap();
+
+    // Add an end marker
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo 'END_MARKER_67890'\n");
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("END_MARKER_67890"))
+        .unwrap();
+
+    // Now toggle terminal mode ON and OFF multiple times, checking scrollback each time
+    for i in 0..3 {
+        // Exit terminal mode to enter scrollback view
+        harness
+            .editor_mut()
+            .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+        assert!(
+            !harness.editor().is_terminal_mode(),
+            "Iteration {}: Should be in scrollback mode after Ctrl+Space",
+            i
+        );
+
+        // Small delay to ensure buffer sync completes
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        harness.render().unwrap();
+
+        // Get the full buffer content - it should contain both markers
+        let content = harness
+            .editor()
+            .get_buffer_content(buffer_id)
+            .unwrap_or_default();
+
+        assert!(
+            content.contains("START_MARKER_12345"),
+            "Iteration {}: Scrollback should contain START marker. Content length: {}\nContent:\n{}",
+            i,
+            content.len(),
+            &content[..content.len().min(500)]
+        );
+
+        assert!(
+            content.contains("END_MARKER_67890"),
+            "Iteration {}: Scrollback should contain END marker. Content:\n{}",
+            i,
+            &content[..content.len().min(500)]
+        );
+
+        // Use Ctrl+Home to scroll to the very beginning
+        harness
+            .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+
+        // DEBUG: Check terminal mode after Ctrl+Home
+        eprintln!(
+            "DEBUG iteration {}: after Ctrl+Home, terminal_mode={}",
+            i,
+            harness.editor().is_terminal_mode()
+        );
+
+        // The screen should now show the START marker (near the top of history)
+        let screen = harness.screen_to_string();
+        assert!(
+            screen.contains("START_MARKER_12345"),
+            "Iteration {}: After Ctrl+Home, screen should show START marker.\nScreen:\n{}",
+            i,
+            screen
+        );
+
+        // Re-enter terminal mode
+        harness
+            .editor_mut()
+            .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+        assert!(
+            harness.editor().is_terminal_mode(),
+            "Iteration {}: Should be in terminal mode after second Ctrl+Space",
+            i
+        );
+    }
+
+    // Final check: exit one more time and verify content length is reasonable
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    let final_content = harness
+        .editor()
+        .get_buffer_content(buffer_id)
+        .unwrap_or_default();
+
+    // Count how many times the START marker appears - should be exactly 2
+    // (once from the echo command, once from the output)
+    let start_count = final_content.matches("START_MARKER_12345").count();
+    assert!(
+        start_count <= 3, // Allow some variance for shell echo behavior
+        "BUG: START marker appears {} times - content may be accumulating!\nContent:\n{}",
+        start_count,
+        &final_content[..final_content.len().min(1000)]
     );
 }

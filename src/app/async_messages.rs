@@ -78,13 +78,13 @@ impl Editor {
         }
 
         // Emit diagnostics_updated hook for plugins
-        if let Some(ref ts_manager) = self.ts_plugin_manager {
-            let hook_args = crate::services::plugins::hooks::HookArgs::DiagnosticsUpdated {
+        self.plugin_manager.run_hook(
+            "diagnostics_updated",
+            crate::services::plugins::hooks::HookArgs::DiagnosticsUpdated {
                 uri,
                 count: diagnostics.len(),
-            };
-            ts_manager.run_hook("diagnostics_updated", hook_args);
-        }
+            },
+        );
     }
 
     /// Handle LSP diagnostics (push model)
@@ -416,15 +416,15 @@ impl Editor {
         let params_str = params.map(|p| p.to_string());
 
         // Run the lsp_server_request hook for plugins
-        if let Some(ref ts_manager) = self.ts_plugin_manager {
-            let hook_args = crate::services::plugins::hooks::HookArgs::LspServerRequest {
+        self.plugin_manager.run_hook(
+            "lsp_server_request",
+            crate::services::plugins::hooks::HookArgs::LspServerRequest {
                 language,
                 method,
                 server_command,
                 params: params_str,
-            };
-            ts_manager.run_hook("lsp_server_request", hook_args);
-        }
+            },
+        );
     }
 
     /// Handle plugin LSP response
@@ -581,12 +581,7 @@ impl Editor {
     ///
     /// Returns true if any commands were processed
     pub(super) fn process_plugin_commands(&mut self) -> bool {
-        let Some(ref mut manager) = self.ts_plugin_manager else {
-            tracing::trace!("process_async_messages: no plugin manager");
-            return false;
-        };
-
-        let commands = manager.process_commands();
+        let commands = self.plugin_manager.process_commands();
         if commands.is_empty() {
             return false;
         }
@@ -610,6 +605,7 @@ impl Editor {
     }
 
     /// Process pending plugin action completions
+    #[cfg(feature = "plugins")]
     pub(super) fn process_pending_plugin_actions(&mut self) {
         self.pending_plugin_actions
             .retain(|(action_name, receiver)| {
