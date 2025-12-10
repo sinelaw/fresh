@@ -682,7 +682,11 @@ impl Editor {
 
     /// Apply dimming effect to UI elements outside the focused terminal area
     /// This visually indicates that keyboard capture mode is active
-    fn apply_keyboard_capture_dimming(&self, frame: &mut Frame, terminal_area: ratatui::layout::Rect) {
+    fn apply_keyboard_capture_dimming(
+        &self,
+        frame: &mut Frame,
+        terminal_area: ratatui::layout::Rect,
+    ) {
         use ratatui::style::Color;
 
         let size = frame.area();

@@ -1036,9 +1036,9 @@ impl Editor {
         }
 
         if has_warnings {
-            // Open the warning log file
+            // Open the warning log file in background (don't steal focus)
             let path = path.clone();
-            if let Err(e) = self.open_file(&path) {
+            if let Err(e) = self.open_file_no_focus(&path) {
                 tracing::error!("Failed to open warning log: {}", e);
             } else {
                 self.set_status_message("Warnings detected - see log".to_string());
@@ -1128,6 +1128,59 @@ impl Editor {
     /// If the file doesn't exist, creates an unsaved buffer with that filename.
     /// Saving the buffer will create the file.
     pub fn open_file(&mut self, path: &Path) -> io::Result<BufferId> {
+        let buffer_id = self.open_file_no_focus(path)?;
+
+        // Check if this was an already-open buffer or a new one
+        // For already-open buffers, just switch to them
+        // For new buffers, record position history before switching
+        let is_new_buffer = self.active_buffer() != buffer_id;
+
+        if is_new_buffer {
+            // Save current position before switching to new buffer
+            self.position_history.commit_pending_movement();
+
+            // Explicitly record current position before switching
+            let current_state = self.active_state();
+            let position = current_state.cursors.primary().position;
+            let anchor = current_state.cursors.primary().anchor;
+            self.position_history
+                .record_movement(self.active_buffer(), position, anchor);
+            self.position_history.commit_pending_movement();
+        }
+
+        self.set_active_buffer(buffer_id);
+
+        // Use display_name from metadata for relative path display
+        let display_name = self
+            .buffer_metadata
+            .get(&buffer_id)
+            .map(|m| m.display_name.clone())
+            .unwrap_or_else(|| path.display().to_string());
+
+        // Check if buffer is binary for status message
+        let is_binary = self
+            .buffers
+            .get(&buffer_id)
+            .map(|s| s.buffer.is_binary())
+            .unwrap_or(false);
+
+        // Show appropriate status message for binary vs regular files
+        if is_binary {
+            self.status_message = Some(format!("Opened {} [binary file, read-only]", display_name));
+        } else {
+            self.status_message = Some(format!("Opened {}", display_name));
+        }
+
+        Ok(buffer_id)
+    }
+
+    /// Open a file without switching focus to it
+    ///
+    /// Creates a new buffer for the file (or returns existing buffer ID if already open)
+    /// but does not change the active buffer. Useful for opening files in background tabs.
+    ///
+    /// If the file doesn't exist, creates an unsaved buffer with that filename.
+    pub fn open_file_no_focus(&mut self, path: &Path) -> io::Result<BufferId> {
         // Determine if we're opening a non-existent file (for creating new files)
         let file_exists = path.exists();
 
@@ -1158,7 +1211,7 @@ impl Editor {
         };
         let path = canonical_path.as_path();
 
-        // Check if file is already open
+        // Check if file is already open - return existing buffer without switching
         let already_open = self
             .buffers
             .iter()
@@ -1166,11 +1219,6 @@ impl Editor {
             .map(|(id, _)| *id);
 
         if let Some(id) = already_open {
-            // Commit pending movement before switching to existing buffer
-            if id != self.active_buffer() {
-                self.position_history.commit_pending_movement();
-                self.set_active_buffer(id);
-            }
             return Ok(id);
         }
 
@@ -1243,32 +1291,10 @@ impl Editor {
         // Store metadata for this buffer
         self.buffer_metadata.insert(buffer_id, metadata);
 
-        // Save current position before switching to new buffer (if not replacing current)
-        if !replace_current {
-            self.position_history.commit_pending_movement();
-
-            // Explicitly record current position before switching
-            let current_state = self.active_state();
-            let position = current_state.cursors.primary().position;
-            let anchor = current_state.cursors.primary().anchor;
-            self.position_history
-                .record_movement(self.active_buffer(), position, anchor);
-            self.position_history.commit_pending_movement();
-        }
-
-        self.set_active_buffer(buffer_id);
-        // Use display_name from metadata for relative path display
-        let display_name = self
-            .buffer_metadata
-            .get(&buffer_id)
-            .map(|m| m.display_name.clone())
-            .unwrap_or_else(|| path.display().to_string());
-
-        // Show appropriate status message for binary vs regular files
-        if is_binary {
-            self.status_message = Some(format!("Opened {} [binary file, read-only]", display_name));
-        } else {
-            self.status_message = Some(format!("Opened {}", display_name));
+        // Add buffer to the active split's tabs (but don't switch to it)
+        let active_split = self.split_manager.active_split();
+        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.add_buffer(buffer_id);
         }
 
         // Emit control event
@@ -4672,11 +4698,12 @@ impl Editor {
                     self.status_message = Some(format!("LSP error ({}): {}", language, error));
 
                     // Open stderr log as read-only buffer if it exists and has content
+                    // Opens in background (new tab) without stealing focus
                     if let Some(log_path) = stderr_log_path {
                         let has_content = log_path.metadata().map(|m| m.len() > 0).unwrap_or(false);
                         if has_content {
-                            tracing::info!("Opening LSP stderr log: {:?}", log_path);
-                            match self.open_file(&log_path) {
+                            tracing::info!("Opening LSP stderr log in background: {:?}", log_path);
+                            match self.open_file_no_focus(&log_path) {
                                 Ok(buffer_id) => {
                                     // Make the buffer read-only
                                     if let Some(state) = self.buffers.get_mut(&buffer_id) {

@@ -723,13 +723,10 @@ impl Editor {
     /// Handle OpenFileInBackground command
     pub(super) fn handle_open_file_in_background(&mut self, path: std::path::PathBuf) {
         // Open file in a new tab without switching to it
-        let current_buffer = self.active_buffer();
-        if let Err(e) = self.open_file(&path) {
+        if let Err(e) = self.open_file_no_focus(&path) {
             tracing::error!("Failed to open file in background: {}", e);
         } else {
-            // Switch back to the original buffer
-            self.set_active_buffer(current_buffer);
-            tracing::info!("Opened debug log in background: {:?}", path);
+            tracing::info!("Opened file in background: {:?}", path);
         }
     }
 
