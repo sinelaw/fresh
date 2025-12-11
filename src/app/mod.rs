@@ -1752,8 +1752,8 @@ impl Editor {
         } else {
             // There are other viewports of this buffer - just remove from current split's tabs
             if current_split_tabs.len() <= 1 {
-                // This is the only tab in this split - can't close it
-                self.set_status_message("Cannot close the only tab in this split".to_string());
+                // This is the only tab in this split - close the split
+                self.close_active_split();
                 return;
             }
 
@@ -1826,9 +1826,9 @@ impl Editor {
         } else {
             // There are other viewports of this buffer - just remove from this split's tabs
             if split_tabs.len() <= 1 {
-                // This is the only tab in this split - can't close it
-                self.set_status_message("Cannot close the only tab in this split".to_string());
-                return false;
+                // This is the only tab in this split - close the split
+                self.handle_close_split(split_id);
+                return true;
             }
 
             // Find replacement buffer for this split
