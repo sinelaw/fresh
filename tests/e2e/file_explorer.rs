@@ -1463,3 +1463,129 @@ fn test_file_explorer_keybinding_matches_behavior() {
         "File explorer should toggle off when the keybinding is pressed again"
     );
 }
+
+/// Test that Ctrl+E toggles focus between file explorer and editor
+/// When in editor context, Ctrl+E focuses the file explorer
+/// When in file explorer context, Ctrl+E focuses the editor (keeps explorer open)
+#[test]
+fn test_ctrl_e_toggles_focus_between_explorer_and_editor() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create a test file
+    fs::write(project_root.join("test.txt"), "test content").unwrap();
+
+    // Open the file so we have something in the editor
+    harness
+        .editor_mut()
+        .open_file(&project_root.join("test.txt"))
+        .unwrap();
+    harness.render().unwrap();
+
+    // Initially, file explorer should not be visible
+    assert!(
+        !harness.editor().file_explorer_visible(),
+        "File explorer should not be visible initially"
+    );
+
+    // Press Ctrl+E to open and focus file explorer
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+
+    // File explorer should now be visible
+    assert!(
+        harness.editor().file_explorer_visible(),
+        "File explorer should be visible after Ctrl+E"
+    );
+
+    let screen_explorer_focused = harness.screen_to_string();
+    println!(
+        "Screen with explorer focused:\n{}",
+        screen_explorer_focused
+    );
+
+    // Press Ctrl+E again - should switch focus back to editor but keep explorer open
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // File explorer should STILL be visible (not toggled off)
+    assert!(
+        harness.editor().file_explorer_visible(),
+        "File explorer should remain visible after Ctrl+E from explorer context"
+    );
+
+    let screen_editor_focused = harness.screen_to_string();
+    println!("Screen with editor focused:\n{}", screen_editor_focused);
+
+    // Verify focus is on editor by typing and seeing it appear in the buffer
+    harness.type_text("TYPED").unwrap();
+    harness.render().unwrap();
+
+    let screen_after_typing = harness.screen_to_string();
+    assert!(
+        screen_after_typing.contains("TYPED"),
+        "Typing should work after Ctrl+E switches focus to editor. Screen:\n{}",
+        screen_after_typing
+    );
+
+    // File explorer should still be visible
+    assert!(
+        screen_after_typing.contains("File Explorer"),
+        "File explorer should still be visible after typing in editor"
+    );
+}
+
+/// Test that closing the last buffer focuses the file explorer
+#[test]
+fn test_close_last_buffer_focuses_file_explorer() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    // Use a fresh editor with no files open initially
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    harness.render().unwrap();
+
+    // The editor starts with a single scratch buffer [No Name]
+    let screen_initial = harness.screen_to_string();
+    println!("Initial screen:\n{}", screen_initial);
+
+    // File explorer should not be visible initially
+    assert!(
+        !harness.editor().file_explorer_visible(),
+        "File explorer should not be visible initially"
+    );
+
+    // Close the scratch buffer (Alt+W)
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+
+    // Wait for async file explorer initialization
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // After closing the last buffer, file explorer should be visible and focused
+    let screen_after_close = harness.screen_to_string();
+    println!("Screen after closing last buffer:\n{}", screen_after_close);
+
+    // File explorer should now be visible
+    assert!(
+        harness.editor().file_explorer_visible(),
+        "File explorer should be visible after closing last buffer"
+    );
+
+    // Should see File Explorer in the screen
+    assert!(
+        screen_after_close.contains("File Explorer"),
+        "File Explorer should be visible on screen after closing last buffer. Screen:\n{}",
+        screen_after_close
+    );
+}

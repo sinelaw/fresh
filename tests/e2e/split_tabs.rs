@@ -671,3 +671,151 @@ fn test_close_tab_transfers_focus_to_remaining_tab() {
         file1_content
     );
 }
+
+/// Test that closing the last tab in a split closes the split
+/// When a buffer is open in multiple splits and user closes the only tab in one split,
+/// that split should close instead of showing an error.
+#[test]
+fn test_close_last_tab_in_split_closes_split() {
+    let temp_dir = TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("shared.txt");
+    std::fs::write(&file1, "Shared content").unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+
+    // Open file in first split
+    harness.open_file(&file1).unwrap();
+    harness.render().unwrap();
+
+    // Verify we have 1 split
+    let screen_one_split = harness.screen_to_string();
+    eprintln!("Screen with one split:\n{}", screen_one_split);
+
+    // Create a vertical split (will show same buffer in both splits)
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should see shared.txt twice (once in each split's tabs)
+    let screen_two_splits = harness.screen_to_string();
+    let count = screen_two_splits.matches("shared.txt").count();
+    eprintln!("Screen with two splits:\n{}", screen_two_splits);
+    assert!(
+        count >= 2,
+        "Expected shared.txt in both splits. Found {} occurrences. Screen:\n{}",
+        count,
+        screen_two_splits
+    );
+
+    // Should see vertical split separator
+    assert!(
+        screen_two_splits.contains('│'),
+        "Expected vertical split separator. Screen:\n{}",
+        screen_two_splits
+    );
+
+    // Close tab in current split (Alt+W) - this is the only tab in this split
+    // but the buffer is open in another split, so it should close the split
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_after_close = harness.screen_to_string();
+    eprintln!("Screen after closing tab:\n{}", screen_after_close);
+
+    // Split should be closed - no vertical separator should remain
+    // (or fewer occurrences of the separator)
+    let has_single_split = !screen_after_close.contains('│')
+        || screen_after_close.matches('│').count()
+            < screen_two_splits.matches('│').count();
+
+    assert!(
+        has_single_split,
+        "Split should be closed after closing the only tab. Screen:\n{}",
+        screen_after_close
+    );
+
+    // Buffer should still exist (visible in remaining split)
+    assert!(
+        screen_after_close.contains("shared.txt"),
+        "Buffer should still exist in remaining split. Screen:\n{}",
+        screen_after_close
+    );
+
+    // Content should still be visible
+    assert!(
+        screen_after_close.contains("Shared content"),
+        "Buffer content should be visible. Screen:\n{}",
+        screen_after_close
+    );
+}
+
+/// Test that close tab still works normally when there are multiple tabs in a split
+#[test]
+fn test_close_tab_with_multiple_tabs_removes_tab_only() {
+    let temp_dir = TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("file1.txt");
+    let file2 = temp_dir.path().join("file2.txt");
+    std::fs::write(&file1, "Content 1").unwrap();
+    std::fs::write(&file2, "Content 2").unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+
+    // Open both files in the same split
+    harness.open_file(&file1).unwrap();
+    harness.open_file(&file2).unwrap();
+    harness.render().unwrap();
+
+    // Verify we see both tabs
+    let screen_both_tabs = harness.screen_to_string();
+    assert!(
+        screen_both_tabs.contains("file1.txt") && screen_both_tabs.contains("file2.txt"),
+        "Both files should be in tabs. Screen:\n{}",
+        screen_both_tabs
+    );
+
+    // Create a vertical split
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_with_split = harness.screen_to_string();
+    eprintln!("Screen with split:\n{}", screen_with_split);
+
+    // Second split should have both tabs (inherited from first split when created)
+    // Now close file2 tab in the second split
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_after_close = harness.screen_to_string();
+    eprintln!("Screen after closing file2 tab:\n{}", screen_after_close);
+
+    // Split should still exist (we have another tab)
+    assert!(
+        screen_after_close.contains('│'),
+        "Split should still exist when there are other tabs. Screen:\n{}",
+        screen_after_close
+    );
+
+    // file1.txt should still be visible
+    assert!(
+        screen_after_close.contains("file1.txt"),
+        "file1.txt should still be in tabs. Screen:\n{}",
+        screen_after_close
+    );
+}
