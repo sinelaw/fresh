@@ -143,6 +143,10 @@ pub struct Editor {
     /// Should the editor quit?
     should_quit: bool,
 
+    /// If set, the editor should restart with this new working directory
+    /// This is used by Open Folder to do a clean context switch
+    restart_with_dir: Option<PathBuf>,
+
     /// Status message (shown in status bar)
     status_message: Option<String>,
 
@@ -682,6 +686,7 @@ impl Editor {
             keybindings,
             clipboard: crate::services::clipboard::Clipboard::new(),
             should_quit: false,
+            restart_with_dir: None,
             status_message: None,
             plugin_status_message: None,
             prompt: None,
@@ -3810,6 +3815,29 @@ impl Editor {
         self.should_quit
     }
 
+    /// Check if the editor should restart with a new working directory
+    pub fn should_restart(&self) -> bool {
+        self.restart_with_dir.is_some()
+    }
+
+    /// Take the restart directory, clearing the restart request
+    /// Returns the new working directory if a restart was requested
+    pub fn take_restart_dir(&mut self) -> Option<PathBuf> {
+        self.restart_with_dir.take()
+    }
+
+    /// Request the editor to restart with a new working directory
+    /// This triggers a clean shutdown and restart with the new project root
+    pub fn request_restart(&mut self, new_working_dir: PathBuf) {
+        tracing::info!(
+            "Restart requested with new working directory: {}",
+            new_working_dir.display()
+        );
+        self.restart_with_dir = Some(new_working_dir);
+        // Also signal quit so the event loop exits
+        self.should_quit = true;
+    }
+
     /// Get the active theme
     pub fn theme(&self) -> &crate::view::theme::Theme {
         &self.theme
@@ -4348,79 +4376,20 @@ impl Editor {
 
     /// Change the working directory to a new path
     ///
-    /// This performs a full context switch:
-    /// - Closes all open buffers
-    /// - Shuts down and restarts LSP servers with the new root
-    /// - Updates the project root
-    /// - Reinitializes the file explorer
-    ///
-    /// This ensures a clean slate when switching between projects,
-    /// avoiding mixing contexts between different projects.
+    /// This requests a full editor restart with the new working directory.
+    /// The main loop will drop the current editor instance and create a fresh
+    /// one pointing to the new directory. This ensures:
+    /// - All buffers are cleanly closed
+    /// - LSP servers are properly shut down and restarted with new root
+    /// - Plugins are cleanly restarted
+    /// - No state leaks between projects
     pub fn change_working_dir(&mut self, new_path: PathBuf) {
         // Canonicalize the path to resolve symlinks and normalize
         let new_path = new_path.canonicalize().unwrap_or(new_path);
 
-        let old_path = self.working_dir.clone();
-
-        // Log the change
-        tracing::info!(
-            "Switching project from {} to {}",
-            old_path.display(),
-            new_path.display()
-        );
-
-        // 1. Close all open buffers (force close to avoid unsaved changes prompts)
-        //    We collect IDs first to avoid borrowing issues
-        let buffer_ids: Vec<_> = self.buffers.keys().copied().collect();
-        for buffer_id in buffer_ids {
-            let _ = self.force_close_buffer(buffer_id);
-        }
-
-        // 2. Clear stored diagnostics from the old project
-        self.stored_diagnostics.clear();
-
-        // 3. Reset LSP manager for the new project
-        let new_root_uri = url::Url::from_file_path(&new_path)
-            .ok()
-            .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok());
-
-        if let Some(ref mut lsp) = self.lsp {
-            lsp.reset_for_new_project(new_root_uri);
-        }
-
-        // 4. Clear LSP-related state
-        // Note: Plugin cleanup is not yet implemented. When plugins support is
-        // added for project-specific state, add plugin reset here.
-        // See: https://github.com/sinelaw/fresh/issues/278#issuecomment-TODO
-        self.lsp_progress.clear();
-        self.lsp_server_statuses.clear();
-        self.lsp_window_messages.clear();
-        self.lsp_log_messages.clear();
-        self.lsp_status.clear();
-
-        // 5. Update working directory
-        self.working_dir = new_path;
-
-        // 6. Reinitialize file explorer with new root
-        self.file_explorer = None;
-        if self.file_explorer_visible {
-            self.init_file_explorer();
-        }
-
-        // Note: A new empty buffer is automatically created by close_buffer_internal
-        // when the last buffer is closed, so we don't need to create one here.
-
-        // Update status message
-        self.set_status_message(format!(
-            "Switched to project: {}",
-            self.working_dir.display()
-        ));
-
-        tracing::info!(
-            "Project switch complete: {} -> {}",
-            old_path.display(),
-            self.working_dir.display()
-        );
+        // Request a restart with the new working directory
+        // The main loop will handle creating a fresh editor instance
+        self.request_restart(new_path);
     }
 
     /// Load directory contents for the file open dialog
