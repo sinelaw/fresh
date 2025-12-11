@@ -348,8 +348,10 @@ fn test_switch_project_restart_flow_with_sessions() {
     fs::write(&file_a, "Content from Project A").unwrap();
     fs::write(&file_b, "Content from Project B").unwrap();
 
-    // Create a shared directory context for consistent session storage
-    let dir_context = fresh::config::DirectoryContext::from_system().unwrap();
+    // Create a shared directory context for consistent session storage (isolated for testing)
+    let context_temp = TempDir::new().unwrap();
+    let dir_context = fresh::config::DirectoryContext::for_testing(context_temp.path());
+    fs::create_dir_all(dir_context.sessions_dir()).unwrap();
 
     // Phase 1: Start in project_a, open file, save session
     {
@@ -589,8 +591,10 @@ fn test_session_persistence_across_project_switches() {
     fs::write(&file_a, "Content of file A").unwrap();
     fs::write(&file_b, "Content of file B").unwrap();
 
-    // Create a shared directory context for session persistence
-    let dir_context = fresh::config::DirectoryContext::from_system().unwrap();
+    // Create a shared directory context for session persistence (isolated for testing)
+    let context_temp = TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(context_temp.path());
+    fs::create_dir_all(dir_context.sessions_dir()).unwrap();
 
     // Phase 1: Start in project A, open file, switch to project B
     {
