@@ -733,8 +733,7 @@ fn test_close_last_tab_in_split_closes_split() {
     // Split should be closed - no vertical separator should remain
     // (or fewer occurrences of the separator)
     let has_single_split = !screen_after_close.contains('│')
-        || screen_after_close.matches('│').count()
-            < screen_two_splits.matches('│').count();
+        || screen_after_close.matches('│').count() < screen_two_splits.matches('│').count();
 
     assert!(
         has_single_split,

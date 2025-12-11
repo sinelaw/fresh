@@ -1505,10 +1505,7 @@ fn test_ctrl_e_toggles_focus_between_explorer_and_editor() {
     );
 
     let screen_explorer_focused = harness.screen_to_string();
-    println!(
-        "Screen with explorer focused:\n{}",
-        screen_explorer_focused
-    );
+    println!("Screen with explorer focused:\n{}", screen_explorer_focused);
 
     // Press Ctrl+E again - should switch focus back to editor but keep explorer open
     harness
