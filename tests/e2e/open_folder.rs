@@ -79,13 +79,16 @@ fn test_switch_project_shows_folder_browser() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait for folder browser to appear
+    // Wait for folder browser to appear with directory contents loaded
+    // On Windows, async directory loading may take longer
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("Navigation:") && screen.contains("Open")
+            screen.contains("Navigation:")
+                && screen.contains("Open")
+                && (screen.contains("subdir1") || screen.contains("subdir2"))
         })
-        .expect("Folder browser should appear");
+        .expect("Folder browser should appear with directories listed");
 
     let screen = harness.screen_to_string();
 

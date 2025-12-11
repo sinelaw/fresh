@@ -1410,6 +1410,7 @@ fn test_terminal_split_switch_exits_terminal_mode() {
 /// When terminal is active in one split and file in another, clicking between them
 /// should properly transfer focus and clicking back on terminal should restore terminal mode.
 #[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell commands (echo)
 fn test_click_between_splits_terminal_focus() {
     let mut harness = harness_or_return!(120, 30);
 
@@ -1640,6 +1641,7 @@ fn test_close_terminal_tab_transfers_focus_to_remaining_tab() {
 
 /// Test switching between terminal and file tabs preserves terminal mode
 #[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell commands (echo)
 fn test_terminal_mode_preserved_when_switching_tabs() {
     let mut harness = harness_or_return!(80, 24);
 
