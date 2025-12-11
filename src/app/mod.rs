@@ -4407,11 +4407,8 @@ impl Editor {
             self.init_file_explorer();
         }
 
-        // 7. Create a new empty buffer for the new project
-        let new_buffer_id = self.new_buffer();
-        // Set this buffer as the active buffer in the current split
-        let split_id = self.split_manager.active_split();
-        let _ = self.split_manager.set_split_buffer(split_id, new_buffer_id);
+        // Note: A new empty buffer is automatically created by close_buffer_internal
+        // when the last buffer is closed, so we don't need to create one here.
 
         // Update status message
         self.set_status_message(format!(
