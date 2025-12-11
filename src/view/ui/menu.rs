@@ -685,9 +685,11 @@ impl MenuRenderer {
                             .bg(theme.menu_dropdown_bg)
                     };
 
-                    let arrow_padding = content_width.saturating_sub(2);
+                    // Format: " Label        ▶ " - label left-aligned, arrow near the end with padding
+                    // content_width minus: leading space (1) + space before arrow (1) + arrow (1) + trailing space (2)
+                    let label_width = content_width.saturating_sub(5);
                     Line::from(vec![Span::styled(
-                        format!(" {:<width$} ▶", label, width = arrow_padding),
+                        format!(" {:<label_width$} ▶  ", label),
                         style,
                     )])
                 }
