@@ -150,7 +150,8 @@ impl EditorTestHarness {
         let terminal = Terminal::new(backend)?;
         let mut config = Config::default();
         config.editor.auto_indent = false; // Disable for simpler testing
-                                           // Use temp directory to avoid loading project plugins in tests
+        config.check_for_updates = false; // Disable update checking in tests
+                                          // Use temp directory to avoid loading project plugins in tests
         let editor = Editor::with_working_dir(config, width, height, Some(temp_path), dir_context)?;
 
         Ok(EditorTestHarness {
@@ -170,7 +171,7 @@ impl EditorTestHarness {
 
     /// Create with custom config
     /// Uses a temporary directory to avoid loading plugins from the project directory
-    pub fn with_config(width: u16, height: u16, config: Config) -> io::Result<Self> {
+    pub fn with_config(width: u16, height: u16, mut config: Config) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
         // Create DirectoryContext pointing to temp dirs for test isolation
@@ -178,6 +179,8 @@ impl EditorTestHarness {
 
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
+        // Disable update checking in tests to avoid flaky status bar changes
+        config.check_for_updates = false;
         // Use temp directory to avoid loading project plugins in tests
         let editor = Editor::with_working_dir(config, width, height, Some(temp_path), dir_context)?;
 
@@ -211,7 +214,7 @@ impl EditorTestHarness {
     pub fn with_temp_project_and_config(
         width: u16,
         height: u16,
-        config: Config,
+        mut config: Config,
     ) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
         // Create DirectoryContext pointing to temp dirs for test isolation
@@ -224,6 +227,8 @@ impl EditorTestHarness {
         // Create editor with explicit working directory (no global state modification!)
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
+        // Disable update checking in tests to avoid flaky status bar changes
+        config.check_for_updates = false;
         let editor =
             Editor::with_working_dir(config, width, height, Some(project_root), dir_context)?;
 
@@ -248,7 +253,7 @@ impl EditorTestHarness {
     pub fn with_config_and_working_dir(
         width: u16,
         height: u16,
-        config: Config,
+        mut config: Config,
         working_dir: std::path::PathBuf,
     ) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
@@ -258,6 +263,8 @@ impl EditorTestHarness {
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
 
+        // Disable update checking in tests to avoid flaky status bar changes
+        config.check_for_updates = false;
         // Create editor - it will create its own tokio runtime for async operations
         let mut editor =
             Editor::with_working_dir(config, width, height, Some(working_dir), dir_context)?;
@@ -294,13 +301,15 @@ impl EditorTestHarness {
     pub fn with_shared_dir_context(
         width: u16,
         height: u16,
-        config: Config,
+        mut config: Config,
         working_dir: std::path::PathBuf,
         dir_context: DirectoryContext,
     ) -> io::Result<Self> {
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
 
+        // Disable update checking in tests to avoid flaky status bar changes
+        config.check_for_updates = false;
         // Create editor - it will create its own tokio runtime for async operations
         let mut editor =
             Editor::with_working_dir(config, width, height, Some(working_dir), dir_context)?;
@@ -339,7 +348,9 @@ impl EditorTestHarness {
 
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
-        let config = Config::default();
+        let mut config = Config::default();
+        // Disable update checking in tests to avoid flaky status bar changes
+        config.check_for_updates = false;
 
         // Create editor with custom filesystem backend
         let editor = Editor::with_fs_backend_for_test(
