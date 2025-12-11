@@ -312,6 +312,9 @@ fn main() -> io::Result<()> {
     // Track whether this is the first run (for session restore, file open, etc.)
     let mut is_first_run = true;
 
+    // Track whether we should restore session on restart (for project switching)
+    let mut restore_session_on_restart = false;
+
     // Track the last update result for display after exit
     let mut last_update_result = None;
 
@@ -359,9 +362,11 @@ fn main() -> io::Result<()> {
             }
         }
 
-        // Try to restore previous session (only on first run, unless --no-session flag is set or a file was specified)
+        // Try to restore previous session:
+        // - On first run (unless --no-session flag is set or a file was specified)
+        // - After project switch (restore session for the new project)
         let session_enabled = !args.no_session && file_to_open.is_none();
-        if is_first_run && session_enabled {
+        if (is_first_run && session_enabled) || restore_session_on_restart {
             match editor.try_restore_session() {
                 Ok(true) => {
                     tracing::info!("Session restored successfully");
@@ -373,6 +378,8 @@ fn main() -> io::Result<()> {
                     tracing::warn!("Failed to restore session: {}", e);
                 }
             }
+            // Reset the flag after restoring
+            restore_session_on_restart = false;
         }
 
         // Open file if provided (only on first run, this takes precedence over session)
@@ -443,6 +450,7 @@ fn main() -> io::Result<()> {
             tracing::info!("Restarting editor with new working directory: {}", new_dir.display());
             current_working_dir = Some(new_dir);
             is_first_run = false;
+            restore_session_on_restart = true; // Restore session for the new project
             // Drop the editor to clean up all resources (LSP, plugins, etc.)
             drop(editor);
             // Clear the terminal for the fresh start
