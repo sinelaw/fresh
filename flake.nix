@@ -29,6 +29,25 @@
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
+        # Source filtering: include Cargo files plus additional files needed by build.rs
+        # and include_str!/include_bytes! macros
+        src = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter = path: type:
+            # Include types/ directory for build.rs (fresh.d.ts.template)
+            (pkgs.lib.hasInfix "/types/" path) ||
+            # Include queries/ for tree-sitter indent queries (include_str!)
+            (pkgs.lib.hasInfix "/queries/" path) ||
+            # Include docs/ for help manual (include_str!)
+            (pkgs.lib.hasInfix "/docs/" path) ||
+            # Include keymaps/ for keymap configs (include_str!)
+            (pkgs.lib.hasInfix "/keymaps/" path) ||
+            # Include plugins/ directory for build.rs output
+            (pkgs.lib.hasInfix "/plugins/" path) ||
+            # Include standard crane/cargo files
+            (craneLib.filterCargoSources path type);
+        };
+
         # Prefetch rusty_v8 static library to avoid network access during build
         # We validate the hash on the compressed download, then decompress for rusty_v8
         librusty_v8 = let
@@ -54,7 +73,7 @@
 
         # Common arguments for crane builds
         commonArgs = {
-          src = craneLib.cleanCargoSource ./.;
+          inherit src;
           strictDeps = true;
 
           # Build inputs needed for compilation
@@ -128,7 +147,7 @@
 
           # Check formatting
           fresh-fmt = craneLib.cargoFmt {
-            src = craneLib.cleanCargoSource ./.;
+            inherit src;
           };
         };
 
