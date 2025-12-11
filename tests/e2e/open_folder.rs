@@ -533,3 +533,184 @@ fn test_switch_project_restart_flow_with_sessions() {
         harness.assert_screen_not_contains("main_b.txt");
     }
 }
+
+use fresh::config::DirectoryContext;
+
+/// Test that sessions persist when switching between projects multiple times
+/// This verifies that opening a file in project A, switching to project B,
+/// and switching back to project A restores the file that was open in A.
+#[test]
+fn test_session_persistence_across_project_switches() {
+    // Create a shared DirectoryContext so sessions persist across editor instances
+    let context_temp = TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(context_temp.path());
+    fs::create_dir_all(dir_context.sessions_dir()).unwrap();
+
+    // Create two project directories
+    let projects_temp = TempDir::new().unwrap();
+    let project_a = projects_temp.path().join("project_a");
+    let project_b = projects_temp.path().join("project_b");
+    fs::create_dir(&project_a).unwrap();
+    fs::create_dir(&project_b).unwrap();
+
+    // Create files in each project
+    fs::write(project_a.join("file_a.txt"), "Content of file A").unwrap();
+    fs::write(project_b.join("file_b.txt"), "Content of file B").unwrap();
+
+    // Phase 1: Open file in project A
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            100,
+            24,
+            Default::default(),
+            project_a.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Open file_a.txt using Ctrl+O
+        harness
+            .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("Open"))
+            .expect("File picker should appear");
+
+        harness.type_text("file_a").unwrap();
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+
+        // Verify file is open
+        harness
+            .wait_until(|h| h.screen_to_string().contains("file_a.txt"))
+            .expect("file_a.txt should be open");
+
+        // Save session by sending quit (which triggers session save)
+        harness
+            .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    // Phase 2: Open file in project B
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            100,
+            24,
+            Default::default(),
+            project_b.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Open file_b.txt
+        harness
+            .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("Open"))
+            .expect("File picker should appear");
+
+        harness.type_text("file_b").unwrap();
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+
+        // Verify file is open
+        harness
+            .wait_until(|h| h.screen_to_string().contains("file_b.txt"))
+            .expect("file_b.txt should be open");
+
+        // Save session
+        harness
+            .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    // Phase 3: Return to project A - should restore file_a.txt
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            100,
+            24,
+            Default::default(),
+            project_a.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Session should be restored - file_a.txt should be open
+        harness
+            .wait_until(|h| h.screen_to_string().contains("file_a.txt"))
+            .expect("Session should restore file_a.txt when returning to project A");
+
+        // Save session again
+        harness
+            .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    // Phase 4: Return to project B - should restore file_b.txt
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            100,
+            24,
+            Default::default(),
+            project_b.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Session should be restored - file_b.txt should be open
+        harness
+            .wait_until(|h| h.screen_to_string().contains("file_b.txt"))
+            .expect("Session should restore file_b.txt when returning to project B");
+
+        // Save session again
+        harness
+            .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    // Phase 5: One more round-trip to project A
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            100,
+            24,
+            Default::default(),
+            project_a.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        harness
+            .wait_until(|h| h.screen_to_string().contains("file_a.txt"))
+            .expect("Session should still restore file_a.txt on second return");
+
+        harness
+            .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    // Phase 6: Final check on project B
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            100,
+            24,
+            Default::default(),
+            project_b.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        harness
+            .wait_until(|h| h.screen_to_string().contains("file_b.txt"))
+            .expect("Session should still restore file_b.txt on second return");
+    }
+}
