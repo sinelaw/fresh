@@ -1573,7 +1573,10 @@ fn test_mouse_click_below_last_line_positions_on_last_line() {
 
     // Get content area bounds
     let (content_first_row, content_last_row) = harness.content_area_rows();
-    println!("Content area: rows {} to {}", content_first_row, content_last_row);
+    println!(
+        "Content area: rows {} to {}",
+        content_first_row, content_last_row
+    );
 
     // The file has 3 lines, so content occupies rows:
     // - content_first_row: "First line"
@@ -1615,5 +1618,8 @@ fn test_mouse_click_below_last_line_positions_on_last_line() {
         content_len
     );
 
-    println!("SUCCESS: Cursor is on the last line at position {}", cursor_pos);
+    println!(
+        "SUCCESS: Cursor is on the last line at position {}",
+        cursor_pos
+    );
 }
