@@ -241,10 +241,10 @@
       "when": "normal"
     },
     {
-      "comment": "Normal context - Emacs-style readline bindings",
+      "comment": "Normal context - Focus file explorer",
       "key": "e",
       "modifiers": ["ctrl"],
-      "action": "move_line_end",
+      "action": "focus_file_explorer",
       "args": {},
       "when": "normal"
     },
@@ -631,14 +631,6 @@
       "key": "Right",
       "modifiers": ["alt"],
       "action": "navigate_forward",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "Normal context - File explorer",
-      "key": "e",
-      "modifiers": ["ctrl"],
-      "action": "toggle_file_explorer",
       "args": {},
       "when": "normal"
     },
@@ -1399,7 +1391,7 @@
     {
       "key": "e",
       "modifiers": ["ctrl"],
-      "action": "toggle_file_explorer",
+      "action": "focus_editor",
       "args": {},
       "when": "file_explorer"
     },

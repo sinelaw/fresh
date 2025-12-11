@@ -1646,8 +1646,9 @@ impl Editor {
 
     /// Internal helper to close a buffer (shared by close_buffer and force_close_buffer)
     fn close_buffer_internal(&mut self, id: BufferId) -> io::Result<()> {
-        // If it's the last buffer, create a new anonymous buffer first
-        let replacement_buffer = if self.buffers.len() == 1 {
+        // If it's the last buffer, create a new empty buffer and focus file explorer
+        let is_last_buffer = self.buffers.len() == 1;
+        let replacement_buffer = if is_last_buffer {
             self.new_buffer()
         } else {
             // Find a replacement buffer (any buffer that's not the one being closed)
@@ -1679,6 +1680,11 @@ impl Editor {
         // Switch to another buffer if we closed the active one
         if self.active_buffer() == id {
             self.set_active_buffer(replacement_buffer);
+        }
+
+        // If this was the last buffer, focus file explorer
+        if is_last_buffer {
+            self.focus_file_explorer();
         }
 
         Ok(())

@@ -66,7 +66,7 @@ impl FileExplorerRenderer {
 
         // Build the title with keybinding
         let title = if let Some(keybinding) = keybinding_resolver.get_keybinding_for_action(
-            &crate::input::keybindings::Action::ToggleFileExplorer,
+            &crate::input::keybindings::Action::FocusFileExplorer,
             current_context,
         ) {
             format!(" File Explorer ({}) ", keybinding)
