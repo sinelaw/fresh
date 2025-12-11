@@ -1,5 +1,6 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use std::time::Duration;
 
 /// Test that Alt+F opens the File menu
 #[test]
@@ -289,4 +290,118 @@ fn test_mouse_click_undo_menu_item() {
     harness.assert_screen_not_contains("Undo");
     // The last character should be undone (type_text inserts char by char)
     harness.assert_buffer_content("Hello Worl");
+}
+
+/// Test that View menu File Explorer checkbox syncs with actual file explorer state
+/// Issue #291: Closing file explorer does not clear the check mark
+#[test]
+fn test_view_menu_file_explorer_checkbox_syncs_on_close() {
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+    harness.render().unwrap();
+
+    // Initially file explorer is not open, checkbox should be unchecked
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("☐ File Explorer"),
+        "File Explorer checkbox should be unchecked initially. Screen:\n{}",
+        screen
+    );
+
+    // Close menu
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Open file explorer
+    harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Open View menu - checkbox should now be checked
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("☑ File Explorer"),
+        "File Explorer checkbox should be checked after opening explorer. Screen:\n{}",
+        screen
+    );
+
+    // Close menu
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Close file explorer (toggle it off)
+    harness.editor_mut().toggle_file_explorer();
+    harness.render().unwrap();
+
+    // Verify file explorer is actually hidden
+    assert!(
+        !harness.editor().file_explorer_visible(),
+        "File explorer should be hidden after toggle"
+    );
+
+    // Open View menu - checkbox should now be UNchecked
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("☐ File Explorer"),
+        "File Explorer checkbox should be unchecked after closing explorer. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test that other View menu checkboxes also sync properly
+/// Tests Line Numbers, Word Wrap, etc.
+#[test]
+fn test_view_menu_other_checkboxes_sync() {
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+    harness.render().unwrap();
+
+    // Check initial state of Line Numbers (default is ON)
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    // Line numbers is on by default
+    assert!(
+        screen.contains("☑ Line Numbers"),
+        "Line Numbers checkbox should be checked by default. Screen:\n{}",
+        screen
+    );
+
+    // Close menu
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Toggle line numbers off
+    harness.editor_mut().toggle_line_numbers();
+    harness.render().unwrap();
+
+    // Open View menu again - should show unchecked
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("☐ Line Numbers"),
+        "Line Numbers checkbox should be unchecked after toggle. Screen:\n{}",
+        screen
+    );
 }
