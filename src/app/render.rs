@@ -598,7 +598,7 @@ impl Editor {
             .get(&self.active_buffer())
             .map(|state| state.view_mode == crate::state::ViewMode::Compose)
             .unwrap_or(false);
-        let file_explorer_exists = self.file_explorer.is_some();
+        let file_explorer_visible = self.file_explorer_visible;
         let file_explorer_focused =
             self.key_context == crate::input::keybindings::KeyContext::FileExplorer;
         let mouse_capture = self.mouse_enabled;
@@ -637,7 +637,7 @@ impl Editor {
             .set(context_keys::LINE_NUMBERS, line_numbers)
             .set(context_keys::LINE_WRAP, line_wrap)
             .set(context_keys::COMPOSE_MODE, compose_mode)
-            .set(context_keys::FILE_EXPLORER, file_explorer_exists)
+            .set(context_keys::FILE_EXPLORER, file_explorer_visible)
             .set(context_keys::FILE_EXPLORER_FOCUSED, file_explorer_focused)
             .set(context_keys::MOUSE_CAPTURE, mouse_capture)
             .set(context_keys::MOUSE_HOVER, mouse_hover)
