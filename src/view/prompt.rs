@@ -59,6 +59,8 @@ pub enum PromptType {
     StopLspServer,
     /// Select a theme (select from list)
     SelectTheme,
+    /// Select a keybinding map (select from list)
+    SelectKeybindingMap,
     /// Confirm reverting a modified file
     ConfirmRevert,
     /// Confirm saving over a file that changed on disk

@@ -1738,6 +1738,7 @@ pub fn action_to_events(
         | Action::ScrollTabsLeft
         | Action::ScrollTabsRight
         | Action::SelectTheme
+        | Action::SelectKeybindingMap
         | Action::Revert
         | Action::ToggleAutoRevert
         | Action::OpenTerminal

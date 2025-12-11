@@ -1154,6 +1154,9 @@ impl Editor {
             Action::SelectTheme => {
                 self.start_select_theme_prompt();
             }
+            Action::SelectKeybindingMap => {
+                self.start_select_keybinding_map_prompt();
+            }
             Action::Search => {
                 // If already in a search-related prompt, Ctrl+F acts like Enter (confirm search)
                 let is_search_prompt = self.prompt.as_ref().is_some_and(|p| {
@@ -2169,6 +2172,9 @@ impl Editor {
                         }
                         PromptType::SelectTheme => {
                             self.apply_theme(input.trim());
+                        }
+                        PromptType::SelectKeybindingMap => {
+                            self.apply_keybinding_map(input.trim());
                         }
                         PromptType::SwitchToTab => {
                             // input is the buffer id as a string
@@ -4391,6 +4397,106 @@ impl Editor {
         let config_path = self.dir_context.config_path();
         if let Err(e) = self.config.save_to_file(&config_path) {
             tracing::warn!("Failed to save theme to config: {}", e);
+        }
+    }
+
+    /// Start the keybinding map selection prompt with available maps
+    fn start_select_keybinding_map_prompt(&mut self) {
+        // Built-in keybinding maps
+        let builtin_maps = vec!["default", "emacs", "vscode"];
+
+        // Collect user-defined keybinding maps from config
+        let user_maps: Vec<&str> = self.config.keybinding_maps.keys().map(|s| s.as_str()).collect();
+
+        // Combine built-in and user maps
+        let mut all_maps: Vec<&str> = builtin_maps;
+        for map in &user_maps {
+            if !all_maps.contains(map) {
+                all_maps.push(map);
+            }
+        }
+
+        let current_map = &self.config.active_keybinding_map;
+
+        // Find the index of the current keybinding map
+        let current_index = all_maps
+            .iter()
+            .position(|name| *name == current_map)
+            .unwrap_or(0);
+
+        let suggestions: Vec<crate::input::commands::Suggestion> = all_maps
+            .iter()
+            .map(|map_name| {
+                let is_current = *map_name == current_map;
+                crate::input::commands::Suggestion {
+                    text: map_name.to_string(),
+                    description: if is_current {
+                        Some("(current)".to_string())
+                    } else {
+                        None
+                    },
+                    value: Some(map_name.to_string()),
+                    disabled: false,
+                    keybinding: None,
+                    source: None,
+                }
+            })
+            .collect();
+
+        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+            "Select keybinding map: ".to_string(),
+            PromptType::SelectKeybindingMap,
+            suggestions,
+        ));
+
+        if let Some(prompt) = self.prompt.as_mut() {
+            if !prompt.suggestions.is_empty() {
+                prompt.selected_suggestion = Some(current_index);
+                // Also set input to match selected map
+                prompt.input = current_map.to_string();
+                prompt.cursor_pos = prompt.input.len();
+            }
+        }
+    }
+
+    /// Apply a keybinding map by name and persist it to config
+    pub(super) fn apply_keybinding_map(&mut self, map_name: &str) {
+        if map_name.is_empty() {
+            return;
+        }
+
+        // Check if the map exists (either built-in or user-defined)
+        let is_builtin = matches!(map_name, "default" | "emacs" | "vscode");
+        let is_user_defined = self.config.keybinding_maps.contains_key(map_name);
+
+        if is_builtin || is_user_defined {
+            // Update the active keybinding map in config
+            self.config.active_keybinding_map = map_name.to_string();
+
+            // Reload the keybinding resolver with the new map
+            self.keybindings = crate::input::keybindings::KeybindingResolver::new(&self.config);
+
+            // Persist to config file
+            self.save_keybinding_map_to_config();
+
+            self.set_status_message(format!("Switched to '{}' keybindings", map_name));
+        } else {
+            self.set_status_message(format!("Unknown keybinding map: '{}'", map_name));
+        }
+    }
+
+    /// Save the current keybinding map setting to the user's config file
+    fn save_keybinding_map_to_config(&mut self) {
+        // Create the directory if it doesn't exist
+        if let Err(e) = std::fs::create_dir_all(&self.dir_context.config_dir) {
+            tracing::warn!("Failed to create config directory: {}", e);
+            return;
+        }
+
+        // Save the config
+        let config_path = self.dir_context.config_path();
+        if let Err(e) = self.config.save_to_file(&config_path) {
+            tracing::warn!("Failed to save keybinding map to config: {}", e);
         }
     }
 
