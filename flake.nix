@@ -29,6 +29,29 @@
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
+        # Prefetch rusty_v8 static library to avoid network access during build
+        # We validate the hash on the compressed download, then decompress for rusty_v8
+        librusty_v8 = let
+          v8_version = "142.2.0";
+          arch = pkgs.stdenv.hostPlatform.rust.rustcTarget;
+        in pkgs.stdenv.mkDerivation {
+          name = "librusty_v8-${v8_version}";
+          src = pkgs.fetchurl {
+            url = "https://github.com/denoland/rusty_v8/releases/download/v${v8_version}/librusty_v8_release_${arch}.a.gz";
+            sha256 = {
+              x86_64-linux = "sha256-xHmofo8wTNg88/TuC2pX2OHDRYtHncoSvSBnTV65o+0=";
+              aarch64-linux = "sha256-24q6wX8RTRX1tMGqgcz9/wN3Y+hWxM2SEuVrYhECyS8=";
+              x86_64-darwin = "sha256-u7fImeadycU1gS5m+m35WZA/G2SOdPrLOMafY54JwY4=";
+              aarch64-darwin = "sha256-XvJ7M5XxOzmevv+nPpy/mvEDD1MfHr986bImvDG0o4U=";
+            }.${system} or (throw "Unsupported system: ${system}");
+          };
+          nativeBuildInputs = [ pkgs.gzip ];
+          dontUnpack = true;
+          installPhase = ''
+            gzip -d -c $src > $out
+          '';
+        };
+
         # Common arguments for crane builds
         commonArgs = {
           src = craneLib.cleanCargoSource ./.;
@@ -51,6 +74,8 @@
 
           # Environment variables
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+          # Point to prefetched rusty_v8 library to avoid download during build
+          RUSTY_V8_ARCHIVE = librusty_v8;
         };
 
         # Build dependencies separately for better caching
