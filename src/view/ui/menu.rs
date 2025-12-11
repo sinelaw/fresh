@@ -154,7 +154,11 @@ impl MenuState {
         };
 
         // Check if highlighted item is a submenu
-        if let Some(MenuItem::Submenu { items: submenu_items, .. }) = items.get(highlighted) {
+        if let Some(MenuItem::Submenu {
+            items: submenu_items,
+            ..
+        }) = items.get(highlighted)
+        {
             if !submenu_items.is_empty() {
                 self.submenu_path.push(highlighted);
                 self.highlighted_item = Some(0);
@@ -176,13 +180,20 @@ impl MenuState {
     }
 
     /// Get the menu items at the current submenu level
-    pub fn get_current_items<'a>(&self, menus: &'a [Menu], active_idx: usize) -> Option<&'a [MenuItem]> {
+    pub fn get_current_items<'a>(
+        &self,
+        menus: &'a [Menu],
+        active_idx: usize,
+    ) -> Option<&'a [MenuItem]> {
         let menu = menus.get(active_idx)?;
         let mut items: &[MenuItem] = &menu.items;
 
         for &idx in &self.submenu_path {
             match items.get(idx)? {
-                MenuItem::Submenu { items: submenu_items, .. } => {
+                MenuItem::Submenu {
+                    items: submenu_items,
+                    ..
+                } => {
                     items = submenu_items;
                 }
                 _ => return None,
@@ -198,7 +209,10 @@ impl MenuState {
 
         for &idx in &self.submenu_path {
             match items.get(idx)? {
-                MenuItem::Submenu { items: submenu_items, .. } => {
+                MenuItem::Submenu {
+                    items: submenu_items,
+                    ..
+                } => {
                     items = submenu_items.clone();
                 }
                 _ => return None,
@@ -503,13 +517,18 @@ impl MenuRenderer {
                 if let Some(MenuItem::Submenu { items, .. }) = current_items.get(submenu_idx) {
                     current_items = items;
                     // Position submenu to the right of parent, aligned with the highlighted item
-                    current_x = dropdown_rect.x.saturating_add(dropdown_rect.width.saturating_sub(1));
+                    current_x = dropdown_rect
+                        .x
+                        .saturating_add(dropdown_rect.width.saturating_sub(1));
                     current_y = dropdown_rect.y.saturating_add(submenu_idx as u16 + 1); // +1 for border
 
                     // Adjust if submenu would go off screen to the right - flip to left side
                     let next_width = Self::calculate_dropdown_width(items);
                     if current_x.saturating_add(next_width as u16) > terminal_width {
-                        current_x = dropdown_rect.x.saturating_sub(next_width as u16).saturating_add(1);
+                        current_x = dropdown_rect
+                            .x
+                            .saturating_sub(next_width as u16)
+                            .saturating_add(1);
                     }
                 } else {
                     break;
@@ -571,7 +590,12 @@ impl MenuRenderer {
 
         // Only render if we have at least minimal space
         if width < 10 || height < 3 {
-            return Rect { x: adjusted_x, y, width, height };
+            return Rect {
+                x: adjusted_x,
+                y,
+                width,
+                height,
+            };
         }
 
         let dropdown_area = Rect {
@@ -1121,15 +1145,13 @@ mod tests {
                         },
                         MenuItem::Submenu {
                             label: "Terminal Settings".to_string(),
-                            items: vec![
-                                MenuItem::Action {
-                                    label: "Font Size".to_string(),
-                                    action: "terminal_font_size".to_string(),
-                                    args: HashMap::new(),
-                                    when: None,
-                                    checkbox: None,
-                                },
-                            ],
+                            items: vec![MenuItem::Action {
+                                label: "Font Size".to_string(),
+                                action: "terminal_font_size".to_string(),
+                                args: HashMap::new(),
+                                when: None,
+                                checkbox: None,
+                            }],
                         },
                     ],
                 },

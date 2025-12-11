@@ -2604,7 +2604,9 @@ impl Editor {
 
                 // Check if the hovered item is a submenu
                 if let Some(menu) = all_menus.get(active_menu_idx) {
-                    if let Some(crate::config::MenuItem::Submenu { items, .. }) = menu.items.get(item_idx) {
+                    if let Some(crate::config::MenuItem::Submenu { items, .. }) =
+                        menu.items.get(item_idx)
+                    {
                         if !items.is_empty() {
                             self.menu_state.submenu_path.push(item_idx);
                             self.menu_state.highlighted_item = Some(0);
@@ -2636,10 +2638,18 @@ impl Editor {
                     .collect();
 
                 // Get the items at this depth
-                if let Some(items) = self.menu_state.get_current_items(&all_menus, active_menu_idx) {
+                if let Some(items) = self
+                    .menu_state
+                    .get_current_items(&all_menus, active_menu_idx)
+                {
                     // Check if hovered item is a submenu - if so, open it
-                    if let Some(crate::config::MenuItem::Submenu { items: sub_items, .. }) = items.get(item_idx) {
-                        if !sub_items.is_empty() && !self.menu_state.submenu_path.contains(&item_idx) {
+                    if let Some(crate::config::MenuItem::Submenu {
+                        items: sub_items, ..
+                    }) = items.get(item_idx)
+                    {
+                        if !sub_items.is_empty()
+                            && !self.menu_state.submenu_path.contains(&item_idx)
+                        {
                             self.menu_state.submenu_path.push(item_idx);
                             self.menu_state.highlighted_item = Some(0);
                             return true;
@@ -2812,7 +2822,9 @@ impl Editor {
                 .collect();
 
             if let Some(menu) = all_menus.get(active_idx) {
-                if let Some(hover) = self.compute_menu_dropdown_hover(col, row, menu, active_idx, &all_menus) {
+                if let Some(hover) =
+                    self.compute_menu_dropdown_hover(col, row, menu, active_idx, &all_menus)
+                {
                     return Some(hover);
                 }
             }
@@ -3006,13 +3018,9 @@ impl Editor {
 
             if let Some(menu) = all_menus.get(active_idx) {
                 // Handle click on menu dropdown chain (including submenus)
-                if let Some(click_result) = self.handle_menu_dropdown_click(
-                    col,
-                    row,
-                    menu,
-                    active_idx,
-                    &all_menus,
-                )? {
+                if let Some(click_result) =
+                    self.handle_menu_dropdown_click(col, row, menu, active_idx, &all_menus)?
+                {
                     return click_result;
                 }
             }
@@ -4127,7 +4135,14 @@ impl Editor {
 
             let dropdown_height = current_items.len() as u16 + 2;
 
-            dropdown_rects.push((current_x, current_y, max_width, dropdown_height, depth, current_items.len()));
+            dropdown_rects.push((
+                current_x,
+                current_y,
+                max_width,
+                dropdown_height,
+                depth,
+                current_items.len(),
+            ));
 
             if depth < self.menu_state.submenu_path.len() {
                 let submenu_idx = self.menu_state.submenu_path[depth];
@@ -4208,7 +4223,14 @@ impl Editor {
 
             let dropdown_height = current_items.len() as u16 + 2;
 
-            dropdown_rects.push((current_x, current_y, max_width, dropdown_height, depth, current_items.to_vec()));
+            dropdown_rects.push((
+                current_x,
+                current_y,
+                max_width,
+                dropdown_height,
+                depth,
+                current_items.to_vec(),
+            ));
 
             // Navigate to next level if there is one
             if depth < self.menu_state.submenu_path.len() {
@@ -4239,7 +4261,10 @@ impl Editor {
                             // Clicked on separator - do nothing but consume the click
                             return Ok(Some(Ok(())));
                         }
-                        MenuItem::Submenu { items: submenu_items, .. } => {
+                        MenuItem::Submenu {
+                            items: submenu_items,
+                            ..
+                        } => {
                             // Clicked on submenu - open it
                             // First, truncate submenu_path to this depth
                             self.menu_state.submenu_path.truncate(*depth);
