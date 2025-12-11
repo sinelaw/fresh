@@ -325,3 +325,211 @@ fn test_open_folder_in_file_menu() {
 
 // Note: File explorer integration test removed as it requires longer timeout
 // The file explorer update is tested manually via tmux session
+
+/// Test the full folder switching flow with session handling
+///
+/// This test verifies:
+/// 1. Editor requests restart when switching folders (via should_quit + take_restart_dir)
+/// 2. Sessions are saved per-working-directory
+/// 3. Sessions are restored when starting in the same directory
+/// 4. Switching folders provides a clean slate (no old buffers)
+#[test]
+fn test_open_folder_restart_flow_with_sessions() {
+    // Create two project directories
+    let temp_dir = TempDir::new().unwrap();
+    let project_a = temp_dir.path().join("project_a");
+    let project_b = temp_dir.path().join("project_b");
+    fs::create_dir(&project_a).unwrap();
+    fs::create_dir(&project_b).unwrap();
+
+    // Create files in each project
+    let file_a = project_a.join("main_a.txt");
+    let file_b = project_b.join("main_b.txt");
+    fs::write(&file_a, "Content from Project A").unwrap();
+    fs::write(&file_b, "Content from Project B").unwrap();
+
+    // Create a shared directory context for consistent session storage
+    let dir_context = fresh::config::DirectoryContext::from_system().unwrap();
+
+    // Phase 1: Start in project_a, open file, save session
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            100,
+            24,
+            Default::default(),
+            project_a.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Open the file in project_a
+        harness.open_file(&file_a).unwrap();
+        harness.render().unwrap();
+
+        // Verify file is opened
+        harness.assert_screen_contains("main_a.txt");
+        harness.assert_screen_contains("Content from Project A");
+
+        // Save session for project_a
+        harness.editor_mut().save_session().unwrap();
+    }
+
+    // Phase 2: Start fresh in project_a - session should restore
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            100,
+            24,
+            Default::default(),
+            project_a.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Restore session
+        let restored = harness.editor_mut().try_restore_session().unwrap();
+        assert!(restored, "Session should be restored for project_a");
+
+        harness.render().unwrap();
+
+        // Verify the file from project_a was restored
+        harness.assert_screen_contains("main_a.txt");
+    }
+
+    // Phase 3: Start in project_a and switch to project_b via Open Folder
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            100,
+            24,
+            Default::default(),
+            project_a.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Restore session (project_a's file)
+        harness.editor_mut().try_restore_session().unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains("main_a.txt");
+
+        // Open folder browser and switch to project_b
+        harness
+            .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("Command:"))
+            .expect("Command palette should appear");
+
+        harness.type_text("open folder").unwrap();
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+
+        // Wait for folder browser
+        harness
+            .wait_until(|h| h.screen_to_string().contains("Navigation:"))
+            .expect("Folder browser should appear");
+
+        // Type path to project_b
+        let project_b_str = project_b.to_string_lossy().to_string();
+        harness.type_text(&project_b_str).unwrap();
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+
+        // Verify editor requested restart (should_quit should be true after folder switch)
+        assert!(
+            harness.should_quit(),
+            "Editor should request quit/restart after folder switch"
+        );
+
+        // Verify restart was requested with the new directory
+        let restart_dir = harness.editor_mut().take_restart_dir();
+        assert!(
+            restart_dir.is_some(),
+            "Editor should have a restart directory set"
+        );
+        let restart_dir = restart_dir.unwrap();
+        assert!(
+            restart_dir.starts_with(&project_b) || project_b.starts_with(&restart_dir),
+            "Restart directory should be project_b: got {:?}, expected {:?}",
+            restart_dir,
+            project_b
+        );
+    }
+
+    // Phase 4: Simulate main loop restart - create new editor in project_b
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            100,
+            24,
+            Default::default(),
+            project_b.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // On restart, session restore is skipped (is_first_run = false in main loop)
+        // So we get a fresh editor - verify no old files
+        harness.render().unwrap();
+
+        // Should NOT contain project_a's file
+        harness.assert_screen_not_contains("main_a.txt");
+        harness.assert_screen_not_contains("Content from Project A");
+
+        // Open file in project_b and save session
+        harness.open_file(&file_b).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains("main_b.txt");
+        harness.assert_screen_contains("Content from Project B");
+
+        // Save session for project_b
+        harness.editor_mut().save_session().unwrap();
+    }
+
+    // Phase 5: Start fresh in project_b - session should restore project_b's file
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            100,
+            24,
+            Default::default(),
+            project_b.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Restore session
+        let restored = harness.editor_mut().try_restore_session().unwrap();
+        assert!(restored, "Session should be restored for project_b");
+
+        harness.render().unwrap();
+
+        // Verify project_b's file was restored
+        harness.assert_screen_contains("main_b.txt");
+        // Should NOT have project_a's file
+        harness.assert_screen_not_contains("main_a.txt");
+    }
+
+    // Phase 6: Start fresh in project_a again - should restore project_a's session (not project_b's)
+    {
+        let mut harness = EditorTestHarness::with_shared_dir_context(
+            100,
+            24,
+            Default::default(),
+            project_a.clone(),
+            dir_context.clone(),
+        )
+        .unwrap();
+
+        // Restore session
+        let restored = harness.editor_mut().try_restore_session().unwrap();
+        assert!(restored, "Session should be restored for project_a");
+
+        harness.render().unwrap();
+
+        // Verify project_a's file was restored
+        harness.assert_screen_contains("main_a.txt");
+        // Should NOT have project_b's file
+        harness.assert_screen_not_contains("main_b.txt");
+    }
+}
