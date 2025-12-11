@@ -3819,16 +3819,16 @@ impl Editor {
 
         // Use cached view line mappings for accurate position lookup
         let visual_row = content_row as usize;
-        let position = cached_mappings
-            .as_ref()
-            .and_then(|mappings| mappings.get(visual_row))
-            .map(|line_mapping| {
-                if text_col < line_mapping.char_mappings.len() {
-                    if let Some(byte_pos) = line_mapping.char_mappings[text_col] {
+
+        // Helper to get position from a line mapping at a given column
+        let position_from_mapping =
+            |line_mapping: &crate::app::types::ViewLineMapping, col: usize| -> usize {
+                if col < line_mapping.char_mappings.len() {
+                    if let Some(byte_pos) = line_mapping.char_mappings[col] {
                         return byte_pos;
                     }
                     // Column maps to virtual/injected content - find nearest real position
-                    for c in (0..text_col).rev() {
+                    for c in (0..col).rev() {
                         if let Some(byte_pos) = line_mapping.char_mappings[c] {
                             return byte_pos;
                         }
@@ -3837,6 +3837,21 @@ impl Editor {
                 } else {
                     // Click is past end of visible content
                     line_mapping.line_end_byte
+                }
+            };
+
+        let position = cached_mappings
+            .as_ref()
+            .and_then(|mappings| {
+                if let Some(line_mapping) = mappings.get(visual_row) {
+                    // Click is on a visible line
+                    Some(position_from_mapping(line_mapping, text_col))
+                } else if !mappings.is_empty() {
+                    // Click is below last visible line - use the last line at the clicked column
+                    let last_mapping = mappings.last().unwrap();
+                    Some(position_from_mapping(last_mapping, text_col))
+                } else {
+                    None
                 }
             })
             .unwrap_or(fallback_position);
@@ -3899,9 +3914,9 @@ impl Editor {
                 gutter_width,
                 &cached_mappings,
                 fallback,
-                false, // Don't allow gutter clicks
+                true, // Allow gutter clicks - position cursor at start of line
             ) else {
-                return Ok(()); // Click was in gutter
+                return Ok(());
             };
 
             // Check for onClick text property at this position
