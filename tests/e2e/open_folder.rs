@@ -7,6 +7,7 @@ use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
 use tempfile::TempDir;
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 /// Test that Switch Project command appears in the command palette
 #[test]
@@ -102,6 +103,11 @@ fn test_switch_project_shows_folder_browser() {
 /// Test that selecting a folder changes the working directory
 #[test]
 fn test_switch_project_changes_working_dir() {
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .try_init();
+
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path().to_path_buf();
 
@@ -110,6 +116,7 @@ fn test_switch_project_changes_working_dir() {
     fs::create_dir(&subdir).unwrap();
     fs::write(subdir.join("README.md"), "Project readme").unwrap();
 
+    tracing::info!("Creating harness with project_root: {:?}", project_root);
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         100, // Wider terminal to see full message
         24,
@@ -119,45 +126,75 @@ fn test_switch_project_changes_working_dir() {
     .unwrap();
 
     // Open command palette and select Switch Project
+    tracing::info!("Opening command palette");
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Command:"))
         .expect("Command palette should appear");
+    tracing::info!("Command palette opened");
 
+    tracing::info!("Typing 'switch project'");
     harness.type_text("switch project").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    tracing::info!("Pressed Enter to select command");
 
     // Wait for folder browser
+    tracing::info!("Waiting for folder browser (Navigation:)");
     harness
-        .wait_until(|h| h.screen_to_string().contains("Navigation:"))
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            tracing::debug!("Screen while waiting for Navigation:\n{}", screen);
+            screen.contains("Navigation:")
+        })
         .expect("Folder browser should appear");
+    tracing::info!("Folder browser appeared");
 
     // Navigate to myproject subdirectory
+    tracing::info!("Typing 'myproject'");
     harness.type_text("myproject").unwrap();
     harness.render().unwrap();
 
     // Press Enter to select the folder
+    tracing::info!("Pressing Enter to select folder");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
+    tracing::info!("Pressed Enter, checking for restart request");
 
-    // Wait for the status message indicating the project switch
-    harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("Switched to project") || screen.contains("myproject")
-        })
-        .expect("Should show project switch message");
+    // The editor should signal a restart is needed (actual restart happens in main.rs)
+    assert!(
+        harness.editor().should_restart(),
+        "Editor should signal restart is needed after selecting project"
+    );
+
+    // Verify the restart directory is set to our subdir
+    let restart_dir = harness
+        .editor_mut()
+        .take_restart_dir()
+        .expect("Restart directory should be set");
+    assert_eq!(
+        restart_dir, subdir,
+        "Restart directory should match selected directory (myproject)"
+    );
+    tracing::info!("Test completed successfully");
 }
 
 /// Test that pressing Enter with no selection uses current directory
 #[test]
 fn test_switch_project_select_current_directory() {
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .try_init();
+
+    // Install signal handlers for backtrace on SIGINT
+    fresh::services::signal_handler::install_signal_handlers();
+
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path().to_path_buf();
 
@@ -165,6 +202,7 @@ fn test_switch_project_select_current_directory() {
     let subdir = project_root.join("current_test");
     fs::create_dir(&subdir).unwrap();
 
+    tracing::info!("Creating harness with subdir: {:?}", subdir);
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         100,
         24,
@@ -174,33 +212,57 @@ fn test_switch_project_select_current_directory() {
     .unwrap();
 
     // Open project browser
+    tracing::info!("Opening command palette");
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Command:"))
         .expect("Command palette should appear");
+    tracing::info!("Command palette opened");
 
+    tracing::info!("Typing 'switch project'");
     harness.type_text("switch project").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    tracing::info!("Pressed Enter to select command");
 
     // Wait for folder browser
+    tracing::info!("Waiting for folder browser (Navigation:)");
     harness
-        .wait_until(|h| h.screen_to_string().contains("Navigation:"))
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            tracing::debug!("Screen while waiting for Navigation:\n{}", screen);
+            screen.contains("Navigation:")
+        })
         .expect("Folder browser should appear");
+    tracing::info!("Folder browser appeared");
 
     // Press Enter immediately to select current directory
+    tracing::info!("Pressing Enter to select current directory");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
+    tracing::info!("Pressed Enter, checking for restart request");
 
-    // Should show confirmation message
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Switched to project"))
-        .expect("Should confirm project switch");
+    // The editor should signal a restart is needed (actual restart happens in main.rs)
+    assert!(
+        harness.editor().should_restart(),
+        "Editor should signal restart is needed after selecting project"
+    );
+
+    // Verify the restart directory is set to our subdir
+    let restart_dir = harness
+        .editor_mut()
+        .take_restart_dir()
+        .expect("Restart directory should be set");
+    assert_eq!(
+        restart_dir, subdir,
+        "Restart directory should match selected directory"
+    );
+    tracing::info!("Test completed successfully");
 }
 
 /// Test that canceling folder browser with Escape doesn't change directory
