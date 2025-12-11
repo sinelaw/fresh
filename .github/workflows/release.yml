@@ -24,7 +24,7 @@ jobs:
       publishing: ${{ steps.version.outputs.publishing }}
       is_prerelease: ${{ steps.version.outputs.is_prerelease }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Extract version info
         id: version
         run: |
@@ -85,7 +85,7 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -169,7 +169,7 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -372,7 +372,7 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download artifacts for checksums
         uses: actions/download-artifact@v4
@@ -447,7 +447,7 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
       TAG: ${{ needs.plan.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -517,7 +517,7 @@ jobs:
           name: artifacts-homebrew-formula
           path: formula/
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: sinelaw/homebrew-fresh
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
