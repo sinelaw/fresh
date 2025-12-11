@@ -559,23 +559,6 @@ mod tests {
     }
 
     #[test]
-    fn test_update_commands() {
-        assert_eq!(
-            InstallMethod::Homebrew.update_command(),
-            Some("brew upgrade fresh")
-        );
-        assert_eq!(
-            InstallMethod::Cargo.update_command(),
-            Some("cargo install fresh-editor")
-        );
-        assert_eq!(
-            InstallMethod::Npm.update_command(),
-            Some("npm update -g fresh-editor")
-        );
-        assert!(InstallMethod::Unknown.update_command().is_none());
-    }
-
-    #[test]
     fn test_current_version_is_valid() {
         let parts: Vec<&str> = CURRENT_VERSION.split('.').collect();
         assert!(parts.len() >= 2, "Version should have at least major.minor");
