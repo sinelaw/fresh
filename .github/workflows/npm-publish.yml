@@ -29,13 +29,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: artifacts-npm-package
-          path: npm/
+          path: dist-artifacts/
         continue-on-error: true
 
       - name: Check if package exists
         id: check
         run: |
-          if [ -f "npm/fresh-editor-npm-package.tar.gz" ]; then
+          if [ -f "dist-artifacts/fresh-editor-npm-package.tar.gz" ]; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
@@ -44,8 +44,8 @@ jobs:
       - name: Download npm package from release (fallback)
         if: steps.check.outputs.found != 'true'
         run: |
-          mkdir -p npm
-          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/fresh-editor-npm-package.tar.gz" -o npm/fresh-editor-npm-package.tar.gz
+          mkdir -p dist-artifacts
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/fresh-editor-npm-package.tar.gz" -o dist-artifacts/fresh-editor-npm-package.tar.gz
 
       - uses: actions/setup-node@v4
         with:
@@ -60,5 +60,5 @@ jobs:
           NPM_CONFIG_PROVENANCE: true
         run: |
           echo "Publishing npm package for version ${VERSION}"
-          ls -la npm/
-          npm publish --access public --provenance npm/fresh-editor-npm-package.tar.gz
+          ls -la dist-artifacts/
+          npm publish --access public --provenance dist-artifacts/fresh-editor-npm-package.tar.gz
