@@ -427,7 +427,10 @@ fn main() -> io::Result<()> {
         if !is_first_run {
             editor.set_status_message(format!(
                 "Switched to project: {}",
-                current_working_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| ".".to_string())
+                current_working_dir
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| ".".to_string())
             ));
         }
 
@@ -447,11 +450,14 @@ fn main() -> io::Result<()> {
 
         // Check if we should restart with a new working directory
         if let Some(new_dir) = editor.take_restart_dir() {
-            tracing::info!("Restarting editor with new working directory: {}", new_dir.display());
+            tracing::info!(
+                "Restarting editor with new working directory: {}",
+                new_dir.display()
+            );
             current_working_dir = Some(new_dir);
             is_first_run = false;
             restore_session_on_restart = true; // Restore session for the new project
-            // Drop the editor to clean up all resources (LSP, plugins, etc.)
+                                               // Drop the editor to clean up all resources (LSP, plugins, etc.)
             drop(editor);
             // Clear the terminal for the fresh start
             terminal.clear()?;

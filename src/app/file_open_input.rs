@@ -13,7 +13,12 @@ impl Editor {
     pub fn is_file_open_active(&self) -> bool {
         self.prompt
             .as_ref()
-            .map(|p| matches!(p.prompt_type, PromptType::OpenFile | PromptType::SwitchProject))
+            .map(|p| {
+                matches!(
+                    p.prompt_type,
+                    PromptType::OpenFile | PromptType::SwitchProject
+                )
+            })
             .unwrap_or(false)
             && self.file_open_state.is_some()
     }

@@ -4406,7 +4406,12 @@ impl Editor {
         let builtin_maps = vec!["default", "emacs", "vscode"];
 
         // Collect user-defined keybinding maps from config
-        let user_maps: Vec<&str> = self.config.keybinding_maps.keys().map(|s| s.as_str()).collect();
+        let user_maps: Vec<&str> = self
+            .config
+            .keybinding_maps
+            .keys()
+            .map(|s| s.as_str())
+            .collect();
 
         // Combine built-in and user maps
         let mut all_maps: Vec<&str> = builtin_maps;

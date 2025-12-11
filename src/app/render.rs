@@ -48,11 +48,12 @@ impl Editor {
             .prompt
             .as_ref()
             .map_or(false, |p| !p.suggestions.is_empty());
-        let has_file_browser = self
-            .prompt
-            .as_ref()
-            .map_or(false, |p| matches!(p.prompt_type, PromptType::OpenFile | PromptType::SwitchProject))
-            && self.file_open_state.is_some();
+        let has_file_browser = self.prompt.as_ref().map_or(false, |p| {
+            matches!(
+                p.prompt_type,
+                PromptType::OpenFile | PromptType::SwitchProject
+            )
+        }) && self.file_open_state.is_some();
 
         // Build main vertical layout: [menu_bar, main_content, status_bar, search_options, prompt_line]
         // Status bar is hidden when suggestions popup is shown
@@ -350,7 +351,10 @@ impl Editor {
         self.file_browser_layout = None;
         if let Some(prompt) = &self.prompt {
             // For OpenFile/SwitchProject prompt, render the file browser popup
-            if matches!(prompt.prompt_type, PromptType::OpenFile | PromptType::SwitchProject) {
+            if matches!(
+                prompt.prompt_type,
+                PromptType::OpenFile | PromptType::SwitchProject
+            ) {
                 if let Some(file_open_state) = &self.file_open_state {
                     // Calculate popup area: position above prompt line, covering status bar
                     let max_height = main_chunks[prompt_line_idx].y.saturating_sub(1).min(20);
@@ -463,7 +467,11 @@ impl Editor {
         // Render prompt line if active
         if let Some(prompt) = &prompt {
             // Use specialized renderer for file/folder open prompt to show colorized path
-            if matches!(prompt.prompt_type, crate::view::prompt::PromptType::OpenFile | crate::view::prompt::PromptType::SwitchProject) {
+            if matches!(
+                prompt.prompt_type,
+                crate::view::prompt::PromptType::OpenFile
+                    | crate::view::prompt::PromptType::SwitchProject
+            ) {
                 if let Some(file_open_state) = &self.file_open_state {
                     StatusBarRenderer::render_file_open_prompt(
                         frame,

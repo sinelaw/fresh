@@ -4251,7 +4251,10 @@ impl Editor {
         // Check if we need to update suggestions after creating the prompt
         let needs_suggestions = matches!(
             prompt_type,
-            PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs | PromptType::Command
+            PromptType::OpenFile
+                | PromptType::SwitchProject
+                | PromptType::SaveFileAs
+                | PromptType::Command
         );
 
         self.prompt = Some(Prompt::with_suggestions(message, prompt_type, suggestions));

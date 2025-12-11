@@ -369,7 +369,9 @@ fn test_switch_project_in_file_menu() {
     .unwrap();
 
     // Open File menu with F10
-    harness.send_key(KeyCode::F(10), KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::F(10), KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     harness
