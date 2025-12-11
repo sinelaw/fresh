@@ -115,6 +115,8 @@ fn test_switch_project_changes_working_dir() {
     let subdir = project_root.join("myproject");
     fs::create_dir(&subdir).unwrap();
     fs::write(subdir.join("README.md"), "Project readme").unwrap();
+    // Canonicalize to handle macOS /var -> /private/var symlinks
+    let subdir = subdir.canonicalize().unwrap();
 
     tracing::info!("Creating harness with project_root: {:?}", project_root);
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -201,6 +203,8 @@ fn test_switch_project_select_current_directory() {
     // Create a nested structure
     let subdir = project_root.join("current_test");
     fs::create_dir(&subdir).unwrap();
+    // Canonicalize to handle macOS /var -> /private/var symlinks
+    let subdir = subdir.canonicalize().unwrap();
 
     tracing::info!("Creating harness with subdir: {:?}", subdir);
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -405,6 +409,9 @@ fn test_switch_project_restart_flow_with_sessions() {
     let project_b = temp_dir.path().join("project_b");
     fs::create_dir(&project_a).unwrap();
     fs::create_dir(&project_b).unwrap();
+    // Canonicalize to handle macOS /var -> /private/var symlinks
+    let project_a = project_a.canonicalize().unwrap();
+    let project_b = project_b.canonicalize().unwrap();
 
     // Create files in each project
     let file_a = project_a.join("main_a.txt");
@@ -648,6 +655,9 @@ fn test_session_persistence_across_project_switches() {
     let project_b = temp_dir.path().join("project_b");
     fs::create_dir(&project_a).unwrap();
     fs::create_dir(&project_b).unwrap();
+    // Canonicalize to handle macOS /var -> /private/var symlinks
+    let project_a = project_a.canonicalize().unwrap();
+    let project_b = project_b.canonicalize().unwrap();
 
     // Create files in each project
     let file_a = project_a.join("file_a.txt");
