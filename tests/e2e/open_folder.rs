@@ -1,4 +1,4 @@
-//! E2E tests for the Open Folder feature
+//! E2E tests for the Switch Project feature
 //!
 //! Tests the ability to switch the project root (working directory) using
 //! the command palette or File menu.
@@ -8,9 +8,9 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
 use tempfile::TempDir;
 
-/// Test that Open Folder command appears in the command palette
+/// Test that Switch Project command appears in the command palette
 #[test]
-fn test_open_folder_command_in_palette() {
+fn test_switch_project_command_in_palette() {
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path().to_path_buf();
 
@@ -32,22 +32,22 @@ fn test_open_folder_command_in_palette() {
         .wait_until(|h| h.screen_to_string().contains("Command:"))
         .expect("Command palette should appear");
 
-    // Type "open folder" to search
-    harness.type_text("open folder").unwrap();
+    // Type "switch project" to search
+    harness.type_text("switch project").unwrap();
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
 
-    // Open Folder command should appear
+    // Switch Project command should appear
     assert!(
-        screen.contains("Open Folder"),
-        "Open Folder command should appear in palette"
+        screen.contains("Switch Project"),
+        "Switch Project command should appear in palette"
     );
 }
 
-/// Test that the folder browser appears when Open Folder is selected
+/// Test that the folder browser appears when Switch Project is selected
 #[test]
-fn test_open_folder_shows_folder_browser() {
+fn test_switch_project_shows_folder_browser() {
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path().to_path_buf();
 
@@ -63,7 +63,7 @@ fn test_open_folder_shows_folder_browser() {
     )
     .unwrap();
 
-    // Open command palette and select Open Folder
+    // Open command palette and select Switch Project
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -71,7 +71,7 @@ fn test_open_folder_shows_folder_browser() {
         .wait_until(|h| h.screen_to_string().contains("Command:"))
         .expect("Command palette should appear");
 
-    harness.type_text("open folder").unwrap();
+    harness.type_text("switch project").unwrap();
     harness.render().unwrap();
 
     harness
@@ -101,7 +101,7 @@ fn test_open_folder_shows_folder_browser() {
 
 /// Test that selecting a folder changes the working directory
 #[test]
-fn test_open_folder_changes_working_dir() {
+fn test_switch_project_changes_working_dir() {
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path().to_path_buf();
 
@@ -118,7 +118,7 @@ fn test_open_folder_changes_working_dir() {
     )
     .unwrap();
 
-    // Open command palette and select Open Folder
+    // Open command palette and select Switch Project
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -126,7 +126,7 @@ fn test_open_folder_changes_working_dir() {
         .wait_until(|h| h.screen_to_string().contains("Command:"))
         .expect("Command palette should appear");
 
-    harness.type_text("open folder").unwrap();
+    harness.type_text("switch project").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -157,7 +157,7 @@ fn test_open_folder_changes_working_dir() {
 
 /// Test that pressing Enter with no selection uses current directory
 #[test]
-fn test_open_folder_select_current_directory() {
+fn test_switch_project_select_current_directory() {
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path().to_path_buf();
 
@@ -173,7 +173,7 @@ fn test_open_folder_select_current_directory() {
     )
     .unwrap();
 
-    // Open folder browser
+    // Open project browser
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -181,7 +181,7 @@ fn test_open_folder_select_current_directory() {
         .wait_until(|h| h.screen_to_string().contains("Command:"))
         .expect("Command palette should appear");
 
-    harness.type_text("open folder").unwrap();
+    harness.type_text("switch project").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -205,7 +205,7 @@ fn test_open_folder_select_current_directory() {
 
 /// Test that canceling folder browser with Escape doesn't change directory
 #[test]
-fn test_open_folder_cancel_preserves_directory() {
+fn test_switch_project_cancel_preserves_directory() {
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path().to_path_buf();
 
@@ -217,7 +217,7 @@ fn test_open_folder_cancel_preserves_directory() {
     )
     .unwrap();
 
-    // Open folder browser
+    // Open project browser
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -225,7 +225,7 @@ fn test_open_folder_cancel_preserves_directory() {
         .wait_until(|h| h.screen_to_string().contains("Command:"))
         .expect("Command palette should appear");
 
-    harness.type_text("open folder").unwrap();
+    harness.type_text("switch project").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -246,7 +246,7 @@ fn test_open_folder_cancel_preserves_directory() {
 
 /// Test that folder browser can navigate using backspace to go to parent
 #[test]
-fn test_open_folder_backspace_goes_parent() {
+fn test_switch_project_backspace_goes_parent() {
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path().to_path_buf();
 
@@ -263,7 +263,7 @@ fn test_open_folder_backspace_goes_parent() {
     )
     .unwrap();
 
-    // Open folder browser
+    // Open project browser
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -271,7 +271,7 @@ fn test_open_folder_backspace_goes_parent() {
         .wait_until(|h| h.screen_to_string().contains("Command:"))
         .expect("Command palette should appear");
 
-    harness.type_text("open folder").unwrap();
+    harness.type_text("switch project").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -292,9 +292,9 @@ fn test_open_folder_backspace_goes_parent() {
         .expect("Should navigate to parent and show root_file.txt");
 }
 
-/// Test that Open Folder appears in the File menu
+/// Test that Switch Project appears in the File menu
 #[test]
-fn test_open_folder_in_file_menu() {
+fn test_switch_project_in_file_menu() {
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path().to_path_buf();
 
@@ -316,10 +316,10 @@ fn test_open_folder_in_file_menu() {
 
     let screen = harness.screen_to_string();
 
-    // Open Folder should appear in File menu
+    // Switch Project should appear in File menu
     assert!(
-        screen.contains("Open Folder"),
-        "Open Folder should be in File menu"
+        screen.contains("Switch Project"),
+        "Switch Project should be in File menu"
     );
 }
 
@@ -334,7 +334,7 @@ fn test_open_folder_in_file_menu() {
 /// 3. Sessions are restored when starting in the same directory
 /// 4. Switching folders provides a clean slate (no old buffers)
 #[test]
-fn test_open_folder_restart_flow_with_sessions() {
+fn test_switch_project_restart_flow_with_sessions() {
     // Create two project directories
     let temp_dir = TempDir::new().unwrap();
     let project_a = temp_dir.path().join("project_a");
@@ -395,7 +395,7 @@ fn test_open_folder_restart_flow_with_sessions() {
         harness.assert_screen_contains("main_a.txt");
     }
 
-    // Phase 3: Start in project_a and switch to project_b via Open Folder
+    // Phase 3: Start in project_a and switch to project_b via Switch Project
     {
         let mut harness = EditorTestHarness::with_shared_dir_context(
             100,
@@ -419,7 +419,7 @@ fn test_open_folder_restart_flow_with_sessions() {
             .wait_until(|h| h.screen_to_string().contains("Command:"))
             .expect("Command palette should appear");
 
-        harness.type_text("open folder").unwrap();
+        harness.type_text("switch project").unwrap();
         harness
             .send_key(KeyCode::Enter, KeyModifiers::NONE)
             .unwrap();

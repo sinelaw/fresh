@@ -1592,7 +1592,7 @@ pub fn action_to_events(
         | Action::Save
         | Action::SaveAs
         | Action::Open
-        | Action::OpenFolder
+        | Action::SwitchProject
         | Action::New
         | Action::Close
         | Action::CloseTab

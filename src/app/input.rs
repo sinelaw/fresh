@@ -745,8 +745,8 @@ impl Editor {
                 self.prefill_open_file_prompt();
                 self.init_file_open_state();
             }
-            Action::OpenFolder => {
-                self.start_prompt("Open folder: ".to_string(), PromptType::OpenFolder);
+            Action::SwitchProject => {
+                self.start_prompt("Switch project: ".to_string(), PromptType::SwitchProject);
                 self.init_folder_open_state();
             }
             Action::GotoLine => self.start_prompt("Go to line: ".to_string(), PromptType::GotoLine),
@@ -1708,7 +1708,7 @@ impl Editor {
                                 ));
                             }
                         }
-                        PromptType::OpenFolder => {
+                        PromptType::SwitchProject => {
                             let input_path = Path::new(&input);
                             let resolved_path = if input_path.is_absolute() {
                                 normalize_path(input_path)

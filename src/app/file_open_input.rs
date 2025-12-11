@@ -1,7 +1,7 @@
 //! Input handling for the file open dialog
 //!
 //! This module handles keyboard and mouse input specifically for the file
-//! browser popup when the Open File or Open Folder prompt is active.
+//! browser popup when the Open File or Switch Project prompt is active.
 
 use super::file_open::{FileOpenSection, SortMode};
 use super::Editor;
@@ -9,20 +9,20 @@ use crate::input::keybindings::Action;
 use crate::view::prompt::PromptType;
 
 impl Editor {
-    /// Check if the file open dialog is active (for both OpenFile and OpenFolder)
+    /// Check if the file open dialog is active (for both OpenFile and SwitchProject)
     pub fn is_file_open_active(&self) -> bool {
         self.prompt
             .as_ref()
-            .map(|p| matches!(p.prompt_type, PromptType::OpenFile | PromptType::OpenFolder))
+            .map(|p| matches!(p.prompt_type, PromptType::OpenFile | PromptType::SwitchProject))
             .unwrap_or(false)
             && self.file_open_state.is_some()
     }
 
-    /// Check if we're in folder-only selection mode
+    /// Check if we're in folder-only selection mode (Switch Project)
     fn is_folder_open_mode(&self) -> bool {
         self.prompt
             .as_ref()
-            .map(|p| p.prompt_type == PromptType::OpenFolder)
+            .map(|p| p.prompt_type == PromptType::SwitchProject)
             .unwrap_or(false)
     }
 
@@ -227,7 +227,7 @@ impl Editor {
         // In folder mode, selecting a file does nothing
     }
 
-    /// Select a folder as the new project root (for OpenFolder mode)
+    /// Select a folder as the new project root (for SwitchProject mode)
     fn file_open_select_folder(&mut self, path: std::path::PathBuf) {
         // Close the file browser
         self.file_open_state = None;

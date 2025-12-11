@@ -135,9 +135,9 @@ pub fn get_all_commands() -> Vec<Command> {
             source: CommandSource::Builtin,
         },
         Command {
-            name: "Open Folder".to_string(),
+            name: "Switch Project".to_string(),
             description: "Switch to a different project folder".to_string(),
-            action: Action::OpenFolder,
+            action: Action::SwitchProject,
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Builtin,

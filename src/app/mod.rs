@@ -4251,7 +4251,7 @@ impl Editor {
         // Check if we need to update suggestions after creating the prompt
         let needs_suggestions = matches!(
             prompt_type,
-            PromptType::OpenFile | PromptType::OpenFolder | PromptType::SaveFileAs | PromptType::Command
+            PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs | PromptType::Command
         );
 
         self.prompt = Some(Prompt::with_suggestions(message, prompt_type, suggestions));
@@ -4361,7 +4361,7 @@ impl Editor {
 
     /// Initialize the folder open dialog state
     ///
-    /// Called when the Open Folder prompt is started. Starts from the current working
+    /// Called when the Switch Project prompt is started. Starts from the current working
     /// directory and triggers async directory loading.
     fn init_folder_open_state(&mut self) {
         // Start from the current working directory
@@ -4481,7 +4481,7 @@ impl Editor {
                     };
                     self.apply_event_to_active_buffer(&remove_overlay_event);
                 }
-                PromptType::OpenFile | PromptType::OpenFolder => {
+                PromptType::OpenFile | PromptType::SwitchProject => {
                     // Clear file browser state
                     self.file_open_state = None;
                     self.file_browser_layout = None;
@@ -4507,7 +4507,7 @@ impl Editor {
                 prompt.prompt_type,
                 PromptType::Command
                     | PromptType::OpenFile
-                    | PromptType::OpenFolder
+                    | PromptType::SwitchProject
                     | PromptType::SaveFileAs
                     | PromptType::StopLspServer
                     | PromptType::SelectTheme
@@ -4648,8 +4648,8 @@ impl Editor {
                 // Update incremental search highlights as user types
                 self.update_search_highlights(&input);
             }
-            PromptType::OpenFile | PromptType::OpenFolder => {
-                // For OpenFile/OpenFolder, update the file browser filter (native implementation)
+            PromptType::OpenFile | PromptType::SwitchProject => {
+                // For OpenFile/SwitchProject, update the file browser filter (native implementation)
                 self.update_file_open_filter();
             }
             PromptType::SaveFileAs => {
