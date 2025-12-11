@@ -139,7 +139,7 @@
 
         apps.default = flake-utils.lib.mkApp {
           drv = fresh;
-        };
+        } // { meta.description = "Fresh terminal-based text editor"; };
 
         devShells.default = craneLib.devShell {
           # Inherit inputs from the main build
