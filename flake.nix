@@ -35,15 +35,12 @@
           strictDeps = true;
 
           # Build inputs needed for compilation
+          # Note: On Darwin, frameworks (Security, SystemConfiguration, CoreServices) and
+          # libiconv are now provided automatically by the stdenv's default SDK.
+          # See: https://discourse.nixos.org/t/the-darwin-sdks-have-been-updated/55295
           buildInputs = with pkgs; [
             # Required for various crates
             openssl
-          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            # macOS-specific dependencies
-            pkgs.darwin.apple_sdk.frameworks.Security
-            pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
-            pkgs.darwin.apple_sdk.frameworks.CoreServices
-            pkgs.libiconv
           ];
 
           nativeBuildInputs = with pkgs; [
