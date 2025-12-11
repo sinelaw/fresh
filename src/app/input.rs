@@ -1287,12 +1287,31 @@ impl Editor {
                 self.menu_state.close_menu();
             }
             Action::MenuLeft => {
-                let total_menus = self.config.menu.menus.len() + self.menu_state.plugin_menus.len();
-                self.menu_state.prev_menu(total_menus);
+                // If in a submenu, close it and go back to parent
+                // Otherwise, go to the previous menu
+                if !self.menu_state.close_submenu() {
+                    let total_menus =
+                        self.config.menu.menus.len() + self.menu_state.plugin_menus.len();
+                    self.menu_state.prev_menu(total_menus);
+                }
             }
             Action::MenuRight => {
-                let total_menus = self.config.menu.menus.len() + self.menu_state.plugin_menus.len();
-                self.menu_state.next_menu(total_menus);
+                // If on a submenu item, open it
+                // Otherwise, go to the next menu
+                let all_menus: Vec<crate::config::Menu> = self
+                    .config
+                    .menu
+                    .menus
+                    .iter()
+                    .chain(self.menu_state.plugin_menus.iter())
+                    .cloned()
+                    .collect();
+
+                if !self.menu_state.open_submenu(&all_menus) {
+                    let total_menus =
+                        self.config.menu.menus.len() + self.menu_state.plugin_menus.len();
+                    self.menu_state.next_menu(total_menus);
+                }
             }
             Action::MenuUp => {
                 if let Some(active_idx) = self.menu_state.active_menu {
@@ -1325,7 +1344,7 @@ impl Editor {
                 }
             }
             Action::MenuExecute => {
-                // Execute the highlighted menu item's action
+                // Execute the highlighted menu item's action, or open submenu if it's a submenu
                 let all_menus: Vec<crate::config::Menu> = self
                     .config
                     .menu
@@ -1334,6 +1353,12 @@ impl Editor {
                     .chain(self.menu_state.plugin_menus.iter())
                     .cloned()
                     .collect();
+
+                // Check if highlighted item is a submenu - if so, open it
+                if self.menu_state.is_highlighted_submenu(&all_menus) {
+                    self.menu_state.open_submenu(&all_menus);
+                    return Ok(());
+                }
 
                 // Update context before checking if action is enabled
                 use crate::view::ui::context_keys;
@@ -2552,10 +2577,79 @@ impl Editor {
         // If a menu is currently open and we're hovering over a different menu bar item,
         // switch to that menu automatically
         if let Some(active_menu_idx) = self.menu_state.active_menu {
-            if let Some(HoverTarget::MenuBarItem(hovered_menu_idx)) = new_target {
+            if let Some(HoverTarget::MenuBarItem(hovered_menu_idx)) = new_target.clone() {
                 if hovered_menu_idx != active_menu_idx {
                     self.menu_state.open_menu(hovered_menu_idx);
                     return true; // Force re-render since menu changed
+                }
+            }
+
+            // If hovering over a menu dropdown item, check if it's a submenu and open it
+            if let Some(HoverTarget::MenuDropdownItem(_, item_idx)) = new_target.clone() {
+                let all_menus: Vec<crate::config::Menu> = self
+                    .config
+                    .menu
+                    .menus
+                    .iter()
+                    .chain(self.menu_state.plugin_menus.iter())
+                    .cloned()
+                    .collect();
+
+                // Clear any open submenus since we're at the main dropdown level
+                if !self.menu_state.submenu_path.is_empty() {
+                    self.menu_state.submenu_path.clear();
+                    self.menu_state.highlighted_item = Some(item_idx);
+                    return true;
+                }
+
+                // Check if the hovered item is a submenu
+                if let Some(menu) = all_menus.get(active_menu_idx) {
+                    if let Some(crate::config::MenuItem::Submenu { items, .. }) = menu.items.get(item_idx) {
+                        if !items.is_empty() {
+                            self.menu_state.submenu_path.push(item_idx);
+                            self.menu_state.highlighted_item = Some(0);
+                            return true;
+                        }
+                    }
+                }
+                // Update highlighted item for non-submenu items too
+                if self.menu_state.highlighted_item != Some(item_idx) {
+                    self.menu_state.highlighted_item = Some(item_idx);
+                    return true;
+                }
+            }
+
+            // If hovering over a submenu item, handle submenu navigation
+            if let Some(HoverTarget::SubmenuItem(depth, item_idx)) = new_target {
+                // Truncate submenu path to this depth (close any deeper submenus)
+                if self.menu_state.submenu_path.len() > depth {
+                    self.menu_state.submenu_path.truncate(depth);
+                }
+
+                let all_menus: Vec<crate::config::Menu> = self
+                    .config
+                    .menu
+                    .menus
+                    .iter()
+                    .chain(self.menu_state.plugin_menus.iter())
+                    .cloned()
+                    .collect();
+
+                // Get the items at this depth
+                if let Some(items) = self.menu_state.get_current_items(&all_menus, active_menu_idx) {
+                    // Check if hovered item is a submenu - if so, open it
+                    if let Some(crate::config::MenuItem::Submenu { items: sub_items, .. }) = items.get(item_idx) {
+                        if !sub_items.is_empty() && !self.menu_state.submenu_path.contains(&item_idx) {
+                            self.menu_state.submenu_path.push(item_idx);
+                            self.menu_state.highlighted_item = Some(0);
+                            return true;
+                        }
+                    }
+                    // Update highlighted item
+                    if self.menu_state.highlighted_item != Some(item_idx) {
+                        self.menu_state.highlighted_item = Some(item_idx);
+                        return true;
+                    }
                 }
             }
         }
@@ -2706,7 +2800,7 @@ impl Editor {
             }
         }
 
-        // Check menu dropdown items if a menu is open
+        // Check menu dropdown items if a menu is open (including submenus)
         if let Some(active_idx) = self.menu_state.active_menu {
             let all_menus: Vec<crate::config::Menu> = self
                 .config
@@ -2718,8 +2812,8 @@ impl Editor {
                 .collect();
 
             if let Some(menu) = all_menus.get(active_idx) {
-                if let Some(item_idx) = self.menu_state.get_item_at_position(menu, row) {
-                    return Some(HoverTarget::MenuDropdownItem(active_idx, item_idx));
+                if let Some(hover) = self.compute_menu_dropdown_hover(col, row, menu, active_idx, &all_menus) {
+                    return Some(hover);
                 }
             }
         }
@@ -2911,55 +3005,15 @@ impl Editor {
                 .collect();
 
             if let Some(menu) = all_menus.get(active_idx) {
-                // Calculate menu dropdown bounds
-                // Menu position: sum of widths of all menus before this one
-                let mut menu_x = 0u16;
-                for m in all_menus.iter().take(active_idx) {
-                    menu_x += m.label.len() as u16 + 3; // " Label " + trailing space
-                }
-
-                // Find the widest item to determine dropdown width
-                let max_label_len = menu
-                    .items
-                    .iter()
-                    .map(|item| match item {
-                        crate::config::MenuItem::Action { label, .. } => label.len(),
-                        crate::config::MenuItem::Separator { .. } => 0,
-                        crate::config::MenuItem::Submenu { label, .. } => label.len(),
-                    })
-                    .max()
-                    .unwrap_or(0);
-                let dropdown_width = max_label_len + 30; // Label + padding + keybinding space
-
-                // Dropdown starts at row 1 (below menu bar), with border at row 1
-                // Items start at row 2, and there's a border at the bottom
-                let dropdown_height = menu.items.len() as u16 + 2; // items + top/bottom border
-
-                // Check if click is inside dropdown bounds
-                if col >= menu_x
-                    && col < menu_x + dropdown_width as u16
-                    && row >= 1
-                    && row < 1 + dropdown_height
-                {
-                    // Check if click is on an item (not border)
-                    if let Some(item_idx) = self.menu_state.get_item_at_position(menu, row) {
-                        // Execute the menu item action
-                        if let Some(crate::config::MenuItem::Action { action, args, .. }) =
-                            menu.items.get(item_idx)
-                        {
-                            let action_name = action.clone();
-                            let action_args = args.clone();
-
-                            // Close the menu first
-                            self.menu_state.close_menu();
-
-                            // Parse and execute the action
-                            if let Some(action) = Action::from_str(&action_name, &action_args) {
-                                return self.handle_action(action);
-                            }
-                        }
-                    }
-                    return Ok(());
+                // Handle click on menu dropdown chain (including submenus)
+                if let Some(click_result) = self.handle_menu_dropdown_click(
+                    col,
+                    row,
+                    menu,
+                    active_idx,
+                    &all_menus,
+                )? {
+                    return click_result;
                 }
             }
 
@@ -4031,6 +4085,191 @@ impl Editor {
         }
 
         Ok(())
+    }
+
+    /// Compute hover target for menu dropdown chain (main dropdown and submenus)
+    fn compute_menu_dropdown_hover(
+        &self,
+        col: u16,
+        row: u16,
+        menu: &crate::config::Menu,
+        menu_index: usize,
+        all_menus: &[crate::config::Menu],
+    ) -> Option<HoverTarget> {
+        use crate::config::MenuItem;
+
+        // Calculate dropdown positions for the entire chain
+        let mut x_offset = 0usize;
+        for (idx, m) in all_menus.iter().enumerate() {
+            if idx == menu_index {
+                break;
+            }
+            x_offset += m.label.len() + 3;
+        }
+
+        let mut current_items: &[MenuItem] = &menu.items;
+        let mut current_x = x_offset as u16;
+        let mut current_y = 1u16;
+
+        let mut dropdown_rects = Vec::new();
+
+        for depth in 0..=self.menu_state.submenu_path.len() {
+            let max_width = current_items
+                .iter()
+                .filter_map(|item| match item {
+                    MenuItem::Action { label, .. } => Some(label.len() + 20),
+                    MenuItem::Submenu { label, .. } => Some(label.len() + 20),
+                    MenuItem::Separator { .. } => Some(20),
+                })
+                .max()
+                .unwrap_or(20)
+                .min(40) as u16;
+
+            let dropdown_height = current_items.len() as u16 + 2;
+
+            dropdown_rects.push((current_x, current_y, max_width, dropdown_height, depth, current_items.len()));
+
+            if depth < self.menu_state.submenu_path.len() {
+                let submenu_idx = self.menu_state.submenu_path[depth];
+                if let Some(MenuItem::Submenu { items, .. }) = current_items.get(submenu_idx) {
+                    let next_x = current_x + max_width - 1;
+                    let next_y = current_y + submenu_idx as u16 + 1;
+                    current_items = items;
+                    current_x = next_x;
+                    current_y = next_y;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Check from deepest submenu to main dropdown
+        for (dx, dy, width, height, depth, item_count) in dropdown_rects.iter().rev() {
+            if col >= *dx && col < dx + width && row >= *dy && row < dy + height {
+                let item_row = row.saturating_sub(*dy + 1);
+                let item_idx = item_row as usize;
+
+                if item_idx < *item_count {
+                    if *depth == 0 {
+                        return Some(HoverTarget::MenuDropdownItem(menu_index, item_idx));
+                    } else {
+                        return Some(HoverTarget::SubmenuItem(*depth, item_idx));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Handle click on menu dropdown chain (main dropdown and any open submenus)
+    /// Returns Some(Ok(())) if click was handled, None if click was outside all dropdowns
+    fn handle_menu_dropdown_click(
+        &mut self,
+        col: u16,
+        row: u16,
+        menu: &crate::config::Menu,
+        menu_index: usize,
+        all_menus: &[crate::config::Menu],
+    ) -> std::io::Result<Option<std::io::Result<()>>> {
+        use crate::config::MenuItem;
+
+        // Calculate dropdown positions for the entire chain
+        // Similar to render_dropdown_chain but for hit testing
+
+        // Calculate the x position of the top-level dropdown
+        let mut x_offset = 0usize;
+        for (idx, m) in all_menus.iter().enumerate() {
+            if idx == menu_index {
+                break;
+            }
+            x_offset += m.label.len() + 3;
+        }
+
+        let mut current_items: &[MenuItem] = &menu.items;
+        let mut current_x = x_offset as u16;
+        let mut current_y = 1u16; // Below menu bar
+
+        // Check each dropdown level from deepest to shallowest
+        // This ensures clicks on nested submenus take priority
+        let mut dropdown_rects = Vec::new();
+
+        for depth in 0..=self.menu_state.submenu_path.len() {
+            let max_width = current_items
+                .iter()
+                .filter_map(|item| match item {
+                    MenuItem::Action { label, .. } => Some(label.len() + 20),
+                    MenuItem::Submenu { label, .. } => Some(label.len() + 20),
+                    MenuItem::Separator { .. } => Some(20),
+                })
+                .max()
+                .unwrap_or(20)
+                .min(40) as u16;
+
+            let dropdown_height = current_items.len() as u16 + 2;
+
+            dropdown_rects.push((current_x, current_y, max_width, dropdown_height, depth, current_items.to_vec()));
+
+            // Navigate to next level if there is one
+            if depth < self.menu_state.submenu_path.len() {
+                let submenu_idx = self.menu_state.submenu_path[depth];
+                if let Some(MenuItem::Submenu { items, .. }) = current_items.get(submenu_idx) {
+                    let next_x = current_x + max_width - 1;
+                    let next_y = current_y + submenu_idx as u16 + 1;
+                    current_items = items;
+                    current_x = next_x;
+                    current_y = next_y;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Check clicks from deepest submenu to main dropdown
+        for (dx, dy, width, height, depth, items) in dropdown_rects.iter().rev() {
+            if col >= *dx && col < dx + width && row >= *dy && row < dy + height {
+                // Click is inside this dropdown
+                let item_row = row.saturating_sub(*dy + 1); // -1 for border
+                let item_idx = item_row as usize;
+
+                if item_idx < items.len() {
+                    // Check what kind of item was clicked
+                    match &items[item_idx] {
+                        MenuItem::Separator { .. } => {
+                            // Clicked on separator - do nothing but consume the click
+                            return Ok(Some(Ok(())));
+                        }
+                        MenuItem::Submenu { items: submenu_items, .. } => {
+                            // Clicked on submenu - open it
+                            // First, truncate submenu_path to this depth
+                            self.menu_state.submenu_path.truncate(*depth);
+                            // Then add this submenu
+                            if !submenu_items.is_empty() {
+                                self.menu_state.submenu_path.push(item_idx);
+                                self.menu_state.highlighted_item = Some(0);
+                            }
+                            return Ok(Some(Ok(())));
+                        }
+                        MenuItem::Action { action, args, .. } => {
+                            // Clicked on action - execute it
+                            let action_name = action.clone();
+                            let action_args = args.clone();
+
+                            self.menu_state.close_menu();
+
+                            if let Some(action) = Action::from_str(&action_name, &action_args) {
+                                return Ok(Some(self.handle_action(action)));
+                            }
+                            return Ok(Some(Ok(())));
+                        }
+                    }
+                }
+                return Ok(Some(Ok(())));
+            }
+        }
+
+        // Click was outside all dropdowns
+        Ok(None)
     }
 
     /// Start the theme selection prompt with available themes

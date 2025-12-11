@@ -80,8 +80,11 @@ fn is_checkbox_checked(checkbox: &Option<String>, context: &MenuContext) -> bool
 pub struct MenuState {
     /// Index of the currently open menu (None if menu bar is closed)
     pub active_menu: Option<usize>,
-    /// Index of the highlighted item within the active menu
+    /// Index of the highlighted item within the active menu or current submenu
     pub highlighted_item: Option<usize>,
+    /// Path of indices into nested submenus (empty = at top level menu)
+    /// Each element is the index of the submenu item that was opened
+    pub submenu_path: Vec<usize>,
     /// Runtime menu additions from plugins
     pub plugin_menus: Vec<Menu>,
     /// Context containing named boolean states for conditions and checkboxes
@@ -97,56 +100,163 @@ impl MenuState {
     pub fn open_menu(&mut self, index: usize) {
         self.active_menu = Some(index);
         self.highlighted_item = Some(0);
+        self.submenu_path.clear();
     }
 
-    /// Close the currently open menu
+    /// Close the currently open menu (and all submenus)
     pub fn close_menu(&mut self) {
         self.active_menu = None;
         self.highlighted_item = None;
+        self.submenu_path.clear();
     }
 
-    /// Navigate to the next menu (right)
+    /// Navigate to the next menu (right) - only at top level
     pub fn next_menu(&mut self, total_menus: usize) {
         if let Some(active) = self.active_menu {
             self.active_menu = Some((active + 1) % total_menus);
             self.highlighted_item = Some(0);
+            self.submenu_path.clear();
         }
     }
 
-    /// Navigate to the previous menu (left)
+    /// Navigate to the previous menu (left) - only at top level
     pub fn prev_menu(&mut self, total_menus: usize) {
         if let Some(active) = self.active_menu {
             self.active_menu = Some((active + total_menus - 1) % total_menus);
             self.highlighted_item = Some(0);
+            self.submenu_path.clear();
         }
     }
 
-    /// Navigate to the next item in the current menu (down)
+    /// Check if we're currently in a submenu
+    pub fn in_submenu(&self) -> bool {
+        !self.submenu_path.is_empty()
+    }
+
+    /// Get the current submenu depth (0 = top level menu)
+    pub fn submenu_depth(&self) -> usize {
+        self.submenu_path.len()
+    }
+
+    /// Open a submenu at the current highlighted item
+    /// Returns true if a submenu was opened, false if the item wasn't a submenu
+    pub fn open_submenu(&mut self, menus: &[Menu]) -> bool {
+        let Some(active_idx) = self.active_menu else {
+            return false;
+        };
+        let Some(highlighted) = self.highlighted_item else {
+            return false;
+        };
+
+        // Get the current menu items
+        let Some(items) = self.get_current_items(menus, active_idx) else {
+            return false;
+        };
+
+        // Check if highlighted item is a submenu
+        if let Some(MenuItem::Submenu { items: submenu_items, .. }) = items.get(highlighted) {
+            if !submenu_items.is_empty() {
+                self.submenu_path.push(highlighted);
+                self.highlighted_item = Some(0);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Close the current submenu and go back to parent
+    /// Returns true if a submenu was closed, false if already at top level
+    pub fn close_submenu(&mut self) -> bool {
+        if let Some(parent_idx) = self.submenu_path.pop() {
+            self.highlighted_item = Some(parent_idx);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the menu items at the current submenu level
+    pub fn get_current_items<'a>(&self, menus: &'a [Menu], active_idx: usize) -> Option<&'a [MenuItem]> {
+        let menu = menus.get(active_idx)?;
+        let mut items: &[MenuItem] = &menu.items;
+
+        for &idx in &self.submenu_path {
+            match items.get(idx)? {
+                MenuItem::Submenu { items: submenu_items, .. } => {
+                    items = submenu_items;
+                }
+                _ => return None,
+            }
+        }
+
+        Some(items)
+    }
+
+    /// Get owned vec of current items (for use when Menu is cloned)
+    pub fn get_current_items_cloned(&self, menu: &Menu) -> Option<Vec<MenuItem>> {
+        let mut items = menu.items.clone();
+
+        for &idx in &self.submenu_path {
+            match items.get(idx)? {
+                MenuItem::Submenu { items: submenu_items, .. } => {
+                    items = submenu_items.clone();
+                }
+                _ => return None,
+            }
+        }
+
+        Some(items)
+    }
+
+    /// Navigate to the next item in the current menu/submenu (down)
     pub fn next_item(&mut self, menu: &Menu) {
-        if let Some(idx) = self.highlighted_item {
-            // Skip separators
-            let mut next = (idx + 1) % menu.items.len();
-            while matches!(menu.items[next], MenuItem::Separator { .. }) && next != idx {
-                next = (next + 1) % menu.items.len();
-            }
-            self.highlighted_item = Some(next);
+        let Some(idx) = self.highlighted_item else {
+            return;
+        };
+
+        // Get current items (may be in a submenu)
+        let Some(items) = self.get_current_items_cloned(menu) else {
+            return;
+        };
+
+        if items.is_empty() {
+            return;
         }
+
+        // Skip separators
+        let mut next = (idx + 1) % items.len();
+        while matches!(items[next], MenuItem::Separator { .. }) && next != idx {
+            next = (next + 1) % items.len();
+        }
+        self.highlighted_item = Some(next);
     }
 
-    /// Navigate to the previous item in the current menu (up)
+    /// Navigate to the previous item in the current menu/submenu (up)
     pub fn prev_item(&mut self, menu: &Menu) {
-        if let Some(idx) = self.highlighted_item {
-            // Skip separators
-            let total = menu.items.len();
-            let mut prev = (idx + total - 1) % total;
-            while matches!(menu.items[prev], MenuItem::Separator { .. }) && prev != idx {
-                prev = (prev + total - 1) % total;
-            }
-            self.highlighted_item = Some(prev);
+        let Some(idx) = self.highlighted_item else {
+            return;
+        };
+
+        // Get current items (may be in a submenu)
+        let Some(items) = self.get_current_items_cloned(menu) else {
+            return;
+        };
+
+        if items.is_empty() {
+            return;
         }
+
+        // Skip separators
+        let total = items.len();
+        let mut prev = (idx + total - 1) % total;
+        while matches!(items[prev], MenuItem::Separator { .. }) && prev != idx {
+            prev = (prev + total - 1) % total;
+        }
+        self.highlighted_item = Some(prev);
     }
 
     /// Get the currently highlighted action (if any)
+    /// This navigates through the submenu path to find the currently highlighted item
     pub fn get_highlighted_action(
         &self,
         menus: &[Menu],
@@ -154,8 +264,9 @@ impl MenuState {
         let active_menu = self.active_menu?;
         let highlighted_item = self.highlighted_item?;
 
-        let menu = menus.get(active_menu)?;
-        let item = menu.items.get(highlighted_item)?;
+        // Get the items at the current submenu level
+        let items = self.get_current_items(menus, active_menu)?;
+        let item = items.get(highlighted_item)?;
 
         match item {
             MenuItem::Action { action, args, .. } => {
@@ -167,6 +278,22 @@ impl MenuState {
             }
             _ => None,
         }
+    }
+
+    /// Check if the currently highlighted item is a submenu
+    pub fn is_highlighted_submenu(&self, menus: &[Menu]) -> bool {
+        let Some(active_menu) = self.active_menu else {
+            return false;
+        };
+        let Some(highlighted_item) = self.highlighted_item else {
+            return false;
+        };
+
+        let Some(items) = self.get_current_items(menus, active_menu) else {
+            return false;
+        };
+
+        matches!(items.get(highlighted_item), Some(MenuItem::Submenu { .. }))
     }
 
     /// Get the menu index at a given x position in the menu bar
@@ -298,37 +425,35 @@ impl MenuRenderer {
         // Render dropdown if a menu is active
         if let Some(active_idx) = menu_state.active_menu {
             if let Some(menu) = all_menus.get(active_idx) {
-                Self::render_dropdown(
+                Self::render_dropdown_chain(
                     frame,
                     area,
                     menu,
-                    menu_state.highlighted_item,
+                    menu_state,
                     active_idx,
                     &all_menus,
                     keybindings,
                     theme,
                     hover_target,
-                    &menu_state.context,
                 );
             }
         }
     }
 
-    /// Render a dropdown menu below the active menu label
-    fn render_dropdown(
+    /// Render a dropdown menu and all its open submenus
+    fn render_dropdown_chain(
         frame: &mut Frame,
         menu_bar_area: Rect,
         menu: &Menu,
-        highlighted_item: Option<usize>,
+        menu_state: &MenuState,
         menu_index: usize,
         all_menus: &[&Menu],
         keybindings: &crate::input::keybindings::KeybindingResolver,
         theme: &Theme,
         hover_target: Option<&crate::app::HoverTarget>,
-        context: &MenuContext,
     ) {
-        // Calculate the x position of the dropdown based on menu index
-        let mut x_offset = 0;
+        // Calculate the x position of the top-level dropdown based on menu index
+        let mut x_offset = 0usize;
         for (idx, m) in all_menus.iter().enumerate() {
             if idx == menu_index {
                 break;
@@ -336,78 +461,149 @@ impl MenuRenderer {
             x_offset += m.label.len() + 3; // label + spaces
         }
 
-        // Calculate dropdown width (longest item + padding)
-        let max_width = menu
-            .items
+        let terminal_width = frame.area().width;
+        let terminal_height = frame.area().height;
+
+        // Track dropdown positions for rendering submenus
+        let mut current_items: &[MenuItem] = &menu.items;
+        let mut current_x = menu_bar_area.x.saturating_add(x_offset as u16);
+        let mut current_y = menu_bar_area.y.saturating_add(1);
+
+        // Render the main dropdown and collect submenu rendering info
+        // We'll render depth 0, then 1, etc.
+        for depth in 0..=menu_state.submenu_path.len() {
+            let is_deepest = depth == menu_state.submenu_path.len();
+            let highlighted_item = if is_deepest {
+                menu_state.highlighted_item
+            } else {
+                Some(menu_state.submenu_path[depth])
+            };
+
+            // Render this dropdown level
+            let dropdown_rect = Self::render_dropdown_level(
+                frame,
+                current_items,
+                highlighted_item,
+                current_x,
+                current_y,
+                terminal_width,
+                terminal_height,
+                depth,
+                &menu_state.submenu_path,
+                menu_index,
+                keybindings,
+                theme,
+                hover_target,
+                &menu_state.context,
+            );
+
+            // If not at the deepest level, navigate into the submenu for next iteration
+            if !is_deepest {
+                let submenu_idx = menu_state.submenu_path[depth];
+                if let Some(MenuItem::Submenu { items, .. }) = current_items.get(submenu_idx) {
+                    current_items = items;
+                    // Position submenu to the right of parent, aligned with the highlighted item
+                    current_x = dropdown_rect.x.saturating_add(dropdown_rect.width.saturating_sub(1));
+                    current_y = dropdown_rect.y.saturating_add(submenu_idx as u16 + 1); // +1 for border
+
+                    // Adjust if submenu would go off screen to the right - flip to left side
+                    let next_width = Self::calculate_dropdown_width(items);
+                    if current_x.saturating_add(next_width as u16) > terminal_width {
+                        current_x = dropdown_rect.x.saturating_sub(next_width as u16).saturating_add(1);
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Calculate the width needed for a dropdown containing the given items
+    fn calculate_dropdown_width(items: &[MenuItem]) -> usize {
+        items
             .iter()
             .filter_map(|item| match item {
-                MenuItem::Action { label, .. } => Some(label.len() + 20), // Extra space for keybindings
+                MenuItem::Action { label, .. } => Some(label.len() + 20),
                 MenuItem::Submenu { label, .. } => Some(label.len() + 20),
                 MenuItem::Separator { .. } => Some(20),
             })
             .max()
             .unwrap_or(20)
-            .min(40); // Cap at 40 chars
+            .min(40)
+    }
 
-        let dropdown_height = menu.items.len() + 2; // +2 for borders
+    /// Render a single dropdown level and return its bounding Rect
+    #[allow(clippy::too_many_arguments)]
+    fn render_dropdown_level(
+        frame: &mut Frame,
+        items: &[MenuItem],
+        highlighted_item: Option<usize>,
+        x: u16,
+        y: u16,
+        terminal_width: u16,
+        terminal_height: u16,
+        depth: usize,
+        submenu_path: &[usize],
+        menu_index: usize,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+        theme: &Theme,
+        hover_target: Option<&crate::app::HoverTarget>,
+        context: &MenuContext,
+    ) -> Rect {
+        let max_width = Self::calculate_dropdown_width(items);
+        let dropdown_height = items.len() + 2; // +2 for borders
 
-        // Calculate the desired position
-        let desired_x = menu_bar_area.x.saturating_add(x_offset as u16);
-        let desired_y = menu_bar_area.y.saturating_add(1);
         let desired_width = max_width as u16;
         let desired_height = dropdown_height as u16;
 
-        // Get the terminal size from the frame area (assuming frame covers full terminal)
-        // We need to ensure dropdown fits within the visible area
-        let terminal_width = frame.area().width;
-        let terminal_height = frame.area().height;
-
-        // Bounds check: ensure dropdown doesn't overflow terminal
-        // If dropdown would go off the right edge, move it left
-        let x = if desired_x.saturating_add(desired_width) > terminal_width {
+        // Bounds check: ensure dropdown fits within the visible area
+        let adjusted_x = if x.saturating_add(desired_width) > terminal_width {
             terminal_width.saturating_sub(desired_width)
         } else {
-            desired_x
+            x
         };
 
-        // If dropdown would go off the bottom, cap the height
-        let available_height = terminal_height.saturating_sub(desired_y);
+        let available_height = terminal_height.saturating_sub(y);
         let height = desired_height.min(available_height);
 
-        // Cap width to available space
-        let available_width = terminal_width.saturating_sub(x);
+        let available_width = terminal_width.saturating_sub(adjusted_x);
         let width = desired_width.min(available_width);
 
         // Only render if we have at least minimal space
         if width < 10 || height < 3 {
-            // Terminal is too small to render dropdown meaningfully
-            return;
+            return Rect { x: adjusted_x, y, width, height };
         }
 
-        // Position dropdown below the menu bar
         let dropdown_area = Rect {
-            x,
-            y: desired_y,
+            x: adjusted_x,
+            y,
             width,
             height,
         };
 
         // Build dropdown content
         let mut lines = Vec::new();
-
-        // Calculate how many items we can show (accounting for borders)
         let max_items = (height.saturating_sub(2)) as usize;
-        let items_to_show = menu.items.len().min(max_items);
-
-        // Use the actual width for formatting (accounting for borders)
+        let items_to_show = items.len().min(max_items);
         let content_width = (width as usize).saturating_sub(2);
 
-        for (idx, item) in menu.items.iter().enumerate().take(items_to_show) {
+        for (idx, item) in items.iter().enumerate().take(items_to_show) {
             let is_highlighted = highlighted_item == Some(idx);
-            let is_hovered = matches!(
-                hover_target,
-                Some(crate::app::HoverTarget::MenuDropdownItem(mi, ii)) if *mi == menu_index && *ii == idx
-            );
+            // Check if this item is in the submenu path (has an open child submenu)
+            let has_open_submenu = depth < submenu_path.len() && submenu_path[depth] == idx;
+
+            // For hover target matching at submenu levels
+            let is_hovered = if depth == 0 {
+                matches!(
+                    hover_target,
+                    Some(crate::app::HoverTarget::MenuDropdownItem(mi, ii)) if *mi == menu_index && *ii == idx
+                )
+            } else {
+                matches!(
+                    hover_target,
+                    Some(crate::app::HoverTarget::SubmenuItem(d, ii)) if *d == depth && *ii == idx
+                )
+            };
             let enabled = is_menu_item_enabled(item, context);
 
             let line = match item {
@@ -418,7 +614,6 @@ impl MenuRenderer {
                     ..
                 } => {
                     let style = if !enabled {
-                        // Disabled items use subdued theme colors
                         Style::default()
                             .fg(theme.menu_disabled_fg)
                             .bg(theme.menu_disabled_bg)
@@ -436,7 +631,6 @@ impl MenuRenderer {
                             .bg(theme.menu_dropdown_bg)
                     };
 
-                    // Find keybinding for this action
                     let keybinding = keybindings
                         .find_keybinding_for_action(
                             action,
@@ -444,7 +638,6 @@ impl MenuRenderer {
                         )
                         .unwrap_or_default();
 
-                    // Determine checkbox icon if checkbox is present
                     let checkbox_icon = if checkbox.is_some() {
                         if is_checkbox_checked(checkbox, context) {
                             "☑ "
@@ -455,7 +648,6 @@ impl MenuRenderer {
                         ""
                     };
 
-                    // Calculate spacing for alignment using actual content width
                     let checkbox_width = if checkbox.is_some() { 2 } else { 0 };
                     let label_width =
                         content_width.saturating_sub(keybinding.len() + checkbox_width + 2);
@@ -478,7 +670,8 @@ impl MenuRenderer {
                     )])
                 }
                 MenuItem::Submenu { label, .. } => {
-                    let style = if is_highlighted {
+                    // Highlight submenu items that have an open child
+                    let style = if is_highlighted || has_open_submenu {
                         Style::default()
                             .fg(theme.menu_highlight_fg)
                             .bg(theme.menu_highlight_bg)
@@ -510,6 +703,8 @@ impl MenuRenderer {
 
         let paragraph = Paragraph::new(lines).block(block);
         frame.render_widget(paragraph, dropdown_area);
+
+        dropdown_area
     }
 }
 
@@ -892,5 +1087,262 @@ mod tests {
 
         // Non-existent menu should return None
         assert_eq!(resolver.find_menu_mnemonic("NonExistent"), None);
+    }
+
+    fn create_menu_with_submenus() -> Vec<Menu> {
+        vec![Menu {
+            label: "View".to_string(),
+            items: vec![
+                MenuItem::Action {
+                    label: "Toggle Explorer".to_string(),
+                    action: "toggle_file_explorer".to_string(),
+                    args: HashMap::new(),
+                    when: None,
+                    checkbox: None,
+                },
+                MenuItem::Submenu {
+                    label: "Terminal".to_string(),
+                    items: vec![
+                        MenuItem::Action {
+                            label: "Open Terminal".to_string(),
+                            action: "open_terminal".to_string(),
+                            args: HashMap::new(),
+                            when: None,
+                            checkbox: None,
+                        },
+                        MenuItem::Action {
+                            label: "Close Terminal".to_string(),
+                            action: "close_terminal".to_string(),
+                            args: HashMap::new(),
+                            when: None,
+                            checkbox: None,
+                        },
+                        MenuItem::Submenu {
+                            label: "Terminal Settings".to_string(),
+                            items: vec![
+                                MenuItem::Action {
+                                    label: "Font Size".to_string(),
+                                    action: "terminal_font_size".to_string(),
+                                    args: HashMap::new(),
+                                    when: None,
+                                    checkbox: None,
+                                },
+                            ],
+                        },
+                    ],
+                },
+                MenuItem::Separator { separator: true },
+                MenuItem::Action {
+                    label: "Zoom In".to_string(),
+                    action: "zoom_in".to_string(),
+                    args: HashMap::new(),
+                    when: None,
+                    checkbox: None,
+                },
+            ],
+        }]
+    }
+
+    #[test]
+    fn test_submenu_open_and_close() {
+        let mut state = MenuState::new();
+        let menus = create_menu_with_submenus();
+
+        state.open_menu(0);
+        assert!(state.submenu_path.is_empty());
+        assert!(!state.in_submenu());
+
+        // Move to Terminal submenu item (index 1)
+        state.highlighted_item = Some(1);
+
+        // Open the submenu
+        assert!(state.open_submenu(&menus));
+        assert_eq!(state.submenu_path, vec![1]);
+        assert!(state.in_submenu());
+        assert_eq!(state.submenu_depth(), 1);
+        assert_eq!(state.highlighted_item, Some(0)); // Reset to first item
+
+        // Close the submenu
+        assert!(state.close_submenu());
+        assert!(state.submenu_path.is_empty());
+        assert!(!state.in_submenu());
+        assert_eq!(state.highlighted_item, Some(1)); // Restored to parent item
+    }
+
+    #[test]
+    fn test_nested_submenu() {
+        let mut state = MenuState::new();
+        let menus = create_menu_with_submenus();
+
+        state.open_menu(0);
+        state.highlighted_item = Some(1); // Terminal submenu
+
+        // Open first level submenu
+        assert!(state.open_submenu(&menus));
+        assert_eq!(state.submenu_depth(), 1);
+
+        // Move to Terminal Settings (nested submenu at index 2)
+        state.highlighted_item = Some(2);
+
+        // Open second level submenu
+        assert!(state.open_submenu(&menus));
+        assert_eq!(state.submenu_path, vec![1, 2]);
+        assert_eq!(state.submenu_depth(), 2);
+        assert_eq!(state.highlighted_item, Some(0));
+
+        // Close back to first level
+        assert!(state.close_submenu());
+        assert_eq!(state.submenu_path, vec![1]);
+        assert_eq!(state.highlighted_item, Some(2));
+
+        // Close back to main menu
+        assert!(state.close_submenu());
+        assert!(state.submenu_path.is_empty());
+        assert_eq!(state.highlighted_item, Some(1));
+
+        // Can't close further
+        assert!(!state.close_submenu());
+    }
+
+    #[test]
+    fn test_get_highlighted_action_in_submenu() {
+        let mut state = MenuState::new();
+        let menus = create_menu_with_submenus();
+
+        state.open_menu(0);
+        state.highlighted_item = Some(1); // Terminal submenu
+
+        // On a submenu item, get_highlighted_action should return None
+        assert!(state.get_highlighted_action(&menus).is_none());
+
+        // Open the submenu
+        state.open_submenu(&menus);
+        // Now highlighted_item is 0 which is "Open Terminal"
+        let action = state.get_highlighted_action(&menus);
+        assert!(action.is_some());
+        let (action_name, _) = action.unwrap();
+        assert_eq!(action_name, "open_terminal");
+
+        // Navigate to second item
+        state.highlighted_item = Some(1);
+        let action = state.get_highlighted_action(&menus);
+        assert!(action.is_some());
+        let (action_name, _) = action.unwrap();
+        assert_eq!(action_name, "close_terminal");
+    }
+
+    #[test]
+    fn test_get_current_items_at_different_depths() {
+        let mut state = MenuState::new();
+        let menus = create_menu_with_submenus();
+
+        state.open_menu(0);
+
+        // At top level, should get main menu items
+        let items = state.get_current_items(&menus, 0).unwrap();
+        assert_eq!(items.len(), 4); // Action, Submenu, Separator, Action
+
+        // Open Terminal submenu
+        state.highlighted_item = Some(1);
+        state.open_submenu(&menus);
+
+        // Now should get Terminal submenu items
+        let items = state.get_current_items(&menus, 0).unwrap();
+        assert_eq!(items.len(), 3); // Open, Close, Settings submenu
+
+        // Open nested Terminal Settings submenu
+        state.highlighted_item = Some(2);
+        state.open_submenu(&menus);
+
+        // Now should get Terminal Settings submenu items
+        let items = state.get_current_items(&menus, 0).unwrap();
+        assert_eq!(items.len(), 1); // Font Size
+    }
+
+    #[test]
+    fn test_is_highlighted_submenu() {
+        let mut state = MenuState::new();
+        let menus = create_menu_with_submenus();
+
+        state.open_menu(0);
+        state.highlighted_item = Some(0); // Toggle Explorer (action)
+        assert!(!state.is_highlighted_submenu(&menus));
+
+        state.highlighted_item = Some(1); // Terminal (submenu)
+        assert!(state.is_highlighted_submenu(&menus));
+
+        state.highlighted_item = Some(2); // Separator
+        assert!(!state.is_highlighted_submenu(&menus));
+
+        state.highlighted_item = Some(3); // Zoom In (action)
+        assert!(!state.is_highlighted_submenu(&menus));
+    }
+
+    #[test]
+    fn test_open_menu_clears_submenu_path() {
+        let mut state = MenuState::new();
+        let menus = create_menu_with_submenus();
+
+        state.open_menu(0);
+        state.highlighted_item = Some(1);
+        state.open_submenu(&menus);
+        assert!(!state.submenu_path.is_empty());
+
+        // Opening a new menu should clear the submenu path
+        state.open_menu(0);
+        assert!(state.submenu_path.is_empty());
+    }
+
+    #[test]
+    fn test_next_prev_menu_clears_submenu_path() {
+        let mut state = MenuState::new();
+        let menus = create_menu_with_submenus();
+
+        state.open_menu(0);
+        state.highlighted_item = Some(1);
+        state.open_submenu(&menus);
+        assert!(!state.submenu_path.is_empty());
+
+        // next_menu should clear submenu path
+        state.next_menu(1);
+        assert!(state.submenu_path.is_empty());
+
+        // Re-open submenu
+        state.open_menu(0);
+        state.highlighted_item = Some(1);
+        state.open_submenu(&menus);
+
+        // prev_menu should clear submenu path
+        state.prev_menu(1);
+        assert!(state.submenu_path.is_empty());
+    }
+
+    #[test]
+    fn test_navigation_in_submenu() {
+        let mut state = MenuState::new();
+        let menus = create_menu_with_submenus();
+
+        state.open_menu(0);
+        state.highlighted_item = Some(1);
+        state.open_submenu(&menus);
+
+        // In Terminal submenu, start at index 0
+        assert_eq!(state.highlighted_item, Some(0));
+
+        // Navigate down
+        state.next_item(&menus[0]);
+        assert_eq!(state.highlighted_item, Some(1));
+
+        // Navigate down again
+        state.next_item(&menus[0]);
+        assert_eq!(state.highlighted_item, Some(2));
+
+        // Navigate down wraps to start
+        state.next_item(&menus[0]);
+        assert_eq!(state.highlighted_item, Some(0));
+
+        // Navigate up wraps to end
+        state.prev_item(&menus[0]);
+        assert_eq!(state.highlighted_item, Some(2));
     }
 }

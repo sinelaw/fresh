@@ -277,6 +277,8 @@ pub enum HoverTarget {
     MenuBarItem(usize),
     /// Hovering over a menu dropdown item (menu_index, item_index)
     MenuDropdownItem(usize, usize),
+    /// Hovering over a submenu item (depth, item_index) - depth 1+ for nested submenus
+    SubmenuItem(usize, usize),
     /// Hovering over a popup list item (popup_index in stack, item_index)
     PopupListItem(usize, usize),
     /// Hovering over a suggestion item (item_index)
