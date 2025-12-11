@@ -154,6 +154,39 @@ impl LspManager {
         self.config.insert(language, config);
     }
 
+    /// Set a new root URI for the workspace
+    ///
+    /// This should be called after shutting down all servers when switching projects.
+    /// Servers spawned after this will use the new root URI.
+    pub fn set_root_uri(&mut self, root_uri: Option<Uri>) {
+        self.root_uri = root_uri;
+    }
+
+    /// Reset the manager for a new project
+    ///
+    /// This shuts down all servers and clears state, preparing for a fresh start.
+    /// The configuration is preserved but servers will need to be respawned.
+    pub fn reset_for_new_project(&mut self, new_root_uri: Option<Uri>) {
+        // Shutdown all servers
+        self.shutdown_all();
+
+        // Update root URI
+        self.root_uri = new_root_uri;
+
+        // Clear restart tracking state (fresh start)
+        self.restart_attempts.clear();
+        self.restart_cooldown.clear();
+        self.pending_restarts.clear();
+
+        // Keep allowed_languages and disabled_languages as user preferences
+        // Keep config as it's not project-specific
+
+        tracing::info!(
+            "LSP manager reset for new project: {:?}",
+            self.root_uri.as_ref().map(|u| u.as_str())
+        );
+    }
+
     /// Get or spawn an LSP handle for a language
     pub fn get_or_spawn(&mut self, language: &str) -> Option<&mut LspHandle> {
         // Return existing handle if available
