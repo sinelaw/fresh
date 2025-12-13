@@ -245,13 +245,15 @@ pub fn byte_to_visual_col(s: &str, byte_offset: usize) -> usize {
 /// If the visual column is beyond the string's width, returns the string's length.
 pub fn visual_col_to_byte(s: &str, target_visual_col: usize) -> usize {
     if !s.contains('\x1b') && !s.contains('\t') {
-        // Fast path: use simple character iteration
+        // Fast path: use simple character iteration (no ANSI, no tabs)
         let mut col = 0;
         for (byte_idx, ch) in s.char_indices() {
-            if col >= target_visual_col {
+            let width = char_width(ch);
+            // Check if target falls within this character's visual range [col, col+width)
+            if target_visual_col < col + width {
                 return byte_idx;
             }
-            col += char_width(ch);
+            col += width;
         }
         return s.len();
     }
@@ -260,19 +262,22 @@ pub fn visual_col_to_byte(s: &str, target_visual_col: usize) -> usize {
     let mut parser = AnsiParser::new();
 
     for (byte_idx, ch) in s.char_indices() {
-        if col >= target_visual_col {
-            return byte_idx;
-        }
-
         if parser.parse_char(ch).is_some() {
-            // Visible character
-            if ch == '\t' {
-                col += tab_expansion_width(col);
+            // Visible character - check if target falls within this char's range
+            let width = if ch == '\t' {
+                tab_expansion_width(col)
             } else {
-                col += char_width(ch);
+                char_width(ch)
+            };
+
+            // Target is within [col, col+width) range of this character
+            if target_visual_col < col + width {
+                return byte_idx;
             }
+
+            col += width;
         }
-        // ANSI chars don't add to visual column
+        // ANSI chars: don't add to visual column, don't match target
     }
 
     s.len()

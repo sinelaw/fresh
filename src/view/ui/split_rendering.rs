@@ -2187,6 +2187,7 @@ impl SplitRenderer {
                 }
 
                 byte_index += ch.len_utf8();
+                display_char_idx += 1; // Increment character index for next lookup
                 // col_offset tracks visual column position (for indexing into visual_to_char)
                 // visual_to_char has one entry per visual column, not per character
                 let ch_width = char_width(ch);
@@ -2685,6 +2686,20 @@ impl SplitRenderer {
     /// This captures the char_source_bytes and visual_to_char from each ViewLine
     /// for accurate mouse click positioning with O(1) lookup
     fn extract_view_line_mappings(view_lines: &[ViewLine]) -> Vec<ViewLineMapping> {
+        tracing::debug!(
+            "extract_view_line_mappings: {} view_lines",
+            view_lines.len()
+        );
+        for (i, vl) in view_lines.iter().enumerate().take(5) {
+            let first_bytes: Vec<_> = vl.char_source_bytes.iter().take(5).collect();
+            tracing::debug!(
+                "  ViewLine {}: text={:?} (len={}), first_source_bytes={:?}",
+                i,
+                vl.text.chars().take(20).collect::<String>(),
+                vl.text.len(),
+                first_bytes
+            );
+        }
         view_lines
             .iter()
             .map(|vl| {
