@@ -421,76 +421,39 @@ mod tests {
 
     // ==========================================================================
     // Tests for double-width character handling (CJK, emoji, etc.)
-    // These tests document the current BUG where characters are counted
-    // instead of their visual display width being measured.
+    // These tests verify that wrap_line correctly uses visual display width
+    // instead of character count for CJK, emoji, and other wide characters.
     // ==========================================================================
 
-    /// Helper: Calculate the visual display width of a string
-    /// This is what wrap_line SHOULD use, but currently doesn't
-    fn visual_width(s: &str) -> usize {
-        s.chars()
-            .map(|c| {
-                if c.is_ascii() {
-                    1
-                } else {
-                    let cp = c as u32;
-                    // East Asian Wide characters (CJK, fullwidth, etc.)
-                    if (0x1100..=0x115F).contains(&cp)        // Hangul Jamo
-                        || (0x2E80..=0x9FFF).contains(&cp)    // CJK
-                        || (0xAC00..=0xD7A3).contains(&cp)    // Hangul Syllables
-                        || (0xF900..=0xFAFF).contains(&cp)    // CJK Compatibility
-                        || (0xFE10..=0xFE1F).contains(&cp)    // Vertical forms
-                        || (0xFE30..=0xFE6F).contains(&cp)    // CJK Compatibility Forms
-                        || (0xFF00..=0xFF60).contains(&cp)    // Fullwidth forms
-                        || (0xFFE0..=0xFFE6).contains(&cp)    // Fullwidth signs
-                        || (0x20000..=0x2FFFF).contains(&cp)  // CJK Extension B-F
-                        || (0x30000..=0x3FFFF).contains(&cp)  // CJK Extension G+
-                        || (0x1F300..=0x1F9FF).contains(&cp)  // Misc Symbols & Pictographs, Emoticons
-                        || (0x1FA00..=0x1FAFF).contains(&cp)  // Symbols Extended-A
-                        || (0x1F600..=0x1F64F).contains(&cp)  // Emoticons
-                        || (0x1F680..=0x1F6FF).contains(&cp)  // Transport & Map Symbols
-                    {
-                        2
-                    } else if c.is_control()
-                        || (0x200B..=0x200F).contains(&cp)    // Zero-width chars
-                        || (0xFE00..=0xFE0F).contains(&cp)    // Variation selectors
-                    {
-                        0
-                    } else {
-                        1
-                    }
-                }
-            })
-            .sum()
-    }
+    use crate::primitives::display_width::str_width;
 
-    /// Test that visual_width correctly identifies double-width characters
+    /// Test that str_width correctly identifies double-width characters
     #[test]
     fn test_visual_width_calculation() {
         // ASCII - each char is 1 column
-        assert_eq!(visual_width("Hello"), 5);
+        assert_eq!(str_width("Hello"), 5);
 
         // Chinese - each char is 2 columns
-        assert_eq!(visual_width("你好"), 4, "Two Chinese characters should be 4 columns");
+        assert_eq!(str_width("你好"), 4, "Two Chinese characters should be 4 columns");
 
         // Emoji - each is 2 columns
-        assert_eq!(visual_width("🚀"), 2, "Rocket emoji should be 2 columns");
-        assert_eq!(visual_width("🚀🎉"), 4, "Two emoji should be 4 columns");
+        assert_eq!(str_width("🚀"), 2, "Rocket emoji should be 2 columns");
+        assert_eq!(str_width("🚀🎉"), 4, "Two emoji should be 4 columns");
 
         // Mixed
         assert_eq!(
-            visual_width("Hello你好"),
+            str_width("Hello你好"),
             5 + 4,
             "Hello (5) + 你好 (4) = 9 columns"
         );
         assert_eq!(
-            visual_width("a🚀b"),
+            str_width("a🚀b"),
             1 + 2 + 1,
             "a (1) + 🚀 (2) + b (1) = 4 columns"
         );
 
         // Japanese
-        assert_eq!(visual_width("月"), 2, "Japanese Moon character should be 2 columns");
+        assert_eq!(str_width("月"), 2, "Japanese Moon character should be 2 columns");
     }
 
     /// BUG TEST: wrap_line counts characters, not visual width
@@ -506,7 +469,7 @@ mod tests {
         // "你好世界啊" = 5 characters, but 10 visual columns
         let chinese_text = "你好世界啊";
         assert_eq!(chinese_text.chars().count(), 5, "5 Chinese characters");
-        assert_eq!(visual_width(chinese_text), 10, "10 visual columns");
+        assert_eq!(str_width(chinese_text), 10, "10 visual columns");
 
         let segments = wrap_line(chinese_text, &config);
 
@@ -518,7 +481,7 @@ mod tests {
         // "你好世界啊你好" = 7 characters (14 visual columns)
         let chinese_text_long = "你好世界啊你好";
         assert_eq!(chinese_text_long.chars().count(), 7, "7 Chinese characters");
-        assert_eq!(visual_width(chinese_text_long), 14, "14 visual columns");
+        assert_eq!(str_width(chinese_text_long), 14, "14 visual columns");
 
         let segments_long = wrap_line(chinese_text_long, &config);
 
@@ -533,13 +496,13 @@ mod tests {
             "BUG: 14 visual columns should wrap at 11 column width! \
              wrap_line is counting characters ({}) instead of visual width ({}).",
             chinese_text_long.chars().count(),
-            visual_width(chinese_text_long)
+            str_width(chinese_text_long)
         );
     }
 
     /// BUG TEST: wrap_line with emoji doesn't account for visual width
     #[test]
-    fn test_wrap_line_emoji_visual_width() {
+    fn test_wrap_line_emoji_str_width() {
         // 11 columns available for text
         let config = WrapConfig::new(20, 8, true);
         assert_eq!(config.first_line_width, 11);
@@ -548,7 +511,7 @@ mod tests {
         // Note: Using emoji that are all in the Misc Symbols & Pictographs range
         let emoji_text = "🚀🎉🔥🌟🎄🎊";
         assert_eq!(emoji_text.chars().count(), 6, "6 emoji characters");
-        assert_eq!(visual_width(emoji_text), 12, "12 visual columns");
+        assert_eq!(str_width(emoji_text), 12, "12 visual columns");
 
         let segments = wrap_line(emoji_text, &config);
 
@@ -573,7 +536,7 @@ mod tests {
         // This should fit in 11 columns
         let mixed_short = "Hello你好";
         assert_eq!(mixed_short.chars().count(), 7);
-        assert_eq!(visual_width(mixed_short), 9);
+        assert_eq!(str_width(mixed_short), 9);
 
         let segments_short = wrap_line(mixed_short, &config);
         assert_eq!(segments_short.len(), 1, "9 visual columns should fit in 11");
@@ -582,7 +545,7 @@ mod tests {
         // This should JUST fit in 11 columns
         let mixed_exact = "Hello你好世";
         assert_eq!(mixed_exact.chars().count(), 8);
-        assert_eq!(visual_width(mixed_exact), 11);
+        assert_eq!(str_width(mixed_exact), 11);
 
         let segments_exact = wrap_line(mixed_exact, &config);
         assert_eq!(segments_exact.len(), 1, "11 visual columns should fit exactly in 11");
@@ -591,7 +554,7 @@ mod tests {
         // This should wrap!
         let mixed_long = "Hello你好世界";
         assert_eq!(mixed_long.chars().count(), 9);
-        assert_eq!(visual_width(mixed_long), 13);
+        assert_eq!(str_width(mixed_long), 13);
 
         let segments_long = wrap_line(mixed_long, &config);
         // BUG: wrap_line thinks 9 chars < 11 width, so no wrap
@@ -613,7 +576,7 @@ mod tests {
         let ascii = "HelloWor";    // 8 characters, 8 visual columns
 
         // Both should take the same visual space on screen
-        assert_eq!(visual_width(chinese), visual_width(ascii), "Same visual width");
+        assert_eq!(str_width(chinese), str_width(ascii), "Same visual width");
 
         // But chars().count() gives DIFFERENT values
         assert_eq!(chinese.chars().count(), 4);
@@ -640,12 +603,12 @@ mod tests {
         // "你好世界你好" = 6 chars, 12 visual columns
         let chinese_long = "你好世界你好";
         assert_eq!(chinese_long.chars().count(), 6);
-        assert_eq!(visual_width(chinese_long), 12);
+        assert_eq!(str_width(chinese_long), 12);
 
         // "HelloWorldAB" = 12 chars, 12 visual columns
         let ascii_long = "HelloWorldAB";
         assert_eq!(ascii_long.chars().count(), 12);
-        assert_eq!(visual_width(ascii_long), 12);
+        assert_eq!(str_width(ascii_long), 12);
 
         // Same visual width, but...
         let chinese_long_segments = wrap_line(chinese_long, &config);
@@ -658,14 +621,189 @@ mod tests {
             "ASCII 12 columns should wrap at 11"
         );
 
-        // BUG: Chinese doesn't wrap: chars().count() = 6 < 11
-        // But visually it's 12 columns and SHOULD wrap!
+        // Chinese now wraps correctly using visual width!
         assert_eq!(
             chinese_long_segments.len(),
             2,
-            "BUG: Chinese text with 12 visual columns should wrap at 11, \
-             but wrap_line only sees {} characters and thinks it fits!",
-            chinese_long.chars().count()
+            "Chinese text with 12 visual columns should wrap at 11 column width"
         );
+    }
+}
+
+// ==========================================================================
+// Property-based tests for Unicode handling
+// ==========================================================================
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use crate::primitives::display_width::str_width;
+    use proptest::prelude::*;
+
+    /// Strategy to generate strings with various Unicode characters
+    fn unicode_string_strategy() -> impl Strategy<Value = String> {
+        prop::collection::vec(
+            prop_oneof![
+                // ASCII characters
+                "[a-zA-Z0-9 ]{1,5}",
+                // Chinese characters
+                "[你好世界月日本中文]{1,3}",
+                // Japanese hiragana/katakana
+                "[あいうえおアイウエオ]{1,3}",
+                // Korean
+                "[한글테스트]{1,2}",
+                // Emoji (common ones that are reliably 2-width)
+                Just("🚀".to_string()),
+                Just("🎉".to_string()),
+                Just("🔥".to_string()),
+                Just("❤".to_string()),
+                // Mixed
+                Just("a你b".to_string()),
+                Just("Hello世界".to_string()),
+            ],
+            1..5,
+        )
+        .prop_map(|parts| parts.join(""))
+    }
+
+    proptest! {
+        /// Property: Segment visual widths should not exceed configured width
+        /// (except when a single character is wider than the width)
+        #[test]
+        fn prop_segment_width_respects_config(
+            text in unicode_string_strategy(),
+            width in 5usize..50,
+        ) {
+            let config = WrapConfig {
+                first_line_width: width,
+                continuation_line_width: width,
+                gutter_width: 0,
+            };
+
+            let segments = wrap_line(&text, &config);
+
+            for (i, segment) in segments.iter().enumerate() {
+                let seg_width = str_width(&segment.text);
+
+                // Each segment should fit within the width limit,
+                // OR be a single character that's wider than the limit
+                let char_count = segment.text.chars().count();
+                if char_count > 1 {
+                    prop_assert!(
+                        seg_width <= width,
+                        "Segment {} has visual width {} > config width {}. Text: {:?}",
+                        i, seg_width, width, segment.text
+                    );
+                }
+            }
+        }
+
+        /// Property: Concatenating all segments should give back the original text
+        #[test]
+        fn prop_segments_reconstruct_original(text in unicode_string_strategy()) {
+            let config = WrapConfig::new(20, 0, false);
+            let segments = wrap_line(&text, &config);
+
+            let reconstructed: String = segments.iter().map(|s| s.text.as_str()).collect();
+
+            prop_assert_eq!(
+                reconstructed, text,
+                "Segments should reconstruct to original text"
+            );
+        }
+
+        /// Property: Total visual width should be preserved across wrapping
+        #[test]
+        fn prop_total_visual_width_preserved(text in unicode_string_strategy()) {
+            let config = WrapConfig::new(15, 0, false);
+            let segments = wrap_line(&text, &config);
+
+            let original_width = str_width(&text);
+            let segments_width: usize = segments.iter().map(|s| str_width(&s.text)).sum();
+
+            prop_assert_eq!(
+                segments_width, original_width,
+                "Total visual width should be preserved"
+            );
+        }
+
+        /// Property: Character offsets should be monotonically increasing and valid
+        #[test]
+        fn prop_char_offsets_valid(text in unicode_string_strategy()) {
+            let config = WrapConfig::new(10, 0, false);
+            let segments = wrap_line(&text, &config);
+
+            let text_char_count = text.chars().count();
+            let mut prev_end = 0;
+
+            for (i, segment) in segments.iter().enumerate() {
+                // Start should equal previous end (no gaps)
+                prop_assert_eq!(
+                    segment.start_char_offset, prev_end,
+                    "Segment {} start should equal previous end",
+                    i
+                );
+
+                // End should be > start (unless empty)
+                if !segment.text.is_empty() {
+                    prop_assert!(
+                        segment.end_char_offset > segment.start_char_offset,
+                        "Non-empty segment {} should have end > start",
+                        i
+                    );
+                }
+
+                // End should not exceed text length
+                prop_assert!(
+                    segment.end_char_offset <= text_char_count,
+                    "Segment {} end {} exceeds text char count {}",
+                    i, segment.end_char_offset, text_char_count
+                );
+
+                prev_end = segment.end_char_offset;
+            }
+
+            // Last segment should end at text end
+            if !segments.is_empty() && !text.is_empty() {
+                prop_assert_eq!(
+                    segments.last().unwrap().end_char_offset,
+                    text_char_count,
+                    "Last segment should end at text end"
+                );
+            }
+        }
+
+        /// Property: For equal visual width strings, wrap_line should produce
+        /// segments with similar characteristics regardless of character encoding
+        #[test]
+        fn prop_visual_width_consistency(
+            n_ascii in 1usize..10,
+            n_wide in 1usize..5,
+        ) {
+            // Create ASCII string with n_ascii * 2 characters (each 1 column)
+            let ascii_text: String = std::iter::repeat('A').take(n_ascii * 2).collect();
+            // Create wide string with n_wide * 2 characters (each 2 columns, so n_wide * 4 visual width)
+            // Actually, to match visual width, we need n_ascii wide chars
+            let wide_text: String = std::iter::repeat('你').take(n_ascii).collect();
+
+            // Both should have same visual width
+            let ascii_width = str_width(&ascii_text);
+            let wide_width = str_width(&wide_text);
+            prop_assert_eq!(ascii_width, wide_width, "Visual widths should match");
+
+            // With same config, both should produce same number of segments
+            let config = WrapConfig::new(15, 0, false);
+            let ascii_segments = wrap_line(&ascii_text, &config);
+            let wide_segments = wrap_line(&wide_text, &config);
+
+            prop_assert_eq!(
+                ascii_segments.len(),
+                wide_segments.len(),
+                "Equal visual width text should produce same number of segments. \
+                 ASCII '{}' ({} width) -> {} segments, Wide '{}' ({} width) -> {} segments",
+                ascii_text, ascii_width, ascii_segments.len(),
+                wide_text, wide_width, wide_segments.len()
+            );
+        }
     }
 }
