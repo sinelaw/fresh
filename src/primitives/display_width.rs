@@ -47,6 +47,34 @@ impl DisplayWidth for String {
     }
 }
 
+/// Calculate the visual column (display width) at a given byte offset within a string.
+///
+/// Returns the sum of display widths of all characters before the given byte offset.
+#[inline]
+pub fn visual_column_at_byte(s: &str, byte_offset: usize) -> usize {
+    s[..byte_offset.min(s.len())]
+        .chars()
+        .map(char_width)
+        .sum()
+}
+
+/// Convert a visual column to a byte offset within a string.
+///
+/// Returns the byte offset of the character that starts at or after the given visual column.
+/// If the visual column is beyond the string's width, returns the string's length.
+/// This ensures the result is always at a valid UTF-8 character boundary.
+#[inline]
+pub fn byte_offset_at_visual_column(s: &str, visual_col: usize) -> usize {
+    let mut current_col = 0;
+    for (byte_idx, ch) in s.char_indices() {
+        if current_col >= visual_col {
+            return byte_idx;
+        }
+        current_col += char_width(ch);
+    }
+    s.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

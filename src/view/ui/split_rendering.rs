@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use crate::app::types::ViewLineMapping;
 use crate::app::BufferMetadata;
 use crate::model::buffer::Buffer;
-use crate::primitives::display_width::{char_width, str_width};
+use crate::primitives::display_width::char_width;
 use crate::model::cursor::SelectionMode;
 use crate::model::event::{BufferId, EventLog, SplitDirection};
 use crate::primitives::ansi::AnsiParser;
@@ -1972,6 +1972,7 @@ impl SplitRenderer {
                         Some(style) => style,
                         None => {
                             // This character is part of an ANSI escape sequence, skip it
+                            // ANSI escape chars have zero visual width, so don't increment col_offset
                             // IMPORTANT: If the cursor is on this ANSI byte, track it
                             if let Some(bp) = byte_pos {
                                 if bp == primary_cursor_position && !have_cursor {
@@ -1982,7 +1983,8 @@ impl SplitRenderer {
                                 }
                             }
                             char_index += ch.len_utf8();
-                            col_offset += 1;
+                            // Note: col_offset not incremented - ANSI chars have 0 visual width
+                            // and char_mappings is indexed by visual column
                             continue;
                         }
                     }
@@ -2665,15 +2667,34 @@ impl SplitRenderer {
         view_lines
             .iter()
             .map(|vl| {
-                // line_end_byte is the last valid mapping in char_mappings.
-                // For lines ending with newline, this IS the newline position.
-                // For wrapped continuations, this is the last char before the wrap.
-                let line_end_byte = vl
-                    .char_mappings
-                    .iter()
-                    .filter_map(|m| *m)
-                    .last()
-                    .unwrap_or(0);
+                // line_end_byte should be the position AFTER the last character
+                // char_mappings stores START positions of characters, so we need to
+                // add the byte length of the last character
+                let line_end_byte = if let Some(&Some(last_byte_start)) =
+                    vl.char_mappings.iter().rev().find(|m| m.is_some())
+                {
+                    // Find unique byte positions to count characters
+                    let mut unique_bytes: Vec<usize> = Vec::new();
+                    let mut prev: Option<usize> = None;
+                    for mapping in &vl.char_mappings {
+                        if let Some(b) = mapping {
+                            if prev != Some(*b) {
+                                unique_bytes.push(*b);
+                                prev = Some(*b);
+                            }
+                        }
+                    }
+
+                    // The number of unique source positions = number of source chars
+                    // Get the last char from text to find its byte length
+                    if let Some(last_char) = vl.text.chars().last() {
+                        last_byte_start + last_char.len_utf8()
+                    } else {
+                        last_byte_start
+                    }
+                } else {
+                    0
+                };
 
                 ViewLineMapping {
                     char_mappings: vl.char_mappings.clone(),
