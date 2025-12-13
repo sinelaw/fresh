@@ -36,8 +36,14 @@ fn push_span_with_map(
     if text.is_empty() {
         return;
     }
-    for _ in text.chars() {
-        map.push(source);
+    // Push one map entry per visual column (not per character)
+    // Double-width characters (CJK, emoji) need 2 entries
+    // Zero-width characters (like \u{200b}) get 0 entries - they don't occupy screen space
+    for ch in text.chars() {
+        let width = char_width(ch);
+        for _ in 0..width {
+            map.push(source);
+        }
     }
     spans.push(Span::styled(text, style));
 }
@@ -2102,6 +2108,19 @@ impl SplitRenderer {
                         );
                     }
 
+                    // Track cursor position for zero-width characters
+                    // Zero-width chars don't get map entries, so we need to explicitly record cursor pos
+                    if !have_cursor {
+                        if let Some(bp) = byte_pos {
+                            if bp == primary_cursor_position && char_width(ch) == 0 {
+                                cursor_screen_x =
+                                    gutter_width as u16 + visible_char_count as u16;
+                                cursor_screen_y = lines.len() as u16;
+                                have_cursor = true;
+                            }
+                        }
+                    }
+
                     if let Some(bp) = byte_pos {
                         if let Some(vtexts) = virtual_text_lookup.get(&bp) {
                             for vtext in vtexts
@@ -2146,8 +2165,11 @@ impl SplitRenderer {
                 }
 
                 char_index += ch.len_utf8();
-                col_offset += 1;
-                visible_char_count += char_width(ch);
+                // col_offset tracks visual column position (for indexing into char_mappings)
+                // char_mappings has one entry per visual column, not per character
+                let ch_width = char_width(ch);
+                col_offset += ch_width;
+                visible_char_count += ch_width;
             }
 
             // Set last_seg_y early so cursor detection works for both empty and non-empty lines

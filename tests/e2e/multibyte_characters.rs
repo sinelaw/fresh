@@ -1,5 +1,6 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::primitives::display_width::char_width;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -1289,38 +1290,9 @@ fn test_all_operations_on_multibyte_fixture() {
             line_idx
         );
 
-        // Calculate expected visual width (double-width chars = 2 columns)
-        let expected_visual_width: usize = line.chars().map(|c| {
-            if c.is_ascii() {
-                1
-            } else {
-                // Most CJK and emoji are double-width
-                // This is a simplified check; unicode_width crate would be more accurate
-                let cp = c as u32;
-                if (0x1100..=0x115F).contains(&cp)    // Hangul Jamo
-                    || (0x2E80..=0x9FFF).contains(&cp)  // CJK
-                    || (0xAC00..=0xD7A3).contains(&cp)  // Hangul Syllables
-                    || (0xF900..=0xFAFF).contains(&cp)  // CJK Compatibility
-                    || (0xFE10..=0xFE1F).contains(&cp)  // Vertical forms
-                    || (0xFE30..=0xFE6F).contains(&cp)  // CJK Compatibility Forms
-                    || (0xFF00..=0xFF60).contains(&cp)  // Fullwidth Forms
-                    || (0xFFE0..=0xFFE6).contains(&cp)  // Fullwidth symbols
-                    || (0x20000..=0x2FFFF).contains(&cp) // CJK Extension B+
-                    || (0x30000..=0x3FFFF).contains(&cp) // CJK Extension G+
-                    || (0x1F300..=0x1F9FF).contains(&cp) // Emoji
-                    || (0x1FA00..=0x1FAFF).contains(&cp) // Emoji extended
-                    || (0x1F600..=0x1F64F).contains(&cp) // Emoticons
-                    || (0x1F680..=0x1F6FF).contains(&cp) // Transport/map symbols
-                {
-                    2
-                } else if c.is_control() || (0x200B..=0x200F).contains(&cp) || (0xFE00..=0xFE0F).contains(&cp) {
-                    // Zero-width characters
-                    0
-                } else {
-                    1
-                }
-            }
-        }).sum();
+        // Calculate expected visual width using char_width per character (same as production code)
+        // Note: This sums individual character widths, which differs from str_width() for ZWJ sequences
+        let expected_visual_width: usize = line.chars().map(|c| char_width(c)).sum();
 
         // Screen X = gutter_width + visual_content_width
         // Get gutter width by checking cursor X at Home position
@@ -1358,35 +1330,8 @@ fn test_all_operations_on_multibyte_fixture() {
             .chain(std::iter::once(line_len))
             .collect();
 
-        // Calculate visual width for each character
-        let char_widths: Vec<usize> = line.chars().map(|c| {
-            if c.is_ascii() {
-                1
-            } else {
-                let cp = c as u32;
-                if (0x1100..=0x115F).contains(&cp)
-                    || (0x2E80..=0x9FFF).contains(&cp)
-                    || (0xAC00..=0xD7A3).contains(&cp)
-                    || (0xF900..=0xFAFF).contains(&cp)
-                    || (0xFE10..=0xFE1F).contains(&cp)
-                    || (0xFE30..=0xFE6F).contains(&cp)
-                    || (0xFF00..=0xFF60).contains(&cp)
-                    || (0xFFE0..=0xFFE6).contains(&cp)
-                    || (0x20000..=0x2FFFF).contains(&cp)
-                    || (0x30000..=0x3FFFF).contains(&cp)
-                    || (0x1F300..=0x1F9FF).contains(&cp)
-                    || (0x1FA00..=0x1FAFF).contains(&cp)
-                    || (0x1F600..=0x1F64F).contains(&cp)
-                    || (0x1F680..=0x1F6FF).contains(&cp)
-                {
-                    2
-                } else if c.is_control() || (0x200B..=0x200F).contains(&cp) || (0xFE00..=0xFE0F).contains(&cp) {
-                    0
-                } else {
-                    1
-                }
-            }
-        }).collect();
+        // Calculate visual width for each character using char_width (same as production code)
+        let char_widths: Vec<usize> = line.chars().map(|c| char_width(c)).collect();
 
         let mut positions_visited = vec![0usize];
         let mut prev_pos = 0;

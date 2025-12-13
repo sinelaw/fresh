@@ -20,6 +20,7 @@
 //! so rendering decisions (like line numbers) can be made based on token types,
 //! not reconstructed from flattened text.
 
+use crate::primitives::display_width::char_width;
 use crate::services::plugins::api::{ViewTokenStyle, ViewTokenWire, ViewTokenWireKind};
 use std::collections::HashSet;
 
@@ -238,9 +239,15 @@ impl<'a> Iterator for ViewLineIterator<'a> {
                             col += spaces;
                         } else {
                             text.push(ch);
-                            char_mappings.push(source);
-                            char_styles.push(token_style.clone());
-                            col += 1;
+                            // Push one map entry per visual column (not per character)
+                            // Double-width characters (CJK, emoji) need 2 entries
+                            // Zero-width characters get 0 entries
+                            let width = char_width(ch);
+                            for _ in 0..width {
+                                char_mappings.push(source);
+                                char_styles.push(token_style.clone());
+                            }
+                            col += width;
                         }
                     }
                     self.token_idx += 1;
@@ -748,5 +755,61 @@ mod tests {
             lines[0].text.contains("Normal text 123"),
             "Printable chars should be preserved in binary mode"
         );
+    }
+
+    #[test]
+    fn test_double_width_char_mappings() {
+        // "你好" - two Chinese characters, each 3 bytes and 2 columns wide
+        // Byte layout: 你=bytes 0-2, 好=bytes 3-5
+        // Visual layout: 你 takes columns 0-1, 好 takes columns 2-3
+        let tokens = vec![make_text_token("你好", Some(0)), make_newline_token(Some(6))];
+
+        let lines: Vec<_> = ViewLineIterator::new(&tokens).collect();
+        assert_eq!(lines.len(), 1);
+
+        // char_mappings should have one entry per visual column (not per character)
+        // 你 = 2 columns, 好 = 2 columns, \n = 1 column = 5 total
+        assert_eq!(
+            lines[0].char_mappings.len(),
+            5,
+            "Expected 5 map entries (2 for 你 + 2 for 好 + 1 for newline), got {}",
+            lines[0].char_mappings.len()
+        );
+
+        // Both columns of 你 should map to byte 0
+        assert_eq!(lines[0].char_mappings[0], Some(0), "Column 0 should map to byte 0");
+        assert_eq!(lines[0].char_mappings[1], Some(0), "Column 1 should map to byte 0");
+
+        // Both columns of 好 should map to byte 3
+        assert_eq!(lines[0].char_mappings[2], Some(3), "Column 2 should map to byte 3");
+        assert_eq!(lines[0].char_mappings[3], Some(3), "Column 3 should map to byte 3");
+
+        // Newline maps to byte 6
+        assert_eq!(lines[0].char_mappings[4], Some(6), "Column 4 (newline) should map to byte 6");
+    }
+
+    #[test]
+    fn test_mixed_width_char_mappings() {
+        // "a你b" - ASCII, Chinese (2 cols), ASCII
+        // Byte layout: a=0, 你=1-3, b=4
+        // Visual columns: a=0, 你=1-2, b=3
+        let tokens = vec![make_text_token("a你b", Some(0)), make_newline_token(Some(5))];
+
+        let lines: Vec<_> = ViewLineIterator::new(&tokens).collect();
+        assert_eq!(lines.len(), 1);
+
+        // a=1 col, 你=2 cols, b=1 col, \n=1 col = 5 total
+        assert_eq!(
+            lines[0].char_mappings.len(),
+            5,
+            "Expected 5 map entries, got {}",
+            lines[0].char_mappings.len()
+        );
+
+        assert_eq!(lines[0].char_mappings[0], Some(0), "Column 0 (a) should map to byte 0");
+        assert_eq!(lines[0].char_mappings[1], Some(1), "Column 1 (你 col 1) should map to byte 1");
+        assert_eq!(lines[0].char_mappings[2], Some(1), "Column 2 (你 col 2) should map to byte 1");
+        assert_eq!(lines[0].char_mappings[3], Some(4), "Column 3 (b) should map to byte 4");
+        assert_eq!(lines[0].char_mappings[4], Some(5), "Column 4 (newline) should map to byte 5");
     }
 }
