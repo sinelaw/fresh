@@ -1,0 +1,64 @@
+### UTF-8 Edge Cases Test File (2 Lines Per Example) ###
+
+# --- 1. Valid Multi-Byte Sequences ---
+
+# Example A: 2-byte Characters (Latin Extended / Greek)
+# Line 1: Latin Small Letter C with Cedilla (U+00E7)
+Façade
+# Line 2: Greek Capital Letter Delta (U+0394)
+Δ_Change
+
+# Example B: 3-byte Characters (Currency / Symbols)
+# Line 1: Euro Sign (U+20AC) - 3 bytes
+Price: 100€
+# Line 2: Japanese "Moon" (U+6708) - 3 bytes
+月
+
+# Example C: 4-byte Characters (Emoji / Supplementary Plane)
+# Line 1: Rocket Emoji (U+1F680)
+🚀_Launch
+# Line 2: Ancient Greek Musical Notation (U+1D200)
+𝈀
+
+
+# --- 2. Zero-Width & Complex Graphemes ---
+
+# Example D: Zero Width Space (U+200B)
+# Line 1: ZWSP between 'Zero' and 'Width'
+Zero​Width
+# Line 2: ZWSP repeated three times inside 'Test'
+T​​​est
+
+# Example E: Zero Width Joiner (ZWJ) Sequences
+# Line 1: Woman + ZWJ + Laptop (Technologist)
+👩‍💻
+# Line 2: Flag of England (Black Flag + Tag chars + Term tag)
+🏴󠁧󠁢󠁥󠁮󠁧󠁿
+
+# Example F: Combining Diacritics (Normalization Edge Cases)
+# Line 1: 'a' + Combining Diaeresis (U+0308)
+ä
+# Line 2: 'o' + Combining Tilde (U+0303) + Combining Dot Below (U+0323)
+ọ̃
+
+
+# --- 3. Invalid / Malformed Sequences (Hex Representation) ---
+# Note: Actual rendering depends on the decoder's error handling (often ).
+
+# Example G: Overlong Encodings (Security Bypass Test)
+# Line 1: Overlong ASCII '/' (C0 AF)
+À¯ (Representative visual for C0 AF)
+# Line 2: Overlong ASCII 'A' (C1 81)
+Á (Representative visual for C1 81)
+
+# Example H: Truncated Sequences (Unexpected End of Stream)
+# Line 1: 3-byte start (E2) with no continuation
+â (Representative for E2 standalone)
+# Line 2: 4-byte start (F0 9F) with only one continuation
+ðŸ (Representative for F0 9F cut short)
+
+# Example I: UTF-16 Surrogates (Illegal in UTF-8)
+# Line 1: High Surrogate (U+D800 encoded as ED A0 80)
+í (Representative for ED A0 80)
+# Line 2: Low Surrogate (U+DC00 encoded as ED B0 80)
+í°€ (Representative for ED B0 80)
