@@ -1,5 +1,6 @@
 use crate::model::buffer::Buffer;
 use crate::model::cursor::Cursor;
+use crate::primitives::display_width::{char_width, str_width};
 use crate::primitives::line_wrapping::{char_position_to_segment, wrap_line, WrapConfig};
 use crate::view::ui::view_pipeline::ViewLine;
 /// The viewport - what portion of the buffer is visible
@@ -373,12 +374,25 @@ impl Viewport {
         if cursor_view_line < view_lines.len() {
             let line = &view_lines[cursor_view_line];
             // Get the byte position of the first character in this line
-            // Then calculate cursor column as offset from line start
-            // This correctly handles the cursor being at end-of-line (past last char)
+            // Then calculate cursor column as visual width from line start
             let line_start = line.char_mappings.iter().find_map(|m| *m).unwrap_or(0);
-            let cursor_col = cursor.position.saturating_sub(line_start);
-            let line_length = line.text.trim_end_matches('\n').chars().count();
-            self.ensure_column_visible_simple(cursor_col, line_length, gutter_width);
+            let cursor_byte_offset = cursor.position.saturating_sub(line_start);
+
+            // Calculate visual column by walking through characters and summing widths
+            // until we've consumed cursor_byte_offset bytes
+            let line_text = line.text.trim_end_matches('\n');
+            let mut bytes_consumed = 0usize;
+            let mut cursor_visual_col = 0usize;
+            for ch in line_text.chars() {
+                if bytes_consumed >= cursor_byte_offset {
+                    break;
+                }
+                cursor_visual_col += char_width(ch);
+                bytes_consumed += ch.len_utf8();
+            }
+
+            let line_visual_width = str_width(line_text);
+            self.ensure_column_visible_simple(cursor_visual_col, line_visual_width, gutter_width);
         }
 
         false

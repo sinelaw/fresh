@@ -3,6 +3,7 @@
 //! This module parses ANSI escape sequences from text content and converts them
 //! into ratatui styles for proper rendering in the editor.
 
+use crate::primitives::display_width::{char_width, str_width};
 use ratatui::style::{Color, Modifier, Style};
 
 /// Standard ANSI colors (codes 30-37 for fg, 40-47 for bg)
@@ -298,23 +299,24 @@ pub fn strip_ansi_codes(text: &str) -> String {
     result
 }
 
-/// Count the number of visible characters in a string, excluding ANSI escape sequences
+/// Count the visual width of visible characters in a string, excluding ANSI escape sequences
 /// This is useful for calculating visual width for line wrapping
+/// Returns the total display width (e.g., CJK characters count as 2, ASCII as 1)
 pub fn visible_char_count(text: &str) -> usize {
     if !contains_ansi_codes(text) {
-        return text.chars().count();
+        return str_width(text);
     }
 
-    let mut count = 0;
+    let mut width = 0;
     let mut parser = AnsiParser::new();
 
     for ch in text.chars() {
         if parser.parse_char(ch).is_some() {
-            count += 1;
+            width += char_width(ch);
         }
     }
 
-    count
+    width
 }
 
 /// Parse a string with ANSI codes and return segments with their styles

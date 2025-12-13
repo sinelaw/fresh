@@ -5,6 +5,8 @@
 //! This module provides a single source of truth for how lines wrap,
 //! ensuring rendering and cursor positioning always agree.
 
+use crate::primitives::display_width::char_width;
+
 /// Represents a single wrapped segment of a logical line
 #[derive(Debug, Clone)]
 pub struct WrappedSegment {
@@ -106,12 +108,21 @@ pub fn wrap_line(text: &str, config: &WrapConfig) -> Vec<WrappedSegment> {
             break;
         }
 
-        // Take up to width characters for this segment
-        let mut segment_len = 0;
+        // Take characters until we reach the visual width limit
+        let mut segment_visual_width = 0;
         let segment_text_start = pos;
 
-        while segment_len < width && pos < chars.len() {
-            segment_len += 1;
+        while pos < chars.len() {
+            let c = chars[pos];
+            let c_width = char_width(c);
+
+            // Check if adding this character would exceed the width
+            // (but always include at least one character per segment to avoid infinite loops)
+            if segment_visual_width + c_width > width && pos > segment_text_start {
+                break;
+            }
+
+            segment_visual_width += c_width;
             pos += 1;
         }
 

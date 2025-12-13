@@ -2,6 +2,7 @@
 
 use crate::app::BufferMetadata;
 use crate::model::event::BufferId;
+use crate::primitives::display_width::str_width;
 use crate::state::EditorState;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -197,11 +198,11 @@ impl TabsRenderer {
 
             // Build tab content: " {name}{modified}{binary_indicator} "
             let tab_name_text = format!(" {name}{modified}{binary_indicator} ");
-            let tab_name_width = tab_name_text.chars().count();
+            let tab_name_width = str_width(&tab_name_text);
 
             // Close button: "× "
             let close_text = "× ";
-            let close_width = close_text.chars().count();
+            let close_width = str_width(close_text);
 
             let total_width = tab_name_width + close_width;
 

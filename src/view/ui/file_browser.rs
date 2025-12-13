@@ -11,6 +11,7 @@ use super::status_bar::truncate_path;
 use crate::app::file_open::{
     format_modified, format_size, FileOpenSection, FileOpenState, SortMode,
 };
+use crate::primitives::display_width::str_width;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -562,8 +563,8 @@ impl FileBrowserLayout {
 
         let mut current_x = prefix_len;
         for (idx, label) in shortcut_labels.iter().enumerate() {
-            // Each shortcut: " {label} " = label.len() + 2
-            let shortcut_width = label.chars().count() + 2;
+            // Each shortcut: " {label} " = visual width + 2 spaces
+            let shortcut_width = str_width(label) + 2;
 
             if rel_x >= current_x && rel_x < current_x + shortcut_width {
                 return Some(idx);

@@ -1,3 +1,4 @@
+use crate::primitives::display_width::str_width;
 use crate::view::file_tree::{FileTreeView, NodeId};
 use crate::view::theme::Theme;
 use ratatui::{
@@ -172,7 +173,7 @@ impl FileExplorerRenderer {
         // Calculate the left side width for padding calculation
         let indent_width = indent * 2;
         let indicator_width = 2; // "▼ " or "● " or "  "
-        let name_width = node.entry.name.chars().count();
+        let name_width = str_width(&node.entry.name);
         let left_side_width = indent_width + indicator_width + name_width;
 
         // Indentation
@@ -245,7 +246,7 @@ impl FileExplorerRenderer {
         };
 
         if let Some(size_text) = size_str {
-            let size_display_width = size_text.chars().count();
+            let size_display_width = str_width(&size_text);
             // Calculate padding needed for right-alignment
             // We need at least 1 space between name and size
             let min_gap = 1;

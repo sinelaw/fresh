@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use crate::app::types::ViewLineMapping;
 use crate::app::BufferMetadata;
 use crate::model::buffer::Buffer;
+use crate::primitives::display_width::{char_width, str_width};
 use crate::model::cursor::SelectionMode;
 use crate::model::event::{BufferId, EventLog, SplitDirection};
 use crate::primitives::ansi::AnsiParser;
@@ -2146,7 +2147,7 @@ impl SplitRenderer {
 
                 char_index += ch.len_utf8();
                 col_offset += 1;
-                visible_char_count += 1;
+                visible_char_count += char_width(ch);
             }
 
             // Set last_seg_y early so cursor detection works for both empty and non-empty lines
@@ -2922,8 +2923,8 @@ mod tests {
                     // Found a visual cursor - record its position
                     cursor_positions.push((col, line_idx as u16));
                 }
-                // Count the width of this span's content
-                col += span.content.chars().count() as u16;
+                // Count the visual width of this span's content
+                col += str_width(&span.content) as u16;
             }
         }
 

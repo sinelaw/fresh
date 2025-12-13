@@ -1,6 +1,7 @@
 //! Autocomplete suggestions and command palette UI rendering
 
 use crate::input::commands::CommandSource;
+use crate::primitives::display_width::{char_width, str_width};
 use crate::view::prompt::Prompt;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -136,16 +137,29 @@ impl SuggestionsRenderer {
 
             // Column 1: Command name (fixed width, truncate if too long)
             let name = &suggestion.text;
-            let name_char_count = name.chars().count();
-            let name_text = if name_char_count > name_column_width {
-                // Truncate name if too long
-                let truncated: String = name.chars().take(name_column_width - 1).collect();
+            let name_visual_width = str_width(name);
+            let name_text = if name_visual_width > name_column_width {
+                // Truncate name by visual width
+                let truncate_at = name_column_width.saturating_sub(1); // -1 for "…"
+                let mut width = 0;
+                let truncated: String = name
+                    .chars()
+                    .take_while(|ch| {
+                        let w = char_width(*ch);
+                        if width + w <= truncate_at {
+                            width += w;
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .collect();
                 format!("{}…", truncated)
             } else {
                 name.clone()
             };
             spans.push(Span::styled(name_text.clone(), base_style));
-            let name_display_width = name_text.chars().count();
+            let name_display_width = str_width(&name_text);
             let name_padding = name_column_width.saturating_sub(name_display_width);
             if name_padding > 0 {
                 spans.push(Span::styled(" ".repeat(name_padding), base_style));
@@ -172,15 +186,27 @@ impl SuggestionsRenderer {
             };
 
             if let Some(keybinding) = &suggestion.keybinding {
-                let kb_char_count = keybinding.chars().count();
-                let kb_text = if kb_char_count > keybinding_column_width {
-                    // Truncate keybinding if too long (unlikely but safe)
-                    keybinding.chars().take(keybinding_column_width).collect()
+                let kb_visual_width = str_width(keybinding);
+                let kb_text = if kb_visual_width > keybinding_column_width {
+                    // Truncate keybinding by visual width
+                    let mut width = 0;
+                    keybinding
+                        .chars()
+                        .take_while(|ch| {
+                            let w = char_width(*ch);
+                            if width + w <= keybinding_column_width {
+                                width += w;
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .collect()
                 } else {
                     keybinding.clone()
                 };
                 spans.push(Span::styled(kb_text.clone(), keybinding_style));
-                let kb_display_width = kb_text.chars().count();
+                let kb_display_width = str_width(&kb_text);
                 let kb_padding = keybinding_column_width.saturating_sub(kb_display_width);
                 if kb_padding > 0 {
                     spans.push(Span::styled(" ".repeat(kb_padding), base_style));
@@ -213,17 +239,29 @@ impl SuggestionsRenderer {
                     let desc_width = available_width
                         .saturating_sub(fixed_columns_width)
                         .saturating_sub(source_reserved);
-                    // Use char count for truncation to avoid slicing in the middle of
-                    // multi-byte UTF-8 characters (e.g., fancy quotes like ")
-                    let desc_text = if desc.chars().count() > desc_width {
-                        // Truncate description if it's too long
-                        let truncated: String =
-                            desc.chars().take(desc_width.saturating_sub(3)).collect();
+                    // Use visual width for truncation to handle double-width characters
+                    let desc_visual_width = str_width(desc);
+                    let desc_text = if desc_visual_width > desc_width {
+                        // Truncate description by visual width
+                        let truncate_at = desc_width.saturating_sub(3); // -3 for "..."
+                        let mut width = 0;
+                        let truncated: String = desc
+                            .chars()
+                            .take_while(|ch| {
+                                let w = char_width(*ch);
+                                if width + w <= truncate_at {
+                                    width += w;
+                                    true
+                                } else {
+                                    false
+                                }
+                            })
+                            .collect();
                         format!("{}...", truncated)
                     } else {
                         desc.clone()
                     };
-                    let desc_display_width = desc_text.chars().count();
+                    let desc_display_width = str_width(&desc_text);
                     spans.push(Span::styled(desc_text, base_style));
                     // Pad description to fill its allocated space
                     let desc_padding = desc_width.saturating_sub(desc_display_width);
@@ -269,16 +307,28 @@ impl SuggestionsRenderer {
                     CommandSource::Builtin => "builtin".to_string(),
                     CommandSource::Plugin(name) => name.clone(),
                 };
-                let source_char_count = source_text.chars().count();
-                let source_display = if source_char_count > source_column_width {
-                    // Truncate source if too long
-                    let truncated: String =
-                        source_text.chars().take(source_column_width - 1).collect();
+                let source_visual_width = str_width(&source_text);
+                let source_display = if source_visual_width > source_column_width {
+                    // Truncate source by visual width
+                    let truncate_at = source_column_width.saturating_sub(1); // -1 for "…"
+                    let mut width = 0;
+                    let truncated: String = source_text
+                        .chars()
+                        .take_while(|ch| {
+                            let w = char_width(*ch);
+                            if width + w <= truncate_at {
+                                width += w;
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .collect();
                     format!("{}…", truncated)
                 } else {
                     source_text
                 };
-                let source_display_width = source_display.chars().count();
+                let source_display_width = str_width(&source_display);
                 // Right-align the source text within its column
                 let source_padding = source_column_width.saturating_sub(source_display_width);
                 if source_padding > 0 {

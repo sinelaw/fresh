@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use crate::primitives::display_width::{char_width, str_width};
 use crate::state::EditorState;
 use crate::view::prompt::Prompt;
 use ratatui::layout::Rect;
@@ -500,12 +501,25 @@ impl StatusBarRenderer {
 
             let mut spans = vec![];
 
-            // Truncate left status if it's too long (use char count, not bytes)
-            let left_char_count = left_status.chars().count();
-            let displayed_left = if left_char_count > left_max_width {
+            // Truncate left status if it's too long (use visual width, not char count)
+            let left_visual_width = str_width(&left_status);
+            let displayed_left = if left_visual_width > left_max_width {
                 let truncate_at = left_max_width.saturating_sub(3); // -3 for "..."
                 if truncate_at > 0 {
-                    let truncated: String = left_status.chars().take(truncate_at).collect();
+                    // Take characters up to visual width limit
+                    let mut width = 0;
+                    let truncated: String = left_status
+                        .chars()
+                        .take_while(|ch| {
+                            let w = char_width(*ch);
+                            if width + w <= truncate_at {
+                                width += w;
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .collect();
                     format!("{}...", truncated)
                 } else {
                     String::from("...")
@@ -521,7 +535,7 @@ impl StatusBarRenderer {
                     .bg(theme.status_bar_bg),
             ));
 
-            let displayed_left_len = displayed_left.chars().count();
+            let displayed_left_len = str_width(&displayed_left);
 
             // Add spacing to push right side indicators to the right
             if displayed_left_len + right_side_width < available_width {
@@ -585,14 +599,40 @@ impl StatusBarRenderer {
         } else {
             // Terminal too narrow or no command palette indicator - fill entire width with left status
             let mut spans = vec![];
-            let left_char_count = left_status.chars().count();
-            let displayed_left = if left_char_count > available_width {
+            let left_visual_width = str_width(&left_status);
+            let displayed_left = if left_visual_width > available_width {
                 let truncate_at = available_width.saturating_sub(3);
                 if truncate_at > 0 {
-                    let truncated: String = left_status.chars().take(truncate_at).collect();
+                    // Take characters up to visual width limit
+                    let mut width = 0;
+                    let truncated: String = left_status
+                        .chars()
+                        .take_while(|ch| {
+                            let w = char_width(*ch);
+                            if width + w <= truncate_at {
+                                width += w;
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .collect();
                     format!("{}...", truncated)
                 } else {
-                    left_status.chars().take(available_width).collect()
+                    // Take characters up to available width
+                    let mut width = 0;
+                    left_status
+                        .chars()
+                        .take_while(|ch| {
+                            let w = char_width(*ch);
+                            if width + w <= available_width {
+                                width += w;
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .collect()
                 }
             } else {
                 left_status.clone()
