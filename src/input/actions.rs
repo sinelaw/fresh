@@ -43,6 +43,28 @@ fn pos_2d_to_byte(buffer: &Buffer, pos: Position2D) -> usize {
     line_start + clamped_col
 }
 
+/// Calculate the visual column (display width) at the cursor position.
+/// Returns (visual_column, byte_column_within_line).
+fn calculate_visual_column(
+    buffer: &mut Buffer,
+    cursor_position: usize,
+    estimated_line_length: usize,
+) -> (usize, usize) {
+    let mut iter = buffer.line_iterator(cursor_position, estimated_line_length);
+    let current_line_start = iter.current_position();
+    let byte_column = cursor_position.saturating_sub(current_line_start);
+
+    if let Some((_, line_content)) = iter.next() {
+        if byte_column > 0 && byte_column <= line_content.len() {
+            (str_width(&line_content[..byte_column]), byte_column)
+        } else {
+            (byte_column, byte_column) // Fallback for edge cases
+        }
+    } else {
+        (byte_column, byte_column) // Fallback
+    }
+}
+
 /// Convert deletion ranges to Delete events
 ///
 /// This is a common pattern used across many deletion actions.
@@ -656,30 +678,12 @@ pub fn action_to_events(
 
         Action::MoveUp => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                // First, get the current line start position
-                let current_line_start = {
-                    let iter = state
-                        .buffer
-                        .line_iterator(cursor.position, estimated_line_length);
-                    iter.current_position()
-                };
-                let current_byte_column = cursor.position.saturating_sub(current_line_start);
-
-                // Get current line content (up to cursor) to calculate visual column
-                let current_visual_column = if current_byte_column > 0 {
-                    match state
-                        .buffer
-                        .get_text_range_mut(current_line_start, current_byte_column)
-                    {
-                        Ok(bytes) => {
-                            let text = String::from_utf8_lossy(&bytes);
-                            str_width(&text)
-                        }
-                        Err(_) => current_byte_column, // Fallback to byte column on error
-                    }
-                } else {
-                    0
-                };
+                // Calculate visual column first (iterator is dropped after this call)
+                let (current_visual_column, _) = calculate_visual_column(
+                    &mut state.buffer,
+                    cursor.position,
+                    estimated_line_length,
+                );
 
                 // Use sticky_column if set (now stores visual column), otherwise use current visual column
                 let goal_visual_column = if cursor.sticky_column > 0 {
@@ -688,12 +692,11 @@ pub fn action_to_events(
                     current_visual_column
                 };
 
-                // Now create a new iterator for navigation to previous line
+                // Now create iterator for navigation
                 let mut iter = state
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
 
-                // Get previous line
                 if let Some((prev_line_start, prev_line_content)) = iter.prev() {
                     // Calculate byte offset from visual column, ensuring valid character boundary
                     let prev_line_text = prev_line_content.trim_end_matches('\n');
@@ -721,30 +724,12 @@ pub fn action_to_events(
 
         Action::MoveDown => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                // First, get the current line start position
-                let current_line_start = {
-                    let iter = state
-                        .buffer
-                        .line_iterator(cursor.position, estimated_line_length);
-                    iter.current_position()
-                };
-                let current_byte_column = cursor.position.saturating_sub(current_line_start);
-
-                // Get current line content (up to cursor) to calculate visual column
-                let current_visual_column = if current_byte_column > 0 {
-                    match state
-                        .buffer
-                        .get_text_range_mut(current_line_start, current_byte_column)
-                    {
-                        Ok(bytes) => {
-                            let text = String::from_utf8_lossy(&bytes);
-                            str_width(&text)
-                        }
-                        Err(_) => current_byte_column, // Fallback to byte column on error
-                    }
-                } else {
-                    0
-                };
+                // Calculate visual column first (iterator is dropped after this call)
+                let (current_visual_column, _) = calculate_visual_column(
+                    &mut state.buffer,
+                    cursor.position,
+                    estimated_line_length,
+                );
 
                 // Use sticky_column if set (now stores visual column), otherwise use current visual column
                 let goal_visual_column = if cursor.sticky_column > 0 {
@@ -753,13 +738,14 @@ pub fn action_to_events(
                     current_visual_column
                 };
 
-                // Now create a new iterator for navigation to next line
+                // Now create iterator for navigation
                 let mut iter = state
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
 
-                // Skip current line, then get next line
+                // Consume current line
                 iter.next();
+
                 if let Some((next_line_start, next_line_content)) = iter.next() {
                     // Calculate byte offset from visual column, ensuring valid character boundary
                     let next_line_text = next_line_content.trim_end_matches('\n');

@@ -2796,6 +2796,7 @@ impl SplitRenderer {
 mod tests {
     use super::*;
     use crate::model::buffer::Buffer;
+    use crate::primitives::display_width::str_width;
     use crate::view::theme::Theme;
     use crate::view::viewport::Viewport;
 
