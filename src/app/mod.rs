@@ -2629,10 +2629,14 @@ impl Editor {
             // Update the buffer in the new split
             self.split_manager.set_active_buffer_id(buffer_id);
 
-            // If switching TO a terminal split, enter terminal mode
+            // Set key context based on target buffer type
             if self.is_terminal_buffer(buffer_id) {
                 self.terminal_mode = true;
                 self.key_context = crate::input::keybindings::KeyContext::Terminal;
+            } else {
+                // Ensure key context is Normal when focusing a non-terminal buffer
+                // This handles the case of clicking on editor from FileExplorer context
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
             }
 
             // Handle buffer change side effects

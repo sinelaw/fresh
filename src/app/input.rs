@@ -3,7 +3,7 @@ use super::*;
 use crate::services::plugins::hooks::HookArgs;
 impl Editor {
     /// Determine the current keybinding context based on UI state
-    pub(super) fn get_key_context(&self) -> crate::input::keybindings::KeyContext {
+    pub fn get_key_context(&self) -> crate::input::keybindings::KeyContext {
         use crate::input::keybindings::KeyContext;
 
         // Priority order: Menu > Prompt > Popup > Rename > Current context (FileExplorer or Normal)
@@ -2973,7 +2973,26 @@ impl Editor {
             return Ok(());
         }
 
-        // no - is it meant for the ???
+        // Check if double-click is on an editor area and update key_context accordingly
+        // This is needed because double-click bypasses handle_mouse_click which normally handles this
+        for (_split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
+            &self.cached_layout.split_areas
+        {
+            if col >= content_rect.x
+                && col < content_rect.x + content_rect.width
+                && row >= content_rect.y
+                && row < content_rect.y + content_rect.height
+            {
+                // Clicked on an editor split - reset key_context
+                if self.is_terminal_buffer(*buffer_id) {
+                    self.key_context = crate::input::keybindings::KeyContext::Terminal;
+                } else {
+                    self.key_context = crate::input::keybindings::KeyContext::Normal;
+                }
+                break;
+            }
+        }
+
         Ok(())
     }
     /// Handle mouse click (down event)
@@ -3249,19 +3268,35 @@ impl Editor {
         }
 
         // Check if click is in editor content area
+        tracing::debug!(
+            "handle_mouse_click: checking {} split_areas for click at ({}, {})",
+            self.cached_layout.split_areas.len(),
+            col,
+            row
+        );
         for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
             &self.cached_layout.split_areas
         {
+            tracing::debug!(
+                "  split_id={:?}, content_rect=({}, {}, {}x{})",
+                split_id,
+                content_rect.x,
+                content_rect.y,
+                content_rect.width,
+                content_rect.height
+            );
             if col >= content_rect.x
                 && col < content_rect.x + content_rect.width
                 && row >= content_rect.y
                 && row < content_rect.y + content_rect.height
             {
                 // Click in editor - focus split and position cursor
+                tracing::debug!("  -> HIT! calling handle_editor_click");
                 self.handle_editor_click(col, row, *split_id, *buffer_id, *content_rect)?;
                 return Ok(());
             }
         }
+        tracing::debug!("  -> No split area hit");
 
         Ok(())
     }
@@ -4008,6 +4043,12 @@ impl Editor {
 
         // Focus this split (handles terminal mode exit, tab state, etc.)
         self.focus_split(split_id, buffer_id);
+
+        // Ensure key context is Normal for non-terminal buffers
+        // This handles the edge case where split/buffer don't change but we clicked from FileExplorer
+        if !self.is_terminal_buffer(buffer_id) {
+            self.key_context = crate::input::keybindings::KeyContext::Normal;
+        }
 
         // Get cached view line mappings for this split (before mutable borrow of buffers)
         let cached_mappings = self

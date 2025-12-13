@@ -1540,6 +1540,103 @@ fn test_ctrl_e_toggles_focus_between_explorer_and_editor() {
     );
 }
 
+/// Test that clicking on empty area in file explorer then clicking on editor allows typing
+/// Bug: When clicking on empty area in file explorer (below files), the key_context is set
+/// to FileExplorer. When clicking back on the editor, the key_context was not being reset
+/// to Normal, so typing would have "No binding found" and do nothing.
+#[test]
+fn test_click_empty_explorer_area_then_editor_allows_typing() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+    // Initialize tracing
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with_test_writer()
+        .try_init();
+
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create a few files so there's empty space below them in the file explorer
+    fs::write(project_root.join("file1.txt"), "content 1").unwrap();
+    fs::write(project_root.join("file2.txt"), "content 2").unwrap();
+
+    // Open file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Verify file explorer is visible
+    assert!(
+        harness.editor().file_explorer_visible(),
+        "File explorer should be visible"
+    );
+
+    let screen = harness.screen_to_string();
+    println!("Screen with file explorer:\n{}", screen);
+
+    // File explorer is on the left side (about 30% width = ~36 columns on 120-width terminal)
+    // Click on an empty area below the files in the file explorer
+    // The files are near the top, so clicking at row 20+ should be empty area
+    let explorer_col = 15; // In the file explorer area
+    let empty_row = 25; // Below where files would be displayed
+
+    println!(
+        "Clicking empty area in file explorer at ({}, {})",
+        explorer_col, empty_row
+    );
+    harness.mouse_click(explorer_col, empty_row).unwrap();
+    harness.render().unwrap();
+
+    // Check key_context after file explorer click
+    let key_context_after_explorer = harness.editor().get_key_context();
+    println!("Key context after explorer click: {:?}", key_context_after_explorer);
+
+    // Now click on the editor area (right side of the screen)
+    // With file explorer taking ~30% width, editor starts around column 40+
+    let editor_col = 70; // Well into the editor area
+    let editor_row = 10; // In the content area
+
+    println!(
+        "Clicking editor area at ({}, {})",
+        editor_col, editor_row
+    );
+    harness.mouse_click(editor_col, editor_row).unwrap();
+    harness.render().unwrap();
+
+    // Check key_context after editor click
+    let key_context_after_editor = harness.editor().get_key_context();
+    println!("Key context after editor click: {:?}", key_context_after_editor);
+
+    // Get the buffer content before typing
+    let content_before = harness.get_buffer_content().unwrap_or_default();
+    println!("Buffer content before typing: '{}'", content_before);
+
+    // Now try to type something - this is the key test
+    // If key_context is still FileExplorer, this will do nothing (bug)
+    // If key_context was properly reset to Normal, this will insert text (fix)
+    harness.type_text("TYPED_TEXT").unwrap();
+    harness.render().unwrap();
+
+    // Check that the text was actually inserted
+    let content_after = harness.get_buffer_content().unwrap_or_default();
+    println!("Buffer content after typing: '{}'", content_after);
+
+    // The critical assertion: text should have been inserted
+    assert!(
+        content_after.contains("TYPED_TEXT"),
+        "Typing should work after clicking on empty file explorer area then clicking on editor. \
+         Bug: key_context stays as FileExplorer after clicking on empty area, preventing typing. \
+         Content before: '{}', Content after: '{}'",
+        content_before,
+        content_after
+    );
+}
+
 /// Test that closing the last buffer focuses the file explorer
 #[test]
 fn test_close_last_buffer_focuses_file_explorer() {
