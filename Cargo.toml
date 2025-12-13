@@ -74,6 +74,7 @@ schemars = "1.1"  # JSON Schema generation for config editor
 syntect = "5.2"
 ureq = { version = "2.10", default-features = false, features = ["tls"] }  # Minimal HTTP client for release checking
 # tree-sitter-markdown = "0.7.1"  # Disabled due to tree-sitter version conflict (uses 0.19.5 instead of 0.25.x)
+unicode-width = "0.2"  # Proper display width calculation for CJK, emoji, etc.
 
 # Terminal emulation
 alacritty_terminal = "0.25"

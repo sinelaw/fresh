@@ -4,6 +4,7 @@
 //! and text manipulation utilities.
 
 pub mod ansi;
+pub mod display_width;
 pub mod ansi_background;
 pub mod grammar_registry;
 pub mod highlight_engine;
