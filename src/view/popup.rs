@@ -863,27 +863,35 @@ mod tests {
             .with_max_height(10);
 
         // Fixed position within bounds - should stay as specified
-        let popup_fixed = popup.clone().with_position(PopupPosition::Fixed { x: 10, y: 20 });
+        let popup_fixed = popup
+            .clone()
+            .with_position(PopupPosition::Fixed { x: 10, y: 20 });
         let area = popup_fixed.calculate_area(terminal_area, None);
         assert_eq!(area.x, 10);
         assert_eq!(area.y, 20);
 
         // Fixed position at right edge - x should be clamped
-        let popup_right_edge = popup.clone().with_position(PopupPosition::Fixed { x: 99, y: 20 });
+        let popup_right_edge = popup
+            .clone()
+            .with_position(PopupPosition::Fixed { x: 99, y: 20 });
         let area = popup_right_edge.calculate_area(terminal_area, None);
         // x=99 + width=30 > 100, so x should be clamped to 100-30=70
         assert_eq!(area.x, 70);
         assert_eq!(area.y, 20);
 
         // Fixed position beyond right edge - x should be clamped
-        let popup_beyond = popup.clone().with_position(PopupPosition::Fixed { x: 199, y: 20 });
+        let popup_beyond = popup
+            .clone()
+            .with_position(PopupPosition::Fixed { x: 199, y: 20 });
         let area = popup_beyond.calculate_area(terminal_area, None);
         // x=199 + width=30 > 100, so x should be clamped to 100-30=70
         assert_eq!(area.x, 70);
         assert_eq!(area.y, 20);
 
         // Fixed position at bottom edge - y should be clamped
-        let popup_bottom = popup.clone().with_position(PopupPosition::Fixed { x: 10, y: 49 });
+        let popup_bottom = popup
+            .clone()
+            .with_position(PopupPosition::Fixed { x: 10, y: 49 });
         let area = popup_bottom.calculate_area(terminal_area, None);
         assert_eq!(area.x, 10);
         // y=49 + height=3 > 50, so y should be clamped to 50-3=47
@@ -900,18 +908,33 @@ mod tests {
         };
 
         // Rect within bounds - unchanged
-        let rect = Rect { x: 10, y: 20, width: 30, height: 10 };
+        let rect = Rect {
+            x: 10,
+            y: 20,
+            width: 30,
+            height: 10,
+        };
         let clamped = super::clamp_rect_to_bounds(rect, bounds);
         assert_eq!(clamped, rect);
 
         // Rect at exact right edge of bounds
-        let rect = Rect { x: 99, y: 20, width: 30, height: 10 };
+        let rect = Rect {
+            x: 99,
+            y: 20,
+            width: 30,
+            height: 10,
+        };
         let clamped = super::clamp_rect_to_bounds(rect, bounds);
         assert_eq!(clamped.x, 99); // x is within bounds
         assert_eq!(clamped.width, 1); // width clamped to fit
 
         // Rect beyond bounds
-        let rect = Rect { x: 199, y: 60, width: 30, height: 10 };
+        let rect = Rect {
+            x: 199,
+            y: 60,
+            width: 30,
+            height: 10,
+        };
         let clamped = super::clamp_rect_to_bounds(rect, bounds);
         assert_eq!(clamped.x, 99); // x clamped to last valid position
         assert_eq!(clamped.y, 49); // y clamped to last valid position

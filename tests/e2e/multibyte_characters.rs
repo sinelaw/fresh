@@ -203,7 +203,8 @@ fn test_cursor_movement_mixed_content() {
             .unwrap();
         let pos = harness.cursor_position();
         assert_eq!(
-            pos, *expected,
+            pos,
+            *expected,
             "After {} right movements, cursor should be at byte {}, got {}",
             i + 1,
             expected,
@@ -434,9 +435,7 @@ fn test_selection_shift_end_chinese() {
     assert_eq!(harness.cursor_position(), 3);
 
     // Select to end with Shift+End
-    harness
-        .send_key(KeyCode::End, KeyModifiers::SHIFT)
-        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
 
     let pos = harness.cursor_position();
     assert_eq!(
@@ -714,7 +713,8 @@ fn test_mouse_click_double_width_characters() {
     harness.mouse_click(gutter_x, row).unwrap();
     harness.render().unwrap();
     assert_eq!(
-        harness.cursor_position(), 0,
+        harness.cursor_position(),
+        0,
         "Click at gutter edge should position at byte 0"
     );
 
@@ -764,7 +764,8 @@ fn test_mouse_click_double_width_characters() {
     harness.mouse_click(gutter_x + 4, row).unwrap();
     harness.render().unwrap();
     assert_eq!(
-        harness.cursor_position(), 6,
+        harness.cursor_position(),
+        6,
         "Click after 好 should position at byte 6 (end)"
     );
 }
@@ -843,7 +844,8 @@ fn test_mouse_click_mixed_ascii_and_double_width() {
     harness.mouse_click(gutter_x + 4, row).unwrap();
     harness.render().unwrap();
     assert_eq!(
-        harness.cursor_position(), 5,
+        harness.cursor_position(),
+        5,
         "Click after content should position at end (byte 5)"
     );
 }
@@ -907,7 +909,8 @@ fn test_mouse_click_emoji() {
     harness.mouse_click(gutter_x + 3, row).unwrap();
     harness.render().unwrap();
     assert_eq!(
-        harness.cursor_position(), 5,
+        harness.cursor_position(),
+        5,
         "Click after X should position at byte 5"
     );
 }
@@ -1081,11 +1084,11 @@ fn test_cursor_never_splits_characters() {
 fn test_end_key_screen_cursor_position_double_width() {
     // Test cases: (content, expected_visual_width)
     let test_cases = [
-        ("月", 2),                    // Single CJK character (2 cols)
-        ("🚀_Launch", 9),            // Emoji (2) + ASCII (7) = 9 cols
-        ("你好", 4),                  // Two CJK chars = 4 cols
-        ("Hello世界", 9),            // ASCII (5) + CJK (4) = 9 cols
-        ("a中b文c", 7),              // Mixed: 3 ASCII + 2 CJK (4) = 7 cols
+        ("月", 2),        // Single CJK character (2 cols)
+        ("🚀_Launch", 9), // Emoji (2) + ASCII (7) = 9 cols
+        ("你好", 4),      // Two CJK chars = 4 cols
+        ("Hello世界", 9), // ASCII (5) + CJK (4) = 9 cols
+        ("a中b文c", 7),   // Mixed: 3 ASCII + 2 CJK (4) = 7 cols
     ];
 
     for (content, expected_width) in test_cases {
@@ -1163,7 +1166,9 @@ fn test_cursor_left_right_screen_position_double_width() {
         );
 
         if i < expected_offsets.len() - 1 {
-            harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+            harness
+                .send_key(KeyCode::Right, KeyModifiers::NONE)
+                .unwrap();
             harness.render().unwrap();
         }
     }
@@ -1177,10 +1182,13 @@ fn test_cursor_left_right_screen_position_double_width() {
         let expected_x = gutter_x + expected_offsets[i] as u16;
 
         assert_eq!(
-            actual_x, expected_x,
+            actual_x,
+            expected_x,
             "Left movement {}: Screen cursor X should be {}, got {}. \
              BUG: Double-width char only moved cursor by 1.",
-            expected_offsets.len() - 1 - i, expected_x, actual_x
+            expected_offsets.len() - 1 - i,
+            expected_x,
+            actual_x
         );
     }
 }
@@ -1248,11 +1256,11 @@ fn test_screen_cursor_position_double_width() {
 /// - Screen cursor is visible and in correct position after render
 #[test]
 fn test_all_operations_on_multibyte_fixture() {
-    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/multi-byte.txt");
+    let fixture_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/multi-byte.txt");
 
-    let fixture_content = std::fs::read_to_string(&fixture_path)
-        .expect("Failed to read multi-byte.txt fixture");
+    let fixture_content =
+        std::fs::read_to_string(&fixture_path).expect("Failed to read multi-byte.txt fixture");
 
     // Extract content lines (skip comments and empty lines)
     let content_lines: Vec<&str> = fixture_content
@@ -1326,7 +1334,10 @@ fn test_all_operations_on_multibyte_fixture() {
             line_idx, expected_screen_x, gutter_x, expected_visual_width, screen_x_end, line
         );
 
-        println!("  End: cursor at byte {}, screen ({}, {}), expected x={}", pos_after_end, screen_x_end, screen_y_end, expected_screen_x);
+        println!(
+            "  End: cursor at byte {}, screen ({}, {}), expected x={}",
+            pos_after_end, screen_x_end, screen_y_end, expected_screen_x
+        );
 
         // --- Test 2: Home key goes to start ---
         harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
@@ -1363,7 +1374,9 @@ fn test_all_operations_on_multibyte_fixture() {
         );
 
         for move_count in 1..=char_count {
-            harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+            harness
+                .send_key(KeyCode::Right, KeyModifiers::NONE)
+                .unwrap();
             harness.render().unwrap();
             let pos = harness.cursor_position();
 
@@ -1376,7 +1389,9 @@ fn test_all_operations_on_multibyte_fixture() {
             assert!(
                 pos > prev_pos || pos == line_len,
                 "Line {}: Right should advance cursor. Was at {}, now at {}",
-                line_idx, prev_pos, pos
+                line_idx,
+                prev_pos,
+                pos
             );
 
             // Check screen cursor position
@@ -1397,9 +1412,12 @@ fn test_all_operations_on_multibyte_fixture() {
 
         // Should have reached the end
         assert_eq!(
-            harness.cursor_position(), line_len,
+            harness.cursor_position(),
+            line_len,
             "Line {}: After {} Right moves, should be at end (byte {})",
-            line_idx, char_count, line_len
+            line_idx,
+            char_count,
+            line_len
         );
 
         println!("  Right traversal: {:?}", positions_visited);
@@ -1417,21 +1435,26 @@ fn test_all_operations_on_multibyte_fixture() {
         }
 
         assert_eq!(
-            harness.cursor_position(), 0,
+            harness.cursor_position(),
+            0,
             "Line {}: After {} Left moves, should be at start (byte 0)",
-            line_idx, char_count
+            line_idx,
+            char_count
         );
 
         // --- Test 5: Selection with Shift+Right selects whole characters ---
         if char_count >= 2 {
             harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
-            harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
+            harness
+                .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+                .unwrap();
 
             let pos_after_shift_right = harness.cursor_position();
             assert!(
                 valid_boundaries.contains(&pos_after_shift_right),
                 "Line {}: Shift+Right should land on valid boundary, got {}",
-                line_idx, pos_after_shift_right
+                line_idx,
+                pos_after_shift_right
             );
 
             // Type to replace selection
@@ -1442,7 +1465,8 @@ fn test_all_operations_on_multibyte_fixture() {
             assert!(
                 content_after_replace.starts_with('X'),
                 "Line {}: After Shift+Right then typing X, content should start with X. Got: {:?}",
-                line_idx, content_after_replace
+                line_idx,
+                content_after_replace
             );
 
             println!("  Selection replace: first char -> X, result starts with X: ✓");
@@ -1454,21 +1478,25 @@ fn test_all_operations_on_multibyte_fixture() {
 
         for del_count in 1..=char_count {
             let before_len = harness2.get_buffer_content().unwrap().len();
-            harness2.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+            harness2
+                .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+                .unwrap();
             let after_content = harness2.get_buffer_content().unwrap();
 
             // Content should remain valid UTF-8 (this will panic if not)
             assert!(
                 after_content.is_char_boundary(after_content.len()),
                 "Line {}: After {} backspaces, content is invalid UTF-8",
-                line_idx, del_count
+                line_idx,
+                del_count
             );
 
             // Length should have decreased
             assert!(
                 after_content.len() < before_len,
                 "Line {}: Backspace {} didn't reduce content length",
-                line_idx, del_count
+                line_idx,
+                del_count
             );
         }
 
@@ -1478,25 +1506,31 @@ fn test_all_operations_on_multibyte_fixture() {
         // --- Test 7: Delete (forward) deletes whole characters ---
         let mut harness3 = EditorTestHarness::new(120, 30).unwrap();
         harness3.type_text(line).unwrap();
-        harness3.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+        harness3
+            .send_key(KeyCode::Home, KeyModifiers::NONE)
+            .unwrap();
 
         for del_count in 1..=char_count {
             let before_len = harness3.get_buffer_content().unwrap().len();
-            harness3.send_key(KeyCode::Delete, KeyModifiers::NONE).unwrap();
+            harness3
+                .send_key(KeyCode::Delete, KeyModifiers::NONE)
+                .unwrap();
             let after_content = harness3.get_buffer_content().unwrap();
 
             // Content should remain valid UTF-8
             assert!(
                 after_content.is_char_boundary(after_content.len()),
                 "Line {}: After {} deletes, content is invalid UTF-8",
-                line_idx, del_count
+                line_idx,
+                del_count
             );
 
             // Length should have decreased
             assert!(
                 after_content.len() < before_len,
                 "Line {}: Delete {} didn't reduce content length",
-                line_idx, del_count
+                line_idx,
+                del_count
             );
         }
 
@@ -1515,13 +1549,20 @@ fn test_all_operations_on_multibyte_fixture() {
         assert!(
             (end_y as usize) >= content_start && (end_y as usize) <= content_end,
             "Line {}: Cursor Y {} should be in content area [{}, {}]",
-            line_idx, end_y, content_start, content_end
+            line_idx,
+            end_y,
+            content_start,
+            content_end
         );
 
         // Move to middle and verify cursor still visible
-        harness4.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+        harness4
+            .send_key(KeyCode::Home, KeyModifiers::NONE)
+            .unwrap();
         for _ in 0..(char_count / 2) {
-            harness4.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+            harness4
+                .send_key(KeyCode::Right, KeyModifiers::NONE)
+                .unwrap();
         }
         harness4.render().unwrap();
 
@@ -1529,15 +1570,22 @@ fn test_all_operations_on_multibyte_fixture() {
         assert!(
             (mid_y as usize) >= content_start && (mid_y as usize) <= content_end,
             "Line {}: Cursor Y {} at middle should be in content area",
-            line_idx, mid_y
+            line_idx,
+            mid_y
         );
 
-        println!("  Screen cursor: end=({}, {}), mid=({}, {}): ✓", end_x, end_y, mid_x, mid_y);
+        println!(
+            "  Screen cursor: end=({}, {}), mid=({}, {}): ✓",
+            end_x, end_y, mid_x, mid_y
+        );
 
         println!("  Line {} PASSED all operations", line_idx);
     }
 
-    println!("\n=== All {} lines passed all operations ===", content_lines.len());
+    println!(
+        "\n=== All {} lines passed all operations ===",
+        content_lines.len()
+    );
 }
 
 // ============================================================================
@@ -1570,7 +1618,9 @@ fn test_mouse_select_double_width_characters() {
 
     // Test 1: Drag across first two characters (visual cols 0-3)
     // Should select "你好" (bytes 0-6)
-    harness.mouse_drag(gutter_x, row, gutter_x + 4, row).unwrap();
+    harness
+        .mouse_drag(gutter_x, row, gutter_x + 4, row)
+        .unwrap();
     harness.render().unwrap();
 
     assert!(harness.has_selection(), "Should have selection after drag");
@@ -1583,16 +1633,21 @@ fn test_mouse_select_double_width_characters() {
     assert!(
         valid_boundaries.contains(&range.start),
         "Selection start {} must be at valid character boundary {:?}",
-        range.start, valid_boundaries
+        range.start,
+        valid_boundaries
     );
     assert!(
         valid_boundaries.contains(&range.end),
         "Selection end {} must be at valid character boundary {:?}",
-        range.end, valid_boundaries
+        range.end,
+        valid_boundaries
     );
 
     let selected = harness.get_selected_text();
-    println!("Selected '{}' (bytes {}-{})", selected, range.start, range.end);
+    println!(
+        "Selected '{}' (bytes {}-{})",
+        selected, range.start, range.end
+    );
 
     // The selected text must be valid UTF-8 (this will panic if not)
     assert!(
@@ -1623,7 +1678,9 @@ fn test_mouse_select_snaps_to_character_boundary() {
     // to third column of 好 (middle of second character)
     // Visual: 你(col 0-1), 好(col 2-3)
     // Start at col 1 (middle of 你), end at col 3 (middle of 好)
-    harness.mouse_drag(gutter_x + 1, row, gutter_x + 3, row).unwrap();
+    harness
+        .mouse_drag(gutter_x + 1, row, gutter_x + 3, row)
+        .unwrap();
     harness.render().unwrap();
 
     assert!(harness.has_selection(), "Should have selection after drag");
@@ -1637,22 +1694,28 @@ fn test_mouse_select_snaps_to_character_boundary() {
     assert!(
         valid_boundaries.contains(&range.start),
         "BUG: Selection start {} is mid-character! Must snap to {:?}",
-        range.start, valid_boundaries
+        range.start,
+        valid_boundaries
     );
     assert!(
         valid_boundaries.contains(&range.end),
         "BUG: Selection end {} is mid-character! Must snap to {:?}",
-        range.end, valid_boundaries
+        range.end,
+        valid_boundaries
     );
 
     let selected = harness.get_selected_text();
-    println!("Drag mid-char to mid-char: selected '{}' (bytes {}-{})", selected, range.start, range.end);
+    println!(
+        "Drag mid-char to mid-char: selected '{}' (bytes {}-{})",
+        selected, range.start, range.end
+    );
 
     // Verify selected text is valid UTF-8
     for (i, _) in selected.char_indices() {
         assert!(
             selected.is_char_boundary(i),
-            "Selected text has invalid UTF-8 at byte {}", i
+            "Selected text has invalid UTF-8 at byte {}",
+            i
         );
     }
 }
@@ -1678,7 +1741,9 @@ fn test_mouse_select_emoji() {
     let valid_boundaries = [0, 4, 8];
 
     // Drag across both emoji
-    harness.mouse_drag(gutter_x, row, gutter_x + 4, row).unwrap();
+    harness
+        .mouse_drag(gutter_x, row, gutter_x + 4, row)
+        .unwrap();
     harness.render().unwrap();
 
     assert!(harness.has_selection(), "Should have selection");
@@ -1700,7 +1765,10 @@ fn test_mouse_select_emoji() {
     );
 
     let selected = harness.get_selected_text();
-    println!("Selected emoji: '{}' (bytes {}-{})", selected, range.start, range.end);
+    println!(
+        "Selected emoji: '{}' (bytes {}-{})",
+        selected, range.start, range.end
+    );
 }
 
 /// Test mouse selection on mixed ASCII and multi-byte content
@@ -1726,7 +1794,9 @@ fn test_mouse_select_mixed_content() {
 
     // Drag from 'a' to 'b' (should include 你)
     // Visual: a(col 0), 你(col 1-2), b(col 3)
-    harness.mouse_drag(gutter_x, row, gutter_x + 4, row).unwrap();
+    harness
+        .mouse_drag(gutter_x, row, gutter_x + 4, row)
+        .unwrap();
     harness.render().unwrap();
 
     assert!(harness.has_selection(), "Should have selection");
@@ -1738,16 +1808,21 @@ fn test_mouse_select_mixed_content() {
     assert!(
         valid_boundaries.contains(&range.start),
         "BUG: Selection start {} is mid-character! Valid boundaries: {:?}",
-        range.start, valid_boundaries
+        range.start,
+        valid_boundaries
     );
     assert!(
         valid_boundaries.contains(&range.end),
         "BUG: Selection end {} is mid-character! Valid boundaries: {:?}",
-        range.end, valid_boundaries
+        range.end,
+        valid_boundaries
     );
 
     let selected = harness.get_selected_text();
-    println!("Mixed content selection: '{}' (bytes {}-{})", selected, range.start, range.end);
+    println!(
+        "Mixed content selection: '{}' (bytes {}-{})",
+        selected, range.start, range.end
+    );
 }
 
 /// Test that dragging backwards (right to left) also respects character boundaries
@@ -1767,7 +1842,9 @@ fn test_mouse_select_backwards() {
     let (gutter_x, _) = harness.screen_cursor_position();
 
     // Drag backwards: from end of 好 to start of 你
-    harness.mouse_drag(gutter_x + 4, row, gutter_x, row).unwrap();
+    harness
+        .mouse_drag(gutter_x + 4, row, gutter_x, row)
+        .unwrap();
     harness.render().unwrap();
 
     assert!(harness.has_selection(), "Should have selection");
@@ -1780,12 +1857,14 @@ fn test_mouse_select_backwards() {
     assert!(
         valid_boundaries.contains(&range.start),
         "Backwards selection start {} must be at valid boundary {:?}",
-        range.start, valid_boundaries
+        range.start,
+        valid_boundaries
     );
     assert!(
         valid_boundaries.contains(&range.end),
         "Backwards selection end {} must be at valid boundary {:?}",
-        range.end, valid_boundaries
+        range.end,
+        valid_boundaries
     );
 }
 
@@ -1829,7 +1908,9 @@ fn test_mouse_select_never_creates_invalid_utf8() {
                 continue;
             }
 
-            harness.mouse_drag(gutter_x + start_col, row, gutter_x + end_col, row).unwrap();
+            harness
+                .mouse_drag(gutter_x + start_col, row, gutter_x + end_col, row)
+                .unwrap();
             harness.render().unwrap();
 
             if !harness.has_selection() {
@@ -1891,7 +1972,9 @@ fn test_mouse_select_multiline_multibyte() {
     let (gutter_x, _) = harness.screen_cursor_position();
 
     // Drag from first line to second line
-    harness.mouse_drag(gutter_x, start_row, gutter_x + 2, end_row).unwrap();
+    harness
+        .mouse_drag(gutter_x, start_row, gutter_x + 2, end_row)
+        .unwrap();
     harness.render().unwrap();
 
     assert!(harness.has_selection(), "Should have multi-line selection");
@@ -1902,14 +1985,18 @@ fn test_mouse_select_multiline_multibyte() {
 
     // Get selected text - this will panic if selection created invalid UTF-8
     let selected = harness.get_selected_text();
-    println!("Multi-line selection: '{:?}' (bytes {}-{})", selected, range.start, range.end);
+    println!(
+        "Multi-line selection: '{:?}' (bytes {}-{})",
+        selected, range.start, range.end
+    );
 
     // Verify the selection is valid UTF-8 by iterating over chars
     for (i, c) in selected.char_indices() {
         assert!(
             selected.is_char_boundary(i),
             "Multi-line selection has invalid UTF-8 at byte {}: char '{}'",
-            i, c
+            i,
+            c
         );
     }
 }

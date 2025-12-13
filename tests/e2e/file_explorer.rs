@@ -1594,23 +1594,26 @@ fn test_click_empty_explorer_area_then_editor_allows_typing() {
 
     // Check key_context after file explorer click
     let key_context_after_explorer = harness.editor().get_key_context();
-    println!("Key context after explorer click: {:?}", key_context_after_explorer);
+    println!(
+        "Key context after explorer click: {:?}",
+        key_context_after_explorer
+    );
 
     // Now click on the editor area (right side of the screen)
     // With file explorer taking ~30% width, editor starts around column 40+
     let editor_col = 70; // Well into the editor area
     let editor_row = 10; // In the content area
 
-    println!(
-        "Clicking editor area at ({}, {})",
-        editor_col, editor_row
-    );
+    println!("Clicking editor area at ({}, {})", editor_col, editor_row);
     harness.mouse_click(editor_col, editor_row).unwrap();
     harness.render().unwrap();
 
     // Check key_context after editor click
     let key_context_after_editor = harness.editor().get_key_context();
-    println!("Key context after editor click: {:?}", key_context_after_editor);
+    println!(
+        "Key context after editor click: {:?}",
+        key_context_after_editor
+    );
 
     // Get the buffer content before typing
     let content_before = harness.get_buffer_content().unwrap_or_default();

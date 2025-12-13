@@ -700,7 +700,8 @@ pub fn action_to_events(
                 if let Some((prev_line_start, prev_line_content)) = iter.prev() {
                     // Calculate byte offset from visual column, ensuring valid character boundary
                     let prev_line_text = prev_line_content.trim_end_matches('\n');
-                    let byte_offset = byte_offset_at_visual_column(prev_line_text, goal_visual_column);
+                    let byte_offset =
+                        byte_offset_at_visual_column(prev_line_text, goal_visual_column);
                     let new_pos = prev_line_start + byte_offset;
 
                     // Preserve anchor if deselect_on_move is false (Emacs mark mode)
@@ -749,7 +750,8 @@ pub fn action_to_events(
                 if let Some((next_line_start, next_line_content)) = iter.next() {
                     // Calculate byte offset from visual column, ensuring valid character boundary
                     let next_line_text = next_line_content.trim_end_matches('\n');
-                    let byte_offset = byte_offset_at_visual_column(next_line_text, goal_visual_column);
+                    let byte_offset =
+                        byte_offset_at_visual_column(next_line_text, goal_visual_column);
                     let new_pos = next_line_start + byte_offset;
 
                     // Preserve anchor if deselect_on_move is false (Emacs mark mode)

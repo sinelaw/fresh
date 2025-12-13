@@ -445,7 +445,11 @@ mod tests {
         assert_eq!(str_width("Hello"), 5);
 
         // Chinese - each char is 2 columns
-        assert_eq!(str_width("你好"), 4, "Two Chinese characters should be 4 columns");
+        assert_eq!(
+            str_width("你好"),
+            4,
+            "Two Chinese characters should be 4 columns"
+        );
 
         // Emoji - each is 2 columns
         assert_eq!(str_width("🚀"), 2, "Rocket emoji should be 2 columns");
@@ -464,7 +468,11 @@ mod tests {
         );
 
         // Japanese
-        assert_eq!(str_width("月"), 2, "Japanese Moon character should be 2 columns");
+        assert_eq!(
+            str_width("月"),
+            2,
+            "Japanese Moon character should be 2 columns"
+        );
     }
 
     /// BUG TEST: wrap_line counts characters, not visual width
@@ -474,7 +482,10 @@ mod tests {
         // Create a narrow terminal: 20 columns total
         // After gutter (8) and scrollbar (1), we have 11 columns for text
         let config = WrapConfig::new(20, 8, true);
-        assert_eq!(config.first_line_width, 11, "Should have 11 columns for text");
+        assert_eq!(
+            config.first_line_width, 11,
+            "Should have 11 columns for text"
+        );
 
         // Create text with Chinese characters
         // "你好世界啊" = 5 characters, but 10 visual columns
@@ -559,7 +570,11 @@ mod tests {
         assert_eq!(str_width(mixed_exact), 11);
 
         let segments_exact = wrap_line(mixed_exact, &config);
-        assert_eq!(segments_exact.len(), 1, "11 visual columns should fit exactly in 11");
+        assert_eq!(
+            segments_exact.len(),
+            1,
+            "11 visual columns should fit exactly in 11"
+        );
 
         // "Hello你好世界" = 9 characters, but 13 visual columns (5 + 8)
         // This should wrap!
@@ -583,8 +598,8 @@ mod tests {
     #[test]
     fn test_chars_count_vs_visual_width_bug() {
         // This test demonstrates WHY the bug exists
-        let chinese = "你好世界";  // 4 characters, 8 visual columns
-        let ascii = "HelloWor";    // 8 characters, 8 visual columns
+        let chinese = "你好世界"; // 4 characters, 8 visual columns
+        let ascii = "HelloWor"; // 8 characters, 8 visual columns
 
         // Both should take the same visual space on screen
         assert_eq!(str_width(chinese), str_width(ascii), "Same visual width");
@@ -597,7 +612,7 @@ mod tests {
         // So it thinks "你好世界" takes 4 columns and "HelloWor" takes 8 columns
         // But they both take 8 visual columns on screen!
 
-        let config = WrapConfig::new(20, 8, true);  // 11 columns for text
+        let config = WrapConfig::new(20, 8, true); // 11 columns for text
 
         let chinese_segments = wrap_line(chinese, &config);
         let ascii_segments = wrap_line(ascii, &config);

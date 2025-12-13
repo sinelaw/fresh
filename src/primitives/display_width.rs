@@ -52,10 +52,7 @@ impl DisplayWidth for String {
 /// Returns the sum of display widths of all characters before the given byte offset.
 #[inline]
 pub fn visual_column_at_byte(s: &str, byte_offset: usize) -> usize {
-    s[..byte_offset.min(s.len())]
-        .chars()
-        .map(char_width)
-        .sum()
+    s[..byte_offset.min(s.len())].chars().map(char_width).sum()
 }
 
 /// Convert a visual column to a byte offset within a string.

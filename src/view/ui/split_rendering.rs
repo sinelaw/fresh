@@ -5,11 +5,11 @@ use std::collections::BTreeMap;
 use crate::app::types::ViewLineMapping;
 use crate::app::BufferMetadata;
 use crate::model::buffer::Buffer;
-use crate::primitives::display_width::char_width;
 use crate::model::cursor::SelectionMode;
 use crate::model::event::{BufferId, EventLog, SplitDirection};
 use crate::primitives::ansi::AnsiParser;
 use crate::primitives::ansi_background::AnsiBackground;
+use crate::primitives::display_width::char_width;
 use crate::services::plugins::api::ViewTransformPayload;
 use crate::state::{EditorState, ViewMode};
 use crate::view::split::SplitManager;
@@ -2115,8 +2115,7 @@ impl SplitRenderer {
                     if !have_cursor {
                         if let Some(bp) = byte_pos {
                             if bp == primary_cursor_position && char_width(ch) == 0 {
-                                cursor_screen_x =
-                                    gutter_width as u16 + visible_char_count as u16;
+                                cursor_screen_x = gutter_width as u16 + visible_char_count as u16;
                                 cursor_screen_y = lines.len() as u16;
                                 have_cursor = true;
                             }
