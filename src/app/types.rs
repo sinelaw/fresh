@@ -347,11 +347,22 @@ pub(super) struct MouseState {
 /// Each entry represents one visual row with byte position info for click handling
 #[derive(Debug, Clone, Default)]
 pub struct ViewLineMapping {
-    /// Maps display column to buffer byte position (None for injected/virtual content)
-    pub char_mappings: Vec<Option<usize>>,
+    /// Source byte offset for each character (None for injected/virtual content)
+    pub char_source_bytes: Vec<Option<usize>>,
+    /// Character index at each visual column (for O(1) mouse clicks)
+    pub visual_to_char: Vec<usize>,
     /// Last valid byte position in this visual row (newline for real lines, last char for wrapped)
     /// Clicks past end of visible text position cursor here
     pub line_end_byte: usize,
+}
+
+impl ViewLineMapping {
+    /// Get source byte at a given visual column (O(1) for mouse clicks)
+    #[inline]
+    pub fn source_byte_at_visual_col(&self, visual_col: usize) -> Option<usize> {
+        let char_idx = self.visual_to_char.get(visual_col).copied()?;
+        self.char_source_bytes.get(char_idx).copied().flatten()
+    }
 }
 
 /// Cached layout information for mouse hit testing

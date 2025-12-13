@@ -3975,16 +3975,17 @@ impl Editor {
         // Use cached view line mappings for accurate position lookup
         let visual_row = content_row as usize;
 
-        // Helper to get position from a line mapping at a given column
+        // Helper to get position from a line mapping at a given visual column
         let position_from_mapping =
             |line_mapping: &crate::app::types::ViewLineMapping, col: usize| -> usize {
-                if col < line_mapping.char_mappings.len() {
-                    if let Some(byte_pos) = line_mapping.char_mappings[col] {
+                if col < line_mapping.visual_to_char.len() {
+                    // Use O(1) lookup: visual column -> char index -> source byte
+                    if let Some(byte_pos) = line_mapping.source_byte_at_visual_col(col) {
                         return byte_pos;
                     }
                     // Column maps to virtual/injected content - find nearest real position
                     for c in (0..col).rev() {
-                        if let Some(byte_pos) = line_mapping.char_mappings[c] {
+                        if let Some(byte_pos) = line_mapping.source_byte_at_visual_col(c) {
                             return byte_pos;
                         }
                     }

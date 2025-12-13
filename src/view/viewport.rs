@@ -214,7 +214,7 @@ impl Viewport {
         let mut best_match = 0;
 
         for (idx, line) in view_lines.iter().enumerate() {
-            if let Some(first_source) = line.char_mappings.iter().find_map(|m| *m) {
+            if let Some(first_source) = line.char_source_bytes.iter().find_map(|m| *m) {
                 if first_source <= target_byte {
                     // This line starts at or before target, so it might contain it
                     best_match = idx;
@@ -233,14 +233,14 @@ impl Viewport {
     fn get_source_byte_for_view_line(&self, view_lines: &[ViewLine], idx: usize) -> Option<usize> {
         // Start from the requested index and walk forward to find a line with source mapping
         for line in view_lines.iter().skip(idx) {
-            if let Some(source_byte) = line.char_mappings.iter().find_map(|m| *m) {
+            if let Some(source_byte) = line.char_source_bytes.iter().find_map(|m| *m) {
                 return Some(source_byte);
             }
         }
         // If all remaining lines are injected, try to get the last known source position
         // by walking backwards
         for line in view_lines.iter().take(idx).rev() {
-            if let Some(source_byte) = line.char_mappings.iter().find_map(|m| *m) {
+            if let Some(source_byte) = line.char_source_bytes.iter().find_map(|m| *m) {
                 // This is the last source position before our target
                 // We want to stay at that position
                 return Some(source_byte);
@@ -338,7 +338,7 @@ impl Viewport {
             // Count how many virtual lines (lines without source content) precede the cursor
             let mut virtual_lines_above = 0;
             for i in (0..cursor_view_line).rev() {
-                let has_source = view_lines[i].char_mappings.iter().any(|m| m.is_some());
+                let has_source = view_lines[i].char_source_bytes.iter().any(|m| m.is_some());
                 if has_source {
                     break; // Hit a source line, stop counting
                 }
@@ -375,7 +375,7 @@ impl Viewport {
             let line = &view_lines[cursor_view_line];
             // Get the byte position of the first character in this line
             // Then calculate cursor column as visual width from line start
-            let line_start = line.char_mappings.iter().find_map(|m| *m).unwrap_or(0);
+            let line_start = line.char_source_bytes.iter().find_map(|m| *m).unwrap_or(0);
             let cursor_byte_offset = cursor.position.saturating_sub(line_start);
 
             // Calculate visual column by walking through characters and summing widths
