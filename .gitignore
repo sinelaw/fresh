@@ -32,3 +32,6 @@ types/fresh.d.ts
 # Nix/direnv
 .direnv/
 result
+
+# Proptest regression files
+proptest-regressions/
