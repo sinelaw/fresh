@@ -8,6 +8,26 @@ use ratatui::{
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
+/// Clamp a rectangle to fit within bounds, preventing out-of-bounds rendering panics.
+/// Returns a rectangle that is guaranteed to be fully contained within `bounds`.
+fn clamp_rect_to_bounds(rect: Rect, bounds: Rect) -> Rect {
+    // Clamp x to be within bounds
+    let x = rect.x.min(bounds.x + bounds.width.saturating_sub(1));
+    // Clamp y to be within bounds
+    let y = rect.y.min(bounds.y + bounds.height.saturating_sub(1));
+
+    // Calculate maximum possible width/height from the clamped position
+    let max_width = (bounds.x + bounds.width).saturating_sub(x);
+    let max_height = (bounds.y + bounds.height).saturating_sub(y);
+
+    Rect {
+        x,
+        y,
+        width: rect.width.min(max_width),
+        height: rect.height.min(max_height),
+    }
+}
+
 /// Position of a popup relative to a point in the buffer
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PopupPosition {
@@ -496,6 +516,17 @@ impl Popup {
                     .content_height()
                     .min(self.max_height)
                     .min(terminal_area.height);
+                // Clamp x and y to ensure popup stays within terminal bounds
+                let x = if x + width > terminal_area.width {
+                    terminal_area.width.saturating_sub(width)
+                } else {
+                    x
+                };
+                let y = if y + height > terminal_area.height {
+                    terminal_area.height.saturating_sub(height)
+                } else {
+                    y
+                };
                 Rect {
                     x,
                     y,
@@ -534,6 +565,15 @@ impl Popup {
         theme: &crate::view::theme::Theme,
         hover_target: Option<&crate::app::HoverTarget>,
     ) {
+        // Defensive bounds checking: clamp area to frame bounds to prevent panic
+        let frame_area = frame.area();
+        let area = clamp_rect_to_bounds(area, frame_area);
+
+        // Skip rendering if area is empty after clamping
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
         // Clear the area behind the popup first to hide underlying text
         frame.render_widget(Clear, area);
 
@@ -806,5 +846,76 @@ mod tests {
         let area = popup_below.calculate_area(terminal_area, Some((20, 10)));
         assert_eq!(area.x, 20);
         assert_eq!(area.y, 12); // Two rows below cursor (allows space for cursor line)
+    }
+
+    #[test]
+    fn test_popup_fixed_position_clamping() {
+        let theme = crate::view::theme::Theme::dark();
+        let terminal_area = Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 50,
+        };
+
+        let popup = Popup::text(vec!["test".to_string()], &theme)
+            .with_width(30)
+            .with_max_height(10);
+
+        // Fixed position within bounds - should stay as specified
+        let popup_fixed = popup.clone().with_position(PopupPosition::Fixed { x: 10, y: 20 });
+        let area = popup_fixed.calculate_area(terminal_area, None);
+        assert_eq!(area.x, 10);
+        assert_eq!(area.y, 20);
+
+        // Fixed position at right edge - x should be clamped
+        let popup_right_edge = popup.clone().with_position(PopupPosition::Fixed { x: 99, y: 20 });
+        let area = popup_right_edge.calculate_area(terminal_area, None);
+        // x=99 + width=30 > 100, so x should be clamped to 100-30=70
+        assert_eq!(area.x, 70);
+        assert_eq!(area.y, 20);
+
+        // Fixed position beyond right edge - x should be clamped
+        let popup_beyond = popup.clone().with_position(PopupPosition::Fixed { x: 199, y: 20 });
+        let area = popup_beyond.calculate_area(terminal_area, None);
+        // x=199 + width=30 > 100, so x should be clamped to 100-30=70
+        assert_eq!(area.x, 70);
+        assert_eq!(area.y, 20);
+
+        // Fixed position at bottom edge - y should be clamped
+        let popup_bottom = popup.clone().with_position(PopupPosition::Fixed { x: 10, y: 49 });
+        let area = popup_bottom.calculate_area(terminal_area, None);
+        assert_eq!(area.x, 10);
+        // y=49 + height=3 > 50, so y should be clamped to 50-3=47
+        assert_eq!(area.y, 47);
+    }
+
+    #[test]
+    fn test_clamp_rect_to_bounds() {
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 50,
+        };
+
+        // Rect within bounds - unchanged
+        let rect = Rect { x: 10, y: 20, width: 30, height: 10 };
+        let clamped = super::clamp_rect_to_bounds(rect, bounds);
+        assert_eq!(clamped, rect);
+
+        // Rect at exact right edge of bounds
+        let rect = Rect { x: 99, y: 20, width: 30, height: 10 };
+        let clamped = super::clamp_rect_to_bounds(rect, bounds);
+        assert_eq!(clamped.x, 99); // x is within bounds
+        assert_eq!(clamped.width, 1); // width clamped to fit
+
+        // Rect beyond bounds
+        let rect = Rect { x: 199, y: 60, width: 30, height: 10 };
+        let clamped = super::clamp_rect_to_bounds(rect, bounds);
+        assert_eq!(clamped.x, 99); // x clamped to last valid position
+        assert_eq!(clamped.y, 49); // y clamped to last valid position
+        assert_eq!(clamped.width, 1); // width clamped to fit
+        assert_eq!(clamped.height, 1); // height clamped to fit
     }
 }

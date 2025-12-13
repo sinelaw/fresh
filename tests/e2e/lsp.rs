@@ -3318,3 +3318,54 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test that hover popup at the right edge of screen doesn't panic.
+///
+/// Reproduces the panic:
+/// "index outside of buffer: the area is Rect { x: 0, y: 0, width: 199, height: 44 }
+/// but index is (199, 31)"
+///
+/// The bug occurs when:
+/// 1. User hovers over an LSP symbol near the right edge of the screen
+/// 2. The popup is positioned with PopupPosition::Fixed { x, y } where x equals or exceeds
+///    the terminal width
+/// 3. calculate_area() for Fixed position doesn't clamp x to ensure x + width <= terminal_width
+/// 4. render_with_hover() tries to render the popup at an out-of-bounds position
+#[test]
+fn test_hover_popup_at_right_edge_does_not_panic() -> std::io::Result<()> {
+    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+
+    // Use the exact dimensions from the panic: width 199, height 44
+    let mut harness = EditorTestHarness::new(199, 44)?;
+
+    // Show a hover popup at the right edge of the screen (x = 199, which equals width)
+    // This simulates what happens when mouse_hover_screen_position is at the right edge
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Hover".to_string()),
+            content: PopupContentData::Text(vec![
+                "fn example() -> i32".to_string(),
+                "Returns an example value".to_string(),
+            ]),
+            // Position at x=199 (right edge) - this triggers the bug
+            position: PopupPositionData::Fixed { x: 199, y: 30 },
+            width: 80,
+            max_height: 20,
+            bordered: true,
+        },
+    });
+
+    // This render call triggers the panic in the buggy code
+    harness.render()?;
+
+    // If we get here without panicking, the fix works
+    let screen = harness.screen_to_string();
+    // The popup should be visible somewhere on screen (clamped to fit)
+    assert!(
+        screen.contains("Hover") || screen.contains("example"),
+        "Hover popup should be rendered on screen"
+    );
+
+    Ok(())
+}
