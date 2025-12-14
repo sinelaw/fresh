@@ -311,42 +311,37 @@ fn main() -> io::Result<()> {
             editor.set_gpm_active(true);
         }
 
-        // Enable event log streaming if requested (only on first run)
+        let session_enabled = !args.no_session && file_to_open.is_none();
+
         if is_first_run {
+            // Enable event log streaming if requested (only on first run)
             if let Some(log_path) = &args.event_log {
                 tracing::trace!("Event logging enabled: {}", log_path.display());
                 editor.enable_event_streaming(log_path)?;
             }
-        }
 
-        // Set up warning log monitoring (to open warning log when warnings occur)
-        // Note: warning_log_handle is consumed on first use, so this only works on first run
-        if is_first_run {
+            // Set up warning log monitoring (to open warning log when warnings occur)
+            // Note: warning_log_handle is consumed on first use, so this only works on first run
             if let Some(handle) = warning_log_handle.take() {
                 editor.set_warning_log(handle.receiver, handle.path);
             }
-        }
 
-        // Try to restore previous session:
-        // - On first run (unless --no-session flag is set or a file was specified)
-        // - After project switch (restore session for the new project)
-        let session_enabled = !args.no_session && file_to_open.is_none();
-        if (is_first_run && session_enabled) || restore_session_on_restart {
-            match editor.try_restore_session() {
-                Ok(true) => {
-                    tracing::info!("Session restored successfully");
-                }
-                Ok(false) => {
-                    tracing::debug!("No previous session found");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to restore session: {}", e);
+            // Try to restore previous session on first run (unless disabled or file provided)
+            if session_enabled {
+                match editor.try_restore_session() {
+                    Ok(true) => {
+                        tracing::info!("Session restored successfully");
+                    }
+                    Ok(false) => {
+                        tracing::debug!("No previous session found");
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to restore session: {}", e);
+                    }
                 }
             }
-        }
 
-        // Open file if provided (only on first run, this takes precedence over session)
-        if is_first_run {
+            // Open file if provided (only on first run, this takes precedence over session)
             if let Some(path) = &file_to_open {
                 editor.open_file(path)?;
 
@@ -357,28 +352,45 @@ fn main() -> io::Result<()> {
                     }
                 }
             }
-        }
 
-        // Show file explorer if directory was provided (only on first run)
-        // On restart, always show file explorer for the new project
-        if (is_first_run && show_file_explorer) || !is_first_run {
-            editor.show_file_explorer();
-        }
+            // Show file explorer if directory was provided (only on first run)
+            if show_file_explorer {
+                editor.show_file_explorer();
+            }
 
-        // Check for recovery files from a crash and recover them (only on first run)
-        if is_first_run && editor.has_recovery_files().unwrap_or(false) {
-            tracing::info!("Recovery files found from previous session, recovering...");
-            match editor.recover_all_buffers() {
-                Ok(count) if count > 0 => {
-                    tracing::info!("Recovered {} buffer(s)", count);
-                }
-                Ok(_) => {
-                    tracing::info!("No buffers to recover");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to recover buffers: {}", e);
+            // Check for recovery files from a crash and recover them (only on first run)
+            if editor.has_recovery_files().unwrap_or(false) {
+                tracing::info!("Recovery files found from previous session, recovering...");
+                match editor.recover_all_buffers() {
+                    Ok(count) if count > 0 => {
+                        tracing::info!("Recovered {} buffer(s)", count);
+                    }
+                    Ok(_) => {
+                        tracing::info!("No buffers to recover");
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to recover buffers: {}", e);
+                    }
                 }
             }
+        } else {
+            // Try to restore session on restart for the new project
+            if restore_session_on_restart {
+                match editor.try_restore_session() {
+                    Ok(true) => {
+                        tracing::info!("Session restored successfully");
+                    }
+                    Ok(false) => {
+                        tracing::debug!("No previous session found");
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to restore session: {}", e);
+                    }
+                }
+            }
+
+            // Always show file explorer after restarts
+            editor.show_file_explorer();
         }
 
         // Start recovery session
