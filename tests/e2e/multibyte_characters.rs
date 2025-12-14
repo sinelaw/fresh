@@ -723,6 +723,8 @@ fn test_mouse_click_double_width_characters() {
     );
 
     // Test 2: Click in first half of 你 (column 0) -> should snap to byte 0 or 3
+    // Add delay to avoid double-click detection
+    std::thread::sleep(double_click_delay);
     harness.mouse_click(gutter_x, row).unwrap();
     harness.render().unwrap();
     let pos = harness.cursor_position();
@@ -733,6 +735,7 @@ fn test_mouse_click_double_width_characters() {
     );
 
     // Test 3: Click in second half of 你 (column 1) -> should snap to byte 3 (after 你)
+    std::thread::sleep(double_click_delay);
     harness.mouse_click(gutter_x + 1, row).unwrap();
     harness.render().unwrap();
     let pos = harness.cursor_position();
@@ -1886,6 +1889,10 @@ fn test_mouse_select_backwards() {
 fn test_mouse_select_never_creates_invalid_utf8() {
     let mut harness = EditorTestHarness::new(120, 30).unwrap();
 
+    // Delay to avoid double-click detection between consecutive drags
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+
     // Complex line: ASCII + Chinese + Emoji + ASCII
     // "Hello你好🚀World"
     let text = "Hello你好🚀World";
@@ -1914,11 +1921,20 @@ fn test_mouse_select_never_creates_invalid_utf8() {
     // H(0) e(1) l(2) l(3) o(4) 你(5-6) 好(7-8) 🚀(9-10) W(11) o(12) r(13) l(14) d(15)
     let test_positions: Vec<u16> = (0..20).collect();
 
+    // Track previous start_col to add delay when same position is reused
+    let mut prev_start_col: Option<u16> = None;
+
     for start_col in &test_positions {
         for end_col in &test_positions {
             if start_col == end_col {
                 continue;
             }
+
+            // Add delay when starting from same column as previous drag to avoid double-click
+            if prev_start_col == Some(*start_col) {
+                std::thread::sleep(double_click_delay);
+            }
+            prev_start_col = Some(*start_col);
 
             harness
                 .mouse_drag(gutter_x + start_col, row, gutter_x + end_col, row)

@@ -151,7 +151,8 @@ impl EditorTestHarness {
         let mut config = Config::default();
         config.editor.auto_indent = false; // Disable for simpler testing
         config.check_for_updates = false; // Disable update checking in tests
-                                          // Use temp directory to avoid loading project plugins in tests
+        config.editor.double_click_time_ms = 10; // Fast double-click for faster tests
+                                                 // Use temp directory to avoid loading project plugins in tests
         let editor = Editor::with_working_dir(config, width, height, Some(temp_path), dir_context)?;
 
         Ok(EditorTestHarness {
