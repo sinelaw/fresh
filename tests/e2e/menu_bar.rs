@@ -201,12 +201,20 @@ fn test_mouse_click_opens_edit_menu() {
 #[test]
 fn test_mouse_click_toggles_menu() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Delay to avoid double-click detection (use config value * 2 for safety margin)
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+
     harness.render().unwrap();
 
     // Click to open File menu
     harness.mouse_click(2, 0).unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains("New File");
+
+    // Wait to avoid double-click detection
+    std::thread::sleep(double_click_delay);
 
     // Click on File again to close it
     harness.mouse_click(2, 0).unwrap();
@@ -218,12 +226,20 @@ fn test_mouse_click_toggles_menu() {
 #[test]
 fn test_mouse_click_empty_area_closes_menu() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Delay to avoid double-click detection (use config value * 2 for safety margin)
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+
     harness.render().unwrap();
 
     // Open a menu first
     harness.mouse_click(2, 0).unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains("New File");
+
+    // Wait to avoid double-click detection
+    std::thread::sleep(double_click_delay);
 
     // Click on empty area of menu bar (far right)
     harness.mouse_click(70, 0).unwrap();
@@ -270,6 +286,10 @@ fn test_mouse_click_menu_item_executes_action() {
 fn test_mouse_click_undo_menu_item() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
+    // Delay to avoid double-click detection (use config value * 2 for safety margin)
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+
     // Type some text first
     harness.type_text("Hello World").unwrap();
     harness.render().unwrap();
@@ -279,6 +299,9 @@ fn test_mouse_click_undo_menu_item() {
     harness.mouse_click(9, 0).unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains("Undo");
+
+    // Wait to avoid double-click detection
+    std::thread::sleep(double_click_delay);
 
     // Click on Undo item (first item in Edit menu, row 2 after border)
     // Edit menu starts at column 7 (after " File " + space)

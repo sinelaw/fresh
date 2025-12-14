@@ -780,6 +780,11 @@ impl EditorTestHarness {
         self.terminal.backend().buffer()
     }
 
+    /// Get the editor's config
+    pub fn config(&self) -> &fresh::config::Config {
+        self.editor.config()
+    }
+
     /// Get text at specific cell position
     pub fn get_cell(&self, x: u16, y: u16) -> Option<String> {
         let buffer = self.buffer();

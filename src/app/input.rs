@@ -2489,12 +2489,12 @@ impl Editor {
 
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // detect double clicks, 500 ms is arbitrary but reasonable
+                // detect double clicks using configured time window
                 if let Some(previous_click_time) = self.previous_click_time {
                     let now = std::time::Instant::now();
-                    if now.duration_since(previous_click_time)
-                        < std::time::Duration::from_millis(500)
-                    {
+                    let double_click_threshold =
+                        std::time::Duration::from_millis(self.config.editor.double_click_time_ms);
+                    if now.duration_since(previous_click_time) < double_click_threshold {
                         // Double click detected
                         self.handle_mouse_double_click(col, row)?;
                         self.previous_click_time = None; // Reset
@@ -3962,6 +3962,17 @@ impl Editor {
         let content_col = col.saturating_sub(content_rect.x);
         let content_row = row.saturating_sub(content_rect.y);
 
+        tracing::debug!(
+            col,
+            row,
+            ?content_rect,
+            gutter_width,
+            content_col,
+            content_row,
+            num_mappings = cached_mappings.as_ref().map(|m| m.len()),
+            "screen_to_buffer_position"
+        );
+
         // Handle gutter clicks
         let text_col = if content_col < gutter_width {
             if !allow_gutter_click {
@@ -3992,6 +4003,14 @@ impl Editor {
                     line_mapping.line_end_byte
                 } else {
                     // Click is past end of visible content
+                    // For empty lines (only a newline), return the line start position
+                    // to keep cursor on this line rather than jumping to the next line
+                    if line_mapping.visual_to_char.len() <= 1 {
+                        // Empty or newline-only line - return first source byte if available
+                        if let Some(Some(first_byte)) = line_mapping.char_source_bytes.first() {
+                            return *first_byte;
+                        }
+                    }
                     line_mapping.line_end_byte
                 }
             };

@@ -149,6 +149,12 @@ pub struct EditorConfig {
     /// Default: 500ms
     #[serde(default = "default_mouse_hover_delay")]
     pub mouse_hover_delay_ms: u64,
+
+    /// Time window in milliseconds for detecting double-clicks.
+    /// Two clicks within this time are treated as a double-click (word selection).
+    /// Default: 500ms
+    #[serde(default = "default_double_click_time")]
+    pub double_click_time_ms: u64,
 }
 
 fn default_tab_size() -> usize {
@@ -200,6 +206,10 @@ fn default_mouse_hover_delay() -> u64 {
     500 // 500ms delay before showing hover info
 }
 
+fn default_double_click_time() -> u64 {
+    500 // 500ms window for detecting double-clicks
+}
+
 impl Default for EditorConfig {
     fn default() -> Self {
         Self {
@@ -220,6 +230,7 @@ impl Default for EditorConfig {
             highlight_context_bytes: default_highlight_context_bytes(),
             mouse_hover_enabled: true,
             mouse_hover_delay_ms: default_mouse_hover_delay(),
+            double_click_time_ms: default_double_click_time(),
         }
     }
 }

@@ -76,6 +76,10 @@
           "type": "integer",
           "description": "Auto-save interval in seconds for file recovery\nModified buffers are saved to recovery files at this interval.\nDefault: 2 seconds for fast recovery with minimal data loss.\nSet to 0 to disable periodic auto-save (manual recovery only)."
         },
+        "double_click_time_ms": {
+          "type": "integer",
+          "description": "Time window in milliseconds for detecting double-clicks.\nTwo clicks within this time are treated as a double-click (word selection).\nDefault: 500ms"
+        },
         "enable_inlay_hints": {
           "type": "boolean",
           "description": "Whether to enable LSP inlay hints (type hints, parameter hints, etc.)"

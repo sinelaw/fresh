@@ -692,6 +692,10 @@ fn test_chinese_file_save_roundtrip() {
 fn test_mouse_click_double_width_characters() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
+    // Delay to avoid double-click detection (use config value * 2 for safety margin)
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+
     // "你好" - two Chinese characters, each 3 bytes and 2 columns wide
     let text = "你好";
     harness.type_text(text).unwrap();
@@ -739,8 +743,8 @@ fn test_mouse_click_double_width_characters() {
     );
 
     // Test 4: Click at boundary between 你 and 好 (column 2) -> byte 3
-    // Add delay to avoid double-click detection (500ms threshold)
-    std::thread::sleep(std::time::Duration::from_millis(600));
+    // Add delay to avoid double-click detection
+    std::thread::sleep(double_click_delay);
     harness.mouse_click(gutter_x + 2, row).unwrap();
     harness.render().unwrap();
     let pos = harness.cursor_position();
@@ -776,6 +780,10 @@ fn test_mouse_click_double_width_characters() {
 fn test_mouse_click_mixed_ascii_and_double_width() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
+    // Delay to avoid double-click detection (use config value * 2 for safety margin)
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+
     // "a你b" - ASCII, Chinese (2 cols), ASCII
     // Bytes: a=0, 你=1-3, b=4
     // Visual columns: a=0, 你=1-2, b=3
@@ -803,8 +811,8 @@ fn test_mouse_click_mixed_ascii_and_double_width() {
         pos
     );
 
-    // Add delay to avoid double-click detection (500ms threshold)
-    std::thread::sleep(std::time::Duration::from_millis(600));
+    // Add delay to avoid double-click detection
+    std::thread::sleep(double_click_delay);
     // Click in middle of 你 (column 1 or 2) -> should NOT be byte 2 or 3
     harness.mouse_click(gutter_x + 1, row).unwrap();
     harness.render().unwrap();
@@ -815,8 +823,8 @@ fn test_mouse_click_mixed_ascii_and_double_width() {
         pos
     );
 
-    // Add delay to avoid double-click detection (500ms threshold)
-    std::thread::sleep(std::time::Duration::from_millis(600));
+    // Add delay to avoid double-click detection
+    std::thread::sleep(double_click_delay);
     harness.mouse_click(gutter_x + 2, row).unwrap();
     harness.render().unwrap();
     let pos = harness.cursor_position();
@@ -826,8 +834,8 @@ fn test_mouse_click_mixed_ascii_and_double_width() {
         pos
     );
 
-    // Add delay to avoid double-click detection (500ms threshold)
-    std::thread::sleep(std::time::Duration::from_millis(600));
+    // Add delay to avoid double-click detection
+    std::thread::sleep(double_click_delay);
     // Click on 'b' (column 3) -> byte 4 or 5
     harness.mouse_click(gutter_x + 3, row).unwrap();
     harness.render().unwrap();
@@ -838,8 +846,8 @@ fn test_mouse_click_mixed_ascii_and_double_width() {
         pos
     );
 
-    // Add delay to avoid double-click detection (500ms threshold)
-    std::thread::sleep(std::time::Duration::from_millis(600));
+    // Add delay to avoid double-click detection
+    std::thread::sleep(double_click_delay);
     // Click after 'b' (column 4+) -> byte 5
     harness.mouse_click(gutter_x + 4, row).unwrap();
     harness.render().unwrap();
@@ -854,6 +862,10 @@ fn test_mouse_click_mixed_ascii_and_double_width() {
 #[test]
 fn test_mouse_click_emoji() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Delay to avoid double-click detection (use config value * 2 for safety margin)
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
 
     // "🚀X" - rocket emoji (4 bytes, 2 cols) + ASCII
     let text = "🚀X";
@@ -880,8 +892,8 @@ fn test_mouse_click_emoji() {
         pos
     );
 
-    // Add delay to avoid double-click detection (500ms threshold)
-    std::thread::sleep(std::time::Duration::from_millis(600));
+    // Add delay to avoid double-click detection
+    std::thread::sleep(double_click_delay);
     harness.mouse_click(gutter_x + 1, row).unwrap();
     harness.render().unwrap();
     let pos = harness.cursor_position();
@@ -891,8 +903,8 @@ fn test_mouse_click_emoji() {
         pos
     );
 
-    // Add delay to avoid double-click detection (500ms threshold)
-    std::thread::sleep(std::time::Duration::from_millis(600));
+    // Add delay to avoid double-click detection
+    std::thread::sleep(double_click_delay);
     // Click on X (col 2) -> byte 4 or 5
     harness.mouse_click(gutter_x + 2, row).unwrap();
     harness.render().unwrap();
@@ -903,8 +915,8 @@ fn test_mouse_click_emoji() {
         pos
     );
 
-    // Add delay to avoid double-click detection (500ms threshold)
-    std::thread::sleep(std::time::Duration::from_millis(600));
+    // Add delay to avoid double-click detection
+    std::thread::sleep(double_click_delay);
     // Click after X (col 3+) -> byte 5
     harness.mouse_click(gutter_x + 3, row).unwrap();
     harness.render().unwrap();

@@ -825,6 +825,11 @@ impl Editor {
         self.async_bridge.as_ref()
     }
 
+    /// Get a reference to the config
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
     /// Emit a control event
     pub fn emit_event(&self, name: impl Into<String>, data: serde_json::Value) {
         self.event_broadcaster.emit_named(name, data);

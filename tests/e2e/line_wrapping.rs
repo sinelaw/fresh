@@ -1,6 +1,7 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
+use tracing_subscriber::prelude::*;
 
 /// Test basic line wrapping rendering
 #[test]
@@ -711,6 +712,12 @@ fn test_wrapped_line_scrolling_down_past_viewport() {
 /// all position the cursor at the correct buffer offset
 #[test]
 fn test_mouse_click_on_wrapped_lines() {
+    // Initialize tracing for debugging
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("fresh=debug")
+        .with_test_writer()
+        .try_init();
+
     const TERMINAL_WIDTH: u16 = 60;
     const TERMINAL_HEIGHT: u16 = 24;
     const GUTTER_WIDTH: u16 = 8; // Line numbers + margin
@@ -799,6 +806,11 @@ fn test_mouse_click_on_wrapped_lines() {
     );
     eprintln!("  ✓ Cursor correctly positioned in first visual row");
 
+    // Wait to avoid double-click detection (use config value * 2 for safety margin)
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+    std::thread::sleep(double_click_delay);
+
     // ========================================
     // Test 2: Click on continuation row (second visual row of line 1)
     // ========================================
@@ -839,6 +851,9 @@ fn test_mouse_click_on_wrapped_lines() {
     );
     eprintln!("  ✓ Cursor correctly positioned in continuation row");
 
+    // Wait to avoid double-click detection
+    std::thread::sleep(double_click_delay);
+
     // ========================================
     // Test 3: Click on empty line (line 2)
     // ========================================
@@ -878,6 +893,9 @@ fn test_mouse_click_on_wrapped_lines() {
     );
     eprintln!("  ✓ Cursor correctly positioned on empty line");
 
+    // Wait to avoid double-click detection
+    std::thread::sleep(double_click_delay);
+
     // ========================================
     // Test 4: Click on line after empty line (line 3)
     // ========================================
@@ -916,6 +934,9 @@ fn test_mouse_click_on_wrapped_lines() {
         line3_start + short_line.len()
     );
     eprintln!("  ✓ Cursor correctly positioned on line after empty line");
+
+    // Wait to avoid double-click detection
+    std::thread::sleep(double_click_delay);
 
     // ========================================
     // Test 5: Click at end of wrapped line (rightmost position before wrap)
