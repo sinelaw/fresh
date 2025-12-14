@@ -14,7 +14,7 @@ use fresh::services::gpm::{gpm_to_crossterm, GpmClient};
 use fresh::services::tracing_setup;
 use fresh::{
     app::Editor, config, config::DirectoryContext, services::release_checker,
-    services::signal_handler,
+    services::signal_handler, services::warning_log::WarningLogHandle,
 };
 use ratatui::Terminal;
 use std::{
@@ -60,6 +60,76 @@ struct FileLocation {
     path: PathBuf,
     line: Option<usize>,
     column: Option<usize>,
+}
+
+struct IterationOutcome {
+    loop_result: io::Result<()>,
+    update_result: Option<release_checker::ReleaseCheckResult>,
+    restart_dir: Option<PathBuf>,
+}
+
+fn handle_first_run_setup(
+    editor: &mut Editor,
+    args: &Args,
+    file_to_open: &Option<PathBuf>,
+    file_location: &Option<FileLocation>,
+    show_file_explorer: bool,
+    warning_log_handle: &mut Option<WarningLogHandle>,
+    session_enabled: bool,
+) -> io::Result<()> {
+    if let Some(log_path) = &args.event_log {
+        tracing::trace!("Event logging enabled: {}", log_path.display());
+        editor.enable_event_streaming(log_path)?;
+    }
+
+    if let Some(handle) = warning_log_handle.take() {
+        editor.set_warning_log(handle.receiver, handle.path);
+    }
+
+    if session_enabled {
+        match editor.try_restore_session() {
+            Ok(true) => {
+                tracing::info!("Session restored successfully");
+            }
+            Ok(false) => {
+                tracing::debug!("No previous session found");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to restore session: {}", e);
+            }
+        }
+    }
+
+    if let Some(path) = &file_to_open {
+        editor.open_file(path)?;
+
+        if let Some(ref loc) = file_location {
+            if let Some(line) = loc.line {
+                editor.goto_line_col(line, loc.column);
+            }
+        }
+    }
+
+    if show_file_explorer {
+        editor.show_file_explorer();
+    }
+
+    if editor.has_recovery_files().unwrap_or(false) {
+        tracing::info!("Recovery files found from previous session, recovering...");
+        match editor.recover_all_buffers() {
+            Ok(count) if count > 0 => {
+                tracing::info!("Recovered {} buffer(s)", count);
+            }
+            Ok(_) => {
+                tracing::info!("No buffers to recover");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to recover buffers: {}", e);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Parse a file path that may include line and column information.
@@ -157,6 +227,117 @@ fn parse_file_location(input: &str) -> FileLocation {
     }
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+fn run_editor_iteration(
+    args: &Args,
+    config: &config::Config,
+    size: (u16, u16),
+    dir_context: &DirectoryContext,
+    file_location: &Option<FileLocation>,
+    file_to_open: &Option<PathBuf>,
+    show_file_explorer: bool,
+    warning_log_handle: &mut Option<WarningLogHandle>,
+    is_first_run: bool,
+    restore_session_on_restart: bool,
+    current_working_dir: &Option<PathBuf>,
+    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    #[cfg(target_os = "linux")] gpm_client: &Option<GpmClient>,
+) -> io::Result<IterationOutcome> {
+    let mut editor = if args.no_plugins {
+        Editor::with_plugins_disabled(
+            config.clone(),
+            size.0,
+            size.1,
+            current_working_dir.clone(),
+            dir_context.clone(),
+        )?
+    } else {
+        Editor::with_working_dir(
+            config.clone(),
+            size.0,
+            size.1,
+            current_working_dir.clone(),
+            dir_context.clone(),
+        )?
+    };
+
+    #[cfg(target_os = "linux")]
+    if gpm_client.is_some() {
+        editor.set_gpm_active(true);
+    }
+
+    let session_enabled = !args.no_session && file_to_open.is_none();
+
+    if is_first_run {
+        handle_first_run_setup(
+            &mut editor,
+            args,
+            file_to_open,
+            file_location,
+            show_file_explorer,
+            warning_log_handle,
+            session_enabled,
+        )?;
+    } else {
+        if restore_session_on_restart {
+            match editor.try_restore_session() {
+                Ok(true) => {
+                    tracing::info!("Session restored successfully");
+                }
+                Ok(false) => {
+                    tracing::debug!("No previous session found");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to restore session: {}", e);
+                }
+            }
+        }
+
+        editor.show_file_explorer();
+    }
+
+    if let Err(e) = editor.start_recovery_session() {
+        tracing::warn!("Failed to start recovery session: {}", e);
+    }
+
+    if !is_first_run {
+        editor.set_status_message(format!(
+            "Switched to project: {}",
+            current_working_dir
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| ".".to_string())
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    let loop_result = run_event_loop(&mut editor, terminal, session_enabled, gpm_client);
+    #[cfg(not(target_os = "linux"))]
+    let loop_result = run_event_loop(&mut editor, terminal, session_enabled);
+
+    if let Err(e) = editor.end_recovery_session() {
+        tracing::warn!("Failed to end recovery session: {}", e);
+    }
+
+    let update_result = editor.get_update_result().cloned();
+
+    if let Some(new_dir) = editor.take_restart_dir() {
+        drop(editor);
+        terminal.clear()?;
+        return Ok(IterationOutcome {
+            loop_result,
+            update_result,
+            restart_dir: Some(new_dir),
+        });
+    }
+
+    Ok(IterationOutcome {
+        loop_result,
+        update_result,
+        restart_dir: None,
+    })
+}
+
 fn main() -> io::Result<()> {
     // Parse command-line arguments
     let args = Args::parse();
@@ -165,6 +346,7 @@ fn main() -> io::Result<()> {
     // Also create a separate warning log that captures WARN+ and notifies the editor
     let log_file = args
         .log_file
+        .clone()
         .unwrap_or_else(|| std::env::temp_dir().join("fresh.log"));
     let mut warning_log_handle = tracing_setup::init_global(&log_file);
 
@@ -285,146 +467,24 @@ fn main() -> io::Result<()> {
     // Main editor loop - supports restarting with a new working directory
     // Returns (loop_result, last_update_result) tuple
     let (result, last_update_result) = loop {
-        // Create editor with actual terminal size and working directory
-        let mut editor = if args.no_plugins {
-            Editor::with_plugins_disabled(
-                config.clone(),
-                size.width,
-                size.height,
-                current_working_dir.clone(),
-                dir_context.clone(),
-            )?
-        } else {
-            Editor::with_working_dir(
-                config.clone(),
-                size.width,
-                size.height,
-                current_working_dir.clone(),
-                dir_context.clone(),
-            )?
-        };
+        let iteration = run_editor_iteration(
+            &args,
+            &config,
+            (size.width, size.height),
+            &dir_context,
+            &file_location,
+            &file_to_open,
+            show_file_explorer,
+            &mut warning_log_handle,
+            is_first_run,
+            restore_session_on_restart,
+            &current_working_dir,
+            &mut terminal,
+            #[cfg(target_os = "linux")]
+            &gpm_client,
+        )?;
 
-        // Enable GPM software cursor if GPM is active
-        // (GPM can't draw its cursor on the alternate screen buffer used by TUI apps)
-        #[cfg(target_os = "linux")]
-        if gpm_client.is_some() {
-            editor.set_gpm_active(true);
-        }
-
-        let session_enabled = !args.no_session && file_to_open.is_none();
-
-        if is_first_run {
-            // Enable event log streaming if requested (only on first run)
-            if let Some(log_path) = &args.event_log {
-                tracing::trace!("Event logging enabled: {}", log_path.display());
-                editor.enable_event_streaming(log_path)?;
-            }
-
-            // Set up warning log monitoring (to open warning log when warnings occur)
-            // Note: warning_log_handle is consumed on first use, so this only works on first run
-            if let Some(handle) = warning_log_handle.take() {
-                editor.set_warning_log(handle.receiver, handle.path);
-            }
-
-            // Try to restore previous session on first run (unless disabled or file provided)
-            if session_enabled {
-                match editor.try_restore_session() {
-                    Ok(true) => {
-                        tracing::info!("Session restored successfully");
-                    }
-                    Ok(false) => {
-                        tracing::debug!("No previous session found");
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to restore session: {}", e);
-                    }
-                }
-            }
-
-            // Open file if provided (only on first run, this takes precedence over session)
-            if let Some(path) = &file_to_open {
-                editor.open_file(path)?;
-
-                // Navigate to line:col if specified
-                if let Some(ref loc) = file_location {
-                    if let Some(line) = loc.line {
-                        editor.goto_line_col(line, loc.column);
-                    }
-                }
-            }
-
-            // Show file explorer if directory was provided (only on first run)
-            if show_file_explorer {
-                editor.show_file_explorer();
-            }
-
-            // Check for recovery files from a crash and recover them (only on first run)
-            if editor.has_recovery_files().unwrap_or(false) {
-                tracing::info!("Recovery files found from previous session, recovering...");
-                match editor.recover_all_buffers() {
-                    Ok(count) if count > 0 => {
-                        tracing::info!("Recovered {} buffer(s)", count);
-                    }
-                    Ok(_) => {
-                        tracing::info!("No buffers to recover");
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to recover buffers: {}", e);
-                    }
-                }
-            }
-        } else {
-            // Try to restore session on restart for the new project
-            if restore_session_on_restart {
-                match editor.try_restore_session() {
-                    Ok(true) => {
-                        tracing::info!("Session restored successfully");
-                    }
-                    Ok(false) => {
-                        tracing::debug!("No previous session found");
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to restore session: {}", e);
-                    }
-                }
-            }
-
-            // Always show file explorer after restarts
-            editor.show_file_explorer();
-        }
-
-        // Start recovery session
-        if let Err(e) = editor.start_recovery_session() {
-            tracing::warn!("Failed to start recovery session: {}", e);
-        }
-
-        // Show status message on restart
-        if !is_first_run {
-            editor.set_status_message(format!(
-                "Switched to project: {}",
-                current_working_dir
-                    .as_ref()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| ".".to_string())
-            ));
-        }
-
-        // Run the editor (update checking is now handled internally by Editor)
-        #[cfg(target_os = "linux")]
-        let loop_result = run_event_loop(&mut editor, &mut terminal, session_enabled, &gpm_client);
-        #[cfg(not(target_os = "linux"))]
-        let loop_result = run_event_loop(&mut editor, &mut terminal, session_enabled);
-
-        // End recovery session (clean shutdown)
-        if let Err(e) = editor.end_recovery_session() {
-            tracing::warn!("Failed to end recovery session: {}", e);
-        }
-
-        // Save update result before potentially dropping editor
-        let update_result = editor.get_update_result().cloned();
-
-        // Check if we should restart with a new working directory
-        if let Some(new_dir) = editor.take_restart_dir() {
+        if let Some(new_dir) = iteration.restart_dir {
             tracing::info!(
                 "Restarting editor with new working directory: {}",
                 new_dir.display()
@@ -432,15 +492,10 @@ fn main() -> io::Result<()> {
             current_working_dir = Some(new_dir);
             is_first_run = false;
             restore_session_on_restart = true; // Restore session for the new project
-                                               // Drop the editor to clean up all resources (LSP, plugins, etc.)
-            drop(editor);
-            // Clear the terminal for the fresh start
-            terminal.clear()?;
             continue;
         }
 
-        // Normal exit - break out of the loop with update result
-        break (loop_result, update_result);
+        break (iteration.loop_result, iteration.update_result);
     };
 
     // Clean up terminal
