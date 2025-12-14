@@ -153,7 +153,8 @@ impl EditorTestHarness {
         config.check_for_updates = false; // Disable update checking in tests
         config.editor.double_click_time_ms = 10; // Fast double-click for faster tests
                                                  // Use temp directory to avoid loading project plugins in tests
-        let editor = Editor::with_working_dir(config, width, height, Some(temp_path), dir_context)?;
+        let editor =
+            Editor::with_working_dir(config, width, height, Some(temp_path), dir_context, true)?;
 
         Ok(EditorTestHarness {
             editor,
@@ -183,7 +184,8 @@ impl EditorTestHarness {
         // Disable update checking in tests to avoid flaky status bar changes
         config.check_for_updates = false;
         // Use temp directory to avoid loading project plugins in tests
-        let editor = Editor::with_working_dir(config, width, height, Some(temp_path), dir_context)?;
+        let editor =
+            Editor::with_working_dir(config, width, height, Some(temp_path), dir_context, true)?;
 
         Ok(EditorTestHarness {
             editor,
@@ -231,7 +233,7 @@ impl EditorTestHarness {
         // Disable update checking in tests to avoid flaky status bar changes
         config.check_for_updates = false;
         let editor =
-            Editor::with_working_dir(config, width, height, Some(project_root), dir_context)?;
+            Editor::with_working_dir(config, width, height, Some(project_root), dir_context, true)?;
 
         Ok(EditorTestHarness {
             editor,
@@ -268,7 +270,7 @@ impl EditorTestHarness {
         config.check_for_updates = false;
         // Create editor - it will create its own tokio runtime for async operations
         let mut editor =
-            Editor::with_working_dir(config, width, height, Some(working_dir), dir_context)?;
+            Editor::with_working_dir(config, width, height, Some(working_dir), dir_context, true)?;
 
         // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
         editor.process_async_messages();
@@ -313,7 +315,7 @@ impl EditorTestHarness {
         config.check_for_updates = false;
         // Create editor - it will create its own tokio runtime for async operations
         let mut editor =
-            Editor::with_working_dir(config, width, height, Some(working_dir), dir_context)?;
+            Editor::with_working_dir(config, width, height, Some(working_dir), dir_context, true)?;
 
         // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
         editor.process_async_messages();

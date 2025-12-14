@@ -385,23 +385,14 @@ fn main() -> io::Result<()> {
         let first_run = is_first_run;
         let session_enabled = !args.no_session && file_to_open.is_none();
 
-        let mut editor = if args.no_plugins {
-            Editor::with_plugins_disabled(
-                config.clone(),
-                size.width,
-                size.height,
-                current_working_dir.clone(),
-                dir_context.clone(),
-            )?
-        } else {
-            Editor::with_working_dir(
-                config.clone(),
-                size.width,
-                size.height,
-                current_working_dir.clone(),
-                dir_context.clone(),
-            )?
-        };
+        let mut editor = Editor::with_working_dir(
+            config.clone(),
+            size.width,
+            size.height,
+            current_working_dir.clone(),
+            dir_context.clone(),
+            !args.no_plugins,
+        )?;
 
         #[cfg(target_os = "linux")]
         if gpm_client.is_some() {

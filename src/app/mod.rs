@@ -456,7 +456,7 @@ impl Editor {
         height: u16,
         dir_context: DirectoryContext,
     ) -> io::Result<Self> {
-        Self::with_working_dir(config, width, height, None, dir_context)
+        Self::with_working_dir(config, width, height, None, dir_context, true)
     }
 
     /// Create a new editor with an explicit working directory
@@ -467,19 +467,17 @@ impl Editor {
         height: u16,
         working_dir: Option<PathBuf>,
         dir_context: DirectoryContext,
+        plugins_enabled: bool,
     ) -> io::Result<Self> {
-        Self::with_options(config, width, height, working_dir, None, true, dir_context)
-    }
-
-    /// Create a new editor with plugins disabled
-    pub fn with_plugins_disabled(
-        config: Config,
-        width: u16,
-        height: u16,
-        working_dir: Option<PathBuf>,
-        dir_context: DirectoryContext,
-    ) -> io::Result<Self> {
-        Self::with_options(config, width, height, working_dir, None, false, dir_context)
+        Self::with_options(
+            config,
+            width,
+            height,
+            working_dir,
+            None,
+            plugins_enabled,
+            dir_context,
+        )
     }
 
     /// Create a new editor with a custom filesystem backend (for testing)
