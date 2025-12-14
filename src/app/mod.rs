@@ -442,6 +442,10 @@ pub struct Editor {
 
     /// Timestamp of the previous mouse click (for double-click detection)
     previous_click_time: Option<std::time::Instant>,
+
+    /// Position of the previous mouse click (for double-click detection)
+    /// Double-click is only detected if both clicks are at the same position
+    previous_click_position: Option<(u16, u16)>,
 }
 
 impl Editor {
@@ -812,6 +816,7 @@ impl Editor {
             keyboard_capture: false,
             terminal_mode_resume: std::collections::HashSet::new(),
             previous_click_time: None,
+            previous_click_position: None,
         })
     }
 

@@ -2489,24 +2489,31 @@ impl Editor {
 
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // detect double clicks using configured time window
-                if let Some(previous_click_time) = self.previous_click_time {
+                // Detect double clicks using configured time window AND same position
+                let is_double_click = if let (Some(previous_time), Some(previous_pos)) =
+                    (self.previous_click_time, self.previous_click_position)
+                {
                     let now = std::time::Instant::now();
                     let double_click_threshold =
                         std::time::Duration::from_millis(self.config.editor.double_click_time_ms);
-                    if now.duration_since(previous_click_time) < double_click_threshold {
-                        // Double click detected
-                        self.handle_mouse_double_click(col, row)?;
-                        self.previous_click_time = None; // Reset
-                        needs_render = true;
-                        return Ok(needs_render);
-                    } else {
-                        // Not a double click, update time
-                        self.previous_click_time = Some(now);
-                    }
+                    let within_time = now.duration_since(previous_time) < double_click_threshold;
+                    let same_position = previous_pos == (col, row);
+                    within_time && same_position
                 } else {
-                    // First click, store time
+                    false
+                };
+
+                if is_double_click {
+                    // Double click detected - both clicks within time threshold AND at same position
+                    self.handle_mouse_double_click(col, row)?;
+                    self.previous_click_time = None;
+                    self.previous_click_position = None;
+                    needs_render = true;
+                    return Ok(needs_render);
+                } else {
+                    // Not a double click - store time and position for next click
                     self.previous_click_time = Some(std::time::Instant::now());
+                    self.previous_click_position = Some((col, row));
                 }
                 self.handle_mouse_click(col, row)?;
                 needs_render = true;
@@ -2965,33 +2972,107 @@ impl Editor {
     }
 
     /// Handle mouse double click (down event)
+    /// Double-click in editor area selects the word under the cursor.
     pub(super) fn handle_mouse_double_click(&mut self, col: u16, row: u16) -> std::io::Result<()> {
         tracing::debug!("handle_mouse_double_click at col={}, row={}", col, row);
 
-        // is it in the file open dialog?
+        // Is it in the file open dialog?
         if self.handle_file_open_double_click(col, row) {
             return Ok(());
         }
 
-        // Check if double-click is on an editor area and update key_context accordingly
-        // This is needed because double-click bypasses handle_mouse_click which normally handles this
-        for (_split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &self.cached_layout.split_areas
+        // Find which split/buffer was clicked and handle double-click
+        let split_areas = self.cached_layout.split_areas.clone();
+        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
+            &split_areas
         {
             if col >= content_rect.x
                 && col < content_rect.x + content_rect.width
                 && row >= content_rect.y
                 && row < content_rect.y + content_rect.height
             {
-                // Clicked on an editor split - reset key_context
+                // Double-clicked on an editor split
                 if self.is_terminal_buffer(*buffer_id) {
                     self.key_context = crate::input::keybindings::KeyContext::Terminal;
-                } else {
-                    self.key_context = crate::input::keybindings::KeyContext::Normal;
+                    // Don't select word in terminal buffers
+                    return Ok(());
                 }
-                break;
+
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
+
+                // Position cursor at click location and select word
+                self.handle_editor_double_click(col, row, *split_id, *buffer_id, *content_rect)?;
+                return Ok(());
             }
         }
+
+        Ok(())
+    }
+
+    /// Handle double-click in editor content area - selects the word under cursor
+    fn handle_editor_double_click(
+        &mut self,
+        col: u16,
+        row: u16,
+        split_id: crate::model::event::SplitId,
+        buffer_id: BufferId,
+        content_rect: ratatui::layout::Rect,
+    ) -> std::io::Result<()> {
+        use crate::model::event::Event;
+
+        // Focus this split
+        self.focus_split(split_id, buffer_id);
+
+        // Get cached view line mappings for this split
+        let cached_mappings = self
+            .cached_layout
+            .view_line_mappings
+            .get(&split_id)
+            .cloned();
+
+        // Get fallback from SplitViewState viewport
+        let fallback = self
+            .split_view_states
+            .get(&split_id)
+            .map(|vs| vs.viewport.top_byte)
+            .unwrap_or(0);
+
+        // Calculate clicked position in buffer
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            let gutter_width = state.margins.left_total_width() as u16;
+
+            let Some(target_position) = Self::screen_to_buffer_position(
+                col,
+                row,
+                content_rect,
+                gutter_width,
+                &cached_mappings,
+                fallback,
+                true, // Allow gutter clicks
+            ) else {
+                return Ok(());
+            };
+
+            // Move cursor to clicked position first
+            let primary_cursor_id = state.cursors.primary_id();
+            let event = Event::MoveCursor {
+                cursor_id: primary_cursor_id,
+                old_position: 0,
+                new_position: target_position,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            };
+
+            if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+                event_log.append(event.clone());
+            }
+            state.apply(&event);
+        }
+
+        // Now select the word under cursor
+        self.handle_action(Action::SelectWord)?;
 
         Ok(())
     }
