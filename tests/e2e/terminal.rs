@@ -1453,6 +1453,10 @@ fn test_click_between_splits_terminal_focus() {
     let right_split_col: u16 = 100;
     let content_row: u16 = 15;
 
+    // Delay to avoid double-click detection (use config value * 2 for safety margin)
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+
     // Repeat the click cycle 3 times to ensure consistent behavior
     for iteration in 1..=3 {
         // Currently on terminal (right split), terminal mode is active
@@ -1496,6 +1500,9 @@ fn test_click_between_splits_terminal_focus() {
             iteration
         );
 
+        // Wait to avoid double-click detection
+        std::thread::sleep(double_click_delay);
+
         // Click back on the right split (terminal)
         harness
             .send_mouse(crossterm::event::MouseEvent {
@@ -1522,6 +1529,9 @@ fn test_click_between_splits_terminal_focus() {
             "Iteration {}: Active buffer should be terminal after clicking terminal split",
             iteration
         );
+
+        // Wait to avoid double-click detection between iterations
+        std::thread::sleep(double_click_delay);
     }
 
     // Final verification: type in terminal to confirm it's truly active

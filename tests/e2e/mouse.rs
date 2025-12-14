@@ -780,6 +780,10 @@ fn test_scrollbar_drag_to_absolute_bottom() {
 fn test_horizontal_split_separator_drag_resize() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
+    // Delay to avoid double-click detection (use config value * 2 for safety margin)
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+
     // Create horizontal split via command palette
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -830,6 +834,9 @@ fn test_horizontal_split_separator_drag_resize() {
         "Ratio should increase after dragging separator down. Was {initial_ratio}, now {new_ratio}"
     );
 
+    // Wait to avoid double-click detection
+    std::thread::sleep(double_click_delay);
+
     // Drag the separator up (decreases top split size)
     let separators_after = harness.editor().get_separator_areas().to_vec();
     let (_, _, sep_x_new, sep_y_new, sep_length_new) = separators_after[0];
@@ -854,6 +861,10 @@ fn test_horizontal_split_separator_drag_resize() {
 #[test]
 fn test_vertical_split_separator_drag_resize() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Delay to avoid double-click detection (use config value * 2 for safety margin)
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
 
     // Create vertical split via command palette
     harness
@@ -904,6 +915,9 @@ fn test_vertical_split_separator_drag_resize() {
         "Ratio should increase after dragging separator right. Was {initial_ratio}, now {new_ratio}"
     );
 
+    // Wait to avoid double-click detection
+    std::thread::sleep(double_click_delay);
+
     // Drag the separator left (decreases left split size)
     let separators_after = harness.editor().get_separator_areas().to_vec();
     let (_, _, sep_x_new, sep_y_new, sep_length_new) = separators_after[0];
@@ -928,6 +942,10 @@ fn test_vertical_split_separator_drag_resize() {
 #[test]
 fn test_split_separator_drag_respects_limits() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Delay to avoid double-click detection (use config value * 2 for safety margin)
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
 
     // Create horizontal split
     harness
@@ -960,6 +978,9 @@ fn test_split_separator_drag_respects_limits() {
         max_ratio >= 0.8,
         "Ratio should be close to maximum after extreme drag down, got {max_ratio}"
     );
+
+    // Wait to avoid double-click detection
+    std::thread::sleep(double_click_delay);
 
     // Drag extremely far up (should clamp to min 0.1)
     let separators_after = harness.editor().get_separator_areas().to_vec();
@@ -1258,6 +1279,10 @@ fn test_drag_to_select_multiple_lines() {
 fn test_click_clears_selection() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
+    // Delay to avoid double-click detection (use config value * 2 for safety margin)
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+
     let content = "Some text to select\n";
     let _fixture = harness.load_buffer_from_text(content).unwrap();
     harness.render().unwrap();
@@ -1270,6 +1295,9 @@ fn test_click_clears_selection() {
     harness.render().unwrap();
 
     assert!(harness.has_selection(), "Should have selection after drag");
+
+    // Wait to avoid double-click detection
+    std::thread::sleep(double_click_delay);
 
     // Click somewhere else to clear selection
     harness.mouse_click(12, row).unwrap();
