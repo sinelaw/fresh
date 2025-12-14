@@ -467,6 +467,8 @@ fn main() -> io::Result<()> {
     // Main editor loop - supports restarting with a new working directory
     // Returns (loop_result, last_update_result) tuple
     let (result, last_update_result) = loop {
+        let first_run = is_first_run;
+
         let iteration = run_editor_iteration(
             &args,
             &config,
@@ -476,7 +478,7 @@ fn main() -> io::Result<()> {
             &file_to_open,
             show_file_explorer,
             &mut warning_log_handle,
-            is_first_run,
+            first_run,
             restore_session_on_restart,
             &current_working_dir,
             &mut terminal,
