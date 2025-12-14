@@ -68,6 +68,22 @@ struct IterationOutcome {
     restart_dir: Option<PathBuf>,
 }
 
+struct SetupState {
+    config: config::Config,
+    warning_log_handle: Option<WarningLogHandle>,
+    terminal: Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    terminal_size: (u16, u16),
+    file_location: Option<FileLocation>,
+    file_to_open: Option<PathBuf>,
+    show_file_explorer: bool,
+    dir_context: DirectoryContext,
+    current_working_dir: Option<PathBuf>,
+    #[cfg(target_os = "linux")]
+    gpm_client: Option<GpmClient>,
+    #[cfg(not(target_os = "linux"))]
+    gpm_client: Option<()>,
+}
+
 fn handle_first_run_setup(
     editor: &mut Editor,
     args: &Args,
@@ -227,6 +243,112 @@ fn parse_file_location(input: &str) -> FileLocation {
     }
 }
 
+fn initialize_app(args: &Args) -> io::Result<SetupState> {
+    let log_file = args
+        .log_file
+        .clone()
+        .unwrap_or_else(|| std::env::temp_dir().join("fresh.log"));
+    let warning_log_handle = tracing_setup::init_global(&log_file);
+
+    tracing::info!("Editor starting");
+
+    signal_handler::install_signal_handlers();
+    tracing::info!("Signal handlers installed");
+
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
+        let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
+        let _ = stdout().execute(SetCursorStyle::DefaultUserShape);
+        let _ = stdout().execute(PopKeyboardEnhancementFlags);
+        let _ = disable_raw_mode();
+        let _ = stdout().execute(LeaveAlternateScreen);
+        original_hook(panic);
+    }));
+
+    let config = if let Some(config_path) = &args.config {
+        match config::Config::load_from_file(config_path) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                eprintln!(
+                    "Error: Failed to load config from {}: {}",
+                    config_path.display(),
+                    e
+                );
+                return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
+            }
+        }
+    } else {
+        config::Config::load_or_default()
+    };
+
+    enable_raw_mode()?;
+    stdout().execute(EnterAlternateScreen)?;
+
+    let keyboard_flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS;
+    let _ = stdout().execute(PushKeyboardEnhancementFlags(keyboard_flags));
+    tracing::info!("Enabled keyboard enhancement flags: {:?}", keyboard_flags);
+
+    #[cfg(target_os = "linux")]
+    let gpm_client = match GpmClient::connect() {
+        Ok(client) => client,
+        Err(e) => {
+            tracing::warn!("Failed to connect to GPM: {}", e);
+            None
+        }
+    };
+    #[cfg(not(target_os = "linux"))]
+    let gpm_client: Option<()> = None;
+
+    if gpm_client.is_none() {
+        let _ = crossterm::execute!(stdout(), crossterm::event::EnableMouseCapture);
+        tracing::info!("Enabled crossterm mouse capture");
+    } else {
+        tracing::info!("Using GPM for mouse capture, skipping crossterm mouse protocol");
+    }
+
+    let _ = stdout().execute(SetCursorStyle::BlinkingBlock);
+    tracing::info!("Enabled blinking block cursor");
+
+    let backend = ratatui::backend::CrosstermBackend::new(stdout());
+    let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?;
+
+    let size = terminal.size()?;
+    tracing::info!("Terminal size: {}x{}", size.width, size.height);
+
+    let file_location = args
+        .file
+        .as_ref()
+        .map(|p| parse_file_location(p.to_string_lossy().as_ref()));
+
+    let (working_dir, file_to_open, show_file_explorer) = if let Some(ref loc) = file_location {
+        if loc.path.is_dir() {
+            (Some(loc.path.clone()), None, true)
+        } else {
+            (None, Some(loc.path.clone()), false)
+        }
+    } else {
+        (None, None, false)
+    };
+
+    let dir_context = DirectoryContext::from_system()?;
+    let current_working_dir = working_dir;
+
+    Ok(SetupState {
+        config,
+        warning_log_handle,
+        terminal,
+        terminal_size: (size.width, size.height),
+        file_location,
+        file_to_open,
+        show_file_explorer,
+        dir_context,
+        current_working_dir,
+        gpm_client,
+    })
+}
+
 #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
 fn run_editor_iteration(
     editor: &mut Editor,
@@ -257,121 +379,24 @@ fn main() -> io::Result<()> {
     // Parse command-line arguments
     let args = Args::parse();
 
-    // Initialize tracing - log to a file to avoid interfering with terminal UI
-    // Also create a separate warning log that captures WARN+ and notifies the editor
-    let log_file = args
-        .log_file
-        .clone()
-        .unwrap_or_else(|| std::env::temp_dir().join("fresh.log"));
-    let mut warning_log_handle = tracing_setup::init_global(&log_file);
+    let SetupState {
+        config,
+        mut warning_log_handle,
+        mut terminal,
+        terminal_size,
+        file_location,
+        file_to_open,
+        show_file_explorer,
+        dir_context,
+        current_working_dir: initial_working_dir,
+        #[cfg(target_os = "linux")]
+        gpm_client,
+        #[cfg(not(target_os = "linux"))]
+        gpm_client,
+    } = initialize_app(&args)?;
 
-    tracing::info!("Editor starting");
-
-    // Install signal handlers for SIGTERM and SIGINT
-    signal_handler::install_signal_handlers();
-    tracing::info!("Signal handlers installed");
-
-    // Set up panic hook to restore terminal
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic| {
-        let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
-        let _ = stdout().execute(SetCursorStyle::DefaultUserShape);
-        let _ = stdout().execute(PopKeyboardEnhancementFlags);
-        let _ = disable_raw_mode();
-        let _ = stdout().execute(LeaveAlternateScreen);
-        original_hook(panic);
-    }));
-
-    // Load configuration
-    let config = if let Some(config_path) = &args.config {
-        match config::Config::load_from_file(config_path) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                eprintln!(
-                    "Error: Failed to load config from {}: {}",
-                    config_path.display(),
-                    e
-                );
-                return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
-            }
-        }
-    } else {
-        // Try to load from default location, fall back to defaults
-        config::Config::load_or_default()
-    };
-
-    // Set up terminal first
-    enable_raw_mode()?;
-    stdout().execute(EnterAlternateScreen)?;
-
-    // Enable keyboard enhancement flags to support Shift+Up/Down and other modifier combinations
-    // This uses the Kitty keyboard protocol for better key detection in supported terminals
-    let keyboard_flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS;
-    let _ = stdout().execute(PushKeyboardEnhancementFlags(keyboard_flags));
-    tracing::info!("Enabled keyboard enhancement flags: {:?}", keyboard_flags);
-
-    // Try to connect to GPM for mouse support in Linux console
-    // Do this BEFORE enabling crossterm mouse capture, since GPM and xterm mouse
-    // protocols don't mix well
-    #[cfg(target_os = "linux")]
-    let gpm_client = match GpmClient::connect() {
-        Ok(client) => client,
-        Err(e) => {
-            tracing::warn!("Failed to connect to GPM: {}", e);
-            None
-        }
-    };
-    #[cfg(not(target_os = "linux"))]
-    let gpm_client: Option<()> = None;
-
-    // Enable mouse support via crossterm (xterm mouse protocol)
-    // Only do this if GPM is NOT connected, since on Linux console GPM handles mouse
-    if gpm_client.is_none() {
-        let _ = crossterm::execute!(stdout(), crossterm::event::EnableMouseCapture);
-        tracing::info!("Enabled crossterm mouse capture");
-    } else {
-        tracing::info!("Using GPM for mouse capture, skipping crossterm mouse protocol");
-    }
-
-    // Enable blinking block cursor for the primary cursor in active split
-    let _ = stdout().execute(SetCursorStyle::BlinkingBlock);
-    tracing::info!("Enabled blinking block cursor");
-
-    let backend = ratatui::backend::CrosstermBackend::new(stdout());
-    let mut terminal = Terminal::new(backend)?;
-
-    // Clear the terminal to ensure proper initialization
-    terminal.clear()?;
-
-    let size = terminal.size()?;
-    tracing::info!("Terminal size: {}x{}", size.width, size.height);
-
-    // Parse the file argument, extracting any line:col suffix
-    let file_location = args
-        .file
-        .as_ref()
-        .map(|p| parse_file_location(p.to_string_lossy().as_ref()));
-
-    // Determine if the provided path is a directory or file
-    let (working_dir, file_to_open, show_file_explorer) = if let Some(ref loc) = file_location {
-        if loc.path.is_dir() {
-            // Path is a directory: use as working dir, don't open any file, show file explorer
-            (Some(loc.path.clone()), None, true)
-        } else {
-            // Path is a file: use current dir as working dir, open the file, don't auto-show explorer
-            (None, Some(loc.path.clone()), false)
-        }
-    } else {
-        // No path provided: use current dir, no file, don't auto-show explorer
-        (None, None, false)
-    };
-
-    // Get directory context from system (data dir, config dir, etc.)
-    let dir_context = DirectoryContext::from_system()?;
-
-    // Track the current working directory (may change on restart)
-    let mut current_working_dir = working_dir;
+    let mut current_working_dir = initial_working_dir;
+    let (terminal_width, terminal_height) = terminal_size;
 
     // Track whether this is the first run (for session restore, file open, etc.)
     let mut is_first_run = true;
@@ -387,8 +412,8 @@ fn main() -> io::Result<()> {
 
         let mut editor = Editor::with_working_dir(
             config.clone(),
-            size.width,
-            size.height,
+            terminal_width,
+            terminal_height,
             current_working_dir.clone(),
             dir_context.clone(),
             !args.no_plugins,
