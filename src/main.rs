@@ -13,8 +13,8 @@ use crossterm::{
 use fresh::services::gpm::{gpm_to_crossterm, GpmClient};
 use fresh::services::tracing_setup;
 use fresh::{
-    app::script_control::ScriptControlMode, app::Editor, config, config::DirectoryContext,
-    services::release_checker, services::signal_handler,
+    app::Editor, config, config::DirectoryContext, services::release_checker,
+    services::signal_handler,
 };
 use ratatui::Terminal;
 use std::{
@@ -22,7 +22,6 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 /// A high-performance terminal text editor
 #[derive(Parser, Debug)]
@@ -49,22 +48,6 @@ struct Args {
     /// Enable event logging to the specified file
     #[arg(long, value_name = "LOG_FILE")]
     event_log: Option<PathBuf>,
-
-    /// Enable script control mode (accepts JSON commands via stdin, outputs to stdout)
-    #[arg(long)]
-    script_mode: bool,
-
-    /// Terminal width for script control mode (default: 80)
-    #[arg(long, default_value = "80")]
-    script_width: u16,
-
-    /// Terminal height for script control mode (default: 24)
-    #[arg(long, default_value = "24")]
-    script_height: u16,
-
-    /// Print script control mode command schema and exit
-    #[arg(long)]
-    script_schema: bool,
 
     /// Don't restore previous session (start fresh)
     #[arg(long)]
@@ -177,23 +160,6 @@ fn parse_file_location(input: &str) -> FileLocation {
 fn main() -> io::Result<()> {
     // Parse command-line arguments
     let args = Args::parse();
-
-    // Handle --script-schema flag
-    if args.script_schema {
-        println!("{}", fresh::app::script_control::get_command_schema());
-        return Ok(());
-    }
-
-    // Handle script control mode
-    if args.script_mode {
-        // Initialize tracing for script mode - log to stderr so it doesn't interfere with JSON output on stdout
-        tracing_subscriber::registry()
-            .with(fmt::layer().with_writer(io::stderr))
-            .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
-            .init();
-
-        return run_script_control_mode(&args);
-    }
 
     // Initialize tracing - log to a file to avoid interfering with terminal UI
     // Also create a separate warning log that captures WARN+ and notifies the editor
@@ -494,44 +460,6 @@ fn main() -> io::Result<()> {
     }
 
     result
-}
-
-/// Run the editor in script control mode
-fn run_script_control_mode(args: &Args) -> io::Result<()> {
-    // Parse the file argument, extracting any line:col suffix
-    let file_location = args
-        .file
-        .as_ref()
-        .map(|p| parse_file_location(p.to_string_lossy().as_ref()));
-
-    // Get directory context from system
-    let dir_context = DirectoryContext::from_system()?;
-
-    // Create script control mode instance
-    let mut control = if let Some(ref loc) = file_location {
-        if loc.path.is_dir() {
-            ScriptControlMode::with_working_dir(
-                args.script_width,
-                args.script_height,
-                loc.path.clone(),
-                dir_context,
-            )?
-        } else {
-            let mut ctrl =
-                ScriptControlMode::new(args.script_width, args.script_height, dir_context)?;
-            // Open the file if provided
-            ctrl.open_file(&loc.path)?;
-            // Navigate to line:col if specified
-            if let Some(line) = loc.line {
-                ctrl.goto_line_col(line, loc.column);
-            }
-            ctrl
-        }
-    } else {
-        ScriptControlMode::new(args.script_width, args.script_height, dir_context)?
-    };
-
-    control.run()
 }
 
 /// Main event loop

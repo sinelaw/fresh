@@ -203,10 +203,6 @@ For more information on how to configure resource limits, see the `docs/PROCESS_
 
 ## Advanced Topics
 
-### Script Control Mode
-
-Fresh can be launched in a special "script control mode" that allows external programs to control the editor. This is useful for integrations with tools like AI assistants. For more information, see `docs/SCRIPT_CONTROL_MODE.md`.
-
 ### Visual Regression Testing
 
 Fresh uses a visual regression testing system to ensure that UI changes are intentional. For more information, see `docs/VISUAL_REGRESSION_TESTING.md`.
