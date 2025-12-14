@@ -1699,7 +1699,10 @@ fn test_double_click_requires_same_position() {
     // If double-click was incorrectly triggered, it would select a word
     // We should NOT have a word selected since the clicks were at different positions
     let selected_text = harness.get_selected_text();
-    println!("Selected text after clicks at different positions: '{}'", selected_text);
+    println!(
+        "Selected text after clicks at different positions: '{}'",
+        selected_text
+    );
 
     // There should be no selection (or empty selection) because:
     // - The clicks were at different positions
@@ -1726,7 +1729,10 @@ fn test_double_click_requires_same_position() {
 
     // Now we SHOULD have word selection because both clicks were at the same position
     let selected_text_same_pos = harness.get_selected_text();
-    println!("Selected text after double-click at same position: '{}'", selected_text_same_pos);
+    println!(
+        "Selected text after double-click at same position: '{}'",
+        selected_text_same_pos
+    );
 
     assert!(
         !selected_text_same_pos.is_empty(),

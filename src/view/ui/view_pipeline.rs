@@ -355,7 +355,8 @@ impl<'a> Iterator for ViewLineIterator<'a> {
                                 text.push(' ');
                                 char_source_bytes.push(source);
                                 char_styles.push(token_style.clone());
-                                char_visual_cols.push(col - spaces + char_source_bytes.len() - char_idx);
+                                char_visual_cols
+                                    .push(col - spaces + char_source_bytes.len() - char_idx);
                             }
                         } else {
                             // Handle ANSI escape sequences - give them width 0

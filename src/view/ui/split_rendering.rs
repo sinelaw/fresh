@@ -1981,7 +1981,10 @@ impl SplitRenderer {
             while let Some(ch) = chars_iterator.next() {
                 // Get source byte for this character using character index
                 // (char_source_bytes is indexed by character position, not visual column)
-                let byte_pos = line_char_source_bytes.get(display_char_idx).copied().flatten();
+                let byte_pos = line_char_source_bytes
+                    .get(display_char_idx)
+                    .copied()
+                    .flatten();
 
                 // Process character through ANSI parser first (if line has ANSI)
                 // If parser returns None, the character is part of an escape sequence and should be skipped
@@ -2039,10 +2042,8 @@ impl SplitRenderer {
                             // If this byte maps to a tab character, only show cursor at tab_start
                             // Check if this is part of a tab expansion by looking at previous char
                             let prev_char_idx = display_char_idx.saturating_sub(1);
-                            let prev_byte_pos = line_char_source_bytes
-                                .get(prev_char_idx)
-                                .copied()
-                                .flatten();
+                            let prev_byte_pos =
+                                line_char_source_bytes.get(prev_char_idx).copied().flatten();
                             // Show cursor if: this is start of line, OR previous char had different byte pos
                             display_char_idx == 0 || prev_byte_pos != Some(bp)
                         })
@@ -2067,7 +2068,9 @@ impl SplitRenderer {
 
                     // Compute character style using helper function
                     // char_styles is indexed by character position, not visual column
-                    let token_style = line_char_styles.get(display_char_idx).and_then(|s| s.as_ref());
+                    let token_style = line_char_styles
+                        .get(display_char_idx)
+                        .and_then(|s| s.as_ref());
                     let CharStyleOutput {
                         style,
                         is_secondary_cursor,
@@ -2188,8 +2191,8 @@ impl SplitRenderer {
 
                 byte_index += ch.len_utf8();
                 display_char_idx += 1; // Increment character index for next lookup
-                // col_offset tracks visual column position (for indexing into visual_to_char)
-                // visual_to_char has one entry per visual column, not per character
+                                       // col_offset tracks visual column position (for indexing into visual_to_char)
+                                       // visual_to_char has one entry per visual column, not per character
                 let ch_width = char_width(ch);
                 col_offset += ch_width;
                 visible_char_count += ch_width;
@@ -2210,7 +2213,8 @@ impl SplitRenderer {
                 let last_char_idx = line_len_chars.saturating_sub(1);
                 let after_last_char_idx = line_len_chars;
 
-                let last_char_buf_pos = line_char_source_bytes.get(last_char_idx).copied().flatten();
+                let last_char_buf_pos =
+                    line_char_source_bytes.get(last_char_idx).copied().flatten();
                 let after_last_char_buf_pos = line_char_source_bytes
                     .get(after_last_char_idx)
                     .copied()
