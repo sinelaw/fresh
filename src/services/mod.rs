@@ -15,5 +15,6 @@ pub mod recovery;
 pub mod release_checker;
 pub mod signal_handler;
 pub mod terminal;
+pub mod time_source;
 pub mod tracing_setup;
 pub mod warning_log;
