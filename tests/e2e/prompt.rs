@@ -464,7 +464,7 @@ fn test_open_file_prompt_truncates_long_paths() {
 
     // The test.txt file should still be visible in the file browser
     // (wait for directory to load)
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -529,7 +529,7 @@ fn test_open_file_prompt_shows_completions_immediately() {
     harness.render().unwrap();
     for _ in 0..10 {
         let _ = harness.editor_mut().process_async_messages();
-        std::thread::sleep(Duration::from_millis(20));
+        harness.sleep(Duration::from_millis(20));
     }
     harness.render().unwrap();
 

@@ -149,7 +149,7 @@ done
     // Wait for LSP to initialize and plugin to load
     for _ in 0..20 {
         harness.process_async_and_render()?;
-        std::thread::sleep(Duration::from_millis(50));
+        harness.sleep(Duration::from_millis(50));
     }
 
     eprintln!(
@@ -176,7 +176,7 @@ done
         // Process any async messages by sending a null key event
         harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
         harness.render()?;
-        std::thread::sleep(Duration::from_millis(100));
+        harness.sleep(Duration::from_millis(100));
 
         let screen = harness.screen_to_string();
 
@@ -312,7 +312,7 @@ fn main() {
             eprintln!("Iteration {}: waiting for LSP...", i);
         }
 
-        std::thread::sleep(Duration::from_millis(100));
+        harness.sleep(Duration::from_millis(100));
     }
 
     if !lsp_ready {
@@ -344,7 +344,7 @@ fn main() {
     for i in 0..100 {
         harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
         harness.render()?;
-        std::thread::sleep(Duration::from_millis(100));
+        harness.sleep(Duration::from_millis(100));
 
         let screen = harness.screen_to_string();
 

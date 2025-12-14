@@ -1560,7 +1560,7 @@ fn test_click_between_splits_terminal_focus() {
         .editor_mut()
         .handle_terminal_key(KeyCode::Enter, KeyModifiers::NONE);
 
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
@@ -1734,7 +1734,7 @@ fn test_terminal_mode_preserved_when_switching_tabs() {
         .handle_terminal_key(KeyCode::Enter, KeyModifiers::NONE);
 
     // Wait a bit for command to execute and render
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     // The terminal should show "HI" in the output (from echo HI)
@@ -1835,7 +1835,7 @@ fn test_terminal_mode_preserved_when_switching_tabs() {
         .editor_mut()
         .handle_terminal_key(KeyCode::Enter, KeyModifiers::NONE);
 
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     // The terminal should show pwd command was executed (shows path or "pwd")
@@ -1977,12 +1977,12 @@ fn test_terminal_view_follows_output_at_bottom() {
 
         // Give the shell time to respond every few iterations
         if i % 5 == 0 {
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            harness.sleep(std::time::Duration::from_millis(20));
         }
     }
 
     // Wait for output to settle
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     // Now type a unique marker that we can search for
@@ -2374,7 +2374,7 @@ fn test_scrollback_captured_after_session_restore() {
             .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
             .unwrap();
         harness.render().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        harness.sleep(std::time::Duration::from_millis(50));
 
         // Get the full buffer content
         let content = harness
@@ -2475,7 +2475,7 @@ fn test_scrollback_stable_after_multiple_mode_toggles() {
         );
 
         // Small delay to ensure buffer sync completes
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        harness.sleep(std::time::Duration::from_millis(50));
         harness.render().unwrap();
 
         // Get the full buffer content - it should contain both markers
@@ -2540,7 +2540,7 @@ fn test_scrollback_stable_after_multiple_mode_toggles() {
         .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    harness.sleep(std::time::Duration::from_millis(50));
 
     let final_content = harness
         .editor()

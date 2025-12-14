@@ -341,7 +341,7 @@ fn test_view_menu_file_explorer_checkbox_syncs_on_close() {
 
     // Open file explorer
     harness.editor_mut().toggle_file_explorer();
-    std::thread::sleep(Duration::from_millis(100));
+    harness.sleep(Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 

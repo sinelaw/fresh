@@ -72,12 +72,12 @@ fn test_file_explorer_shows_directory_structure() {
     harness
         .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // Wait a moment for async file system operations
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     // Check that we see the project structure
@@ -104,11 +104,11 @@ fn test_file_explorer_navigation() {
     harness
         .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
 
     // Wait for initialization
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     let _screen_initial = harness.screen_to_string();
@@ -147,11 +147,11 @@ fn test_file_explorer_expand_collapse() {
     harness
         .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
 
     // Wait for initialization
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     let screen_before_expand = harness.screen_to_string();
@@ -163,7 +163,7 @@ fn test_file_explorer_expand_collapse() {
         .unwrap();
 
     // Wait for async operation
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -178,7 +178,7 @@ fn test_file_explorer_expand_collapse() {
         .send_key(KeyCode::Char('l'), KeyModifiers::ALT)
         .unwrap();
 
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 }
@@ -260,11 +260,11 @@ fn test_file_explorer_refresh() {
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
 
     // Wait for initialization
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     // Add a new file to the directory
@@ -274,7 +274,7 @@ fn test_file_explorer_refresh() {
     harness.editor_mut().file_explorer_refresh();
 
     // Wait for refresh
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -291,7 +291,7 @@ fn test_file_explorer_focus_switching() {
 
     // Open file explorer
     harness.editor_mut().toggle_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -313,7 +313,7 @@ fn test_file_explorer_focus_switching() {
 
     // Toggle file explorer back on
     harness.editor_mut().toggle_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -338,7 +338,7 @@ fn test_file_explorer_context_aware_keybindings() {
 
     // Open file explorer (starts with focus)
     harness.editor_mut().toggle_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -371,7 +371,7 @@ fn test_focus_file_explorer_action() {
 
     // Open and focus file explorer
     harness.editor_mut().focus_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -426,12 +426,12 @@ fn test_file_explorer_displays_opened_file_content() {
     harness
         .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // Wait for async file system operations
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -439,7 +439,7 @@ fn test_file_explorer_displays_opened_file_content() {
     harness
         .send_key(KeyCode::Char('l'), KeyModifiers::ALT)
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -459,7 +459,7 @@ fn test_file_explorer_displays_opened_file_content() {
     let result = harness.send_key(KeyCode::Enter, KeyModifiers::ALT);
     assert!(result.is_ok(), "Failed to send Alt+Enter: {result:?}");
 
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    harness.sleep(std::time::Duration::from_millis(50));
     harness.render().unwrap();
 
     let screen_after_open = harness.screen_to_string();
@@ -485,9 +485,9 @@ fn test_file_explorer_toggle_hidden_smoke() {
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -509,9 +509,9 @@ fn test_file_explorer_toggle_gitignored_smoke() {
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -534,15 +534,15 @@ fn test_file_explorer_new_file_smoke() {
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // Call new_file - should not panic (actual file creation depends on runtime)
     harness.editor_mut().file_explorer_new_file();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     // Test passes if no panic occurs
@@ -556,15 +556,15 @@ fn test_file_explorer_new_directory_smoke() {
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // Call new_directory - should not panic (actual creation depends on runtime)
     harness.editor_mut().file_explorer_new_directory();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     // Test passes if no panic occurs
@@ -582,15 +582,15 @@ fn test_file_explorer_delete_smoke() {
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // Expand root and navigate
     harness.editor_mut().file_explorer_toggle_expand();
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    harness.sleep(std::time::Duration::from_millis(50));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -599,7 +599,7 @@ fn test_file_explorer_delete_smoke() {
 
     // Call delete - should not panic (actual deletion depends on runtime and safety checks)
     harness.editor_mut().file_explorer_delete();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     // Test passes if no panic occurs
@@ -618,7 +618,7 @@ fn test_enter_toggles_directory() {
 
     // Open file explorer
     harness.editor_mut().focus_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -641,7 +641,7 @@ fn test_enter_toggles_directory() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::empty())
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -664,7 +664,7 @@ fn test_enter_toggles_directory() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::empty())
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -700,9 +700,9 @@ fn test_enter_opens_file_and_switches_focus() {
 
     // Open file explorer (should have focus)
     harness.editor_mut().focus_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -733,7 +733,7 @@ fn test_enter_opens_file_and_switches_focus() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::empty())
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -777,9 +777,9 @@ fn test_project_directory_expanded_on_open() {
 
     // Open file explorer for the first time
     harness.editor_mut().focus_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -830,9 +830,9 @@ fn test_unsaved_change_indicators() {
 
     // Open file explorer
     harness.editor_mut().focus_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -865,7 +865,7 @@ fn test_unsaved_change_indicators() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::empty())
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -886,7 +886,7 @@ fn test_unsaved_change_indicators() {
 
     // Go back to file explorer
     harness.editor_mut().focus_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -943,9 +943,9 @@ fn test_scroll_allows_cursor_to_top() {
 
     // Open file explorer
     harness.editor_mut().focus_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -1068,9 +1068,9 @@ fn test_tabs_above_editor_area_only() {
 
     // Open file explorer
     harness.editor_mut().focus_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -1133,9 +1133,9 @@ fn test_auto_select_file_on_focus_switch() {
 
     // Open file explorer
     harness.editor_mut().focus_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -1144,13 +1144,13 @@ fn test_auto_select_file_on_focus_switch() {
         .editor_mut()
         .open_file(&project_root.join("src/components/App.js"))
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // Switch focus to file explorer
     harness.editor_mut().focus_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    harness.sleep(std::time::Duration::from_millis(200));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -1202,7 +1202,7 @@ fn test_auto_select_file_on_focus_switch() {
 
     // Switch focus back to file explorer
     harness.editor_mut().focus_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    harness.sleep(std::time::Duration::from_millis(200));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -1228,9 +1228,9 @@ fn test_file_explorer_sync_after_hide_and_tab_switch() {
 
     // Open file explorer
     harness.editor_mut().focus_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -1239,7 +1239,7 @@ fn test_file_explorer_sync_after_hide_and_tab_switch() {
         .editor_mut()
         .open_file(&project_root.join("file1.txt"))
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -1251,7 +1251,7 @@ fn test_file_explorer_sync_after_hide_and_tab_switch() {
         .editor_mut()
         .open_file(&project_root.join("file2.txt"))
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -1287,7 +1287,7 @@ fn test_file_explorer_sync_after_hide_and_tab_switch() {
 
     // Re-open the file explorer
     harness.editor_mut().toggle_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    harness.sleep(std::time::Duration::from_millis(200));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -1329,7 +1329,7 @@ fn test_file_explorer_shows_keybinding_in_title() {
     harness
         .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -1528,9 +1528,9 @@ fn test_click_empty_explorer_area_then_editor_allows_typing() {
 
     // Open file explorer
     harness.editor_mut().focus_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
@@ -1627,7 +1627,7 @@ fn test_close_last_buffer_focuses_file_explorer() {
         .unwrap();
 
     // Wait for async file explorer initialization
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 

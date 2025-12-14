@@ -119,7 +119,7 @@ fn test_git_grep_interactive_updates() {
         harness
             .send_key(KeyCode::Backspace, KeyModifiers::NONE)
             .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        harness.sleep(std::time::Duration::from_millis(10));
     }
     harness.render().unwrap();
 
@@ -233,7 +233,7 @@ fn test_git_grep_confirm_jumps_to_location() {
     harness.render().unwrap();
 
     // Give it time to open the file
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    harness.sleep(std::time::Duration::from_millis(200));
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
@@ -390,7 +390,7 @@ fn test_git_find_file_interactive_filtering() {
         harness
             .send_key(KeyCode::Backspace, KeyModifiers::NONE)
             .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        harness.sleep(std::time::Duration::from_millis(10));
     }
     harness.type_text("lib").unwrap();
 
@@ -554,7 +554,7 @@ fn test_git_grep_scrolling_many_results() {
     for _ in 0..10 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.process_async_and_render().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        harness.sleep(std::time::Duration::from_millis(20));
     }
 
     let screen = harness.screen_to_string();
@@ -596,14 +596,14 @@ fn test_git_find_file_scrolling_many_files() {
     for _ in 0..15 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.process_async_and_render().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        harness.sleep(std::time::Duration::from_millis(20));
     }
 
     // Navigate up
     for _ in 0..5 {
         harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
         harness.process_async_and_render().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        harness.sleep(std::time::Duration::from_millis(20));
     }
 
     let screen = harness.screen_to_string();
@@ -772,7 +772,7 @@ fn test_git_find_file_actually_opens_file() {
     trigger_git_find_file(&mut harness);
 
     // Wait for file list to load first (async operation)
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    harness.sleep(std::time::Duration::from_millis(500));
     harness.render().unwrap();
 
     // Type to find lib.rs
@@ -806,7 +806,7 @@ fn test_git_find_file_actually_opens_file() {
     harness.render().unwrap();
 
     // Give time for file to load
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    harness.sleep(std::time::Duration::from_millis(200));
     harness.render().unwrap();
 
     // CRITICAL CHECKS:
@@ -1175,7 +1175,7 @@ fn test_git_log_close() {
     harness.process_async_and_render().unwrap();
 
     // Git log should be closed
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     let screen_after = harness.screen_to_string();
@@ -1941,7 +1941,7 @@ fn test_git_blame_scroll_with_many_virtual_lines() {
     for _ in 0..40 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.process_async_and_render().unwrap();
-        std::thread::sleep(Duration::from_millis(5));
+        harness.sleep(Duration::from_millis(5));
     }
     harness.render().unwrap();
 

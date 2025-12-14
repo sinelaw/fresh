@@ -314,7 +314,7 @@ fn test_git_log_split_tabs() {
         .unwrap();
 
     // Wait a bit for async operations
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     eprintln!("\n=== After git log ===");

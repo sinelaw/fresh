@@ -86,7 +86,7 @@ fn test_update_notification_appears_in_status_bar() {
             found_update = true;
             break;
         }
-        thread::sleep(Duration::from_millis(50));
+        harness.sleep(Duration::from_millis(50));
     }
 
     assert!(found_update, "Update check did not complete within timeout");
@@ -134,7 +134,7 @@ fn test_update_notification_not_shown_when_current() {
         if harness.editor().get_update_result().is_some() {
             break;
         }
-        thread::sleep(Duration::from_millis(50));
+        harness.sleep(Duration::from_millis(50));
     }
 
     // Should NOT show update notification
@@ -175,7 +175,7 @@ fn test_update_notification_positioned_near_ctrl_p() {
         if harness.editor().is_update_available() {
             break;
         }
-        thread::sleep(Duration::from_millis(50));
+        harness.sleep(Duration::from_millis(50));
     }
 
     harness.render().unwrap();

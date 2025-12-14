@@ -455,7 +455,7 @@ fn start_server(config: Config) {
     open_file(&mut harness, &repo.path, "src/main.rs");
 
     // Wait a bit for git gutter to process
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    harness.sleep(std::time::Duration::from_millis(500));
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
@@ -496,7 +496,7 @@ fn test_git_gutter_untracked_file() {
     open_file(&mut harness, &repo.path, "src/new_file.rs");
 
     // Wait a bit for git gutter to process
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    harness.sleep(std::time::Duration::from_millis(500));
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
@@ -546,7 +546,7 @@ fn test_buffer_modified_shows_on_edit() {
     harness.render().unwrap();
 
     // Wait a bit for plugin to update
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
@@ -584,7 +584,7 @@ fn test_buffer_modified_clears_after_save() {
     // Make an edit
     harness.type_text("// Unsaved change\n").unwrap();
     harness.render().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
 
     // Verify we have indicators before save
     harness.render().unwrap();
@@ -595,7 +595,7 @@ fn test_buffer_modified_clears_after_save() {
     save_file(&mut harness);
 
     // Wait for plugin to update
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    harness.sleep(std::time::Duration::from_millis(200));
     harness.render().unwrap();
 
     let screen_after = harness.screen_to_string();
@@ -671,7 +671,7 @@ fn start_server(config: Config) {
         .unwrap();
     harness.type_text("\n// Unsaved edit").unwrap();
     harness.render().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
@@ -729,7 +729,7 @@ fn start_server(config: Config) {
     open_file(&mut harness, &repo.path, "src/main.rs");
 
     // Wait for git gutter to load
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    harness.sleep(std::time::Duration::from_millis(500));
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();

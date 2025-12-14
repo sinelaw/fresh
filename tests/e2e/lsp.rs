@@ -802,7 +802,7 @@ fn test_lsp_waiting_indicator() -> std::io::Result<()> {
     // Process async messages to get LSP response
     for _ in 0..10 {
         harness.process_async_and_render()?;
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        harness.sleep(std::time::Duration::from_millis(50));
     }
 
     // Get the screen content
@@ -1043,7 +1043,7 @@ fn test_lsp_cursor_animation() -> std::io::Result<()> {
     // Process async messages to get LSP response
     for _ in 0..10 {
         harness.process_async_and_render()?;
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        harness.sleep(std::time::Duration::from_millis(50));
     }
 
     // Get screen after LSP request
@@ -1184,7 +1184,7 @@ edition = "2021"
     let mut lsp_ready = false;
     for _ in 0..40 {
         // Wait 100ms
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        harness.sleep(std::time::Duration::from_millis(100));
 
         // Process async messages
         let _ = harness.editor_mut().process_async_messages();
@@ -1208,7 +1208,7 @@ edition = "2021"
     let mut had_progress = false;
     for i in 0..120 {
         // Wait up to 12 seconds for indexing
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        harness.sleep(std::time::Duration::from_millis(100));
         let processed = harness.editor_mut().process_async_messages();
         if i < 10 && processed {
             println!("  Processed async messages at {}ms", i * 100);
@@ -1239,9 +1239,9 @@ edition = "2021"
     // Extra safety: wait a bit after progress ends to ensure all state is updated
     // rust-analyzer needs extra time after indexing to build its full semantic model
     println!("Waiting for rust-analyzer semantic analysis...");
-    std::thread::sleep(std::time::Duration::from_millis(2000));
+    harness.sleep(std::time::Duration::from_millis(2000));
     for _ in 0..20 {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        harness.sleep(std::time::Duration::from_millis(100));
         let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
     }
@@ -1313,7 +1313,7 @@ edition = "2021"
     // Wait for LSP response (rust-analyzer can take several seconds)
     let mut rename_succeeded = false;
     for i in 0..20 {
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        harness.sleep(std::time::Duration::from_millis(500));
         let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
 
@@ -1841,7 +1841,7 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     // Wait INDEFINITELY for LSP to initialize (no timeout as user requested)
     let mut wait_count = 0;
     loop {
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        harness.sleep(std::time::Duration::from_millis(500));
         let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
         wait_count += 1;
@@ -1908,7 +1908,7 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     // Wait INDEFINITELY for LSP response (no timeout)
     eprintln!("Waiting for rust-analyzer response (no timeout)...");
     loop {
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        harness.sleep(std::time::Duration::from_millis(200));
         let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
 
@@ -2185,7 +2185,7 @@ edition = "2021"
     let mut lsp_ready = false;
     for i in 0..240 {
         // Up to 24 seconds
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        harness.sleep(std::time::Duration::from_millis(100));
         let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
 
@@ -2216,7 +2216,7 @@ edition = "2021"
     eprintln!("Waiting for indexing...");
     let mut had_progress = false;
     for i in 0..120 {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        harness.sleep(std::time::Duration::from_millis(100));
         let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
 
@@ -2242,9 +2242,9 @@ edition = "2021"
 
     // Extra wait for semantic analysis (rust-analyzer needs this)
     eprintln!("Waiting for semantic analysis...");
-    std::thread::sleep(std::time::Duration::from_millis(2000));
+    harness.sleep(std::time::Duration::from_millis(2000));
     for _ in 0..20 {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        harness.sleep(std::time::Duration::from_millis(100));
         let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
     }
@@ -2293,7 +2293,7 @@ edition = "2021"
     // Wait for LSP response
     eprintln!("Waiting for first rename response...");
     for _ in 0..40 {
-        std::thread::sleep(std::time::Duration::from_millis(250));
+        harness.sleep(std::time::Duration::from_millis(250));
         let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
 
@@ -2359,7 +2359,7 @@ edition = "2021"
     // Wait for LSP response
     eprintln!("Waiting for second rename response...");
     for _ in 0..40 {
-        std::thread::sleep(std::time::Duration::from_millis(250));
+        harness.sleep(std::time::Duration::from_millis(250));
         let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
 
@@ -2455,7 +2455,7 @@ fn test_lsp_progress_status_display() -> std::io::Result<()> {
     // Poll for progress notifications
     for i in 0..30 {
         // Wait up to 3 seconds
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        harness.sleep(std::time::Duration::from_millis(100));
 
         // Process async messages from LSP
         let _ = harness.editor_mut().process_async_messages();
@@ -2610,7 +2610,7 @@ fn test_lsp_crash_detection_and_restart() -> std::io::Result<()> {
 
     // Give the LSP server a moment to initialize and process didOpen
     // The server will crash when it receives didOpen
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    harness.sleep(std::time::Duration::from_millis(200));
 
     // Render to process async messages
     harness.render()?;
@@ -2619,7 +2619,7 @@ fn test_lsp_crash_detection_and_restart() -> std::io::Result<()> {
     let mut crash_detected = false;
     let mut status_msg = String::new();
     for i in 0..30 {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        harness.sleep(std::time::Duration::from_millis(100));
 
         // Send a no-op key to trigger async message processing
         // (render() alone doesn't process async messages)
@@ -2690,7 +2690,7 @@ fn test_lsp_crash_detection_and_restart() -> std::io::Result<()> {
 
     // Wait for restart backoff (first attempt is 1 second)
     // The restart should happen automatically
-    std::thread::sleep(std::time::Duration::from_millis(1500));
+    harness.sleep(std::time::Duration::from_millis(1500));
 
     // Process messages to trigger the restart
     harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
@@ -2928,7 +2928,7 @@ fn test_pull_diagnostics_auto_trigger_after_open() -> std::io::Result<()> {
         }
 
         // Small delay between checks
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        harness.sleep(std::time::Duration::from_millis(100));
     }
 
     assert!(
@@ -3002,7 +3002,7 @@ fn test_pull_diagnostics_result_id_tracking() -> std::io::Result<()> {
             break;
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        harness.sleep(std::time::Duration::from_millis(100));
     }
 
     assert!(
@@ -3019,7 +3019,7 @@ fn test_pull_diagnostics_result_id_tracking() -> std::io::Result<()> {
     for _ in 0..30 {
         harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
         harness.render()?;
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        harness.sleep(std::time::Duration::from_millis(100));
     }
 
     // The diagnostics should still be there (server returned unchanged or new full response)
@@ -3236,7 +3236,7 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> std::io::Result<()> {
     harness.render()?;
 
     // Wait for the LSP server to initialize
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    harness.sleep(std::time::Duration::from_millis(200));
     harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
     harness.render()?;
 
@@ -3254,7 +3254,7 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> std::io::Result<()> {
     assert!(stopped, "shutdown_lsp_server should return true");
 
     // Give the shutdown a moment to complete
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    harness.sleep(std::time::Duration::from_millis(50));
     harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
     harness.render()?;
 
@@ -3273,7 +3273,7 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> std::io::Result<()> {
     harness.render()?;
 
     // Give some time for any potential LSP spawn
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.sleep(std::time::Duration::from_millis(100));
     harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
     harness.render()?;
 
@@ -3289,7 +3289,7 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> std::io::Result<()> {
     // Type more text to double-check
     harness.type_text("// Another edit\n")?;
     harness.render()?;
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    harness.sleep(std::time::Duration::from_millis(50));
     harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
     harness.render()?;
 
