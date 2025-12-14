@@ -66,6 +66,7 @@ use crate::services::lsp::manager::{detect_language, LspManager, LspSpawnResult}
 use crate::services::plugins::api::{BufferSavedDiff, PluginCommand};
 use crate::services::plugins::PluginManager;
 use crate::services::recovery::{RecoveryConfig, RecoveryService};
+use crate::services::time_source::{RealTimeSource, SharedTimeSource};
 use crate::state::EditorState;
 use crate::view::file_tree::{FileTree, FileTreeView};
 use crate::view::prompt::{Prompt, PromptType};
@@ -401,6 +402,9 @@ pub struct Editor {
     /// Recovery service for auto-save and crash recovery
     recovery_service: RecoveryService,
 
+    /// Time source for testable time operations
+    time_source: SharedTimeSource,
+
     /// Last auto-save time for rate limiting
     last_auto_save: std::time::Instant,
 
@@ -480,6 +484,7 @@ impl Editor {
             None,
             plugins_enabled,
             dir_context,
+            None,
         )
     }
 
@@ -501,6 +506,29 @@ impl Editor {
             Some(fs_backend),
             true,
             dir_context,
+            None,
+        )
+    }
+
+    /// Create a new editor with a custom time source (for testing)
+    /// This allows tests to control time for deterministic testing
+    pub fn with_time_source(
+        config: Config,
+        width: u16,
+        height: u16,
+        working_dir: Option<PathBuf>,
+        dir_context: DirectoryContext,
+        time_source: SharedTimeSource,
+    ) -> io::Result<Self> {
+        Self::with_options(
+            config,
+            width,
+            height,
+            working_dir,
+            None,
+            true,
+            dir_context,
+            Some(time_source),
         )
     }
 
@@ -515,7 +543,10 @@ impl Editor {
         fs_backend: Option<Arc<dyn FsBackend>>,
         enable_plugins: bool,
         dir_context: DirectoryContext,
+        time_source: Option<SharedTimeSource>,
     ) -> io::Result<Self> {
+        // Use provided time_source or default to RealTimeSource
+        let time_source = time_source.unwrap_or_else(RealTimeSource::shared);
         tracing::info!("Editor::new called with width={}, height={}", width, height);
 
         // Use provided working_dir or capture from environment
@@ -804,7 +835,8 @@ impl Editor {
                 };
                 RecoveryService::with_config_and_dir(recovery_config, dir_context.recovery_dir())
             },
-            last_auto_save: std::time::Instant::now(),
+            time_source: time_source.clone(),
+            last_auto_save: time_source.now(),
             active_custom_contexts: HashSet::new(),
             warning_log: None,
             update_checker,
@@ -836,6 +868,11 @@ impl Editor {
         &self.config
     }
 
+    /// Get a reference to the time source
+    pub fn time_source(&self) -> &SharedTimeSource {
+        &self.time_source
+    }
+    
     /// Emit a control event
     pub fn emit_event(&self, name: impl Into<String>, data: serde_json::Value) {
         self.event_broadcaster.emit_named(name, data);
@@ -4298,7 +4335,7 @@ impl Editor {
         // Check if enough time has passed since last auto-save
         let interval =
             std::time::Duration::from_secs(self.config.editor.auto_save_interval_secs as u64);
-        if self.last_auto_save.elapsed() < interval {
+        if self.time_source.elapsed_since(self.last_auto_save) < interval {
             return Ok(0);
         }
 
@@ -4330,7 +4367,7 @@ impl Editor {
         // Early exit if nothing to save
         if buffer_info.is_empty() {
             // Still update the timer to avoid checking buffers too frequently
-            self.last_auto_save = std::time::Instant::now();
+            self.last_auto_save = self.time_source.now();
             return Ok(0);
         }
 
@@ -4417,7 +4454,7 @@ impl Editor {
             }
         }
 
-        self.last_auto_save = std::time::Instant::now();
+        self.last_auto_save = self.time_source.now();
         Ok(saved_count)
     }
 

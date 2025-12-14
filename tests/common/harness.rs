@@ -65,6 +65,7 @@ pub mod layout {
 use fresh::config::DirectoryContext;
 use fresh::primitives::highlight_engine::HighlightEngine;
 use fresh::services::fs::{BackendMetrics, FsBackend, LocalFsBackend, SlowFsBackend, SlowFsConfig};
+use fresh::services::time_source::{SharedTimeSource, TestTimeSource};
 use fresh::{app::Editor, config::Config};
 use ratatui::{backend::TestBackend, Terminal};
 use std::io::{self, Write};
@@ -116,6 +117,9 @@ pub struct EditorTestHarness {
     /// Tokio runtime for async operations (needed for TypeScript plugins)
     _tokio_runtime: Option<tokio::runtime::Runtime>,
 
+    /// Optional test time source for controllable time in tests
+    test_time_source: Option<Arc<TestTimeSource>>,
+
     /// Shadow string that mirrors editor operations for validation
     /// This helps catch discrepancies between piece tree and simple string operations
     shadow_string: String,
@@ -162,6 +166,7 @@ impl EditorTestHarness {
             _temp_dir: Some(temp_dir),
             fs_metrics: None,
             _tokio_runtime: None,
+            test_time_source: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -193,6 +198,7 @@ impl EditorTestHarness {
             _temp_dir: Some(temp_dir),
             fs_metrics: None,
             _tokio_runtime: None,
+            test_time_source: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -241,6 +247,7 @@ impl EditorTestHarness {
             _temp_dir: Some(temp_dir),
             fs_metrics: None,
             _tokio_runtime: None,
+            test_time_source: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -281,6 +288,7 @@ impl EditorTestHarness {
             _temp_dir: Some(temp_dir),
             fs_metrics: None,
             _tokio_runtime: None,
+            test_time_source: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -326,6 +334,7 @@ impl EditorTestHarness {
             _temp_dir: None, // No owned temp dir - caller manages the shared context
             fs_metrics: None,
             _tokio_runtime: None,
+            test_time_source: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -371,6 +380,7 @@ impl EditorTestHarness {
             _temp_dir: Some(temp_dir),
             fs_metrics: Some(metrics_arc),
             _tokio_runtime: None,
+            test_time_source: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -378,6 +388,76 @@ impl EditorTestHarness {
             term_width: width,
             term_height: height,
         })
+    }
+
+    /// Create a test harness with a TestTimeSource for controllable time.
+    ///
+    /// This allows tests to advance time instantly without real sleeps,
+    /// making time-dependent tests fast and deterministic.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let harness = EditorTestHarness::with_test_time_source(80, 24)?;
+    /// // Advance time by 5 seconds instantly
+    /// harness.advance_time(Duration::from_secs(5));
+    /// ```
+    pub fn with_test_time_source(width: u16, height: u16) -> io::Result<Self> {
+        let temp_dir = TempDir::new()?;
+        let temp_path = temp_dir.path().to_path_buf();
+        let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+        // Create TestTimeSource
+        let test_time_source = Arc::new(TestTimeSource::new());
+        let time_source: SharedTimeSource = test_time_source.clone();
+
+        let backend = TestBackend::new(width, height);
+        let terminal = Terminal::new(backend)?;
+        let mut config = Config::default();
+        config.editor.auto_indent = false;
+        config.check_for_updates = false;
+
+        // Create editor with custom time source
+        let editor = Editor::with_time_source(
+            config,
+            width,
+            height,
+            Some(temp_path),
+            dir_context,
+            time_source,
+        )?;
+
+        Ok(EditorTestHarness {
+            editor,
+            terminal,
+            _temp_dir: Some(temp_dir),
+            fs_metrics: None,
+            _tokio_runtime: None,
+            test_time_source: Some(test_time_source),
+            shadow_string: String::new(),
+            shadow_cursor: 0,
+            enable_shadow_validation: false,
+            vt100_parser: vt100::Parser::new(height, width, 0),
+            term_width: width,
+            term_height: height,
+        })
+    }
+
+    /// Advance the test time source by the given duration.
+    ///
+    /// This only works if the harness was created with `with_test_time_source()`.
+    ///
+    /// # Panics
+    /// Panics if called on a harness without a test time source.
+    pub fn advance_time(&self, duration: std::time::Duration) {
+        self.test_time_source
+            .as_ref()
+            .expect("advance_time called on harness without test time source")
+            .advance(duration);
+    }
+
+    /// Get the test time source if available.
+    pub fn test_time_source(&self) -> Option<&Arc<TestTimeSource>> {
+        self.test_time_source.as_ref()
     }
 
     /// Get filesystem metrics (if using slow filesystem backend)

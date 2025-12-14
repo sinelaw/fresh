@@ -2850,11 +2850,11 @@ impl Editor {
 
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // Detect double clicks using configured time window AND same position
+                // detect double clicks, 500 ms is arbitrary but reasonable
+                let now = self.time_source.now();
                 let is_double_click = if let (Some(previous_time), Some(previous_pos)) =
                     (self.previous_click_time, self.previous_click_position)
                 {
-                    let now = std::time::Instant::now();
                     let double_click_threshold =
                         std::time::Duration::from_millis(self.config.editor.double_click_time_ms);
                     let within_time = now.duration_since(previous_time) < double_click_threshold;
@@ -2873,7 +2873,7 @@ impl Editor {
                     return Ok(needs_render);
                 } else {
                     // Not a double click - store time and position for next click
-                    self.previous_click_time = Some(std::time::Instant::now());
+                    self.previous_click_time = Some(now);
                     self.previous_click_position = Some((col, row));
                 }
                 self.handle_mouse_click(col, row)?;
