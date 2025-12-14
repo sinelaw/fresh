@@ -425,13 +425,6 @@ fn main() -> io::Result<()> {
             }
 
             editor.show_file_explorer();
-        }
-
-        if let Err(e) = editor.start_recovery_session() {
-            tracing::warn!("Failed to start recovery session: {}", e);
-        }
-
-        if !first_run {
             editor.set_status_message(format!(
                 "Switched to project: {}",
                 current_working_dir
@@ -439,6 +432,10 @@ fn main() -> io::Result<()> {
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|| ".".to_string())
             ));
+        }
+
+        if let Err(e) = editor.start_recovery_session() {
+            tracing::warn!("Failed to start recovery session: {}", e);
         }
 
         let iteration = run_editor_iteration(
