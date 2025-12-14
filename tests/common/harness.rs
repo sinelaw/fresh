@@ -144,11 +144,16 @@ impl EditorTestHarness {
     /// Create new test harness with virtual terminal
     /// Uses a temporary directory to avoid loading plugins from the project directory
     /// Auto-indent is disabled by default to match shadow string behavior
+    /// Uses TestTimeSource by default for fast, deterministic time control
     pub fn new(width: u16, height: u16) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
         // Create DirectoryContext pointing to temp dirs for test isolation
         let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+        // Create TestTimeSource for controllable time in tests
+        let test_time_source = Arc::new(TestTimeSource::new());
+        let time_source: SharedTimeSource = test_time_source.clone();
 
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
@@ -156,9 +161,9 @@ impl EditorTestHarness {
         config.editor.auto_indent = false; // Disable for simpler testing
         config.check_for_updates = false; // Disable update checking in tests
         config.editor.double_click_time_ms = 10; // Fast double-click for faster tests
-                                                 // Use temp directory to avoid loading project plugins in tests
+        // Use temp directory to avoid loading project plugins in tests
         let editor =
-            Editor::with_working_dir(config, width, height, Some(temp_path), dir_context, true)?;
+            Editor::with_time_source(config, width, height, Some(temp_path), dir_context, time_source)?;
 
         Ok(EditorTestHarness {
             editor,
@@ -166,7 +171,7 @@ impl EditorTestHarness {
             _temp_dir: Some(temp_dir),
             fs_metrics: None,
             _tokio_runtime: None,
-            test_time_source: None,
+            test_time_source: Some(test_time_source),
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -178,11 +183,16 @@ impl EditorTestHarness {
 
     /// Create with custom config
     /// Uses a temporary directory to avoid loading plugins from the project directory
+    /// Uses TestTimeSource by default for fast, deterministic time control
     pub fn with_config(width: u16, height: u16, mut config: Config) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
         // Create DirectoryContext pointing to temp dirs for test isolation
         let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+        // Create TestTimeSource for controllable time in tests
+        let test_time_source = Arc::new(TestTimeSource::new());
+        let time_source: SharedTimeSource = test_time_source.clone();
 
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
@@ -190,7 +200,7 @@ impl EditorTestHarness {
         config.check_for_updates = false;
         // Use temp directory to avoid loading project plugins in tests
         let editor =
-            Editor::with_working_dir(config, width, height, Some(temp_path), dir_context, true)?;
+            Editor::with_time_source(config, width, height, Some(temp_path), dir_context, time_source)?;
 
         Ok(EditorTestHarness {
             editor,
@@ -198,7 +208,7 @@ impl EditorTestHarness {
             _temp_dir: Some(temp_dir),
             fs_metrics: None,
             _tokio_runtime: None,
-            test_time_source: None,
+            test_time_source: Some(test_time_source),
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -220,6 +230,7 @@ impl EditorTestHarness {
     }
 
     /// Create a test harness with a temporary project directory and custom config
+    /// Uses TestTimeSource by default for fast, deterministic time control
     pub fn with_temp_project_and_config(
         width: u16,
         height: u16,
@@ -228,6 +239,10 @@ impl EditorTestHarness {
         let temp_dir = TempDir::new()?;
         // Create DirectoryContext pointing to temp dirs for test isolation
         let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+        // Create TestTimeSource for controllable time in tests
+        let test_time_source = Arc::new(TestTimeSource::new());
+        let time_source: SharedTimeSource = test_time_source.clone();
 
         // Create a subdirectory with a constant name for deterministic paths
         let project_root = temp_dir.path().join("project_root");
@@ -239,7 +254,7 @@ impl EditorTestHarness {
         // Disable update checking in tests to avoid flaky status bar changes
         config.check_for_updates = false;
         let editor =
-            Editor::with_working_dir(config, width, height, Some(project_root), dir_context, true)?;
+            Editor::with_time_source(config, width, height, Some(project_root), dir_context, time_source)?;
 
         Ok(EditorTestHarness {
             editor,
@@ -247,7 +262,7 @@ impl EditorTestHarness {
             _temp_dir: Some(temp_dir),
             fs_metrics: None,
             _tokio_runtime: None,
-            test_time_source: None,
+            test_time_source: Some(test_time_source),
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -260,6 +275,7 @@ impl EditorTestHarness {
     /// Create with custom config and explicit working directory
     /// The working directory is used for LSP initialization and file operations
     /// Note: Creates a temp dir for DirectoryContext to ensure test isolation
+    /// Uses TestTimeSource by default for fast, deterministic time control
     pub fn with_config_and_working_dir(
         width: u16,
         height: u16,
@@ -270,6 +286,10 @@ impl EditorTestHarness {
         // Create DirectoryContext pointing to temp dirs for test isolation
         let dir_context = DirectoryContext::for_testing(temp_dir.path());
 
+        // Create TestTimeSource for controllable time in tests
+        let test_time_source = Arc::new(TestTimeSource::new());
+        let time_source: SharedTimeSource = test_time_source.clone();
+
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
 
@@ -277,7 +297,7 @@ impl EditorTestHarness {
         config.check_for_updates = false;
         // Create editor - it will create its own tokio runtime for async operations
         let mut editor =
-            Editor::with_working_dir(config, width, height, Some(working_dir), dir_context, true)?;
+            Editor::with_time_source(config, width, height, Some(working_dir), dir_context, time_source)?;
 
         // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
         editor.process_async_messages();
@@ -288,7 +308,7 @@ impl EditorTestHarness {
             _temp_dir: Some(temp_dir),
             fs_metrics: None,
             _tokio_runtime: None,
-            test_time_source: None,
+            test_time_source: Some(test_time_source),
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -309,6 +329,7 @@ impl EditorTestHarness {
     /// Create with custom config, working directory, and shared DirectoryContext.
     /// This is useful for session restore tests that need to share state directories
     /// across multiple Editor instances.
+    /// Uses TestTimeSource by default for fast, deterministic time control
     pub fn with_shared_dir_context(
         width: u16,
         height: u16,
@@ -316,6 +337,10 @@ impl EditorTestHarness {
         working_dir: std::path::PathBuf,
         dir_context: DirectoryContext,
     ) -> io::Result<Self> {
+        // Create TestTimeSource for controllable time in tests
+        let test_time_source = Arc::new(TestTimeSource::new());
+        let time_source: SharedTimeSource = test_time_source.clone();
+
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
 
@@ -323,7 +348,7 @@ impl EditorTestHarness {
         config.check_for_updates = false;
         // Create editor - it will create its own tokio runtime for async operations
         let mut editor =
-            Editor::with_working_dir(config, width, height, Some(working_dir), dir_context, true)?;
+            Editor::with_time_source(config, width, height, Some(working_dir), dir_context, time_source)?;
 
         // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
         editor.process_async_messages();
@@ -334,7 +359,7 @@ impl EditorTestHarness {
             _temp_dir: None, // No owned temp dir - caller manages the shared context
             fs_metrics: None,
             _tokio_runtime: None,
-            test_time_source: None,
+            test_time_source: Some(test_time_source),
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -346,11 +371,16 @@ impl EditorTestHarness {
 
     /// Create a test harness with a slow filesystem backend for performance testing
     /// Returns the harness and provides access to filesystem metrics
+    /// Uses TestTimeSource by default for fast, deterministic time control
     pub fn with_slow_fs(width: u16, height: u16, slow_config: SlowFsConfig) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
         // Create DirectoryContext pointing to temp dirs for test isolation
         let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+        // Create TestTimeSource for controllable time in tests
+        let test_time_source = Arc::new(TestTimeSource::new());
+        let time_source: SharedTimeSource = test_time_source.clone();
 
         // Create slow filesystem backend wrapping the local backend
         let local_backend = Arc::new(LocalFsBackend::new());
@@ -364,64 +394,13 @@ impl EditorTestHarness {
         // Disable update checking in tests to avoid flaky status bar changes
         config.check_for_updates = false;
 
-        // Create editor with custom filesystem backend
-        let editor = Editor::with_fs_backend_for_test(
+        // Create editor with custom filesystem backend and time source
+        let editor = Editor::with_fs_backend_and_time_source(
             config,
             width,
             height,
             Some(temp_path),
             fs_backend,
-            dir_context,
-        )?;
-
-        Ok(EditorTestHarness {
-            editor,
-            terminal,
-            _temp_dir: Some(temp_dir),
-            fs_metrics: Some(metrics_arc),
-            _tokio_runtime: None,
-            test_time_source: None,
-            shadow_string: String::new(),
-            shadow_cursor: 0,
-            enable_shadow_validation: false,
-            vt100_parser: vt100::Parser::new(height, width, 0),
-            term_width: width,
-            term_height: height,
-        })
-    }
-
-    /// Create a test harness with a TestTimeSource for controllable time.
-    ///
-    /// This allows tests to advance time instantly without real sleeps,
-    /// making time-dependent tests fast and deterministic.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let harness = EditorTestHarness::with_test_time_source(80, 24)?;
-    /// // Advance time by 5 seconds instantly
-    /// harness.advance_time(Duration::from_secs(5));
-    /// ```
-    pub fn with_test_time_source(width: u16, height: u16) -> io::Result<Self> {
-        let temp_dir = TempDir::new()?;
-        let temp_path = temp_dir.path().to_path_buf();
-        let dir_context = DirectoryContext::for_testing(temp_dir.path());
-
-        // Create TestTimeSource
-        let test_time_source = Arc::new(TestTimeSource::new());
-        let time_source: SharedTimeSource = test_time_source.clone();
-
-        let backend = TestBackend::new(width, height);
-        let terminal = Terminal::new(backend)?;
-        let mut config = Config::default();
-        config.editor.auto_indent = false;
-        config.check_for_updates = false;
-
-        // Create editor with custom time source
-        let editor = Editor::with_time_source(
-            config,
-            width,
-            height,
-            Some(temp_path),
             dir_context,
             time_source,
         )?;
@@ -430,7 +409,7 @@ impl EditorTestHarness {
             editor,
             terminal,
             _temp_dir: Some(temp_dir),
-            fs_metrics: None,
+            fs_metrics: Some(metrics_arc),
             _tokio_runtime: None,
             test_time_source: Some(test_time_source),
             shadow_string: String::new(),
@@ -442,17 +421,40 @@ impl EditorTestHarness {
         })
     }
 
-    /// Advance the test time source by the given duration.
+    /// Advance the test time source by the given duration (instant, no real wait).
     ///
-    /// This only works if the harness was created with `with_test_time_source()`.
+    /// All harness constructors now use TestTimeSource by default, so this
+    /// method works on any harness instance.
+    ///
+    /// Use this for time-based editor logic like:
+    /// - Auto-save intervals
+    /// - Debounce timers that check elapsed time
+    /// - Rate limiting based on time
+    ///
+    /// Do NOT use this for waiting on async I/O operations (file changes, LSP responses).
+    /// For those, use `wait_for_async` or real `std::thread::sleep`.
     ///
     /// # Panics
-    /// Panics if called on a harness without a test time source.
+    /// Panics if called on a harness without a test time source (should not happen
+    /// with standard constructors).
     pub fn advance_time(&self, duration: std::time::Duration) {
         self.test_time_source
             .as_ref()
             .expect("advance_time called on harness without test time source")
             .advance(duration);
+    }
+
+    /// Sleep using the test time source (instant logical time advancement).
+    ///
+    /// This is equivalent to `advance_time` - it advances logical time without
+    /// actually waiting. Use this to replace `thread::sleep` in tests that are
+    /// waiting for time-based editor logic.
+    ///
+    /// # When to use this vs `std::thread::sleep`:
+    /// - Use `sleep()` for time-based editor logic (debounce, rate limiting, auto-save)
+    /// - Use `std::thread::sleep()` for waiting on real async I/O (file changes, LSP, plugins)
+    pub fn sleep(&self, duration: std::time::Duration) {
+        self.advance_time(duration);
     }
 
     /// Get the test time source if available.

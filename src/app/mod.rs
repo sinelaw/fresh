@@ -532,6 +532,29 @@ impl Editor {
         )
     }
 
+    /// Create a new editor with custom filesystem backend and time source (for testing)
+    /// This allows injecting slow/mock backends while also controlling time
+    pub fn with_fs_backend_and_time_source(
+        config: Config,
+        width: u16,
+        height: u16,
+        working_dir: Option<PathBuf>,
+        fs_backend: Arc<dyn FsBackend>,
+        dir_context: DirectoryContext,
+        time_source: SharedTimeSource,
+    ) -> io::Result<Self> {
+        Self::with_options(
+            config,
+            width,
+            height,
+            working_dir,
+            Some(fs_backend),
+            true,
+            dir_context,
+            Some(time_source),
+        )
+    }
+
     /// Create a new editor with custom options
     /// This is primarily used for testing with slow or mock backends
     /// to verify editor behavior under various I/O conditions
