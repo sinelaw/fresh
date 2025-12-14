@@ -470,95 +470,9 @@ fn run_event_loop(
     session_enabled: bool,
     gpm_client: &Option<GpmClient>,
 ) -> io::Result<()> {
-    use std::time::Instant;
-
-    const FRAME_DURATION: Duration = Duration::from_millis(16); // 60fps
-    let mut last_render = Instant::now();
-    let mut needs_render = true;
-    let mut pending_event: Option<CrosstermEvent> = None; // For events read during coalescing
-
-    loop {
-        if editor.process_async_messages() {
-            needs_render = true;
-        }
-
-        // Check mouse hover timer for LSP hover requests
-        if editor.check_mouse_hover_timer() {
-            needs_render = true;
-        }
-
-        // Check for warnings and open warning log if any occurred
-        if editor.check_warning_log() {
-            needs_render = true;
-        }
-
-        // Periodic auto-save for recovery
-        if let Err(e) = editor.auto_save_dirty_buffers() {
-            tracing::debug!("Auto-save error: {}", e);
-        }
-
-        if editor.should_quit() {
-            // Save session before quitting (if enabled)
-            if session_enabled {
-                if let Err(e) = editor.save_session() {
-                    tracing::warn!("Failed to save session: {}", e);
-                } else {
-                    tracing::debug!("Session saved successfully");
-                }
-            }
-            break;
-        }
-
-        // Render at most 60fps
-        if needs_render && last_render.elapsed() >= FRAME_DURATION {
-            terminal.draw(|frame| editor.render(frame))?;
-            last_render = Instant::now();
-            needs_render = false;
-        }
-
-        // Get next event - check GPM first if available, then crossterm
-        let event = if let Some(e) = pending_event.take() {
-            Some(e)
-        } else {
-            let timeout = if needs_render {
-                FRAME_DURATION.saturating_sub(last_render.elapsed())
-            } else {
-                Duration::from_millis(50)
-            };
-
-            // Poll for events from GPM and/or crossterm
-            poll_with_gpm(gpm_client.as_ref(), timeout)?
-        };
-
-        let Some(event) = event else { continue };
-
-        // Coalesce mouse moves - skip stale ones, keep clicks/keys
-        let (event, next) = coalesce_mouse_moves(event)?;
-        pending_event = next;
-
-        match event {
-            CrosstermEvent::Key(key_event) => {
-                // Only process key press events to avoid duplicate events on Windows
-                // (Windows sends both Press and Release events, while Linux/macOS only send Press)
-                if key_event.kind == KeyEventKind::Press {
-                    handle_key_event(editor, key_event)?;
-                    needs_render = true;
-                }
-            }
-            CrosstermEvent::Mouse(mouse_event) => {
-                if handle_mouse_event(editor, mouse_event)? {
-                    needs_render = true;
-                }
-            }
-            CrosstermEvent::Resize(w, h) => {
-                editor.resize(w, h);
-                needs_render = true;
-            }
-            _ => {}
-        }
-    }
-
-    Ok(())
+    run_event_loop_common(editor, terminal, session_enabled, |timeout| {
+        poll_with_gpm(gpm_client.as_ref(), timeout)
+    })
 }
 
 /// Main event loop (non-Linux version without GPM)
@@ -568,6 +482,24 @@ fn run_event_loop(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     session_enabled: bool,
 ) -> io::Result<()> {
+    run_event_loop_common(editor, terminal, session_enabled, |timeout| {
+        if event_poll(timeout)? {
+            Ok(Some(event_read()?))
+        } else {
+            Ok(None)
+        }
+    })
+}
+
+fn run_event_loop_common<F>(
+    editor: &mut Editor,
+    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    session_enabled: bool,
+    mut poll_event: F,
+) -> io::Result<()>
+where
+    F: FnMut(Duration) -> io::Result<Option<CrosstermEvent>>,
+{
     use std::time::Instant;
 
     const FRAME_DURATION: Duration = Duration::from_millis(16); // 60fps
@@ -620,11 +552,7 @@ fn run_event_loop(
                 Duration::from_millis(50)
             };
 
-            if event_poll(timeout)? {
-                Some(event_read()?)
-            } else {
-                None
-            }
+            poll_event(timeout)?
         };
 
         let Some(event) = event else { continue };
