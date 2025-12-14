@@ -1,5 +1,33 @@
 # Release Notes
 
+## 0.1.44
+
+### Features
+
+* **Double-Click Word Selection**: Double-click now selects the word under the cursor. Both clicks must be at the same position within the configurable time threshold (`double_click_time_ms`, default 500ms).
+
+* **Multi-Byte Character Support**: Full support for CJK characters, emoji, and other double-width Unicode characters. Includes correct visual width calculation, cursor positioning, mouse click handling, line wrapping, and display across all UI components (status bar, tabs, file explorer, suggestions). (reported by @pm100)
+
+* **Nix Flakes Support**: Added Nix flakes for reproducible builds and development. Includes crane-based Rust caching, dev shell with toolchain and dependencies, checks for clippy/tests/formatting, and direnv integration.
+
+### Bug Fixes
+
+* **Mouse Escape Codes After Panic**: Fixed mouse control codes littering the terminal after a crash by disabling mouse capture in the panic handler (#311, reported by @rluvaton).
+
+* **Hover Popup Screen Edge**: Fixed panic when LSP hover popup appears near the edge of the screen.
+
+* **File Explorer Click Focus**: Fixed typing not working after clicking on empty area in the file explorer and then clicking back on the editor.
+
+### Infrastructure
+
+* **npm Publish Workflow**: Consolidated npm publishing into a single workflow that works both standalone and when called from release.yml.
+
+### Credits
+
+Thanks to @blissartt, @dvchd, @jakoss, @pm100, @rluvaton, @sottey, and @Yousa-Mirage for bug reports, suggestions, and contributions.
+
+---
+
 ## 0.1.40
 
 ### Features
