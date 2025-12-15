@@ -3,7 +3,6 @@
 /// Provides cross-platform support for limiting memory and CPU usage of spawned processes.
 /// On Linux, uses user-delegated cgroups v2 if available, otherwise falls back to setrlimit.
 /// Memory and CPU limits are decoupled - memory can work without CPU delegation.
-
 // Re-export the type from the shared types module
 pub use crate::types::ProcessLimits;
 

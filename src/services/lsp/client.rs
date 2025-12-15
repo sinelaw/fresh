@@ -451,7 +451,6 @@ impl Drop for LspClient {
     }
 }
 
-
 /// Manager for multiple language servers
 pub struct LspManager {
     /// Map from language ID to LSP client

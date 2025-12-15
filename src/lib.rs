@@ -4,8 +4,8 @@
 pub mod v8_init;
 
 // Core types and config are always available (needed for schema generation)
-pub mod types;
 pub mod config;
+pub mod types;
 
 // Runtime-only modules (require the "runtime" feature)
 #[cfg(feature = "runtime")]
