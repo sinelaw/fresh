@@ -57,6 +57,24 @@ brew install fresh-editor
 
 ### Arch Linux ([AUR](https://aur.archlinux.org/packages/fresh-editor-bin))
 
+**Binary package (recommended, faster install):**
+
+```bash
+git clone https://aur.archlinux.org/fresh-editor-bin.git
+cd fresh-editor-bin
+makepkg --install
+```
+
+**Build from source:**
+
+```bash
+git clone https://aur.archlinux.org/fresh-editor.git
+cd fresh-editor
+makepkg --install
+```
+
+**Using an AUR helper (such as `yay` or `paru`):**
+
 ```bash
 # Binary package (recommended, faster install)
 yay -S fresh-editor-bin
