@@ -478,10 +478,8 @@ impl Editor {
                 *count += 1;
 
                 if *count >= RAPID_REVERT_THRESHOLD {
-                    // Disable auto-revert and stop the file watcher
+                    // Disable auto-revert
                     self.auto_revert_enabled = false;
-                    self.file_watcher = None;
-                    self.watched_dirs.clear();
                     self.status_message = Some(format!(
                         "Auto-revert disabled: {} is updating too frequently (use Ctrl+Shift+R to re-enable)",
                         path_buf.file_name().unwrap_or_default().to_string_lossy()

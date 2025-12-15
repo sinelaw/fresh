@@ -573,6 +573,16 @@ where
             needs_render = true;
         }
 
+        // Poll for file changes (auto-revert)
+        if editor.poll_file_changes() {
+            needs_render = true;
+        }
+
+        // Poll for file tree changes (expanded directories)
+        if editor.poll_file_tree_changes() {
+            needs_render = true;
+        }
+
         // Check mouse hover timer for LSP hover requests
         if editor.check_mouse_hover_timer() {
             needs_render = true;

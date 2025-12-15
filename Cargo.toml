@@ -74,7 +74,6 @@ dirs = "6.0"  # For XDG/platform-specific directory detection
 pulldown-cmark = { version = "0.13", default-features = false }  # Disable `html` feature which is unused in a TUI app.
 sha2 = "0.10"  # SHA-256 checksums for recovery file integrity
 arboard = { version = "3.6", default-features = false }  # Disable `image` support for clipboard, which is unneeded for a text editor.
-notify = { version = "8.2.0" }
 schemars = "1.1"  # JSON Schema generation for config editor
 syntect = "5.2"
 ureq = { version = "2.10", default-features = false, features = ["tls"] }  # Minimal HTTP client for release checking

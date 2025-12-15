@@ -268,6 +268,20 @@ pub struct EditorConfig {
     /// Default: 500ms
     #[serde(default = "default_double_click_time")]
     pub double_click_time_ms: u64,
+
+    /// Poll interval in milliseconds for auto-reverting open buffers.
+    /// When auto-revert is enabled, file modification times are checked at this interval.
+    /// Lower values detect external changes faster but use more CPU.
+    /// Default: 2000ms (2 seconds)
+    #[serde(default = "default_auto_revert_poll_interval")]
+    pub auto_revert_poll_interval_ms: u64,
+
+    /// Poll interval in milliseconds for refreshing expanded directories in the file explorer.
+    /// Directory modification times are checked at this interval to detect new/deleted files.
+    /// Lower values detect changes faster but use more CPU.
+    /// Default: 3000ms (3 seconds)
+    #[serde(default = "default_file_tree_poll_interval")]
+    pub file_tree_poll_interval_ms: u64,
 }
 
 fn default_tab_size() -> usize {
@@ -323,6 +337,14 @@ fn default_double_click_time() -> u64 {
     500 // 500ms window for detecting double-clicks
 }
 
+fn default_auto_revert_poll_interval() -> u64 {
+    2000 // 2 seconds between file mtime checks
+}
+
+fn default_file_tree_poll_interval() -> u64 {
+    3000 // 3 seconds between directory mtime checks
+}
+
 impl Default for EditorConfig {
     fn default() -> Self {
         Self {
@@ -344,6 +366,8 @@ impl Default for EditorConfig {
             mouse_hover_enabled: true,
             mouse_hover_delay_ms: default_mouse_hover_delay(),
             double_click_time_ms: default_double_click_time(),
+            auto_revert_poll_interval_ms: default_auto_revert_poll_interval(),
+            file_tree_poll_interval_ms: default_file_tree_poll_interval(),
         }
     }
 }

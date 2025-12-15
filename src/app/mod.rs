@@ -378,16 +378,19 @@ pub struct Editor {
     /// Whether auto-revert mode is enabled (automatically reload files when changed on disk)
     auto_revert_enabled: bool,
 
-    /// File watcher for auto-revert functionality
-    file_watcher: Option<notify::RecommendedWatcher>,
+    /// Last time we polled for file changes (for auto-revert)
+    last_auto_revert_poll: std::time::Instant,
 
-    /// Directories currently being watched (to avoid duplicate watches)
-    /// We watch directories instead of files to handle atomic saves (temp+rename)
-    watched_dirs: HashSet<PathBuf>,
+    /// Last time we polled for directory changes (for file tree refresh)
+    last_file_tree_poll: std::time::Instant,
 
-    /// Last known modification times for watched files (for conflict detection)
+    /// Last known modification times for open files (for auto-revert)
     /// Maps file path to last known modification time
     file_mod_times: HashMap<PathBuf, std::time::SystemTime>,
+
+    /// Last known modification times for expanded directories (for file tree refresh)
+    /// Maps directory path to last known modification time
+    dir_mod_times: HashMap<PathBuf, std::time::SystemTime>,
 
     /// Tracks rapid file change events for debouncing
     /// Maps file path to (last event time, event count)
@@ -844,9 +847,10 @@ impl Editor {
             pending_lsp_confirmation: None,
             pending_close_buffer: None,
             auto_revert_enabled: true,
-            file_watcher: None,
-            watched_dirs: HashSet::new(),
+            last_auto_revert_poll: std::time::Instant::now(),
+            last_file_tree_poll: std::time::Instant::now(),
             file_mod_times: HashMap::new(),
+            dir_mod_times: HashMap::new(),
             file_rapid_change_counts: HashMap::new(),
             file_open_state: None,
             file_browser_layout: None,
@@ -3759,88 +3763,140 @@ impl Editor {
         self.auto_revert_enabled = !self.auto_revert_enabled;
 
         if self.auto_revert_enabled {
-            // Start file watcher if not already running
-            self.start_file_watcher();
             self.status_message = Some("Auto-revert enabled".to_string());
         } else {
-            // Stop file watcher
-            self.file_watcher = None;
-            self.watched_dirs.clear();
             self.status_message = Some("Auto-revert disabled".to_string());
         }
     }
 
-    /// Start the file watcher for auto-revert functionality
-    fn start_file_watcher(&mut self) {
-        use notify::{RecursiveMode, Watcher};
+    /// Poll for file changes (called from main loop)
+    ///
+    /// Checks modification times of open files to detect external changes.
+    /// Returns true if any file was changed (requires re-render).
+    pub fn poll_file_changes(&mut self) -> bool {
+        // Skip if auto-revert is disabled
+        if !self.auto_revert_enabled {
+            return false;
+        }
 
-        // Get the sender for async messages
-        let sender = match &self.async_bridge {
-            Some(bridge) => bridge.sender(),
-            None => {
-                tracing::warn!("Cannot start file watcher: no async bridge available");
-                return;
-            }
-        };
+        // Check poll interval
+        let poll_interval =
+            std::time::Duration::from_millis(self.config.editor.auto_revert_poll_interval_ms);
+        if self.last_auto_revert_poll.elapsed() < poll_interval {
+            return false;
+        }
+        self.last_auto_revert_poll = std::time::Instant::now();
 
-        // Create a new watcher
-        // We watch directories (not files) to handle atomic saves where editors
-        // write to a temp file and rename it, which changes the file's inode
-        let watcher_result =
-            notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-                match res {
-                    Ok(event) => {
-                        // Handle modify, create, and rename events
-                        // Rename is important for atomic saves (temp file + rename)
-                        let dominated = matches!(
-                            event.kind,
-                            notify::EventKind::Modify(_)
-                                | notify::EventKind::Create(_)
-                                | notify::EventKind::Remove(_)
-                        );
-                        if dominated {
-                            for path in event.paths {
-                                if let Err(e) = sender.send(AsyncMessage::FileChanged {
-                                    path: path.display().to_string(),
-                                }) {
-                                    tracing::error!(
-                                        "Failed to send file change notification: {}",
-                                        e
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("File watcher error: {}", e);
-                    }
-                }
-            });
+        // Collect paths of open files that need checking
+        let files_to_check: Vec<PathBuf> = self
+            .buffers
+            .values()
+            .filter_map(|state| state.buffer.file_path().map(PathBuf::from))
+            .collect();
 
-        match watcher_result {
-            Ok(mut watcher) => {
-                // Watch parent directories of all currently open files
-                for state in self.buffers.values() {
-                    if let Some(path) = state.buffer.file_path() {
-                        if let Some(parent) = path.parent() {
-                            if !self.watched_dirs.contains(parent) {
-                                if let Err(e) = watcher.watch(parent, RecursiveMode::NonRecursive) {
-                                    tracing::warn!("Failed to watch directory {:?}: {}", parent, e);
-                                } else {
-                                    self.watched_dirs.insert(parent.to_path_buf());
-                                }
-                            }
-                        }
+        let mut any_changed = false;
+
+        for path in files_to_check {
+            // Get current mtime
+            let current_mtime = match std::fs::metadata(&path) {
+                Ok(meta) => match meta.modified() {
+                    Ok(mtime) => mtime,
+                    Err(_) => continue,
+                },
+                Err(_) => continue, // File might have been deleted
+            };
+
+            // Check if mtime has changed
+            if let Some(&stored_mtime) = self.file_mod_times.get(&path) {
+                if current_mtime != stored_mtime {
+                    // Update stored mtime
+                    self.file_mod_times.insert(path.clone(), current_mtime);
+
+                    // Handle the file change (this includes debouncing)
+                    let path_str = path.display().to_string();
+                    if self.handle_async_file_changed(path_str) {
+                        any_changed = true;
                     }
                 }
-                self.file_watcher = Some(watcher);
-                tracing::info!("File watcher started");
-            }
-            Err(e) => {
-                tracing::error!("Failed to create file watcher: {}", e);
-                self.status_message = Some(format!("Failed to start file watcher: {}", e));
+            } else {
+                // First time seeing this file, record its mtime
+                self.file_mod_times.insert(path, current_mtime);
             }
         }
+
+        any_changed
+    }
+
+    /// Poll for file tree changes (called from main loop)
+    ///
+    /// Checks modification times of expanded directories to detect new/deleted files.
+    /// Returns true if any directory was refreshed (requires re-render).
+    pub fn poll_file_tree_changes(&mut self) -> bool {
+        // Check poll interval
+        let poll_interval =
+            std::time::Duration::from_millis(self.config.editor.file_tree_poll_interval_ms);
+        if self.last_file_tree_poll.elapsed() < poll_interval {
+            return false;
+        }
+        self.last_file_tree_poll = std::time::Instant::now();
+
+        // Get file explorer reference
+        let Some(explorer) = &self.file_explorer else {
+            return false;
+        };
+
+        // Collect expanded directories (node_id, path)
+        use crate::view::file_tree::NodeId;
+        let expanded_dirs: Vec<(NodeId, PathBuf)> = explorer
+            .tree()
+            .all_nodes()
+            .filter(|node| node.is_dir() && node.is_expanded())
+            .map(|node| (node.id, node.entry.path.clone()))
+            .collect();
+
+        // Check mtimes and collect directories that need refresh
+        let mut dirs_to_refresh: Vec<NodeId> = Vec::new();
+
+        for (node_id, path) in expanded_dirs {
+            // Get current mtime
+            let current_mtime = match std::fs::metadata(&path) {
+                Ok(meta) => match meta.modified() {
+                    Ok(mtime) => mtime,
+                    Err(_) => continue,
+                },
+                Err(_) => continue, // Directory might have been deleted
+            };
+
+            // Check if mtime has changed
+            if let Some(&stored_mtime) = self.dir_mod_times.get(&path) {
+                if current_mtime != stored_mtime {
+                    // Update stored mtime
+                    self.dir_mod_times.insert(path.clone(), current_mtime);
+                    dirs_to_refresh.push(node_id);
+                    tracing::debug!("Directory changed: {:?}", path);
+                }
+            } else {
+                // First time seeing this directory, record its mtime
+                self.dir_mod_times.insert(path, current_mtime);
+            }
+        }
+
+        // Refresh changed directories
+        if dirs_to_refresh.is_empty() {
+            return false;
+        }
+
+        // Refresh each changed directory
+        if let (Some(runtime), Some(explorer)) = (&self.tokio_runtime, &mut self.file_explorer) {
+            for node_id in dirs_to_refresh {
+                let tree = explorer.tree_mut();
+                if let Err(e) = runtime.block_on(tree.refresh_node(node_id)) {
+                    tracing::warn!("Failed to refresh directory: {}", e);
+                }
+            }
+        }
+
+        true
     }
 
     /// Notify LSP server about a newly opened file
@@ -3984,36 +4040,13 @@ impl Editor {
         }
     }
 
-    /// Add a file to the file watcher (called when opening files)
-    /// We watch the parent directory instead of the file itself to handle
-    /// atomic saves (temp file + rename) which change the file's inode
+    /// Record a file's modification time (called when opening files)
+    /// This is used by the polling-based auto-revert to detect external changes
     fn watch_file(&mut self, path: &Path) {
-        use notify::{RecursiveMode, Watcher};
-
-        // Record current modification time
+        // Record current modification time for polling
         if let Ok(metadata) = std::fs::metadata(path) {
             if let Ok(mtime) = metadata.modified() {
                 self.file_mod_times.insert(path.to_path_buf(), mtime);
-            }
-        }
-
-        // Add parent directory to watcher if auto-revert is enabled
-        if self.auto_revert_enabled {
-            // Start file watcher if not already running
-            if self.file_watcher.is_none() {
-                self.start_file_watcher();
-            }
-            // Watch the parent directory if not already watched
-            if let Some(parent) = path.parent() {
-                if !self.watched_dirs.contains(parent) {
-                    if let Some(watcher) = &mut self.file_watcher {
-                        if let Err(e) = watcher.watch(parent, RecursiveMode::NonRecursive) {
-                            tracing::warn!("Failed to watch directory {:?}: {}", parent, e);
-                        } else {
-                            self.watched_dirs.insert(parent.to_path_buf());
-                        }
-                    }
-                }
             }
         }
     }
