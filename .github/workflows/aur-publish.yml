@@ -16,7 +16,7 @@ on:
         type: string
 
 jobs:
-  publish-aur:
+  publish-aur-bin:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ inputs.version }}
@@ -38,7 +38,7 @@ jobs:
 
       - name: Clone AUR repo and update PKGBUILD
         run: |
-          git clone https://aur.archlinux.org/fresh-editor.git aur-repo
+          git clone https://aur.archlinux.org/fresh-editor-bin.git aur-repo
           cd aur-repo
           sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
@@ -53,7 +53,34 @@ jobs:
           echo "Updated PKGBUILD:"
           cat PKGBUILD
 
-      - name: Publish AUR package
+      - name: Publish AUR package (fresh-editor-bin)
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.1
+        with:
+          pkgname: fresh-editor-bin
+          pkgbuild: ./aur-repo/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${VERSION}"
+          ssh_keyscan_types: ed25519
+
+  publish-aur-source:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Clone AUR repo and update PKGBUILD
+        run: |
+          git clone https://aur.archlinux.org/fresh-editor.git aur-repo
+          cd aur-repo
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          echo "Updated PKGBUILD:"
+          cat PKGBUILD
+
+      - name: Publish AUR package (fresh-editor)
         uses: KSXGitHub/github-actions-deploy-aur@v4.1.1
         with:
           pkgname: fresh-editor

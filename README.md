@@ -55,9 +55,13 @@ brew tap sinelaw/fresh
 brew install fresh-editor
 ```
 
-### Arch Linux ([AUR](https://aur.archlinux.org/packages/fresh-editor))
+### Arch Linux ([AUR](https://aur.archlinux.org/packages/fresh-editor-bin))
 
 ```bash
+# Binary package (recommended, faster install)
+yay -S fresh-editor-bin
+
+# Or build from source
 yay -S fresh-editor
 ```
 
