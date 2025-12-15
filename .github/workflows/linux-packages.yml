@@ -79,7 +79,7 @@ jobs:
           ls -la packages/
 
       - name: Upload Linux packages
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: artifacts-linux-packages-${{ matrix.arch }}
           path: packages/*
