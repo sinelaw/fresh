@@ -4,10 +4,10 @@
   "description": "Main configuration structure",
   "type": "object",
   "properties": {
-    "active_keybinding_map": {
-      "description": "Active keybinding map name",
-      "$ref": "#/$defs/KeybindingMapOptions",
-      "default": "default"
+    "theme": {
+      "description": "Color theme name",
+      "$ref": "#/$defs/ThemeOptions",
+      "default": "high-contrast"
     },
     "check_for_updates": {
       "description": "Check for new versions on quit (default: true)",
@@ -18,38 +18,53 @@
       "description": "Editor behavior settings (indentation, line numbers, wrapping, etc.)",
       "$ref": "#/$defs/EditorConfig",
       "default": {
+        "tab_size": 4,
         "auto_indent": true,
-        "auto_revert_poll_interval_ms": 2000,
-        "auto_save_interval_secs": 2,
-        "double_click_time_ms": 500,
-        "enable_inlay_hints": true,
-        "estimated_line_length": 80,
-        "file_tree_poll_interval_ms": 3000,
-        "highlight_context_bytes": 10000,
-        "highlight_timeout_ms": 5,
-        "large_file_threshold_bytes": 1048576,
         "line_numbers": true,
-        "line_wrap": true,
-        "mouse_hover_delay_ms": 500,
-        "mouse_hover_enabled": true,
-        "recovery_enabled": true,
         "relative_line_numbers": false,
         "scroll_offset": 3,
-        "snapshot_interval": 100,
         "syntax_highlighting": true,
-        "tab_size": 4
+        "line_wrap": true,
+        "highlight_timeout_ms": 5,
+        "snapshot_interval": 100,
+        "large_file_threshold_bytes": 1048576,
+        "estimated_line_length": 80,
+        "enable_inlay_hints": true,
+        "recovery_enabled": true,
+        "auto_save_interval_secs": 2,
+        "highlight_context_bytes": 10000,
+        "mouse_hover_enabled": true,
+        "mouse_hover_delay_ms": 500,
+        "double_click_time_ms": 500,
+        "auto_revert_poll_interval_ms": 2000,
+        "file_tree_poll_interval_ms": 3000
       }
     },
     "file_explorer": {
       "description": "File explorer panel settings",
       "$ref": "#/$defs/FileExplorerConfig",
       "default": {
-        "custom_ignore_patterns": [],
         "respect_gitignore": true,
-        "show_gitignored": false,
         "show_hidden": false,
+        "show_gitignored": false,
+        "custom_ignore_patterns": [],
         "width": 0.30000001192092896
       }
+    },
+    "terminal": {
+      "description": "Terminal settings",
+      "$ref": "#/$defs/TerminalConfig",
+      "default": {
+        "jump_to_end_on_output": true
+      }
+    },
+    "keybindings": {
+      "description": "Custom keybindings (overrides for the active map)",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Keybinding"
+      },
+      "default": []
     },
     "keybinding_maps": {
       "description": "Named keybinding maps (user can define custom maps here)\nEach map can optionally inherit from another map",
@@ -59,13 +74,10 @@
       },
       "default": {}
     },
-    "keybindings": {
-      "description": "Custom keybindings (overrides for the active map)",
-      "type": "array",
-      "default": [],
-      "items": {
-        "$ref": "#/$defs/Keybinding"
-      }
+    "active_keybinding_map": {
+      "description": "Active keybinding map name",
+      "$ref": "#/$defs/KeybindingMapOptions",
+      "default": "default"
     },
     "languages": {
       "description": "Per-language configuration overrides (tab size, formatters, etc.)",
@@ -89,773 +101,695 @@
       "default": {
         "menus": [
           {
+            "label": "File",
             "items": [
               {
+                "label": "New File",
                 "action": "new",
                 "args": {},
-                "checkbox": null,
-                "label": "New File",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Open File...",
                 "action": "open",
                 "args": {},
-                "checkbox": null,
-                "label": "Open File...",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Save",
                 "action": "save",
                 "args": {},
-                "checkbox": null,
-                "label": "Save",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Save As...",
                 "action": "save_as",
                 "args": {},
-                "checkbox": null,
-                "label": "Save As...",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Revert",
                 "action": "revert",
                 "args": {},
-                "checkbox": null,
-                "label": "Revert",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Close Buffer",
                 "action": "close",
                 "args": {},
-                "checkbox": null,
-                "label": "Close Buffer",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Switch Project...",
                 "action": "switch_project",
                 "args": {},
-                "checkbox": null,
-                "label": "Switch Project...",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Quit",
                 "action": "quit",
                 "args": {},
-                "checkbox": null,
-                "label": "Quit",
-                "when": null
+                "when": null,
+                "checkbox": null
               }
-            ],
-            "label": "File"
+            ]
           },
           {
+            "label": "Edit",
             "items": [
               {
+                "label": "Undo",
                 "action": "undo",
                 "args": {},
-                "checkbox": null,
-                "label": "Undo",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Redo",
                 "action": "redo",
                 "args": {},
-                "checkbox": null,
-                "label": "Redo",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Cut",
                 "action": "cut",
                 "args": {},
-                "checkbox": null,
-                "label": "Cut",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Copy",
                 "action": "copy",
                 "args": {},
-                "checkbox": null,
-                "label": "Copy",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Paste",
                 "action": "paste",
                 "args": {},
-                "checkbox": null,
-                "label": "Paste",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Select All",
                 "action": "select_all",
                 "args": {},
-                "checkbox": null,
-                "label": "Select All",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Find...",
                 "action": "search",
                 "args": {},
-                "checkbox": null,
-                "label": "Find...",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Find in Selection",
                 "action": "find_in_selection",
                 "args": {},
-                "checkbox": null,
-                "label": "Find in Selection",
-                "when": "has_selection"
+                "when": "has_selection",
+                "checkbox": null
               },
               {
+                "label": "Find Next",
                 "action": "find_next",
                 "args": {},
-                "checkbox": null,
-                "label": "Find Next",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Find Previous",
                 "action": "find_previous",
                 "args": {},
-                "checkbox": null,
-                "label": "Find Previous",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Replace...",
                 "action": "query_replace",
                 "args": {},
-                "checkbox": null,
-                "label": "Replace...",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Delete Line",
                 "action": "delete_line",
                 "args": {},
-                "checkbox": null,
-                "label": "Delete Line",
-                "when": null
+                "when": null,
+                "checkbox": null
               }
-            ],
-            "label": "Edit"
+            ]
           },
           {
+            "label": "View",
             "items": [
               {
+                "label": "File Explorer",
                 "action": "toggle_file_explorer",
                 "args": {},
-                "checkbox": "file_explorer",
-                "label": "File Explorer",
-                "when": null
+                "when": null,
+                "checkbox": "file_explorer"
               },
               {
                 "separator": true
               },
               {
+                "label": "Line Numbers",
                 "action": "toggle_line_numbers",
                 "args": {},
-                "checkbox": "line_numbers",
-                "label": "Line Numbers",
-                "when": null
+                "when": null,
+                "checkbox": "line_numbers"
               },
               {
+                "label": "Line Wrap",
                 "action": "toggle_line_wrap",
                 "args": {},
-                "checkbox": "line_wrap",
-                "label": "Line Wrap",
-                "when": null
+                "when": null,
+                "checkbox": "line_wrap"
               },
               {
+                "label": "Mouse Support",
                 "action": "toggle_mouse_capture",
                 "args": {},
-                "checkbox": "mouse_capture",
-                "label": "Mouse Support",
-                "when": null
+                "when": null,
+                "checkbox": "mouse_capture"
               },
               {
                 "separator": true
               },
               {
+                "label": "Set Background...",
                 "action": "set_background",
                 "args": {},
-                "checkbox": null,
-                "label": "Set Background...",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Set Background Blend...",
                 "action": "set_background_blend",
                 "args": {},
-                "checkbox": null,
-                "label": "Set Background Blend...",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Set Compose Width...",
                 "action": "set_compose_width",
                 "args": {},
-                "checkbox": null,
-                "label": "Set Compose Width...",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Select Theme...",
                 "action": "select_theme",
                 "args": {},
-                "checkbox": null,
-                "label": "Select Theme...",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Settings...",
                 "action": "open_settings",
                 "args": {},
-                "checkbox": null,
-                "label": "Settings...",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Split Horizontal",
                 "action": "split_horizontal",
                 "args": {},
-                "checkbox": null,
-                "label": "Split Horizontal",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Split Vertical",
                 "action": "split_vertical",
                 "args": {},
-                "checkbox": null,
-                "label": "Split Vertical",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Close Split",
                 "action": "close_split",
                 "args": {},
-                "checkbox": null,
-                "label": "Close Split",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Focus Next Split",
                 "action": "next_split",
                 "args": {},
-                "checkbox": null,
-                "label": "Focus Next Split",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Focus Previous Split",
                 "action": "prev_split",
                 "args": {},
-                "checkbox": null,
-                "label": "Focus Previous Split",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Toggle Maximize Split",
                 "action": "toggle_maximize_split",
                 "args": {},
-                "checkbox": null,
-                "label": "Toggle Maximize Split",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Terminal",
                 "items": [
                   {
+                    "label": "Open Terminal",
                     "action": "open_terminal",
                     "args": {},
-                    "checkbox": null,
-                    "label": "Open Terminal",
-                    "when": null
+                    "when": null,
+                    "checkbox": null
                   },
                   {
+                    "label": "Close Terminal",
                     "action": "close_terminal",
                     "args": {},
-                    "checkbox": null,
-                    "label": "Close Terminal",
-                    "when": null
+                    "when": null,
+                    "checkbox": null
                   },
                   {
                     "separator": true
                   },
                   {
+                    "label": "Toggle Keyboard Capture",
                     "action": "toggle_keyboard_capture",
                     "args": {},
-                    "checkbox": null,
-                    "label": "Toggle Keyboard Capture",
-                    "when": null
+                    "when": null,
+                    "checkbox": null
                   }
-                ],
-                "label": "Terminal"
+                ]
               },
               {
                 "separator": true
               },
               {
+                "label": "Keybinding Style",
                 "items": [
                   {
+                    "label": "Default",
                     "action": "switch_keybinding_map",
                     "args": {
                       "map": "default"
                     },
-                    "checkbox": null,
-                    "label": "Default",
-                    "when": null
+                    "when": null,
+                    "checkbox": null
                   },
                   {
+                    "label": "Emacs",
                     "action": "switch_keybinding_map",
                     "args": {
                       "map": "emacs"
                     },
-                    "checkbox": null,
-                    "label": "Emacs",
-                    "when": null
+                    "when": null,
+                    "checkbox": null
                   },
                   {
+                    "label": "VSCode",
                     "action": "switch_keybinding_map",
                     "args": {
                       "map": "vscode"
                     },
-                    "checkbox": null,
-                    "label": "VSCode",
-                    "when": null
+                    "when": null,
+                    "checkbox": null
                   }
-                ],
-                "label": "Keybinding Style"
+                ]
               }
-            ],
-            "label": "View"
+            ]
           },
           {
+            "label": "Selection",
             "items": [
               {
+                "label": "Select All",
                 "action": "select_all",
                 "args": {},
-                "checkbox": null,
-                "label": "Select All",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Select Word",
                 "action": "select_word",
                 "args": {},
-                "checkbox": null,
-                "label": "Select Word",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Select Line",
                 "action": "select_line",
                 "args": {},
-                "checkbox": null,
-                "label": "Select Line",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Expand Selection",
                 "action": "expand_selection",
                 "args": {},
-                "checkbox": null,
-                "label": "Expand Selection",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Add Cursor Above",
                 "action": "add_cursor_above",
                 "args": {},
-                "checkbox": null,
-                "label": "Add Cursor Above",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Add Cursor Below",
                 "action": "add_cursor_below",
                 "args": {},
-                "checkbox": null,
-                "label": "Add Cursor Below",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Add Cursor at Next Match",
                 "action": "add_cursor_next_match",
                 "args": {},
-                "checkbox": null,
-                "label": "Add Cursor at Next Match",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Remove Secondary Cursors",
                 "action": "remove_secondary_cursors",
                 "args": {},
-                "checkbox": null,
-                "label": "Remove Secondary Cursors",
-                "when": null
+                "when": null,
+                "checkbox": null
               }
-            ],
-            "label": "Selection"
+            ]
           },
           {
+            "label": "Go",
             "items": [
               {
+                "label": "Go to Line...",
                 "action": "goto_line",
                 "args": {},
-                "checkbox": null,
-                "label": "Go to Line...",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Go to Definition",
                 "action": "lsp_goto_definition",
                 "args": {},
-                "checkbox": null,
-                "label": "Go to Definition",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Find References",
                 "action": "lsp_references",
                 "args": {},
-                "checkbox": null,
-                "label": "Find References",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Next Buffer",
                 "action": "next_buffer",
                 "args": {},
-                "checkbox": null,
-                "label": "Next Buffer",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Previous Buffer",
                 "action": "prev_buffer",
                 "args": {},
-                "checkbox": null,
-                "label": "Previous Buffer",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Command Palette...",
                 "action": "command_palette",
                 "args": {},
-                "checkbox": null,
-                "label": "Command Palette...",
-                "when": null
+                "when": null,
+                "checkbox": null
               }
-            ],
-            "label": "Go"
+            ]
           },
           {
+            "label": "LSP",
             "items": [
               {
+                "label": "Show Hover Info",
                 "action": "lsp_hover",
                 "args": {},
-                "checkbox": null,
-                "label": "Show Hover Info",
-                "when": "lsp_available"
+                "when": "lsp_available",
+                "checkbox": null
               },
               {
+                "label": "Go to Definition",
                 "action": "lsp_goto_definition",
                 "args": {},
-                "checkbox": null,
-                "label": "Go to Definition",
-                "when": "lsp_available"
+                "when": "lsp_available",
+                "checkbox": null
               },
               {
+                "label": "Find References",
                 "action": "lsp_references",
                 "args": {},
-                "checkbox": null,
-                "label": "Find References",
-                "when": "lsp_available"
+                "when": "lsp_available",
+                "checkbox": null
               },
               {
+                "label": "Rename Symbol",
                 "action": "lsp_rename",
                 "args": {},
-                "checkbox": null,
-                "label": "Rename Symbol",
-                "when": "lsp_available"
+                "when": "lsp_available",
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Show Completions",
                 "action": "lsp_completion",
                 "args": {},
-                "checkbox": null,
-                "label": "Show Completions",
-                "when": "lsp_available"
+                "when": "lsp_available",
+                "checkbox": null
               },
               {
+                "label": "Show Signature Help",
                 "action": "lsp_signature_help",
                 "args": {},
-                "checkbox": null,
-                "label": "Show Signature Help",
-                "when": "lsp_available"
+                "when": "lsp_available",
+                "checkbox": null
               },
               {
+                "label": "Code Actions",
                 "action": "lsp_code_actions",
                 "args": {},
-                "checkbox": null,
-                "label": "Code Actions",
-                "when": "lsp_available"
+                "when": "lsp_available",
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Toggle Inlay Hints",
                 "action": "toggle_inlay_hints",
                 "args": {},
-                "checkbox": null,
-                "label": "Toggle Inlay Hints",
-                "when": "lsp_available"
+                "when": "lsp_available",
+                "checkbox": null
               },
               {
+                "label": "Toggle Mouse Hover",
                 "action": "toggle_mouse_hover",
                 "args": {},
-                "checkbox": "mouse_hover",
-                "label": "Toggle Mouse Hover",
-                "when": null
+                "when": null,
+                "checkbox": "mouse_hover"
               },
               {
                 "separator": true
               },
               {
+                "label": "Restart Server",
                 "action": "lsp_restart",
                 "args": {},
-                "checkbox": null,
-                "label": "Restart Server",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Stop Server",
                 "action": "lsp_stop",
                 "args": {},
-                "checkbox": null,
-                "label": "Stop Server",
-                "when": null
+                "when": null,
+                "checkbox": null
               }
-            ],
-            "label": "LSP"
+            ]
           },
           {
+            "label": "Explorer",
             "items": [
               {
+                "label": "New File",
                 "action": "file_explorer_new_file",
                 "args": {},
-                "checkbox": null,
-                "label": "New File",
-                "when": "file_explorer_focused"
+                "when": "file_explorer_focused",
+                "checkbox": null
               },
               {
+                "label": "New Folder",
                 "action": "file_explorer_new_directory",
                 "args": {},
-                "checkbox": null,
-                "label": "New Folder",
-                "when": "file_explorer_focused"
+                "when": "file_explorer_focused",
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Open",
                 "action": "file_explorer_open",
                 "args": {},
-                "checkbox": null,
-                "label": "Open",
-                "when": "file_explorer_focused"
+                "when": "file_explorer_focused",
+                "checkbox": null
               },
               {
+                "label": "Rename",
                 "action": "file_explorer_rename",
                 "args": {},
-                "checkbox": null,
-                "label": "Rename",
-                "when": "file_explorer_focused"
+                "when": "file_explorer_focused",
+                "checkbox": null
               },
               {
+                "label": "Delete",
                 "action": "file_explorer_delete",
                 "args": {},
-                "checkbox": null,
-                "label": "Delete",
-                "when": "file_explorer_focused"
+                "when": "file_explorer_focused",
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Refresh",
                 "action": "file_explorer_refresh",
                 "args": {},
-                "checkbox": null,
-                "label": "Refresh",
-                "when": "file_explorer_focused"
+                "when": "file_explorer_focused",
+                "checkbox": null
               },
               {
                 "separator": true
               },
               {
+                "label": "Show Hidden Files",
                 "action": "file_explorer_toggle_hidden",
                 "args": {},
-                "checkbox": "file_explorer_show_hidden",
-                "label": "Show Hidden Files",
-                "when": "file_explorer"
+                "when": "file_explorer",
+                "checkbox": "file_explorer_show_hidden"
               },
               {
+                "label": "Show Gitignored Files",
                 "action": "file_explorer_toggle_gitignored",
                 "args": {},
-                "checkbox": "file_explorer_show_gitignored",
-                "label": "Show Gitignored Files",
-                "when": "file_explorer"
+                "when": "file_explorer",
+                "checkbox": "file_explorer_show_gitignored"
               }
-            ],
-            "label": "Explorer"
+            ]
           },
           {
+            "label": "Help",
             "items": [
               {
+                "label": "Show Fresh Manual",
                 "action": "show_help",
                 "args": {},
-                "checkbox": null,
-                "label": "Show Fresh Manual",
-                "when": null
+                "when": null,
+                "checkbox": null
               },
               {
+                "label": "Keyboard Shortcuts",
                 "action": "keyboard_shortcuts",
                 "args": {},
-                "checkbox": null,
-                "label": "Keyboard Shortcuts",
-                "when": null
+                "when": null,
+                "checkbox": null
               }
-            ],
-            "label": "Help"
+            ]
           }
         ]
       }
-    },
-    "terminal": {
-      "description": "Terminal settings",
-      "$ref": "#/$defs/TerminalConfig",
-      "default": {
-        "jump_to_end_on_output": true
-      }
-    },
-    "theme": {
-      "description": "Color theme name",
-      "$ref": "#/$defs/ThemeOptions",
-      "default": "high-contrast"
     }
   },
   "$defs": {
+    "ThemeOptions": {
+      "description": "Available color themes",
+      "type": "string",
+      "enum": [
+        "dark",
+        "light",
+        "high-contrast",
+        "nostalgia"
+      ]
+    },
     "EditorConfig": {
       "description": "Editor behavior configuration",
       "type": "object",
       "properties": {
+        "tab_size": {
+          "description": "Number of spaces per tab character",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 4
+        },
         "auto_indent": {
           "description": "Automatically indent new lines based on the previous line",
           "type": "boolean",
           "default": true
         },
-        "auto_revert_poll_interval_ms": {
-          "description": "Poll interval in milliseconds for auto-reverting open buffers.\nWhen auto-revert is enabled, file modification times are checked at this interval.\nLower values detect external changes faster but use more CPU.\nDefault: 2000ms (2 seconds)",
-          "type": "integer",
-          "format": "uint64",
-          "default": 2000,
-          "minimum": 0
-        },
-        "auto_save_interval_secs": {
-          "description": "Auto-save interval in seconds for file recovery\nModified buffers are saved to recovery files at this interval.\nDefault: 2 seconds for fast recovery with minimal data loss.\nSet to 0 to disable periodic auto-save (manual recovery only).",
-          "type": "integer",
-          "format": "uint32",
-          "default": 2,
-          "minimum": 0
-        },
-        "double_click_time_ms": {
-          "description": "Time window in milliseconds for detecting double-clicks.\nTwo clicks within this time are treated as a double-click (word selection).\nDefault: 500ms",
-          "type": "integer",
-          "format": "uint64",
-          "default": 500,
-          "minimum": 0
-        },
-        "enable_inlay_hints": {
-          "description": "Whether to enable LSP inlay hints (type hints, parameter hints, etc.)",
-          "type": "boolean",
-          "default": true
-        },
-        "estimated_line_length": {
-          "description": "Estimated average line length in bytes (used for large file line estimation)\nThis is used by LineIterator to estimate line positions in large files\nwithout line metadata. Typical values: 80-120 bytes.",
-          "type": "integer",
-          "format": "uint",
-          "default": 80,
-          "minimum": 0
-        },
-        "file_tree_poll_interval_ms": {
-          "description": "Poll interval in milliseconds for refreshing expanded directories in the file explorer.\nDirectory modification times are checked at this interval to detect new/deleted files.\nLower values detect changes faster but use more CPU.\nDefault: 3000ms (3 seconds)",
-          "type": "integer",
-          "format": "uint64",
-          "default": 3000,
-          "minimum": 0
-        },
-        "highlight_context_bytes": {
-          "description": "Number of bytes to look back/forward from the viewport for syntax highlighting context.\nLarger values improve accuracy for multi-line constructs (strings, comments, nested blocks)\nbut may slow down highlighting for very large files.\nDefault: 10KB (10000 bytes)",
-          "type": "integer",
-          "format": "uint",
-          "default": 10000,
-          "minimum": 0
-        },
-        "highlight_timeout_ms": {
-          "description": "Maximum time in milliseconds for syntax highlighting per frame",
-          "type": "integer",
-          "format": "uint64",
-          "default": 5,
-          "minimum": 0
-        },
-        "large_file_threshold_bytes": {
-          "description": "File size threshold in bytes for \"large file\" behavior\nFiles larger than this will:\n- Skip LSP features\n- Use constant-size scrollbar thumb (1 char)\nFiles smaller will count actual lines for accurate scrollbar rendering",
-          "type": "integer",
-          "format": "uint64",
-          "default": 1048576,
-          "minimum": 0
-        },
         "line_numbers": {
           "description": "Show line numbers in the gutter",
-          "type": "boolean",
-          "default": true
-        },
-        "line_wrap": {
-          "description": "Wrap long lines to fit the window width",
-          "type": "boolean",
-          "default": true
-        },
-        "mouse_hover_delay_ms": {
-          "description": "Delay in milliseconds before a mouse hover triggers an LSP hover request.\nLower values show hover info faster but may cause more LSP server load.\nDefault: 500ms",
-          "type": "integer",
-          "format": "uint64",
-          "default": 500,
-          "minimum": 0
-        },
-        "mouse_hover_enabled": {
-          "description": "Whether mouse hover triggers LSP hover requests.\nWhen enabled, hovering over code with the mouse will show documentation.\nDefault: true",
-          "type": "boolean",
-          "default": true
-        },
-        "recovery_enabled": {
-          "description": "Whether to enable file recovery (Emacs-style auto-save)\nWhen enabled, buffers are periodically saved to recovery files\nso they can be recovered if the editor crashes.",
           "type": "boolean",
           "default": true
         },
@@ -868,27 +802,103 @@
           "description": "Minimum lines to keep visible above/below cursor when scrolling",
           "type": "integer",
           "format": "uint",
-          "default": 3,
-          "minimum": 0
-        },
-        "snapshot_interval": {
-          "description": "Undo history snapshot interval (number of edits between snapshots)",
-          "type": "integer",
-          "format": "uint",
-          "default": 100,
-          "minimum": 0
+          "minimum": 0,
+          "default": 3
         },
         "syntax_highlighting": {
           "description": "Enable syntax highlighting for code files",
           "type": "boolean",
           "default": true
         },
-        "tab_size": {
-          "description": "Number of spaces per tab character",
+        "line_wrap": {
+          "description": "Wrap long lines to fit the window width",
+          "type": "boolean",
+          "default": true
+        },
+        "highlight_timeout_ms": {
+          "description": "Maximum time in milliseconds for syntax highlighting per frame",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 5
+        },
+        "snapshot_interval": {
+          "description": "Undo history snapshot interval (number of edits between snapshots)",
           "type": "integer",
           "format": "uint",
-          "default": 4,
-          "minimum": 0
+          "minimum": 0,
+          "default": 100
+        },
+        "large_file_threshold_bytes": {
+          "description": "File size threshold in bytes for \"large file\" behavior\nFiles larger than this will:\n- Skip LSP features\n- Use constant-size scrollbar thumb (1 char)\nFiles smaller will count actual lines for accurate scrollbar rendering",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 1048576
+        },
+        "estimated_line_length": {
+          "description": "Estimated average line length in bytes (used for large file line estimation)\nThis is used by LineIterator to estimate line positions in large files\nwithout line metadata. Typical values: 80-120 bytes.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 80
+        },
+        "enable_inlay_hints": {
+          "description": "Whether to enable LSP inlay hints (type hints, parameter hints, etc.)",
+          "type": "boolean",
+          "default": true
+        },
+        "recovery_enabled": {
+          "description": "Whether to enable file recovery (Emacs-style auto-save)\nWhen enabled, buffers are periodically saved to recovery files\nso they can be recovered if the editor crashes.",
+          "type": "boolean",
+          "default": true
+        },
+        "auto_save_interval_secs": {
+          "description": "Auto-save interval in seconds for file recovery\nModified buffers are saved to recovery files at this interval.\nDefault: 2 seconds for fast recovery with minimal data loss.\nSet to 0 to disable periodic auto-save (manual recovery only).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 2
+        },
+        "highlight_context_bytes": {
+          "description": "Number of bytes to look back/forward from the viewport for syntax highlighting context.\nLarger values improve accuracy for multi-line constructs (strings, comments, nested blocks)\nbut may slow down highlighting for very large files.\nDefault: 10KB (10000 bytes)",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 10000
+        },
+        "mouse_hover_enabled": {
+          "description": "Whether mouse hover triggers LSP hover requests.\nWhen enabled, hovering over code with the mouse will show documentation.\nDefault: true",
+          "type": "boolean",
+          "default": true
+        },
+        "mouse_hover_delay_ms": {
+          "description": "Delay in milliseconds before a mouse hover triggers an LSP hover request.\nLower values show hover info faster but may cause more LSP server load.\nDefault: 500ms",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 500
+        },
+        "double_click_time_ms": {
+          "description": "Time window in milliseconds for detecting double-clicks.\nTwo clicks within this time are treated as a double-click (word selection).\nDefault: 500ms",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 500
+        },
+        "auto_revert_poll_interval_ms": {
+          "description": "Poll interval in milliseconds for auto-reverting open buffers.\nWhen auto-revert is enabled, file modification times are checked at this interval.\nLower values detect external changes faster but use more CPU.\nDefault: 2000ms (2 seconds)",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 2000
+        },
+        "file_tree_poll_interval_ms": {
+          "description": "Poll interval in milliseconds for refreshing expanded directories in the file explorer.\nDirectory modification times are checked at this interval to detect new/deleted files.\nLower values detect changes faster but use more CPU.\nDefault: 3000ms (3 seconds)",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 3000
         }
       }
     },
@@ -896,34 +906,186 @@
       "description": "File explorer configuration",
       "type": "object",
       "properties": {
-        "custom_ignore_patterns": {
-          "description": "Custom patterns to ignore (in addition to .gitignore)",
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          }
-        },
         "respect_gitignore": {
           "description": "Whether to respect .gitignore files",
           "type": "boolean",
           "default": true
-        },
-        "show_gitignored": {
-          "description": "Whether to show gitignored files by default",
-          "type": "boolean",
-          "default": false
         },
         "show_hidden": {
           "description": "Whether to show hidden files (starting with .) by default",
           "type": "boolean",
           "default": false
         },
+        "show_gitignored": {
+          "description": "Whether to show gitignored files by default",
+          "type": "boolean",
+          "default": false
+        },
+        "custom_ignore_patterns": {
+          "description": "Custom patterns to ignore (in addition to .gitignore)",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
         "width": {
           "description": "Width of file explorer as percentage (0.0 to 1.0)",
           "type": "number",
           "format": "float",
           "default": 0.30000001192092896
+        }
+      }
+    },
+    "TerminalConfig": {
+      "description": "Terminal configuration",
+      "type": "object",
+      "properties": {
+        "jump_to_end_on_output": {
+          "description": "When viewing terminal scrollback and new output arrives,\nautomatically jump back to terminal mode (default: true)",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "Keybinding": {
+      "description": "Keybinding definition",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "Key name (e.g., \"a\", \"Enter\", \"F1\") - for single-key bindings",
+          "type": "string"
+        },
+        "modifiers": {
+          "description": "Modifiers (e.g., [\"ctrl\"], [\"ctrl\", \"shift\"]) - for single-key bindings",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "keys": {
+          "description": "Key sequence for chord bindings (e.g., [{\"key\": \"x\", \"modifiers\": [\"ctrl\"]}, {\"key\": \"s\", \"modifiers\": [\"ctrl\"]}])\nIf present, takes precedence over key + modifiers",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/KeyPress"
+          }
+        },
+        "action": {
+          "description": "Action to perform (e.g., \"insert_char\", \"move_left\")",
+          "type": "string"
+        },
+        "args": {
+          "description": "Optional arguments for the action",
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        },
+        "when": {
+          "description": "Optional condition (e.g., \"mode == insert\")",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "KeyPress": {
+      "description": "A single key in a sequence",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "Key name (e.g., \"a\", \"Enter\", \"F1\")",
+          "type": "string"
+        },
+        "modifiers": {
+          "description": "Modifiers (e.g., [\"ctrl\"], [\"ctrl\", \"shift\"])",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "key"
+      ]
+    },
+    "KeymapConfig": {
+      "description": "Keymap configuration (for built-in and user-defined keymaps)",
+      "type": "object",
+      "properties": {
+        "inherits": {
+          "description": "Optional parent keymap to inherit from",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bindings": {
+          "description": "Keybindings defined in this keymap",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Keybinding"
+          },
+          "default": []
+        }
+      }
+    },
+    "KeybindingMapOptions": {
+      "description": "Available keybinding maps",
+      "type": "string",
+      "enum": [
+        "default",
+        "emacs",
+        "vscode"
+      ]
+    },
+    "LanguageConfig": {
+      "description": "Language-specific configuration",
+      "type": "object",
+      "properties": {
+        "extensions": {
+          "description": "File extensions for this language",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "grammar": {
+          "description": "Tree-sitter grammar name",
+          "type": "string",
+          "default": ""
+        },
+        "comment_prefix": {
+          "description": "Comment prefix",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "auto_indent": {
+          "description": "Whether to auto-indent",
+          "type": "boolean",
+          "default": true
+        },
+        "highlighter": {
+          "description": "Preferred highlighter backend (auto, tree-sitter, or textmate)",
+          "$ref": "#/$defs/HighlighterPreference",
+          "default": "auto"
+        },
+        "textmate_grammar": {
+          "description": "Path to custom TextMate grammar file (optional)\nIf specified, this grammar will be used when highlighter is \"textmate\"",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         }
       }
     },
@@ -947,211 +1109,80 @@
         }
       ]
     },
-    "KeyPress": {
-      "description": "A single key in a sequence",
-      "type": "object",
-      "properties": {
-        "key": {
-          "description": "Key name (e.g., \"a\", \"Enter\", \"F1\")",
-          "type": "string"
-        },
-        "modifiers": {
-          "description": "Modifiers (e.g., [\"ctrl\"], [\"ctrl\", \"shift\"])",
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "key"
-      ]
-    },
-    "Keybinding": {
-      "description": "Keybinding definition",
-      "type": "object",
-      "properties": {
-        "action": {
-          "description": "Action to perform (e.g., \"insert_char\", \"move_left\")",
-          "type": "string"
-        },
-        "args": {
-          "description": "Optional arguments for the action",
-          "type": "object",
-          "additionalProperties": true,
-          "default": {}
-        },
-        "key": {
-          "description": "Key name (e.g., \"a\", \"Enter\", \"F1\") - for single-key bindings",
-          "type": "string"
-        },
-        "keys": {
-          "description": "Key sequence for chord bindings (e.g., [{\"key\": \"x\", \"modifiers\": [\"ctrl\"]}, {\"key\": \"s\", \"modifiers\": [\"ctrl\"]}])\nIf present, takes precedence over key + modifiers",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/KeyPress"
-          }
-        },
-        "modifiers": {
-          "description": "Modifiers (e.g., [\"ctrl\"], [\"ctrl\", \"shift\"]) - for single-key bindings",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "when": {
-          "description": "Optional condition (e.g., \"mode == insert\")",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        }
-      },
-      "required": [
-        "action"
-      ]
-    },
-    "KeybindingMapOptions": {
-      "description": "Available keybinding maps",
-      "type": "string",
-      "enum": [
-        "default",
-        "emacs",
-        "vscode"
-      ]
-    },
-    "KeymapConfig": {
-      "description": "Keymap configuration (for built-in and user-defined keymaps)",
-      "type": "object",
-      "properties": {
-        "bindings": {
-          "description": "Keybindings defined in this keymap",
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/Keybinding"
-          }
-        },
-        "inherits": {
-          "description": "Optional parent keymap to inherit from",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      }
-    },
-    "LanguageConfig": {
-      "description": "Language-specific configuration",
-      "type": "object",
-      "properties": {
-        "auto_indent": {
-          "description": "Whether to auto-indent",
-          "type": "boolean",
-          "default": true
-        },
-        "comment_prefix": {
-          "description": "Comment prefix",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "extensions": {
-          "description": "File extensions for this language",
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          }
-        },
-        "grammar": {
-          "description": "Tree-sitter grammar name",
-          "type": "string",
-          "default": ""
-        },
-        "highlighter": {
-          "description": "Preferred highlighter backend (auto, tree-sitter, or textmate)",
-          "$ref": "#/$defs/HighlighterPreference",
-          "default": "auto"
-        },
-        "textmate_grammar": {
-          "description": "Path to custom TextMate grammar file (optional)\nIf specified, this grammar will be used when highlighter is \"textmate\"",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        }
-      }
-    },
     "LspServerConfig": {
       "description": "LSP server configuration",
       "type": "object",
       "properties": {
-        "args": {
-          "description": "Arguments to pass to the server",
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          }
-        },
-        "auto_start": {
-          "description": "Whether to auto-start this LSP server when opening matching files\nIf false (default), the server must be started manually via command palette",
-          "type": "boolean",
-          "default": false
-        },
         "command": {
           "description": "Command to spawn the server",
           "type": "string"
+        },
+        "args": {
+          "description": "Arguments to pass to the server",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
         },
         "enabled": {
           "description": "Whether the server is enabled",
           "type": "boolean",
           "default": true
         },
-        "initialization_options": {
-          "description": "Custom initialization options to send to the server\nThese are passed in the `initializationOptions` field of the LSP Initialize request",
-          "default": null
+        "auto_start": {
+          "description": "Whether to auto-start this LSP server when opening matching files\nIf false (default), the server must be started manually via command palette",
+          "type": "boolean",
+          "default": false
         },
         "process_limits": {
           "description": "Process resource limits (memory and CPU)",
           "$ref": "#/$defs/ProcessLimits",
           "default": {
-            "enabled": true,
+            "max_memory_percent": 50,
             "max_cpu_percent": 90,
-            "max_memory_percent": 50
+            "enabled": true
           }
+        },
+        "initialization_options": {
+          "description": "Custom initialization options to send to the server\nThese are passed in the `initializationOptions` field of the LSP Initialize request",
+          "default": null
         }
       },
       "required": [
         "command"
       ]
     },
-    "Menu": {
-      "description": "A top-level menu in the menu bar",
+    "ProcessLimits": {
+      "description": "Configuration for process resource limits",
       "type": "object",
       "properties": {
-        "items": {
-          "description": "Menu items (actions, separators, or submenus)",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/MenuItem"
-          }
+        "max_memory_percent": {
+          "description": "Maximum memory usage as percentage of total system memory (None = no limit)\nDefault is 50% of total system memory",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
         },
-        "label": {
-          "description": "Display label for the menu (e.g., \"File\", \"Edit\")",
-          "type": "string"
+        "max_cpu_percent": {
+          "description": "Maximum CPU usage as percentage of total CPU (None = no limit)\nFor multi-core systems, 100% = 1 core, 200% = 2 cores, etc.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "enabled": {
+          "description": "Enable resource limiting (can be disabled per-platform)",
+          "type": "boolean",
+          "default": true
         }
-      },
-      "required": [
-        "label",
-        "items"
-      ]
+      }
     },
     "MenuConfig": {
       "description": "Menu bar configuration",
@@ -1160,12 +1191,33 @@
         "menus": {
           "description": "List of top-level menus in the menu bar",
           "type": "array",
-          "default": [],
           "items": {
             "$ref": "#/$defs/Menu"
-          }
+          },
+          "default": []
         }
       }
+    },
+    "Menu": {
+      "description": "A top-level menu in the menu bar",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "Display label for the menu (e.g., \"File\", \"Edit\")",
+          "type": "string"
+        },
+        "items": {
+          "description": "Menu items (actions, separators, or submenus)",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MenuItem"
+          }
+        }
+      },
+      "required": [
+        "label",
+        "items"
+      ]
     },
     "MenuItem": {
       "description": "A menu item (action, separator, or submenu)",
@@ -1186,6 +1238,9 @@
           "description": "An action item",
           "type": "object",
           "properties": {
+            "label": {
+              "type": "string"
+            },
             "action": {
               "type": "string"
             },
@@ -1194,18 +1249,15 @@
               "additionalProperties": true,
               "default": {}
             },
-            "checkbox": {
-              "description": "Checkbox state condition (e.g., \"line_numbers\", \"line_wrap\")",
+            "when": {
               "type": [
                 "string",
                 "null"
               ],
               "default": null
             },
-            "label": {
-              "type": "string"
-            },
-            "when": {
+            "checkbox": {
+              "description": "Checkbox state condition (e.g., \"line_numbers\", \"line_wrap\")",
               "type": [
                 "string",
                 "null"
@@ -1222,14 +1274,14 @@
           "description": "A submenu (for future extensibility)",
           "type": "object",
           "properties": {
+            "label": {
+              "type": "string"
+            },
             "items": {
               "type": "array",
               "items": {
                 "$ref": "#/$defs/MenuItem"
               }
-            },
-            "label": {
-              "type": "string"
             }
           },
           "required": [
@@ -1237,58 +1289,6 @@
             "items"
           ]
         }
-      ]
-    },
-    "ProcessLimits": {
-      "description": "Configuration for process resource limits",
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "description": "Enable resource limiting (can be disabled per-platform)",
-          "type": "boolean",
-          "default": true
-        },
-        "max_cpu_percent": {
-          "description": "Maximum CPU usage as percentage of total CPU (None = no limit)\nFor multi-core systems, 100% = 1 core, 200% = 2 cores, etc.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "default": null,
-          "minimum": 0
-        },
-        "max_memory_percent": {
-          "description": "Maximum memory usage as percentage of total system memory (None = no limit)\nDefault is 50% of total system memory",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "default": null,
-          "minimum": 0
-        }
-      }
-    },
-    "TerminalConfig": {
-      "description": "Terminal configuration",
-      "type": "object",
-      "properties": {
-        "jump_to_end_on_output": {
-          "description": "When viewing terminal scrollback and new output arrives,\nautomatically jump back to terminal mode (default: true)",
-          "type": "boolean",
-          "default": true
-        }
-      }
-    },
-    "ThemeOptions": {
-      "description": "Available color themes",
-      "type": "string",
-      "enum": [
-        "dark",
-        "light",
-        "high-contrast",
-        "nostalgia"
       ]
     }
   }
