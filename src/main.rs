@@ -13,7 +13,7 @@ use crossterm::{
 use fresh::services::gpm::{gpm_to_crossterm, GpmClient};
 use fresh::services::tracing_setup;
 use fresh::{
-    app::Editor, config, config::DirectoryContext, services::release_checker,
+    app::Editor, config, config_io::DirectoryContext, services::release_checker,
     services::signal_handler, services::warning_log::WarningLogHandle,
 };
 use ratatui::Terminal;
@@ -705,7 +705,7 @@ fn poll_with_gpm(
     );
 
     // Check GPM first (mouse events are typically less frequent)
-    if gpm_revents.map_or(false, |r| r.contains(PollFlags::POLLIN)) {
+    if gpm_revents.is_some_and(|r| r.contains(PollFlags::POLLIN)) {
         tracing::trace!("GPM poll: GPM fd has data, reading event...");
         match gpm.read_event() {
             Ok(Some(gpm_event)) => {
@@ -733,7 +733,7 @@ fn poll_with_gpm(
     }
 
     // Check stdin (crossterm events)
-    if stdin_revents.map_or(false, |r| r.contains(PollFlags::POLLIN)) {
+    if stdin_revents.is_some_and(|r| r.contains(PollFlags::POLLIN)) {
         // Use crossterm's read since it handles escape sequence parsing
         if event_poll(Duration::ZERO)? {
             return Ok(Some(event_read()?));

@@ -14,75 +14,128 @@ categories = ["command-line-utilities", "text-editors"]
 [[bin]]
 name = "fresh"
 path = "src/main.rs"
+required-features = ["runtime"]
 
 [[bin]]
 name = "generate_schema"
 path = "src/bin/generate_schema.rs"
+# No required-features - works with minimal deps via --no-default-features
 
 [lib]
 name = "fresh"
 path = "src/lib.rs"
 
 [features]
-default = ["plugins"]
+default = ["plugins", "runtime"]
 plugins = ["dep:deno_core", "dep:deno_ast", "dep:deno_error"]
+# Runtime feature includes all heavy dependencies needed for the actual editor
+runtime = [
+    "dep:crossterm",
+    "dep:ratatui",
+    "dep:chrono",
+    "dep:clap",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "dep:tree-sitter",
+    "dep:tree-sitter-highlight",
+    "dep:tree-sitter-rust",
+    "dep:tree-sitter-python",
+    "dep:tree-sitter-javascript",
+    "dep:tree-sitter-typescript",
+    "dep:tree-sitter-html",
+    "dep:tree-sitter-css",
+    "dep:tree-sitter-c",
+    "dep:tree-sitter-cpp",
+    "dep:tree-sitter-go",
+    "dep:tree-sitter-json",
+    "dep:tree-sitter-java",
+    "dep:tree-sitter-c-sharp",
+    "dep:tree-sitter-php",
+    "dep:tree-sitter-ruby",
+    "dep:tree-sitter-bash",
+    "dep:tree-sitter-lua",
+    "dep:lsp-types",
+    "dep:url",
+    "dep:tokio",
+    "dep:async-trait",
+    "dep:lru",
+    "dep:ignore",
+    "dep:regex",
+    "dep:libc",
+    "dep:libloading",
+    "dep:nix",
+    "dep:anyhow",
+    "dep:dirs",
+    "dep:pulldown-cmark",
+    "dep:sha2",
+    "dep:arboard",
+    "dep:syntect",
+    "dep:ureq",
+    "dep:unicode-width",
+    "dep:alacritty_terminal",
+    "dep:portable-pty",
+]
+# Schema-only feature for minimal builds (just schema generation)
+schema-only = []
 
 [dependencies]
-crossterm = { version = "0.29.0", features = ["osc52"] }
-ratatui = "0.29.0"
+# Always required (for schema generation and runtime)
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] } # Disable default features to remove wasm-bind, clock, etc.
-clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] } # Disable `color` and `suggestions` to reduce binary size.
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-tree-sitter = "0.25.10"
-tree-sitter-highlight = "0.25.10"
-tree-sitter-rust = "0.24.0"
-
-lsp-types = { version = "0.97", default-features = false } # Disable default features for consistency; this crate has few anyway.
-url = "2.5"
-tokio = { version = "1.48", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"] } # Core async runtime features
-async-trait = "0.1"
-lru = "0.16"
-ignore = { version = "0.4", default-features = false } # Disable multithreading via `crossbeam` for potentially smaller builds.
-regex = "1.12"
-libc = "0.2"
-libloading = "0.9"  # Dynamic library loading for optional GPM support
-nix = { version = "0.30", features = ["signal", "pthread", "resource", "poll", "fs"] }
-deno_core = { version = "0.373.0", default-features = false, features = ["v8_use_custom_libcxx"], optional = true }  # Disable ICU data but keep custom libcxx for cross-compilation.
-deno_ast = { version = "0.51.0", default-features = false, features = ["transpiling"], optional = true }  # EXPERIMENT: Slim down SWC toolchain, keeping only transpiling.
-deno_error = { version = "0.7", optional = true }  # Error types for deno_core ops (matches deno_core's dependency)
-tree-sitter-python = "0.25.0"
-tree-sitter-javascript = "0.25.0"
-tree-sitter-typescript = "0.23.2"
-tree-sitter-html = "0.23.2"
-tree-sitter-css = "0.25.0"
-tree-sitter-c = "0.24.1"
-tree-sitter-cpp = "0.23.4"
-tree-sitter-go = "0.25.0"
-tree-sitter-json = "0.24.8"
-tree-sitter-java = "0.23.5"
-tree-sitter-c-sharp = "0.23.1"
-tree-sitter-php = "0.24.2"
-tree-sitter-ruby = "0.23.1"
-tree-sitter-bash = "0.25.0"
-tree-sitter-lua = "0.2.0"
-anyhow = { version = "1.0.100", default-features = false } # Be explicit about requiring `std`, which is pulled in elsewhere.
-dirs = "6.0"  # For XDG/platform-specific directory detection
-pulldown-cmark = { version = "0.13", default-features = false }  # Disable `html` feature which is unused in a TUI app.
-sha2 = "0.10"  # SHA-256 checksums for recovery file integrity
-arboard = { version = "3.6", default-features = false }  # Disable `image` support for clipboard, which is unneeded for a text editor.
 schemars = "1.1"  # JSON Schema generation for config editor
-syntect = "5.2"
-ureq = { version = "2.10", default-features = false, features = ["tls"] }  # Minimal HTTP client for release checking
-# tree-sitter-markdown = "0.7.1"  # Disabled due to tree-sitter version conflict (uses 0.19.5 instead of 0.25.x)
-unicode-width = "0.2"  # Proper display width calculation for CJK, emoji, etc.
 
-# Terminal emulation
-alacritty_terminal = "0.25"
-portable-pty = "0.9"
+# Runtime dependencies (optional, enabled by "runtime" feature)
+crossterm = { version = "0.29.0", features = ["osc52"], optional = true }
+ratatui = { version = "0.29.0", optional = true }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
+clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"], optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+tree-sitter = { version = "0.25.10", optional = true }
+tree-sitter-highlight = { version = "0.25.10", optional = true }
+tree-sitter-rust = { version = "0.24.0", optional = true }
+
+lsp-types = { version = "0.97", default-features = false, optional = true }
+url = { version = "2.5", optional = true }
+tokio = { version = "1.48", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"], optional = true }
+async-trait = { version = "0.1", optional = true }
+lru = { version = "0.16", optional = true }
+ignore = { version = "0.4", default-features = false, optional = true }
+regex = { version = "1.12", optional = true }
+libc = { version = "0.2", optional = true }
+libloading = { version = "0.9", optional = true }
+nix = { version = "0.30", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
+deno_core = { version = "0.373.0", default-features = false, features = ["v8_use_custom_libcxx"], optional = true }
+deno_ast = { version = "0.51.0", default-features = false, features = ["transpiling"], optional = true }
+deno_error = { version = "0.7", optional = true }
+tree-sitter-python = { version = "0.25.0", optional = true }
+tree-sitter-javascript = { version = "0.25.0", optional = true }
+tree-sitter-typescript = { version = "0.23.2", optional = true }
+tree-sitter-html = { version = "0.23.2", optional = true }
+tree-sitter-css = { version = "0.25.0", optional = true }
+tree-sitter-c = { version = "0.24.1", optional = true }
+tree-sitter-cpp = { version = "0.23.4", optional = true }
+tree-sitter-go = { version = "0.25.0", optional = true }
+tree-sitter-json = { version = "0.24.8", optional = true }
+tree-sitter-java = { version = "0.23.5", optional = true }
+tree-sitter-c-sharp = { version = "0.23.1", optional = true }
+tree-sitter-php = { version = "0.24.2", optional = true }
+tree-sitter-ruby = { version = "0.23.1", optional = true }
+tree-sitter-bash = { version = "0.25.0", optional = true }
+tree-sitter-lua = { version = "0.2.0", optional = true }
+anyhow = { version = "1.0.100", default-features = false, optional = true }
+dirs = { version = "6.0", optional = true }
+pulldown-cmark = { version = "0.13", default-features = false, optional = true }
+sha2 = { version = "0.10", optional = true }
+arboard = { version = "3.6", default-features = false, optional = true }
+syntect = { version = "5.2", optional = true }
+ureq = { version = "2.10", default-features = false, features = ["tls"], optional = true }
+unicode-width = { version = "0.2", optional = true }
+
+# Terminal emulation (optional)
+alacritty_terminal = { version = "0.25", optional = true }
+portable-pty = { version = "0.9", optional = true }
 
 [dev-dependencies]
 proptest = "1.9"

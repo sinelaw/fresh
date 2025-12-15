@@ -48,7 +48,8 @@ use self::types::{
     Bookmark, CachedLayout, EventLineInfo, InteractiveReplaceState, LspMessageEntry,
     LspProgressInfo, MacroRecordingState, MouseState, SearchState, DEFAULT_BACKGROUND_FILE,
 };
-use crate::config::{Config, DirectoryContext};
+use crate::config::Config;
+use crate::config_io::DirectoryContext;
 use crate::input::actions::action_to_events as convert_action_to_events;
 use crate::input::buffer_mode::ModeRegistry;
 use crate::input::command_registry::CommandRegistry;

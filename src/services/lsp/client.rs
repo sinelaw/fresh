@@ -1,4 +1,6 @@
-use crate::services::process_limits::ProcessLimits;
+// Re-export LspServerConfig from the shared types module
+pub use crate::types::LspServerConfig;
+
 use lsp_types::{
     notification::{Notification, PublishDiagnostics},
     request::{Initialize, Request, Shutdown},
@@ -7,7 +9,6 @@ use lsp_types::{
     ServerCapabilities, TextDocumentContentChangeEvent, TextDocumentItem, Uri,
     VersionedTextDocumentIdentifier, WorkspaceFolder,
 };
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -450,39 +451,6 @@ impl Drop for LspClient {
     }
 }
 
-/// Configuration for a language server
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct LspServerConfig {
-    /// Command to spawn the server
-    pub command: String,
-
-    /// Arguments to pass to the server
-    #[serde(default)]
-    pub args: Vec<String>,
-
-    /// Whether the server is enabled
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-
-    /// Whether to auto-start this LSP server when opening matching files
-    /// If false (default), the server must be started manually via command palette
-    #[serde(default)]
-    pub auto_start: bool,
-
-    /// Process resource limits (memory and CPU)
-    #[serde(default)]
-    pub process_limits: ProcessLimits,
-
-    /// Initialization options sent during LSP initialize request.
-    /// Some language servers (like Deno) require specific options here.
-    /// For example, Deno requires `{"enable": true}` to enable completions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub initialization_options: Option<serde_json::Value>,
-}
-
-fn default_true() -> bool {
-    true
-}
 
 /// Manager for multiple language servers
 pub struct LspManager {

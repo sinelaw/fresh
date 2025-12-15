@@ -8,21 +8,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-/// Constants for menu context state keys
-/// These are used both in menu item `when` conditions and `checkbox` states
-pub mod context_keys {
-    pub const LINE_NUMBERS: &str = "line_numbers";
-    pub const LINE_WRAP: &str = "line_wrap";
-    pub const COMPOSE_MODE: &str = "compose_mode";
-    pub const FILE_EXPLORER: &str = "file_explorer";
-    pub const FILE_EXPLORER_FOCUSED: &str = "file_explorer_focused";
-    pub const MOUSE_CAPTURE: &str = "mouse_capture";
-    pub const MOUSE_HOVER: &str = "mouse_hover";
-    pub const LSP_AVAILABLE: &str = "lsp_available";
-    pub const FILE_EXPLORER_SHOW_HIDDEN: &str = "file_explorer_show_hidden";
-    pub const FILE_EXPLORER_SHOW_GITIGNORED: &str = "file_explorer_show_gitignored";
-    pub const HAS_SELECTION: &str = "has_selection";
-}
+// Re-export context_keys from the shared types module
+pub use crate::types::context_keys;
 
 /// Menu state context - provides named boolean states for menu item conditions
 /// Both `when` conditions and `checkbox` states look up values here

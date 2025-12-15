@@ -3,43 +3,13 @@
 /// Provides cross-platform support for limiting memory and CPU usage of spawned processes.
 /// On Linux, uses user-delegated cgroups v2 if available, otherwise falls back to setrlimit.
 /// Memory and CPU limits are decoupled - memory can work without CPU delegation.
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+
+// Re-export the type from the shared types module
+pub use crate::types::ProcessLimits;
+
 use std::fs;
 use std::io;
 use std::path::PathBuf;
-
-/// Configuration for process resource limits
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct ProcessLimits {
-    /// Maximum memory usage as percentage of total system memory (None = no limit)
-    /// Default is 50% of total system memory
-    #[serde(default)]
-    pub max_memory_percent: Option<u32>,
-
-    /// Maximum CPU usage as percentage of total CPU (None = no limit)
-    /// For multi-core systems, 100% = 1 core, 200% = 2 cores, etc.
-    #[serde(default)]
-    pub max_cpu_percent: Option<u32>,
-
-    /// Enable resource limiting (can be disabled per-platform)
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-impl Default for ProcessLimits {
-    fn default() -> Self {
-        Self {
-            max_memory_percent: Some(50),       // 50% of total memory
-            max_cpu_percent: Some(90),          // 90% of total CPU
-            enabled: cfg!(target_os = "linux"), // Only enabled on Linux by default
-        }
-    }
-}
 
 impl ProcessLimits {
     /// Get the memory limit in bytes, computed from percentage of total system memory
@@ -49,20 +19,6 @@ impl ProcessLimits {
                 .ok()
                 .map(|total_mb| (total_mb as u64 * percent as u64 / 100) * 1024 * 1024)
         })
-    }
-
-    /// Get the default CPU limit (90% of total CPU)
-    pub fn default_cpu_limit_percent() -> u32 {
-        90
-    }
-
-    /// Create a new ProcessLimits with no restrictions
-    pub fn unlimited() -> Self {
-        Self {
-            max_memory_percent: None,
-            max_cpu_percent: None,
-            enabled: false,
-        }
     }
 
     /// Apply these limits to a tokio Command before spawning

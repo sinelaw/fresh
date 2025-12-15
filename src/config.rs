@@ -1,4 +1,5 @@
-use crate::services::lsp::client::LspServerConfig;
+use crate::types::{context_keys, LspServerConfig, ProcessLimits};
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -589,47 +590,6 @@ impl Default for MenuConfig {
 }
 
 impl Config {
-    /// Get the default config file path
-    pub fn default_config_paths() -> Vec<std::path::PathBuf> {
-        let mut paths = Vec::with_capacity(2);
-
-        // macOS: Prioritize ~/.config/fresh/config.json
-        #[cfg(target_os = "macos")]
-        if let Some(home) = dirs::home_dir() {
-            let path = home.join(".config").join("fresh").join("config.json");
-            if path.exists() {
-                paths.push(path);
-            }
-        }
-
-        // Standard system paths (XDG on Linux, AppSupport on macOS, Roaming on Windows)
-        if let Some(config_dir) = dirs::config_dir() {
-            let path = config_dir.join("fresh").join("config.json");
-            if !paths.contains(&path) && path.exists() {
-                paths.push(path);
-            }
-        }
-
-        paths
-    }
-
-    /// Load configuration from the default location, falling back to defaults if not found
-    pub fn load_or_default() -> Self {
-        for path in Self::default_config_paths() {
-            match Self::load_from_file(&path) {
-                Ok(config) => return config,
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to load config from {}: {}, trying next option",
-                        path.display(),
-                        e
-                    );
-                }
-            }
-        }
-        Self::default()
-    }
-
     /// Load configuration from a JSON file
     ///
     /// This deserializes the user's config file and merges it with defaults.
@@ -649,6 +609,16 @@ impl Config {
         Ok(config)
     }
 
+    /// Save configuration to a JSON file
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ConfigError> {
+        let contents = serde_json::to_string_pretty(self)
+            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+
+        std::fs::write(path.as_ref(), contents).map_err(|e| ConfigError::IoError(e.to_string()))?;
+
+        Ok(())
+    }
+
     /// Merge default values for HashMap fields that should combine user entries with defaults.
     ///
     /// This is called after deserializing user config to ensure that:
@@ -656,7 +626,7 @@ impl Config {
     /// - Default language configs are present even if user only customizes one
     ///
     /// User entries override defaults when keys collide.
-    fn merge_defaults_for_maps(&mut self) {
+    pub(crate) fn merge_defaults_for_maps(&mut self) {
         let defaults = Self::default();
 
         // Merge LSP configs: start with defaults, overlay user entries
@@ -676,16 +646,6 @@ impl Config {
         // Note: keybinding_maps is NOT merged - user defines their own complete maps
         // Note: keybindings Vec is NOT merged - it's user customizations only
         // Note: menu is NOT merged - user can completely override the menu structure
-    }
-
-    /// Save configuration to a JSON file
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ConfigError> {
-        let contents = serde_json::to_string_pretty(self)
-            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
-
-        std::fs::write(path.as_ref(), contents).map_err(|e| ConfigError::IoError(e.to_string()))?;
-
-        Ok(())
     }
 
     /// Load a built-in keymap from embedded JSON
@@ -854,7 +814,6 @@ impl Config {
             .join(format!("rust-analyzer-{}.log", std::process::id()))
             .to_string_lossy()
             .to_string();
-        tracing::info!("rust-analyzer will log to: {}", ra_log_path);
 
         lsp.insert(
             "rust".to_string(),
@@ -863,7 +822,7 @@ impl Config {
                 args: vec!["--log-file".to_string(), ra_log_path],
                 enabled: true,
                 auto_start: false,
-                process_limits: crate::services::process_limits::ProcessLimits::default(),
+                process_limits: ProcessLimits::default(),
                 initialization_options: None,
             },
         );
@@ -876,7 +835,7 @@ impl Config {
                 args: vec![],
                 enabled: true,
                 auto_start: false,
-                process_limits: crate::services::process_limits::ProcessLimits::default(),
+                process_limits: ProcessLimits::default(),
                 initialization_options: None,
             },
         );
@@ -888,7 +847,7 @@ impl Config {
             args: vec!["--stdio".to_string()],
             enabled: true,
             auto_start: false,
-            process_limits: crate::services::process_limits::ProcessLimits::default(),
+            process_limits: ProcessLimits::default(),
             initialization_options: None,
         };
         lsp.insert("javascript".to_string(), ts_lsp.clone());
@@ -902,7 +861,7 @@ impl Config {
                 args: vec!["--stdio".to_string()],
                 enabled: true,
                 auto_start: false,
-                process_limits: crate::services::process_limits::ProcessLimits::default(),
+                process_limits: ProcessLimits::default(),
                 initialization_options: None,
             },
         );
@@ -915,7 +874,7 @@ impl Config {
                 args: vec!["--stdio".to_string()],
                 enabled: true,
                 auto_start: false,
-                process_limits: crate::services::process_limits::ProcessLimits::default(),
+                process_limits: ProcessLimits::default(),
                 initialization_options: None,
             },
         );
@@ -928,7 +887,7 @@ impl Config {
                 args: vec![],
                 enabled: true,
                 auto_start: false,
-                process_limits: crate::services::process_limits::ProcessLimits::default(),
+                process_limits: ProcessLimits::default(),
                 initialization_options: None,
             },
         );
@@ -939,7 +898,7 @@ impl Config {
                 args: vec![],
                 enabled: true,
                 auto_start: false,
-                process_limits: crate::services::process_limits::ProcessLimits::default(),
+                process_limits: ProcessLimits::default(),
                 initialization_options: None,
             },
         );
@@ -952,7 +911,7 @@ impl Config {
                 args: vec![],
                 enabled: true,
                 auto_start: false,
-                process_limits: crate::services::process_limits::ProcessLimits::default(),
+                process_limits: ProcessLimits::default(),
                 initialization_options: None,
             },
         );
@@ -965,7 +924,7 @@ impl Config {
                 args: vec!["--stdio".to_string()],
                 enabled: true,
                 auto_start: false,
-                process_limits: crate::services::process_limits::ProcessLimits::default(),
+                process_limits: ProcessLimits::default(),
                 initialization_options: None,
             },
         );
@@ -978,7 +937,7 @@ impl Config {
                 args: vec![],
                 enabled: true,
                 auto_start: false,
-                process_limits: crate::services::process_limits::ProcessLimits::default(),
+                process_limits: ProcessLimits::default(),
                 initialization_options: None,
             },
         );
@@ -1114,7 +1073,7 @@ impl Config {
                         label: "Find in Selection".to_string(),
                         action: "find_in_selection".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::HAS_SELECTION.to_string()),
+                        when: Some(context_keys::HAS_SELECTION.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
@@ -1157,7 +1116,7 @@ impl Config {
                         action: "toggle_file_explorer".to_string(),
                         args: HashMap::new(),
                         when: None,
-                        checkbox: Some(crate::view::ui::context_keys::FILE_EXPLORER.to_string()),
+                        checkbox: Some(context_keys::FILE_EXPLORER.to_string()),
                     },
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
@@ -1165,21 +1124,21 @@ impl Config {
                         action: "toggle_line_numbers".to_string(),
                         args: HashMap::new(),
                         when: None,
-                        checkbox: Some(crate::view::ui::context_keys::LINE_NUMBERS.to_string()),
+                        checkbox: Some(context_keys::LINE_NUMBERS.to_string()),
                     },
                     MenuItem::Action {
                         label: "Line Wrap".to_string(),
                         action: "toggle_line_wrap".to_string(),
                         args: HashMap::new(),
                         when: None,
-                        checkbox: Some(crate::view::ui::context_keys::LINE_WRAP.to_string()),
+                        checkbox: Some(context_keys::LINE_WRAP.to_string()),
                     },
                     MenuItem::Action {
                         label: "Mouse Support".to_string(),
                         action: "toggle_mouse_capture".to_string(),
                         args: HashMap::new(),
                         when: None,
-                        checkbox: Some(crate::view::ui::context_keys::MOUSE_CAPTURE.to_string()),
+                        checkbox: Some(context_keys::MOUSE_CAPTURE.to_string()),
                     },
                     // Note: Compose Mode removed from menu - markdown_compose plugin provides this
                     MenuItem::Separator { separator: true },
@@ -1452,28 +1411,28 @@ impl Config {
                         label: "Show Hover Info".to_string(),
                         action: "lsp_hover".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::LSP_AVAILABLE.to_string()),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: "Go to Definition".to_string(),
                         action: "lsp_goto_definition".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::LSP_AVAILABLE.to_string()),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: "Find References".to_string(),
                         action: "lsp_references".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::LSP_AVAILABLE.to_string()),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: "Rename Symbol".to_string(),
                         action: "lsp_rename".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::LSP_AVAILABLE.to_string()),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Separator { separator: true },
@@ -1481,21 +1440,21 @@ impl Config {
                         label: "Show Completions".to_string(),
                         action: "lsp_completion".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::LSP_AVAILABLE.to_string()),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: "Show Signature Help".to_string(),
                         action: "lsp_signature_help".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::LSP_AVAILABLE.to_string()),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: "Code Actions".to_string(),
                         action: "lsp_code_actions".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::LSP_AVAILABLE.to_string()),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Separator { separator: true },
@@ -1503,7 +1462,7 @@ impl Config {
                         label: "Toggle Inlay Hints".to_string(),
                         action: "toggle_inlay_hints".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::LSP_AVAILABLE.to_string()),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
@@ -1511,7 +1470,7 @@ impl Config {
                         action: "toggle_mouse_hover".to_string(),
                         args: HashMap::new(),
                         when: None,
-                        checkbox: Some(crate::view::ui::context_keys::MOUSE_HOVER.to_string()),
+                        checkbox: Some(context_keys::MOUSE_HOVER.to_string()),
                     },
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
@@ -1539,7 +1498,7 @@ impl Config {
                         action: "file_explorer_new_file".to_string(),
                         args: HashMap::new(),
                         when: Some(
-                            crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string(),
+                            context_keys::FILE_EXPLORER_FOCUSED.to_string(),
                         ),
                         checkbox: None,
                     },
@@ -1548,7 +1507,7 @@ impl Config {
                         action: "file_explorer_new_directory".to_string(),
                         args: HashMap::new(),
                         when: Some(
-                            crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string(),
+                            context_keys::FILE_EXPLORER_FOCUSED.to_string(),
                         ),
                         checkbox: None,
                     },
@@ -1558,7 +1517,7 @@ impl Config {
                         action: "file_explorer_open".to_string(),
                         args: HashMap::new(),
                         when: Some(
-                            crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string(),
+                            context_keys::FILE_EXPLORER_FOCUSED.to_string(),
                         ),
                         checkbox: None,
                     },
@@ -1567,7 +1526,7 @@ impl Config {
                         action: "file_explorer_rename".to_string(),
                         args: HashMap::new(),
                         when: Some(
-                            crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string(),
+                            context_keys::FILE_EXPLORER_FOCUSED.to_string(),
                         ),
                         checkbox: None,
                     },
@@ -1576,7 +1535,7 @@ impl Config {
                         action: "file_explorer_delete".to_string(),
                         args: HashMap::new(),
                         when: Some(
-                            crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string(),
+                            context_keys::FILE_EXPLORER_FOCUSED.to_string(),
                         ),
                         checkbox: None,
                     },
@@ -1586,7 +1545,7 @@ impl Config {
                         action: "file_explorer_refresh".to_string(),
                         args: HashMap::new(),
                         when: Some(
-                            crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string(),
+                            context_keys::FILE_EXPLORER_FOCUSED.to_string(),
                         ),
                         checkbox: None,
                     },
@@ -1595,18 +1554,18 @@ impl Config {
                         label: "Show Hidden Files".to_string(),
                         action: "file_explorer_toggle_hidden".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::FILE_EXPLORER.to_string()),
+                        when: Some(context_keys::FILE_EXPLORER.to_string()),
                         checkbox: Some(
-                            crate::view::ui::context_keys::FILE_EXPLORER_SHOW_HIDDEN.to_string(),
+                            context_keys::FILE_EXPLORER_SHOW_HIDDEN.to_string(),
                         ),
                     },
                     MenuItem::Action {
                         label: "Show Gitignored Files".to_string(),
                         action: "file_explorer_toggle_gitignored".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::FILE_EXPLORER.to_string()),
+                        when: Some(context_keys::FILE_EXPLORER.to_string()),
                         checkbox: Some(
-                            crate::view::ui::context_keys::FILE_EXPLORER_SHOW_GITIGNORED
+                            context_keys::FILE_EXPLORER_SHOW_GITIGNORED
                                 .to_string(),
                         ),
                     },
@@ -1690,141 +1649,6 @@ impl std::fmt::Display for ConfigError {
 }
 
 impl std::error::Error for ConfigError {}
-
-/// Directory paths for editor state and configuration
-///
-/// This struct holds all directory paths that the editor needs.
-/// Only the top-level `main` function should use `dirs::*` to construct this;
-/// all other code should receive it by construction/parameter passing.
-///
-/// This design ensures:
-/// - Tests can use isolated temp directories
-/// - Parallel tests don't interfere with each other
-/// - No hidden global state dependencies
-#[derive(Debug, Clone)]
-pub struct DirectoryContext {
-    /// Data directory for persistent state (recovery, sessions, history)
-    /// e.g., ~/.local/share/fresh on Linux, ~/Library/Application Support/fresh on macOS
-    pub data_dir: std::path::PathBuf,
-
-    /// Config directory for user configuration
-    /// e.g., ~/.config/fresh on Linux, ~/Library/Application Support/fresh on macOS
-    pub config_dir: std::path::PathBuf,
-
-    /// User's home directory (for file open dialog shortcuts)
-    pub home_dir: Option<std::path::PathBuf>,
-
-    /// User's documents directory (for file open dialog shortcuts)
-    pub documents_dir: Option<std::path::PathBuf>,
-
-    /// User's downloads directory (for file open dialog shortcuts)
-    pub downloads_dir: Option<std::path::PathBuf>,
-}
-
-impl DirectoryContext {
-    /// Create a DirectoryContext from the system directories
-    /// This should ONLY be called from main()
-    pub fn from_system() -> std::io::Result<Self> {
-        let data_dir = dirs::data_dir()
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Could not determine data directory",
-                )
-            })?
-            .join("fresh");
-
-        #[allow(unused_mut)] // mut needed on macOS only
-        let mut config_dir = dirs::config_dir()
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Could not determine config directory",
-                )
-            })?
-            .join("fresh");
-
-        // macOS: Prioritize ~/.config/fresh if it exists
-        #[cfg(target_os = "macos")]
-        if let Some(home) = dirs::home_dir() {
-            let xdg_config = home.join(".config").join("fresh");
-            if xdg_config.exists() {
-                config_dir = xdg_config;
-            }
-        }
-
-        Ok(Self {
-            data_dir,
-            config_dir,
-            home_dir: dirs::home_dir(),
-            documents_dir: dirs::document_dir(),
-            downloads_dir: dirs::download_dir(),
-        })
-    }
-
-    /// Create a DirectoryContext for testing with a temp directory
-    /// All paths point to subdirectories within the provided temp_dir
-    pub fn for_testing(temp_dir: &std::path::Path) -> Self {
-        Self {
-            data_dir: temp_dir.join("data"),
-            config_dir: temp_dir.join("config"),
-            home_dir: Some(temp_dir.join("home")),
-            documents_dir: Some(temp_dir.join("documents")),
-            downloads_dir: Some(temp_dir.join("downloads")),
-        }
-    }
-
-    /// Get the recovery directory path
-    pub fn recovery_dir(&self) -> std::path::PathBuf {
-        self.data_dir.join("recovery")
-    }
-
-    /// Get the sessions directory path
-    pub fn sessions_dir(&self) -> std::path::PathBuf {
-        self.data_dir.join("sessions")
-    }
-
-    /// Get the search history file path
-    pub fn search_history_path(&self) -> std::path::PathBuf {
-        self.data_dir.join("search_history.json")
-    }
-
-    /// Get the replace history file path
-    pub fn replace_history_path(&self) -> std::path::PathBuf {
-        self.data_dir.join("replace_history.json")
-    }
-
-    /// Get the terminals root directory
-    pub fn terminals_dir(&self) -> std::path::PathBuf {
-        self.data_dir.join("terminals")
-    }
-
-    /// Get the terminal directory for a specific working directory
-    pub fn terminal_dir_for(&self, working_dir: &std::path::Path) -> std::path::PathBuf {
-        let encoded = crate::session::encode_path_for_filename(working_dir);
-        self.terminals_dir().join(encoded)
-    }
-
-    /// Get the config file path
-    pub fn config_path(&self) -> std::path::PathBuf {
-        self.config_dir.join("config.json")
-    }
-
-    /// Get the themes directory path
-    pub fn themes_dir(&self) -> std::path::PathBuf {
-        self.config_dir.join("themes")
-    }
-
-    /// Get the grammars directory path
-    pub fn grammars_dir(&self) -> std::path::PathBuf {
-        self.config_dir.join("grammars")
-    }
-
-    /// Get the plugins directory path
-    pub fn plugins_dir(&self) -> std::path::PathBuf {
-        self.config_dir.join("plugins")
-    }
-}
 
 #[cfg(test)]
 mod tests {

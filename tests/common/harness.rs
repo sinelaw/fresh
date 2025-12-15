@@ -62,7 +62,7 @@ pub mod layout {
         terminal_height.saturating_sub(TOTAL_RESERVED_ROWS)
     }
 }
-use fresh::config::DirectoryContext;
+use fresh::config_io::DirectoryContext;
 use fresh::primitives::highlight_engine::HighlightEngine;
 use fresh::services::fs::{BackendMetrics, FsBackend, LocalFsBackend, SlowFsBackend, SlowFsConfig};
 use fresh::services::time_source::{SharedTimeSource, TestTimeSource};

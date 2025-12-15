@@ -2054,7 +2054,8 @@ fn test_terminal_resize_on_enter_mode() {
 #[test]
 #[cfg(not(windows))] // Uses Unix shell
 fn test_session_restore_terminal_scrollback() {
-    use fresh::config::{Config, DirectoryContext};
+    use fresh::config::Config;
+    use fresh::config_io::DirectoryContext;
     use portable_pty::{native_pty_system, PtySize};
     use tempfile::TempDir;
 
@@ -2224,7 +2225,8 @@ fn test_session_restore_terminal_scrollback() {
 #[test]
 #[cfg(not(windows))] // Uses Unix shell
 fn test_scrollback_captured_after_session_restore() {
-    use fresh::config::{Config, DirectoryContext};
+    use fresh::config::Config;
+    use fresh::config_io::DirectoryContext;
     use portable_pty::{native_pty_system, PtySize};
     use tempfile::TempDir;
 

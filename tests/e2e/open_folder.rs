@@ -424,7 +424,7 @@ fn test_switch_project_restart_flow_with_sessions() {
 
     // Create a shared directory context for consistent session storage (isolated for testing)
     let context_temp = TempDir::new().unwrap();
-    let dir_context = fresh::config::DirectoryContext::for_testing(context_temp.path());
+    let dir_context = fresh::config_io::DirectoryContext::for_testing(context_temp.path());
     fs::create_dir_all(dir_context.sessions_dir()).unwrap();
 
     // Phase 1: Start in project_a, open file, save session
@@ -610,7 +610,7 @@ fn test_switch_project_restart_flow_with_sessions() {
     }
 }
 
-use fresh::config::DirectoryContext;
+use fresh::config_io::DirectoryContext;
 
 /// Helper to switch project via the command palette
 fn switch_to_project(harness: &mut EditorTestHarness, project_path: &std::path::Path) {
