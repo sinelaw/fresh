@@ -895,7 +895,7 @@ impl Editor {
     pub fn time_source(&self) -> &SharedTimeSource {
         &self.time_source
     }
-    
+
     /// Emit a control event
     pub fn emit_event(&self, name: impl Into<String>, data: serde_json::Value) {
         self.event_broadcaster.emit_named(name, data);

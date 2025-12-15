@@ -161,9 +161,15 @@ impl EditorTestHarness {
         config.editor.auto_indent = false; // Disable for simpler testing
         config.check_for_updates = false; // Disable update checking in tests
         config.editor.double_click_time_ms = 10; // Fast double-click for faster tests
-        // Use temp directory to avoid loading project plugins in tests
-        let editor =
-            Editor::with_time_source(config, width, height, Some(temp_path), dir_context, time_source)?;
+                                                 // Use temp directory to avoid loading project plugins in tests
+        let editor = Editor::with_time_source(
+            config,
+            width,
+            height,
+            Some(temp_path),
+            dir_context,
+            time_source,
+        )?;
 
         Ok(EditorTestHarness {
             editor,
@@ -199,8 +205,14 @@ impl EditorTestHarness {
         // Disable update checking in tests to avoid flaky status bar changes
         config.check_for_updates = false;
         // Use temp directory to avoid loading project plugins in tests
-        let editor =
-            Editor::with_time_source(config, width, height, Some(temp_path), dir_context, time_source)?;
+        let editor = Editor::with_time_source(
+            config,
+            width,
+            height,
+            Some(temp_path),
+            dir_context,
+            time_source,
+        )?;
 
         Ok(EditorTestHarness {
             editor,
@@ -253,8 +265,14 @@ impl EditorTestHarness {
         let terminal = Terminal::new(backend)?;
         // Disable update checking in tests to avoid flaky status bar changes
         config.check_for_updates = false;
-        let editor =
-            Editor::with_time_source(config, width, height, Some(project_root), dir_context, time_source)?;
+        let editor = Editor::with_time_source(
+            config,
+            width,
+            height,
+            Some(project_root),
+            dir_context,
+            time_source,
+        )?;
 
         Ok(EditorTestHarness {
             editor,
@@ -296,8 +314,14 @@ impl EditorTestHarness {
         // Disable update checking in tests to avoid flaky status bar changes
         config.check_for_updates = false;
         // Create editor - it will create its own tokio runtime for async operations
-        let mut editor =
-            Editor::with_time_source(config, width, height, Some(working_dir), dir_context, time_source)?;
+        let mut editor = Editor::with_time_source(
+            config,
+            width,
+            height,
+            Some(working_dir),
+            dir_context,
+            time_source,
+        )?;
 
         // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
         editor.process_async_messages();
@@ -347,8 +371,14 @@ impl EditorTestHarness {
         // Disable update checking in tests to avoid flaky status bar changes
         config.check_for_updates = false;
         // Create editor - it will create its own tokio runtime for async operations
-        let mut editor =
-            Editor::with_time_source(config, width, height, Some(working_dir), dir_context, time_source)?;
+        let mut editor = Editor::with_time_source(
+            config,
+            width,
+            height,
+            Some(working_dir),
+            dir_context,
+            time_source,
+        )?;
 
         // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
         editor.process_async_messages();
