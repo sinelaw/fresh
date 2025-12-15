@@ -40,7 +40,14 @@ const NAMED_COLORS: Record<string, RGB> = {
   "White": [255, 255, 255],
 };
 
+/**
+ * Special colors that use the terminal's default (preserves transparency)
+ * These don't have RGB values - they tell the terminal to use its native color
+ */
+const SPECIAL_COLORS = ["Default", "Reset"];
+
 const NAMED_COLOR_LIST = Object.keys(NAMED_COLORS);
+const ALL_COLOR_NAMES = [...NAMED_COLOR_LIST, ...SPECIAL_COLORS];
 
 /**
  * Color value - either RGB array or named color string
@@ -152,6 +159,8 @@ const THEME_SECTIONS: ThemeSection[] = [
       { key: "scrollbar_thumb_hover_fg", displayName: "Scrollbar Thumb Hover", description: "Scrollbar thumb hover color", section: "ui" },
       { key: "compose_margin_bg", displayName: "Compose Margin Background", description: "Compose mode margin background", section: "ui" },
       { key: "semantic_highlight_bg", displayName: "Semantic Highlight Background", description: "Word under cursor highlight", section: "ui" },
+      { key: "terminal_bg", displayName: "Terminal Background", description: "Embedded terminal background (use Default for transparency)", section: "ui" },
+      { key: "terminal_fg", displayName: "Terminal Foreground", description: "Embedded terminal default text color", section: "ui" },
     ],
   },
   {
@@ -370,10 +379,10 @@ function formatColorValue(value: ColorValue): string {
 }
 
 /**
- * Check if a color is a named color
+ * Check if a color is a named color (including special colors like Default/Reset)
  */
 function isNamedColor(value: ColorValue): boolean {
-  return typeof value === "string" && value in NAMED_COLORS;
+  return typeof value === "string" && (value in NAMED_COLORS || SPECIAL_COLORS.includes(value));
 }
 
 /**
@@ -648,6 +657,13 @@ function isBackgroundColorField(path: string): boolean {
 }
 
 /**
+ * Check if a color is a special color (Default/Reset)
+ */
+function isSpecialColor(value: ColorValue): boolean {
+  return typeof value === "string" && SPECIAL_COLORS.includes(value);
+}
+
+/**
  * Add color swatches using virtual text
  */
 function addColorSwatches(): void {
@@ -664,29 +680,45 @@ function addColorSwatches(): void {
 
     if (props.type === "field" && props.colorValue) {
       const colorValue = props.colorValue as ColorValue;
-      const rgb = parseColorToRgb(colorValue);
       const path = props.path as string;
 
-      if (rgb) {
-        // Find position after the field name colon
-        const colonIdx = entry.text.indexOf(":");
-        if (colonIdx >= 0) {
-          const swatchPos = byteOffset + getUtf8ByteLength(entry.text.substring(0, colonIdx + 2));
-          const swatchId = `theme-swatch-${path}`;
-          const useBg = isBackgroundColorField(path);
+      // Find position after the field name colon
+      const colonIdx = entry.text.indexOf(":");
+      if (colonIdx >= 0) {
+        const swatchPos = byteOffset + getUtf8ByteLength(entry.text.substring(0, colonIdx + 2));
+        const swatchId = `theme-swatch-${path}`;
 
-          // Add swatch with a trailing space included in the text
+        if (isSpecialColor(colorValue)) {
+          // For Default/Reset, show a placeholder indicator
           editor.addVirtualText(
             state.bufferId,
             swatchId,
             swatchPos,
-            useBg ? "   " : COLOR_BLOCK + " ",  // Include trailing space in swatch text
-            rgb[0],
-            rgb[1],
-            rgb[2],
+            "∅ ",  // Empty set symbol to indicate "use default"
+            150,   // Gray color for the indicator
+            150,
+            150,
             true,
-            useBg  // use as background color
+            false
           );
+        } else {
+          const rgb = parseColorToRgb(colorValue);
+          if (rgb) {
+            const useBg = isBackgroundColorField(path);
+
+            // Add swatch with a trailing space included in the text
+            editor.addVirtualText(
+              state.bufferId,
+              swatchId,
+              swatchPos,
+              useBg ? "   " : COLOR_BLOCK + " ",  // Include trailing space in swatch text
+              rgb[0],
+              rgb[1],
+              rgb[2],
+              true,
+              useBg  // use as background color
+            );
+          }
         }
       }
     }
@@ -793,6 +825,15 @@ function editColorField(field: ThemeField): void {
     },
   ];
 
+  // Add special colors first (Default/Reset for terminal transparency)
+  for (const name of SPECIAL_COLORS) {
+    suggestions.push({
+      text: name,
+      description: "Use terminal's native color",
+      value: name,
+    });
+  }
+
   // Add named colors as suggestions with hex format
   for (const name of NAMED_COLOR_LIST) {
     const rgb = NAMED_COLORS[name];
@@ -812,6 +853,11 @@ function editColorField(field: ThemeField): void {
  */
 function parseColorInput(input: string): ColorValue | null {
   input = input.trim();
+
+  // Check for special colors (Default/Reset - use terminal's native color)
+  if (SPECIAL_COLORS.includes(input)) {
+    return input;
+  }
 
   // Check for named color
   if (input in NAMED_COLORS) {
@@ -1070,6 +1116,8 @@ function createDefaultTheme(): Record<string, unknown> {
       help_indicator_fg: "Red",
       help_indicator_bg: "Black",
       split_separator_fg: [100, 100, 100],
+      terminal_bg: "Default",
+      terminal_fg: "Default",
     },
     search: {
       match_bg: [100, 100, 20],
