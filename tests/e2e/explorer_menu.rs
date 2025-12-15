@@ -279,14 +279,13 @@ fn test_explorer_d_keybinding_deletes() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
-    // Expand root and navigate to the file
-    harness.editor_mut().file_explorer_toggle_expand();
+    // Root is automatically expanded during init, so just wait for the file to appear
     harness
         .wait_for_file_explorer_item("to_delete.txt")
         .unwrap();
 
-    harness.editor_mut().file_explorer_navigate_down();
-    harness.render().unwrap();
+    // Navigate down to select the file (root is initially selected)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
 
     // Press 'd' to delete
     harness
@@ -313,14 +312,13 @@ fn test_explorer_f2_keybinding_renames() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
-    // Expand root and navigate to the file
-    harness.editor_mut().file_explorer_toggle_expand();
+    // Root is automatically expanded during init, so just wait for the file to appear
     harness
         .wait_for_file_explorer_item("to_rename.txt")
         .unwrap();
 
-    harness.editor_mut().file_explorer_navigate_down();
-    harness.render().unwrap();
+    // Navigate down to select the file (root is initially selected)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
 
     // Press F2 to rename
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
@@ -344,14 +342,13 @@ fn test_explorer_delete_key_deletes() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
-    // Expand root and navigate to the file
-    harness.editor_mut().file_explorer_toggle_expand();
+    // Root is automatically expanded during init, so just wait for the file to appear
     harness
         .wait_for_file_explorer_item("delete_test.txt")
         .unwrap();
 
-    harness.editor_mut().file_explorer_navigate_down();
-    harness.render().unwrap();
+    // Navigate down to select the file (root is initially selected)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
 
     // Press Delete key
     harness
@@ -636,15 +633,13 @@ fn test_rename_prompt_escape_aborts() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
-    // Ensure root is expanded - toggle until file is visible
-    harness.editor_mut().file_explorer_toggle_expand();
+    // Root is automatically expanded during init, so just wait for the file to appear
     harness
         .wait_for_file_explorer_item("original_file")
         .unwrap();
 
-    // Navigate down to the first child (the file)
+    // Navigate down to select the file (root is initially selected)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
 
     // Press F2 to start rename
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
@@ -698,15 +693,13 @@ fn test_rename_prompt_enter_accepts() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
-    // Ensure root is expanded - toggle until file is visible
-    harness.editor_mut().file_explorer_toggle_expand();
+    // Root is automatically expanded during init, so just wait for the file to appear
     harness
         .wait_for_file_explorer_item("file_to_rename")
         .unwrap();
 
-    // Navigate down to the first child (the file)
+    // Navigate down to select the file (root is initially selected)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
 
     // Press F2 to start rename
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
@@ -825,18 +818,16 @@ fn test_rename_via_menu_affects_filesystem() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
-    // Ensure root is expanded - toggle until file is visible
-    harness.editor_mut().file_explorer_toggle_expand();
+    // Root is automatically expanded during init, so just wait for the file to appear
     harness
         .wait_for_file_explorer_item("menu_rename_test")
         .unwrap();
 
-    // Navigate down to the first child (the file)
+    // Navigate down to select the file (root is initially selected)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
 
-    // Trigger rename directly (same as selecting from Explorer menu)
-    harness.editor_mut().file_explorer_rename();
+    // Trigger rename via F2 key
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     harness.wait_for_prompt().unwrap();
 
     // Should be prompting for new name
@@ -884,16 +875,14 @@ fn test_selection_after_rename_on_renamed_item() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
-    // Ensure root is expanded
-    harness.editor_mut().file_explorer_toggle_expand();
+    // Root is automatically expanded during init, so just wait for the file to appear
     harness.wait_for_file_explorer_item("select_test").unwrap();
 
-    // Navigate down to select the file
+    // Navigate down to select the file (root is initially selected)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
 
-    // Start rename
-    harness.editor_mut().file_explorer_rename();
+    // Start rename via F2 key
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     harness.wait_for_prompt().unwrap();
 
     // Set new name and confirm
@@ -936,15 +925,15 @@ fn test_navigation_after_rename_completes() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
-    // Ensure root is expanded
-    harness.editor_mut().file_explorer_toggle_expand();
+    // Root is auto-expanded during init, wait for file to appear
     harness.wait_for_file_explorer_item("aaa_first").unwrap();
 
     // Navigate to first file and rename it
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    harness.editor_mut().file_explorer_rename();
+    // Use F2 key to trigger rename (user-facing action)
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     harness.wait_for_prompt().unwrap();
 
     // Rename the file
@@ -1060,8 +1049,7 @@ fn test_focus_returns_after_rename() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
-    // Ensure root is expanded
-    harness.editor_mut().file_explorer_toggle_expand();
+    // Root is auto-expanded during init, wait for file to appear
     harness.wait_for_file_explorer_item("aaa_file").unwrap();
 
     // Navigate to aaa_file.txt
@@ -1074,8 +1062,8 @@ fn test_focus_returns_after_rename() {
         "File explorer should be focused before rename"
     );
 
-    // Start rename
-    harness.editor_mut().file_explorer_rename();
+    // Start rename using F2 key (user-facing action)
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     harness.wait_for_prompt().unwrap();
 
     // Type new name and confirm

@@ -580,25 +580,21 @@ fn test_file_explorer_delete_smoke() {
     // Create a test file
     fs::write(project_root.join("test.txt"), "test").unwrap();
 
-    // Toggle file explorer on
-    harness.editor_mut().toggle_file_explorer();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
+    // Open and focus file explorer
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    // Root is auto-expanded during init, wait for file to appear
+    harness.wait_for_file_explorer_item("test.txt").unwrap();
+
+    // Navigate to the file using Down key (user-facing action)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Expand root and navigate
-    harness.editor_mut().file_explorer_toggle_expand();
-    harness.sleep(std::time::Duration::from_millis(50));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
-
-    harness.editor_mut().file_explorer_navigate_down();
-    harness.render().unwrap();
-
-    // Call delete - should not panic (actual deletion depends on runtime and safety checks)
-    harness.editor_mut().file_explorer_delete();
+    // Call delete using Delete key (user-facing action)
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
     harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 

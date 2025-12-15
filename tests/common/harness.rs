@@ -1409,9 +1409,14 @@ impl EditorTestHarness {
 
     /// Wait for file explorer to show a specific item by name (in the tree, not tabs)
     /// The file explorer tree uses │ characters, so we check for lines containing both
+    /// Also ensures the file_explorer object exists (not taken for async operation)
     pub fn wait_for_file_explorer_item(&mut self, name: &str) -> io::Result<()> {
         let name = name.to_string();
         self.wait_until(move |h| {
+            // Ensure file_explorer exists (not None during async operation)
+            if h.editor().file_explorer().is_none() {
+                return false;
+            }
             let screen = h.screen_to_string();
             // Look for the item in a file explorer tree line (contains │ tree connector)
             // or in a line with tree markers like ▶ or ▼
