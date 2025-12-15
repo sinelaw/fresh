@@ -213,8 +213,8 @@ fn test_mouse_click_toggles_menu() {
     harness.render().unwrap();
     harness.assert_screen_contains("New File");
 
-    // Wait to avoid double-click detection
-    std::thread::sleep(double_click_delay);
+    // Wait to avoid double-click detection (use harness.sleep to advance logical time)
+    harness.sleep(double_click_delay);
 
     // Click on File again to close it
     harness.mouse_click(2, 0).unwrap();
@@ -238,8 +238,8 @@ fn test_mouse_click_empty_area_closes_menu() {
     harness.render().unwrap();
     harness.assert_screen_contains("New File");
 
-    // Wait to avoid double-click detection
-    std::thread::sleep(double_click_delay);
+    // Wait to avoid double-click detection (use harness.sleep to advance logical time)
+    harness.sleep(double_click_delay);
 
     // Click on empty area of menu bar (far right)
     harness.mouse_click(70, 0).unwrap();
@@ -300,8 +300,8 @@ fn test_mouse_click_undo_menu_item() {
     harness.render().unwrap();
     harness.assert_screen_contains("Undo");
 
-    // Wait to avoid double-click detection
-    std::thread::sleep(double_click_delay);
+    // Wait to avoid double-click detection (use harness.sleep to advance logical time)
+    harness.sleep(double_click_delay);
 
     // Click on Undo item (first item in Edit menu, row 2 after border)
     // Edit menu starts at column 7 (after " File " + space)

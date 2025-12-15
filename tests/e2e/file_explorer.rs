@@ -618,9 +618,7 @@ fn test_enter_toggles_directory() {
 
     // Open file explorer
     harness.editor_mut().focus_file_explorer();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    harness.wait_for_file_explorer().unwrap();
 
     // Root should already be expanded (Feature 3), navigate to testdir
     harness
@@ -641,9 +639,7 @@ fn test_enter_toggles_directory() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::empty())
         .unwrap();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    harness.wait_for_file_explorer_item("file1.txt").unwrap();
 
     let screen_after_expand = harness.screen_to_string();
     println!("After expand:\n{}", screen_after_expand);
@@ -664,9 +660,10 @@ fn test_enter_toggles_directory() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::empty())
         .unwrap();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    // Wait for the directory to collapse (files should be gone)
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("file1.txt"))
+        .unwrap();
 
     let screen_after_collapse = harness.screen_to_string();
 
@@ -700,11 +697,7 @@ fn test_enter_opens_file_and_switches_focus() {
 
     // Open file explorer (should have focus)
     harness.editor_mut().focus_file_explorer();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    harness.wait_for_file_explorer().unwrap();
 
     // Root directory should already be expanded (Feature 3)
     // Navigate down to the file (testfile.txt)
@@ -733,9 +726,7 @@ fn test_enter_opens_file_and_switches_focus() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::empty())
         .unwrap();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    harness.wait_for_screen_contains(test_content).unwrap();
 
     let screen_after = harness.screen_to_string();
 
@@ -830,11 +821,7 @@ fn test_unsaved_change_indicators() {
 
     // Open file explorer
     harness.editor_mut().focus_file_explorer();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    harness.wait_for_file_explorer().unwrap();
 
     let screen_initial = harness.screen_to_string();
 
@@ -865,9 +852,13 @@ fn test_unsaved_change_indicators() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::empty())
         .unwrap();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    // Wait for file content to load
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("original content") || s.contains("fn main")
+        })
+        .unwrap();
 
     let screen_after_open = harness.screen_to_string();
     println!("After opening file:\n{}", screen_after_open);
@@ -886,9 +877,7 @@ fn test_unsaved_change_indicators() {
 
     // Go back to file explorer
     harness.editor_mut().focus_file_explorer();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    harness.wait_for_file_explorer().unwrap();
 
     let screen_with_unsaved = harness.screen_to_string();
 
@@ -1068,11 +1057,7 @@ fn test_tabs_above_editor_area_only() {
 
     // Open file explorer
     harness.editor_mut().focus_file_explorer();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    harness.wait_for_file_explorer().unwrap();
 
     let screen = harness.screen_to_string();
     println!("Screen with file explorer and tabs:\n{}", screen);
@@ -1133,26 +1118,19 @@ fn test_auto_select_file_on_focus_switch() {
 
     // Open file explorer
     harness.editor_mut().focus_file_explorer();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    harness.wait_for_file_explorer().unwrap();
 
     // Open a deeply nested file
     harness
         .editor_mut()
         .open_file(&project_root.join("src/components/App.js"))
         .unwrap();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // Switch focus to file explorer
     harness.editor_mut().focus_file_explorer();
-    harness.sleep(std::time::Duration::from_millis(200));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    // Wait for file explorer to show App.js (auto-expand to currently edited file)
+    harness.wait_for_file_explorer_item("App.js").unwrap();
 
     let screen = harness.screen_to_string();
     println!("Screen after opening nested file:\n{}", screen);
@@ -1202,9 +1180,7 @@ fn test_auto_select_file_on_focus_switch() {
 
     // Switch focus back to file explorer
     harness.editor_mut().focus_file_explorer();
-    harness.sleep(std::time::Duration::from_millis(200));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    harness.wait_for_file_explorer_item("README.md").unwrap();
 
     let screen2 = harness.screen_to_string();
     println!("Screen after switching to README.md:\n{}", screen2);

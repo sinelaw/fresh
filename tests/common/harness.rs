@@ -1382,6 +1382,9 @@ impl EditorTestHarness {
     /// Wait indefinitely for async operations until condition is met
     /// Repeatedly processes async messages until condition is met (no timeout)
     /// Use this for semantic events that must eventually occur
+    ///
+    /// Note: Uses a short real wall-clock sleep between iterations to allow
+    /// async I/O operations (running on tokio runtime) time to complete.
     pub fn wait_until<F>(&mut self, mut condition: F) -> io::Result<()>
     where
         F: FnMut(&Self) -> bool,
@@ -1391,8 +1394,48 @@ impl EditorTestHarness {
             if condition(self) {
                 return Ok(());
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            // Sleep for real wall-clock time to allow async I/O operations to complete
+            // These run on the tokio runtime and need actual time, not logical time
+            std::thread::sleep(std::time::Duration::from_millis(50));
         }
+    }
+
+    // ===== File Explorer Wait Helpers =====
+
+    /// Wait for file explorer to be initialized (has a view)
+    pub fn wait_for_file_explorer(&mut self) -> io::Result<()> {
+        self.wait_until(|h| h.editor().file_explorer().is_some())
+    }
+
+    /// Wait for file explorer to show a specific item by name (in the tree, not tabs)
+    /// The file explorer tree uses │ characters, so we check for lines containing both
+    pub fn wait_for_file_explorer_item(&mut self, name: &str) -> io::Result<()> {
+        let name = name.to_string();
+        self.wait_until(move |h| {
+            let screen = h.screen_to_string();
+            // Look for the item in a file explorer tree line (contains │ tree connector)
+            // or in a line with tree markers like ▶ or ▼
+            screen.lines().any(|line| {
+                line.contains(&name)
+                    && (line.contains("│") || line.contains("▶") || line.contains("▼"))
+            })
+        })
+    }
+
+    /// Wait for a prompt to become active
+    pub fn wait_for_prompt(&mut self) -> io::Result<()> {
+        self.wait_until(|h| h.editor().is_prompting())
+    }
+
+    /// Wait for prompt to close (no longer prompting)
+    pub fn wait_for_prompt_closed(&mut self) -> io::Result<()> {
+        self.wait_until(|h| !h.editor().is_prompting())
+    }
+
+    /// Wait for screen to contain specific text
+    pub fn wait_for_screen_contains(&mut self, text: &str) -> io::Result<()> {
+        let text = text.to_string();
+        self.wait_until(move |h| h.screen_to_string().contains(&text))
     }
 
     /// Capture a visual step for regression testing
