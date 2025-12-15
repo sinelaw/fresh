@@ -33,6 +33,8 @@ impl From<ColorDef> for Color {
                 "LightMagenta" => Color::LightMagenta,
                 "LightCyan" => Color::LightCyan,
                 "White" => Color::White,
+                // Default/Reset uses the terminal's default color (preserves transparency)
+                "Default" | "Reset" => Color::Reset,
                 _ => Color::White, // Default fallback
             },
         }
@@ -141,6 +143,10 @@ struct UiColors {
     compose_margin_bg: ColorDef,
     #[serde(default = "default_semantic_highlight_bg")]
     semantic_highlight_bg: ColorDef,
+    #[serde(default = "default_terminal_bg")]
+    terminal_bg: ColorDef,
+    #[serde(default = "default_terminal_fg")]
+    terminal_fg: ColorDef,
 }
 
 // Default tab close hover color (for backward compatibility with existing themes)
@@ -217,6 +223,12 @@ fn default_compose_margin_bg() -> ColorDef {
 }
 fn default_semantic_highlight_bg() -> ColorDef {
     ColorDef::Rgb(60, 60, 80) // Subtle dark highlight for word occurrences
+}
+fn default_terminal_bg() -> ColorDef {
+    ColorDef::Named("Default".to_string()) // Use terminal's default background (preserves transparency)
+}
+fn default_terminal_fg() -> ColorDef {
+    ColorDef::Named("Default".to_string()) // Use terminal's default foreground
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -332,6 +344,10 @@ pub struct Theme {
     // Semantic highlighting (word under cursor)
     pub semantic_highlight_bg: Color,
 
+    // Terminal colors (for embedded terminal buffers)
+    pub terminal_bg: Color,
+    pub terminal_fg: Color,
+
     // Search colors
     pub search_match_bg: Color,
     pub search_match_fg: Color,
@@ -417,6 +433,8 @@ impl From<ThemeFile> for Theme {
             scrollbar_thumb_hover_fg: file.ui.scrollbar_thumb_hover_fg.into(),
             compose_margin_bg: file.ui.compose_margin_bg.into(),
             semantic_highlight_bg: file.ui.semantic_highlight_bg.into(),
+            terminal_bg: file.ui.terminal_bg.into(),
+            terminal_fg: file.ui.terminal_fg.into(),
             search_match_bg: file.search.match_bg.into(),
             search_match_fg: file.search.match_fg.into(),
             diagnostic_error_fg: file.diagnostic.error_fg.into(),
@@ -557,6 +575,10 @@ impl Theme {
             // Semantic highlighting (word under cursor)
             semantic_highlight_bg: Color::Rgb(60, 60, 80), // Subtle dark highlight
 
+            // Terminal colors (use terminal's default colors to preserve transparency)
+            terminal_bg: Color::Reset,
+            terminal_fg: Color::Reset,
+
             // Search colors
             search_match_bg: Color::Rgb(100, 100, 20), // Yellow-brown highlight
             search_match_fg: Color::Rgb(255, 255, 255),
@@ -663,6 +685,10 @@ impl Theme {
             // Semantic highlighting (word under cursor)
             semantic_highlight_bg: Color::Rgb(220, 230, 240), // Subtle light blue highlight
 
+            // Terminal colors (use terminal's default colors to preserve transparency)
+            terminal_bg: Color::Reset,
+            terminal_fg: Color::Reset,
+
             // Search colors
             search_match_bg: Color::Rgb(255, 255, 150), // Light yellow highlight
             search_match_fg: Color::Rgb(0, 0, 0),
@@ -768,6 +794,10 @@ impl Theme {
 
             // Semantic highlighting (word under cursor)
             semantic_highlight_bg: Color::Rgb(0, 60, 100), // Bright blue highlight for visibility
+
+            // Terminal colors (use terminal's default colors to preserve transparency)
+            terminal_bg: Color::Reset,
+            terminal_fg: Color::Reset,
 
             // Search colors
             search_match_bg: Color::Yellow,
@@ -925,6 +955,10 @@ impl Theme {
             // Semantic highlighting (word under cursor)
             semantic_highlight_bg: Color::Rgb(0, 85, 170), // Lighter blue highlight
 
+            // Terminal colors (Turbo Pascal style - blue background, yellow text)
+            terminal_bg: Color::Rgb(0, 0, 170), // Classic DOS blue
+            terminal_fg: Color::Rgb(255, 255, 85), // Bright yellow
+
             // Search colors
             search_match_bg: Color::Rgb(170, 85, 0), // Orange/brown
             search_match_fg: Color::Rgb(255, 255, 255),
@@ -1001,5 +1035,16 @@ mod tests {
     fn test_default_theme() {
         let theme = Theme::default();
         assert_eq!(theme.name, "high-contrast");
+    }
+
+    #[test]
+    fn test_default_reset_color() {
+        // Test that "Default" maps to Color::Reset
+        let color: Color = ColorDef::Named("Default".to_string()).into();
+        assert_eq!(color, Color::Reset);
+
+        // Test that "Reset" also maps to Color::Reset
+        let color: Color = ColorDef::Named("Reset".to_string()).into();
+        assert_eq!(color, Color::Reset);
     }
 }

@@ -639,13 +639,15 @@ impl Editor {
                         // Clear the content area first
                         frame.render_widget(ratatui::widgets::Clear, *content_rect);
 
-                        // Render terminal content
+                        // Render terminal content with theme colors
                         render::render_terminal_content(
                             &content,
                             cursor_pos,
                             cursor_visible,
                             *content_rect,
                             frame.buffer_mut(),
+                            self.theme.terminal_fg,
+                            self.theme.terminal_bg,
                         );
                     }
                 }
@@ -668,6 +670,8 @@ pub mod render {
         cursor_visible: bool,
         area: Rect,
         buf: &mut Buffer,
+        default_fg: Color,
+        default_bg: Color,
     ) {
         for (row_idx, row) in content.iter().enumerate() {
             if row_idx as u16 >= area.height {
@@ -683,15 +687,14 @@ pub mod render {
 
                 let x = area.x + col_idx as u16;
 
-                // Build style from cell attributes
-                let mut style = Style::default();
+                // Build style from cell attributes, using theme defaults
+                let mut style = Style::default().fg(default_fg).bg(default_bg);
 
-                // Set foreground color
+                // Override with cell-specific colors if present
                 if let Some((r, g, b)) = cell.fg {
                     style = style.fg(Color::Rgb(r, g, b));
                 }
 
-                // Set background color
                 if let Some((r, g, b)) = cell.bg {
                     style = style.bg(Color::Rgb(r, g, b));
                 }
