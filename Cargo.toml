@@ -46,7 +46,7 @@ regex = "1.12"
 libc = "0.2"
 libloading = "0.9"  # Dynamic library loading for optional GPM support
 nix = { version = "0.30", features = ["signal", "pthread", "resource", "poll", "fs"] }
-deno_core = { version = "0.372.0", default-features = false, features = ["v8_use_custom_libcxx"], optional = true }  # Disable ICU data but keep custom libcxx for cross-compilation.
+deno_core = { version = "0.373.0", default-features = false, features = ["v8_use_custom_libcxx"], optional = true }  # Disable ICU data but keep custom libcxx for cross-compilation.
 deno_ast = { version = "0.51.0", default-features = false, features = ["transpiling"], optional = true }  # EXPERIMENT: Slim down SWC toolchain, keeping only transpiling.
 deno_error = { version = "0.7", optional = true }  # Error types for deno_core ops (matches deno_core's dependency)
 tree-sitter-python = "0.25.0"
