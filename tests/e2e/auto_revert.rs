@@ -34,6 +34,10 @@ fn write_and_sync(path: &Path, content: &str) {
 #[test]
 #[cfg_attr(target_os = "macos", ignore)] // FSEvents coalescing can cause flaky timing
 fn test_auto_revert_multiple_external_edits() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("fresh=trace")
+        .with_test_writer()
+        .try_init();
     let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
     let project_dir = harness.project_dir().unwrap();
     let file_path = project_dir.join("test_revert.txt");

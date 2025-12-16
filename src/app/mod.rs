@@ -848,8 +848,8 @@ impl Editor {
             pending_lsp_confirmation: None,
             pending_close_buffer: None,
             auto_revert_enabled: true,
-            last_auto_revert_poll: std::time::Instant::now(),
-            last_file_tree_poll: std::time::Instant::now(),
+            last_auto_revert_poll: time_source.now(),
+            last_file_tree_poll: time_source.now(),
             file_mod_times: HashMap::new(),
             dir_mod_times: HashMap::new(),
             file_rapid_change_counts: HashMap::new(),
@@ -3783,10 +3783,12 @@ impl Editor {
         // Check poll interval
         let poll_interval =
             std::time::Duration::from_millis(self.config.editor.auto_revert_poll_interval_ms);
-        if self.last_auto_revert_poll.elapsed() < poll_interval {
+        let elapsed = self.time_source.elapsed_since(self.last_auto_revert_poll);
+        tracing::trace!("poll_file_changes: elapsed={:?}, poll_interval={:?}", elapsed, poll_interval);
+        if elapsed < poll_interval {
             return false;
         }
-        self.last_auto_revert_poll = std::time::Instant::now();
+        self.last_auto_revert_poll = self.time_source.now();
 
         // Collect paths of open files that need checking
         let files_to_check: Vec<PathBuf> = self
@@ -3810,10 +3812,9 @@ impl Editor {
             // Check if mtime has changed
             if let Some(&stored_mtime) = self.file_mod_times.get(&path) {
                 if current_mtime != stored_mtime {
-                    // Update stored mtime
-                    self.file_mod_times.insert(path.clone(), current_mtime);
-
                     // Handle the file change (this includes debouncing)
+                    // Note: file_mod_times is updated by handle_file_changed after successful revert,
+                    // not here, to avoid the race where the revert check sees the already-updated mtime
                     let path_str = path.display().to_string();
                     if self.handle_async_file_changed(path_str) {
                         any_changed = true;
@@ -3836,10 +3837,10 @@ impl Editor {
         // Check poll interval
         let poll_interval =
             std::time::Duration::from_millis(self.config.editor.file_tree_poll_interval_ms);
-        if self.last_file_tree_poll.elapsed() < poll_interval {
+        if self.time_source.elapsed_since(self.last_file_tree_poll) < poll_interval {
             return false;
         }
-        self.last_file_tree_poll = std::time::Instant::now();
+        self.last_file_tree_poll = self.time_source.now();
 
         // Get file explorer reference
         let Some(explorer) = &self.file_explorer else {

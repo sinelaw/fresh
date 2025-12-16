@@ -1389,6 +1389,7 @@ impl EditorTestHarness {
     where
         F: FnMut(&Self) -> bool,
     {
+        const WAIT_SLEEP: std::time::Duration = std::time::Duration::from_millis(50);
         loop {
             self.process_async_and_render()?;
             if condition(self) {
@@ -1396,7 +1397,9 @@ impl EditorTestHarness {
             }
             // Sleep for real wall-clock time to allow async I/O operations to complete
             // These run on the tokio runtime and need actual time, not logical time
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::thread::sleep(WAIT_SLEEP);
+            // Also advance test time so time-based features (polling, debounce) continue working
+            self.advance_time(WAIT_SLEEP);
         }
     }
 
