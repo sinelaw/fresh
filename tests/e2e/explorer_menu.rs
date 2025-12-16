@@ -273,7 +273,8 @@ fn test_explorer_d_keybinding_deletes() {
     let project_root = harness.project_dir().unwrap();
 
     // Create a test file
-    fs::write(project_root.join("to_delete.txt"), "delete me").unwrap();
+    let file_path = project_root.join("to_delete.txt");
+    fs::write(&file_path, "delete me").unwrap();
 
     // Open and focus file explorer
     harness.editor_mut().focus_file_explorer();
@@ -286,17 +287,16 @@ fn test_explorer_d_keybinding_deletes() {
 
     // Navigate down to select the file (root is initially selected)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
 
-    // Press 'd' to delete
+    // Press 'd' to delete (deletes immediately without prompt)
     harness
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
-    // Wait for delete confirmation prompt
-    harness.wait_for_prompt().unwrap();
-
-    // The test passes if no panic occurs - actual deletion depends on the selected item
-    let screen = harness.screen_to_string();
-    println!("Screen after delete attempt:\n{}", screen);
+    // Wait for the file to actually be deleted
+    harness
+        .wait_until(|_| !file_path.exists())
+        .unwrap();
 }
 
 /// Test that F2 keybinding triggers rename in file explorer
@@ -336,7 +336,8 @@ fn test_explorer_delete_key_deletes() {
     let project_root = harness.project_dir().unwrap();
 
     // Create a test file
-    fs::write(project_root.join("delete_test.txt"), "delete me").unwrap();
+    let file_path = project_root.join("delete_test.txt");
+    fs::write(&file_path, "delete me").unwrap();
 
     // Open and focus file explorer
     harness.editor_mut().focus_file_explorer();
@@ -349,16 +350,16 @@ fn test_explorer_delete_key_deletes() {
 
     // Navigate down to select the file (root is initially selected)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
 
-    // Press Delete key
+    // Press Delete key (deletes immediately without prompt)
     harness
         .send_key(KeyCode::Delete, KeyModifiers::NONE)
         .unwrap();
-    harness.wait_for_prompt().unwrap();
-
-    // The test passes if no panic occurs
-    let screen = harness.screen_to_string();
-    println!("Screen after delete key attempt:\n{}", screen);
+    // Wait for the file to actually be deleted
+    harness
+        .wait_until(|_| !file_path.exists())
+        .unwrap();
 }
 
 /// Test executing New File action from Explorer menu
@@ -383,16 +384,10 @@ fn test_explorer_menu_new_file_action() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.wait_for_prompt().unwrap();
-
-    // Verify a new file was created
-    let final_count = fs::read_dir(&project_root).unwrap().count();
-    assert!(
-        final_count > initial_count,
-        "A new file should have been created via menu. Initial: {}, Final: {}",
-        initial_count,
-        final_count
-    );
+    // Wait for a new file to actually be created on the filesystem
+    harness
+        .wait_until(|_| fs::read_dir(&project_root).unwrap().count() > initial_count)
+        .unwrap();
 }
 
 /// Test executing New Folder action from Explorer menu

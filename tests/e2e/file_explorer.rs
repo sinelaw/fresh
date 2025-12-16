@@ -1200,96 +1200,53 @@ fn test_file_explorer_sync_after_hide_and_tab_switch() {
 
     // Open file explorer
     harness.editor_mut().focus_file_explorer();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    harness.wait_for_file_explorer().unwrap();
 
     // Open file1.txt
     harness
         .editor_mut()
         .open_file(&project_root.join("file1.txt"))
         .unwrap();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
-
-    let screen_file1 = harness.screen_to_string();
-    println!("Screen with file1.txt open:\n{}", screen_file1);
 
     // Open file2.txt (should auto-sync explorer to file2)
     harness
         .editor_mut()
         .open_file(&project_root.join("file2.txt"))
         .unwrap();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
-
-    let screen_file2 = harness.screen_to_string();
-    println!("Screen with file2.txt open:\n{}", screen_file2);
 
     // Close (hide) the file explorer
     harness.editor_mut().toggle_file_explorer();
     harness.render().unwrap();
 
-    let screen_explorer_hidden = harness.screen_to_string();
-    println!("Screen with explorer hidden:\n{}", screen_explorer_hidden);
-    assert!(
-        !screen_explorer_hidden.contains("File Explorer"),
-        "File explorer should be hidden"
-    );
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("File Explorer"))
+        .unwrap();
 
     // Switch to file1.txt (while explorer is hidden)
     harness.editor_mut().prev_buffer();
     harness.render().unwrap();
 
-    let screen_switched = harness.screen_to_string();
-    println!(
-        "Screen after switching to file1 (explorer hidden):\n{}",
-        screen_switched
-    );
-
     // Verify we're on file1.txt
-    assert!(
-        screen_switched.contains("file1.txt"),
-        "Should be viewing file1.txt now"
-    );
+    harness
+        .wait_until(|h| h.screen_to_string().contains("file1.txt"))
+        .unwrap();
 
     // Re-open the file explorer
     harness.editor_mut().toggle_file_explorer();
-    harness.sleep(std::time::Duration::from_millis(200));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    harness.wait_for_file_explorer().unwrap();
 
-    let screen_explorer_reopened = harness.screen_to_string();
-    println!(
-        "Screen after re-opening explorer:\n{}",
-        screen_explorer_reopened
-    );
-
-    // BUG: The explorer should now show file1.txt selected (the current active file)
-    // but it might still be showing file2.txt from before it was hidden
-
-    // Check that file explorer is showing file1.txt as selected
-    // We can verify this by checking internal state
-    let explorer_state = harness.editor().file_explorer();
-    assert!(explorer_state.is_some(), "File explorer should exist");
-
-    let selected_entry = explorer_state.unwrap().get_selected_entry();
-
-    assert!(
-        selected_entry.is_some(),
-        "Explorer should have a selected entry"
-    );
-
-    let selected_name = selected_entry.unwrap().name.as_str();
-    assert_eq!(
-        selected_name, "file1.txt",
-        "Explorer should show file1.txt as selected (current active file), but shows: {}",
-        selected_name
-    );
+    // Wait for file explorer to sync to file1.txt
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .file_explorer()
+                .and_then(|e| e.get_selected_entry())
+                .map(|e| e.name.as_str() == "file1.txt")
+                .unwrap_or(false)
+        })
+        .unwrap();
 }
 
 /// Test that file explorer shows the keybinding for toggling it (or just the title if no binding)
