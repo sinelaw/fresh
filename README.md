@@ -106,25 +106,14 @@ Or download the `.rpm` file manually from the [releases page](https://github.com
 
 ### Flatpak
 
-Install from a Flatpak bundle (download from [releases page](https://github.com/sinelaw/fresh/releases)):
+Download the `.flatpak` bundle from the [releases page](https://github.com/sinelaw/fresh/releases) and install:
 
 ```bash
 flatpak install --user fresh-editor-VERSION-x86_64.flatpak
 flatpak run io.github.sinelaw.fresh
 ```
 
-Or build from source (see [flatpak/README.md](flatpak/README.md) for details):
-
-```bash
-# Install prerequisites
-flatpak install flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
-flatpak install flathub org.freedesktop.Sdk.Extension.rust-stable//24.08
-
-# Generate cargo sources and build
-./flatpak/generate-sources.sh
-flatpak-builder --force-clean --user --install build flatpak/io.github.sinelaw.fresh.yml
-flatpak run io.github.sinelaw.fresh
-```
+See [flatpak/README.md](flatpak/README.md) for building from source.
 
 ### Pre-built binaries
 
