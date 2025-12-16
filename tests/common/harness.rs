@@ -1351,8 +1351,8 @@ impl EditorTestHarness {
         Ok(())
     }
 
-    /// Process pending async messages and render
-    /// Useful for testing async features like git grep, file explorer, etc.
+    /// Process pending async messages (including file polling) and render
+    /// Useful for testing async features like git grep, file explorer, auto-revert, etc.
     pub fn process_async_and_render(&mut self) -> io::Result<()> {
         let _ = self.editor.process_async_messages();
         self.render()?;

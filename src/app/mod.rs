@@ -5352,8 +5352,12 @@ impl Editor {
             let _ = checker.poll_result();
         }
 
+        // Poll for file changes (auto-revert) and file tree changes
+        let file_changes = self.poll_file_changes();
+        let tree_changes = self.poll_file_tree_changes();
+
         // Trigger render if any async messages, plugin commands were processed, or plugin requested render
-        needs_render || processed_any_commands || plugin_render
+        needs_render || processed_any_commands || plugin_render || file_changes || tree_changes
     }
 
     /// Update LSP status bar string from active progress operations

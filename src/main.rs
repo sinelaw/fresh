@@ -569,17 +569,8 @@ where
     let mut pending_event: Option<CrosstermEvent> = None;
 
     loop {
+        // Process async messages and poll for file changes (auto-revert, file tree)
         if editor.process_async_messages() {
-            needs_render = true;
-        }
-
-        // Poll for file changes (auto-revert)
-        if editor.poll_file_changes() {
-            needs_render = true;
-        }
-
-        // Poll for file tree changes (expanded directories)
-        if editor.poll_file_tree_changes() {
             needs_render = true;
         }
 
