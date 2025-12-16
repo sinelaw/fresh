@@ -1,0 +1,97 @@
+# Flatpak build workflow - builds Fresh as a Flatpak bundle
+# Can be called from the release workflow or run standalone
+
+name: Flatpak Build
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to build'
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (leave empty for dev build)'
+        required: false
+        type: string
+  pull_request:
+    paths:
+      - 'flatpak/**'
+      - '.github/workflows/flatpak-build.yml'
+
+jobs:
+  build-flatpak:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building Flatpak for version: $VERSION"
+
+      - name: Install Flatpak and flatpak-builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+
+      - name: Add Flathub repository
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Install SDK and runtime
+        run: |
+          flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+          flatpak install --user -y flathub org.freedesktop.Sdk.Extension.rust-stable//24.08
+
+      - name: Install Python dependencies for cargo generator
+        run: |
+          pip3 install toml aiohttp
+
+      - name: Generate cargo-sources.json
+        run: |
+          cd flatpak
+          ./generate-sources.sh
+
+      - name: Update metainfo version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DATE=$(date +%Y-%m-%d)
+          sed -i "s/version=\"[^\"]*\"/version=\"$VERSION\"/" flatpak/io.github.sinelaw.fresh.metainfo.xml
+          sed -i "s/date=\"[^\"]*\"/date=\"$DATE\"/" flatpak/io.github.sinelaw.fresh.metainfo.xml
+
+      - name: Build Flatpak
+        run: |
+          flatpak-builder --force-clean --repo=repo build flatpak/io.github.sinelaw.fresh.yml
+
+      - name: Create Flatpak bundle
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          flatpak build-bundle repo fresh-editor-${VERSION}-x86_64.flatpak io.github.sinelaw.fresh
+
+      - name: Generate checksum
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sha256sum fresh-editor-${VERSION}-x86_64.flatpak > fresh-editor-${VERSION}-x86_64.flatpak.sha256
+
+      - name: Upload Flatpak bundle
+        uses: actions/upload-artifact@v6
+        with:
+          name: artifacts-flatpak
+          path: |
+            fresh-editor-*.flatpak
+            fresh-editor-*.flatpak.sha256
+
+      - name: Test Flatpak installation
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          flatpak install --user -y fresh-editor-${VERSION}-x86_64.flatpak
+          flatpak run io.github.sinelaw.fresh --version

@@ -1,0 +1,44 @@
+app-id: io.github.sinelaw.fresh
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: fresh
+finish-args:
+  # Terminal access
+  - --device=dri
+  # Access to user files
+  - --filesystem=host
+  # For git operations and other tools
+  - --talk-name=org.freedesktop.Flatpak
+  # Network access for LSP servers that may need it
+  - --share=network
+  # For clipboard support
+  - --socket=session-bus
+
+modules:
+  - name: fresh
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/fresh/cargo
+        CARGO_NET_OFFLINE: "true"
+    build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo build --offline --release
+      - install -Dm0755 target/release/fresh ${FLATPAK_DEST}/bin/fresh
+      - install -Dm0644 flatpak/io.github.sinelaw.fresh.desktop ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
+      - install -Dm0644 flatpak/io.github.sinelaw.fresh.metainfo.xml ${FLATPAK_DEST}/share/metainfo/${FLATPAK_ID}.metainfo.xml
+      - install -Dm0644 flatpak/io.github.sinelaw.fresh.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/${FLATPAK_ID}.svg
+      # Install plugins
+      - mkdir -p ${FLATPAK_DEST}/share/fresh-editor/plugins/lib
+      - mkdir -p ${FLATPAK_DEST}/share/fresh-editor/plugins/examples
+      - cp -r plugins/*.ts plugins/*.json plugins/*.md ${FLATPAK_DEST}/share/fresh-editor/plugins/ 2>/dev/null || true
+      - cp -r plugins/lib/* ${FLATPAK_DEST}/share/fresh-editor/plugins/lib/ 2>/dev/null || true
+      - cp -r plugins/examples/* ${FLATPAK_DEST}/share/fresh-editor/plugins/examples/ 2>/dev/null || true
+    sources:
+      - type: dir
+        path: ..
+      - cargo-sources.json

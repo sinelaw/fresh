@@ -1,0 +1,8 @@
+# Generated files
+cargo-sources.json
+flatpak-cargo-generator.py
+
+# Build artifacts
+build/
+.flatpak-builder/
+repo/

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="console-application">
+  <id>io.github.sinelaw.fresh</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0</project_license>
+  <name>Fresh</name>
+  <summary>A lightweight, fast terminal-based text editor with LSP support</summary>
+  <description>
+    <p>
+      Fresh is a modern terminal-based text editor designed for discovery and ease of use.
+      It features native UIs, a full menu system, and a powerful Command Palette with full mouse support.
+    </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Low-latency performance with large file support (multi-gigabyte files)</li>
+      <li>Language Server Protocol (LSP) integration for code intelligence</li>
+      <li>TypeScript plugins running in a sandboxed Deno environment</li>
+      <li>Multi-cursor editing and block selection</li>
+      <li>Git integration (file finder, grep, log, blame)</li>
+      <li>Split panes and tabs</li>
+      <li>Syntax highlighting for many languages</li>
+      <li>Customizable themes and keymaps</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.sinelaw.fresh.desktop</launchable>
+  <url type="homepage">https://sinelaw.github.io/fresh/</url>
+  <url type="bugtracker">https://github.com/sinelaw/fresh/issues</url>
+  <url type="vcs-browser">https://github.com/sinelaw/fresh</url>
+  <developer id="io.github.sinelaw">
+    <name>Noam Lewis</name>
+  </developer>
+  <provides>
+    <binary>fresh</binary>
+  </provides>
+  <categories>
+    <category>Development</category>
+    <category>TextEditor</category>
+    <category>Utility</category>
+  </categories>
+  <keywords>
+    <keyword>editor</keyword>
+    <keyword>terminal</keyword>
+    <keyword>text</keyword>
+    <keyword>code</keyword>
+    <keyword>lsp</keyword>
+    <keyword>programming</keyword>
+  </keywords>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.44" date="2024-12-16">
+      <description>
+        <p>Latest release with bug fixes and improvements.</p>
+      </description>
+    </release>
+  </releases>
+</component>
