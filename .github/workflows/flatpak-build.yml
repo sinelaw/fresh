@@ -54,7 +54,7 @@ jobs:
 
       - name: Install Python dependencies for cargo generator
         run: |
-          pip3 install toml aiohttp
+          pip3 install tomlkit aiohttp
 
       - name: Generate cargo-sources.json
         run: |

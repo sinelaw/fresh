@@ -14,9 +14,9 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 # Ensure we have the required Python modules
-python3 -c "import toml" 2>/dev/null || python3 -c "import tomllib" 2>/dev/null || {
+python3 -c "import tomlkit" 2>/dev/null || {
     echo "Installing required Python packages..."
-    pip3 install toml aiohttp
+    pip3 install tomlkit aiohttp
 }
 
 # Download the generator if not present

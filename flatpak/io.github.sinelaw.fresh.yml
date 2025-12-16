@@ -26,6 +26,9 @@ modules:
         CARGO_HOME: /run/build/fresh/cargo
         CARGO_NET_OFFLINE: "true"
     build-commands:
+      # Set up cargo config for vendored dependencies
+      - mkdir -p .cargo
+      - cp cargo/config .cargo/config.toml
       - cargo --offline fetch --manifest-path Cargo.toml --verbose
       - cargo build --offline --release
       - install -Dm0755 target/release/fresh ${FLATPAK_DEST}/bin/fresh
