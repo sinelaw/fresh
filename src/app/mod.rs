@@ -3784,7 +3784,11 @@ impl Editor {
         let poll_interval =
             std::time::Duration::from_millis(self.config.editor.auto_revert_poll_interval_ms);
         let elapsed = self.time_source.elapsed_since(self.last_auto_revert_poll);
-        tracing::trace!("poll_file_changes: elapsed={:?}, poll_interval={:?}", elapsed, poll_interval);
+        tracing::trace!(
+            "poll_file_changes: elapsed={:?}, poll_interval={:?}",
+            elapsed,
+            poll_interval
+        );
         if elapsed < poll_interval {
             return false;
         }
