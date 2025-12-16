@@ -37,8 +37,15 @@ fn test_save_preserves_file_permissions() {
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
-    // Wait for save to complete
-    harness.wait_for_screen_contains("Saved").unwrap();
+    // Wait for save to complete by checking file content changed
+    let file_path_clone = file_path.clone();
+    harness
+        .wait_until(move |_| {
+            std::fs::read_to_string(&file_path_clone)
+                .map(|s| s.starts_with("modified "))
+                .unwrap_or(false)
+        })
+        .unwrap();
 
     // Verify permissions are preserved
     let final_mode = std::fs::metadata(&file_path).unwrap().permissions().mode() & 0o777;
@@ -81,8 +88,15 @@ fn test_save_preserves_executable_permission() {
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
-    // Wait for save to complete
-    harness.wait_for_screen_contains("Saved").unwrap();
+    // Wait for save to complete by checking file content changed
+    let file_path_clone = file_path.clone();
+    harness
+        .wait_until(move |_| {
+            std::fs::read_to_string(&file_path_clone)
+                .map(|s| s.contains("echo world"))
+                .unwrap_or(false)
+        })
+        .unwrap();
 
     // Verify executable permission is preserved
     let final_mode = std::fs::metadata(&file_path).unwrap().permissions().mode() & 0o777;
@@ -124,8 +138,15 @@ fn test_save_preserves_restricted_permissions() {
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
-    // Wait for save to complete
-    harness.wait_for_screen_contains("Saved").unwrap();
+    // Wait for save to complete by checking file content changed
+    let file_path_clone = file_path.clone();
+    harness
+        .wait_until(move |_| {
+            std::fs::read_to_string(&file_path_clone)
+                .map(|s| s.starts_with("more "))
+                .unwrap_or(false)
+        })
+        .unwrap();
 
     // Verify restricted permissions are preserved
     let final_mode = std::fs::metadata(&file_path).unwrap().permissions().mode() & 0o777;
