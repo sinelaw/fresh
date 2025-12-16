@@ -35,3 +35,7 @@ result*
 
 # Proptest regression files
 proptest-regressions/
+
+# Flatpak build artifacts
+.flatpak-builder/
+repo/
