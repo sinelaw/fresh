@@ -38,10 +38,34 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building Flatpak for version: $VERSION"
 
+      # Try to download pre-built binary from release workflow
+      - name: Download pre-built binary
+        id: download
+        uses: actions/download-artifact@v7
+        with:
+          name: artifacts-x86_64-unknown-linux-gnu
+          path: artifacts/
+        continue-on-error: true
+
+      - name: Extract pre-built binary
+        if: steps.download.outcome == 'success'
+        run: |
+          mkdir -p target/release
+          cd artifacts
+          tar -xJf fresh-editor-x86_64-unknown-linux-gnu.tar.xz
+          cp fresh-editor-x86_64-unknown-linux-gnu/fresh ../target/release/
+          # Also copy plugins if not already present
+          if [ -d fresh-editor-x86_64-unknown-linux-gnu/plugins ]; then
+            cp -r fresh-editor-x86_64-unknown-linux-gnu/plugins ../
+          fi
+
+      # Fall back to building from source if no pre-built binary
       - name: Install Rust toolchain
+        if: steps.download.outcome != 'success'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build release binary
+        if: steps.download.outcome != 'success'
         run: cargo build --release
 
       - name: Install Flatpak and flatpak-builder

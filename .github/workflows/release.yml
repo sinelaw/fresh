@@ -163,7 +163,7 @@ jobs:
 
   # Build Flatpak bundle
   build-flatpak:
-    needs: [plan]
+    needs: [plan, build]
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     uses: ./.github/workflows/flatpak-build.yml
     with:
