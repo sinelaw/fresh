@@ -113,7 +113,7 @@ flatpak install --user fresh-editor-VERSION-x86_64.flatpak
 flatpak run io.github.sinelaw.fresh
 ```
 
-See [flatpak/README.md](flatpak/README.md) for building from source.
+**Note:** The Flatpak version does not include TypeScript plugin support. See [flatpak/README.md](flatpak/README.md) for details.
 
 ### Pre-built binaries
 

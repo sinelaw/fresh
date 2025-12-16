@@ -2,6 +2,8 @@
 
 This directory contains the Flatpak manifest and related files for building Fresh as a Flatpak package.
 
+**Note:** The Flatpak build does not include TypeScript plugin support. This is because V8/Deno requires network access during compilation to download prebuilt binaries, which isn't available in Flatpak's sandboxed offline build environment. For full plugin support, use other installation methods (deb, rpm, Homebrew, etc.).
+
 ## Prerequisites
 
 Install Flatpak and flatpak-builder:
