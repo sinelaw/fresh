@@ -1,5 +1,5 @@
-# Flatpak build workflow - builds Fresh as a Flatpak bundle
-# Can be called from the release workflow or run standalone
+# Flatpak build workflow - packages pre-built binary as a Flatpak bundle
+# Called from the release workflow after the build job completes
 
 name: Flatpak Build
 
@@ -8,18 +8,8 @@ on:
     inputs:
       version:
         description: 'Version to build'
-        required: false
+        required: true
         type: string
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to build (leave empty for dev build)'
-        required: false
-        type: string
-  pull_request:
-    paths:
-      - 'flatpak/**'
-      - '.github/workflows/flatpak-build.yml'
 
 jobs:
   build-flatpak:
@@ -27,46 +17,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Determine version
-        id: version
-        run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION="${{ inputs.version }}"
-          else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building Flatpak for version: $VERSION"
-
-      # Try to download pre-built binary from release workflow
       - name: Download pre-built binary
-        id: download
         uses: actions/download-artifact@v7
         with:
           name: artifacts-x86_64-unknown-linux-gnu
           path: artifacts/
-        continue-on-error: true
 
       - name: Extract pre-built binary
-        if: steps.download.outcome == 'success'
         run: |
           mkdir -p target/release
           cd artifacts
           tar -xJf fresh-editor-x86_64-unknown-linux-gnu.tar.xz
           cp fresh-editor-x86_64-unknown-linux-gnu/fresh ../target/release/
-          # Also copy plugins if not already present
-          if [ -d fresh-editor-x86_64-unknown-linux-gnu/plugins ]; then
-            cp -r fresh-editor-x86_64-unknown-linux-gnu/plugins ../
-          fi
-
-      # Fall back to building from source if no pre-built binary
-      - name: Install Rust toolchain
-        if: steps.download.outcome != 'success'
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build release binary
-        if: steps.download.outcome != 'success'
-        run: cargo build --release
 
       - name: Install Flatpak and flatpak-builder
         run: |
@@ -83,7 +45,7 @@ jobs:
 
       - name: Update metainfo version
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ inputs.version }}"
           DATE=$(date +%Y-%m-%d)
           sed -i "s/version=\"[^\"]*\"/version=\"$VERSION\"/" flatpak/io.github.sinelaw.fresh.metainfo.xml
           sed -i "s/date=\"[^\"]*\"/date=\"$DATE\"/" flatpak/io.github.sinelaw.fresh.metainfo.xml
@@ -94,12 +56,12 @@ jobs:
 
       - name: Create Flatpak bundle
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ inputs.version }}"
           flatpak build-bundle repo fresh-editor-${VERSION}-x86_64.flatpak io.github.sinelaw.fresh
 
       - name: Generate checksum
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ inputs.version }}"
           sha256sum fresh-editor-${VERSION}-x86_64.flatpak > fresh-editor-${VERSION}-x86_64.flatpak.sha256
 
       - name: Upload Flatpak bundle
@@ -112,6 +74,6 @@ jobs:
 
       - name: Test Flatpak installation
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ inputs.version }}"
           flatpak install --user -y fresh-editor-${VERSION}-x86_64.flatpak
           flatpak run io.github.sinelaw.fresh --version
