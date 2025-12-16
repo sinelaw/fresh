@@ -14,13 +14,13 @@
     <ul>
       <li>Low-latency performance with large file support (multi-gigabyte files)</li>
       <li>Language Server Protocol (LSP) integration for code intelligence</li>
+      <li>TypeScript plugins running in a sandboxed Deno environment</li>
       <li>Multi-cursor editing and block selection</li>
       <li>Git integration (file finder, grep, log, blame)</li>
       <li>Split panes and tabs</li>
       <li>Syntax highlighting for many languages</li>
       <li>Customizable themes and keymaps</li>
     </ul>
-    <p>Note: The Flatpak version does not include TypeScript plugin support.</p>
   </description>
   <launchable type="desktop-id">io.github.sinelaw.fresh.desktop</launchable>
   <url type="homepage">https://sinelaw.github.io/fresh/</url>

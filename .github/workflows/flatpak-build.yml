@@ -38,6 +38,12 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building Flatpak for version: $VERSION"
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
       - name: Install Flatpak and flatpak-builder
         run: |
           sudo apt-get update
@@ -47,19 +53,9 @@ jobs:
         run: |
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
-      - name: Install SDK and runtime
+      - name: Install runtime
         run: |
           flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
-          flatpak install --user -y flathub org.freedesktop.Sdk.Extension.rust-stable//24.08
-
-      - name: Install Python dependencies for cargo generator
-        run: |
-          pip3 install tomlkit aiohttp
-
-      - name: Generate cargo-sources.json
-        run: |
-          cd flatpak
-          ./generate-sources.sh
 
       - name: Update metainfo version
         run: |
