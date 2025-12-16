@@ -771,9 +771,8 @@ fn test_git_find_file_actually_opens_file() {
     // Trigger git find file
     trigger_git_find_file(&mut harness);
 
-    // Wait for file list to load first (async operation)
-    harness.sleep(std::time::Duration::from_millis(500));
-    harness.render().unwrap();
+    // Wait for prompt to appear
+    harness.wait_for_prompt().unwrap();
 
     // Type to find lib.rs
     harness.type_text("lib.rs").unwrap();
@@ -803,11 +802,14 @@ fn test_git_find_file_actually_opens_file() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
 
-    // Give time for file to load
-    harness.sleep(std::time::Duration::from_millis(200));
-    harness.render().unwrap();
+    // Wait for file to load (buffer content should change from empty)
+    harness
+        .wait_until(|h| {
+            let content = h.get_buffer_content().unwrap_or_default();
+            !content.is_empty() && content != "\n"
+        })
+        .unwrap();
 
     // CRITICAL CHECKS:
 

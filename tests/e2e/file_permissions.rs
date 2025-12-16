@@ -37,10 +37,8 @@ fn test_save_preserves_file_permissions() {
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
-
-    // Verify save succeeded
-    harness.assert_screen_contains("Saved");
+    // Wait for save to complete
+    harness.wait_for_screen_contains("Saved").unwrap();
 
     // Verify permissions are preserved
     let final_mode = std::fs::metadata(&file_path).unwrap().permissions().mode() & 0o777;
@@ -83,10 +81,8 @@ fn test_save_preserves_executable_permission() {
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
-
-    // Verify save succeeded
-    harness.assert_screen_contains("Saved");
+    // Wait for save to complete
+    harness.wait_for_screen_contains("Saved").unwrap();
 
     // Verify executable permission is preserved
     let final_mode = std::fs::metadata(&file_path).unwrap().permissions().mode() & 0o777;
@@ -128,10 +124,8 @@ fn test_save_preserves_restricted_permissions() {
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
-
-    // Verify save succeeded
-    harness.assert_screen_contains("Saved");
+    // Wait for save to complete
+    harness.wait_for_screen_contains("Saved").unwrap();
 
     // Verify restricted permissions are preserved
     let final_mode = std::fs::metadata(&file_path).unwrap().permissions().mode() & 0o777;

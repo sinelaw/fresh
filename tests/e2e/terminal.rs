@@ -1560,15 +1560,13 @@ fn test_click_between_splits_terminal_focus() {
         .editor_mut()
         .handle_terminal_key(KeyCode::Enter, KeyModifiers::NONE);
 
-    harness.sleep(std::time::Duration::from_millis(100));
-    harness.render().unwrap();
-
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("OK") || screen.contains("echo"),
-        "Terminal should show command output after repeated split switching. Screen:\n{}",
-        screen
-    );
+    // Wait for terminal output to appear (use real wall-clock time for async I/O)
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("OK") || screen.contains("echo")
+        })
+        .unwrap();
 }
 
 /// Test that closing a terminal tab transfers keyboard focus to remaining tab
