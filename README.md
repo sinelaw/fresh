@@ -62,7 +62,7 @@ brew install fresh-editor
 ```bash
 git clone https://aur.archlinux.org/fresh-editor-bin.git
 cd fresh-editor-bin
-makepkg --install
+makepkg --syncdeps --install
 ```
 
 **Build from source:**
@@ -70,7 +70,7 @@ makepkg --install
 ```bash
 git clone https://aur.archlinux.org/fresh-editor.git
 cd fresh-editor
-makepkg --install
+makepkg --syncdeps --install
 ```
 
 **Using an AUR helper (such as `yay` or `paru`):**
