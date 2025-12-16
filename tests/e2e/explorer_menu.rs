@@ -294,9 +294,7 @@ fn test_explorer_d_keybinding_deletes() {
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
     // Wait for the file to actually be deleted
-    harness
-        .wait_until(|_| !file_path.exists())
-        .unwrap();
+    harness.wait_until(|_| !file_path.exists()).unwrap();
 }
 
 /// Test that F2 keybinding triggers rename in file explorer
@@ -357,9 +355,7 @@ fn test_explorer_delete_key_deletes() {
         .send_key(KeyCode::Delete, KeyModifiers::NONE)
         .unwrap();
     // Wait for the file to actually be deleted
-    harness
-        .wait_until(|_| !file_path.exists())
-        .unwrap();
+    harness.wait_until(|_| !file_path.exists()).unwrap();
 }
 
 /// Test executing New File action from Explorer menu
