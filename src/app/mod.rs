@@ -2842,25 +2842,18 @@ impl Editor {
     ///
     /// This reloads the config from disk and emits a config_changed event
     /// so plugins can update their state accordingly.
+    /// Checks local config (working directory) first, then system config paths.
     pub fn reload_config(&mut self) {
-        let config_path = self.dir_context.config_path();
-        match Config::load_from_file(&config_path) {
-            Ok(new_config) => {
-                self.config = new_config;
-                // Emit event so plugins know config changed
-                self.emit_event(
-                    "config_changed",
-                    serde_json::json!({
-                        "path": config_path.to_string_lossy(),
-                    }),
-                );
-                tracing::info!("Configuration reloaded from {}", config_path.display());
-            }
-            Err(e) => {
-                tracing::warn!("Failed to reload config: {}", e);
-                self.set_status_message(format!("Failed to reload config: {}", e));
-            }
-        }
+        self.config = Config::load_for_working_dir(&self.working_dir);
+
+        // Emit event so plugins know config changed
+        let config_path = Config::find_config_path(&self.working_dir);
+        self.emit_event(
+            "config_changed",
+            serde_json::json!({
+                "path": config_path.map(|p| p.to_string_lossy().into_owned()),
+            }),
+        );
     }
 
     /// Calculate the effective width available for tabs.
@@ -5555,17 +5548,7 @@ impl Editor {
 
             // Update user config (raw file contents, not merged with defaults)
             // This allows plugins to distinguish between user-set and default values
-            // First check working directory, then system paths
-            let local_config = Config::local_config_path(&self.working_dir);
-            let config_paths =
-                std::iter::once(local_config).chain(Config::default_config_paths().into_iter());
-            for config_path in config_paths {
-                if let Ok(contents) = std::fs::read_to_string(config_path) {
-                    snapshot.user_config = serde_json::from_str(&contents)
-                        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                    break;
-                }
-            }
+            snapshot.user_config = Config::read_user_config_raw(&self.working_dir);
         }
     }
 

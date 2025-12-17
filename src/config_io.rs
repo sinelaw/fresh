@@ -5,10 +5,14 @@
 //! These are separated from config.rs to allow schema-only builds.
 
 use crate::config::Config;
+use std::path::{Path, PathBuf};
 
 impl Config {
-    /// Get the default config file paths
-    pub fn default_config_paths() -> Vec<std::path::PathBuf> {
+    /// Get the system config file paths (without local/working directory).
+    ///
+    /// On macOS, prioritizes `~/.config/fresh/config.json` if it exists.
+    /// Then checks the standard system config directory.
+    fn system_config_paths() -> Vec<PathBuf> {
         let mut paths = Vec::with_capacity(2);
 
         // macOS: Prioritize ~/.config/fresh/config.json
@@ -31,9 +35,82 @@ impl Config {
         paths
     }
 
-    /// Load configuration from the default location, falling back to defaults if not found
+    /// Get all config search paths, checking local (working directory) first.
+    ///
+    /// Search order:
+    /// 1. `{working_dir}/config.json` (project-local config)
+    /// 2. System config paths (see `system_config_paths()`)
+    ///
+    /// Only returns paths that exist on disk.
+    fn config_search_paths(working_dir: &Path) -> Vec<PathBuf> {
+        let local = Self::local_config_path(working_dir);
+        let mut paths = Vec::with_capacity(3);
+
+        if local.exists() {
+            paths.push(local);
+        }
+
+        paths.extend(Self::system_config_paths());
+        paths
+    }
+
+    /// Find the first existing config file, checking local directory first.
+    ///
+    /// Returns `None` if no config file exists anywhere.
+    pub fn find_config_path(working_dir: &Path) -> Option<PathBuf> {
+        Self::config_search_paths(working_dir).into_iter().next()
+    }
+
+    /// Load configuration, checking working directory first, then system paths.
+    ///
+    /// Falls back to defaults if no config file is found or all fail to load.
+    pub fn load_for_working_dir(working_dir: &Path) -> Self {
+        for path in Self::config_search_paths(working_dir) {
+            match Self::load_from_file(&path) {
+                Ok(config) => {
+                    tracing::info!("Loaded config from {}", path.display());
+                    return config;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load config from {}: {}, trying next option",
+                        path.display(),
+                        e
+                    );
+                }
+            }
+        }
+        tracing::debug!("No config file found, using defaults");
+        Self::default()
+    }
+
+    /// Read the raw user config file content as JSON.
+    ///
+    /// This returns the sparse user config (only what's in the file, not merged
+    /// with defaults). Useful for plugins that need to distinguish between
+    /// user-set values and defaults.
+    ///
+    /// Checks working directory first, then system paths.
+    pub fn read_user_config_raw(working_dir: &Path) -> serde_json::Value {
+        for path in Self::config_search_paths(working_dir) {
+            if let Ok(contents) = std::fs::read_to_string(&path) {
+                match serde_json::from_str(&contents) {
+                    Ok(value) => return value,
+                    Err(e) => {
+                        tracing::warn!("Failed to parse config from {}: {}", path.display(), e);
+                    }
+                }
+            }
+        }
+        serde_json::Value::Object(serde_json::Map::new())
+    }
+
+    /// Load configuration from the default system location, falling back to defaults.
+    ///
+    /// Note: This does NOT check the working directory. Use `load_for_working_dir()`
+    /// if you want to check local config first.
     pub fn load_or_default() -> Self {
-        for path in Self::default_config_paths() {
+        for path in Self::system_config_paths() {
             match Self::load_from_file(&path) {
                 Ok(config) => return config,
                 Err(e) => {

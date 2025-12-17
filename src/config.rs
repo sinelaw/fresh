@@ -591,10 +591,10 @@ impl Default for MenuConfig {
 
 impl Config {
     /// The config filename used throughout the application
-    pub const FILENAME: &'static str = "config.json";
+    pub(crate) const FILENAME: &'static str = "config.json";
 
     /// Get the local config path (in the working directory)
-    pub fn local_config_path(working_dir: &Path) -> std::path::PathBuf {
+    pub(crate) fn local_config_path(working_dir: &Path) -> std::path::PathBuf {
         working_dir.join(Self::FILENAME)
     }
 
