@@ -4326,9 +4326,7 @@ impl Editor {
 
     /// Check if the settings dialog is open and visible
     pub fn is_settings_open(&self) -> bool {
-        self.settings_state
-            .as_ref()
-            .is_some_and(|s| s.visible)
+        self.settings_state.as_ref().is_some_and(|s| s.visible)
     }
 
     /// Request the editor to quit
