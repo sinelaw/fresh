@@ -29,6 +29,17 @@
         "max_memory_mb": null,
         "max_cpu_percent": 90,
         "enabled": true
+      },
+      "initialization_options": {
+        "checkOnSave": false,
+        "cachePriming": { "enable": false },
+        "procMacro": { "enable": false },
+        "cargo": {
+          "buildScripts": { "enable": false },
+          "autoreload": false
+        },
+        "diagnostics": { "enable": true },
+        "files": { "watcher": "server" }
       }
     },
     "python": {
