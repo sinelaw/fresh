@@ -89,7 +89,7 @@ yay -S fresh-editor
 Download and install the latest release:
 
 ```bash
-curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | grep "browser_download_url.*\.deb" | cut -d '"' -f 4) -o fresh-editor.deb && sudo dpkg -i fresh-editor.deb
+curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | grep "browser_download_url.*_$(dpkg --print-architecture)\.deb" | cut -d '"' -f 4) -o fresh-editor.deb && sudo dpkg -i fresh-editor.deb
 ```
 
 Or download the `.deb` file manually from the [releases page](https://github.com/sinelaw/fresh/releases).
@@ -99,7 +99,7 @@ Or download the `.deb` file manually from the [releases page](https://github.com
 Download and install the latest release:
 
 ```bash
-curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | grep "browser_download_url.*\.rpm" | cut -d '"' -f 4) -o fresh-editor.rpm && sudo rpm -i fresh-editor.rpm
+curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | grep "browser_download_url.*\.$(uname -m)\.rpm" | cut -d '"' -f 4) -o fresh-editor.rpm && sudo rpm -i fresh-editor.rpm
 ```
 
 Or download the `.rpm` file manually from the [releases page](https://github.com/sinelaw/fresh/releases).
