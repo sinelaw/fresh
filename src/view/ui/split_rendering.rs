@@ -2017,12 +2017,8 @@ impl SplitRenderer {
                 // Performance: skip expensive style calculations for characters beyond visible range
                 // Use visible_char_count (not byte_index) since ANSI codes don't take up visible space
                 if visible_char_count > max_chars_to_process {
-                    // Fast path: just count remaining characters without processing
+                    // Fast path: skip remaining characters without processing
                     // This is critical for performance with very long lines (e.g., 100KB single line)
-                    byte_index += ch.len_utf8();
-                    for remaining_ch in chars_iterator.by_ref() {
-                        byte_index += remaining_ch.len_utf8();
-                    }
                     break;
                 }
 
