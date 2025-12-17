@@ -162,13 +162,11 @@
           default = fresh;
         };
 
-        apps.default =
-          flake-utils.lib.mkApp {
-            drv = fresh;
-          }
-          // {
-            meta.description = "Text editor for your terminal: easy, powerful and fast";
-          };
+        apps.default = {
+          type = "app";
+          program = "${fresh}/bin/fresh";
+          meta.description = "Text editor for your terminal: easy, powerful and fast";
+        };
 
         devShells.default = craneLib.devShell (
           commonVars
