@@ -4,6 +4,7 @@ pub mod file_open;
 mod file_open_input;
 mod help;
 mod input;
+mod input_dispatch;
 mod plugin_commands;
 mod render;
 pub mod session;

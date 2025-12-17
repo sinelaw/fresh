@@ -538,10 +538,6 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
-    fn key_ctrl(c: char) -> KeyEvent {
-        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
-    }
-
     #[test]
     fn test_settings_is_modal() {
         // SettingsState should be modal - consume all unhandled input

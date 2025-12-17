@@ -179,6 +179,12 @@ impl Editor {
             }
         }
 
+        // Try hierarchical modal input dispatch first (Settings, Menu, Prompt, Popup)
+        let key_event = crossterm::event::KeyEvent::new(code, modifiers);
+        if self.dispatch_modal_input(&key_event).is_some() {
+            return Ok(());
+        }
+
         // Only check buffer mode keybindings if we're not in a higher-priority context
         // (Menu, Prompt, Popup should take precedence over mode bindings)
         let should_check_mode_bindings = matches!(
