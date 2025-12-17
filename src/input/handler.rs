@@ -92,7 +92,9 @@ impl InputContext {
 #[derive(Debug, Clone)]
 pub enum DeferredAction {
     // Settings actions
-    CloseSettings { save: bool },
+    CloseSettings {
+        save: bool,
+    },
 
     // Menu actions
     CloseMenu,

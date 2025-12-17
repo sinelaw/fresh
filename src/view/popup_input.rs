@@ -103,22 +103,43 @@ mod tests {
         let mut ctx = InputContext::new();
 
         // Initially at item 0
-        assert_eq!(manager.top().unwrap().selected_item().unwrap().text, "Item 0");
+        assert_eq!(
+            manager.top().unwrap().selected_item().unwrap().text,
+            "Item 0"
+        );
 
         // Down arrow moves to next
         manager.handle_key_event(&key(KeyCode::Down), &mut ctx);
-        assert_eq!(manager.top().unwrap().selected_item().unwrap().text, "Item 1");
+        assert_eq!(
+            manager.top().unwrap().selected_item().unwrap().text,
+            "Item 1"
+        );
 
         // Up arrow moves back
         manager.handle_key_event(&key(KeyCode::Up), &mut ctx);
-        assert_eq!(manager.top().unwrap().selected_item().unwrap().text, "Item 0");
+        assert_eq!(
+            manager.top().unwrap().selected_item().unwrap().text,
+            "Item 0"
+        );
 
         // j/k also work
-        manager.handle_key_event(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), &mut ctx);
-        assert_eq!(manager.top().unwrap().selected_item().unwrap().text, "Item 1");
+        manager.handle_key_event(
+            &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            &mut ctx,
+        );
+        assert_eq!(
+            manager.top().unwrap().selected_item().unwrap().text,
+            "Item 1"
+        );
 
-        manager.handle_key_event(&KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), &mut ctx);
-        assert_eq!(manager.top().unwrap().selected_item().unwrap().text, "Item 0");
+        manager.handle_key_event(
+            &KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+            &mut ctx,
+        );
+        assert_eq!(
+            manager.top().unwrap().selected_item().unwrap().text,
+            "Item 0"
+        );
     }
 
     #[test]

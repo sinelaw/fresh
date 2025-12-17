@@ -52,7 +52,10 @@ impl Editor {
 
         // Popup is next
         if self.active_state().popups.is_visible() {
-            let result = self.active_state_mut().popups.dispatch_input(event, &mut ctx);
+            let result = self
+                .active_state_mut()
+                .popups
+                .dispatch_input(event, &mut ctx);
             self.process_deferred_actions(ctx);
             return Some(result);
         }
@@ -159,7 +162,10 @@ impl Editor {
         use crate::view::prompt::PromptType;
 
         // Get the prompt type and current input
-        let prompt_info = self.prompt.as_ref().map(|p| (p.prompt_type.clone(), p.input.clone()));
+        let prompt_info = self
+            .prompt
+            .as_ref()
+            .map(|p| (p.prompt_type.clone(), p.input.clone()));
 
         if let Some((prompt_type, current_input)) = prompt_info {
             // Only search prompts have history

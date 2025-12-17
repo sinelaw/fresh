@@ -4,10 +4,10 @@
 
 pub mod actions;
 pub mod buffer_mode;
-pub mod handler;
 pub mod command_registry;
 pub mod commands;
 pub mod fuzzy;
+pub mod handler;
 pub mod input_history;
 pub mod keybindings;
 pub mod multi_cursor;

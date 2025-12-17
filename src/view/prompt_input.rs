@@ -33,9 +33,7 @@ impl InputHandler for Prompt {
                 ctx.defer(DeferredAction::UpdatePromptSuggestions);
                 InputResult::Consumed
             }
-            KeyCode::Char(c) if ctrl => {
-                self.handle_ctrl_key(c, ctx)
-            }
+            KeyCode::Char(c) if ctrl => self.handle_ctrl_key(c, ctx),
 
             // Deletion
             KeyCode::Backspace if ctrl => {
@@ -126,7 +124,10 @@ impl InputHandler for Prompt {
                 if !self.suggestions.is_empty() {
                     self.select_prev_suggestion();
                     // For non-plugin prompts, update input to match selected suggestion
-                    if !matches!(self.prompt_type, crate::view::prompt::PromptType::Plugin { .. }) {
+                    if !matches!(
+                        self.prompt_type,
+                        crate::view::prompt::PromptType::Plugin { .. }
+                    ) {
                         if let Some(value) = self.selected_value() {
                             self.input = value;
                             self.cursor_pos = self.input.len();
@@ -142,7 +143,10 @@ impl InputHandler for Prompt {
                 if !self.suggestions.is_empty() {
                     self.select_next_suggestion();
                     // For non-plugin prompts, update input to match selected suggestion
-                    if !matches!(self.prompt_type, crate::view::prompt::PromptType::Plugin { .. }) {
+                    if !matches!(
+                        self.prompt_type,
+                        crate::view::prompt::PromptType::Plugin { .. }
+                    ) {
                         if let Some(value) = self.selected_value() {
                             self.input = value;
                             self.cursor_pos = self.input.len();
@@ -184,7 +188,7 @@ impl InputHandler for Prompt {
                 InputResult::Consumed
             }
 
-            _ => InputResult::Consumed // Modal - consume all unhandled keys
+            _ => InputResult::Consumed, // Modal - consume all unhandled keys
         }
     }
 
@@ -229,7 +233,7 @@ impl Prompt {
                 ctx.defer(DeferredAction::UpdatePromptSuggestions);
                 InputResult::Consumed
             }
-            _ => InputResult::Consumed
+            _ => InputResult::Consumed,
         }
     }
 }
@@ -256,8 +260,14 @@ mod tests {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
         let mut ctx = InputContext::new();
 
-        prompt.handle_key_event(&KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), &mut ctx);
-        prompt.handle_key_event(&KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE), &mut ctx);
+        prompt.handle_key_event(
+            &KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+            &mut ctx,
+        );
+        prompt.handle_key_event(
+            &KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+            &mut ctx,
+        );
 
         assert_eq!(prompt.input, "hi");
         assert_eq!(prompt.cursor_pos, 2);
@@ -323,7 +333,10 @@ mod tests {
         let mut ctx = InputContext::new();
 
         prompt.handle_key_event(&key(KeyCode::Enter), &mut ctx);
-        assert!(ctx.deferred_actions.iter().any(|a| matches!(a, DeferredAction::ConfirmPrompt)));
+        assert!(ctx
+            .deferred_actions
+            .iter()
+            .any(|a| matches!(a, DeferredAction::ConfirmPrompt)));
     }
 
     #[test]
@@ -332,7 +345,10 @@ mod tests {
         let mut ctx = InputContext::new();
 
         prompt.handle_key_event(&key(KeyCode::Esc), &mut ctx);
-        assert!(ctx.deferred_actions.iter().any(|a| matches!(a, DeferredAction::ClosePrompt)));
+        assert!(ctx
+            .deferred_actions
+            .iter()
+            .any(|a| matches!(a, DeferredAction::ClosePrompt)));
     }
 
     #[test]

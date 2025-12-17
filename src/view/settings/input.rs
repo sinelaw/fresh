@@ -157,7 +157,7 @@ impl SettingsState {
                 ctx.defer(DeferredAction::CloseSettings { save: false });
                 InputResult::Consumed
             }
-            _ => InputResult::Consumed // Modal: consume all
+            _ => InputResult::Consumed, // Modal: consume all
         }
     }
 
@@ -195,16 +195,12 @@ impl SettingsState {
                 self.search_pop_char();
                 InputResult::Consumed
             }
-            _ => InputResult::Consumed // Modal: consume all
+            _ => InputResult::Consumed, // Modal: consume all
         }
     }
 
     /// Handle input when Categories panel is focused
-    fn handle_categories_input(
-        &mut self,
-        event: &KeyEvent,
-        ctx: &mut InputContext,
-    ) -> InputResult {
+    fn handle_categories_input(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
         match event.code {
             KeyCode::Up => {
                 self.select_prev();
@@ -235,7 +231,7 @@ impl SettingsState {
                 self.focus_panel = FocusPanel::Settings;
                 InputResult::Consumed
             }
-            _ => InputResult::Ignored // Let modal catch it
+            _ => InputResult::Ignored, // Let modal catch it
         }
     }
 
@@ -288,7 +284,7 @@ impl SettingsState {
                 self.request_close(ctx);
                 InputResult::Consumed
             }
-            _ => InputResult::Ignored // Let modal catch it
+            _ => InputResult::Ignored, // Let modal catch it
         }
     }
 
@@ -332,7 +328,7 @@ impl SettingsState {
                 self.toggle_help();
                 InputResult::Consumed
             }
-            _ => InputResult::Ignored // Let modal catch it
+            _ => InputResult::Ignored, // Let modal catch it
         }
     }
 
@@ -379,16 +375,12 @@ impl SettingsState {
                 self.text_focus_next();
                 InputResult::Consumed
             }
-            _ => InputResult::Consumed // Consume all during text edit
+            _ => InputResult::Consumed, // Consume all during text edit
         }
     }
 
     /// Handle input when dropdown is open
-    fn handle_dropdown_input(
-        &mut self,
-        event: &KeyEvent,
-        _ctx: &mut InputContext,
-    ) -> InputResult {
+    fn handle_dropdown_input(&mut self, event: &KeyEvent, _ctx: &mut InputContext) -> InputResult {
         match event.code {
             KeyCode::Up => {
                 self.dropdown_prev();
@@ -406,7 +398,7 @@ impl SettingsState {
                 self.dropdown_cancel();
                 InputResult::Consumed
             }
-            _ => InputResult::Consumed // Consume all while dropdown is open
+            _ => InputResult::Consumed, // Consume all while dropdown is open
         }
     }
 
