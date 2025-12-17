@@ -2840,11 +2840,28 @@ impl Editor {
 
     /// Reload configuration from the config file
     ///
-    /// This reloads the config from disk and emits a config_changed event
-    /// so plugins can update their state accordingly.
+    /// This reloads the config from disk, applies runtime changes (theme, keybindings),
+    /// and emits a config_changed event so plugins can update their state accordingly.
     /// Checks local config (working directory) first, then system config paths.
     pub fn reload_config(&mut self) {
+        let old_theme = self.config.theme.clone();
         self.config = Config::load_for_working_dir(&self.working_dir);
+
+        // Apply theme change if needed
+        if old_theme != self.config.theme {
+            self.theme = crate::view::theme::Theme::from_name(&self.config.theme);
+            tracing::info!("Theme changed to '{}'", self.config.theme.0);
+        }
+
+        // Always reload keybindings (complex types don't implement PartialEq)
+        self.keybindings = KeybindingResolver::new(&self.config);
+
+        // Update LSP configs
+        if let Some(ref mut lsp) = self.lsp {
+            for (language, lsp_config) in &self.config.lsp {
+                lsp.set_language_config(language.clone(), lsp_config.clone());
+            }
+        }
 
         // Emit event so plugins know config changed
         let config_path = Config::find_config_path(&self.working_dir);
