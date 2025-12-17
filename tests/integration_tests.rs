@@ -378,6 +378,7 @@ fn test_popup_events() {
     // Create a popup with list items
     let popup_data = PopupData {
         title: Some("Test Popup".to_string()),
+        transient: false,
         content: PopupContentData::List {
             items: vec![
                 PopupListItemData {

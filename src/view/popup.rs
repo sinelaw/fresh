@@ -291,6 +291,9 @@ pub struct Popup {
     /// Title of the popup (optional)
     pub title: Option<String>,
 
+    /// Whether this popup is transient (dismissed on focus loss, e.g. hover, signature help)
+    pub transient: bool,
+
     /// Content to display
     pub content: PopupContent,
 
@@ -321,6 +324,7 @@ impl Popup {
     pub fn text(content: Vec<String>, theme: &crate::view::theme::Theme) -> Self {
         Self {
             title: None,
+            transient: false,
             content: PopupContent::Text(content),
             position: PopupPosition::AtCursor,
             width: 50,
@@ -337,6 +341,7 @@ impl Popup {
         let styled_lines = parse_markdown(markdown_text, theme);
         Self {
             title: None,
+            transient: false,
             content: PopupContent::Markdown(styled_lines),
             position: PopupPosition::AtCursor,
             width: 60,      // Wider for markdown content
@@ -352,6 +357,7 @@ impl Popup {
     pub fn list(items: Vec<PopupListItem>, theme: &crate::view::theme::Theme) -> Self {
         Self {
             title: None,
+            transient: false,
             content: PopupContent::List { items, selected: 0 },
             position: PopupPosition::AtCursor,
             width: 50,
@@ -366,6 +372,12 @@ impl Popup {
     /// Set the title
     pub fn with_title(mut self, title: String) -> Self {
         self.title = Some(title);
+        self
+    }
+
+    /// Mark this popup as transient (will be dismissed on focus loss)
+    pub fn with_transient(mut self, transient: bool) -> Self {
+        self.transient = transient;
         self
     }
 
@@ -737,15 +749,11 @@ impl PopupManager {
         &self.popups
     }
 
-    /// Dismiss transient popups (Hover, Signature Help) if present at the top.
+    /// Dismiss transient popups if present at the top.
     /// These popups should be dismissed when the buffer loses focus.
     /// Returns true if a popup was dismissed.
     pub fn dismiss_transient(&mut self) -> bool {
-        let is_transient = self
-            .popups
-            .last()
-            .and_then(|p| p.title.as_ref())
-            .is_some_and(|title| title == "Hover" || title == "Signature Help");
+        let is_transient = self.popups.last().is_some_and(|p| p.transient);
 
         if is_transient {
             self.popups.pop();

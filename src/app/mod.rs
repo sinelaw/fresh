@@ -2628,13 +2628,12 @@ impl Editor {
             .map(|(pos, _, x, y)| (pos, x, y))
     }
 
-    /// Check if a hover popup is currently visible (for testing)
-    pub fn has_hover_popup(&self) -> bool {
+    /// Check if a transient popup (hover/signature help) is currently visible
+    pub fn has_transient_popup(&self) -> bool {
         self.active_state()
             .popups
             .top()
-            .and_then(|p| p.title.as_ref())
-            .is_some_and(|title| title == "Hover")
+            .is_some_and(|p| p.transient)
     }
 
     /// Force check the mouse hover timer (for testing)
@@ -6291,6 +6290,7 @@ impl Editor {
         };
         let popup_data = PopupData {
             title: Some("Completion".to_string()),
+            transient: false,
             content: PopupContentData::List {
                 items: popup_items
                     .into_iter()
@@ -6725,6 +6725,7 @@ impl Editor {
 
         // Configure popup properties
         popup.title = Some("Hover".to_string());
+        popup.transient = true;
         // Use mouse position if this was a mouse-triggered hover, otherwise use cursor position
         popup.position = if let Some((x, y)) = self.mouse_hover_screen_position.take() {
             // Position below the mouse, offset by 1 row
@@ -7059,6 +7060,7 @@ impl Editor {
 
         let mut popup = Popup::text(lines, &self.theme);
         popup.title = Some("Signature Help".to_string());
+        popup.transient = true;
         popup.position = PopupPosition::BelowCursor;
         popup.width = 60;
         popup.max_height = 10;

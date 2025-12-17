@@ -17,6 +17,7 @@ fn test_lsp_completion_popup_text_not_mangled() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            transient: false,
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
@@ -100,6 +101,7 @@ fn test_lsp_completion_replaces_word() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
                     text: "test_function".to_string(),
@@ -187,6 +189,7 @@ fn test_lsp_completion_popup() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            transient: false,
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
@@ -349,6 +352,7 @@ fn test_lsp_completion_navigation() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            transient: false,
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
@@ -418,6 +422,7 @@ fn test_lsp_completion_cancel() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
                     text: "completion_item".to_string(),
@@ -472,6 +477,7 @@ fn test_lsp_completion_after_dot() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            transient: false,
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
@@ -534,6 +540,7 @@ fn test_lsp_completion_after_dot_with_partial() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
                     text: "length".to_string(),
@@ -586,6 +593,7 @@ fn test_lsp_completion_filtering() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            transient: false,
             content: PopupContentData::List {
                 items: vec![
                     // Only items matching "test_" prefix should appear
@@ -677,6 +685,7 @@ fn test_lsp_completion_popup_size() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            transient: false,
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
@@ -841,6 +850,7 @@ fn test_lsp_completion_popup_hides_background() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            transient: false,
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {
@@ -3343,6 +3353,7 @@ fn test_hover_popup_at_right_edge_does_not_panic() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Hover".to_string()),
+            transient: true,
             content: PopupContentData::Text(vec![
                 "fn example() -> i32".to_string(),
                 "Returns an example value".to_string(),
@@ -3388,6 +3399,7 @@ fn test_hover_popup_dismissed_on_focus_change() -> std::io::Result<()> {
         state.apply(&Event::ShowPopup {
             popup: PopupData {
                 title: Some("Hover".to_string()),
+                transient: true,
                 content: PopupContentData::Text(vec![
                     "fn example() -> i32".to_string(),
                     "Returns an example value".to_string(),

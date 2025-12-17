@@ -975,19 +975,18 @@ impl Editor {
         self.hover_symbol_range = None;
     }
 
-    /// Dismiss transient popups (Hover, Signature Help) if present
+    /// Dismiss transient popups if present
     /// These popups should be dismissed on scroll or other user actions
     pub(super) fn dismiss_transient_popups(&mut self) {
         let is_transient_popup = self
             .active_state()
             .popups
             .top()
-            .and_then(|p| p.title.as_ref())
-            .is_some_and(|title| title == "Hover" || title == "Signature Help");
+            .is_some_and(|p| p.transient);
 
         if is_transient_popup {
             self.hide_popup();
-            tracing::debug!("Dismissed transient popup on scroll");
+            tracing::debug!("Dismissed transient popup");
         }
     }
 
@@ -1049,6 +1048,7 @@ impl Editor {
 
         let popup = PopupData {
             title: Some(format!("Start LSP Server: {}?", server_info)),
+            transient: false,
             content: PopupContentData::List {
                 items: vec![
                     PopupListItemData {

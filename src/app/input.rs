@@ -163,18 +163,17 @@ impl Editor {
 
         // Special case: Hover and Signature Help popups should be dismissed on any key press
         if matches!(context, crate::input::keybindings::KeyContext::Popup) {
-            // Check if the current popup is a hover or signature help popup (identified by title)
-            let is_dismissable_popup = self
+            // Check if the current popup is transient (hover, signature help)
+            let is_transient_popup = self
                 .active_state()
                 .popups
                 .top()
-                .and_then(|p| p.title.as_ref())
-                .is_some_and(|title| title == "Hover" || title == "Signature Help");
+                .is_some_and(|p| p.transient);
 
-            if is_dismissable_popup {
+            if is_transient_popup {
                 // Dismiss the popup on any key press
                 self.hide_popup();
-                tracing::debug!("Dismissed hover/signature help popup on key press");
+                tracing::debug!("Dismissed transient popup on key press");
                 // Recalculate context now that popup is gone
                 context = self.get_key_context();
             }
@@ -3094,8 +3093,8 @@ impl Editor {
     /// - Mouse is within the hovered symbol range
     /// Hover is dismissed when mouse leaves the editor area entirely.
     fn update_lsp_hover_state(&mut self, col: u16, row: u16) {
-        // Check if mouse is over a hover popup - if so, keep hover active
-        if self.is_mouse_over_hover_popup(col, row) {
+        // Check if mouse is over a transient popup - if so, keep hover active
+        if self.is_mouse_over_transient_popup(col, row) {
             return;
         }
 
@@ -3183,17 +3182,16 @@ impl Editor {
         self.mouse_state.lsp_hover_request_sent = false;
     }
 
-    /// Check if mouse position is over a hover popup
-    fn is_mouse_over_hover_popup(&self, col: u16, row: u16) -> bool {
-        // Check if there's a hover popup showing
-        let has_hover_popup = self
+    /// Check if mouse position is over a transient popup (hover, signature help)
+    fn is_mouse_over_transient_popup(&self, col: u16, row: u16) -> bool {
+        // Check if there's a transient popup showing
+        let has_transient_popup = self
             .active_state()
             .popups
             .top()
-            .and_then(|p| p.title.as_ref())
-            .is_some_and(|title| title == "Hover" || title == "Signature Help");
+            .is_some_and(|p| p.transient);
 
-        if !has_hover_popup {
+        if !has_transient_popup {
             return false;
         }
 

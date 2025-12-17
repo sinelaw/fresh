@@ -251,6 +251,8 @@ pub enum UnderlineStyle {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PopupData {
     pub title: Option<String>,
+    #[serde(default)]
+    pub transient: bool,
     pub content: PopupContentData,
     pub position: PopupPositionData,
     pub width: u16,
