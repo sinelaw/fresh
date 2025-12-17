@@ -73,7 +73,16 @@ while true; do
 case "$method" in
     "initialize")
         # Send initialize response
-        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"definitionProvider":true,"textDocumentSync":1}}}'
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1}}}'
+        ;;
+    "textDocument/hover")
+        # Send hover response with range
+        # Extract position from request
+        line=$(echo "$msg" | grep -o '"line":[0-9]*' | head -1 | cut -d':' -f2)
+        char=$(echo "$msg" | grep -o '"character":[0-9]*' | head -1 | cut -d':' -f2)
+        # Return hover with a range spanning 10 characters from the position
+        end_char=$((char + 10))
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"contents":{"kind":"markdown","value":"Test hover content"},"range":{"start":{"line":'$line',"character":'$char'},"end":{"line":'$line',"character":'$end_char'}}}}'
         ;;
     "textDocument/completion")
         # Send completion response with sample items

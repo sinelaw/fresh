@@ -3088,7 +3088,17 @@ impl Editor {
 
     /// Update LSP hover state based on mouse position
     /// Tracks position for debounced hover requests
+    ///
+    /// Hover popup stays visible when:
+    /// - Mouse is over the hover popup itself
+    /// - Mouse is within the hovered symbol range
+    /// Hover is dismissed when mouse leaves the editor area entirely.
     fn update_lsp_hover_state(&mut self, col: u16, row: u16) {
+        // Check if mouse is over a hover popup - if so, keep hover active
+        if self.is_mouse_over_hover_popup(col, row) {
+            return;
+        }
+
         // Find which split the mouse is over
         let split_info = self
             .cached_layout
@@ -3150,19 +3160,57 @@ impl Editor {
             return;
         };
 
+        // Check if mouse is within the hovered symbol range - if so, keep hover active
+        if let Some((start, end)) = self.hover_symbol_range {
+            if byte_pos >= start && byte_pos < end {
+                // Mouse is still over the hovered symbol - keep hover state
+                return;
+            }
+        }
+
         // Check if we're still hovering the same position
         if let Some((old_pos, _, _, _)) = self.mouse_state.lsp_hover_state {
             if old_pos == byte_pos {
                 // Same position - keep existing state
                 return;
             }
-            // Position changed - reset state and dismiss popup
+            // Position changed outside symbol range - reset state and dismiss popup
             self.dismiss_transient_popups();
         }
 
         // Start tracking new hover position
         self.mouse_state.lsp_hover_state = Some((byte_pos, std::time::Instant::now(), col, row));
         self.mouse_state.lsp_hover_request_sent = false;
+    }
+
+    /// Check if mouse position is over a hover popup
+    fn is_mouse_over_hover_popup(&self, col: u16, row: u16) -> bool {
+        // Check if there's a hover popup showing
+        let has_hover_popup = self
+            .active_state()
+            .popups
+            .top()
+            .and_then(|p| p.title.as_ref())
+            .is_some_and(|title| title == "Hover" || title == "Signature Help");
+
+        if !has_hover_popup {
+            return false;
+        }
+
+        // Check if mouse is over any popup area
+        for (_popup_idx, popup_rect, _inner_rect, _scroll_offset, _num_items) in
+            self.cached_layout.popup_areas.iter()
+        {
+            if col >= popup_rect.x
+                && col < popup_rect.x + popup_rect.width
+                && row >= popup_rect.y
+                && row < popup_rect.y + popup_rect.height
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Compute what hover target is at the given position

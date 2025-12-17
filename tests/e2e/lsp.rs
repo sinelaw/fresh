@@ -3506,3 +3506,95 @@ fn test_hover_popup_dismissed_on_focus_change() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test that hover popup persists when mouse moves within hovered symbol or popup
+///
+/// The hover popup should stay visible when:
+/// 1. Mouse moves within the hovered symbol range
+/// 2. Mouse moves over the hover popup itself
+/// The hover should only be dismissed when mouse leaves the editor area.
+///
+/// Uses a fake LSP server to properly trigger hover flow via user-style events.
+#[test]
+fn test_hover_popup_persists_within_symbol_and_popup() -> std::io::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+
+    // Spawn fake LSP server (has hover support)
+    let _fake_server = FakeLspServer::spawn()?;
+
+    // Create temp dir and test file
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn example_function() {}\n")?;
+
+    // Configure editor to use the fake LSP server
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::services::lsp::client::LspServerConfig {
+            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: false,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+
+    // Create harness with config
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Move mouse over the symbol "example_function" to trigger hover state
+    // The gutter takes some columns, so move to column ~10 which should be over the symbol
+    harness.mouse_move(10, 2)?;
+    harness.render()?;
+
+    // Force check mouse hover to bypass the 500ms timer and send the request
+    harness.editor_mut().force_check_mouse_hover();
+
+    // Wait for hover popup to appear (LSP response received)
+    harness.wait_until(|h| h.editor().active_state().popups.is_visible())?;
+
+    // Test 1: Mouse move within the symbol range should keep popup
+    // Move mouse slightly to the right (still within 10 char range)
+    harness.mouse_move(12, 2)?;
+
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Hover popup should persist when mouse moves within symbol range"
+    );
+
+    // Test 2: Mouse move over the popup area should keep popup
+    // The popup renders below cursor, so move to where it would be
+    // Get popup areas from cached layout
+    let popup_visible_after_popup_hover = {
+        harness.render()?;
+        // Move mouse to where the popup should be (below the hover point)
+        harness.mouse_move(12, 5)?;
+        harness.editor().active_state().popups.is_visible()
+    };
+
+    assert!(
+        popup_visible_after_popup_hover,
+        "Hover popup should persist when mouse is over the popup area"
+    );
+
+    // Test 3: Mouse leaving editor area should dismiss popup
+    // Move mouse to row 0 (menu bar area, outside editor content)
+    harness.mouse_move(40, 0)?;
+
+    assert!(
+        !harness.editor().active_state().popups.is_visible(),
+        "Hover popup should be dismissed when mouse leaves editor area"
+    );
+
+    Ok(())
+}
