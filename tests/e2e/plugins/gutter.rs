@@ -728,9 +728,13 @@ fn start_server(config: Config) {
 
     open_file(&mut harness, &repo.path, "src/main.rs");
 
-    // Wait for git gutter to load
-    harness.sleep(std::time::Duration::from_millis(500));
-    harness.render().unwrap();
+    // Wait for git gutter indicators to appear
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            has_gutter_indicator(&screen, "│")
+        })
+        .unwrap();
 
     let screen = harness.screen_to_string();
     println!("Priority test screen:\n{}", screen);

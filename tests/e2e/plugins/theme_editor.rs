@@ -657,10 +657,19 @@ fn test_color_prompt_shows_suggestions() {
         harness
             .send_key(KeyCode::Enter, KeyModifiers::NONE)
             .unwrap();
-        harness.render().unwrap();
 
-        let screen = harness.screen_to_string();
-        if screen.contains("#RRGGBB") || screen.contains("(#RRGGBB or named)") {
+        // Wait for either prompt to appear or a short timeout
+        let found = harness
+            .wait_for_async(
+                |h| {
+                    let screen = h.screen_to_string();
+                    screen.contains("#RRGGBB") || screen.contains("(#RRGGBB or named)")
+                },
+                500,
+            )
+            .unwrap();
+
+        if found {
             prompt_opened = true;
             break;
         }
