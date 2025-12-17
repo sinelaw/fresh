@@ -5555,7 +5555,11 @@ impl Editor {
 
             // Update user config (raw file contents, not merged with defaults)
             // This allows plugins to distinguish between user-set and default values
-            for config_path in Config::default_config_paths() {
+            // First check working directory, then system paths
+            let local_config = Config::local_config_path(&self.working_dir);
+            let config_paths =
+                std::iter::once(local_config).chain(Config::default_config_paths().into_iter());
+            for config_path in config_paths {
                 if let Ok(contents) = std::fs::read_to_string(config_path) {
                     snapshot.user_config = serde_json::from_str(&contents)
                         .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));

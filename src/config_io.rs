@@ -14,7 +14,7 @@ impl Config {
         // macOS: Prioritize ~/.config/fresh/config.json
         #[cfg(target_os = "macos")]
         if let Some(home) = dirs::home_dir() {
-            let path = home.join(".config").join("fresh").join("config.json");
+            let path = home.join(".config").join("fresh").join(Config::FILENAME);
             if path.exists() {
                 paths.push(path);
             }
@@ -22,7 +22,7 @@ impl Config {
 
         // Standard system paths (XDG on Linux, AppSupport on macOS, Roaming on Windows)
         if let Some(config_dir) = dirs::config_dir() {
-            let path = config_dir.join("fresh").join("config.json");
+            let path = config_dir.join("fresh").join(Config::FILENAME);
             if !paths.contains(&path) && path.exists() {
                 paths.push(path);
             }
@@ -165,7 +165,7 @@ impl DirectoryContext {
 
     /// Get the config file path
     pub fn config_path(&self) -> std::path::PathBuf {
-        self.config_dir.join("config.json")
+        self.config_dir.join(Config::FILENAME)
     }
 
     /// Get the themes directory path

@@ -684,6 +684,75 @@ function deepEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
+ * Strip default values from a config object, returning only non-default values.
+ * This ensures we only save what the user has explicitly customized.
+ *
+ * @param config - The user config object to clean
+ * @param schema - The schema defining defaults
+ * @returns A new config with only non-default values (may be empty object)
+ */
+function stripDefaultValues(
+  config: Record<string, unknown>,
+  schema: Record<string, FieldSchema>
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(config)) {
+    const fieldSchema = schema[key];
+
+    // If no schema for this key, keep the value (user-defined extra field)
+    if (!fieldSchema) {
+      result[key] = value;
+      continue;
+    }
+
+    // Handle nested objects with their own schema
+    if (fieldSchema.type === "object" && fieldSchema.nestedSchema && typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const strippedNested = stripDefaultValues(value as Record<string, unknown>, fieldSchema.nestedSchema);
+      // Only include if there are non-default values remaining
+      if (Object.keys(strippedNested).length > 0) {
+        result[key] = strippedNested;
+      }
+      continue;
+    }
+
+    // Handle map types (additionalProperties pattern - like languages, lsp)
+    if (fieldSchema.type === "object" && fieldSchema.itemSchema && !fieldSchema.nestedSchema && typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const strippedMap: Record<string, unknown> = {};
+      for (const [mapKey, mapValue] of Object.entries(value as Record<string, unknown>)) {
+        // For maps with object item schema, recursively strip
+        if (fieldSchema.itemSchema.type === "object" && fieldSchema.itemSchema.nestedSchema && typeof mapValue === "object" && mapValue !== null) {
+          const strippedItem = stripDefaultValues(mapValue as Record<string, unknown>, fieldSchema.itemSchema.nestedSchema);
+          if (Object.keys(strippedItem).length > 0) {
+            strippedMap[mapKey] = strippedItem;
+          }
+        } else {
+          // For simple map values, keep them (no default to compare against per-key)
+          strippedMap[mapKey] = mapValue;
+        }
+      }
+      if (Object.keys(strippedMap).length > 0) {
+        result[key] = strippedMap;
+      }
+      continue;
+    }
+
+    // For primitive types (boolean, number, string, enum) and arrays,
+    // compare against the schema's default value
+    const defaultValue = fieldSchema.defaultValue;
+    if (defaultValue !== undefined && deepEqual(value, defaultValue)) {
+      // Value matches default, skip it
+      continue;
+    }
+
+    // Value differs from default (or no default defined), keep it
+    result[key] = value;
+  }
+
+  return result;
+}
+
+/**
  * Format a value for display
  * @param isSection - Whether this is being displayed as a section header (affects array display)
  */
@@ -833,8 +902,8 @@ async function createBackup(filePath: string): Promise<string | null> {
 
 /**
  * Save config to file
- * Only saves the userConfig (sparse - only user-customized values)
- * Creates a timestamped backup of the existing file first
+ * Only saves non-default values (sparse config).
+ * Creates a timestamped backup of the existing file first.
  */
 async function saveConfig(): Promise<boolean> {
   try {
@@ -844,10 +913,16 @@ async function saveConfig(): Promise<boolean> {
       editor.debug(`Created backup: ${backupPath}`);
     }
 
-    const content = JSON.stringify(state.userConfig, null, 2);
+    // Strip default values - only save what the user has actually customized
+    const sparseConfig = stripDefaultValues(state.userConfig, state.schema);
+    const content = JSON.stringify(sparseConfig, null, 2);
     await editor.writeFile(state.configPath, content);
-    state.originalConfig = deepClone(state.userConfig);
+
+    // Update state to reflect saved config
+    state.userConfig = sparseConfig;
+    state.originalConfig = deepClone(sparseConfig);
     state.hasChanges = false;
+
     // Tell the editor to reload config from file so it stays in sync
     editor.reloadConfig();
     return true;
@@ -1787,13 +1862,10 @@ globalThis.config_editor_reset_to_default = function(): void {
 
 /**
  * Save configuration
+ * Always saves, stripping default values even if the user hasn't made
+ * explicit changes (to clean up config files with redundant defaults).
  */
 globalThis.config_editor_save = async function(): Promise<void> {
-  if (!state.hasChanges) {
-    editor.setStatus("No changes to save");
-    return;
-  }
-
   editor.setStatus("Saving...");
 
   if (await saveConfig()) {

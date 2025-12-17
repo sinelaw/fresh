@@ -590,6 +590,14 @@ impl Default for MenuConfig {
 }
 
 impl Config {
+    /// The config filename used throughout the application
+    pub const FILENAME: &'static str = "config.json";
+
+    /// Get the local config path (in the working directory)
+    pub fn local_config_path(working_dir: &Path) -> std::path::PathBuf {
+        working_dir.join(Self::FILENAME)
+    }
+
     /// Load configuration from a JSON file
     ///
     /// This deserializes the user's config file and merges it with defaults.

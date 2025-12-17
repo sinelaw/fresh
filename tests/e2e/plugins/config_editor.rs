@@ -417,6 +417,123 @@ fn test_config_editor_shows_lsp_defaults() {
     );
 }
 
+/// Test that saving config only stores non-default values
+/// When a user sets a value that matches the default, it should be stripped on save.
+#[test]
+fn test_config_editor_strips_default_values_on_save() {
+    use fresh::config::Config;
+
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy files
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/config_editor.ts");
+    fs::copy(&plugin_source, plugins_dir.join("config_editor.ts")).unwrap();
+
+    let schema_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/config-schema.json");
+    fs::copy(&schema_source, plugins_dir.join("config-schema.json")).unwrap();
+
+    // Get the default config to know what values are default
+    let default_config = Config::default();
+    let default_tab_size = default_config.editor.tab_size;
+
+    // Create a config file with some values that match defaults and some that don't
+    // The theme default is "high-contrast", tab_size default is 4
+    let config_content = format!(
+        r#"{{
+            "theme": "custom-theme",
+            "editor": {{
+                "tab_size": {},
+                "line_numbers": true
+            }}
+        }}"#,
+        default_tab_size // This matches the default and should be stripped
+    );
+    let config_path = project_root.join("config.json");
+    fs::write(&config_path, config_content).unwrap();
+
+    // Create harness
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+
+    harness.render().unwrap();
+
+    // Open command palette and run Edit Configuration
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Edit Configuration").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Process async operations to let the config editor load
+    for _ in 0..30 {
+        harness.process_async_and_render().unwrap();
+    }
+
+    // Save the config (press 's' which is bound to save in config-editor mode)
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .unwrap();
+
+    // Process async operations for save
+    for _ in 0..20 {
+        harness.process_async_and_render().unwrap();
+    }
+
+    // Read the saved config file
+    let saved_content = fs::read_to_string(&config_path).unwrap();
+    let saved_config: serde_json::Value = serde_json::from_str(&saved_content).unwrap();
+
+    // Verify: "theme" should be kept (non-default value "custom-theme")
+    assert!(
+        saved_config.get("theme").is_some(),
+        "theme should be present (non-default value): {}",
+        saved_content
+    );
+    assert_eq!(
+        saved_config.get("theme").and_then(|v| v.as_str()),
+        Some("custom-theme"),
+        "theme should be 'custom-theme'"
+    );
+
+    // Verify: tab_size should be stripped (matches default value)
+    // Either the entire "editor" section is missing, or tab_size is not in it
+    if let Some(editor) = saved_config.get("editor") {
+        assert!(
+            editor.get("tab_size").is_none(),
+            "tab_size should be stripped (matches default {}): {}",
+            default_tab_size,
+            saved_content
+        );
+    }
+
+    // Verify: line_numbers should also be stripped if it matches default (true)
+    if let Some(editor) = saved_config.get("editor") {
+        // line_numbers default is true, so it should be stripped
+        if default_config.editor.line_numbers {
+            assert!(
+                editor.get("line_numbers").is_none(),
+                "line_numbers should be stripped (matches default true): {}",
+                saved_content
+            );
+        }
+    }
+}
+
 /// Test that config editor opens and shows content (integration test)
 #[test]
 fn test_config_editor_opens_with_content() {
