@@ -1030,3 +1030,55 @@ fn test_settings_change_theme_and_save() {
         initial_theme, new_theme
     );
 }
+
+/// Test that global shortcuts (Ctrl+P, Ctrl+Q) are consumed by settings dialog
+///
+/// When the settings dialog is open, it should capture all keyboard input
+/// and not let shortcuts like Ctrl+P (command palette) or Ctrl+Q (quit) through.
+#[test]
+fn test_settings_consumes_global_shortcuts() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    harness.render().unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify settings is open
+    assert!(
+        harness.editor().is_settings_open(),
+        "Settings should be open"
+    );
+
+    // Try Ctrl+P (command palette) - should be consumed, not open palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Settings should still be open (Ctrl+P was consumed)
+    assert!(
+        harness.editor().is_settings_open(),
+        "Settings should still be open after Ctrl+P - shortcut should be consumed"
+    );
+
+    // Verify command palette is NOT open
+    harness.assert_screen_not_contains("Command Palette");
+
+    // Try Ctrl+Q (quit) - should be consumed, not quit
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Settings should still be open (Ctrl+Q was consumed)
+    assert!(
+        harness.editor().is_settings_open(),
+        "Settings should still be open after Ctrl+Q - shortcut should be consumed"
+    );
+
+    // Close settings
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}

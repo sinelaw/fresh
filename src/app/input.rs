@@ -422,7 +422,10 @@ impl Editor {
                         }
                         return Ok(());
                     }
-                    _ => {}
+                    _ => {
+                        // Consume all other keys when text editing
+                        return Ok(());
+                    }
                 }
             }
 
@@ -459,7 +462,10 @@ impl Editor {
                         }
                         return Ok(());
                     }
-                    _ => {}
+                    _ => {
+                        // Consume all other keys when dropdown is open
+                        return Ok(());
+                    }
                 }
             }
 
@@ -496,7 +502,10 @@ impl Editor {
                         }
                         return Ok(());
                     }
-                    _ => {}
+                    _ => {
+                        // Consume all other keys when number editing
+                        return Ok(());
+                    }
                 }
             }
 
@@ -549,7 +558,10 @@ impl Editor {
                         }
                         return Ok(());
                     }
-                    _ => {}
+                    _ => {
+                        // Consume all other keys in search mode
+                        return Ok(());
+                    }
                 }
             } else {
                 // Not in search mode - normal settings navigation
@@ -574,7 +586,10 @@ impl Editor {
                     | Action::CloseSettings => {
                         return self.handle_action(action);
                     }
-                    _ => {}
+                    _ => {
+                        // Consume all other keys - settings dialog captures all input
+                        return Ok(());
+                    }
                 }
             }
         }
