@@ -91,11 +91,32 @@ impl InputContext {
 /// These are operations that require mutable access to Editor.
 #[derive(Debug, Clone)]
 pub enum DeferredAction {
+    // Settings actions
     CloseSettings { save: bool },
+
+    // Menu actions
     CloseMenu,
+    ExecuteMenuAction {
+        action: String,
+        args: std::collections::HashMap<String, serde_json::Value>,
+    },
+
+    // Prompt actions
     ClosePrompt,
+    ConfirmPrompt,
+    UpdatePromptSuggestions,
+    PromptHistoryPrev,
+    PromptHistoryNext,
+
+    // Popup actions
     ClosePopup,
+    ConfirmPopup,
+
+    // Generic action execution
     ExecuteAction(crate::input::keybindings::Action),
+
+    // Insert character (for prompts that need to update suggestions)
+    InsertCharAndUpdate(char),
 }
 
 /// Trait for elements that can handle input events.

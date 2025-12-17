@@ -15,6 +15,7 @@
 pub mod file_browser;
 pub mod file_explorer;
 pub mod menu;
+pub mod menu_input;
 pub mod scroll_panel;
 pub mod scrollbar;
 pub mod split_rendering;
@@ -27,6 +28,7 @@ pub mod view_pipeline;
 pub use file_browser::{FileBrowserLayout, FileBrowserRenderer};
 pub use file_explorer::FileExplorerRenderer;
 pub use menu::{context_keys, MenuContext, MenuRenderer, MenuState};
+pub use menu_input::MenuInputHandler;
 pub use scroll_panel::{
     FocusRegion, RenderInfo, ScrollItem, ScrollState, ScrollablePanel, ScrollablePanelLayout,
 };
