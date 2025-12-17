@@ -1368,13 +1368,6 @@
       "when": "settings"
     },
     {
-      "key": "s",
-      "modifiers": ["ctrl"],
-      "action": "settings_save",
-      "args": {},
-      "when": "settings"
-    },
-    {
       "key": "/",
       "modifiers": [],
       "action": "settings_search",

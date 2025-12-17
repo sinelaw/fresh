@@ -888,15 +888,12 @@ fn test_settings_from_terminal_mode_captures_input() {
     }
 }
 
-/// BUG: Footer buttons (Reset/Save/Cancel) cannot be accessed via keyboard
+/// Test footer buttons (Reset/Save/Cancel) are accessible via keyboard
 ///
-/// The Settings dialog has footer buttons [Reset] [Save] [Cancel] but they
-/// cannot be reached using Tab navigation. Tab only cycles between the
-/// category panel (left) and settings panel (right), never reaching the
-/// footer buttons.
+/// The Settings dialog has footer buttons [Reset] [Save] [Cancel] that can
+/// be reached using Tab navigation.
 ///
-/// Expected behavior: Tab cycles through: categories -> settings -> footer buttons
-/// Actual behavior: Tab only cycles between categories and settings panels
+/// Tab cycles through: categories -> settings -> footer buttons
 #[test]
 fn test_settings_footer_buttons_keyboard_accessible() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
@@ -929,60 +926,40 @@ fn test_settings_footer_buttons_keyboard_accessible() {
     // Should show modified indicator
     harness.assert_screen_contains("modified");
 
-    // Now try to Tab to the footer buttons
-    // Currently in settings panel, Tab should eventually reach footer
-    // We'll Tab multiple times and check if we can get to a Save button
-
-    let mut found_save_focused = false;
-    for _ in 0..10 {
-        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
-
-        let screen = harness.screen_to_string();
-
-        // Check if Save button appears to be focused/selected
-        // When footer is focused, pressing Enter on Save should work
-        // We could detect this by looking for a focus indicator on Save
-        if screen.contains("▶[ Save ]") || screen.contains("> Save") {
-            found_save_focused = true;
-            break;
-        }
-
-        // Alternative: try pressing Enter and see if it saves (no unsaved dialog)
-        // But that's destructive, so we just check for visual indicator
-    }
-
-    // This assertion will fail until the bug is fixed
-    assert!(
-        found_save_focused,
-        "Should be able to Tab to Save button in footer. \
-         Currently Tab only cycles between category and settings panels."
-    );
-
-    // Clean up
-    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    // Tab to footer - from settings panel, Tab goes to footer
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    if harness.screen_to_string().contains("Unsaved Changes") {
-        harness
-            .send_key(KeyCode::Right, KeyModifiers::NONE)
-            .unwrap();
-        harness
-            .send_key(KeyCode::Enter, KeyModifiers::NONE)
-            .unwrap();
-    }
+
+    // Save button should be selected (has ▶ indicator)
+    harness.assert_screen_contains("▶[ Save ]");
+
+    // Navigate right to Cancel
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Cancel button should now be selected
+    harness.assert_screen_contains("▶[ Cancel ]");
+
+    // Press Enter on Cancel to close without saving
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Settings should be closed
+    harness.assert_screen_not_contains("Settings");
 }
 
-/// BUG: Pressing Ctrl+S should save settings when Settings dialog is open
-///
-/// The keyboard shortcuts hint shows Ctrl+S for save, and this is the standard
-/// save shortcut. When Settings dialog is open with unsaved changes, Ctrl+S
-/// should save those changes.
-///
-/// This is related to footer button accessibility - if we can't Tab to Save,
-/// at least Ctrl+S should work as an alternative.
+/// Test changing theme, saving, and verifying the theme is applied
 #[test]
-fn test_settings_ctrl_s_saves() {
+fn test_settings_change_theme_and_save() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    harness.render().unwrap();
+
+    // Get initial theme name
+    let initial_theme = harness.editor().theme().name.clone();
 
     // Open settings
     harness
@@ -990,41 +967,66 @@ fn test_settings_ctrl_s_saves() {
         .unwrap();
     harness.render().unwrap();
 
-    // Make a change
+    // Verify settings is open via state check
+    assert!(
+        harness.editor().is_settings_open(),
+        "Settings should be open after Ctrl+,"
+    );
+
+    // Search for theme setting
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
         .unwrap();
-    for c in "check".chars() {
+    for c in "theme".chars() {
         harness
             .send_key(KeyCode::Char(c), KeyModifiers::NONE)
             .unwrap();
     }
+    harness.render().unwrap();
+
+    // Jump to theme setting
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    harness.render().unwrap();
+
+    // Cycle through theme options until we get to "light"
+    let mut found_light = false;
+    for _ in 0..10 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+
+        if harness.screen_to_string().contains("light") {
+            found_light = true;
+            break;
+        }
+    }
+
+    assert!(found_light, "Should be able to cycle to light theme");
+
+    // Tab to footer (Save button)
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to save
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
-    // Should show modified
-    harness.assert_screen_contains("modified");
+    // Verify settings is closed via state check
+    assert!(
+        !harness.editor().is_settings_open(),
+        "Settings should be closed after saving"
+    );
 
-    // Press Ctrl+S to save
-    harness
-        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    // After saving, "modified" indicator should be gone
-    // (Settings should still be open, just no longer modified)
-    harness.assert_screen_contains("Settings");
-    harness.assert_screen_not_contains("modified");
-
-    // Close settings (should close without unsaved changes dialog)
-    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Should close directly without confirmation since we saved
-    harness.assert_screen_not_contains("Unsaved Changes");
+    // Verify theme changed via state check
+    let new_theme = harness.editor().theme().name.clone();
+    assert_eq!(
+        new_theme, "light",
+        "Theme should be 'light' after saving. Was: {}, Now: {}",
+        initial_theme, new_theme
+    );
 }

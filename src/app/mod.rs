@@ -1738,6 +1738,8 @@ impl Editor {
 
     /// Save the settings from the modal to config
     pub fn save_settings(&mut self) {
+        let old_theme = self.config.theme.clone();
+
         let new_config = {
             if let Some(ref state) = self.settings_state {
                 if !state.has_changes() {
@@ -1757,6 +1759,15 @@ impl Editor {
 
         // Apply the new config
         self.config = new_config;
+
+        // Apply runtime changes
+        if old_theme != self.config.theme {
+            self.theme = crate::view::theme::Theme::from_name(&self.config.theme);
+            tracing::info!("Theme changed to '{}'", self.config.theme.0);
+        }
+
+        // Update keybindings
+        self.keybindings = KeybindingResolver::new(&self.config);
 
         // Save to disk
         if let Err(e) = std::fs::create_dir_all(&self.dir_context.config_dir) {
@@ -1797,6 +1808,40 @@ impl Editor {
     /// Activate/toggle the currently selected setting
     pub fn settings_activate_current(&mut self) {
         use crate::view::settings::items::SettingControl;
+        use crate::view::settings::FocusPanel;
+
+        // Check if we're in the Footer panel - handle button activation
+        let focus_panel = self
+            .settings_state
+            .as_ref()
+            .map(|s| s.focus_panel)
+            .unwrap_or(FocusPanel::Categories);
+
+        if focus_panel == FocusPanel::Footer {
+            let button_index = self
+                .settings_state
+                .as_ref()
+                .map(|s| s.footer_button_index)
+                .unwrap_or(1);
+            match button_index {
+                0 => {
+                    // Reset button
+                    if let Some(ref mut state) = self.settings_state {
+                        state.reset_current_to_default();
+                    }
+                }
+                1 => {
+                    // Save button - save and close
+                    self.close_settings(true);
+                }
+                2 => {
+                    // Cancel button
+                    self.close_settings(false);
+                }
+                _ => {}
+            }
+            return;
+        }
 
         // Get the current item's control type to determine action
         let control_type = {
@@ -1883,6 +1928,22 @@ impl Editor {
     /// Increment the current setting value (for Number and Dropdown controls)
     pub fn settings_increment_current(&mut self) {
         use crate::view::settings::items::SettingControl;
+        use crate::view::settings::FocusPanel;
+
+        // Check if we're in the Footer panel - navigate buttons instead
+        let focus_panel = self
+            .settings_state
+            .as_ref()
+            .map(|s| s.focus_panel)
+            .unwrap_or(FocusPanel::Categories);
+
+        if focus_panel == FocusPanel::Footer {
+            if let Some(ref mut state) = self.settings_state {
+                // Navigate to next footer button (wrapping around)
+                state.footer_button_index = (state.footer_button_index + 1) % 3;
+            }
+            return;
+        }
 
         let control_type = {
             if let Some(ref state) = self.settings_state {
@@ -1924,6 +1985,26 @@ impl Editor {
     /// Decrement the current setting value (for Number and Dropdown controls)
     pub fn settings_decrement_current(&mut self) {
         use crate::view::settings::items::SettingControl;
+        use crate::view::settings::FocusPanel;
+
+        // Check if we're in the Footer panel - navigate buttons instead
+        let focus_panel = self
+            .settings_state
+            .as_ref()
+            .map(|s| s.focus_panel)
+            .unwrap_or(FocusPanel::Categories);
+
+        if focus_panel == FocusPanel::Footer {
+            if let Some(ref mut state) = self.settings_state {
+                // Navigate to previous footer button (wrapping around)
+                state.footer_button_index = if state.footer_button_index == 0 {
+                    2
+                } else {
+                    state.footer_button_index - 1
+                };
+            }
+            return;
+        }
 
         let control_type = {
             if let Some(ref state) = self.settings_state {
@@ -4241,6 +4322,13 @@ impl Editor {
     /// Get the active theme
     pub fn theme(&self) -> &crate::view::theme::Theme {
         &self.theme
+    }
+
+    /// Check if the settings dialog is open and visible
+    pub fn is_settings_open(&self) -> bool {
+        self.settings_state
+            .as_ref()
+            .is_some_and(|s| s.visible)
     }
 
     /// Request the editor to quit
