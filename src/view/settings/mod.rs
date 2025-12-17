@@ -13,6 +13,7 @@
 //! - `entry_dialog.rs` - Dialog for editing complex map entries
 
 pub mod entry_dialog;
+pub mod input;
 pub mod items;
 pub mod layout;
 pub mod render;
