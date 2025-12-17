@@ -736,6 +736,24 @@ impl PopupManager {
     pub fn all(&self) -> &[Popup] {
         &self.popups
     }
+
+    /// Dismiss transient popups (Hover, Signature Help) if present at the top.
+    /// These popups should be dismissed when the buffer loses focus.
+    /// Returns true if a popup was dismissed.
+    pub fn dismiss_transient(&mut self) -> bool {
+        let is_transient = self
+            .popups
+            .last()
+            .and_then(|p| p.title.as_ref())
+            .is_some_and(|title| title == "Hover" || title == "Signature Help");
+
+        if is_transient {
+            self.popups.pop();
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl Default for PopupManager {

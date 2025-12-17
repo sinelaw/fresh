@@ -568,6 +568,15 @@ impl EditorState {
     pub fn primary_cursor_mut(&mut self) -> &mut Cursor {
         self.cursors.primary_mut()
     }
+
+    /// Called when this buffer loses focus (e.g., switching to another buffer,
+    /// opening a prompt, focusing file explorer, etc.)
+    /// Dismisses transient popups like Hover and Signature Help.
+    pub fn on_focus_lost(&mut self) {
+        if self.popups.dismiss_transient() {
+            tracing::debug!("Dismissed transient popup on buffer focus loss");
+        }
+    }
 }
 
 /// Convert event overlay face to the actual overlay face

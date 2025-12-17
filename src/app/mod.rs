@@ -2892,6 +2892,9 @@ impl Editor {
             return; // No change
         }
 
+        // Dismiss transient popups and clear hover state when switching buffers
+        self.on_editor_focus_lost();
+
         // Cancel search/replace prompts when switching buffers
         // (they are buffer-specific and don't make sense across buffers)
         self.cancel_search_prompt_if_active();
@@ -4627,6 +4630,9 @@ impl Editor {
         prompt_type: PromptType,
         suggestions: Vec<Suggestion>,
     ) {
+        // Dismiss transient popups and clear hover state when opening a prompt
+        self.on_editor_focus_lost();
+
         // Clear search highlights when starting a new search prompt
         // This ensures old highlights from previous searches don't persist
         match prompt_type {
@@ -4660,6 +4666,9 @@ impl Editor {
         prompt_type: PromptType,
         initial_text: String,
     ) {
+        // Dismiss transient popups and clear hover state when opening a prompt
+        self.on_editor_focus_lost();
+
         self.prompt = Some(Prompt::with_initial_text(
             message,
             prompt_type,

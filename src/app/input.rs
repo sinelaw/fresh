@@ -1593,6 +1593,8 @@ impl Editor {
 
             // Menu navigation actions
             Action::MenuActivate => {
+                // Dismiss transient popups and clear hover state when opening menu
+                self.on_editor_focus_lost();
                 // Open the first menu
                 self.menu_state.open_menu(0);
             }
@@ -1700,6 +1702,9 @@ impl Editor {
                 }
             }
             Action::MenuOpen(menu_name) => {
+                // Dismiss transient popups and clear hover state when opening menu
+                self.on_editor_focus_lost();
+
                 // Find the menu by name and open it
                 let all_menus: Vec<crate::config::Menu> = self
                     .config
@@ -3515,6 +3520,8 @@ impl Editor {
                 if self.menu_state.active_menu == Some(menu_idx) {
                     self.menu_state.close_menu();
                 } else {
+                    // Dismiss transient popups and clear hover state when opening menu
+                    self.on_editor_focus_lost();
                     self.menu_state.open_menu(menu_idx);
                 }
             } else {

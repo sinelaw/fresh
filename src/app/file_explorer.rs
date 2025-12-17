@@ -114,6 +114,9 @@ impl Editor {
 
     pub fn focus_file_explorer(&mut self) {
         if self.file_explorer_visible {
+            // Dismiss transient popups and clear hover state when focusing file explorer
+            self.on_editor_focus_lost();
+
             // Cancel search/replace prompts when switching focus away from editor
             self.cancel_search_prompt_if_active();
 

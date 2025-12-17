@@ -3368,3 +3368,141 @@ fn test_hover_popup_at_right_edge_does_not_panic() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test that hover popup is dismissed when focus changes
+///
+/// The hover popup should be dismissed when:
+/// 1. Opening command palette (Ctrl+Shift+P)
+/// 2. Switching buffers
+/// 3. Focusing file explorer
+/// 4. Opening any prompt
+#[test]
+fn test_hover_popup_dismissed_on_focus_change() -> std::io::Result<()> {
+    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Helper to show a hover popup
+    fn show_hover_popup(harness: &mut EditorTestHarness) {
+        let state = harness.editor_mut().active_state_mut();
+        state.apply(&Event::ShowPopup {
+            popup: PopupData {
+                title: Some("Hover".to_string()),
+                content: PopupContentData::Text(vec![
+                    "fn example() -> i32".to_string(),
+                    "Returns an example value".to_string(),
+                ]),
+                position: PopupPositionData::BelowCursor,
+                width: 40,
+                max_height: 10,
+                bordered: true,
+            },
+        });
+    }
+
+    // Test 1: Hover popup dismissed when opening command palette
+    show_hover_popup(&mut harness);
+    harness.render()?;
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Hover popup should be visible initially"
+    );
+
+    // Open command palette (Ctrl+Shift+P)
+    harness.send_key(
+        KeyCode::Char('P'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    )?;
+
+    assert!(
+        !harness.editor().active_state().popups.is_visible(),
+        "Hover popup should be dismissed after opening command palette"
+    );
+
+    // Close command palette
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+
+    // Test 2: Hover popup dismissed when opening Go to Line prompt
+    show_hover_popup(&mut harness);
+    harness.render()?;
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Hover popup should be visible again"
+    );
+
+    // Open Go to Line (Ctrl+G)
+    harness.send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)?;
+
+    assert!(
+        !harness.editor().active_state().popups.is_visible(),
+        "Hover popup should be dismissed after opening Go to Line prompt"
+    );
+
+    // Close prompt
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+
+    // Test 3: Hover popup dismissed when switching buffers
+    // First open a second buffer
+    harness.type_text("test content")?;
+    harness.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)?; // New buffer
+
+    // Go back to first buffer
+    harness.send_key(KeyCode::Tab, KeyModifiers::CONTROL)?;
+
+    // Show hover popup
+    show_hover_popup(&mut harness);
+    harness.render()?;
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Hover popup should be visible before buffer switch"
+    );
+
+    // Switch to other buffer
+    harness.send_key(KeyCode::Tab, KeyModifiers::CONTROL)?;
+
+    // Note: After switching buffers, the popup belongs to the previous buffer's state.
+    // The new buffer should not have the popup.
+    assert!(
+        !harness.editor().active_state().popups.is_visible(),
+        "New buffer should not have hover popup after switching"
+    );
+
+    // Test 4: Hover popup dismissed when opening search prompt
+    // Switch back and show hover
+    harness.send_key(KeyCode::Tab, KeyModifiers::CONTROL)?;
+    show_hover_popup(&mut harness);
+    harness.render()?;
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Hover popup should be visible before search"
+    );
+
+    // Open search (Ctrl+F)
+    harness.send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)?;
+
+    assert!(
+        !harness.editor().active_state().popups.is_visible(),
+        "Hover popup should be dismissed after opening search"
+    );
+
+    // Close search prompt
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+
+    // Test 5: Hover popup dismissed when opening menu (Alt/F10)
+    show_hover_popup(&mut harness);
+    harness.render()?;
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Hover popup should be visible before opening menu"
+    );
+
+    // Open menu (F10)
+    harness.send_key(KeyCode::F(10), KeyModifiers::NONE)?;
+
+    assert!(
+        !harness.editor().active_state().popups.is_visible(),
+        "Hover popup should be dismissed after opening menu"
+    );
+
+    Ok(())
+}

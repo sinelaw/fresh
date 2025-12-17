@@ -991,6 +991,30 @@ impl Editor {
         }
     }
 
+    /// Called when the editor buffer loses focus (e.g., switching buffers,
+    /// opening prompts/menus, focusing file explorer, etc.)
+    ///
+    /// This is the central handler for focus loss that:
+    /// - Dismisses transient popups (Hover, Signature Help)
+    /// - Clears LSP hover state and pending requests
+    /// - Removes hover symbol highlighting
+    pub(super) fn on_editor_focus_lost(&mut self) {
+        // Dismiss transient popups via EditorState
+        self.active_state_mut().on_focus_lost();
+
+        // Clear hover state
+        self.mouse_state.lsp_hover_state = None;
+        self.mouse_state.lsp_hover_request_sent = false;
+        self.pending_hover_request = None;
+
+        // Clear hover symbol highlight if present
+        if let Some(handle) = self.hover_symbol_overlay.take() {
+            let remove_overlay_event = crate::model::event::Event::RemoveOverlay { handle };
+            self.apply_event_to_active_buffer(&remove_overlay_event);
+        }
+        self.hover_symbol_range = None;
+    }
+
     /// Clear all popups
     pub fn clear_popups(&mut self) {
         let event = Event::ClearPopups;
