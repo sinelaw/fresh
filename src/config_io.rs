@@ -104,26 +104,6 @@ impl Config {
         }
         serde_json::Value::Object(serde_json::Map::new())
     }
-
-    /// Load configuration from the default system location, falling back to defaults.
-    ///
-    /// Note: This does NOT check the working directory. Use `load_for_working_dir()`
-    /// if you want to check local config first.
-    pub fn load_or_default() -> Self {
-        for path in Self::system_config_paths() {
-            match Self::load_from_file(&path) {
-                Ok(config) => return config,
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to load config from {}: {}, trying next option",
-                        path.display(),
-                        e
-                    );
-                }
-            }
-        }
-        Self::default()
-    }
 }
 
 /// Directory paths for editor state and configuration

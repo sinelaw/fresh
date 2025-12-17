@@ -593,3 +593,268 @@ fn test_config_editor_opens_with_content() {
         "Should show config editor or loading state"
     );
 }
+
+/// Test that changing the theme in settings UI and saving applies the visual theme at runtime
+/// This verifies that the actual rendered colors change, not just the theme name
+#[test]
+fn test_config_editor_theme_change_applies_visual_colors() {
+    use ratatui::style::Color;
+    use tracing_subscriber::EnvFilter;
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with_test_writer()
+        .try_init();
+
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy files
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/config_editor.ts");
+    fs::copy(&plugin_source, plugins_dir.join("config_editor.ts")).unwrap();
+
+    let schema_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/config-schema.json");
+    fs::copy(&schema_source, plugins_dir.join("config-schema.json")).unwrap();
+
+    // Create a config file with the initial theme "light" (NOT the default!)
+    // Default theme is "high-contrast", so using "light" exposes if config loading works
+    let config_content = r#"{"theme": "light"}"#;
+    let config_path = project_root.join("config.json");
+    fs::write(&config_path, config_content).unwrap();
+
+    // Create harness - use with_working_dir to load config from file like production does
+    let mut harness = EditorTestHarness::with_working_dir(120, 40, project_root).unwrap();
+
+    harness.render().unwrap();
+
+    // Verify initial theme is "light" from our config file
+    assert_eq!(
+        harness.editor().theme().name,
+        "light",
+        "Initial theme should be 'light' from config file"
+    );
+
+    // Get the initial background color from an editor cell
+    // light theme has editor_bg = Color::Rgb(255, 255, 255) (white)
+    let initial_bg = harness.get_cell_style(5, 5).map(|s| s.bg);
+    eprintln!("Initial background color: {:?}", initial_bg);
+
+    // Open config editor via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Edit Configuration").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for config editor to load (shows "Configuration" in screen)
+    harness.wait_for_screen_contains("Configuration").unwrap();
+
+    // Move down to the theme field (skip header, file path, blank, comment)
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+
+    // Press Enter to edit the theme field
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    // Wait for prompt to open
+    harness.wait_for_prompt().unwrap();
+
+    // Type "high-contrast" to change the theme (black background - very different from white)
+    harness.type_text("high-contrast").unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to confirm the value
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    // Wait for prompt to close
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Press 's' to save
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .unwrap();
+    // Wait for save to complete (file should be modified)
+    let config_path_clone = config_path.clone();
+    harness
+        .wait_until(move |_| {
+            fs::read_to_string(&config_path_clone)
+                .map(|s| s.contains("high-contrast"))
+                .unwrap_or(false)
+        })
+        .unwrap();
+
+    // Close config editor to see the main editor
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    // Wait for config editor to close by checking the [Save] button is gone
+    // (this is specific to config editor, unlike "Configuration" which may appear elsewhere)
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("[Save]"))
+        .unwrap();
+
+    // Re-render to get updated colors
+    harness.render().unwrap();
+
+    // Get the new background color
+    // high-contrast theme has editor_bg = Color::Black
+    let new_bg = harness.get_cell_style(5, 5).map(|s| s.bg);
+    eprintln!("New background color after theme change: {:?}", new_bg);
+
+    // The visual colors should have changed
+    // light: Rgb(255, 255, 255) white background
+    // high-contrast: Black background
+    assert_ne!(
+        initial_bg, new_bg,
+        "Visual background color should change when theme changes.\n\
+         Initial (light): {:?}\n\
+         After (high-contrast): {:?}\n\
+         These should be different colors!",
+        initial_bg, new_bg
+    );
+
+    // Specifically verify we now have a high-contrast theme background (black)
+    // Note: Black can be either Color::Black or Color::Rgb(0, 0, 0)
+    let is_black = matches!(
+        new_bg,
+        Some(Some(Color::Black)) | Some(Some(Color::Rgb(0, 0, 0)))
+    );
+    assert!(
+        is_black,
+        "After changing to 'high-contrast' theme, background should be black.\n\
+         Got: {:?}",
+        new_bg
+    );
+}
+
+/// Test that pressing 's' keybinding saves the config file
+/// BUG: User reports pressing 's' to save doesn't work
+#[test]
+fn test_config_editor_s_key_saves_config() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy files
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/config_editor.ts");
+    fs::copy(&plugin_source, plugins_dir.join("config_editor.ts")).unwrap();
+
+    let schema_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/config-schema.json");
+    fs::copy(&schema_source, plugins_dir.join("config-schema.json")).unwrap();
+
+    // Create a config file with initial theme "light" (NOT the default!)
+    // This exposes the bug if config isn't being loaded from working directory
+    let config_content = r#"{"theme": "light"}"#;
+    let config_path = project_root.join("config.json");
+    fs::write(&config_path, config_content).unwrap();
+
+    // Get initial modification time
+    let initial_modified = fs::metadata(&config_path).unwrap().modified().unwrap();
+
+    // Create harness - use with_working_dir to load config from file like production does
+    let mut harness = EditorTestHarness::with_working_dir(120, 40, project_root).unwrap();
+
+    harness.render().unwrap();
+
+    // Verify initial theme is "light" from our config file
+    assert_eq!(
+        harness.editor().theme().name,
+        "light",
+        "Initial theme should be 'light' from config file"
+    );
+
+    // Open config editor via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Edit Configuration").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for config editor to load
+    harness.wait_for_screen_contains("Configuration").unwrap();
+
+    // Move down to the theme field
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+
+    // Press Enter to edit, type new value, confirm
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("dark").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Sleep briefly to ensure filesystem timestamp would be different
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Press 's' to save (this is the keybinding being tested)
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for save to complete (file should contain "dark")
+    let config_path_clone = config_path.clone();
+    harness
+        .wait_until(move |_| {
+            fs::read_to_string(&config_path_clone)
+                .map(|s| s.contains("dark"))
+                .unwrap_or(false)
+        })
+        .unwrap();
+
+    // Verify the file was modified
+    let new_modified = fs::metadata(&config_path).unwrap().modified().unwrap();
+    assert!(
+        new_modified > initial_modified,
+        "Config file should be modified after pressing 's' to save.\n\
+         Initial mtime: {:?}\n\
+         New mtime: {:?}\n\
+         BUG: The 's' keybinding to save doesn't work!",
+        initial_modified,
+        new_modified
+    );
+
+    // Verify the content changed
+    let saved_content = fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved_content.contains("dark"),
+        "Saved config should contain 'dark' theme after pressing 's'.\n\
+         Got: {}",
+        saved_content
+    );
+}

@@ -265,6 +265,28 @@ fn initialize_app(args: &Args) -> io::Result<SetupState> {
         original_hook(panic);
     }));
 
+    // Determine working directory early for config loading
+    let file_location = args
+        .file
+        .as_ref()
+        .map(|p| parse_file_location(p.to_string_lossy().as_ref()));
+
+    let (working_dir, file_to_open, show_file_explorer) = if let Some(ref loc) = file_location {
+        if loc.path.is_dir() {
+            (Some(loc.path.clone()), None, true)
+        } else {
+            (None, Some(loc.path.clone()), false)
+        }
+    } else {
+        (None, None, false)
+    };
+
+    // Load config - checking working directory first, then system paths
+    let effective_working_dir = working_dir
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
     let config = if let Some(config_path) = &args.config {
         match config::Config::load_from_file(config_path) {
             Ok(cfg) => cfg,
@@ -278,7 +300,7 @@ fn initialize_app(args: &Args) -> io::Result<SetupState> {
             }
         }
     } else {
-        config::Config::load_or_default()
+        config::Config::load_for_working_dir(&effective_working_dir)
     };
 
     enable_raw_mode()?;
@@ -316,21 +338,6 @@ fn initialize_app(args: &Args) -> io::Result<SetupState> {
 
     let size = terminal.size()?;
     tracing::info!("Terminal size: {}x{}", size.width, size.height);
-
-    let file_location = args
-        .file
-        .as_ref()
-        .map(|p| parse_file_location(p.to_string_lossy().as_ref()));
-
-    let (working_dir, file_to_open, show_file_explorer) = if let Some(ref loc) = file_location {
-        if loc.path.is_dir() {
-            (Some(loc.path.clone()), None, true)
-        } else {
-            (None, Some(loc.path.clone()), false)
-        }
-    } else {
-        (None, None, false)
-    };
 
     let dir_context = DirectoryContext::from_system()?;
     let current_working_dir = working_dir;

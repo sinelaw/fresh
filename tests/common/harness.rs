@@ -291,6 +291,19 @@ impl EditorTestHarness {
         })
     }
 
+    /// Create with explicit working directory, loading config from that directory.
+    /// This mirrors production behavior where config is loaded from the working directory.
+    /// Note: Creates a temp dir for DirectoryContext to ensure test isolation
+    /// Uses TestTimeSource for fast, deterministic time control
+    pub fn with_working_dir(
+        width: u16,
+        height: u16,
+        working_dir: std::path::PathBuf,
+    ) -> io::Result<Self> {
+        let config = Config::load_for_working_dir(&working_dir);
+        Self::with_config_and_working_dir(width, height, config, working_dir)
+    }
+
     /// Create with custom config and explicit working directory
     /// The working directory is used for LSP initialization and file operations
     /// Note: Creates a temp dir for DirectoryContext to ensure test isolation
