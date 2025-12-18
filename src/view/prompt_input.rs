@@ -10,6 +10,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 impl InputHandler for Prompt {
     fn handle_key_event(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
         let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = event.modifiers.contains(KeyModifiers::ALT);
         let shift = event.modifiers.contains(KeyModifiers::SHIFT);
 
         match event.code {
@@ -23,8 +24,15 @@ impl InputHandler for Prompt {
                 InputResult::Consumed
             }
 
-            // Character input
+            // Alt+key combinations should pass through to keybindings
+            KeyCode::Char(_) if alt => InputResult::Ignored,
+
+            // Character input (no modifiers or just shift)
             KeyCode::Char(c) if !ctrl => {
+                // Delete any selection before inserting
+                if self.has_selection() {
+                    self.delete_selection();
+                }
                 if shift {
                     self.insert_char(c.to_ascii_uppercase());
                 } else {
@@ -122,15 +130,19 @@ impl InputHandler for Prompt {
             // Suggestion navigation
             KeyCode::Up => {
                 if !self.suggestions.is_empty() {
-                    self.select_prev_suggestion();
-                    // For non-plugin prompts, update input to match selected suggestion
-                    if !matches!(
-                        self.prompt_type,
-                        crate::view::prompt::PromptType::Plugin { .. }
-                    ) {
-                        if let Some(value) = self.selected_value() {
-                            self.input = value;
-                            self.cursor_pos = self.input.len();
+                    // Don't wrap around - stay at 0 if already at the beginning
+                    if let Some(selected) = self.selected_suggestion {
+                        let new_selected = if selected == 0 { 0 } else { selected - 1 };
+                        self.selected_suggestion = Some(new_selected);
+                        // For non-plugin prompts, update input to match selected suggestion
+                        if !matches!(
+                            self.prompt_type,
+                            crate::view::prompt::PromptType::Plugin { .. }
+                        ) {
+                            if let Some(suggestion) = self.suggestions.get(new_selected) {
+                                self.input = suggestion.get_value().to_string();
+                                self.cursor_pos = self.input.len();
+                            }
                         }
                     }
                 } else {
@@ -141,15 +153,19 @@ impl InputHandler for Prompt {
             }
             KeyCode::Down => {
                 if !self.suggestions.is_empty() {
-                    self.select_next_suggestion();
-                    // For non-plugin prompts, update input to match selected suggestion
-                    if !matches!(
-                        self.prompt_type,
-                        crate::view::prompt::PromptType::Plugin { .. }
-                    ) {
-                        if let Some(value) = self.selected_value() {
-                            self.input = value;
-                            self.cursor_pos = self.input.len();
+                    // Don't wrap around - stay at end if already at the last item
+                    if let Some(selected) = self.selected_suggestion {
+                        let new_selected = (selected + 1).min(self.suggestions.len() - 1);
+                        self.selected_suggestion = Some(new_selected);
+                        // For non-plugin prompts, update input to match selected suggestion
+                        if !matches!(
+                            self.prompt_type,
+                            crate::view::prompt::PromptType::Plugin { .. }
+                        ) {
+                            if let Some(suggestion) = self.suggestions.get(new_selected) {
+                                self.input = suggestion.get_value().to_string();
+                                self.cursor_pos = self.input.len();
+                            }
                         }
                     }
                 } else {

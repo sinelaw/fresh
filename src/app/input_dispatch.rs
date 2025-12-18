@@ -45,6 +45,23 @@ impl Editor {
 
         // Prompt is next
         if let Some(ref mut prompt) = self.prompt {
+            // Check for Alt+key keybindings first (before prompt consumes them as modal)
+            if event
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::ALT)
+            {
+                if let crossterm::event::KeyCode::Char(_) = event.code {
+                    let action = self
+                        .keybindings
+                        .resolve(event, crate::input::keybindings::KeyContext::Prompt);
+                    if !matches!(action, Action::None) {
+                        // Handle the action (ignore errors for modal context)
+                        let _ = self.handle_action(action);
+                        return Some(InputResult::Consumed);
+                    }
+                }
+            }
+
             let result = prompt.dispatch_input(event, &mut ctx);
             self.process_deferred_actions(ctx);
             return Some(result);
