@@ -931,70 +931,10 @@ impl Editor {
                 self.handle_popup_cancel();
             }
             Action::InsertChar(c) => {
-                // Handle character insertion in prompt mode
                 if self.is_prompting() {
-                    // Check if this is the query-replace confirmation prompt
-                    if let Some(ref prompt) = self.prompt {
-                        if prompt.prompt_type == PromptType::QueryReplaceConfirm {
-                            return self.handle_interactive_replace_key(c);
-                        }
-                    }
-                    // Reset history navigation when user starts typing
-                    // This allows them to press Up to get back to history items
-                    if let Some(ref prompt) = self.prompt {
-                        match &prompt.prompt_type {
-                            PromptType::Search
-                            | PromptType::ReplaceSearch
-                            | PromptType::QueryReplaceSearch => {
-                                self.search_history.reset_navigation();
-                            }
-                            PromptType::Replace { .. } | PromptType::QueryReplace { .. } => {
-                                self.replace_history.reset_navigation();
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    if let Some(prompt) = self.prompt_mut() {
-                        // Use insert_str to properly handle selection deletion
-                        let s = c.to_string();
-                        prompt.insert_str(&s);
-                    }
-                    self.update_prompt_suggestions();
+                    return self.handle_insert_char_prompt(c);
                 } else {
-                    // Check if editing is disabled (show_cursors = false)
-                    if self.is_editing_disabled() {
-                        self.set_status_message("Editing disabled in this buffer".to_string());
-                        return Ok(());
-                    }
-                    // Normal mode character insertion
-                    // Cancel any pending LSP requests since the text is changing
-                    self.cancel_pending_lsp_requests();
-
-                    if let Some(events) = self.action_to_events(Action::InsertChar(c)) {
-                        // Wrap multiple events (multi-cursor) in a Batch for atomic undo
-                        if events.len() > 1 {
-                            let batch = Event::Batch {
-                                events: events.clone(),
-                                description: format!("Insert '{}'", c),
-                            };
-                            self.active_event_log_mut().append(batch.clone());
-                            self.apply_event_to_active_buffer(&batch);
-                            // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
-                        } else {
-                            // Single cursor - no need for batch
-                            for event in events {
-                                self.active_event_log_mut().append(event.clone());
-                                self.apply_event_to_active_buffer(&event);
-                                // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
-                            }
-                        }
-                    }
-
-                    // Auto-trigger signature help on '(' and ','
-                    if c == '(' || c == ',' {
-                        let _ = self.request_signature_help();
-                    }
+                    self.handle_insert_char_editor(c)?;
                 }
             }
             _ => {
@@ -2092,5 +2032,74 @@ impl Editor {
 
             self.set_active_buffer(buffer_id);
         }
+    }
+
+    /// Handle character insertion in prompt mode.
+    fn handle_insert_char_prompt(&mut self, c: char) -> std::io::Result<()> {
+        // Check if this is the query-replace confirmation prompt
+        if let Some(ref prompt) = self.prompt {
+            if prompt.prompt_type == PromptType::QueryReplaceConfirm {
+                return self.handle_interactive_replace_key(c);
+            }
+        }
+
+        // Reset history navigation when user starts typing
+        // This allows them to press Up to get back to history items
+        if let Some(ref prompt) = self.prompt {
+            match &prompt.prompt_type {
+                PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch => {
+                    self.search_history.reset_navigation();
+                }
+                PromptType::Replace { .. } | PromptType::QueryReplace { .. } => {
+                    self.replace_history.reset_navigation();
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(prompt) = self.prompt_mut() {
+            // Use insert_str to properly handle selection deletion
+            let s = c.to_string();
+            prompt.insert_str(&s);
+        }
+        self.update_prompt_suggestions();
+        Ok(())
+    }
+
+    /// Handle character insertion in normal editor mode.
+    fn handle_insert_char_editor(&mut self, c: char) -> std::io::Result<()> {
+        // Check if editing is disabled (show_cursors = false)
+        if self.is_editing_disabled() {
+            self.set_status_message("Editing disabled in this buffer".to_string());
+            return Ok(());
+        }
+
+        // Cancel any pending LSP requests since the text is changing
+        self.cancel_pending_lsp_requests();
+
+        if let Some(events) = self.action_to_events(Action::InsertChar(c)) {
+            // Wrap multiple events (multi-cursor) in a Batch for atomic undo
+            if events.len() > 1 {
+                let batch = Event::Batch {
+                    events: events.clone(),
+                    description: format!("Insert '{}'", c),
+                };
+                self.active_event_log_mut().append(batch.clone());
+                self.apply_event_to_active_buffer(&batch);
+            } else {
+                // Single cursor - no need for batch
+                for event in events {
+                    self.active_event_log_mut().append(event.clone());
+                    self.apply_event_to_active_buffer(&event);
+                }
+            }
+        }
+
+        // Auto-trigger signature help on '(' and ','
+        if c == '(' || c == ',' {
+            let _ = self.request_signature_help();
+        }
+
+        Ok(())
     }
 }
