@@ -938,83 +938,12 @@ impl Editor {
                 }
             }
             _ => {
-                // Convert action to events and apply them
-                // Get description before moving action
-                let action_description = format!("{:?}", action);
-
-                // Check if this is an editing action and editing is disabled
-                let is_editing_action = matches!(
-                    action,
-                    Action::InsertNewline
-                        | Action::InsertTab
-                        | Action::DeleteForward
-                        | Action::DeleteWordBackward
-                        | Action::DeleteWordForward
-                        | Action::DeleteLine
-                        | Action::IndentSelection
-                        | Action::DedentSelection
-                        | Action::ToggleComment
-                );
-
-                if is_editing_action && self.is_editing_disabled() {
-                    self.set_status_message("Editing disabled in this buffer".to_string());
-                    return Ok(());
-                }
-
-                if let Some(events) = self.action_to_events(action) {
-                    // Wrap multiple events (multi-cursor) in a Batch for atomic undo
-                    if events.len() > 1 {
-                        let batch = Event::Batch {
-                            events: events.clone(),
-                            description: action_description,
-                        };
-                        self.active_event_log_mut().append(batch.clone());
-                        self.apply_event_to_active_buffer(&batch);
-                        // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
-
-                        // Track position history for all events in the batch
-                        for event in &events {
-                            // Track cursor movements in position history (but not during navigation)
-                            if !self.in_navigation {
-                                if let Event::MoveCursor {
-                                    new_position,
-                                    new_anchor,
-                                    ..
-                                } = event
-                                {
-                                    self.position_history.record_movement(
-                                        self.active_buffer(),
-                                        *new_position,
-                                        *new_anchor,
-                                    );
-                                }
-                            }
-                        }
-                    } else {
-                        // Single cursor - no need for batch
-                        for event in events {
-                            self.active_event_log_mut().append(event.clone());
-                            self.apply_event_to_active_buffer(&event);
-                            // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
-
-                            // Track cursor movements in position history (but not during navigation)
-                            if !self.in_navigation {
-                                if let Event::MoveCursor {
-                                    new_position,
-                                    new_anchor,
-                                    ..
-                                } = event
-                                {
-                                    self.position_history.record_movement(
-                                        self.active_buffer(),
-                                        new_position,
-                                        new_anchor,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
+                // TODO: Why do we have this catch-all? It seems like actions should either:
+                // 1. Be handled explicitly above (like InsertChar, PopupConfirm, etc.)
+                // 2. Or be converted to events consistently
+                // This catch-all makes it unclear which actions go through event conversion
+                // vs. direct handling. Consider making this explicit or removing the pattern.
+                self.apply_action_as_events(action)?;
             }
         }
 
@@ -2101,5 +2030,77 @@ impl Editor {
         }
 
         Ok(())
+    }
+
+    /// Apply an action by converting it to events.
+    ///
+    /// This is the catch-all handler for actions that can be converted to buffer events
+    /// (cursor movements, text edits, etc.). It handles batching for multi-cursor,
+    /// position history tracking, and editing permission checks.
+    fn apply_action_as_events(&mut self, action: Action) -> std::io::Result<()> {
+        // Get description before moving action
+        let action_description = format!("{:?}", action);
+
+        // Check if this is an editing action and editing is disabled
+        let is_editing_action = matches!(
+            action,
+            Action::InsertNewline
+                | Action::InsertTab
+                | Action::DeleteForward
+                | Action::DeleteWordBackward
+                | Action::DeleteWordForward
+                | Action::DeleteLine
+                | Action::IndentSelection
+                | Action::DedentSelection
+                | Action::ToggleComment
+        );
+
+        if is_editing_action && self.is_editing_disabled() {
+            self.set_status_message("Editing disabled in this buffer".to_string());
+            return Ok(());
+        }
+
+        if let Some(events) = self.action_to_events(action) {
+            // Wrap multiple events (multi-cursor) in a Batch for atomic undo
+            if events.len() > 1 {
+                let batch = Event::Batch {
+                    events: events.clone(),
+                    description: action_description,
+                };
+                self.active_event_log_mut().append(batch.clone());
+                self.apply_event_to_active_buffer(&batch);
+
+                // Track position history for all events in the batch
+                for event in &events {
+                    self.track_cursor_movement(event);
+                }
+            } else {
+                // Single cursor - no need for batch
+                for event in events {
+                    self.active_event_log_mut().append(event.clone());
+                    self.apply_event_to_active_buffer(&event);
+                    self.track_cursor_movement(&event);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Track cursor movement in position history if applicable.
+    fn track_cursor_movement(&mut self, event: &Event) {
+        if self.in_navigation {
+            return;
+        }
+
+        if let Event::MoveCursor {
+            new_position,
+            new_anchor,
+            ..
+        } = event
+        {
+            self.position_history
+                .record_movement(self.active_buffer(), *new_position, *new_anchor);
+        }
     }
 }
