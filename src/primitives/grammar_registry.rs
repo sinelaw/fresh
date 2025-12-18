@@ -2,7 +2,8 @@
 //!
 //! This module handles discovery and loading of TextMate grammars from:
 //! 1. Built-in syntect grammars (100+ languages)
-//! 2. User-installed grammars in ~/.config/fresh/grammars/
+//! 2. Embedded grammars for languages not in syntect (TOML, etc.)
+//! 3. User-installed grammars in ~/.config/fresh/grammars/
 //!
 //! User grammars use VSCode extension format for compatibility.
 
@@ -10,11 +11,14 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use syntect::parsing::{SyntaxReference, SyntaxSet, SyntaxSetBuilder};
+use syntect::parsing::{SyntaxDefinition, SyntaxReference, SyntaxSet, SyntaxSetBuilder};
+
+/// Embedded TOML grammar (syntect doesn't include one)
+const TOML_GRAMMAR: &str = include_str!("../grammars/toml.sublime-syntax");
 
 /// Registry of all available TextMate grammars
 pub struct GrammarRegistry {
-    /// Combined syntax set (built-in + user grammars)
+    /// Combined syntax set (built-in + embedded + user grammars)
     syntax_set: Arc<SyntaxSet>,
     /// Extension -> scope name mapping for user grammars (takes priority)
     user_extensions: HashMap<String, String>,
@@ -23,45 +27,23 @@ pub struct GrammarRegistry {
 impl GrammarRegistry {
     /// Load grammar registry, scanning user grammars directory
     pub fn load() -> Self {
-        let mut builder = SyntaxSetBuilder::new();
         let mut user_extensions = HashMap::new();
 
-        // Add built-in syntect grammars
-        builder.add_plain_text_syntax();
-
-        // Load default syntect grammars
+        // Start with syntect defaults, convert to builder to add more
         let defaults = SyntaxSet::load_defaults_newlines();
-        for _syntax in defaults.syntaxes() {
-            // SyntaxSetBuilder doesn't have a direct way to add from another set,
-            // so we'll just use the defaults as our base and add user grammars on top
-        }
+        let mut builder = defaults.into_builder();
 
-        // For now, use the defaults directly and add user grammars separately
-        // We'll merge them after loading user grammars
-        let mut syntax_set = SyntaxSet::load_defaults_newlines();
+        // Add embedded grammars (TOML, etc.)
+        Self::add_embedded_grammars(&mut builder);
 
-        // Scan user grammars directory
+        // Add user grammars from config directory
         if let Some(grammars_dir) = Self::grammars_directory() {
             if grammars_dir.exists() {
-                if let Some(user_set) =
-                    Self::load_user_grammars(&grammars_dir, &mut user_extensions)
-                {
-                    // Merge user syntaxes with defaults
-                    // Since SyntaxSet doesn't support merging, we need to rebuild
-                    let mut builder = SyntaxSetBuilder::new();
-                    builder.add_plain_text_syntax();
-
-                    // Add defaults first
-                    for _syntax in syntax_set.syntaxes() {
-                        // We can't directly add syntaxes, so we'll keep defaults as base
-                    }
-
-                    // For user grammars, we store the mappings and load them into a separate set
-                    // The find_syntax_for_file will check user_extensions first
-                    syntax_set = Self::merge_syntax_sets(syntax_set, user_set);
-                }
+                Self::load_user_grammars_into(&grammars_dir, &mut builder, &mut user_extensions);
             }
         }
+
+        let syntax_set = builder.build();
 
         tracing::info!(
             "Loaded {} syntaxes, {} user extension mappings",
@@ -80,67 +62,54 @@ impl GrammarRegistry {
         dirs::config_dir().map(|p| p.join("fresh/grammars"))
     }
 
-    /// Merge two syntax sets (user grammars override defaults)
-    fn merge_syntax_sets(base: SyntaxSet, _user: SyntaxSet) -> SyntaxSet {
-        // syntect doesn't have a great API for merging, so we use a builder
-        let mut builder = SyntaxSetBuilder::new();
-        builder.add_plain_text_syntax();
-
-        // Unfortunately, SyntaxSetBuilder doesn't let us add from existing SyntaxSet
-        // directly. The best approach is to load from folders.
-        // For now, we'll just use the base set and rely on user_extensions mapping
-        // to find user grammars by scope name.
-
-        // In a more complete implementation, we'd serialize user syntaxes and reload
-        base
+    /// Add embedded grammars for languages not in syntect's defaults
+    fn add_embedded_grammars(builder: &mut SyntaxSetBuilder) {
+        // TOML grammar
+        match SyntaxDefinition::load_from_str(TOML_GRAMMAR, true, Some("TOML")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded TOML grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded TOML grammar: {}", e);
+            }
+        }
     }
 
-    /// Load user grammars from the grammars directory
-    fn load_user_grammars(
+    /// Load user grammars into builder
+    fn load_user_grammars_into(
         dir: &Path,
+        builder: &mut SyntaxSetBuilder,
         user_extensions: &mut HashMap<String, String>,
-    ) -> Option<SyntaxSet> {
-        let mut builder = SyntaxSetBuilder::new();
-        let mut found_any = false;
-
-        // Iterate through subdirectories looking for package.json
+    ) {
+        // Iterate through subdirectories looking for package.json or direct grammar files
         let entries = match std::fs::read_dir(dir) {
             Ok(entries) => entries,
             Err(e) => {
                 tracing::warn!("Failed to read grammars directory {:?}: {}", dir, e);
-                return None;
+                return;
             }
         };
 
         for entry in entries.flatten() {
             let path = entry.path();
+
             if !path.is_dir() {
                 continue;
             }
 
-            let package_json = path.join("package.json");
-            if !package_json.exists() {
-                // Also check for direct .tmLanguage.json files
-                Self::load_direct_grammar(&path, &mut builder, user_extensions, &mut found_any);
+            // Check for package.json (VSCode extension format)
+            let manifest_path = path.join("package.json");
+            if manifest_path.exists() {
+                if let Ok(manifest) = Self::parse_package_json(&manifest_path) {
+                    Self::process_manifest(&path, manifest, builder, user_extensions);
+                }
                 continue;
             }
 
-            // Parse package.json
-            match Self::parse_package_json(&package_json) {
-                Ok(manifest) => {
-                    Self::process_manifest(&path, manifest, &mut builder, user_extensions);
-                    found_any = true;
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to parse {:?}: {}", package_json, e);
-                }
-            }
-        }
-
-        if found_any {
-            Some(builder.build())
-        } else {
-            None
+            // Check for direct grammar files
+            let mut found_any = false;
+            Self::load_direct_grammar(&path, builder, user_extensions, &mut found_any);
         }
     }
 
@@ -238,9 +207,9 @@ impl GrammarRegistry {
     /// Find syntax for a file by path/extension/filename.
     ///
     /// Checks in order:
-    /// 1. User-configured grammar extensions
-    /// 2. Syntect by extension
-    /// 3. Syntect by filename (handles Makefile, .bashrc, etc.)
+    /// 1. User-configured grammar extensions (by scope)
+    /// 2. By extension (includes built-in + embedded grammars)
+    /// 3. By filename (handles Makefile, .bashrc, etc.)
     pub fn find_syntax_for_file(&self, path: &Path) -> Option<&SyntaxReference> {
         // Try extension-based lookup first
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
@@ -254,7 +223,7 @@ impl GrammarRegistry {
                 }
             }
 
-            // Try syntect's extension lookup
+            // Try extension lookup (includes embedded grammars like TOML)
             if let Some(syntax) = self.syntax_set.find_syntax_by_extension(ext) {
                 return Some(syntax);
             }

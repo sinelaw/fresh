@@ -1,0 +1,156 @@
+%YAML 1.2
+---
+# TOML syntax highlighting for Fresh editor
+# Based on the TOML v1.0.0 specification
+name: TOML
+file_extensions:
+  - toml
+scope: source.toml
+
+contexts:
+  main:
+    - include: comments
+    - include: tables
+    - include: key-value
+
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.toml
+
+  tables:
+    # Array of tables [[name]]
+    - match: '^\s*(\[\[)([^\]]+)(\]\])'
+      captures:
+        1: punctuation.definition.table.array.begin.toml
+        2: entity.name.section.toml
+        3: punctuation.definition.table.array.end.toml
+    # Regular tables [name]
+    - match: '^\s*(\[)([^\]]+)(\])'
+      captures:
+        1: punctuation.definition.table.begin.toml
+        2: entity.name.section.toml
+        3: punctuation.definition.table.end.toml
+
+  key-value:
+    - match: '([A-Za-z0-9_-]+|"[^"]*"|''[^'']*'')\s*(=)'
+      captures:
+        1: entity.name.tag.toml
+        2: punctuation.separator.key-value.toml
+      push: value
+
+  value:
+    - include: strings
+    - include: numbers
+    - include: booleans
+    - include: dates
+    - include: arrays
+    - include: inline-tables
+    - match: '$'
+      pop: true
+
+  strings:
+    # Multi-line basic strings
+    - match: '"""'
+      scope: punctuation.definition.string.begin.toml
+      push:
+        - meta_scope: string.quoted.triple.toml
+        - match: '"""'
+          scope: punctuation.definition.string.end.toml
+          pop: true
+        - include: escape-chars
+    # Multi-line literal strings
+    - match: "'''"
+      scope: punctuation.definition.string.begin.toml
+      push:
+        - meta_scope: string.quoted.triple.literal.toml
+        - match: "'''"
+          scope: punctuation.definition.string.end.toml
+          pop: true
+    # Basic strings
+    - match: '"'
+      scope: punctuation.definition.string.begin.toml
+      push:
+        - meta_scope: string.quoted.double.toml
+        - match: '"'
+          scope: punctuation.definition.string.end.toml
+          pop: true
+        - include: escape-chars
+    # Literal strings
+    - match: "'"
+      scope: punctuation.definition.string.begin.toml
+      push:
+        - meta_scope: string.quoted.single.toml
+        - match: "'"
+          scope: punctuation.definition.string.end.toml
+          pop: true
+
+  escape-chars:
+    - match: '\\[btnfr"\\]'
+      scope: constant.character.escape.toml
+    - match: '\\u[0-9A-Fa-f]{4}'
+      scope: constant.character.escape.unicode.toml
+    - match: '\\U[0-9A-Fa-f]{8}'
+      scope: constant.character.escape.unicode.toml
+
+  numbers:
+    # Hexadecimal
+    - match: '0x[0-9A-Fa-f_]+'
+      scope: constant.numeric.hex.toml
+    # Octal
+    - match: '0o[0-7_]+'
+      scope: constant.numeric.octal.toml
+    # Binary
+    - match: '0b[01_]+'
+      scope: constant.numeric.binary.toml
+    # Float with exponent
+    - match: '[+-]?(\d[0-9_]*)?\.(\d[0-9_]*)?([eE][+-]?\d[0-9_]*)?'
+      scope: constant.numeric.float.toml
+    # Float special values
+    - match: '[+-]?(inf|nan)\b'
+      scope: constant.numeric.float.toml
+    # Integer
+    - match: '[+-]?\d[0-9_]*'
+      scope: constant.numeric.integer.toml
+
+  booleans:
+    - match: '\b(true|false)\b'
+      scope: constant.language.boolean.toml
+
+  dates:
+    # Offset datetime
+    - match: '\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?'
+      scope: constant.other.datetime.toml
+    # Local datetime
+    - match: '\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?'
+      scope: constant.other.datetime.toml
+    # Local date
+    - match: '\d{4}-\d{2}-\d{2}'
+      scope: constant.other.date.toml
+    # Local time
+    - match: '\d{2}:\d{2}:\d{2}(\.\d+)?'
+      scope: constant.other.time.toml
+
+  arrays:
+    - match: '\['
+      scope: punctuation.definition.array.begin.toml
+      push:
+        - meta_scope: meta.array.toml
+        - match: '\]'
+          scope: punctuation.definition.array.end.toml
+          pop: true
+        - include: value
+        - match: ','
+          scope: punctuation.separator.array.toml
+        - include: comments
+
+  inline-tables:
+    - match: '\{'
+      scope: punctuation.definition.inline-table.begin.toml
+      push:
+        - meta_scope: meta.inline-table.toml
+        - match: '\}'
+          scope: punctuation.definition.inline-table.end.toml
+          pop: true
+        - include: key-value
+        - match: ','
+          scope: punctuation.separator.inline-table.toml
