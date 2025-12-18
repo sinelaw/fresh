@@ -942,7 +942,22 @@ fn test_settings_footer_buttons_keyboard_accessible() {
     // Cancel button should now be selected
     harness.assert_screen_contains("▶[ Cancel ]");
 
-    // Press Enter on Cancel to close without saving
+    // Press Enter on Cancel - this shows confirmation dialog when there are changes
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Confirmation dialog should appear
+    harness.assert_screen_contains("Unsaved Changes");
+
+    // Navigate to Discard button (Right from Save)
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to discard and close
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();

@@ -470,10 +470,8 @@ impl SettingsState {
                     self.on_value_changed();
                 }
                 SettingControl::Dropdown(ref mut state) => {
-                    if state.selected + 1 < state.options.len() {
-                        state.selected += 1;
-                        self.on_value_changed();
-                    }
+                    state.select_next();
+                    self.on_value_changed();
                 }
                 SettingControl::Map(ref mut state) => {
                     // Navigate within map entries
@@ -503,10 +501,8 @@ impl SettingsState {
                     self.on_value_changed();
                 }
                 SettingControl::Dropdown(ref mut state) => {
-                    if state.selected > 0 {
-                        state.selected -= 1;
-                        self.on_value_changed();
-                    }
+                    state.select_prev();
+                    self.on_value_changed();
                 }
                 SettingControl::Map(ref mut state) => {
                     if let Some(idx) = state.focused_entry {

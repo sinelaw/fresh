@@ -5142,6 +5142,12 @@ impl Editor {
             PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch => {
                 // Update incremental search highlights as user types
                 self.update_search_highlights(&input);
+                // Reset history navigation when user types - allows Up to navigate history
+                self.search_history.reset_navigation();
+            }
+            PromptType::Replace { .. } | PromptType::QueryReplace { .. } => {
+                // Reset history navigation when user types - allows Up to navigate history
+                self.replace_history.reset_navigation();
             }
             PromptType::OpenFile | PromptType::SwitchProject => {
                 // For OpenFile/SwitchProject, update the file browser filter (native implementation)
