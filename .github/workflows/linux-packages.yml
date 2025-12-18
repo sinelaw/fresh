@@ -16,11 +16,11 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             arch: amd64
             rpm_arch: x86_64
-            runner: ubuntu-22.04
+            runner: ubuntu-20.04
           - target: aarch64-unknown-linux-gnu
             arch: arm64
             rpm_arch: aarch64
-            runner: ubuntu-22.04
+            runner: ubuntu-20.04
     runs-on: ${{ matrix.runner }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -92,6 +92,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - distro: ubuntu:20.04
+            name: Ubuntu 20.04
           - distro: ubuntu:22.04
             name: Ubuntu 22.04
           - distro: ubuntu:24.04
