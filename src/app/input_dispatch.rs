@@ -88,6 +88,27 @@ impl Editor {
                 }
             }
 
+            // QueryReplaceConfirm prompts need special handling - character input goes
+            // directly to handle_interactive_replace_key instead of being inserted
+            use crate::view::prompt::PromptType;
+            let is_query_replace_confirm = self
+                .prompt
+                .as_ref()
+                .map_or(false, |p| p.prompt_type == PromptType::QueryReplaceConfirm);
+            if is_query_replace_confirm {
+                if let crossterm::event::KeyCode::Char(c) = event.code {
+                    let _ = self.handle_interactive_replace_key(c);
+                    return Some(InputResult::Consumed);
+                }
+                if event.code == crossterm::event::KeyCode::Esc {
+                    self.cancel_prompt();
+                    self.interactive_replace_state = None;
+                    return Some(InputResult::Consumed);
+                }
+                // Consume other keys for modal behavior
+                return Some(InputResult::Consumed);
+            }
+
             if let Some(ref mut prompt) = self.prompt {
                 let result = prompt.dispatch_input(event, &mut ctx);
                 self.process_deferred_actions(ctx);
