@@ -295,7 +295,7 @@ pub struct Editor {
     mouse_state: MouseState,
 
     /// Cached layout areas from last render (for mouse hit testing)
-    cached_layout: CachedLayout,
+    pub(crate) cached_layout: CachedLayout,
 
     /// Command registry for dynamic commands
     command_registry: Arc<RwLock<CommandRegistry>>,
@@ -463,7 +463,7 @@ pub struct Editor {
     previous_click_position: Option<(u16, u16)>,
 
     /// Settings UI state (when settings modal is open)
-    settings_state: Option<crate::view::settings::SettingsState>,
+    pub(crate) settings_state: Option<crate::view::settings::SettingsState>,
 }
 
 impl Editor {

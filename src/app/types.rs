@@ -363,7 +363,7 @@ impl ViewLineMapping {
 
 /// Cached layout information for mouse hit testing
 #[derive(Debug, Clone, Default)]
-pub(super) struct CachedLayout {
+pub(crate) struct CachedLayout {
     /// File explorer area (if visible)
     pub file_explorer_area: Option<Rect>,
     /// Editor content area (excluding file explorer)

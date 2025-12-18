@@ -16,6 +16,7 @@ pub mod entry_dialog;
 pub mod input;
 pub mod items;
 pub mod layout;
+pub mod mouse;
 pub mod render;
 pub mod schema;
 pub mod search;
