@@ -37,7 +37,7 @@ pub use dropdown::{
 pub use keybinding_list::{
     render_keybinding_list, KeybindingListColors, KeybindingListLayout, KeybindingListState,
 };
-pub use map_input::{render_map, MapColors, MapLayout, MapState};
+pub use map_input::{render_map, MapColors, MapEvent, MapLayout, MapState};
 pub use number_input::{
     render_number_input, render_number_input_aligned, NumberInputColors, NumberInputEvent,
     NumberInputLayout, NumberInputState,

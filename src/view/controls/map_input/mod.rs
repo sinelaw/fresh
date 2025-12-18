@@ -10,12 +10,21 @@
 //!       auto_indent: [x]
 //!   [+ Add entry...]
 //! ```
+//!
+//! This module provides a complete map control with:
+//! - State management (`MapState`)
+//! - Rendering (`render_map`)
+//! - Input handling (`MapState::handle_mouse`, `handle_key`)
+//! - Layout/hit testing (`MapLayout`)
+
+mod input;
+mod render;
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
-use ratatui::Frame;
+use ratatui::style::Color;
+
+pub use input::MapEvent;
+pub use render::render_map;
 
 use super::FocusState;
 
@@ -82,6 +91,11 @@ impl MapState {
     pub fn with_focus(mut self, focus: FocusState) -> Self {
         self.focus = focus;
         self
+    }
+
+    /// Check if the control is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.focus != FocusState::Disabled
     }
 
     /// Add a new entry with the given key and default value
@@ -293,13 +307,14 @@ impl MapColors {
 }
 
 /// Layout information for hit testing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MapLayout {
     pub full_area: Rect,
     pub entry_areas: Vec<MapEntryLayout>,
     pub add_row_area: Option<Rect>,
 }
 
+/// Layout for an entry row
 #[derive(Debug, Clone)]
 pub struct MapEntryLayout {
     pub index: usize,
@@ -309,209 +324,46 @@ pub struct MapEntryLayout {
     pub remove_area: Rect,
 }
 
-/// Render a map control
-pub fn render_map(
-    frame: &mut Frame,
-    area: Rect,
-    state: &MapState,
-    colors: &MapColors,
-    key_width: u16,
-) -> MapLayout {
-    let empty_layout = MapLayout {
-        full_area: area,
-        entry_areas: Vec::new(),
-        add_row_area: None,
-    };
-
-    if area.height == 0 || area.width < 15 {
-        return empty_layout;
-    }
-
-    let label_color = match state.focus {
-        FocusState::Focused => colors.focused,
-        FocusState::Hovered => colors.focused,
-        FocusState::Disabled => colors.disabled,
-        FocusState::Normal => colors.label,
-    };
-
-    // Render label
-    let label_line = Line::from(vec![
-        Span::styled(&state.label, Style::default().fg(label_color)),
-        Span::raw(":"),
-    ]);
-    frame.render_widget(
-        Paragraph::new(label_line),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
-
-    let mut entry_areas = Vec::new();
-    let mut y = area.y + 1;
-    let indent = 2u16;
-    let actual_key_width = key_width.min(area.width.saturating_sub(indent + 8));
-
-    // Render entries
-    for (idx, (key, value)) in state.entries.iter().enumerate() {
-        if y >= area.y + area.height {
-            break;
-        }
-
-        let is_focused = state.focused_entry == Some(idx) && state.focus == FocusState::Focused;
-        let is_expanded = state.is_expanded(idx);
-
-        let arrow = if is_expanded { "▼" } else { "▶" };
-        let arrow_color = if is_focused {
-            colors.focused
-        } else {
-            colors.expand_arrow
-        };
-        let key_color = if is_focused {
-            colors.focused
-        } else {
-            colors.key
-        };
-
-        // Value preview (truncated)
-        let value_preview = format_value_preview(value, 20);
-
-        let line = Line::from(vec![
-            Span::raw(" ".repeat(indent as usize)),
-            Span::styled(arrow, Style::default().fg(arrow_color)),
-            Span::raw(" "),
-            Span::styled(
-                format!("{:width$}", key, width = actual_key_width as usize),
-                Style::default().fg(key_color),
-            ),
-            Span::raw(" "),
-            Span::styled(value_preview, Style::default().fg(colors.value_preview)),
-            Span::raw(" "),
-            Span::styled("[x]", Style::default().fg(colors.remove_button)),
-        ]);
-
-        let row_area = Rect::new(area.x, y, area.width, 1);
-        frame.render_widget(Paragraph::new(line), row_area);
-
-        entry_areas.push(MapEntryLayout {
-            index: idx,
-            row_area,
-            expand_area: Rect::new(area.x + indent, y, 1, 1),
-            key_area: Rect::new(area.x + indent + 2, y, actual_key_width, 1),
-            remove_area: Rect::new(area.x + indent + 2 + actual_key_width + 22, y, 3, 1),
-        });
-
-        y += 1;
-
-        // If expanded, show nested values (simplified view)
-        if is_expanded && y < area.y + area.height {
-            if let Some(obj) = value.as_object() {
-                for (nested_key, nested_value) in obj.iter().take(5) {
-                    if y >= area.y + area.height {
-                        break;
-                    }
-                    let nested_preview = format_value_preview(nested_value, 15);
-                    let nested_line = Line::from(vec![
-                        Span::raw(" ".repeat((indent + 4) as usize)),
-                        Span::styled(
-                            format!("{}: ", nested_key),
-                            Style::default().fg(colors.label),
-                        ),
-                        Span::styled(nested_preview, Style::default().fg(colors.value_preview)),
-                    ]);
-                    frame.render_widget(
-                        Paragraph::new(nested_line),
-                        Rect::new(area.x, y, area.width, 1),
-                    );
-                    y += 1;
+impl MapLayout {
+    /// Find what was clicked at the given coordinates
+    pub fn hit_test(&self, x: u16, y: u16) -> Option<MapHit> {
+        // Check entry rows
+        for entry in &self.entry_areas {
+            if y == entry.row_area.y {
+                if x >= entry.remove_area.x && x < entry.remove_area.x + entry.remove_area.width {
+                    return Some(MapHit::RemoveButton(entry.index));
                 }
-                if obj.len() > 5 && y < area.y + area.height {
-                    let more_line = Line::from(Span::styled(
-                        format!(
-                            "{}... and {} more",
-                            " ".repeat((indent + 4) as usize),
-                            obj.len() - 5
-                        ),
-                        Style::default()
-                            .fg(colors.value_preview)
-                            .add_modifier(Modifier::ITALIC),
-                    ));
-                    frame.render_widget(
-                        Paragraph::new(more_line),
-                        Rect::new(area.x, y, area.width, 1),
-                    );
-                    y += 1;
+                if x >= entry.expand_area.x && x < entry.expand_area.x + entry.expand_area.width {
+                    return Some(MapHit::ExpandArrow(entry.index));
+                }
+                if x >= entry.key_area.x && x < entry.key_area.x + entry.key_area.width {
+                    return Some(MapHit::EntryKey(entry.index));
                 }
             }
         }
-    }
 
-    // Render "add new" row
-    let add_row_area = if y < area.y + area.height {
-        let is_focused = state.focused_entry.is_none() && state.focus == FocusState::Focused;
-        let (border_color, text_color) = if is_focused {
-            (colors.focused, colors.label)
-        } else if state.focus == FocusState::Disabled {
-            (colors.disabled, colors.disabled)
-        } else {
-            (colors.border, colors.label)
-        };
-
-        let inner_width = actual_key_width.saturating_sub(2) as usize;
-        let visible: String = state.new_key_text.chars().take(inner_width).collect();
-        let padded = format!("{:width$}", visible, width = inner_width);
-
-        let line = Line::from(vec![
-            Span::raw(" ".repeat(indent as usize)),
-            Span::styled("[", Style::default().fg(border_color)),
-            Span::styled(padded, Style::default().fg(text_color)),
-            Span::styled("]", Style::default().fg(border_color)),
-            Span::raw(" "),
-            Span::styled("[+]", Style::default().fg(colors.add_button)),
-            Span::raw(" Add entry..."),
-        ]);
-
-        let row_area = Rect::new(area.x, y, area.width, 1);
-        frame.render_widget(Paragraph::new(line), row_area);
-
-        // Render cursor if focused
-        if is_focused && state.cursor <= inner_width {
-            let cursor_x = area.x + indent + 1 + state.cursor as u16;
-            let cursor_char = state.new_key_text.chars().nth(state.cursor).unwrap_or(' ');
-            let cursor_area = Rect::new(cursor_x, y, 1, 1);
-            let cursor_span = Span::styled(
-                cursor_char.to_string(),
-                Style::default()
-                    .fg(colors.cursor)
-                    .add_modifier(Modifier::REVERSED),
-            );
-            frame.render_widget(Paragraph::new(Line::from(vec![cursor_span])), cursor_area);
+        // Check add row - clicking anywhere on the row focuses the input
+        if let Some(ref add_row) = self.add_row_area {
+            if y == add_row.y && x >= add_row.x && x < add_row.x + add_row.width {
+                return Some(MapHit::AddRow);
+            }
         }
 
-        Some(row_area)
-    } else {
         None
-    };
-
-    MapLayout {
-        full_area: area,
-        entry_areas,
-        add_row_area,
     }
 }
 
-/// Format a JSON value as a short preview string
-fn format_value_preview(value: &serde_json::Value, max_len: usize) -> String {
-    let s = match value {
-        serde_json::Value::Null => "null".to_string(),
-        serde_json::Value::Bool(b) => b.to_string(),
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => format!("\"{}\"", s),
-        serde_json::Value::Array(arr) => format!("[{} items]", arr.len()),
-        serde_json::Value::Object(obj) => format!("{{{} fields}}", obj.len()),
-    };
-    if s.len() > max_len {
-        format!("{}...", &s[..max_len - 3])
-    } else {
-        s
-    }
+/// Result of hit testing on a map control
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapHit {
+    /// Clicked on expand/collapse arrow
+    ExpandArrow(usize),
+    /// Clicked on entry key
+    EntryKey(usize),
+    /// Clicked on remove button for entry
+    RemoveButton(usize),
+    /// Clicked on add row (input field or button area)
+    AddRow,
 }
 
 #[cfg(test)]
@@ -580,5 +432,27 @@ mod tests {
         assert!(state.is_expanded(0));
         state.toggle_expand(0);
         assert!(!state.is_expanded(0));
+    }
+
+    #[test]
+    fn test_map_hit_test() {
+        let layout = MapLayout {
+            full_area: Rect::new(0, 0, 50, 5),
+            entry_areas: vec![MapEntryLayout {
+                index: 0,
+                row_area: Rect::new(0, 1, 50, 1),
+                expand_area: Rect::new(2, 1, 1, 1),
+                key_area: Rect::new(4, 1, 10, 1),
+                remove_area: Rect::new(40, 1, 3, 1),
+            }],
+            add_row_area: Some(Rect::new(0, 2, 50, 1)),
+        };
+
+        assert_eq!(layout.hit_test(2, 1), Some(MapHit::ExpandArrow(0)));
+        assert_eq!(layout.hit_test(5, 1), Some(MapHit::EntryKey(0)));
+        assert_eq!(layout.hit_test(40, 1), Some(MapHit::RemoveButton(0)));
+        assert_eq!(layout.hit_test(5, 2), Some(MapHit::AddRow));
+        assert_eq!(layout.hit_test(13, 2), Some(MapHit::AddRow));
+        assert_eq!(layout.hit_test(0, 0), None);
     }
 }
