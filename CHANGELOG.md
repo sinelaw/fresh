@@ -1,5 +1,36 @@
 # Release Notes
 
+## 0.1.56
+
+### Features
+
+* **Terminal Color Detection**: Automatic detection of terminal color capabilities with fallback to 256 colors for GNU Screen and other limited terminals. Manual override available via `FRESH_COLOR_MODE` environment variable.
+
+* **TOML Syntax Highlighting**: Added embedded TextMate grammar for TOML files (syntect doesn't include one by default).
+
+* **Language Detection by Filename**: Languages can now be detected by filename in addition to extension. Useful for dotfiles like `.bashrc`, `.zshrc`, and special files like `Makefile` and `Dockerfile`. Fixes #383.
+
+* **Minimal Config Saves**: Config file now only saves fields that differ from defaults, keeping `config.json` clean and readable.
+
+### Settings UI Enhancements
+
+* Mouse click and double-click support for map entries
+* Mouse click support for entry dialog items and buttons
+* Hover effects for entry dialog items and buttons
+* Improved entry dialog scrolling and sizing
+
+### Bug Fixes
+
+* **macOS Keybinding Display**: Fixed keybinding display showing ⌘ instead of Ctrl on macOS.
+
+* **Entry Dialog Focus**: Fixed focus wrapping and cursor visibility when clicking entry dialog items.
+
+* **tmux Truecolor**: Fixed truecolor detection in tmux when `COLORTERM=truecolor` is set.
+
+### Documentation
+
+* Added Settings UI instructions for configuring language detection by extension and filename patterns.
+
 ## 0.1.54
 
 ### Features
