@@ -619,16 +619,6 @@ impl Config {
         Ok(config)
     }
 
-    /// Save configuration to a JSON file
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ConfigError> {
-        let contents = serde_json::to_string_pretty(self)
-            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
-
-        std::fs::write(path.as_ref(), contents).map_err(|e| ConfigError::IoError(e.to_string()))?;
-
-        Ok(())
-    }
-
     /// Merge default values for HashMap fields that should combine user entries with defaults.
     ///
     /// This is called after deserializing user config to ensure that:

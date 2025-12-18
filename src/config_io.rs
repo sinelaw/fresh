@@ -4,7 +4,7 @@
 //! that require runtime dependencies (dirs, tracing).
 //! These are separated from config.rs to allow schema-only builds.
 
-use crate::config::Config;
+use crate::config::{Config, ConfigError};
 use std::path::{Path, PathBuf};
 
 impl Config {
@@ -103,6 +103,71 @@ impl Config {
             }
         }
         serde_json::Value::Object(serde_json::Map::new())
+    }
+
+    /// Save configuration to a JSON file, only saving fields that differ from defaults.
+    ///
+    /// This keeps user config files minimal and clean - only user customizations are saved.
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ConfigError> {
+        let current = serde_json::to_value(self)
+            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+        let defaults = serde_json::to_value(Self::default())
+            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+
+        // Compute diff - only values that differ from defaults
+        let diff = json_diff(&defaults, &current);
+
+        let contents = serde_json::to_string_pretty(&diff)
+            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+
+        std::fs::write(path.as_ref(), contents).map_err(|e| ConfigError::IoError(e.to_string()))?;
+
+        Ok(())
+    }
+}
+
+/// Compute the difference between two JSON values.
+/// Returns only the parts of `current` that differ from `defaults`.
+fn json_diff(defaults: &serde_json::Value, current: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+
+    match (defaults, current) {
+        // Both are objects - recursively diff
+        (Value::Object(def_map), Value::Object(cur_map)) => {
+            let mut result = serde_json::Map::new();
+
+            for (key, cur_val) in cur_map {
+                if let Some(def_val) = def_map.get(key) {
+                    // Key exists in both - recurse
+                    let diff = json_diff(def_val, cur_val);
+                    // Only include if there's an actual difference
+                    if !is_empty_diff(&diff) {
+                        result.insert(key.clone(), diff);
+                    }
+                } else {
+                    // Key only in current - include it entirely
+                    result.insert(key.clone(), cur_val.clone());
+                }
+            }
+
+            Value::Object(result)
+        }
+        // For arrays and primitives, include if different
+        _ => {
+            if defaults == current {
+                Value::Object(serde_json::Map::new()) // Empty object signals "no diff"
+            } else {
+                current.clone()
+            }
+        }
+    }
+}
+
+/// Check if a diff result represents "no changes"
+fn is_empty_diff(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => map.is_empty(),
+        _ => false,
     }
 }
 
