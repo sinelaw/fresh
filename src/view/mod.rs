@@ -12,6 +12,7 @@ pub mod popup;
 pub mod popup_input;
 pub mod prompt;
 pub mod prompt_input;
+pub mod query_replace_input;
 pub mod settings;
 pub mod split;
 pub mod stream;

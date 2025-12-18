@@ -124,6 +124,10 @@ pub enum DeferredAction {
     FileBrowserGoParent,
     FileBrowserUpdateFilter,
 
+    // Interactive replace actions
+    InteractiveReplaceKey(char),
+    CancelInteractiveReplace,
+
     // Generic action execution
     ExecuteAction(crate::input::keybindings::Action),
 

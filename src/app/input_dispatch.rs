@@ -7,6 +7,7 @@ use super::Editor;
 use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputResult};
 use crate::input::keybindings::Action;
 use crate::view::file_browser_input::FileBrowserInputHandler;
+use crate::view::query_replace_input::QueryReplaceConfirmInputHandler;
 use crate::view::ui::MenuInputHandler;
 use crossterm::event::KeyEvent;
 
@@ -75,25 +76,17 @@ impl Editor {
                 }
             }
 
-            // QueryReplaceConfirm prompts need special handling - character input goes
-            // directly to handle_interactive_replace_key instead of being inserted
+            // QueryReplaceConfirm prompts use QueryReplaceConfirmInputHandler
             use crate::view::prompt::PromptType;
             let is_query_replace_confirm = self
                 .prompt
                 .as_ref()
                 .map_or(false, |p| p.prompt_type == PromptType::QueryReplaceConfirm);
             if is_query_replace_confirm {
-                if let crossterm::event::KeyCode::Char(c) = event.code {
-                    let _ = self.handle_interactive_replace_key(c);
-                    return Some(InputResult::Consumed);
-                }
-                if event.code == crossterm::event::KeyCode::Esc {
-                    self.cancel_prompt();
-                    self.interactive_replace_state = None;
-                    return Some(InputResult::Consumed);
-                }
-                // Consume other keys for modal behavior
-                return Some(InputResult::Consumed);
+                let mut handler = QueryReplaceConfirmInputHandler::new();
+                let result = handler.dispatch_input(event, &mut ctx);
+                self.process_deferred_actions(ctx);
+                return Some(result);
             }
 
             if let Some(ref mut prompt) = self.prompt {
@@ -233,6 +226,15 @@ impl Editor {
             }
             DeferredAction::FileBrowserUpdateFilter => {
                 self.update_file_open_filter();
+            }
+
+            // Interactive replace actions
+            DeferredAction::InteractiveReplaceKey(c) => {
+                self.handle_interactive_replace_key(c)?;
+            }
+            DeferredAction::CancelInteractiveReplace => {
+                self.cancel_prompt();
+                self.interactive_replace_state = None;
             }
         }
 
