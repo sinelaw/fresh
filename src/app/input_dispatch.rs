@@ -44,7 +44,7 @@ impl Editor {
         }
 
         // Prompt is next
-        if let Some(ref mut prompt) = self.prompt {
+        if self.prompt.is_some() {
             // Check for Alt+key keybindings first (before prompt consumes them as modal)
             if event
                 .modifiers
@@ -62,9 +62,37 @@ impl Editor {
                 }
             }
 
-            let result = prompt.dispatch_input(event, &mut ctx);
-            self.process_deferred_actions(ctx);
-            return Some(result);
+            // For file browser prompts (OpenFile, SwitchProject), navigation keys need to
+            // go through keybinding resolution to reach handle_file_open_action.
+            // Only let the prompt InputHandler handle text editing keys.
+            if self.is_file_open_active() {
+                use crossterm::event::KeyCode;
+                let input_empty = self.prompt.as_ref().map_or(true, |p| p.input.is_empty());
+                match event.code {
+                    // Navigation keys - let keybindings handle them for file browser
+                    KeyCode::Enter
+                    | KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::Tab
+                    | KeyCode::PageUp
+                    | KeyCode::PageDown => {
+                        // Don't dispatch to prompt - let keybinding resolution handle it
+                        return None;
+                    }
+                    // Backspace when input is empty goes to parent directory
+                    KeyCode::Backspace if input_empty => {
+                        return None;
+                    }
+                    // All other keys (text input, cursor movement) handled by prompt
+                    _ => {}
+                }
+            }
+
+            if let Some(ref mut prompt) = self.prompt {
+                let result = prompt.dispatch_input(event, &mut ctx);
+                self.process_deferred_actions(ctx);
+                return Some(result);
+            }
         }
 
         // Popup is next
