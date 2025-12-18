@@ -1,89 +1,12 @@
 //! Entry detail dialog for editing complex map entries
 //!
-//! Provides a modal dialog for editing complex map entries with proper controls.
-//! Fields are built dynamically from the JSON Schema.
+//! Provides a modal dialog for editing complex map entries using the same
+//! SettingItem/SettingControl infrastructure as the main settings UI.
 
-use crate::view::controls::FocusState;
-use crate::view::settings::schema::{SettingSchema, SettingType};
+use super::items::{build_item_from_value, control_to_value, SettingControl, SettingItem};
+use super::schema::{SettingSchema, SettingType};
+use crate::view::controls::{FocusState, TextInputState};
 use serde_json::Value;
-
-/// A field in the entry dialog
-#[derive(Debug, Clone)]
-pub struct DialogField {
-    /// Field name/key
-    pub name: String,
-    /// Display label
-    pub label: String,
-    /// Current value
-    pub value: FieldValue,
-    /// Whether this field is required
-    pub required: bool,
-    /// Description/help text
-    pub description: Option<String>,
-}
-
-/// Possible values for dialog fields
-#[derive(Debug, Clone)]
-pub enum FieldValue {
-    /// Boolean toggle
-    Bool(bool),
-    /// Single-line text
-    Text {
-        value: String,
-        cursor: usize,
-        editing: bool,
-    },
-    /// Optional text (can be null)
-    OptionalText {
-        value: Option<String>,
-        cursor: usize,
-        editing: bool,
-    },
-    /// String array
-    StringList {
-        items: Vec<String>,
-        focused_index: Option<usize>,
-        new_text: String,
-        cursor: usize,
-        editing: bool,
-    },
-    /// Integer number
-    Integer {
-        value: i64,
-        min: Option<i64>,
-        max: Option<i64>,
-        editing: bool,
-        text: String,
-    },
-    /// Dropdown selection
-    Dropdown {
-        options: Vec<String>,
-        selected: usize,
-        open: bool,
-    },
-    /// Nested object (show field count, click to expand)
-    Object {
-        /// JSON representation
-        json: Value,
-        /// Expanded state
-        expanded: bool,
-    },
-}
-
-impl FieldValue {
-    /// Check if the field is currently in edit mode
-    pub fn is_editing(&self) -> bool {
-        match self {
-            FieldValue::Bool(_) => false,
-            FieldValue::Text { editing, .. } => *editing,
-            FieldValue::OptionalText { editing, .. } => *editing,
-            FieldValue::StringList { editing, .. } => *editing,
-            FieldValue::Integer { editing, .. } => *editing,
-            FieldValue::Dropdown { open, .. } => *open,
-            FieldValue::Object { .. } => false,
-        }
-    }
-}
 
 /// State for the entry detail dialog
 #[derive(Debug, Clone)]
@@ -96,13 +19,17 @@ pub struct EntryDialogState {
     pub title: String,
     /// Whether this is a new entry (vs editing existing)
     pub is_new: bool,
-    /// Fields in the dialog
-    pub fields: Vec<DialogField>,
-    /// Currently focused field index
-    pub focused_field: usize,
+    /// Items in the dialog (using same SettingItem structure as main settings)
+    pub items: Vec<SettingItem>,
+    /// Currently selected item index
+    pub selected_item: usize,
+    /// Sub-focus index within the selected item (for TextList/Map navigation)
+    pub sub_focus: Option<usize>,
+    /// Whether we're in text editing mode
+    pub editing_text: bool,
     /// Currently focused button (0=Save, 1=Delete, 2=Cancel for existing; 0=Save, 1=Cancel for new)
     pub focused_button: usize,
-    /// Whether focus is on buttons (true) or fields (false)
+    /// Whether focus is on buttons (true) or items (false)
     pub focus_on_buttons: bool,
     /// Whether deletion was requested
     pub delete_requested: bool,
@@ -111,8 +38,9 @@ pub struct EntryDialogState {
 impl EntryDialogState {
     /// Create a dialog from a schema definition
     ///
-    /// This is the primary, schema-driven constructor. It builds fields
-    /// dynamically from the SettingSchema's properties.
+    /// This is the primary, schema-driven constructor. It builds items
+    /// dynamically from the SettingSchema's properties using the same
+    /// build logic as the main settings UI.
     pub fn from_schema(
         key: String,
         value: &Value,
@@ -120,11 +48,33 @@ impl EntryDialogState {
         map_path: &str,
         is_new: bool,
     ) -> Self {
-        let fields = build_fields_from_schema(schema, value);
+        let mut items = Vec::new();
+
+        // Add key field as first item (editable text input)
+        let key_item = SettingItem {
+            path: "__key__".to_string(),
+            name: "Key".to_string(),
+            description: Some("unique identifier for this entry".to_string()),
+            control: SettingControl::Text(TextInputState::new("Key").with_value(&key)),
+            default: None,
+            modified: false,
+        };
+        items.push(key_item);
+
+        // Add schema-driven items from object properties
+        if let SettingType::Object { properties } = &schema.setting_type {
+            for prop in properties {
+                let field_name = prop.path.trim_start_matches('/');
+                let field_value = value.get(field_name);
+                let item = build_item_from_value(prop, field_value);
+                items.push(item);
+            }
+        }
+
         let title = if is_new {
-            format!("New {}", schema.name)
+            format!("Add {}", schema.name)
         } else {
-            format!("Edit {}: {}", schema.name, key)
+            format!("Edit {}", schema.name)
         };
 
         Self {
@@ -132,211 +82,229 @@ impl EntryDialogState {
             map_path: map_path.to_string(),
             title,
             is_new,
-            fields,
-            focused_field: 0,
+            items,
+            selected_item: 0,
+            sub_focus: None,
+            editing_text: false,
             focused_button: 0,
             focus_on_buttons: false,
             delete_requested: false,
         }
     }
 
-    /// Get button count (3 for existing entries with Delete, 2 for new entries)
-    pub fn button_count(&self) -> usize {
-        if self.is_new { 2 } else { 3 }
+    /// Get the current key value from the key item
+    pub fn get_key(&self) -> String {
+        if let Some(item) = self.items.first() {
+            if item.path == "__key__" {
+                if let SettingControl::Text(state) = &item.control {
+                    return state.value.clone();
+                }
+            }
+        }
+        self.entry_key.clone()
     }
 
-    /// Convert dialog state back to JSON value
+    /// Get button count (3 for existing entries with Delete, 2 for new entries)
+    pub fn button_count(&self) -> usize {
+        if self.is_new {
+            2
+        } else {
+            3
+        }
+    }
+
+    /// Convert dialog state back to JSON value (excludes the __key__ item)
     pub fn to_value(&self) -> Value {
         let mut obj = serde_json::Map::new();
 
-        for field in &self.fields {
-            // Handle nested paths like "process_limits.enabled"
-            let parts: Vec<&str> = field.name.split('.').collect();
-            let value = field_to_value(&field.value);
-
-            if parts.len() == 1 {
-                obj.insert(parts[0].to_string(), value);
-            } else if parts.len() == 2 {
-                // Nested field
-                let parent = obj
-                    .entry(parts[0].to_string())
-                    .or_insert_with(|| Value::Object(serde_json::Map::new()));
-                if let Value::Object(ref mut parent_obj) = parent {
-                    parent_obj.insert(parts[1].to_string(), value);
-                }
+        for item in &self.items {
+            // Skip the special key item - it's stored separately
+            if item.path == "__key__" {
+                continue;
             }
+
+            let field_name = item.path.trim_start_matches('/');
+            let value = control_to_value(&item.control);
+            obj.insert(field_name.to_string(), value);
         }
 
         Value::Object(obj)
     }
 
-    /// Move focus to previous field
+    /// Get currently selected item
+    pub fn current_item(&self) -> Option<&SettingItem> {
+        if self.focus_on_buttons {
+            None
+        } else {
+            self.items.get(self.selected_item)
+        }
+    }
+
+    /// Get currently selected item mutably
+    pub fn current_item_mut(&mut self) -> Option<&mut SettingItem> {
+        if self.focus_on_buttons {
+            None
+        } else {
+            self.items.get_mut(self.selected_item)
+        }
+    }
+
+    /// Move focus to next item or button
+    pub fn focus_next(&mut self) {
+        if self.editing_text {
+            return; // Don't change focus while editing
+        }
+
+        if self.focus_on_buttons {
+            // Cycle through buttons
+            self.focused_button = (self.focused_button + 1) % self.button_count();
+        } else if self.selected_item + 1 < self.items.len() {
+            // Move to next item
+            self.selected_item += 1;
+            self.sub_focus = None;
+        } else {
+            // Move to buttons
+            self.focus_on_buttons = true;
+            self.focused_button = 0;
+        }
+
+        self.update_focus_states();
+    }
+
+    /// Move focus to previous item or button
     pub fn focus_prev(&mut self) {
+        if self.editing_text {
+            return; // Don't change focus while editing
+        }
+
         if self.focus_on_buttons {
             if self.focused_button > 0 {
                 self.focused_button -= 1;
             } else {
+                // Move back to items
                 self.focus_on_buttons = false;
-                self.focused_field = self.fields.len().saturating_sub(1);
+                self.selected_item = self.items.len().saturating_sub(1);
             }
-        } else if self.focused_field > 0 {
-            self.focused_field -= 1;
+        } else if self.selected_item > 0 {
+            self.selected_item -= 1;
+            self.sub_focus = None;
         }
+
+        self.update_focus_states();
     }
 
-    /// Move focus to next field
-    pub fn focus_next(&mut self) {
-        if self.focus_on_buttons {
-            if self.focused_button + 1 < self.button_count() {
-                self.focused_button += 1;
+    /// Move to next sub-item within current control (for TextList, Map)
+    pub fn sub_focus_next(&mut self) {
+        if let Some(item) = self.items.get(self.selected_item) {
+            let max_sub = match &item.control {
+                SettingControl::TextList(state) => state.items.len(), // +1 for add-new
+                SettingControl::Map(state) => state.entries.len(),    // +1 for add-new
+                _ => 0,
+            };
+
+            if max_sub > 0 {
+                let current = self.sub_focus.unwrap_or(0);
+                if current < max_sub {
+                    self.sub_focus = Some(current + 1);
+                } else {
+                    // Move to next item
+                    self.sub_focus = None;
+                    self.focus_next();
+                }
+            } else {
+                self.focus_next();
             }
-        } else if self.focused_field + 1 < self.fields.len() {
-            self.focused_field += 1;
         } else {
-            self.focus_on_buttons = true;
-            self.focused_button = 0;
+            self.focus_next();
         }
     }
 
-    /// Get the currently focused field
-    pub fn current_field(&self) -> Option<&DialogField> {
-        self.fields.get(self.focused_field)
+    /// Move to previous sub-item within current control
+    pub fn sub_focus_prev(&mut self) {
+        if let Some(sub) = self.sub_focus {
+            if sub > 0 {
+                self.sub_focus = Some(sub - 1);
+            } else {
+                self.sub_focus = None;
+            }
+        } else {
+            self.focus_prev();
+        }
     }
 
-    /// Get the currently focused field mutably
-    pub fn current_field_mut(&mut self) -> Option<&mut DialogField> {
-        self.fields.get_mut(self.focused_field)
-    }
+    /// Update focus states for all items
+    pub fn update_focus_states(&mut self) {
+        for (idx, item) in self.items.iter_mut().enumerate() {
+            let state = if !self.focus_on_buttons && idx == self.selected_item {
+                FocusState::Focused
+            } else {
+                FocusState::Normal
+            };
 
-    /// Toggle a boolean field or dropdown
-    pub fn toggle_current(&mut self) {
-        if let Some(field) = self.current_field_mut() {
-            match &mut field.value {
-                FieldValue::Bool(b) => *b = !*b,
-                FieldValue::Dropdown { open, .. } => *open = !*open,
-                _ => {}
+            match &mut item.control {
+                SettingControl::Toggle(s) => s.focus = state,
+                SettingControl::Number(s) => s.focus = state,
+                SettingControl::Dropdown(s) => s.focus = state,
+                SettingControl::Text(s) => s.focus = state,
+                SettingControl::TextList(s) => s.focus = state,
+                SettingControl::Map(s) => s.focus = state,
+                SettingControl::KeybindingList(s) => s.focus = state,
+                SettingControl::Complex { .. } => {}
             }
         }
     }
 
-    /// Start editing the current text field
+    /// Start text editing mode for the current control
     pub fn start_editing(&mut self) {
-        if let Some(field) = self.current_field_mut() {
-            match &mut field.value {
-                FieldValue::Text {
-                    editing,
-                    cursor,
-                    value,
-                } => {
-                    *editing = true;
-                    *cursor = value.len();
+        if let Some(item) = self.current_item_mut() {
+            match &mut item.control {
+                SettingControl::Text(state) => {
+                    // TextInputState uses focus state, cursor is already at end from with_value
+                    state.cursor = state.value.len();
+                    self.editing_text = true;
                 }
-                FieldValue::OptionalText {
-                    editing,
-                    cursor,
-                    value,
-                } => {
-                    *editing = true;
-                    *cursor = value.as_ref().map_or(0, |s| s.len());
+                SettingControl::TextList(state) => {
+                    // Focus on the new item input by default
+                    state.focus_new_item();
+                    self.editing_text = true;
                 }
-                FieldValue::StringList {
-                    editing, cursor, ..
-                } => {
-                    *editing = true;
-                    *cursor = 0;
-                }
-                FieldValue::Integer {
-                    editing,
-                    text,
-                    value,
-                    ..
-                } => {
-                    *editing = true;
-                    *text = value.to_string();
+                SettingControl::Number(state) => {
+                    state.start_editing();
+                    self.editing_text = true;
                 }
                 _ => {}
             }
         }
     }
 
-    /// Stop editing and confirm changes
+    /// Stop text editing mode
     pub fn stop_editing(&mut self) {
-        if let Some(field) = self.current_field_mut() {
-            match &mut field.value {
-                FieldValue::Text { editing, .. } => *editing = false,
-                FieldValue::OptionalText { editing, .. } => *editing = false,
-                FieldValue::StringList { editing, .. } => *editing = false,
-                FieldValue::Integer {
-                    editing,
-                    text,
-                    value,
-                    ..
-                } => {
-                    *editing = false;
-                    if let Ok(n) = text.parse::<i64>() {
-                        *value = n;
-                    }
+        if let Some(item) = self.current_item_mut() {
+            match &mut item.control {
+                SettingControl::Number(state) => {
+                    state.cancel_editing();
                 }
-                FieldValue::Dropdown { open, .. } => *open = false,
                 _ => {}
             }
         }
+        self.editing_text = false;
     }
 
-    /// Check if any field is being edited
-    pub fn is_editing(&self) -> bool {
-        self.fields.iter().any(|f| f.value.is_editing())
-    }
-
-    /// Get the focus state for a field
-    pub fn field_focus_state(&self, index: usize) -> FocusState {
-        if self.focus_on_buttons {
-            FocusState::Normal
-        } else if index == self.focused_field {
-            FocusState::Focused
-        } else {
-            FocusState::Normal
-        }
-    }
-
-    /// Insert a character into the current editable field
+    /// Handle character input
     pub fn insert_char(&mut self, c: char) {
-        if let Some(field) = self.current_field_mut() {
-            match &mut field.value {
-                FieldValue::Text {
-                    value,
-                    cursor,
-                    editing,
-                } if *editing => {
-                    value.insert(*cursor, c);
-                    *cursor += c.len_utf8();
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            match &mut item.control {
+                SettingControl::Text(state) => {
+                    state.insert(c);
                 }
-                FieldValue::OptionalText {
-                    value,
-                    cursor,
-                    editing,
-                } if *editing => {
-                    if value.is_none() {
-                        *value = Some(String::new());
-                    }
-                    if let Some(ref mut s) = value {
-                        s.insert(*cursor, c);
-                        *cursor += c.len_utf8();
-                    }
+                SettingControl::TextList(state) => {
+                    state.insert(c);
                 }
-                FieldValue::StringList {
-                    new_text,
-                    cursor,
-                    editing,
-                    ..
-                } if *editing => {
-                    new_text.insert(*cursor, c);
-                    *cursor += c.len_utf8();
-                }
-                FieldValue::Integer { text, editing, .. } if *editing => {
-                    if c.is_ascii_digit() || (c == '-' && text.is_empty()) {
-                        text.push(c);
-                    }
+                SettingControl::Number(state) => {
+                    state.insert_char(c);
                 }
                 _ => {}
             }
@@ -345,862 +313,294 @@ impl EntryDialogState {
 
     /// Handle backspace
     pub fn backspace(&mut self) {
-        if let Some(field) = self.current_field_mut() {
-            match &mut field.value {
-                FieldValue::Text {
-                    value,
-                    cursor,
-                    editing,
-                } if *editing && *cursor > 0 => {
-                    *cursor -= 1;
-                    value.remove(*cursor);
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            match &mut item.control {
+                SettingControl::Text(state) => {
+                    state.backspace();
                 }
-                FieldValue::OptionalText {
-                    value,
-                    cursor,
-                    editing,
-                } if *editing && *cursor > 0 => {
-                    if let Some(ref mut s) = value {
-                        *cursor -= 1;
-                        s.remove(*cursor);
-                        if s.is_empty() {
-                            *value = None;
-                        }
-                    }
+                SettingControl::TextList(state) => {
+                    state.backspace();
                 }
-                FieldValue::StringList {
-                    new_text,
-                    cursor,
-                    editing,
-                    ..
-                } if *editing && *cursor > 0 => {
-                    *cursor -= 1;
-                    new_text.remove(*cursor);
-                }
-                FieldValue::Integer { text, editing, .. } if *editing => {
-                    text.pop();
+                SettingControl::Number(state) => {
+                    state.backspace();
                 }
                 _ => {}
             }
         }
     }
 
-    /// Move cursor left
+    /// Handle cursor left
     pub fn cursor_left(&mut self) {
-        if let Some(field) = self.current_field_mut() {
-            match &mut field.value {
-                FieldValue::Text {
-                    cursor, editing, ..
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            match &mut item.control {
+                SettingControl::Text(state) => {
+                    state.move_left();
                 }
-                | FieldValue::OptionalText {
-                    cursor, editing, ..
-                }
-                | FieldValue::StringList {
-                    cursor, editing, ..
-                } if *editing && *cursor > 0 => {
-                    *cursor -= 1;
+                SettingControl::TextList(state) => {
+                    state.move_left();
                 }
                 _ => {}
             }
         }
     }
 
-    /// Move cursor right
+    /// Handle cursor right
     pub fn cursor_right(&mut self) {
-        if let Some(field) = self.current_field_mut() {
-            match &mut field.value {
-                FieldValue::Text {
-                    value,
-                    cursor,
-                    editing,
-                } if *editing && *cursor < value.len() => {
-                    *cursor += 1;
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            match &mut item.control {
+                SettingControl::Text(state) => {
+                    state.move_right();
                 }
-                FieldValue::OptionalText {
-                    value,
-                    cursor,
-                    editing,
-                } if *editing => {
-                    let max = value.as_ref().map_or(0, |s| s.len());
-                    if *cursor < max {
-                        *cursor += 1;
-                    }
-                }
-                FieldValue::StringList {
-                    new_text,
-                    cursor,
-                    editing,
-                    ..
-                } if *editing && *cursor < new_text.len() => {
-                    *cursor += 1;
+                SettingControl::TextList(state) => {
+                    state.move_right();
                 }
                 _ => {}
             }
         }
     }
 
-    /// Navigate within dropdown
+    /// Toggle boolean value
+    pub fn toggle_bool(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Toggle(state) = &mut item.control {
+                state.checked = !state.checked;
+            }
+        }
+    }
+
+    /// Toggle dropdown open state
+    pub fn toggle_dropdown(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Dropdown(state) = &mut item.control {
+                state.open = !state.open;
+            }
+        }
+    }
+
+    /// Move dropdown selection up
     pub fn dropdown_prev(&mut self) {
-        if let Some(field) = self.current_field_mut() {
-            if let FieldValue::Dropdown {
-                options, selected, ..
-            } = &mut field.value
-            {
-                if *selected > 0 {
-                    *selected -= 1;
-                } else {
-                    *selected = options.len().saturating_sub(1);
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Dropdown(state) = &mut item.control {
+                if state.open {
+                    state.select_prev();
                 }
             }
         }
     }
 
-    /// Navigate within dropdown
+    /// Move dropdown selection down
     pub fn dropdown_next(&mut self) {
-        if let Some(field) = self.current_field_mut() {
-            if let FieldValue::Dropdown {
-                options, selected, ..
-            } = &mut field.value
-            {
-                if *selected + 1 < options.len() {
-                    *selected += 1;
-                } else {
-                    *selected = 0;
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Dropdown(state) = &mut item.control {
+                if state.open {
+                    state.select_next();
                 }
             }
         }
     }
 
-    /// Add item to string list and clear input
-    pub fn add_list_item(&mut self) {
-        if let Some(field) = self.current_field_mut() {
-            if let FieldValue::StringList {
-                items,
-                new_text,
-                cursor,
-                ..
-            } = &mut field.value
-            {
-                if !new_text.is_empty() {
-                    items.push(std::mem::take(new_text));
-                    *cursor = 0;
-                }
+    /// Confirm dropdown selection
+    pub fn dropdown_confirm(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Dropdown(state) = &mut item.control {
+                state.open = false;
             }
         }
     }
 
-    /// Delete focused item from string list
+    /// Increment number value
+    pub fn increment_number(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(state) = &mut item.control {
+                state.increment();
+            }
+        }
+    }
+
+    /// Decrement number value
+    pub fn decrement_number(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(state) = &mut item.control {
+                state.decrement();
+            }
+        }
+    }
+
+    /// Delete the currently focused item from a TextList control
     pub fn delete_list_item(&mut self) {
-        if let Some(field) = self.current_field_mut() {
-            if let FieldValue::StringList {
-                items,
-                focused_index,
-                ..
-            } = &mut field.value
-            {
-                if let Some(idx) = *focused_index {
-                    if idx < items.len() {
-                        items.remove(idx);
-                        if items.is_empty() {
-                            *focused_index = None;
-                        } else if idx >= items.len() {
-                            *focused_index = Some(items.len() - 1);
-                        }
-                    }
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::TextList(state) = &mut item.control {
+                // Remove the currently focused item if any
+                if let Some(idx) = state.focused_item {
+                    state.remove_item(idx);
                 }
             }
         }
     }
 
-    /// Navigate within string list
-    pub fn list_prev(&mut self) {
-        if let Some(field) = self.current_field_mut() {
-            if let FieldValue::StringList {
-                items,
-                focused_index,
-                editing,
-                ..
-            } = &mut field.value
-            {
-                if *editing {
-                    return;
-                }
-                match *focused_index {
-                    None if !items.is_empty() => *focused_index = Some(items.len() - 1),
-                    Some(0) => *focused_index = None,
-                    Some(idx) => *focused_index = Some(idx - 1),
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    /// Navigate within string list
-    pub fn list_next(&mut self) {
-        if let Some(field) = self.current_field_mut() {
-            if let FieldValue::StringList {
-                items,
-                focused_index,
-                editing,
-                ..
-            } = &mut field.value
-            {
-                if *editing {
-                    return;
-                }
-                match *focused_index {
-                    Some(idx) if idx + 1 < items.len() => *focused_index = Some(idx + 1),
-                    Some(_) => *focused_index = None,
-                    None if !items.is_empty() => *focused_index = Some(0),
-                    _ => {}
-                }
-            }
-        }
-    }
-}
-
-/// Convert field value to JSON
-fn field_to_value(field: &FieldValue) -> Value {
-    match field {
-        FieldValue::Bool(b) => Value::Bool(*b),
-        FieldValue::Text { value, .. } => Value::String(value.clone()),
-        FieldValue::OptionalText { value, .. } => value.clone().map_or(Value::Null, Value::String),
-        FieldValue::StringList { items, .. } => {
-            Value::Array(items.iter().map(|s| Value::String(s.clone())).collect())
-        }
-        FieldValue::Integer { value, .. } => Value::Number((*value).into()),
-        FieldValue::Dropdown {
-            options, selected, ..
-        } => options
-            .get(*selected)
-            .map(|s| Value::String(s.clone()))
-            .unwrap_or(Value::Null),
-        FieldValue::Object { json, .. } => json.clone(),
-    }
-}
-
-/// Build dialog fields from a schema definition
-fn build_fields_from_schema(schema: &SettingSchema, value: &Value) -> Vec<DialogField> {
-    let mut fields = Vec::new();
-
-    // Extract properties from schema if it's an Object type
-    let properties = match &schema.setting_type {
-        SettingType::Object { properties } => properties,
-        _ => return fields, // Not an object schema, return empty
-    };
-
-    for prop in properties {
-        let field_value = value.get(&prop.path.trim_start_matches('/'));
-        let field = build_field_from_property(prop, field_value);
-        fields.push(field);
-    }
-
-    fields
-}
-
-/// Build a single dialog field from a schema property
-fn build_field_from_property(prop: &SettingSchema, value: Option<&Value>) -> DialogField {
-    let field_value = match &prop.setting_type {
-        SettingType::Boolean => {
-            let checked = value
-                .and_then(|v| v.as_bool())
-                .or_else(|| prop.default.as_ref().and_then(|d| d.as_bool()))
-                .unwrap_or(false);
-            FieldValue::Bool(checked)
-        }
-
-        SettingType::Integer { minimum, maximum } => {
-            let val = value
-                .and_then(|v| v.as_i64())
-                .or_else(|| prop.default.as_ref().and_then(|d| d.as_i64()))
-                .unwrap_or(0);
-            FieldValue::Integer {
-                value: val,
-                min: *minimum,
-                max: *maximum,
-                editing: false,
-                text: String::new(),
-            }
-        }
-
-        SettingType::Number { .. } => {
-            // Treat as integer for simplicity (could be extended)
-            let val = value
-                .and_then(|v| v.as_f64())
-                .or_else(|| prop.default.as_ref().and_then(|d| d.as_f64()))
-                .map(|f| f as i64)
-                .unwrap_or(0);
-            FieldValue::Integer {
-                value: val,
-                min: None,
-                max: None,
-                editing: false,
-                text: String::new(),
-            }
-        }
-
-        SettingType::String => {
-            // Check if the value can be null (nullable string)
-            let is_nullable = value.map_or(false, |v| v.is_null())
-                || prop.default.as_ref().map_or(false, |d| d.is_null());
-
-            if is_nullable {
-                FieldValue::OptionalText {
-                    value: value.and_then(|v| v.as_str()).map(String::from),
-                    cursor: 0,
-                    editing: false,
-                }
-            } else {
-                let text = value
-                    .and_then(|v| v.as_str())
-                    .or_else(|| prop.default.as_ref().and_then(|d| d.as_str()))
-                    .unwrap_or("")
-                    .to_string();
-                FieldValue::Text {
-                    value: text,
-                    cursor: 0,
-                    editing: false,
-                }
-            }
-        }
-
-        SettingType::Enum { options } => {
-            let current = value
-                .and_then(|v| v.as_str())
-                .or_else(|| prop.default.as_ref().and_then(|d| d.as_str()))
-                .unwrap_or("");
-            let option_values: Vec<String> = options.iter().map(|o| o.value.clone()).collect();
-            let selected = option_values.iter().position(|v| v == current).unwrap_or(0);
-            FieldValue::Dropdown {
-                options: options.iter().map(|o| o.name.clone()).collect(),
-                selected,
-                open: false,
-            }
-        }
-
-        SettingType::StringArray => {
-            let items: Vec<String> = value
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
+    /// Check if any field is currently in edit mode
+    pub fn is_editing(&self) -> bool {
+        self.editing_text
+            || self
+                .current_item()
+                .map(|item| {
+                    matches!(
+                        &item.control,
+                        SettingControl::Dropdown(s) if s.open
+                    )
                 })
-                .or_else(|| {
-                    prop.default.as_ref().and_then(|d| {
-                        d.as_array().map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                    })
-                })
-                .unwrap_or_default();
-            FieldValue::StringList {
-                items,
-                focused_index: None,
-                new_text: String::new(),
-                cursor: 0,
-                editing: false,
-            }
-        }
-
-        SettingType::Object { .. } | SettingType::Map { .. } | SettingType::Complex => {
-            // For complex nested objects, store as JSON for now
-            let json = value
-                .cloned()
-                .unwrap_or_else(|| prop.default.clone().unwrap_or(serde_json::json!({})));
-            FieldValue::Object {
-                json,
-                expanded: false,
-            }
-        }
-
-        SettingType::KeybindingArray => {
-            // Treat as a complex object for now
-            let json = value.cloned().unwrap_or_else(|| serde_json::json!([]));
-            FieldValue::Object {
-                json,
-                expanded: false,
-            }
-        }
-    };
-
-    // Extract property name from path (e.g., "/extensions" -> "extensions")
-    let name = prop.path.trim_start_matches('/').to_string();
-
-    DialogField {
-        name,
-        label: prop.name.clone(),
-        value: field_value,
-        required: false, // Could be derived from schema if we had "required" info
-        description: prop.description.clone(),
+                .unwrap_or(false)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::settings::schema::EnumOption;
-    use serde_json::json;
 
-    /// Helper to create a simple property schema
-    fn prop(name: &str, setting_type: SettingType) -> SettingSchema {
+    fn create_test_schema() -> SettingSchema {
         SettingSchema {
-            path: format!("/{}", name),
-            name: name.to_string(),
-            description: None,
-            setting_type,
-            default: None,
-        }
-    }
-
-    /// Helper to create a property schema with default
-    fn prop_with_default(name: &str, setting_type: SettingType, default: Value) -> SettingSchema {
-        SettingSchema {
-            path: format!("/{}", name),
-            name: name.to_string(),
-            description: Some(format!("{} description", name)),
-            setting_type,
-            default: Some(default),
-        }
-    }
-
-    // === build_fields_from_schema tests ===
-
-    #[test]
-    fn non_object_schema_returns_empty_fields() {
-        let schema = prop("test", SettingType::Boolean);
-        let fields = build_fields_from_schema(&schema, &json!({}));
-        assert!(fields.is_empty());
-    }
-
-    #[test]
-    fn object_schema_creates_fields_for_each_property() {
-        let schema = SettingSchema {
-            path: "/root".to_string(),
-            name: "Root".to_string(),
-            description: None,
+            path: "/test".to_string(),
+            name: "Test".to_string(),
+            description: Some("Test schema".to_string()),
             setting_type: SettingType::Object {
                 properties: vec![
-                    prop("enabled", SettingType::Boolean),
-                    prop("name", SettingType::String),
+                    SettingSchema {
+                        path: "/enabled".to_string(),
+                        name: "Enabled".to_string(),
+                        description: Some("Enable this".to_string()),
+                        setting_type: SettingType::Boolean,
+                        default: Some(serde_json::json!(true)),
+                    },
+                    SettingSchema {
+                        path: "/command".to_string(),
+                        name: "Command".to_string(),
+                        description: Some("Command to run".to_string()),
+                        setting_type: SettingType::String,
+                        default: Some(serde_json::json!("")),
+                    },
                 ],
             },
             default: None,
-        };
-
-        let value = json!({"enabled": true, "name": "test"});
-        let fields = build_fields_from_schema(&schema, &value);
-
-        assert_eq!(fields.len(), 2);
-        assert_eq!(fields[0].name, "enabled");
-        assert_eq!(fields[1].name, "name");
-    }
-
-    // === Boolean field tests ===
-
-    #[test]
-    fn boolean_uses_value_over_default() {
-        let schema = prop_with_default("flag", SettingType::Boolean, json!(true));
-        let field = build_field_from_property(&schema, Some(&json!(false)));
-        assert!(matches!(field.value, FieldValue::Bool(false)));
-    }
-
-    #[test]
-    fn boolean_falls_back_to_default() {
-        let schema = prop_with_default("flag", SettingType::Boolean, json!(true));
-        let field = build_field_from_property(&schema, None);
-        assert!(matches!(field.value, FieldValue::Bool(true)));
-    }
-
-    #[test]
-    fn boolean_defaults_to_false_when_no_value_or_default() {
-        let schema = prop("flag", SettingType::Boolean);
-        let field = build_field_from_property(&schema, None);
-        assert!(matches!(field.value, FieldValue::Bool(false)));
-    }
-
-    // === Integer field tests ===
-
-    #[test]
-    fn integer_preserves_min_max_constraints() {
-        let schema = prop(
-            "count",
-            SettingType::Integer {
-                minimum: Some(1),
-                maximum: Some(100),
-            },
-        );
-        let field = build_field_from_property(&schema, Some(&json!(50)));
-
-        match field.value {
-            FieldValue::Integer {
-                value, min, max, ..
-            } => {
-                assert_eq!(value, 50);
-                assert_eq!(min, Some(1));
-                assert_eq!(max, Some(100));
-            }
-            _ => panic!("Expected Integer field"),
         }
     }
 
     #[test]
-    fn integer_with_no_constraints() {
-        let schema = prop(
-            "count",
-            SettingType::Integer {
-                minimum: None,
-                maximum: None,
-            },
-        );
-        let field = build_field_from_property(&schema, None);
-
-        match field.value {
-            FieldValue::Integer { min, max, .. } => {
-                assert_eq!(min, None);
-                assert_eq!(max, None);
-            }
-            _ => panic!("Expected Integer field"),
-        }
-    }
-
-    // === String field tests ===
-
-    #[test]
-    fn string_with_null_value_becomes_optional() {
-        let schema = prop("comment", SettingType::String);
-        let field = build_field_from_property(&schema, Some(&Value::Null));
-
-        assert!(matches!(
-            field.value,
-            FieldValue::OptionalText { value: None, .. }
-        ));
-    }
-
-    #[test]
-    fn string_with_null_default_becomes_optional() {
-        let schema = prop_with_default("comment", SettingType::String, Value::Null);
-        let field = build_field_from_property(&schema, None);
-
-        assert!(matches!(
-            field.value,
-            FieldValue::OptionalText { value: None, .. }
-        ));
-    }
-
-    #[test]
-    fn nullable_string_preserves_actual_value() {
-        let schema = prop_with_default("comment", SettingType::String, Value::Null);
-        let field = build_field_from_property(&schema, Some(&json!("hello")));
-
-        match field.value {
-            FieldValue::OptionalText { value, .. } => {
-                assert_eq!(value, Some("hello".to_string()));
-            }
-            _ => panic!("Expected OptionalText field"),
-        }
-    }
-
-    #[test]
-    fn regular_string_uses_text_field() {
-        let schema = prop_with_default("name", SettingType::String, json!("default"));
-        let field = build_field_from_property(&schema, Some(&json!("actual")));
-
-        match field.value {
-            FieldValue::Text { value, .. } => assert_eq!(value, "actual"),
-            _ => panic!("Expected Text field"),
-        }
-    }
-
-    // === Enum field tests ===
-
-    #[test]
-    fn enum_selects_matching_option() {
-        let schema = prop(
-            "mode",
-            SettingType::Enum {
-                options: vec![
-                    EnumOption {
-                        name: "Auto".to_string(),
-                        value: "auto".to_string(),
-                    },
-                    EnumOption {
-                        name: "Manual".to_string(),
-                        value: "manual".to_string(),
-                    },
-                    EnumOption {
-                        name: "Off".to_string(),
-                        value: "off".to_string(),
-                    },
-                ],
-            },
-        );
-        let field = build_field_from_property(&schema, Some(&json!("manual")));
-
-        match field.value {
-            FieldValue::Dropdown {
-                selected, options, ..
-            } => {
-                assert_eq!(selected, 1);
-                assert_eq!(options, vec!["Auto", "Manual", "Off"]);
-            }
-            _ => panic!("Expected Dropdown field"),
-        }
-    }
-
-    #[test]
-    fn enum_unknown_value_defaults_to_first() {
-        let schema = prop(
-            "mode",
-            SettingType::Enum {
-                options: vec![
-                    EnumOption {
-                        name: "A".to_string(),
-                        value: "a".to_string(),
-                    },
-                    EnumOption {
-                        name: "B".to_string(),
-                        value: "b".to_string(),
-                    },
-                ],
-            },
-        );
-        let field = build_field_from_property(&schema, Some(&json!("unknown")));
-
-        match field.value {
-            FieldValue::Dropdown { selected, .. } => assert_eq!(selected, 0),
-            _ => panic!("Expected Dropdown field"),
-        }
-    }
-
-    // === StringArray field tests ===
-
-    #[test]
-    fn string_array_from_value() {
-        let schema = prop("extensions", SettingType::StringArray);
-        let field = build_field_from_property(&schema, Some(&json!(["rs", "toml"])));
-
-        match field.value {
-            FieldValue::StringList { items, .. } => {
-                assert_eq!(items, vec!["rs", "toml"]);
-            }
-            _ => panic!("Expected StringList field"),
-        }
-    }
-
-    #[test]
-    fn string_array_falls_back_to_default() {
-        let schema = prop_with_default("tags", SettingType::StringArray, json!(["default"]));
-        let field = build_field_from_property(&schema, None);
-
-        match field.value {
-            FieldValue::StringList { items, .. } => {
-                assert_eq!(items, vec!["default"]);
-            }
-            _ => panic!("Expected StringList field"),
-        }
-    }
-
-    #[test]
-    fn string_array_filters_non_strings() {
-        let schema = prop("mixed", SettingType::StringArray);
-        let field = build_field_from_property(&schema, Some(&json!(["a", 123, "b", null])));
-
-        match field.value {
-            FieldValue::StringList { items, .. } => {
-                assert_eq!(items, vec!["a", "b"]);
-            }
-            _ => panic!("Expected StringList field"),
-        }
-    }
-
-    // === Complex type tests ===
-
-    #[test]
-    fn nested_object_stored_as_json() {
-        let schema = prop(
-            "limits",
-            SettingType::Object {
-                properties: vec![prop(
-                    "max",
-                    SettingType::Integer {
-                        minimum: None,
-                        maximum: None,
-                    },
-                )],
-            },
-        );
-        let value = json!({"max": 100, "extra": "data"});
-        let field = build_field_from_property(&schema, Some(&value));
-
-        match field.value {
-            FieldValue::Object { json, expanded } => {
-                assert_eq!(json, value);
-                assert!(!expanded);
-            }
-            _ => panic!("Expected Object field"),
-        }
-    }
-
-    #[test]
-    fn map_type_stored_as_json() {
-        let inner = prop("value", SettingType::String);
-        let schema = prop(
-            "configs",
-            SettingType::Map {
-                value_schema: Box::new(inner),
-                display_field: None,
-            },
-        );
-        let field = build_field_from_property(&schema, Some(&json!({"key": "val"})));
-
-        assert!(matches!(field.value, FieldValue::Object { .. }));
-    }
-
-    #[test]
-    fn complex_type_uses_default_when_no_value() {
-        let schema = prop_with_default("data", SettingType::Complex, json!({"preset": true}));
-        let field = build_field_from_property(&schema, None);
-
-        match field.value {
-            FieldValue::Object { json, .. } => {
-                assert_eq!(json, json!({"preset": true}));
-            }
-            _ => panic!("Expected Object field"),
-        }
-    }
-
-    // === Number type test ===
-
-    #[test]
-    fn number_converted_to_integer() {
-        let schema = prop(
-            "ratio",
-            SettingType::Number {
-                minimum: None,
-                maximum: None,
-            },
-        );
-        let field = build_field_from_property(&schema, Some(&json!(3.7)));
-
-        match field.value {
-            FieldValue::Integer { value, .. } => assert_eq!(value, 3),
-            _ => panic!("Expected Integer field"),
-        }
-    }
-
-    // === from_schema constructor tests ===
-
-    #[test]
-    fn from_schema_generates_edit_title() {
-        let schema = SettingSchema {
-            path: "/value".to_string(),
-            name: "LanguageConfig".to_string(),
-            description: None,
-            setting_type: SettingType::Object { properties: vec![] },
-            default: None,
-        };
-
+    fn from_schema_creates_key_item_first() {
+        let schema = create_test_schema();
         let dialog = EntryDialogState::from_schema(
-            "rust".to_string(),
-            &json!({}),
+            "test".to_string(),
+            &serde_json::json!({}),
             &schema,
-            "/languages",
+            "/test",
             false,
         );
 
-        assert_eq!(dialog.title, "Edit LanguageConfig: rust");
-        assert_eq!(dialog.entry_key, "rust");
-        assert_eq!(dialog.map_path, "/languages");
-        assert!(!dialog.is_new);
+        assert!(!dialog.items.is_empty());
+        assert_eq!(dialog.items[0].path, "__key__");
+        assert_eq!(dialog.items[0].name, "Key");
     }
 
     #[test]
-    fn from_schema_generates_new_title() {
-        let schema = SettingSchema {
-            path: "/value".to_string(),
-            name: "LspConfig".to_string(),
-            description: None,
-            setting_type: SettingType::Object { properties: vec![] },
-            default: None,
-        };
+    fn from_schema_creates_items_from_properties() {
+        let schema = create_test_schema();
+        let dialog = EntryDialogState::from_schema(
+            "test".to_string(),
+            &serde_json::json!({"enabled": true, "command": "test-cmd"}),
+            &schema,
+            "/test",
+            false,
+        );
 
-        let dialog =
-            EntryDialogState::from_schema("python".to_string(), &json!({}), &schema, "/lsp", true);
-
-        assert_eq!(dialog.title, "New LspConfig");
-        assert!(dialog.is_new);
+        // Key + 2 properties = 3 items
+        assert_eq!(dialog.items.len(), 3);
+        assert_eq!(dialog.items[1].name, "Enabled");
+        assert_eq!(dialog.items[2].name, "Command");
     }
 
     #[test]
-    fn from_schema_populates_fields_from_value() {
-        let schema = SettingSchema {
-            path: "/value".to_string(),
-            name: "Config".to_string(),
-            description: None,
-            setting_type: SettingType::Object {
-                properties: vec![
-                    prop("enabled", SettingType::Boolean),
-                    prop_with_default(
-                        "count",
-                        SettingType::Integer {
-                            minimum: None,
-                            maximum: None,
-                        },
-                        json!(10),
-                    ),
-                ],
-            },
-            default: None,
-        };
+    fn get_key_returns_key_value() {
+        let schema = create_test_schema();
+        let dialog = EntryDialogState::from_schema(
+            "mykey".to_string(),
+            &serde_json::json!({}),
+            &schema,
+            "/test",
+            false,
+        );
 
-        let value = json!({"enabled": true});
-        let dialog =
-            EntryDialogState::from_schema("test".to_string(), &value, &schema, "/test", false);
-
-        assert_eq!(dialog.fields.len(), 2);
-
-        // First field uses provided value
-        assert!(matches!(dialog.fields[0].value, FieldValue::Bool(true)));
-
-        // Second field falls back to default (value not provided)
-        match &dialog.fields[1].value {
-            FieldValue::Integer { value, .. } => assert_eq!(*value, 10),
-            _ => panic!("Expected Integer field"),
-        }
-    }
-
-    // === Field metadata tests ===
-
-    #[test]
-    fn field_name_extracted_from_path() {
-        let schema = SettingSchema {
-            path: "/deeply/nested/property".to_string(),
-            name: "Property".to_string(),
-            description: None,
-            setting_type: SettingType::Boolean,
-            default: None,
-        };
-        let field = build_field_from_property(&schema, None);
-
-        // Name is the full path minus leading slash
-        assert_eq!(field.name, "deeply/nested/property");
-        assert_eq!(field.label, "Property");
+        assert_eq!(dialog.get_key(), "mykey");
     }
 
     #[test]
-    fn field_preserves_description() {
-        let schema = SettingSchema {
-            path: "/test".to_string(),
-            name: "Test".to_string(),
-            description: Some("Help text".to_string()),
-            setting_type: SettingType::Boolean,
-            default: None,
-        };
-        let field = build_field_from_property(&schema, None);
+    fn to_value_excludes_key() {
+        let schema = create_test_schema();
+        let dialog = EntryDialogState::from_schema(
+            "test".to_string(),
+            &serde_json::json!({"enabled": true, "command": "cmd"}),
+            &schema,
+            "/test",
+            false,
+        );
 
-        assert_eq!(field.description, Some("Help text".to_string()));
+        let value = dialog.to_value();
+        assert!(value.get("__key__").is_none());
+        assert!(value.get("enabled").is_some());
+    }
+
+    #[test]
+    fn focus_navigation_works() {
+        let schema = create_test_schema();
+        let mut dialog = EntryDialogState::from_schema(
+            "test".to_string(),
+            &serde_json::json!({}),
+            &schema,
+            "/test",
+            false,
+        );
+
+        assert_eq!(dialog.selected_item, 0);
+        assert!(!dialog.focus_on_buttons);
+
+        dialog.focus_next();
+        assert_eq!(dialog.selected_item, 1);
+
+        dialog.focus_next();
+        assert_eq!(dialog.selected_item, 2);
+
+        dialog.focus_next();
+        assert!(dialog.focus_on_buttons);
+        assert_eq!(dialog.focused_button, 0);
+    }
+
+    #[test]
+    fn button_count_differs_for_new_vs_existing() {
+        let schema = create_test_schema();
+
+        let new_dialog = EntryDialogState::from_schema(
+            "test".to_string(),
+            &serde_json::json!({}),
+            &schema,
+            "/test",
+            true,
+        );
+        assert_eq!(new_dialog.button_count(), 2); // Save, Cancel
+
+        let existing_dialog = EntryDialogState::from_schema(
+            "test".to_string(),
+            &serde_json::json!({}),
+            &schema,
+            "/test",
+            false,
+        );
+        assert_eq!(existing_dialog.button_count(), 3); // Save, Delete, Cancel
     }
 }

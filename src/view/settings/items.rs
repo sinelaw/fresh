@@ -347,7 +347,7 @@ fn build_page(category: &SettingCategory, config_value: &serde_json::Value) -> S
 }
 
 /// Build a setting item with its control state initialized from current config
-fn build_item(schema: &SettingSchema, config_value: &serde_json::Value) -> SettingItem {
+pub fn build_item(schema: &SettingSchema, config_value: &serde_json::Value) -> SettingItem {
     // Get current value from config
     let current_value = config_value.pointer(&schema.path);
 
@@ -495,6 +495,154 @@ fn build_item(schema: &SettingSchema, config_value: &serde_json::Value) -> Setti
         path: schema.path.clone(),
         name: schema.name.clone(),
         description: cleaned_description,
+        control,
+        default: schema.default.clone(),
+        modified,
+    }
+}
+
+/// Build a setting item with a value provided directly (for dialogs)
+pub fn build_item_from_value(
+    schema: &SettingSchema,
+    current_value: Option<&serde_json::Value>,
+) -> SettingItem {
+    // Create control based on type
+    let control = match &schema.setting_type {
+        SettingType::Boolean => {
+            let checked = current_value
+                .and_then(|v| v.as_bool())
+                .or_else(|| schema.default.as_ref().and_then(|d| d.as_bool()))
+                .unwrap_or(false);
+            SettingControl::Toggle(ToggleState::new(checked, &schema.name))
+        }
+
+        SettingType::Integer { minimum, maximum } => {
+            let value = current_value
+                .and_then(|v| v.as_i64())
+                .or_else(|| schema.default.as_ref().and_then(|d| d.as_i64()))
+                .unwrap_or(0);
+
+            let mut state = NumberInputState::new(value, &schema.name);
+            if let Some(min) = minimum {
+                state = state.with_min(*min);
+            }
+            if let Some(max) = maximum {
+                state = state.with_max(*max);
+            }
+            SettingControl::Number(state)
+        }
+
+        SettingType::Number { minimum, maximum } => {
+            let value = current_value
+                .and_then(|v| v.as_f64())
+                .or_else(|| schema.default.as_ref().and_then(|d| d.as_f64()))
+                .unwrap_or(0.0);
+
+            let int_value = (value * 100.0).round() as i64;
+            let mut state = NumberInputState::new(int_value, &schema.name);
+            if let Some(min) = minimum {
+                state = state.with_min((*min * 100.0) as i64);
+            }
+            if let Some(max) = maximum {
+                state = state.with_max((*max * 100.0) as i64);
+            }
+            SettingControl::Number(state)
+        }
+
+        SettingType::String => {
+            let value = current_value
+                .and_then(|v| v.as_str())
+                .or_else(|| schema.default.as_ref().and_then(|d| d.as_str()))
+                .unwrap_or("");
+
+            let state = TextInputState::new(&schema.name).with_value(value);
+            SettingControl::Text(state)
+        }
+
+        SettingType::Enum { options } => {
+            let current = current_value
+                .and_then(|v| v.as_str())
+                .or_else(|| schema.default.as_ref().and_then(|d| d.as_str()))
+                .unwrap_or("");
+
+            let display_names: Vec<String> = options.iter().map(|o| o.name.clone()).collect();
+            let values: Vec<String> = options.iter().map(|o| o.value.clone()).collect();
+            let selected = values.iter().position(|v| v == current).unwrap_or(0);
+            let state = DropdownState::with_values(display_names, values, &schema.name)
+                .with_selected(selected);
+            SettingControl::Dropdown(state)
+        }
+
+        SettingType::StringArray => {
+            let items: Vec<String> = current_value
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .or_else(|| {
+                    schema.default.as_ref().and_then(|d| {
+                        d.as_array().map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                    })
+                })
+                .unwrap_or_default();
+
+            let state = TextListState::new(&schema.name).with_items(items);
+            SettingControl::TextList(state)
+        }
+
+        SettingType::Object { .. } => SettingControl::Complex {
+            type_name: "Object".to_string(),
+        },
+
+        SettingType::Map {
+            value_schema,
+            display_field,
+        } => {
+            let map_value = current_value
+                .cloned()
+                .or_else(|| schema.default.clone())
+                .unwrap_or_else(|| serde_json::json!({}));
+
+            let mut state = MapState::new(&schema.name).with_entries(&map_value);
+            state = state.with_value_schema((**value_schema).clone());
+            if let Some(field) = display_field {
+                state = state.with_display_field(field.clone());
+            }
+            SettingControl::Map(state)
+        }
+
+        SettingType::KeybindingArray => {
+            let bindings_value = current_value
+                .cloned()
+                .or_else(|| schema.default.clone())
+                .unwrap_or_else(|| serde_json::json!([]));
+
+            let state = KeybindingListState::new(&schema.name).with_bindings(&bindings_value);
+            SettingControl::KeybindingList(state)
+        }
+
+        SettingType::Complex => SettingControl::Complex {
+            type_name: "Complex".to_string(),
+        },
+    };
+
+    // Check if modified from default
+    let modified = match (&current_value, &schema.default) {
+        (Some(current), Some(default)) => *current != default,
+        (Some(_), None) => true,
+        _ => false,
+    };
+
+    SettingItem {
+        path: schema.path.clone(),
+        name: schema.name.clone(),
+        description: schema.description.clone(),
         control,
         default: schema.default.clone(),
         modified,

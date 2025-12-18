@@ -528,8 +528,8 @@ impl SettingsState {
         self.entry_dialog = Some(dialog);
     }
 
-    /// Open entry dialog for adding a new entry
-    pub fn open_new_entry_dialog(&mut self, key: String) {
+    /// Open entry dialog for adding a new entry (with empty key)
+    pub fn open_add_entry_dialog(&mut self) {
         let Some(item) = self.current_item() else {
             return;
         };
@@ -541,8 +541,14 @@ impl SettingsState {
         };
         let path = item.path.clone();
 
-        let dialog =
-            EntryDialogState::from_schema(key, &serde_json::json!({}), schema, &path, true);
+        // Create dialog with empty key - user will fill it in
+        let dialog = EntryDialogState::from_schema(
+            String::new(),
+            &serde_json::json!({}),
+            schema,
+            &path,
+            true,
+        );
         self.entry_dialog = Some(dialog);
     }
 
@@ -557,29 +563,51 @@ impl SettingsState {
             return;
         };
 
+        // Get key from the dialog's key field (may have been edited)
+        let key = dialog.get_key();
+        if key.is_empty() {
+            return; // Can't save with empty key
+        }
+
         let value = dialog.to_value();
-        let path = format!("{}/{}", dialog.map_path, dialog.entry_key);
+        let map_path = dialog.map_path.clone();
+        let original_key = dialog.entry_key.clone();
+        let is_new = dialog.is_new;
+        let key_changed = !is_new && key != original_key;
 
         // Update the map control with the new value
         if let Some(item) = self.current_item_mut() {
             if let SettingControl::Map(map_state) = &mut item.control {
-                // Find or add the entry
-                if let Some(entry) = map_state
-                    .entries
-                    .iter_mut()
-                    .find(|(k, _)| k == &dialog.entry_key)
-                {
+                // If key was changed, remove old entry first
+                if key_changed {
+                    if let Some(idx) = map_state
+                        .entries
+                        .iter()
+                        .position(|(k, _)| k == &original_key)
+                    {
+                        map_state.entries.remove(idx);
+                    }
+                }
+
+                // Find or add the entry with the (possibly new) key
+                if let Some(entry) = map_state.entries.iter_mut().find(|(k, _)| k == &key) {
                     entry.1 = value.clone();
                 } else {
-                    map_state
-                        .entries
-                        .push((dialog.entry_key.clone(), value.clone()));
+                    map_state.entries.push((key.clone(), value.clone()));
                     map_state.entries.sort_by(|a, b| a.0.cmp(&b.0));
                 }
             }
         }
 
+        // Record deletion of old key if key was changed
+        if key_changed {
+            let old_path = format!("{}/{}", map_path, original_key);
+            self.pending_changes
+                .insert(old_path, serde_json::Value::Null);
+        }
+
         // Record the pending change
+        let path = format!("{}/{}", map_path, key);
         self.set_pending_change(&path, value);
     }
 

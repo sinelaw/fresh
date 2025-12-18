@@ -213,7 +213,6 @@ struct RenderContext {
     selected_item: usize,
     settings_focused: bool,
     hover_hit: Option<SettingsHit>,
-    editing_text: bool,
 }
 
 /// Render the settings panel for the current category
@@ -271,7 +270,6 @@ fn render_settings_panel(
         selected_item: state.selected_item,
         settings_focused: state.focus_panel == FocusPanel::Settings,
         hover_hit: state.hover_hit.clone(),
-        editing_text: state.editing_text,
     };
 
     // Area for items (below header)
@@ -452,7 +450,6 @@ fn render_setting_item_pure(
         skip_top,
         theme,
         label_width,
-        ctx.editing_text,
     );
 
     // Render description below the control (if visible and exists)
@@ -500,7 +497,6 @@ fn render_setting_item_pure(
 /// * `modified` - Whether the setting has been modified from default
 /// * `skip_rows` - Number of rows to skip at top of control (for partial visibility)
 /// * `label_width` - Optional label width for column alignment
-/// * `editing_text` - Whether text editing mode is active
 fn render_control(
     frame: &mut Frame,
     area: Rect,
@@ -510,7 +506,6 @@ fn render_control(
     skip_rows: u16,
     theme: &Theme,
     label_width: Option<u16>,
-    editing_text: bool,
 ) -> ControlLayoutInfo {
     match control {
         // Single-row controls: only render if not skipped
@@ -570,8 +565,7 @@ fn render_control(
 
         SettingControl::Map(state) => {
             let colors = MapColors::from_theme(theme);
-            let map_layout =
-                render_map_partial(frame, area, state, &colors, 20, skip_rows, editing_text);
+            let map_layout = render_map_partial(frame, area, state, &colors, 20, skip_rows);
             ControlLayoutInfo::Map {
                 entry_rows: map_layout.entry_areas.iter().map(|e| e.row_area).collect(),
             }
@@ -742,7 +736,6 @@ fn render_map_partial(
     colors: &MapColors,
     key_width: u16,
     skip_rows: u16,
-    editing_text: bool,
 ) -> crate::view::controls::MapLayout {
     use crate::view::controls::map_input::{MapEntryLayout, MapLayout};
     use crate::view::controls::FocusState;
@@ -785,7 +778,7 @@ fn render_map_partial(
     let indent = 2u16;
 
     // Render entries
-    for (idx, (key, _value)) in state.entries.iter().enumerate() {
+    for (idx, (key, value)) in state.entries.iter().enumerate() {
         if y >= area.y + area.height {
             break;
         }
@@ -796,27 +789,64 @@ fn render_map_partial(
         }
 
         let is_focused = state.focused_entry == Some(idx) && state.focus == FocusState::Focused;
-        let key_color = if is_focused {
-            colors.focused
+
+        let row_area = Rect::new(area.x, y, area.width, 1);
+
+        // Full row background highlight for focused entry
+        if is_focused {
+            let highlight_style = Style::default().bg(colors.focused);
+            let bg_line = Line::from(Span::styled(
+                " ".repeat(area.width as usize),
+                highlight_style,
+            ));
+            frame.render_widget(Paragraph::new(bg_line), row_area);
+        }
+
+        let (key_color, value_color) = if is_focused {
+            (colors.label, colors.value_preview)
         } else if state.focus == FocusState::Disabled {
-            colors.disabled
+            (colors.disabled, colors.disabled)
         } else {
-            colors.key
+            (colors.key, colors.value_preview)
+        };
+
+        let base_style = if is_focused {
+            Style::default().bg(colors.focused)
+        } else {
+            Style::default()
+        };
+
+        // Get display value
+        let value_preview = state.get_display_value(value);
+        let max_preview_len = 20;
+        let value_preview = if value_preview.len() > max_preview_len {
+            format!("{}...", &value_preview[..max_preview_len - 3])
+        } else {
+            value_preview
         };
 
         let display_key: String = key.chars().take(key_width as usize).collect();
-        let line = Line::from(vec![
-            Span::raw(" ".repeat(indent as usize)),
+        let mut spans = vec![
+            Span::styled(" ".repeat(indent as usize), base_style),
             Span::styled(
                 format!("{:width$}", display_key, width = key_width as usize),
-                Style::default().fg(key_color),
+                base_style.fg(key_color),
             ),
             Span::raw(" "),
-            Span::styled("[x]", Style::default().fg(colors.remove_button)),
-        ]);
+            Span::styled(value_preview, base_style.fg(value_color)),
+        ];
 
-        let row_area = Rect::new(area.x, y, area.width, 1);
-        frame.render_widget(Paragraph::new(line), row_area);
+        // Add [Edit] hint for focused entry
+        if is_focused {
+            spans.push(Span::styled(
+                "  [Enter to edit]",
+                base_style
+                    .fg(colors.value_preview)
+                    .add_modifier(Modifier::DIM),
+            ));
+        }
+
+        frame.render_widget(Paragraph::new(Line::from(spans)), row_area);
 
         entry_areas.push(MapEntryLayout {
             index: idx,
@@ -830,51 +860,42 @@ fn render_map_partial(
         content_row += 1;
     }
 
-    // Add-new row
+    // Add-new row (always show as button - dialog handles input)
     let add_row_area = if y < area.y + area.height && content_row >= skip_rows {
         let row_area = Rect::new(area.x, y, area.width, 1);
+        let is_focused = state.focused_entry.is_none() && state.focus == FocusState::Focused;
 
-        // Show text input when editing, otherwise show "[+] Add new" button
-        if editing_text && state.focused_entry.is_none() {
-            // Render text input field for new entry key
-            let field_width = key_width.min(area.width.saturating_sub(indent + 4));
-            let text = &state.new_key_text;
-            let cursor_pos = state.cursor;
-
-            // Pad or truncate text to field width
-            let display_text = if text.len() >= field_width as usize {
-                &text[..field_width as usize]
-            } else {
-                text.as_str()
-            };
-            let padding = field_width as usize - display_text.len();
-            let padded = format!("{}{}", display_text, " ".repeat(padding));
-
-            let add_line = Line::from(vec![
-                Span::raw(" ".repeat(indent as usize)),
-                Span::styled("[", Style::default().fg(colors.border)),
-                Span::styled(
-                    padded,
-                    Style::default()
-                        .fg(colors.key)
-                        .add_modifier(ratatui::style::Modifier::UNDERLINED),
-                ),
-                Span::styled("]", Style::default().fg(colors.border)),
-            ]);
-            frame.render_widget(Paragraph::new(add_line), row_area);
-
-            // Render cursor
-            let cursor_x = area.x + indent + 1 + cursor_pos as u16;
-            if cursor_x < area.x + area.width {
-                frame.set_cursor_position((cursor_x, y));
-            }
-        } else {
-            let add_line = Line::from(vec![
-                Span::raw(" ".repeat(indent as usize)),
-                Span::styled("[+] Add new", Style::default().fg(colors.add_button)),
-            ]);
-            frame.render_widget(Paragraph::new(add_line), row_area);
+        // Highlight row when focused
+        if is_focused {
+            let highlight_style = Style::default().bg(colors.focused);
+            let bg_line = Line::from(Span::styled(
+                " ".repeat(area.width as usize),
+                highlight_style,
+            ));
+            frame.render_widget(Paragraph::new(bg_line), row_area);
         }
+
+        let base_style = if is_focused {
+            Style::default().bg(colors.focused)
+        } else {
+            Style::default()
+        };
+
+        let mut spans = vec![
+            Span::styled(" ".repeat(indent as usize), base_style),
+            Span::styled("[+] Add new", base_style.fg(colors.add_button)),
+        ];
+
+        if is_focused {
+            spans.push(Span::styled(
+                "  [Enter to add]",
+                base_style
+                    .fg(colors.value_preview)
+                    .add_modifier(Modifier::DIM),
+            ));
+        }
+
+        frame.render_widget(Paragraph::new(Line::from(spans)), row_area);
         Some(row_area)
     } else {
         None
@@ -1462,9 +1483,10 @@ fn render_confirm_dialog(
 }
 
 /// Render the entry detail dialog for editing Language/LSP/Keybinding entries
+///
+/// Now uses the same SettingItem/SettingControl infrastructure as the main settings UI,
+/// eliminating duplication and ensuring consistent rendering.
 fn render_entry_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsState, theme: &Theme) {
-    use super::entry_dialog::FieldValue;
-
     let Some(dialog) = &state.entry_dialog else {
         return;
     };
@@ -1497,267 +1519,58 @@ fn render_entry_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
         dialog_area.height.saturating_sub(3),
     );
 
-    // Calculate optimal label column width based on actual labels
-    // Cap at half of available width to ensure space for values
+    // Calculate optimal label column width based on actual item names
     let max_label_width = (inner.width / 2).max(20);
     let label_col_width = dialog
-        .fields
+        .items
         .iter()
-        .map(|f| f.label.len() as u16 + 2) // +2 for ": "
-        .filter(|&w| w <= max_label_width) // Only consider labels that fit
+        .map(|item| item.name.len() as u16 + 2) // +2 for ": "
+        .filter(|&w| w <= max_label_width)
         .max()
         .unwrap_or(20)
         .min(max_label_width);
 
     let mut y = inner.y;
 
-    for (idx, field) in dialog.fields.iter().enumerate() {
+    for (idx, item) in dialog.items.iter().enumerate() {
         if y >= inner.y + inner.height.saturating_sub(2) {
             break;
         }
 
-        let is_focused = !dialog.focus_on_buttons && dialog.focused_field == idx;
-        let label_style = if is_focused {
-            Style::default().fg(theme.menu_highlight_fg)
-        } else {
-            Style::default().fg(theme.editor_fg)
-        };
+        let is_focused = !dialog.focus_on_buttons && dialog.selected_item == idx;
 
-        let label = format!("{}: ", field.label);
-        let label_len = label.len() as u16;
-
-        // Determine if label is too long and value should wrap to next line
-        let wrap_value = label_len > max_label_width;
-
-        // Render label (full width if wrapping, or column width if inline)
-        let label_area_width = if wrap_value {
-            inner.width
-        } else {
-            label_col_width
-        };
-        let display_label = if wrap_value {
-            label.clone()
-        } else {
-            format!("{:width$}", label, width = label_col_width as usize)
-        };
-
-        frame.render_widget(
-            Paragraph::new(display_label).style(label_style),
-            Rect::new(inner.x, y, label_area_width, 1),
-        );
-
-        // Calculate control position
-        let (control_x, control_width, control_y) = if wrap_value {
-            // Value on next line, indented
-            y += 1;
-            if y >= inner.y + inner.height.saturating_sub(2) {
-                break;
-            }
-            (inner.x + 2, inner.width.saturating_sub(2), y)
-        } else {
-            // Value inline after label column
-            (
-                inner.x + label_col_width,
-                inner.width.saturating_sub(label_col_width),
-                y,
-            )
-        };
-        let control_area = Rect::new(control_x, control_y, control_width, 1);
-
-        match &field.value {
-            FieldValue::Bool(checked) => {
-                let colors = ToggleColors::from_theme(theme);
-                let toggle_text = if *checked { "[x]" } else { "[ ]" };
-                let toggle_style = if is_focused {
-                    Style::default()
-                        .fg(colors.focused)
-                        .add_modifier(Modifier::BOLD)
-                } else if *checked {
-                    Style::default().fg(colors.checkmark)
-                } else {
-                    Style::default().fg(colors.bracket)
-                };
-                frame.render_widget(
-                    Paragraph::new(toggle_text).style(toggle_style),
-                    control_area,
-                );
-            }
-
-            FieldValue::Text {
-                value,
-                cursor,
-                editing,
-            } => {
-                render_dialog_text_field(
-                    frame,
-                    control_area,
-                    value,
-                    *cursor,
-                    *editing,
-                    is_focused,
-                    theme,
-                );
-            }
-
-            FieldValue::OptionalText {
-                value,
-                cursor,
-                editing,
-            } => {
-                let display = value.as_deref().unwrap_or("(none)");
-                render_dialog_text_field(
-                    frame,
-                    control_area,
-                    display,
-                    *cursor,
-                    *editing,
-                    is_focused,
-                    theme,
-                );
-            }
-
-            FieldValue::StringList {
-                items,
-                focused_index,
-                new_text,
-                cursor: _,
-                editing,
-            } => {
-                // Render as compact inline list: [item1, item2, ...]  [+ Add]
-                let items_str = if items.is_empty() {
-                    "(empty)".to_string()
-                } else {
-                    items.join(", ")
-                };
-
-                let style = if is_focused {
-                    Style::default().fg(theme.menu_highlight_fg)
-                } else {
-                    Style::default().fg(theme.editor_fg)
-                };
-
-                // Truncate if too long
-                let max_len = control_width.saturating_sub(10) as usize;
-                let display = if items_str.len() > max_len {
-                    format!("{}...", &items_str[..max_len.saturating_sub(3)])
-                } else {
-                    items_str
-                };
-
-                frame.render_widget(Paragraph::new(display).style(style), control_area);
-
-                // Show list items on next lines if focused
-                if is_focused && !items.is_empty() {
-                    y += 1;
-                    for (item_idx, item) in items.iter().enumerate() {
-                        if y >= inner.y + inner.height.saturating_sub(2) {
-                            break;
-                        }
-                        let item_focused = *focused_index == Some(item_idx);
-                        let item_style = if item_focused {
-                            Style::default()
-                                .fg(theme.menu_highlight_fg)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(theme.editor_fg)
-                        };
-                        let prefix = if item_focused { "  > " } else { "    " };
-                        frame.render_widget(
-                            Paragraph::new(format!("{}{} [x]", prefix, item)).style(item_style),
-                            Rect::new(control_x, y, control_width, 1),
-                        );
-                        y += 1;
-                    }
-                    // Add input row
-                    if y < inner.y + inner.height.saturating_sub(2) {
-                        let input_focused = focused_index.is_none();
-                        let input_style = if input_focused && *editing {
-                            Style::default().fg(theme.cursor)
-                        } else if input_focused {
-                            Style::default().fg(theme.menu_highlight_fg)
-                        } else {
-                            Style::default().fg(theme.line_number_fg)
-                        };
-                        frame.render_widget(
-                            Paragraph::new(format!("    [{}] [+]", new_text)).style(input_style),
-                            Rect::new(control_x, y, control_width, 1),
-                        );
-                    }
-                }
-            }
-
-            FieldValue::Integer {
-                value,
-                editing,
-                text,
-                ..
-            } => {
-                let display = if *editing {
-                    text.clone()
-                } else {
-                    value.to_string()
-                };
-                render_dialog_text_field(
-                    frame,
-                    control_area,
-                    &display,
-                    display.len(),
-                    *editing,
-                    is_focused,
-                    theme,
-                );
-            }
-
-            FieldValue::Dropdown {
-                options,
-                selected,
-                open,
-            } => {
-                let current = options.get(*selected).map(|s| s.as_str()).unwrap_or("");
-                let style = if is_focused {
-                    Style::default().fg(theme.menu_highlight_fg)
-                } else {
-                    Style::default().fg(theme.editor_fg)
-                };
-                frame.render_widget(
-                    Paragraph::new(format!("[{} ▼]", current)).style(style),
-                    control_area,
-                );
-
-                // Show dropdown options if open
-                if *open {
-                    for (opt_idx, opt) in options.iter().enumerate() {
-                        y += 1;
-                        if y >= inner.y + inner.height.saturating_sub(2) {
-                            break;
-                        }
-                        let opt_style = if opt_idx == *selected {
-                            Style::default()
-                                .fg(theme.menu_highlight_fg)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(theme.editor_fg)
-                        };
-                        let prefix = if opt_idx == *selected { "  > " } else { "    " };
-                        frame.render_widget(
-                            Paragraph::new(format!("{}{}", prefix, opt)).style(opt_style),
-                            Rect::new(control_x, y, control_width, 1),
-                        );
-                    }
-                }
-            }
-
-            FieldValue::Object { json, .. } => {
-                let preview = match json {
-                    serde_json::Value::Object(obj) => format!("{{...}} ({} fields)", obj.len()),
-                    _ => "{}".to_string(),
-                };
-                let style = Style::default().fg(theme.line_number_fg);
-                frame.render_widget(Paragraph::new(preview).style(style), control_area);
+        // Draw selection highlight background
+        if is_focused {
+            let bg_style = Style::default().bg(theme.current_line_bg);
+            let item_height = item.control.control_height();
+            for row in 0..item_height.min(inner.y + inner.height - y) {
+                let row_area = Rect::new(inner.x, y + row, inner.width, 1);
+                frame.render_widget(Paragraph::new("").style(bg_style), row_area);
             }
         }
 
-        y += 1;
+        // Calculate control height and area
+        let control_height = item.control.control_height();
+        let control_area = Rect::new(
+            inner.x,
+            y,
+            inner.width,
+            control_height.min(inner.y + inner.height - y),
+        );
+
+        // Render using the same render_control function as main settings
+        let _layout = render_control(
+            frame,
+            control_area,
+            &item.control,
+            &item.name,
+            item.modified,
+            0, // skip_rows
+            theme,
+            Some(label_col_width),
+        );
+
+        y += control_height;
     }
 
     // Render buttons at bottom
@@ -1802,51 +1615,6 @@ fn render_entry_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
             1,
         ),
     );
-}
-
-/// Helper to render a text field in the entry dialog
-fn render_dialog_text_field(
-    frame: &mut Frame,
-    area: Rect,
-    value: &str,
-    cursor: usize,
-    editing: bool,
-    focused: bool,
-    theme: &Theme,
-) {
-    let style = if editing {
-        Style::default().fg(theme.cursor)
-    } else if focused {
-        Style::default().fg(theme.menu_highlight_fg)
-    } else {
-        Style::default().fg(theme.editor_fg)
-    };
-
-    // Truncate if needed
-    let max_len = area.width.saturating_sub(2) as usize;
-    let display = if value.len() > max_len {
-        format!("{}...", &value[..max_len.saturating_sub(3)])
-    } else {
-        value.to_string()
-    };
-
-    frame.render_widget(Paragraph::new(format!("[{}]", display)).style(style), area);
-
-    // Show cursor if editing
-    if editing && cursor <= display.len() && cursor < area.width.saturating_sub(1) as usize {
-        let cursor_x = area.x + 1 + cursor as u16;
-        let cursor_char = display.chars().nth(cursor).unwrap_or(' ');
-        let cursor_span = Span::styled(
-            cursor_char.to_string(),
-            Style::default()
-                .fg(theme.cursor)
-                .add_modifier(Modifier::REVERSED),
-        );
-        frame.render_widget(
-            Paragraph::new(Line::from(cursor_span)),
-            Rect::new(cursor_x, area.y, 1, 1),
-        );
-    }
 }
 
 /// Render the help overlay showing keyboard shortcuts

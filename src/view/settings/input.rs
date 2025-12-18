@@ -45,18 +45,163 @@ impl InputHandler for SettingsState {
 
 impl SettingsState {
     /// Handle input when entry dialog is open
+    ///
+    /// Uses the same input flow as the main settings UI:
+    /// 1. If in text editing mode -> handle text input
+    /// 2. If dropdown is open -> handle dropdown navigation
+    /// 3. Otherwise -> handle navigation and control activation
     fn handle_entry_dialog_input(
         &mut self,
         event: &KeyEvent,
         _ctx: &mut InputContext,
     ) -> InputResult {
+        // Check if we're in a special editing mode
+        let (editing_text, dropdown_open) = if let Some(ref dialog) = self.entry_dialog {
+            let dropdown_open = dialog
+                .current_item()
+                .map(|item| matches!(&item.control, SettingControl::Dropdown(s) if s.open))
+                .unwrap_or(false);
+            (dialog.editing_text, dropdown_open)
+        } else {
+            return InputResult::Consumed;
+        };
+
+        // Route to appropriate handler based on mode
+        if editing_text {
+            self.handle_entry_dialog_text_editing(event)
+        } else if dropdown_open {
+            self.handle_entry_dialog_dropdown(event)
+        } else {
+            self.handle_entry_dialog_navigation(event)
+        }
+    }
+
+    /// Handle text editing input in entry dialog (same pattern as handle_text_editing_input)
+    fn handle_entry_dialog_text_editing(&mut self, event: &KeyEvent) -> InputResult {
+        let Some(ref mut dialog) = self.entry_dialog else {
+            return InputResult::Consumed;
+        };
+
+        match event.code {
+            KeyCode::Esc => {
+                dialog.stop_editing();
+            }
+            KeyCode::Enter => {
+                // Add item for TextList, or stop editing
+                if let Some(item) = dialog.current_item_mut() {
+                    if let SettingControl::TextList(state) = &mut item.control {
+                        state.add_item();
+                    }
+                }
+            }
+            KeyCode::Char(c) => {
+                dialog.insert_char(c);
+            }
+            KeyCode::Backspace => {
+                dialog.backspace();
+            }
+            KeyCode::Delete => {
+                dialog.delete_list_item();
+            }
+            KeyCode::Left => {
+                dialog.cursor_left();
+            }
+            KeyCode::Right => {
+                dialog.cursor_right();
+            }
+            KeyCode::Up => {
+                // Move to previous item in TextList
+                if let Some(item) = dialog.current_item_mut() {
+                    if let SettingControl::TextList(state) = &mut item.control {
+                        state.focus_prev();
+                    }
+                }
+            }
+            KeyCode::Down => {
+                // Move to next item in TextList
+                if let Some(item) = dialog.current_item_mut() {
+                    if let SettingControl::TextList(state) = &mut item.control {
+                        state.focus_next();
+                    }
+                }
+            }
+            _ => {}
+        }
+        InputResult::Consumed
+    }
+
+    /// Handle dropdown navigation in entry dialog (same pattern as handle_dropdown_input)
+    fn handle_entry_dialog_dropdown(&mut self, event: &KeyEvent) -> InputResult {
+        let Some(ref mut dialog) = self.entry_dialog else {
+            return InputResult::Consumed;
+        };
+
+        match event.code {
+            KeyCode::Up => {
+                dialog.dropdown_prev();
+            }
+            KeyCode::Down => {
+                dialog.dropdown_next();
+            }
+            KeyCode::Enter => {
+                dialog.dropdown_confirm();
+            }
+            KeyCode::Esc => {
+                dialog.dropdown_confirm(); // Close dropdown
+            }
+            _ => {}
+        }
+        InputResult::Consumed
+    }
+
+    /// Handle navigation and activation in entry dialog (same pattern as handle_settings_input)
+    fn handle_entry_dialog_navigation(&mut self, event: &KeyEvent) -> InputResult {
         match event.code {
             KeyCode::Esc => {
                 self.close_entry_dialog();
-                InputResult::Consumed
             }
-            KeyCode::Enter => {
-                if let Some(ref dialog) = self.entry_dialog {
+            KeyCode::Up => {
+                if let Some(ref mut dialog) = self.entry_dialog {
+                    dialog.focus_prev();
+                }
+            }
+            KeyCode::Down => {
+                if let Some(ref mut dialog) = self.entry_dialog {
+                    dialog.focus_next();
+                }
+            }
+            KeyCode::Tab => {
+                if let Some(ref mut dialog) = self.entry_dialog {
+                    dialog.focus_next();
+                }
+            }
+            KeyCode::BackTab => {
+                if let Some(ref mut dialog) = self.entry_dialog {
+                    dialog.focus_prev();
+                }
+            }
+            KeyCode::Left => {
+                // Decrement number or navigate within control
+                if let Some(ref mut dialog) = self.entry_dialog {
+                    if !dialog.focus_on_buttons {
+                        dialog.decrement_number();
+                    } else if dialog.focused_button > 0 {
+                        dialog.focused_button -= 1;
+                    }
+                }
+            }
+            KeyCode::Right => {
+                // Increment number or navigate within control
+                if let Some(ref mut dialog) = self.entry_dialog {
+                    if !dialog.focus_on_buttons {
+                        dialog.increment_number();
+                    } else if dialog.focused_button + 1 < dialog.button_count() {
+                        dialog.focused_button += 1;
+                    }
+                }
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                if let Some(ref mut dialog) = self.entry_dialog {
                     if dialog.focus_on_buttons {
                         // Button actions: Save=0, Delete=1 (existing only), Cancel=last
                         let cancel_idx = dialog.button_count() - 1;
@@ -70,66 +215,30 @@ impl SettingsState {
                     } else if event.modifiers.contains(KeyModifiers::CONTROL) {
                         // Ctrl+Enter always saves
                         self.save_entry_dialog();
+                    } else {
+                        // Activate current control
+                        if let Some(item) = dialog.current_item() {
+                            match &item.control {
+                                SettingControl::Toggle(_) => {
+                                    dialog.toggle_bool();
+                                }
+                                SettingControl::Dropdown(_) => {
+                                    dialog.toggle_dropdown();
+                                }
+                                SettingControl::Text(_)
+                                | SettingControl::TextList(_)
+                                | SettingControl::Number(_) => {
+                                    dialog.start_editing();
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
-                InputResult::Consumed
             }
-            KeyCode::Tab => {
-                if let Some(ref mut dialog) = self.entry_dialog {
-                    dialog.focus_next();
-                }
-                InputResult::Consumed
-            }
-            KeyCode::BackTab => {
-                if let Some(ref mut dialog) = self.entry_dialog {
-                    dialog.focus_prev();
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Char(c) => {
-                if let Some(ref mut dialog) = self.entry_dialog {
-                    dialog.insert_char(c);
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Backspace => {
-                if let Some(ref mut dialog) = self.entry_dialog {
-                    dialog.backspace();
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Delete => {
-                if let Some(ref mut dialog) = self.entry_dialog {
-                    dialog.delete_list_item();
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Left => {
-                if let Some(ref mut dialog) = self.entry_dialog {
-                    dialog.cursor_left();
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Right => {
-                if let Some(ref mut dialog) = self.entry_dialog {
-                    dialog.cursor_right();
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Up => {
-                if let Some(ref mut dialog) = self.entry_dialog {
-                    dialog.dropdown_prev();
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Down => {
-                if let Some(ref mut dialog) = self.entry_dialog {
-                    dialog.dropdown_next();
-                }
-                InputResult::Consumed
-            }
-            _ => InputResult::Consumed, // Modal: consume all
+            _ => {}
         }
+        InputResult::Consumed
     }
 
     /// Handle input when confirmation dialog is showing
@@ -435,8 +544,8 @@ impl SettingsState {
                     state.checked = !state.checked;
                     self.on_value_changed();
                 }
-                SettingControl::Dropdown(ref mut state) => {
-                    state.open = !state.open;
+                SettingControl::Dropdown(_) => {
+                    self.dropdown_toggle();
                 }
                 SettingControl::Number(_) => {
                     self.start_number_editing();
@@ -449,8 +558,10 @@ impl SettingsState {
                 }
                 SettingControl::Map(ref mut state) => {
                     if state.focused_entry.is_none() {
-                        // On add-new row: start editing
-                        self.start_editing();
+                        // On add-new row: open dialog with empty key
+                        if state.value_schema.is_some() {
+                            self.open_add_entry_dialog();
+                        }
                     } else if state.value_schema.is_some() {
                         // Has schema: open entry dialog
                         self.open_entry_dialog();
