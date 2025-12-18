@@ -82,7 +82,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04, ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       # if your project needs OpenSSL, uncomment this to fix Windows builds.
       # it's commented out by default as the install command takes 5-10m.
@@ -103,5 +103,38 @@ jobs:
         run: cargo generate-lockfile
       - name: Run tests
         run: cargo nextest run -j=4 --no-fail-fast --locked --all-features --all-targets
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+  test-ubuntu-20-04:
+    runs-on: ubuntu-latest
+    name: test ubuntu-20.04 (container)
+    container:
+      image: ubuntu:20.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            git \
+            build-essential
+
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Run tests
+        run: cargo nextest run -j=4 --no-fail-fast --locked --all-features --all-targets
+
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2

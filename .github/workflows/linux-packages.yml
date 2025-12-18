@@ -16,15 +16,28 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             arch: amd64
             rpm_arch: x86_64
-            runner: ubuntu-20.04
+            runner: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             arch: arm64
             rpm_arch: aarch64
-            runner: ubuntu-20.04
+            runner: ubuntu-22.04
     runs-on: ${{ matrix.runner }}
+    container:
+      image: ubuntu:20.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            git \
+            build-essential \
+            binutils \
+            pkg-config
+
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
@@ -38,8 +51,8 @@ jobs:
       - name: Install cross-compilation tools
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          apt-get update
+          apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
       - name: Install cargo-deb and cargo-generate-rpm
         run: |
