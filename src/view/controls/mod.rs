@@ -38,8 +38,8 @@ pub use keybinding_list::{
 };
 pub use map_input::{render_map, MapColors, MapLayout, MapState};
 pub use number_input::{
-    render_number_input, render_number_input_aligned, NumberInputColors, NumberInputLayout,
-    NumberInputState,
+    render_number_input, render_number_input_aligned, NumberInputColors, NumberInputEvent,
+    NumberInputLayout, NumberInputState,
 };
 pub use text_input::{
     render_text_input, render_text_input_aligned, TextInputColors, TextInputLayout, TextInputState,

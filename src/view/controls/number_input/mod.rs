@@ -1,12 +1,21 @@
 //! Number input control with increment/decrement
 //!
 //! Renders as: `Label: [  42  ] [-] [+]`
+//!
+//! This module provides a complete number input component with:
+//! - State management (`NumberInputState`)
+//! - Rendering (`render_number_input`, `render_number_input_aligned`)
+//! - Input handling (`NumberInputState::handle_mouse`, `handle_key`)
+//! - Layout/hit testing (`NumberInputLayout`)
+
+mod input;
+mod render;
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
-use ratatui::Frame;
+use ratatui::style::Color;
+
+pub use input::NumberInputEvent;
+pub use render::{render_number_input, render_number_input_aligned};
 
 use super::FocusState;
 
@@ -70,9 +79,14 @@ impl NumberInputState {
         self
     }
 
+    /// Check if the control is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.focus != FocusState::Disabled
+    }
+
     /// Increment the value by step
     pub fn increment(&mut self) {
-        if self.focus == FocusState::Disabled {
+        if !self.is_enabled() {
             return;
         }
         let new_value = self.value.saturating_add(self.step);
@@ -84,7 +98,7 @@ impl NumberInputState {
 
     /// Decrement the value by step
     pub fn decrement(&mut self) {
-        if self.focus == FocusState::Disabled {
+        if !self.is_enabled() {
             return;
         }
         let new_value = self.value.saturating_sub(self.step);
@@ -96,7 +110,7 @@ impl NumberInputState {
 
     /// Set the value directly, respecting min/max
     pub fn set_value(&mut self, value: i64) {
-        if self.focus == FocusState::Disabled {
+        if !self.is_enabled() {
             return;
         }
         let mut v = value;
@@ -111,7 +125,7 @@ impl NumberInputState {
 
     /// Start editing mode
     pub fn start_editing(&mut self) {
-        if self.focus == FocusState::Disabled {
+        if !self.is_enabled() {
             return;
         }
         self.editing = true;
@@ -198,7 +212,7 @@ impl NumberInputColors {
     pub fn from_theme(theme: &crate::view::theme::Theme) -> Self {
         Self {
             label: theme.editor_fg,
-            value: theme.help_key_fg, // Highlighted value color
+            value: theme.help_key_fg,
             border: theme.line_number_fg,
             button: theme.menu_active_fg,
             focused: theme.selection_bg,
@@ -208,7 +222,7 @@ impl NumberInputColors {
 }
 
 /// Layout information returned after rendering for hit testing
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct NumberInputLayout {
     /// The value display area
     pub value_area: Rect,
@@ -236,116 +250,21 @@ impl NumberInputLayout {
             && y >= self.increment_area.y
             && y < self.increment_area.y + self.increment_area.height
     }
-}
 
-/// Render a number input control
-///
-/// # Arguments
-/// * `frame` - The ratatui frame to render to
-/// * `area` - Rectangle where the control should be rendered
-/// * `state` - The number input state
-/// * `colors` - Colors for rendering
-///
-/// # Returns
-/// Layout information for hit testing
-pub fn render_number_input(
-    frame: &mut Frame,
-    area: Rect,
-    state: &NumberInputState,
-    colors: &NumberInputColors,
-) -> NumberInputLayout {
-    render_number_input_aligned(frame, area, state, colors, None)
-}
-
-/// Render a number input control with optional label width alignment
-///
-/// # Arguments
-/// * `frame` - The ratatui frame to render to
-/// * `area` - Rectangle where the control should be rendered
-/// * `state` - The number input state
-/// * `colors` - Colors for rendering
-/// * `label_width` - Optional minimum label width for alignment
-///
-/// # Returns
-/// Layout information for hit testing
-pub fn render_number_input_aligned(
-    frame: &mut Frame,
-    area: Rect,
-    state: &NumberInputState,
-    colors: &NumberInputColors,
-    label_width: Option<u16>,
-) -> NumberInputLayout {
-    let empty_layout = NumberInputLayout {
-        value_area: Rect::default(),
-        decrement_area: Rect::default(),
-        increment_area: Rect::default(),
-        full_area: area,
-    };
-
-    if area.height == 0 || area.width < 10 {
-        return empty_layout;
+    /// Check if a point is on the value area
+    pub fn is_value(&self, x: u16, y: u16) -> bool {
+        x >= self.value_area.x
+            && x < self.value_area.x + self.value_area.width
+            && y >= self.value_area.y
+            && y < self.value_area.y + self.value_area.height
     }
 
-    let (label_color, value_color, border_color, button_color) = match state.focus {
-        FocusState::Normal => (colors.label, colors.value, colors.border, colors.button),
-        FocusState::Focused => (colors.focused, colors.value, colors.focused, colors.focused),
-        FocusState::Hovered => (colors.focused, colors.value, colors.focused, colors.focused),
-        FocusState::Disabled => (
-            colors.disabled,
-            colors.disabled,
-            colors.disabled,
-            colors.disabled,
-        ),
-    };
-
-    // Format: "Label: [ value ] [-] [+]"
-    let value_str = state.display_text();
-    let value_padded = if state.editing {
-        // Show edit text with cursor indicator
-        format!("{}_", value_str)
-    } else {
-        format!("{:^5}", value_str) // Center in 5 chars
-    };
-
-    // Use provided label_width for alignment, or default to label length
-    let actual_label_width = label_width.unwrap_or(state.label.len() as u16);
-    let padded_label = format!(
-        "{:width$}",
-        state.label,
-        width = actual_label_width as usize
-    );
-
-    let line = Line::from(vec![
-        Span::styled(padded_label, Style::default().fg(label_color)),
-        Span::styled(": ", Style::default().fg(label_color)),
-        Span::styled("[", Style::default().fg(border_color)),
-        Span::styled(value_padded, Style::default().fg(value_color)),
-        Span::styled("]", Style::default().fg(border_color)),
-        Span::raw(" "),
-        Span::styled("[-]", Style::default().fg(button_color)),
-        Span::raw(" "),
-        Span::styled("[+]", Style::default().fg(button_color)),
-    ]);
-
-    let paragraph = Paragraph::new(line);
-    frame.render_widget(paragraph, area);
-
-    // Calculate layout positions
-    let final_label_width = actual_label_width + 2; // label + ": "
-    let value_start = area.x + final_label_width;
-    let value_width = 7; // "[" + 5 chars + "]"
-
-    let dec_start = value_start + value_width + 1;
-    let dec_width = 3;
-
-    let inc_start = dec_start + dec_width + 1;
-    let inc_width = 3;
-
-    NumberInputLayout {
-        value_area: Rect::new(value_start, area.y, value_width, 1),
-        decrement_area: Rect::new(dec_start, area.y, dec_width, 1),
-        increment_area: Rect::new(inc_start, area.y, inc_width, 1),
-        full_area: Rect::new(area.x, area.y, inc_start - area.x + inc_width, 1),
+    /// Check if a point is within any part of the control
+    pub fn contains(&self, x: u16, y: u16) -> bool {
+        x >= self.full_area.x
+            && x < self.full_area.x + self.full_area.width
+            && y >= self.full_area.y
+            && y < self.full_area.y + self.full_area.height
     }
 }
 
@@ -357,7 +276,7 @@ mod tests {
 
     fn test_frame<F>(width: u16, height: u16, f: F)
     where
-        F: FnOnce(&mut Frame, Rect),
+        F: FnOnce(&mut ratatui::Frame, Rect),
     {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -400,11 +319,9 @@ mod tests {
     fn test_number_input_min_max() {
         let mut state = NumberInputState::new(5, "Value").with_min(0).with_max(10);
 
-        // Should not go below min
         state.set_value(-5);
         assert_eq!(state.value, 0);
 
-        // Should not go above max
         state.set_value(20);
         assert_eq!(state.value, 10);
     }
@@ -422,7 +339,7 @@ mod tests {
     fn test_number_input_disabled() {
         let mut state = NumberInputState::new(5, "Value").with_focus(FocusState::Disabled);
         state.increment();
-        assert_eq!(state.value, 5); // Should not change
+        assert_eq!(state.value, 5);
     }
 
     #[test]
@@ -432,12 +349,10 @@ mod tests {
             let colors = NumberInputColors::default();
             let layout = render_number_input(frame, area, &state, &colors);
 
-            // Decrement button should be detected
             let dec_x = layout.decrement_area.x;
             assert!(layout.is_decrement(dec_x, 0));
             assert!(!layout.is_increment(dec_x, 0));
 
-            // Increment button should be detected
             let inc_x = layout.increment_area.x;
             assert!(layout.is_increment(inc_x, 0));
             assert!(!layout.is_decrement(inc_x, 0));
@@ -467,7 +382,7 @@ mod tests {
         state.cancel_editing();
         assert!(!state.editing);
         assert!(state.edit_text.is_empty());
-        assert_eq!(state.value, 42); // Original value unchanged
+        assert_eq!(state.value, 42);
     }
 
     #[test]
@@ -479,18 +394,18 @@ mod tests {
         state.confirm_editing();
         assert!(!state.editing);
         assert!(state.edit_text.is_empty());
-        assert_eq!(state.value, 100); // New value applied
+        assert_eq!(state.value, 100);
     }
 
     #[test]
     fn test_number_input_confirm_invalid_resets() {
         let mut state = NumberInputState::new(42, "Value");
         state.start_editing();
-        state.edit_text = "abc".to_string(); // Invalid number
+        state.edit_text = "abc".to_string();
 
         state.confirm_editing();
         assert!(!state.editing);
-        assert_eq!(state.value, 42); // Original value unchanged
+        assert_eq!(state.value, 42);
     }
 
     #[test]
@@ -499,19 +414,17 @@ mod tests {
         state.start_editing();
         state.edit_text.clear();
 
-        // Can insert digits
         state.insert_char('1');
         state.insert_char('2');
         state.insert_char('3');
         assert_eq!(state.edit_text, "123");
 
-        // Can insert minus at start only
         let mut state2 = NumberInputState::new(0, "Value");
         state2.start_editing();
         state2.edit_text.clear();
         state2.insert_char('-');
         assert_eq!(state2.edit_text, "-");
-        state2.insert_char('-'); // Should be ignored (not at start)
+        state2.insert_char('-');
         assert_eq!(state2.edit_text, "-");
         state2.insert_char('5');
         assert_eq!(state2.edit_text, "-5");
@@ -529,7 +442,7 @@ mod tests {
         assert_eq!(state.edit_text, "1");
         state.backspace();
         assert_eq!(state.edit_text, "");
-        state.backspace(); // No crash on empty
+        state.backspace();
         assert_eq!(state.edit_text, "");
     }
 
@@ -537,10 +450,8 @@ mod tests {
     fn test_number_input_display_text() {
         let mut state = NumberInputState::new(42, "Value");
 
-        // Not editing - shows value
         assert_eq!(state.display_text(), "42");
 
-        // Editing - shows edit text
         state.start_editing();
         assert_eq!(state.display_text(), "42");
         state.insert_char('0');
@@ -554,13 +465,13 @@ mod tests {
         state.edit_text = "200".to_string();
 
         state.confirm_editing();
-        assert_eq!(state.value, 100); // Clamped to max
+        assert_eq!(state.value, 100);
     }
 
     #[test]
     fn test_number_input_disabled_no_editing() {
         let mut state = NumberInputState::new(42, "Value").with_focus(FocusState::Disabled);
         state.start_editing();
-        assert!(!state.editing); // Should not enter editing mode
+        assert!(!state.editing);
     }
 }
