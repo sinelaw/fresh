@@ -235,22 +235,45 @@ impl GrammarRegistry {
         }
     }
 
-    /// Find syntax for a file by path/extension
+    /// Find syntax for a file by path/extension/filename.
+    ///
+    /// Checks in order:
+    /// 1. User-configured grammar extensions
+    /// 2. Syntect by extension
+    /// 3. Syntect by filename (handles Makefile, .bashrc, etc.)
     pub fn find_syntax_for_file(&self, path: &Path) -> Option<&SyntaxReference> {
-        let ext = path.extension()?.to_str()?;
+        // Try extension-based lookup first
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            // Check user grammars first (higher priority)
+            if let Some(scope) = self.user_extensions.get(ext) {
+                if let Some(syntax) = syntect::parsing::Scope::new(scope)
+                    .ok()
+                    .and_then(|s| self.syntax_set.find_syntax_by_scope(s))
+                {
+                    return Some(syntax);
+                }
+            }
 
-        // Check user grammars first (higher priority)
-        if let Some(scope) = self.user_extensions.get(ext) {
-            if let Some(syntax) = self
-                .syntax_set
-                .find_syntax_by_scope(syntect::parsing::Scope::new(scope).ok()?)
-            {
+            // Try syntect's extension lookup
+            if let Some(syntax) = self.syntax_set.find_syntax_by_extension(ext) {
                 return Some(syntax);
             }
         }
 
-        // Fall back to built-in syntect detection
-        self.syntax_set.find_syntax_for_file(path).ok().flatten()
+        // Try syntect's full file detection (handles special filenames like Makefile)
+        // This may do I/O for first-line detection, but handles many cases
+        if let Ok(Some(syntax)) = self.syntax_set.find_syntax_for_file(path) {
+            return Some(syntax);
+        }
+
+        None
+    }
+
+    /// Find syntax by first line content (shebang, mode line, etc.)
+    ///
+    /// Use this when you have the file content but path-based detection failed.
+    pub fn find_syntax_by_first_line(&self, first_line: &str) -> Option<&SyntaxReference> {
+        self.syntax_set.find_syntax_by_first_line(first_line)
     }
 
     /// Find syntax by scope name

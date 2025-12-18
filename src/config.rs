@@ -483,9 +483,13 @@ pub struct KeymapConfig {
 /// Language-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageConfig {
-    /// File extensions for this language
+    /// File extensions for this language (e.g., ["rs"] for Rust)
     #[serde(default)]
     pub extensions: Vec<String>,
+
+    /// Exact filenames for this language (e.g., ["Makefile", "GNUmakefile"])
+    #[serde(default)]
+    pub filenames: Vec<String>,
 
     /// Tree-sitter grammar name
     #[serde(default)]
@@ -714,6 +718,7 @@ impl Config {
             "rust".to_string(),
             LanguageConfig {
                 extensions: vec!["rs".to_string()],
+                filenames: vec![],
                 grammar: "rust".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
@@ -725,7 +730,8 @@ impl Config {
         languages.insert(
             "javascript".to_string(),
             LanguageConfig {
-                extensions: vec!["js".to_string(), "jsx".to_string()],
+                extensions: vec!["js".to_string(), "jsx".to_string(), "mjs".to_string()],
+                filenames: vec![],
                 grammar: "javascript".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
@@ -737,7 +743,8 @@ impl Config {
         languages.insert(
             "typescript".to_string(),
             LanguageConfig {
-                extensions: vec!["ts".to_string(), "tsx".to_string()],
+                extensions: vec!["ts".to_string(), "tsx".to_string(), "mts".to_string()],
+                filenames: vec![],
                 grammar: "typescript".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
@@ -749,7 +756,8 @@ impl Config {
         languages.insert(
             "python".to_string(),
             LanguageConfig {
-                extensions: vec!["py".to_string()],
+                extensions: vec!["py".to_string(), "pyi".to_string()],
+                filenames: vec![],
                 grammar: "python".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: true,
@@ -762,6 +770,7 @@ impl Config {
             "c".to_string(),
             LanguageConfig {
                 extensions: vec!["c".to_string(), "h".to_string()],
+                filenames: vec![],
                 grammar: "c".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
@@ -781,6 +790,7 @@ impl Config {
                     "hh".to_string(),
                     "hxx".to_string(),
                 ],
+                filenames: vec![],
                 grammar: "cpp".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
@@ -793,9 +803,119 @@ impl Config {
             "csharp".to_string(),
             LanguageConfig {
                 extensions: vec!["cs".to_string()],
+                filenames: vec![],
                 grammar: "c_sharp".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+            },
+        );
+
+        languages.insert(
+            "bash".to_string(),
+            LanguageConfig {
+                extensions: vec!["sh".to_string(), "bash".to_string()],
+                filenames: vec![
+                    ".bashrc".to_string(),
+                    ".bash_profile".to_string(),
+                    ".bash_aliases".to_string(),
+                    ".bash_logout".to_string(),
+                    ".profile".to_string(),
+                    ".zshrc".to_string(),
+                    ".zprofile".to_string(),
+                    ".zshenv".to_string(),
+                    ".zlogin".to_string(),
+                    ".zlogout".to_string(),
+                ],
+                grammar: "bash".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+            },
+        );
+
+        languages.insert(
+            "makefile".to_string(),
+            LanguageConfig {
+                extensions: vec!["mk".to_string()],
+                filenames: vec![
+                    "Makefile".to_string(),
+                    "makefile".to_string(),
+                    "GNUmakefile".to_string(),
+                ],
+                grammar: "make".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+            },
+        );
+
+        languages.insert(
+            "dockerfile".to_string(),
+            LanguageConfig {
+                extensions: vec!["dockerfile".to_string()],
+                filenames: vec![
+                    "Dockerfile".to_string(),
+                    "Containerfile".to_string(),
+                ],
+                grammar: "dockerfile".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+            },
+        );
+
+        languages.insert(
+            "json".to_string(),
+            LanguageConfig {
+                extensions: vec!["json".to_string(), "jsonc".to_string()],
+                filenames: vec![],
+                grammar: "json".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+            },
+        );
+
+        languages.insert(
+            "toml".to_string(),
+            LanguageConfig {
+                extensions: vec!["toml".to_string()],
+                filenames: vec!["Cargo.lock".to_string()],
+                grammar: "toml".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+            },
+        );
+
+        languages.insert(
+            "yaml".to_string(),
+            LanguageConfig {
+                extensions: vec!["yml".to_string(), "yaml".to_string()],
+                filenames: vec![],
+                grammar: "yaml".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+            },
+        );
+
+        languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                extensions: vec!["md".to_string(), "markdown".to_string()],
+                filenames: vec!["README".to_string()],
+                grammar: "markdown".to_string(),
+                comment_prefix: None,
+                auto_indent: false,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
             },
