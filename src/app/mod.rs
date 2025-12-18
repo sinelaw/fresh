@@ -8,6 +8,7 @@ mod input_dispatch;
 mod lsp_actions;
 mod menu_actions;
 mod plugin_commands;
+mod prompt_actions;
 mod render;
 pub mod session;
 mod terminal;
