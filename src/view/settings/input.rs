@@ -128,15 +128,27 @@ impl SettingsState {
                 dialog.delete_list_item();
             }
             KeyCode::Left => {
-                dialog.cursor_left();
+                if is_editing_json && event.modifiers.contains(KeyModifiers::SHIFT) {
+                    dialog.cursor_left_selecting();
+                } else {
+                    dialog.cursor_left();
+                }
             }
             KeyCode::Right => {
-                dialog.cursor_right();
+                if is_editing_json && event.modifiers.contains(KeyModifiers::SHIFT) {
+                    dialog.cursor_right_selecting();
+                } else {
+                    dialog.cursor_right();
+                }
             }
             KeyCode::Up => {
                 if is_editing_json {
                     // Move cursor up in JSON editor
-                    dialog.cursor_up();
+                    if event.modifiers.contains(KeyModifiers::SHIFT) {
+                        dialog.cursor_up_selecting();
+                    } else {
+                        dialog.cursor_up();
+                    }
                 } else {
                     // Move to previous item in TextList
                     if let Some(item) = dialog.current_item_mut() {
@@ -149,7 +161,11 @@ impl SettingsState {
             KeyCode::Down => {
                 if is_editing_json {
                     // Move cursor down in JSON editor
-                    dialog.cursor_down();
+                    if event.modifiers.contains(KeyModifiers::SHIFT) {
+                        dialog.cursor_down_selecting();
+                    } else {
+                        dialog.cursor_down();
+                    }
                 } else {
                     // Move to next item in TextList
                     if let Some(item) = dialog.current_item_mut() {
@@ -287,7 +303,8 @@ impl SettingsState {
                                 }
                                 SettingControl::Text(_)
                                 | SettingControl::TextList(_)
-                                | SettingControl::Number(_) => {
+                                | SettingControl::Number(_)
+                                | SettingControl::Json(_) => {
                                     dialog.start_editing();
                                 }
                                 _ => {}

@@ -33,6 +33,10 @@ pub struct EntryDialogState {
     pub focus_on_buttons: bool,
     /// Whether deletion was requested
     pub delete_requested: bool,
+    /// Scroll offset for the items area
+    pub scroll_offset: usize,
+    /// Last known viewport height (updated during render)
+    pub viewport_height: usize,
 }
 
 impl EntryDialogState {
@@ -89,6 +93,8 @@ impl EntryDialogState {
             focused_button: 0,
             focus_on_buttons: false,
             delete_requested: false,
+            scroll_offset: 0,
+            viewport_height: 20, // Default, updated during render
         }
     }
 
@@ -169,6 +175,7 @@ impl EntryDialogState {
         }
 
         self.update_focus_states();
+        self.ensure_selected_visible(self.viewport_height);
     }
 
     /// Move focus to previous item or button
@@ -191,6 +198,7 @@ impl EntryDialogState {
         }
 
         self.update_focus_states();
+        self.ensure_selected_visible(self.viewport_height);
     }
 
     /// Move to next sub-item within current control (for TextList, Map)
@@ -255,6 +263,65 @@ impl EntryDialogState {
         }
     }
 
+    /// Calculate total content height for all items
+    pub fn total_content_height(&self) -> usize {
+        self.items.iter().map(|item| item.control.control_height() as usize).sum()
+    }
+
+    /// Calculate the Y offset of the selected item
+    pub fn selected_item_offset(&self) -> usize {
+        self.items
+            .iter()
+            .take(self.selected_item)
+            .map(|item| item.control.control_height() as usize)
+            .sum()
+    }
+
+    /// Calculate the height of the selected item
+    pub fn selected_item_height(&self) -> usize {
+        self.items
+            .get(self.selected_item)
+            .map(|item| item.control.control_height() as usize)
+            .unwrap_or(1)
+    }
+
+    /// Ensure the selected item is visible within the viewport
+    pub fn ensure_selected_visible(&mut self, viewport_height: usize) {
+        if self.focus_on_buttons {
+            // Scroll to bottom when buttons are focused
+            let total = self.total_content_height();
+            if total > viewport_height {
+                self.scroll_offset = total.saturating_sub(viewport_height);
+            }
+            return;
+        }
+
+        let item_start = self.selected_item_offset();
+        let item_end = item_start + self.selected_item_height();
+
+        // If item starts before viewport, scroll up
+        if item_start < self.scroll_offset {
+            self.scroll_offset = item_start;
+        }
+        // If item ends after viewport, scroll down
+        else if item_end > self.scroll_offset + viewport_height {
+            self.scroll_offset = item_end.saturating_sub(viewport_height);
+        }
+    }
+
+    /// Scroll up by one line
+    pub fn scroll_up(&mut self) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+    }
+
+    /// Scroll down by one line
+    pub fn scroll_down(&mut self, viewport_height: usize) {
+        let max_scroll = self.total_content_height().saturating_sub(viewport_height);
+        if self.scroll_offset < max_scroll {
+            self.scroll_offset += 1;
+        }
+    }
+
     /// Start text editing mode for the current control
     pub fn start_editing(&mut self) {
         if let Some(item) = self.current_item_mut() {
@@ -271,6 +338,10 @@ impl EntryDialogState {
                 }
                 SettingControl::Number(state) => {
                     state.start_editing();
+                    self.editing_text = true;
+                }
+                SettingControl::Json(_) => {
+                    // JSON editor is always ready to edit, just set the flag
                     self.editing_text = true;
                 }
                 _ => {}
@@ -360,6 +431,18 @@ impl EntryDialogState {
         }
     }
 
+    /// Handle cursor left with selection (Shift+Left)
+    pub fn cursor_left_selecting(&mut self) {
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.editor.move_left_selecting();
+            }
+        }
+    }
+
     /// Handle cursor right
     pub fn cursor_right(&mut self) {
         if !self.editing_text {
@@ -381,6 +464,18 @@ impl EntryDialogState {
         }
     }
 
+    /// Handle cursor right with selection (Shift+Right)
+    pub fn cursor_right_selecting(&mut self) {
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.editor.move_right_selecting();
+            }
+        }
+    }
+
     /// Handle cursor up (for multiline controls)
     pub fn cursor_up(&mut self) {
         if !self.editing_text {
@@ -393,6 +488,18 @@ impl EntryDialogState {
         }
     }
 
+    /// Handle cursor up with selection (Shift+Up)
+    pub fn cursor_up_selecting(&mut self) {
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.editor.move_up_selecting();
+            }
+        }
+    }
+
     /// Handle cursor down (for multiline controls)
     pub fn cursor_down(&mut self) {
         if !self.editing_text {
@@ -401,6 +508,18 @@ impl EntryDialogState {
         if let Some(item) = self.current_item_mut() {
             if let SettingControl::Json(state) = &mut item.control {
                 state.move_down();
+            }
+        }
+    }
+
+    /// Handle cursor down with selection (Shift+Down)
+    pub fn cursor_down_selecting(&mut self) {
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.editor.move_down_selecting();
             }
         }
     }

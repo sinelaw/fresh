@@ -18,6 +18,88 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
+/// Build spans for a text line with selection highlighting
+///
+/// Returns a vector of spans where selected portions are highlighted.
+fn build_selection_spans(
+    display_text: &str,
+    display_len: usize,
+    line_idx: usize,
+    start_row: usize,
+    start_col: usize,
+    end_row: usize,
+    end_col: usize,
+    text_color: Color,
+    selection_bg: Color,
+) -> Vec<Span<'static>> {
+    let chars: Vec<char> = display_text.chars().collect();
+    let char_count = chars.len();
+
+    // Determine selection range for this line
+    let (sel_start, sel_end) = if line_idx < start_row || line_idx > end_row {
+        // Line not in selection
+        (char_count, char_count)
+    } else if line_idx == start_row && line_idx == end_row {
+        // Selection within single line
+        let start = byte_to_char_idx(display_text, start_col).min(char_count);
+        let end = byte_to_char_idx(display_text, end_col).min(char_count);
+        (start, end)
+    } else if line_idx == start_row {
+        // Selection starts on this line
+        let start = byte_to_char_idx(display_text, start_col).min(char_count);
+        (start, char_count)
+    } else if line_idx == end_row {
+        // Selection ends on this line
+        let end = byte_to_char_idx(display_text, end_col).min(char_count);
+        (0, end)
+    } else {
+        // Entire line is selected
+        (0, char_count)
+    };
+
+    let mut spans = Vec::new();
+    let normal_style = Style::default().fg(text_color);
+    let selected_style = Style::default().fg(text_color).bg(selection_bg);
+
+    if sel_start >= sel_end || sel_start >= char_count {
+        // No selection on this line
+        let padded = format!("{:width$}", display_text, width = display_len);
+        spans.push(Span::styled(padded, normal_style));
+    } else {
+        // Before selection
+        if sel_start > 0 {
+            let before: String = chars[..sel_start].iter().collect();
+            spans.push(Span::styled(before, normal_style));
+        }
+
+        // Selection
+        let selected: String = chars[sel_start..sel_end].iter().collect();
+        spans.push(Span::styled(selected, selected_style));
+
+        // After selection
+        if sel_end < char_count {
+            let after: String = chars[sel_end..].iter().collect();
+            spans.push(Span::styled(after, normal_style));
+        }
+
+        // Pad to display_len
+        let current_len = char_count;
+        if current_len < display_len {
+            let padding = " ".repeat(display_len - current_len);
+            spans.push(Span::styled(padding, normal_style));
+        }
+    }
+
+    spans
+}
+
+/// Convert byte offset to char index in a string
+fn byte_to_char_idx(s: &str, byte_offset: usize) -> usize {
+    s.char_indices()
+        .take_while(|(i, _)| *i < byte_offset)
+        .count()
+}
+
 /// Render the settings modal
 pub fn render_settings(
     frame: &mut Frame,
@@ -673,10 +755,11 @@ fn render_json_control(
     let edit_x = area.x + indent;
     let edit_start_y = y;
 
-    // Render visible lines
-    let visible_lines = state.max_visible_lines;
-    for line_idx in 0..visible_lines {
-        let actual_line_idx = state.scroll_offset + line_idx;
+    // Render all lines (scrolling handled by entry dialog/scroll panel)
+    let lines = state.lines();
+    let total_lines = lines.len();
+    for line_idx in 0..total_lines {
+        let actual_line_idx = line_idx;
 
         if content_row < skip_rows {
             content_row += 1;
@@ -687,32 +770,59 @@ fn render_json_control(
             break;
         }
 
-        let line_content = state
-            .lines
-            .get(actual_line_idx)
-            .map(|s| s.as_str())
-            .unwrap_or("");
+        let line_content = lines.get(actual_line_idx).map(|s| s.as_str()).unwrap_or("");
 
         // Truncate line if too long
         let display_len = edit_width.saturating_sub(2) as usize;
         let display_text: String = line_content.chars().take(display_len).collect();
-        let padded = format!("{:width$}", display_text, width = display_len);
+
+        // Get selection range and cursor position
+        let selection = state.selection_range();
+        let (cursor_row, cursor_col) = state.cursor_pos();
+
+        // Build content spans with selection highlighting
+        let content_spans = if is_focused {
+            if let Some(((start_row, start_col), (end_row, end_col))) = selection {
+                build_selection_spans(
+                    &display_text,
+                    display_len,
+                    actual_line_idx,
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                    text_color,
+                    theme.selection_bg,
+                )
+            } else {
+                vec![Span::styled(
+                    format!("{:width$}", display_text, width = display_len),
+                    Style::default().fg(text_color),
+                )]
+            }
+        } else {
+            vec![Span::styled(
+                format!("{:width$}", display_text, width = display_len),
+                Style::default().fg(text_color),
+            )]
+        };
 
         // Build line with border
-        let line = Line::from(vec![
+        let mut spans = vec![
             Span::raw(" ".repeat(indent as usize)),
             Span::styled("│", Style::default().fg(border_color)),
-            Span::styled(padded, Style::default().fg(text_color)),
-            Span::styled("│", Style::default().fg(border_color)),
-        ]);
+        ];
+        spans.extend(content_spans);
+        spans.push(Span::styled("│", Style::default().fg(border_color)));
+        let line = Line::from(spans);
 
         frame.render_widget(Paragraph::new(line), Rect::new(area.x, y, area.width, 1));
 
-        // Draw cursor if focused and on this line
-        if is_focused && actual_line_idx == state.cursor_row {
-            let cursor_x = edit_x + 1 + state.cursor_col.min(display_len) as u16;
+        // Draw cursor if focused and on this line (overlays selection)
+        if is_focused && actual_line_idx == cursor_row {
+            let cursor_x = edit_x + 1 + cursor_col.min(display_len) as u16;
             if cursor_x < area.x + area.width - 1 {
-                let cursor_char = line_content.chars().nth(state.cursor_col).unwrap_or(' ');
+                let cursor_char = line_content.chars().nth(cursor_col).unwrap_or(' ');
                 let cursor_span = Span::styled(
                     cursor_char.to_string(),
                     Style::default()
@@ -1629,8 +1739,13 @@ fn render_confirm_dialog(
 ///
 /// Now uses the same SettingItem/SettingControl infrastructure as the main settings UI,
 /// eliminating duplication and ensuring consistent rendering.
-fn render_entry_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsState, theme: &Theme) {
-    let Some(dialog) = &state.entry_dialog else {
+fn render_entry_dialog(
+    frame: &mut Frame,
+    parent_area: Rect,
+    state: &mut SettingsState,
+    theme: &Theme,
+) {
+    let Some(dialog) = &mut state.entry_dialog else {
         return;
     };
 
@@ -1654,12 +1769,12 @@ fn render_entry_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
         .style(Style::default().bg(theme.popup_bg));
     frame.render_widget(block, dialog_area);
 
-    // Inner area
+    // Inner area (reserve 2 lines for buttons and help at bottom)
     let inner = Rect::new(
         dialog_area.x + 2,
         dialog_area.y + 1,
         dialog_area.width.saturating_sub(4),
-        dialog_area.height.saturating_sub(3),
+        dialog_area.height.saturating_sub(5), // 1 border + 2 button/help rows + 2 padding
     );
 
     // Calculate optimal label column width based on actual item names
@@ -1673,11 +1788,53 @@ fn render_entry_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
         .unwrap_or(20)
         .min(max_label_width);
 
-    let mut y = inner.y;
+    // Calculate total content height and viewport
+    let total_content_height = dialog.total_content_height();
+    let viewport_height = inner.height as usize;
+
+    // Store viewport height for use in focus navigation
+    dialog.viewport_height = viewport_height;
+
+    let scroll_offset = dialog.scroll_offset;
+    let needs_scroll = total_content_height > viewport_height;
+
+    // Track current position in content (for scrolling)
+    let mut content_y: usize = 0;
+    let mut screen_y = inner.y;
 
     for (idx, item) in dialog.items.iter().enumerate() {
-        if y >= inner.y + inner.height.saturating_sub(2) {
+        let control_height = item.control.control_height() as usize;
+
+        // Check if this item is visible in the viewport
+        let item_start = content_y;
+        let item_end = content_y + control_height;
+
+        // Skip items completely above the viewport
+        if item_end <= scroll_offset {
+            content_y = item_end;
+            continue;
+        }
+
+        // Stop if we're past the viewport
+        if screen_y >= inner.y + inner.height {
             break;
+        }
+
+        // Calculate how many rows to skip at top of this item
+        let skip_rows = if item_start < scroll_offset {
+            (scroll_offset - item_start) as u16
+        } else {
+            0
+        };
+
+        // Calculate visible height for this item
+        let visible_height = control_height.saturating_sub(skip_rows as usize);
+        let available_height = (inner.y + inner.height).saturating_sub(screen_y) as usize;
+        let render_height = visible_height.min(available_height);
+
+        if render_height == 0 {
+            content_y = item_end;
+            continue;
         }
 
         let is_focused = !dialog.focus_on_buttons && dialog.selected_item == idx;
@@ -1685,21 +1842,14 @@ fn render_entry_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
         // Draw selection highlight background
         if is_focused {
             let bg_style = Style::default().bg(theme.current_line_bg);
-            let item_height = item.control.control_height();
-            for row in 0..item_height.min(inner.y + inner.height - y) {
-                let row_area = Rect::new(inner.x, y + row, inner.width, 1);
+            for row in 0..render_height as u16 {
+                let row_area = Rect::new(inner.x, screen_y + row, inner.width, 1);
                 frame.render_widget(Paragraph::new("").style(bg_style), row_area);
             }
         }
 
-        // Calculate control height and area
-        let control_height = item.control.control_height();
-        let control_area = Rect::new(
-            inner.x,
-            y,
-            inner.width,
-            control_height.min(inner.y + inner.height - y),
-        );
+        // Calculate control area
+        let control_area = Rect::new(inner.x, screen_y, inner.width, render_height as u16);
 
         // Render using the same render_control function as main settings
         let _layout = render_control(
@@ -1708,12 +1858,28 @@ fn render_entry_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
             &item.control,
             &item.name,
             item.modified,
-            0, // skip_rows
+            skip_rows,
             theme,
             Some(label_col_width),
         );
 
-        y += control_height;
+        screen_y += render_height as u16;
+        content_y = item_end;
+    }
+
+    // Render scrollbar if needed
+    if needs_scroll {
+        use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
+
+        let scrollbar_x = dialog_area.x + dialog_area.width - 3;
+        let scrollbar_area = Rect::new(scrollbar_x, inner.y, 1, inner.height);
+        let scrollbar_state = ScrollbarState::new(
+            total_content_height,
+            viewport_height,
+            scroll_offset,
+        );
+        let scrollbar_colors = ScrollbarColors::from_theme(theme);
+        render_scrollbar(frame, scrollbar_area, &scrollbar_state, &scrollbar_colors);
     }
 
     // Render buttons at bottom

@@ -1086,13 +1086,13 @@ fn update_control_from_value(control: &mut SettingControl, value: &serde_json::V
             // Re-create from value with pretty printing
             let json_str =
                 serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string());
-            state.lines = json_str.lines().map(String::from).collect();
-            if state.lines.is_empty() {
-                state.lines = vec!["null".to_string()];
-            }
-            state.original_lines = state.lines.clone();
-            state.cursor_row = 0;
-            state.cursor_col = 0;
+            let json_str = if json_str.is_empty() {
+                "null".to_string()
+            } else {
+                json_str
+            };
+            state.original_text = json_str.clone();
+            state.editor.set_value(&json_str);
             state.scroll_offset = 0;
         }
         SettingControl::Complex { .. } => {}

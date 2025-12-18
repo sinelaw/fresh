@@ -22,6 +22,7 @@ pub mod split_rendering;
 pub mod status_bar;
 pub mod suggestions;
 pub mod tabs;
+pub mod text_edit;
 pub mod view_pipeline;
 
 // Re-export main types for convenience
@@ -37,3 +38,4 @@ pub use split_rendering::SplitRenderer;
 pub use status_bar::{truncate_path, StatusBarRenderer, TruncatedPath};
 pub use suggestions::SuggestionsRenderer;
 pub use tabs::TabsRenderer;
+pub use text_edit::TextEdit;

@@ -15,11 +15,33 @@ impl Editor {
     ) -> std::io::Result<bool> {
         use crossterm::event::{MouseButton, MouseEventKind};
 
-        // When entry dialog, confirm dialog, or help overlay is open, consume all mouse events
-        // to prevent interaction with the underlying settings modal
+        // When confirm dialog or help overlay is open, consume all mouse events
         if let Some(ref state) = self.settings_state {
-            if state.showing_entry_dialog() || state.showing_confirm_dialog || state.showing_help {
-                // Just consume the event without doing anything
+            if state.showing_confirm_dialog || state.showing_help {
+                return Ok(false);
+            }
+        }
+
+        // Handle mouse events for entry dialog (scroll support)
+        if let Some(ref mut state) = self.settings_state {
+            if state.showing_entry_dialog() {
+                match mouse_event.kind {
+                    MouseEventKind::ScrollUp => {
+                        if let Some(ref mut dialog) = state.entry_dialog {
+                            dialog.scroll_up();
+                            return Ok(true);
+                        }
+                    }
+                    MouseEventKind::ScrollDown => {
+                        if let Some(ref mut dialog) = state.entry_dialog {
+                            // Use a reasonable viewport estimate (will be corrected on render)
+                            dialog.scroll_down(20);
+                            return Ok(true);
+                        }
+                    }
+                    _ => {}
+                }
+                // Consume other events without action
                 return Ok(false);
             }
         }

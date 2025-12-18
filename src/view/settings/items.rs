@@ -7,27 +7,23 @@ use crate::view::controls::{
     DropdownState, FocusState, KeybindingListState, MapState, NumberInputState, TextInputState,
     TextListState, ToggleState,
 };
-use crate::view::ui::{FocusRegion, ScrollItem};
+use crate::view::ui::{FocusRegion, ScrollItem, TextEdit};
 use std::collections::HashSet;
 
 /// State for multiline JSON editing
 #[derive(Debug, Clone)]
 pub struct JsonEditState {
-    /// Lines of JSON text
-    pub lines: Vec<String>,
-    /// Original lines (for revert on Escape)
-    pub original_lines: Vec<String>,
-    /// Current cursor row (0-indexed)
-    pub cursor_row: usize,
-    /// Current cursor column (0-indexed)
-    pub cursor_col: usize,
+    /// The text editor state
+    pub editor: TextEdit,
+    /// Original text (for revert on Escape)
+    pub original_text: String,
     /// Label for the control
     pub label: String,
     /// Focus state
     pub focus: FocusState,
-    /// Scroll offset for viewing
+    /// Scroll offset for viewing (used by entry dialog)
     pub scroll_offset: usize,
-    /// Maximum visible lines
+    /// Maximum visible lines (for main settings panel)
     pub max_visible_lines: usize,
 }
 
@@ -38,18 +34,9 @@ impl JsonEditState {
             .map(|v| serde_json::to_string_pretty(v).unwrap_or_else(|_| "null".to_string()))
             .unwrap_or_else(|| "null".to_string());
 
-        let lines: Vec<String> = json_str.lines().map(String::from).collect();
-        let lines = if lines.is_empty() {
-            vec!["null".to_string()]
-        } else {
-            lines
-        };
-
         Self {
-            original_lines: lines.clone(),
-            lines,
-            cursor_row: 0,
-            cursor_col: 0,
+            original_text: json_str.clone(),
+            editor: TextEdit::with_text(&json_str),
             label: label.into(),
             focus: FocusState::Normal,
             scroll_offset: 0,
@@ -59,20 +46,18 @@ impl JsonEditState {
 
     /// Revert to original value (for Escape key)
     pub fn revert(&mut self) {
-        self.lines = self.original_lines.clone();
-        self.cursor_row = 0;
-        self.cursor_col = 0;
+        self.editor.set_value(&self.original_text);
         self.scroll_offset = 0;
     }
 
     /// Commit current value as the new original (after saving)
     pub fn commit(&mut self) {
-        self.original_lines = self.lines.clone();
+        self.original_text = self.editor.value();
     }
 
     /// Get the full text value
     pub fn value(&self) -> String {
-        self.lines.join("\n")
+        self.editor.value()
     }
 
     /// Check if the JSON is valid
@@ -80,107 +65,142 @@ impl JsonEditState {
         serde_json::from_str::<serde_json::Value>(&self.value()).is_ok()
     }
 
-    /// Get number of lines to display
+    /// Get number of lines to display (all lines)
     pub fn display_height(&self) -> usize {
-        self.lines.len().min(self.max_visible_lines)
+        self.editor.line_count()
     }
 
-    /// Insert a character at cursor position
+    /// Get number of lines for constrained view (e.g., main settings panel)
+    pub fn display_height_capped(&self) -> usize {
+        self.editor.line_count().min(self.max_visible_lines)
+    }
+
+    /// Get lines for rendering
+    pub fn lines(&self) -> &[String] {
+        &self.editor.lines
+    }
+
+    /// Get cursor position (row, col)
+    pub fn cursor_pos(&self) -> (usize, usize) {
+        (self.editor.cursor_row, self.editor.cursor_col)
+    }
+
+    // Delegate editing methods to TextEdit
     pub fn insert(&mut self, c: char) {
-        if c == '\n' {
-            // Split line at cursor
-            let current_line = &self.lines[self.cursor_row];
-            let (before, after) = current_line.split_at(self.cursor_col.min(current_line.len()));
-            let before = before.to_string();
-            let after = after.to_string();
-            self.lines[self.cursor_row] = before;
-            self.lines.insert(self.cursor_row + 1, after);
-            self.cursor_row += 1;
-            self.cursor_col = 0;
-        } else {
-            if self.cursor_row < self.lines.len() {
-                let line = &mut self.lines[self.cursor_row];
-                let col = self.cursor_col.min(line.len());
-                line.insert(col, c);
-                self.cursor_col = col + 1;
-            }
-        }
-        self.ensure_cursor_visible();
+        self.editor.insert_char(c);
     }
 
-    /// Delete character before cursor (backspace)
+    pub fn insert_str(&mut self, s: &str) {
+        self.editor.insert_str(s);
+    }
+
     pub fn backspace(&mut self) {
-        if self.cursor_col > 0 {
-            let line = &mut self.lines[self.cursor_row];
-            let col = (self.cursor_col - 1).min(line.len());
-            if col < line.len() {
-                line.remove(col);
-            }
-            self.cursor_col = col;
-        } else if self.cursor_row > 0 {
-            // Join with previous line
-            let current_line = self.lines.remove(self.cursor_row);
-            self.cursor_row -= 1;
-            self.cursor_col = self.lines[self.cursor_row].len();
-            self.lines[self.cursor_row].push_str(&current_line);
-        }
-        self.ensure_cursor_visible();
+        self.editor.backspace();
     }
 
-    /// Move cursor left
+    pub fn delete(&mut self) {
+        self.editor.delete();
+    }
+
     pub fn move_left(&mut self) {
-        if self.cursor_col > 0 {
-            self.cursor_col -= 1;
-        } else if self.cursor_row > 0 {
-            self.cursor_row -= 1;
-            self.cursor_col = self.lines[self.cursor_row].len();
-        }
-        self.ensure_cursor_visible();
+        self.editor.move_left();
     }
 
-    /// Move cursor right
     pub fn move_right(&mut self) {
-        let line_len = self
-            .lines
-            .get(self.cursor_row)
-            .map(|l| l.len())
-            .unwrap_or(0);
-        if self.cursor_col < line_len {
-            self.cursor_col += 1;
-        } else if self.cursor_row + 1 < self.lines.len() {
-            self.cursor_row += 1;
-            self.cursor_col = 0;
-        }
-        self.ensure_cursor_visible();
+        self.editor.move_right();
     }
 
-    /// Move cursor up
     pub fn move_up(&mut self) {
-        if self.cursor_row > 0 {
-            self.cursor_row -= 1;
-            let line_len = self.lines[self.cursor_row].len();
-            self.cursor_col = self.cursor_col.min(line_len);
-        }
-        self.ensure_cursor_visible();
+        self.editor.move_up();
     }
 
-    /// Move cursor down
     pub fn move_down(&mut self) {
-        if self.cursor_row + 1 < self.lines.len() {
-            self.cursor_row += 1;
-            let line_len = self.lines[self.cursor_row].len();
-            self.cursor_col = self.cursor_col.min(line_len);
-        }
-        self.ensure_cursor_visible();
+        self.editor.move_down();
     }
 
-    /// Ensure cursor row is visible
-    fn ensure_cursor_visible(&mut self) {
-        if self.cursor_row < self.scroll_offset {
-            self.scroll_offset = self.cursor_row;
-        } else if self.cursor_row >= self.scroll_offset + self.max_visible_lines {
-            self.scroll_offset = self.cursor_row - self.max_visible_lines + 1;
-        }
+    pub fn move_home(&mut self) {
+        self.editor.move_home();
+    }
+
+    pub fn move_end(&mut self) {
+        self.editor.move_end();
+    }
+
+    pub fn move_word_left(&mut self) {
+        self.editor.move_word_left();
+    }
+
+    pub fn move_word_right(&mut self) {
+        self.editor.move_word_right();
+    }
+
+    // Selection methods
+    pub fn has_selection(&self) -> bool {
+        self.editor.has_selection()
+    }
+
+    pub fn selection_range(&self) -> Option<((usize, usize), (usize, usize))> {
+        self.editor.selection_range()
+    }
+
+    pub fn selected_text(&self) -> Option<String> {
+        self.editor.selected_text()
+    }
+
+    pub fn delete_selection(&mut self) -> Option<String> {
+        self.editor.delete_selection()
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.editor.clear_selection();
+    }
+
+    pub fn move_left_selecting(&mut self) {
+        self.editor.move_left_selecting();
+    }
+
+    pub fn move_right_selecting(&mut self) {
+        self.editor.move_right_selecting();
+    }
+
+    pub fn move_up_selecting(&mut self) {
+        self.editor.move_up_selecting();
+    }
+
+    pub fn move_down_selecting(&mut self) {
+        self.editor.move_down_selecting();
+    }
+
+    pub fn move_home_selecting(&mut self) {
+        self.editor.move_home_selecting();
+    }
+
+    pub fn move_end_selecting(&mut self) {
+        self.editor.move_end_selecting();
+    }
+
+    pub fn move_word_left_selecting(&mut self) {
+        self.editor.move_word_left_selecting();
+    }
+
+    pub fn move_word_right_selecting(&mut self) {
+        self.editor.move_word_right_selecting();
+    }
+
+    pub fn select_all(&mut self) {
+        self.editor.select_all();
+    }
+
+    pub fn delete_word_forward(&mut self) {
+        self.editor.delete_word_forward();
+    }
+
+    pub fn delete_word_backward(&mut self) {
+        self.editor.delete_word_backward();
+    }
+
+    pub fn delete_to_end(&mut self) {
+        self.editor.delete_to_end();
     }
 }
 
