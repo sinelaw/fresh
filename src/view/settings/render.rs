@@ -1838,10 +1838,15 @@ fn render_entry_dialog(
         }
 
         let is_focused = !dialog.focus_on_buttons && dialog.selected_item == idx;
+        let is_hovered = dialog.hover_item == Some(idx);
 
-        // Draw selection highlight background
-        if is_focused {
-            let bg_style = Style::default().bg(theme.current_line_bg);
+        // Draw selection or hover highlight background
+        if is_focused || is_hovered {
+            let bg_style = if is_focused {
+                Style::default().bg(theme.current_line_bg)
+            } else {
+                Style::default().bg(theme.menu_hover_bg)
+            };
             for row in 0..render_height as u16 {
                 let row_area = Rect::new(inner.x, screen_y + row, inner.width, 1);
                 frame.render_widget(Paragraph::new("").style(bg_style), row_area);
@@ -1892,11 +1897,16 @@ fn render_entry_dialog(
     let mut x = button_x;
     for (idx, label) in buttons.iter().enumerate() {
         let is_selected = dialog.focus_on_buttons && dialog.focused_button == idx;
+        let is_hovered = dialog.hover_button == Some(idx);
         let is_delete = !dialog.is_new && idx == 1;
         let style = if is_selected {
             Style::default()
                 .fg(theme.menu_highlight_fg)
                 .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+        } else if is_hovered {
+            Style::default()
+                .fg(theme.menu_hover_fg)
+                .bg(theme.menu_hover_bg)
         } else if is_delete {
             Style::default().fg(theme.diagnostic_error_fg)
         } else {

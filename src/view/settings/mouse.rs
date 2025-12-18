@@ -90,6 +90,9 @@ impl Editor {
         if let Some(ref mut state) = self.settings_state {
             if state.showing_entry_dialog() {
                 match mouse_event.kind {
+                    MouseEventKind::Moved => {
+                        return Ok(self.entry_dialog_update_hover(col, row));
+                    }
                     MouseEventKind::ScrollUp => {
                         if let Some(ref mut dialog) = state.entry_dialog {
                             dialog.scroll_up();
@@ -322,6 +325,67 @@ impl Editor {
             }
         }
         false
+    }
+
+    fn entry_dialog_update_hover(&mut self, col: u16, row: u16) -> bool {
+        let Some(layout) = self.entry_dialog_layout() else {
+            return false;
+        };
+
+        let Some(ref mut state) = self.settings_state else {
+            return false;
+        };
+        let Some(ref mut dialog) = state.entry_dialog else {
+            return false;
+        };
+
+        let old_item = dialog.hover_item;
+        let old_button = dialog.hover_button;
+
+        // Reset hover state
+        dialog.hover_item = None;
+        dialog.hover_button = None;
+
+        if !layout.contains(col, row) {
+            return old_item.is_some() || old_button.is_some();
+        }
+
+        // Check button hover
+        if row == layout.button_y {
+            let buttons: &[&str] = if dialog.is_new {
+                &["[ Save ]", "[ Cancel ]"]
+            } else {
+                &["[ Save ]", "[ Delete ]", "[ Cancel ]"]
+            };
+            let total_width: u16 = buttons.iter().map(|b| b.len() as u16 + 2).sum();
+            let mut x = layout.dialog_x + (layout.dialog_width.saturating_sub(total_width)) / 2;
+
+            for (idx, label) in buttons.iter().enumerate() {
+                let width = label.len() as u16;
+                if col >= x && col < x + width {
+                    dialog.hover_button = Some(idx);
+                    break;
+                }
+                x += width + 2;
+            }
+        }
+
+        // Check item hover
+        if layout.in_content_area(col, row) {
+            let click_y = (row - layout.inner_y) as usize + dialog.scroll_offset;
+            let mut content_y: usize = 0;
+
+            for (idx, item) in dialog.items.iter().enumerate() {
+                let item_end = content_y + item.control.control_height() as usize;
+                if click_y >= content_y && click_y < item_end {
+                    dialog.hover_item = Some(idx);
+                    break;
+                }
+                content_y = item_end;
+            }
+        }
+
+        old_item != dialog.hover_item || old_button != dialog.hover_button
     }
 
     fn handle_entry_dialog_click(

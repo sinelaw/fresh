@@ -37,6 +37,10 @@ pub struct EntryDialogState {
     pub scroll_offset: usize,
     /// Last known viewport height (updated during render)
     pub viewport_height: usize,
+    /// Hovered item index (for mouse hover feedback)
+    pub hover_item: Option<usize>,
+    /// Hovered button index (for mouse hover feedback)
+    pub hover_button: Option<usize>,
 }
 
 impl EntryDialogState {
@@ -95,6 +99,8 @@ impl EntryDialogState {
             delete_requested: false,
             scroll_offset: 0,
             viewport_height: 20, // Default, updated during render
+            hover_item: None,
+            hover_button: None,
         }
     }
 
