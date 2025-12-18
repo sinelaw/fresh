@@ -184,6 +184,18 @@ cargo build --release
 ./target/release/fresh [file]
 ```
 
+### For immutable distros (Bazzite, ublue, aurora, etc.)
+Install Rust via HomeBrew first then build from source
+
+```bash
+brew install rust
+git clone https://github.com/sinelaw/fresh.git
+cd fresh
+cargo build --release
+cp ./target/release/fresh ~/.local/bin
+fresh
+```
+
 ## Documentation
 
 - [User Guide](docs/USER_GUIDE.md)
