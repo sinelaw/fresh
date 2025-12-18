@@ -7,6 +7,7 @@ mod input;
 mod input_dispatch;
 mod lsp_actions;
 mod menu_actions;
+mod mouse_input;
 mod plugin_commands;
 mod popup_actions;
 mod prompt_actions;
