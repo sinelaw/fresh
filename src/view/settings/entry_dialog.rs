@@ -162,8 +162,14 @@ impl EntryDialogState {
         }
 
         if self.focus_on_buttons {
-            // Cycle through buttons
-            self.focused_button = (self.focused_button + 1) % self.button_count();
+            if self.focused_button + 1 < self.button_count() {
+                // Move to next button
+                self.focused_button += 1;
+            } else {
+                // Wrap to first item
+                self.focus_on_buttons = false;
+                self.selected_item = 0;
+            }
         } else if self.selected_item + 1 < self.items.len() {
             // Move to next item
             self.selected_item += 1;
@@ -195,6 +201,10 @@ impl EntryDialogState {
         } else if self.selected_item > 0 {
             self.selected_item -= 1;
             self.sub_focus = None;
+        } else {
+            // Wrap to last button
+            self.focus_on_buttons = true;
+            self.focused_button = self.button_count().saturating_sub(1);
         }
 
         self.update_focus_states();
