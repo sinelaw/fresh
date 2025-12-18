@@ -754,6 +754,12 @@
                 "args": {},
                 "when": null,
                 "checkbox": null
+              },
+              {
+                "separator": true
+              },
+              {
+                "info": "Color: Truecolor"
               }
             ]
           }
@@ -1049,7 +1055,15 @@
       "type": "object",
       "properties": {
         "extensions": {
-          "description": "File extensions for this language",
+          "description": "File extensions for this language (e.g., [\"rs\"] for Rust)",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "filenames": {
+          "description": "Exact filenames for this language (e.g., [\"Makefile\", \"GNUmakefile\"])",
           "type": "array",
           "items": {
             "type": "string"
@@ -1287,6 +1301,18 @@
           "required": [
             "label",
             "items"
+          ]
+        },
+        {
+          "description": "A disabled info label (no action)",
+          "type": "object",
+          "properties": {
+            "info": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "info"
           ]
         }
       ]
