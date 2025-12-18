@@ -147,15 +147,9 @@ impl Editor {
             }
         }
 
-        // Handle file open dialog actions first (when active)
-        if self.handle_file_open_action(&action) {
-            return Ok(());
-        }
-
-        // Note: Settings context is now handled by dispatch_modal_input (InputHandler system)
-
-        // Note: Prompt and Popup actions are now handled by dispatch_modal_input (InputHandler system)
-        // All remaining actions delegate to handle_action
+        // Note: Modal components (Settings, Menu, Prompt, Popup, File Browser) are now
+        // handled by dispatch_modal_input using the InputHandler system.
+        // All remaining actions delegate to handle_action.
         self.handle_action(action)
     }
 
