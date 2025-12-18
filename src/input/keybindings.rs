@@ -3,17 +3,17 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Global flag to force Linux-style keybinding display (Ctrl instead of ⌘)
+/// Global flag to force Linux-style keybinding display (Alt/Shift instead of ⌥/⇧)
 /// This is primarily used in tests to ensure consistent output across platforms.
 static FORCE_LINUX_KEYBINDINGS: AtomicBool = AtomicBool::new(false);
 
-/// Force Linux-style keybinding display (Ctrl/Alt/Shift instead of ⌘/⌥/⇧)
+/// Force Linux-style keybinding display (Alt/Shift instead of ⌥/⇧)
 /// Call this in tests to ensure consistent output regardless of platform.
 pub fn set_force_linux_keybindings(force: bool) {
     FORCE_LINUX_KEYBINDINGS.store(force, Ordering::SeqCst);
 }
 
-/// Check if we should use macOS-style symbols for keybindings
+/// Check if we should use macOS-style symbols for Alt and Shift keybindings
 fn use_macos_symbols() -> bool {
     if FORCE_LINUX_KEYBINDINGS.load(Ordering::SeqCst) {
         return false;
@@ -22,14 +22,14 @@ fn use_macos_symbols() -> bool {
 }
 
 /// Format a keybinding as a user-friendly string
-/// On macOS, this will show ⌘ instead of Ctrl for better UX
+/// On macOS, uses native symbols for Alt (⌥) and Shift (⇧)
 pub fn format_keybinding(keycode: &KeyCode, modifiers: &KeyModifiers) -> String {
     let mut result = String::new();
 
-    // On macOS, show ⌘ (Cmd) symbol instead of Ctrl for the Control modifier
-    // This provides a more native experience for Mac users
+    // Control key is Ctrl on all platforms (crossterm's CONTROL modifier is the physical Ctrl key)
+    // On macOS, use native symbols for Alt and Shift only
     let (ctrl_label, alt_label, shift_label) = if use_macos_symbols() {
-        ("⌘", "⌥", "⇧")
+        ("Ctrl", "⌥", "⇧")
     } else {
         ("Ctrl", "Alt", "Shift")
     };
