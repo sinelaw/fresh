@@ -38,117 +38,12 @@ impl Editor {
             modifiers
         );
 
-        // Check if we're in a prompt, popup, or settings - these take priority over terminal handling
-        // so that command palette, open file dialog, settings dialog, etc. work correctly
-        let in_prompt_or_popup = self.is_prompting()
-            || self.active_state().popups.is_visible()
-            || self.menu_state.active_menu.is_some()
-            || self.settings_state.as_ref().map_or(false, |s| s.visible);
+        // Create key event for dispatch methods
+        let key_event = crossterm::event::KeyEvent::new(code, modifiers);
 
-        // Special handling for terminal mode - forward keys directly to terminal
-        // unless it's an escape sequence or UI keybinding
-        // Skip if we're in a prompt/popup (those need to handle keys normally)
-        if self.terminal_mode && !in_prompt_or_popup {
-            tracing::trace!(
-                "Terminal mode key handling: code={:?}, modifiers={:?}, keyboard_capture={}",
-                code,
-                modifiers,
-                self.keyboard_capture
-            );
-
-            // F9 always toggles keyboard capture mode (works even when capture is ON)
-            let is_toggle_capture = code == crossterm::event::KeyCode::F(9);
-            tracing::trace!("is_toggle_capture (F9)={}", is_toggle_capture);
-            if is_toggle_capture {
-                self.keyboard_capture = !self.keyboard_capture;
-                tracing::info!("Toggled keyboard_capture to {}", self.keyboard_capture);
-                if self.keyboard_capture {
-                    self.set_status_message(
-                        "Keyboard capture ON - all keys go to terminal (F9 to toggle)".to_string(),
-                    );
-                } else {
-                    self.set_status_message(
-                        "Keyboard capture OFF - UI bindings active (F9 to toggle)".to_string(),
-                    );
-                }
-                return Ok(());
-            }
-
-            // When keyboard capture is ON, forward ALL keys to terminal
-            if self.keyboard_capture {
-                tracing::trace!("Forwarding key to terminal (keyboard capture ON)");
-                self.send_terminal_key(code, modifiers);
-                return Ok(());
-            }
-
-            // When keyboard capture is OFF, check for UI keybindings first
-            let key_event = crossterm::event::KeyEvent::new(code, modifiers);
-            let ui_action = self.keybindings.resolve_terminal_ui_action(&key_event);
-
-            if !matches!(ui_action, Action::None) {
-                // Handle terminal escape specially - exits terminal mode
-                if matches!(ui_action, Action::TerminalEscape) {
-                    self.terminal_mode = false;
-                    self.key_context = crate::input::keybindings::KeyContext::Normal;
-                    // User explicitly exited - don't auto-resume when switching back
-                    self.terminal_mode_resume.remove(&self.active_buffer());
-                    self.sync_terminal_to_buffer(self.active_buffer());
-                    self.set_status_message(
-                        "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
-                    );
-                    return Ok(());
-                }
-
-                // For split navigation, exit terminal mode first
-                if matches!(
-                    ui_action,
-                    Action::NextSplit | Action::PrevSplit | Action::CloseSplit
-                ) {
-                    self.terminal_mode = false;
-                    self.key_context = crate::input::keybindings::KeyContext::Normal;
-                }
-
-                return self.handle_action(ui_action);
-            }
-
-            // Handle scrollback: Shift+PageUp exits terminal mode and uses file-backed buffer
-            if modifiers.contains(crossterm::event::KeyModifiers::SHIFT)
-                && code == crossterm::event::KeyCode::PageUp
-            {
-                // Sync terminal content to buffer and exit terminal mode
-                self.terminal_mode = false;
-                self.key_context = crate::input::keybindings::KeyContext::Normal;
-                self.sync_terminal_to_buffer(self.active_buffer());
-                self.set_status_message(
-                    "Scrollback mode - use PageUp/Down to scroll (Ctrl+Space to resume)"
-                        .to_string(),
-                );
-                // Now scroll up using normal buffer scrolling
-                return self.handle_action(crate::input::keybindings::Action::MovePageUp);
-            }
-
-            // Forward all other keys to the terminal
-            self.send_terminal_key(code, modifiers);
+        // Try terminal input dispatch first (handles terminal mode and re-entry)
+        if self.dispatch_terminal_input(&key_event).is_some() {
             return Ok(());
-        }
-
-        // Toggle back into terminal mode when viewing a terminal buffer
-        // Skip if we're in a prompt/popup (those need to handle keys normally)
-        if self.is_terminal_buffer(self.active_buffer()) && !in_prompt_or_popup {
-            if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
-                match code {
-                    crossterm::event::KeyCode::Char(' ')
-                    | crossterm::event::KeyCode::Char(']')
-                    | crossterm::event::KeyCode::Char('`') => {
-                        self.enter_terminal_mode();
-                        return Ok(());
-                    }
-                    _ => {}
-                }
-            } else if code == crossterm::event::KeyCode::Char('q') {
-                self.enter_terminal_mode();
-                return Ok(());
-            }
         }
 
         // Clear skip_ensure_visible flag so cursor becomes visible after key press
@@ -180,7 +75,6 @@ impl Editor {
         }
 
         // Try hierarchical modal input dispatch first (Settings, Menu, Prompt, Popup)
-        let key_event = crossterm::event::KeyEvent::new(code, modifiers);
         if self.dispatch_modal_input(&key_event).is_some() {
             return Ok(());
         }

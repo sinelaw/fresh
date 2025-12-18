@@ -128,6 +128,13 @@ pub enum DeferredAction {
     InteractiveReplaceKey(char),
     CancelInteractiveReplace,
 
+    // Terminal mode actions
+    ToggleKeyboardCapture,
+    SendTerminalKey(crossterm::event::KeyCode, crossterm::event::KeyModifiers),
+    ExitTerminalMode { explicit: bool },
+    EnterScrollbackMode,
+    EnterTerminalMode,
+
     // Generic action execution
     ExecuteAction(crate::input::keybindings::Action),
 

@@ -3,6 +3,7 @@
 //! This module provides the bridge between Editor and the InputHandler trait,
 //! dispatching input to modal components and processing deferred actions.
 
+use super::terminal_input::{should_enter_terminal_mode, TerminalModeInputHandler};
 use super::Editor;
 use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputResult};
 use crate::input::keybindings::Action;
@@ -12,6 +13,40 @@ use crate::view::ui::MenuInputHandler;
 use crossterm::event::KeyEvent;
 
 impl Editor {
+    /// Dispatch input when in terminal mode.
+    ///
+    /// Returns `Some(InputResult)` if terminal mode handled the input,
+    /// `None` if not in terminal mode or if a modal is active.
+    pub fn dispatch_terminal_input(&mut self, event: &KeyEvent) -> Option<InputResult> {
+        // Skip if we're in a prompt/popup (those need to handle keys normally)
+        let in_modal = self.is_prompting()
+            || self.active_state().popups.is_visible()
+            || self.menu_state.active_menu.is_some()
+            || self.settings_state.as_ref().map_or(false, |s| s.visible);
+
+        if in_modal {
+            return None;
+        }
+
+        // Handle terminal mode input
+        if self.terminal_mode {
+            let mut ctx = InputContext::new();
+            let mut handler =
+                TerminalModeInputHandler::new(self.keyboard_capture, &self.keybindings);
+            let result = handler.dispatch_input(event, &mut ctx);
+            self.process_deferred_actions(ctx);
+            return Some(result);
+        }
+
+        // Check for keys that should re-enter terminal mode from read-only view
+        if self.is_terminal_buffer(self.active_buffer()) && should_enter_terminal_mode(event) {
+            self.enter_terminal_mode();
+            return Some(InputResult::Consumed);
+        }
+
+        None
+    }
+
     /// Dispatch input to the appropriate modal handler.
     ///
     /// Returns `Some(InputResult)` if a modal handled the input,
@@ -235,6 +270,49 @@ impl Editor {
             DeferredAction::CancelInteractiveReplace => {
                 self.cancel_prompt();
                 self.interactive_replace_state = None;
+            }
+
+            // Terminal mode actions
+            DeferredAction::ToggleKeyboardCapture => {
+                self.keyboard_capture = !self.keyboard_capture;
+                if self.keyboard_capture {
+                    self.set_status_message(
+                        "Keyboard capture ON - all keys go to terminal (F9 to toggle)".to_string(),
+                    );
+                } else {
+                    self.set_status_message(
+                        "Keyboard capture OFF - UI bindings active (F9 to toggle)".to_string(),
+                    );
+                }
+            }
+            DeferredAction::SendTerminalKey(code, modifiers) => {
+                self.send_terminal_key(code, modifiers);
+            }
+            DeferredAction::ExitTerminalMode { explicit } => {
+                self.terminal_mode = false;
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
+                if explicit {
+                    // User explicitly exited - don't auto-resume when switching back
+                    self.terminal_mode_resume.remove(&self.active_buffer());
+                    self.sync_terminal_to_buffer(self.active_buffer());
+                    self.set_status_message(
+                        "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
+                    );
+                }
+            }
+            DeferredAction::EnterScrollbackMode => {
+                self.terminal_mode = false;
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
+                self.sync_terminal_to_buffer(self.active_buffer());
+                self.set_status_message(
+                    "Scrollback mode - use PageUp/Down to scroll (Ctrl+Space to resume)"
+                        .to_string(),
+                );
+                // Scroll up using normal buffer scrolling
+                self.handle_action(Action::MovePageUp)?;
+            }
+            DeferredAction::EnterTerminalMode => {
+                self.enter_terminal_mode();
             }
         }
 
