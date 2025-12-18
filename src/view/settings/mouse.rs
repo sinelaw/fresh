@@ -403,6 +403,7 @@ impl Editor {
             if click_y >= content_y && click_y < item_end {
                 dialog.focus_on_buttons = false;
                 dialog.selected_item = idx;
+                dialog.update_focus_states();
                 if !dialog.editing_text {
                     dialog.start_editing();
                 }
