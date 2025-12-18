@@ -1,5 +1,53 @@
 # Release Notes
 
+## 0.1.53
+
+### Features
+
+* **Universal Install Script**: New `install.sh` script for easy installation across Linux and macOS.
+
+* **Settings UI Enhancements**:
+  - Entry dialogs for editing Languages, LSP servers, and keybindings
+  - Schema-driven dialog builder with automatic field generation
+  - Dimming effect for modal dialogs
+  - Column-aligned controls for cleaner layout
+  - Setting descriptions now displayed inline
+  - Map controls with flat navigation, entry highlighting, and delete buttons
+
+* **LSP Hover Improvements**: Hover popups now persist when moving within a symbol or hovering over the popup itself. Popups dismiss on focus loss.
+
+* **Replace History**: Search & replace now supports history navigation for the replace field.
+
+### Bug Fixes
+
+* **Settings Input Isolation**: Fixed keyboard input leaking between Settings UI panels.
+
+* **Map Control Buttons**: Fixed [+] Add new buttons not working for Map controls.
+
+* **File Browser Navigation**: Fixed input routing issues in file browser modal.
+
+* **Config Loading**: Fixed config not loading from working directory; changes now apply to runtime state immediately.
+
+### Configuration
+
+* **rust-analyzer Defaults**: Added minimal performance defaults for rust-analyzer LSP.
+
+### Packaging
+
+* **Ubuntu 20.04**: Added CI coverage for Ubuntu 20.04 (#374).
+
+### Internal
+
+* **Input Handling Refactor**: New hierarchical `InputHandler` trait system for cleaner modal input routing.
+
+* **Component Pattern**: Refactored all Settings UI controls (Button, Toggle, NumberInput, TextInput, Dropdown, TextList, MapInput, KeybindingList) to consistent component pattern.
+
+* **Config Module**: Consolidated config path resolution and loading into `config_io` module. Config editor now saves only non-default values.
+
+* **Code Organization**: Extracted action handlers into dedicated modules (menu_actions, lsp_actions, prompt_actions, undo_actions, mouse_input).
+
+---
+
 ## 0.1.45
 
 ### Features
