@@ -754,12 +754,6 @@
                 "args": {},
                 "when": null,
                 "checkbox": null
-              },
-              {
-                "separator": true
-              },
-              {
-                "info": "Color: Truecolor"
               }
             ]
           }

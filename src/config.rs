@@ -1709,19 +1709,6 @@ impl Config {
                         when: None,
                         checkbox: None,
                     },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Label {
-                        info: format!(
-                            "Color: {}",
-                            match crate::view::color_support::get_color_capability() {
-                                crate::view::color_support::ColorCapability::TrueColor =>
-                                    "Truecolor",
-                                crate::view::color_support::ColorCapability::Color256 =>
-                                    "256 colors",
-                                crate::view::color_support::ColorCapability::Color16 => "16 colors",
-                            }
-                        ),
-                    },
                 ],
             },
         ]
