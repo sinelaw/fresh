@@ -213,12 +213,23 @@ impl Editor {
             .map(|p| (p.prompt_type.clone(), p.input.clone()));
 
         if let Some((prompt_type, current_input)) = prompt_info {
-            // Only search prompts have history
+            // Search prompts use search history
             if matches!(
                 prompt_type,
                 PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch
             ) {
                 if let Some(entry) = self.search_history.navigate_prev(&current_input) {
+                    if let Some(ref mut prompt) = self.prompt {
+                        prompt.set_input(entry);
+                    }
+                }
+            }
+            // Replacement prompts use replace history
+            else if matches!(
+                prompt_type,
+                PromptType::Replace { .. } | PromptType::QueryReplace { .. }
+            ) {
+                if let Some(entry) = self.replace_history.navigate_prev(&current_input) {
                     if let Some(ref mut prompt) = self.prompt {
                         prompt.set_input(entry);
                     }
@@ -234,12 +245,23 @@ impl Editor {
         let prompt_type = self.prompt.as_ref().map(|p| p.prompt_type.clone());
 
         if let Some(prompt_type) = prompt_type {
-            // Only search prompts have history
+            // Search prompts use search history
             if matches!(
                 prompt_type,
                 PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch
             ) {
                 if let Some(entry) = self.search_history.navigate_next() {
+                    if let Some(ref mut prompt) = self.prompt {
+                        prompt.set_input(entry);
+                    }
+                }
+            }
+            // Replacement prompts use replace history
+            else if matches!(
+                prompt_type,
+                PromptType::Replace { .. } | PromptType::QueryReplace { .. }
+            ) {
+                if let Some(entry) = self.replace_history.navigate_next() {
                     if let Some(ref mut prompt) = self.prompt {
                         prompt.set_input(entry);
                     }
