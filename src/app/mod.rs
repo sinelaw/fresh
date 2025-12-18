@@ -16,6 +16,7 @@ pub mod session;
 mod terminal;
 mod terminal_input;
 pub mod types;
+mod undo_actions;
 mod view_actions;
 
 use std::path::Component;

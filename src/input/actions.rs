@@ -510,13 +510,7 @@ fn insert_char_events(
         // Try auto-close
         if let Some(close_char) = auto_close_char {
             if should_auto_close(data.char_after) {
-                handle_auto_close(
-                    events,
-                    data.cursor_id,
-                    ch,
-                    close_char,
-                    data.insert_position,
-                );
+                handle_auto_close(events, data.cursor_id, ch, close_char, data.insert_position);
                 continue;
             }
         }
