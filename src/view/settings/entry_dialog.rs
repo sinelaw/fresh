@@ -100,10 +100,12 @@ pub struct EntryDialogState {
     pub fields: Vec<DialogField>,
     /// Currently focused field index
     pub focused_field: usize,
-    /// Currently focused button (0=Save, 1=Cancel)
+    /// Currently focused button (0=Save, 1=Delete, 2=Cancel for existing; 0=Save, 1=Cancel for new)
     pub focused_button: usize,
     /// Whether focus is on buttons (true) or fields (false)
     pub focus_on_buttons: bool,
+    /// Whether deletion was requested
+    pub delete_requested: bool,
 }
 
 impl EntryDialogState {
@@ -134,7 +136,13 @@ impl EntryDialogState {
             focused_field: 0,
             focused_button: 0,
             focus_on_buttons: false,
+            delete_requested: false,
         }
+    }
+
+    /// Get button count (3 for existing entries with Delete, 2 for new entries)
+    pub fn button_count(&self) -> usize {
+        if self.is_new { 2 } else { 3 }
     }
 
     /// Convert dialog state back to JSON value
@@ -179,7 +187,7 @@ impl EntryDialogState {
     /// Move focus to next field
     pub fn focus_next(&mut self) {
         if self.focus_on_buttons {
-            if self.focused_button < 1 {
+            if self.focused_button + 1 < self.button_count() {
                 self.focused_button += 1;
             }
         } else if self.focused_field + 1 < self.fields.len() {

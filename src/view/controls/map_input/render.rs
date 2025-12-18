@@ -58,16 +58,6 @@ pub fn render_map(
         let is_expanded = state.is_expanded(idx);
 
         let arrow = if is_expanded { "▼" } else { "▶" };
-        let arrow_color = if is_focused {
-            colors.focused
-        } else {
-            colors.expand_arrow
-        };
-        let key_color = if is_focused {
-            colors.focused
-        } else {
-            colors.key
-        };
 
         // Value preview using display_field if available
         let value_preview = state.get_display_value(value);
@@ -79,20 +69,54 @@ pub fn render_map(
             value_preview
         };
 
-        let line = Line::from(vec![
-            Span::raw(" ".repeat(indent as usize)),
-            Span::styled(arrow, Style::default().fg(arrow_color)),
+        let row_area = Rect::new(area.x, y, area.width, 1);
+
+        // Full row background highlight for focused entry
+        if is_focused {
+            let highlight_style = Style::default().bg(colors.focused);
+            let bg_line = Line::from(Span::styled(
+                " ".repeat(area.width as usize),
+                highlight_style,
+            ));
+            frame.render_widget(Paragraph::new(bg_line), row_area);
+        }
+
+        // Row content with appropriate colors
+        let (arrow_color, key_color, value_color) = if is_focused {
+            (colors.label, colors.label, colors.value_preview)
+        } else {
+            (colors.expand_arrow, colors.key, colors.value_preview)
+        };
+
+        let base_style = if is_focused {
+            Style::default().bg(colors.focused)
+        } else {
+            Style::default()
+        };
+
+        let mut spans = vec![
+            Span::styled(" ".repeat(indent as usize), base_style),
+            Span::styled(arrow, base_style.fg(arrow_color)),
             Span::raw(" "),
             Span::styled(
                 format!("{:width$}", key, width = actual_key_width as usize),
-                Style::default().fg(key_color),
+                base_style.fg(key_color),
             ),
             Span::raw(" "),
-            Span::styled(value_preview, Style::default().fg(colors.value_preview)),
-        ]);
+            Span::styled(value_preview, base_style.fg(value_color)),
+        ];
 
-        let row_area = Rect::new(area.x, y, area.width, 1);
-        frame.render_widget(Paragraph::new(line), row_area);
+        // Add [Edit] hint for focused entry
+        if is_focused {
+            spans.push(Span::styled(
+                "  [Enter to edit]",
+                base_style
+                    .fg(colors.value_preview)
+                    .add_modifier(Modifier::DIM),
+            ));
+        }
+
+        frame.render_widget(Paragraph::new(Line::from(spans)), row_area);
 
         entry_areas.push(MapEntryLayout {
             index: idx,

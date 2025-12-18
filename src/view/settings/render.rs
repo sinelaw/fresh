@@ -1762,17 +1762,24 @@ fn render_entry_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
 
     // Render buttons at bottom
     let button_y = dialog_area.y + dialog_area.height - 2;
-    let buttons = ["[ Save ]", "[ Cancel ]"];
+    let buttons: Vec<&str> = if dialog.is_new {
+        vec!["[ Save ]", "[ Cancel ]"]
+    } else {
+        vec!["[ Save ]", "[ Delete ]", "[ Cancel ]"]
+    };
     let button_width: u16 = buttons.iter().map(|b| b.len() as u16 + 2).sum();
     let button_x = dialog_area.x + (dialog_area.width.saturating_sub(button_width)) / 2;
 
     let mut x = button_x;
     for (idx, label) in buttons.iter().enumerate() {
         let is_selected = dialog.focus_on_buttons && dialog.focused_button == idx;
+        let is_delete = !dialog.is_new && idx == 1;
         let style = if is_selected {
             Style::default()
                 .fg(theme.menu_highlight_fg)
                 .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+        } else if is_delete {
+            Style::default().fg(theme.diagnostic_error_fg)
         } else {
             Style::default().fg(theme.editor_fg)
         };

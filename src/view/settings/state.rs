@@ -583,6 +583,31 @@ impl SettingsState {
         self.set_pending_change(&path, value);
     }
 
+    /// Delete the entry from the map and close the dialog
+    pub fn delete_entry_dialog(&mut self) {
+        let Some(dialog) = self.entry_dialog.take() else {
+            return;
+        };
+
+        let path = format!("{}/{}", dialog.map_path, dialog.entry_key);
+
+        // Remove from the map control
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Map(map_state) = &mut item.control {
+                if let Some(idx) = map_state
+                    .entries
+                    .iter()
+                    .position(|(k, _)| k == &dialog.entry_key)
+                {
+                    map_state.remove_entry(idx);
+                }
+            }
+        }
+
+        // Record the pending change (null value signals deletion)
+        self.set_pending_change(&path, serde_json::Value::Null);
+    }
+
     /// Get the maximum scroll offset for the current page (in rows)
     pub fn max_scroll(&self) -> u16 {
         self.scroll_panel.scroll.max_offset()

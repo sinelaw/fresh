@@ -55,8 +55,23 @@ impl SettingsState {
                 self.close_entry_dialog();
                 InputResult::Consumed
             }
-            KeyCode::Enter if event.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.save_entry_dialog();
+            KeyCode::Enter => {
+                if let Some(ref dialog) = self.entry_dialog {
+                    if dialog.focus_on_buttons {
+                        // Button actions: Save=0, Delete=1 (existing only), Cancel=last
+                        let cancel_idx = dialog.button_count() - 1;
+                        if dialog.focused_button == 0 {
+                            self.save_entry_dialog();
+                        } else if !dialog.is_new && dialog.focused_button == 1 {
+                            self.delete_entry_dialog();
+                        } else if dialog.focused_button == cancel_idx {
+                            self.close_entry_dialog();
+                        }
+                    } else if event.modifiers.contains(KeyModifiers::CONTROL) {
+                        // Ctrl+Enter always saves
+                        self.save_entry_dialog();
+                    }
+                }
                 InputResult::Consumed
             }
             KeyCode::Tab => {
