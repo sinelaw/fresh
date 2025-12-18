@@ -472,12 +472,14 @@ jobs:
         id: changelog
         run: |
           # Extract the changelog section for this version
+          # CHANGELOG format: ## 0.1.53 (no brackets), sections end with ---
           VERSION="${{ needs.plan.outputs.version }}"
           awk -v ver="$VERSION" '
-            /^## \[/ {
+            /^## [0-9]/ {
               if (found) exit
-              if (index($0, ver)) found=1
+              if ($2 == ver) found=1
             }
+            /^---$/ { if (found) exit }
             found { print }
           ' CHANGELOG.md > release_notes.md || echo "Release ${VERSION}" > release_notes.md
 
