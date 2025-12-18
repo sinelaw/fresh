@@ -857,10 +857,7 @@ impl Config {
             "dockerfile".to_string(),
             LanguageConfig {
                 extensions: vec!["dockerfile".to_string()],
-                filenames: vec![
-                    "Dockerfile".to_string(),
-                    "Containerfile".to_string(),
-                ],
+                filenames: vec!["Dockerfile".to_string(), "Containerfile".to_string()],
                 grammar: "dockerfile".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: true,
@@ -1717,8 +1714,10 @@ impl Config {
                         info: format!(
                             "Color: {}",
                             match crate::view::color_support::get_color_capability() {
-                                crate::view::color_support::ColorCapability::TrueColor => "Truecolor",
-                                crate::view::color_support::ColorCapability::Color256 => "256 colors",
+                                crate::view::color_support::ColorCapability::TrueColor =>
+                                    "Truecolor",
+                                crate::view::color_support::ColorCapability::Color256 =>
+                                    "256 colors",
                                 crate::view::color_support::ColorCapability::Color16 => "16 colors",
                             }
                         ),

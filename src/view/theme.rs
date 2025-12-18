@@ -984,7 +984,6 @@ impl Theme {
             syntax_operator: Color::Rgb(170, 170, 170), // Light gray operators
         }
     }
-
 }
 
 impl Default for Theme {

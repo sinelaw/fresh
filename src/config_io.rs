@@ -109,8 +109,8 @@ impl Config {
     ///
     /// This keeps user config files minimal and clean - only user customizations are saved.
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ConfigError> {
-        let current = serde_json::to_value(self)
-            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+        let current =
+            serde_json::to_value(self).map_err(|e| ConfigError::SerializeError(e.to_string()))?;
         let defaults = serde_json::to_value(Self::default())
             .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
 
