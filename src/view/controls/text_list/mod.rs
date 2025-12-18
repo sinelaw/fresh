@@ -7,12 +7,21 @@
 //!   [item two                ] [x]
 //!   [                        ] [+]
 //! ```
+//!
+//! This module provides a complete text list component with:
+//! - State management (`TextListState`)
+//! - Rendering (`render_text_list`)
+//! - Input handling (`TextListState::handle_mouse`, `handle_key`)
+//! - Layout/hit testing (`TextListLayout`)
+
+mod input;
+mod render;
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
-use ratatui::Frame;
+use ratatui::style::Color;
+
+pub use input::TextListEvent;
+pub use render::render_text_list;
 
 use super::FocusState;
 
@@ -58,9 +67,14 @@ impl TextListState {
         self
     }
 
+    /// Check if the control is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.focus != FocusState::Disabled
+    }
+
     /// Add a new item from the new_item_text field
     pub fn add_item(&mut self) {
-        if self.focus == FocusState::Disabled || self.new_item_text.is_empty() {
+        if !self.is_enabled() || self.new_item_text.is_empty() {
             return;
         }
         self.items.push(std::mem::take(&mut self.new_item_text));
@@ -69,11 +83,10 @@ impl TextListState {
 
     /// Remove an item by index
     pub fn remove_item(&mut self, index: usize) {
-        if self.focus == FocusState::Disabled || index >= self.items.len() {
+        if !self.is_enabled() || index >= self.items.len() {
             return;
         }
         self.items.remove(index);
-        // Adjust focused_item if needed
         if let Some(focused) = self.focused_item {
             if focused >= self.items.len() {
                 self.focused_item = if self.items.is_empty() {
@@ -101,7 +114,7 @@ impl TextListState {
 
     /// Insert a character in the focused field
     pub fn insert(&mut self, c: char) {
-        if self.focus == FocusState::Disabled {
+        if !self.is_enabled() {
             return;
         }
         match self.focused_item {
@@ -119,7 +132,7 @@ impl TextListState {
 
     /// Backspace in the focused field
     pub fn backspace(&mut self) {
-        if self.focus == FocusState::Disabled || self.cursor == 0 {
+        if !self.is_enabled() || self.cursor == 0 {
             return;
         }
         self.cursor -= 1;
@@ -156,7 +169,7 @@ impl TextListState {
     /// Move focus to previous item
     pub fn focus_prev(&mut self) {
         match self.focused_item {
-            Some(0) => {} // Stay at first item
+            Some(0) => {}
             Some(idx) => {
                 self.focused_item = Some(idx - 1);
                 self.cursor = self.items[idx - 1].len();
@@ -249,7 +262,7 @@ pub struct TextListRowLayout {
 }
 
 /// Layout information returned after rendering for hit testing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TextListLayout {
     /// Layout for each row
     pub rows: Vec<TextListRowLayout>,
@@ -289,164 +302,6 @@ pub enum TextListHit {
     Button(Option<usize>),
 }
 
-/// Render a text list control
-///
-/// # Arguments
-/// * `frame` - The ratatui frame to render to
-/// * `area` - Rectangle where the control should be rendered
-/// * `state` - The text list state
-/// * `colors` - Colors for rendering
-/// * `field_width` - Width of each text field
-///
-/// # Returns
-/// Layout information for hit testing
-pub fn render_text_list(
-    frame: &mut Frame,
-    area: Rect,
-    state: &TextListState,
-    colors: &TextListColors,
-    field_width: u16,
-) -> TextListLayout {
-    let empty_layout = TextListLayout {
-        rows: Vec::new(),
-        full_area: area,
-    };
-
-    if area.height == 0 || area.width < 10 {
-        return empty_layout;
-    }
-
-    let label_color = match state.focus {
-        FocusState::Focused => colors.focused,
-        FocusState::Hovered => colors.focused,
-        FocusState::Disabled => colors.disabled,
-        FocusState::Normal => colors.label,
-    };
-
-    // Render label on first line
-    let label_line = Line::from(vec![
-        Span::styled(&state.label, Style::default().fg(label_color)),
-        Span::raw(":"),
-    ]);
-    frame.render_widget(
-        Paragraph::new(label_line),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
-
-    let mut rows = Vec::new();
-    let mut y = area.y + 1;
-    let indent = 2u16;
-    let actual_field_width = field_width.min(area.width.saturating_sub(indent + 5)); // "[" + "]" + " " + "[x]"
-
-    // Render existing items
-    for (idx, item) in state.items.iter().enumerate() {
-        if y >= area.y + area.height {
-            break;
-        }
-
-        let is_focused = state.focused_item == Some(idx) && state.focus == FocusState::Focused;
-        let (border_color, text_color) = if is_focused {
-            (colors.focused, colors.text)
-        } else if state.focus == FocusState::Disabled {
-            (colors.disabled, colors.disabled)
-        } else {
-            (colors.border, colors.text)
-        };
-
-        // Calculate visible text
-        let inner_width = actual_field_width.saturating_sub(2) as usize;
-        let visible: String = item.chars().take(inner_width).collect();
-        let padded = format!("{:width$}", visible, width = inner_width);
-
-        let line = Line::from(vec![
-            Span::raw(" ".repeat(indent as usize)),
-            Span::styled("[", Style::default().fg(border_color)),
-            Span::styled(padded, Style::default().fg(text_color)),
-            Span::styled("]", Style::default().fg(border_color)),
-            Span::raw(" "),
-            Span::styled("[x]", Style::default().fg(colors.remove_button)),
-        ]);
-
-        let row_area = Rect::new(area.x, y, area.width, 1);
-        frame.render_widget(Paragraph::new(line), row_area);
-
-        // Render cursor if focused
-        if is_focused && state.cursor <= inner_width {
-            let cursor_x = area.x + indent + 1 + state.cursor as u16;
-            let cursor_char = item.chars().nth(state.cursor).unwrap_or(' ');
-            let cursor_area = Rect::new(cursor_x, y, 1, 1);
-            let cursor_span = Span::styled(
-                cursor_char.to_string(),
-                Style::default()
-                    .fg(colors.cursor)
-                    .add_modifier(Modifier::REVERSED),
-            );
-            frame.render_widget(Paragraph::new(Line::from(vec![cursor_span])), cursor_area);
-        }
-
-        rows.push(TextListRowLayout {
-            text_area: Rect::new(area.x + indent, y, actual_field_width + 2, 1),
-            button_area: Rect::new(area.x + indent + actual_field_width + 3, y, 3, 1),
-            index: Some(idx),
-        });
-
-        y += 1;
-    }
-
-    // Render "add new" row
-    if y < area.y + area.height {
-        let is_focused = state.focused_item.is_none() && state.focus == FocusState::Focused;
-        let (border_color, text_color) = if is_focused {
-            (colors.focused, colors.text)
-        } else if state.focus == FocusState::Disabled {
-            (colors.disabled, colors.disabled)
-        } else {
-            (colors.border, colors.text)
-        };
-
-        let inner_width = actual_field_width.saturating_sub(2) as usize;
-        let visible: String = state.new_item_text.chars().take(inner_width).collect();
-        let padded = format!("{:width$}", visible, width = inner_width);
-
-        let line = Line::from(vec![
-            Span::raw(" ".repeat(indent as usize)),
-            Span::styled("[", Style::default().fg(border_color)),
-            Span::styled(padded, Style::default().fg(text_color)),
-            Span::styled("]", Style::default().fg(border_color)),
-            Span::raw(" "),
-            Span::styled("[+]", Style::default().fg(colors.add_button)),
-        ]);
-
-        let row_area = Rect::new(area.x, y, area.width, 1);
-        frame.render_widget(Paragraph::new(line), row_area);
-
-        // Render cursor if focused
-        if is_focused && state.cursor <= inner_width {
-            let cursor_x = area.x + indent + 1 + state.cursor as u16;
-            let cursor_char = state.new_item_text.chars().nth(state.cursor).unwrap_or(' ');
-            let cursor_area = Rect::new(cursor_x, y, 1, 1);
-            let cursor_span = Span::styled(
-                cursor_char.to_string(),
-                Style::default()
-                    .fg(colors.cursor)
-                    .add_modifier(Modifier::REVERSED),
-            );
-            frame.render_widget(Paragraph::new(Line::from(vec![cursor_span])), cursor_area);
-        }
-
-        rows.push(TextListRowLayout {
-            text_area: Rect::new(area.x + indent, y, actual_field_width + 2, 1),
-            button_area: Rect::new(area.x + indent + actual_field_width + 3, y, 3, 1),
-            index: None,
-        });
-    }
-
-    TextListLayout {
-        rows,
-        full_area: area,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,7 +310,7 @@ mod tests {
 
     fn test_frame<F>(width: u16, height: u16, f: F)
     where
-        F: FnOnce(&mut Frame, Rect),
+        F: FnOnce(&mut ratatui::Frame, Rect),
     {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -474,7 +329,6 @@ mod tests {
             let colors = TextListColors::default();
             let layout = render_text_list(frame, area, &state, &colors, 20);
 
-            // Should have add-new row only
             assert_eq!(layout.rows.len(), 1);
             assert!(layout.rows[0].index.is_none());
         });
@@ -488,7 +342,7 @@ mod tests {
             let colors = TextListColors::default();
             let layout = render_text_list(frame, area, &state, &colors, 20);
 
-            assert_eq!(layout.rows.len(), 3); // 2 items + add-new
+            assert_eq!(layout.rows.len(), 3);
             assert_eq!(layout.rows[0].index, Some(0));
             assert_eq!(layout.rows[1].index, Some(1));
             assert!(layout.rows[2].index.is_none());
@@ -531,26 +385,20 @@ mod tests {
             .with_items(vec!["a".to_string(), "b".to_string()])
             .with_focus(FocusState::Focused);
 
-        // Start at add-new
         assert!(state.focused_item.is_none());
 
-        // Go to last item
         state.focus_prev();
         assert_eq!(state.focused_item, Some(1));
 
-        // Go to first item
         state.focus_prev();
         assert_eq!(state.focused_item, Some(0));
 
-        // Try to go before first
         state.focus_prev();
         assert_eq!(state.focused_item, Some(0));
 
-        // Go forward
         state.focus_next();
         assert_eq!(state.focused_item, Some(1));
 
-        // Go to add-new
         state.focus_next();
         assert!(state.focused_item.is_none());
     }
@@ -562,12 +410,10 @@ mod tests {
             let colors = TextListColors::default();
             let layout = render_text_list(frame, area, &state, &colors, 20);
 
-            // Test hitting the remove button on first item
             let btn = &layout.rows[0].button_area;
             let hit = layout.hit_test(btn.x, btn.y);
             assert_eq!(hit, Some(TextListHit::Button(Some(0))));
 
-            // Test hitting the add button
             let add_btn = &layout.rows[1].button_area;
             let hit = layout.hit_test(add_btn.x, add_btn.y);
             assert_eq!(hit, Some(TextListHit::Button(None)));

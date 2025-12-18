@@ -46,7 +46,9 @@ pub use text_input::{
     render_text_input, render_text_input_aligned, TextInputColors, TextInputEvent, TextInputLayout,
     TextInputState,
 };
-pub use text_list::{render_text_list, TextListColors, TextListLayout, TextListState};
+pub use text_list::{
+    render_text_list, TextListColors, TextListEvent, TextListLayout, TextListState,
+};
 pub use toggle::{
     render_toggle, render_toggle_aligned, ToggleColors, ToggleEvent, ToggleLayout, ToggleState,
 };
