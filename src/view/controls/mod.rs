@@ -31,7 +31,8 @@ pub use button::{
     render_button, render_button_row, ButtonColors, ButtonEvent, ButtonLayout, ButtonState,
 };
 pub use dropdown::{
-    render_dropdown, render_dropdown_aligned, DropdownColors, DropdownLayout, DropdownState,
+    render_dropdown, render_dropdown_aligned, DropdownColors, DropdownEvent, DropdownLayout,
+    DropdownState,
 };
 pub use keybinding_list::{
     render_keybinding_list, KeybindingListColors, KeybindingListLayout, KeybindingListState,

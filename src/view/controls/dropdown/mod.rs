@@ -1,12 +1,21 @@
 //! Dropdown selection control
 //!
 //! Renders as: `Label: [Selected Option ▼]`
+//!
+//! This module provides a complete dropdown component with:
+//! - State management (`DropdownState`)
+//! - Rendering (`render_dropdown`, `render_dropdown_aligned`)
+//! - Input handling (`DropdownState::handle_mouse`, `handle_key`)
+//! - Layout/hit testing (`DropdownLayout`)
+
+mod input;
+mod render;
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
-use ratatui::Frame;
+use ratatui::style::Color;
+
+pub use input::DropdownEvent;
+pub use render::{render_dropdown, render_dropdown_aligned};
 
 use super::FocusState;
 
@@ -36,7 +45,7 @@ impl DropdownState {
         Self {
             selected: 0,
             options,
-            values: Vec::new(), // Empty means use options as values
+            values: Vec::new(),
             label: label.into(),
             open: false,
             focus: FocusState::Normal,
@@ -76,6 +85,11 @@ impl DropdownState {
         self
     }
 
+    /// Check if the control is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.focus != FocusState::Disabled
+    }
+
     /// Get the currently selected value (for storing in config)
     pub fn selected_value(&self) -> Option<&str> {
         if self.values.is_empty() {
@@ -101,12 +115,10 @@ impl DropdownState {
 
     /// Toggle the dropdown open/closed
     pub fn toggle_open(&mut self) {
-        if self.focus != FocusState::Disabled {
+        if self.is_enabled() {
             if !self.open {
-                // Opening - save original selection for cancel
                 self.original_selected = Some(self.selected);
             } else {
-                // Closing via toggle - clear original (treat as confirm)
                 self.original_selected = None;
             }
             self.open = !self.open;
@@ -129,14 +141,14 @@ impl DropdownState {
 
     /// Select the next option
     pub fn select_next(&mut self) {
-        if self.focus != FocusState::Disabled && !self.options.is_empty() {
+        if self.is_enabled() && !self.options.is_empty() {
             self.selected = (self.selected + 1) % self.options.len();
         }
     }
 
     /// Select the previous option
     pub fn select_prev(&mut self) {
-        if self.focus != FocusState::Disabled && !self.options.is_empty() {
+        if self.is_enabled() && !self.options.is_empty() {
             self.selected = if self.selected == 0 {
                 self.options.len() - 1
             } else {
@@ -147,7 +159,7 @@ impl DropdownState {
 
     /// Select an option by index
     pub fn select(&mut self, index: usize) {
-        if self.focus != FocusState::Disabled && index < self.options.len() {
+        if self.is_enabled() && index < self.options.len() {
             self.selected = index;
             self.original_selected = None;
             self.open = false;
@@ -208,7 +220,7 @@ impl DropdownColors {
 }
 
 /// Layout information returned after rendering for hit testing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DropdownLayout {
     /// The main dropdown button area
     pub button_area: Rect,
@@ -236,143 +248,13 @@ impl DropdownLayout {
         }
         None
     }
-}
 
-/// Render a dropdown control (closed state)
-///
-/// # Arguments
-/// * `frame` - The ratatui frame to render to
-/// * `area` - Rectangle where the control should be rendered
-/// * `state` - The dropdown state
-/// * `colors` - Colors for rendering
-///
-/// # Returns
-/// Layout information for hit testing
-pub fn render_dropdown(
-    frame: &mut Frame,
-    area: Rect,
-    state: &DropdownState,
-    colors: &DropdownColors,
-) -> DropdownLayout {
-    render_dropdown_aligned(frame, area, state, colors, None)
-}
-
-/// Render a dropdown control with optional label width alignment
-///
-/// # Arguments
-/// * `frame` - The ratatui frame to render to
-/// * `area` - Rectangle where the control should be rendered
-/// * `state` - The dropdown state
-/// * `colors` - Colors for rendering
-/// * `label_width` - Optional minimum label width for alignment
-///
-/// # Returns
-/// Layout information for hit testing
-pub fn render_dropdown_aligned(
-    frame: &mut Frame,
-    area: Rect,
-    state: &DropdownState,
-    colors: &DropdownColors,
-    label_width: Option<u16>,
-) -> DropdownLayout {
-    let empty_layout = DropdownLayout {
-        button_area: Rect::default(),
-        option_areas: Vec::new(),
-        full_area: area,
-    };
-
-    if area.height == 0 || area.width < 10 {
-        return empty_layout;
-    }
-
-    let (label_color, selected_color, border_color, arrow_color) = match state.focus {
-        FocusState::Normal => (colors.label, colors.selected, colors.border, colors.arrow),
-        FocusState::Focused => (
-            colors.focused,
-            colors.selected,
-            colors.focused,
-            colors.focused,
-        ),
-        FocusState::Hovered => (
-            colors.focused,
-            colors.selected,
-            colors.focused,
-            colors.focused,
-        ),
-        FocusState::Disabled => (
-            colors.disabled,
-            colors.disabled,
-            colors.disabled,
-            colors.disabled,
-        ),
-    };
-
-    let selected_text = state.selected_option().unwrap_or("");
-    let max_option_len = state.options.iter().map(|s| s.len()).max().unwrap_or(10);
-    let display_width = max_option_len.max(selected_text.len()).min(20);
-    let padded = format!("{:width$}", selected_text, width = display_width);
-
-    let arrow = if state.open { "▲" } else { "▼" };
-
-    // Use provided label_width for alignment, or default to label length
-    let actual_label_width = label_width.unwrap_or(state.label.len() as u16);
-    let padded_label = format!(
-        "{:width$}",
-        state.label,
-        width = actual_label_width as usize
-    );
-
-    let line = Line::from(vec![
-        Span::styled(padded_label, Style::default().fg(label_color)),
-        Span::styled(": ", Style::default().fg(label_color)),
-        Span::styled("[", Style::default().fg(border_color)),
-        Span::styled(padded, Style::default().fg(selected_color)),
-        Span::styled(" ", Style::default()),
-        Span::styled(arrow, Style::default().fg(arrow_color)),
-        Span::styled("]", Style::default().fg(border_color)),
-    ]);
-
-    let paragraph = Paragraph::new(line);
-    frame.render_widget(paragraph, area);
-
-    let final_label_width = actual_label_width + 2; // label + ": "
-    let button_start = area.x + final_label_width;
-    let button_width = display_width as u16 + 4; // "[" + text + " " + arrow + "]"
-
-    let mut option_areas = Vec::new();
-
-    // Render dropdown menu if open
-    if state.open && area.height > 1 {
-        let menu_y = area.y + 1;
-        let available_height = area.height.saturating_sub(1) as usize;
-        let options_to_show = state.options.len().min(available_height);
-
-        for (i, option) in state.options.iter().take(options_to_show).enumerate() {
-            let option_area = Rect::new(button_start, menu_y + i as u16, button_width, 1);
-            option_areas.push(option_area);
-
-            let is_selected = i == state.selected;
-            let (bg, fg) = if is_selected {
-                (colors.highlight_bg, colors.selected)
-            } else {
-                (Color::Reset, colors.option)
-            };
-
-            let padded_option = format!(" {:width$} ", option, width = display_width);
-            let option_line = Line::from(vec![Span::styled(
-                padded_option,
-                Style::default().fg(fg).bg(bg),
-            )]);
-
-            let option_para = Paragraph::new(option_line);
-            frame.render_widget(option_para, option_area);
-        }
-    }
-
-    DropdownLayout {
-        button_area: Rect::new(button_start, area.y, button_width, 1),
-        option_areas,
-        full_area: Rect::new(area.x, area.y, button_start - area.x + button_width, 1),
+    /// Check if a point is within the full control area
+    pub fn contains(&self, x: u16, y: u16) -> bool {
+        x >= self.full_area.x
+            && x < self.full_area.x + self.full_area.width
+            && y >= self.full_area.y
+            && y < self.full_area.y + self.full_area.height
     }
 }
 
@@ -384,7 +266,7 @@ mod tests {
 
     fn test_frame<F>(width: u16, height: u16, f: F)
     where
-        F: FnOnce(&mut Frame, Rect),
+        F: FnOnce(&mut ratatui::Frame, Rect),
     {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -407,7 +289,7 @@ mod tests {
             let layout = render_dropdown(frame, area, &state, &colors);
 
             assert!(layout.button_area.width > 0);
-            assert!(layout.option_areas.is_empty()); // Closed
+            assert!(layout.option_areas.is_empty());
         });
     }
 
@@ -439,10 +321,10 @@ mod tests {
         state.select_next();
         assert_eq!(state.selected, 2);
         state.select_next();
-        assert_eq!(state.selected, 0); // Wraps around
+        assert_eq!(state.selected, 0);
 
         state.select_prev();
-        assert_eq!(state.selected, 2); // Wraps around backwards
+        assert_eq!(state.selected, 2);
     }
 
     #[test]
@@ -454,7 +336,7 @@ mod tests {
         state.open = true;
         state.select(2);
         assert_eq!(state.selected, 2);
-        assert!(!state.open); // Should close after selection
+        assert!(!state.open);
     }
 
     #[test]
@@ -477,16 +359,13 @@ mod tests {
         )
         .with_selected(1);
 
-        // Open dropdown - should save original
         state.toggle_open();
         assert!(state.open);
         assert_eq!(state.selected, 1);
 
-        // Change selection while open
         state.select_next();
         assert_eq!(state.selected, 2);
 
-        // Cancel - should restore original
         state.cancel();
         assert!(!state.open);
         assert_eq!(state.selected, 1);
@@ -500,15 +379,12 @@ mod tests {
         )
         .with_selected(0);
 
-        // Open dropdown
         state.toggle_open();
         assert!(state.open);
 
-        // Change selection
         state.select_next();
         assert_eq!(state.selected, 1);
 
-        // Confirm - should keep new selection
         state.confirm();
         assert!(!state.open);
         assert_eq!(state.selected, 1);
@@ -522,15 +398,12 @@ mod tests {
         )
         .with_selected(0);
 
-        // Open dropdown
         state.toggle_open();
         assert!(state.open);
 
-        // Change selection
         state.select_next();
         assert_eq!(state.selected, 1);
 
-        // Toggle close - should confirm (not restore)
         state.toggle_open();
         assert!(!state.open);
         assert_eq!(state.selected, 1);
