@@ -6,6 +6,7 @@
 use super::Editor;
 use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputResult};
 use crate::input::keybindings::Action;
+use crate::view::file_browser_input::FileBrowserInputHandler;
 use crate::view::ui::MenuInputHandler;
 use crossterm::event::KeyEvent;
 
@@ -62,29 +63,15 @@ impl Editor {
                 }
             }
 
-            // For file browser prompts (OpenFile, SwitchProject), navigation keys need to
-            // go through keybinding resolution to reach handle_file_open_action.
-            // Only let the prompt InputHandler handle text editing keys.
+            // File browser prompts use FileBrowserInputHandler
             if self.is_file_open_active() {
-                use crossterm::event::KeyCode;
-                let input_empty = self.prompt.as_ref().map_or(true, |p| p.input.is_empty());
-                match event.code {
-                    // Navigation keys - let keybindings handle them for file browser
-                    KeyCode::Enter
-                    | KeyCode::Up
-                    | KeyCode::Down
-                    | KeyCode::Tab
-                    | KeyCode::PageUp
-                    | KeyCode::PageDown => {
-                        // Don't dispatch to prompt - let keybinding resolution handle it
-                        return None;
-                    }
-                    // Backspace when input is empty goes to parent directory
-                    KeyCode::Backspace if input_empty => {
-                        return None;
-                    }
-                    // All other keys (text input, cursor movement) handled by prompt
-                    _ => {}
+                if let (Some(ref mut file_state), Some(ref mut prompt)) =
+                    (&mut self.file_open_state, &mut self.prompt)
+                {
+                    let mut handler = FileBrowserInputHandler::new(file_state, prompt);
+                    let result = handler.dispatch_input(event, &mut ctx);
+                    self.process_deferred_actions(ctx);
+                    return Some(result);
                 }
             }
 
@@ -202,6 +189,50 @@ impl Editor {
                     prompt.insert_char(c);
                 }
                 self.update_prompt_suggestions();
+            }
+
+            // File browser actions
+            DeferredAction::FileBrowserSelectPrev => {
+                if let Some(state) = &mut self.file_open_state {
+                    state.select_prev();
+                }
+            }
+            DeferredAction::FileBrowserSelectNext => {
+                if let Some(state) = &mut self.file_open_state {
+                    state.select_next();
+                }
+            }
+            DeferredAction::FileBrowserPageUp => {
+                if let Some(state) = &mut self.file_open_state {
+                    state.page_up(10);
+                }
+            }
+            DeferredAction::FileBrowserPageDown => {
+                if let Some(state) = &mut self.file_open_state {
+                    state.page_down(10);
+                }
+            }
+            DeferredAction::FileBrowserConfirm => {
+                // Must call handle_file_open_action directly to get proper
+                // file browser behavior (e.g., project switch triggering restart)
+                self.handle_file_open_action(&Action::PromptConfirm);
+            }
+            DeferredAction::FileBrowserAcceptSuggestion => {
+                self.handle_file_open_action(&Action::PromptAcceptSuggestion);
+            }
+            DeferredAction::FileBrowserGoParent => {
+                // Navigate to parent directory
+                let parent = self
+                    .file_open_state
+                    .as_ref()
+                    .and_then(|s| s.current_dir.parent())
+                    .map(|p| p.to_path_buf());
+                if let Some(parent_path) = parent {
+                    self.load_file_open_directory(parent_path);
+                }
+            }
+            DeferredAction::FileBrowserUpdateFilter => {
+                self.update_file_open_filter();
             }
         }
 

@@ -4,6 +4,7 @@
 
 pub mod controls;
 pub mod dimming;
+pub mod file_browser_input;
 pub mod file_tree;
 pub mod margin;
 pub mod overlay;

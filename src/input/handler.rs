@@ -114,6 +114,16 @@ pub enum DeferredAction {
     ClosePopup,
     ConfirmPopup,
 
+    // File browser actions
+    FileBrowserSelectPrev,
+    FileBrowserSelectNext,
+    FileBrowserPageUp,
+    FileBrowserPageDown,
+    FileBrowserConfirm,
+    FileBrowserAcceptSuggestion,
+    FileBrowserGoParent,
+    FileBrowserUpdateFilter,
+
     // Generic action execution
     ExecuteAction(crate::input::keybindings::Action),
 
