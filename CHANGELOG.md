@@ -20,6 +20,12 @@
 
 ### Bug Fixes
 
+* **Paste with Selection**: Fixed paste not replacing selected text - previously inserted without deleting selection.
+
+* **Multi-Cursor Paste**: Fixed paste only working at primary cursor - now pastes at all cursor positions.
+
+* **Bracketed Paste**: Enabled bracketed paste mode for proper handling of external paste (Ctrl+Shift+V). External pastes now arrive as single atomic events instead of character streams.
+
 * **Settings Input Isolation**: Fixed keyboard input leaking between Settings UI panels.
 
 * **Map Control Buttons**: Fixed [+] Add new buttons not working for Map controls.
