@@ -1,7 +1,9 @@
-# TimeSource Abstraction Design
+# TimeSource Abstraction (Implemented)
 
-## Issue Reference
-GitHub Issue #314 - Tests should not rely on real thread sleep
+This document started as a design proposal. The `TimeSource` abstraction is now implemented in
+`src/services/time_source.rs` and is wired through `Editor` for deterministic tests.
+
+If you are looking for “what exists today”, prefer this document over older references.
 
 ## Problem Statement
 
@@ -13,37 +15,20 @@ scattered throughout production and test code. This creates several issues:
 2. **Flaky tests**: Time-dependent tests can be flaky due to system load variations.
 3. **Poor testability**: Code with hard-coded time dependencies is difficult to test in isolation.
 
-## Current Time Usage Analysis
+## Current Usage (Today)
 
-### Production Code (`src/`)
+As of the current code:
+- Most editor subsystems that need time use `Editor`’s `time_source` (`SharedTimeSource`), so tests can run deterministically by swapping in `TestTimeSource`.
+- The `main.rs` frame loop still uses real time (`std::time::Instant`) because terminal event polling (`crossterm::event::poll`) is inherently wall-clock driven.
+- There are still a few direct `std::thread::sleep` usages in non-interactive/background paths (e.g., release checker loops) and in tests; use `rg "thread::sleep"` and `rg "Instant::now"` to get an up-to-date list.
 
-| File | Line | Usage | Purpose |
-|------|------|-------|---------|
-| `services/signal_handler.rs` | 114 | `thread::sleep(100ms)` | Wait for thread backtrace capture |
-| `services/lsp/async_handler.rs` | 3872 | `thread::sleep(50ms)` | Retry delay in tests |
-| `services/release_checker.rs` | 230 | `thread::sleep(increment)` | Periodic update check loop |
-| `app/script_control.rs` | 829 | `thread::sleep(poll_interval)` | Wait-for condition polling |
-
-### Time Measurement (`Instant::now()`)
-
-- Frame timing in `main.rs` event loop
-- LSP request timing
-- Auto-save intervals in `app/mod.rs`
-- Recovery service intervals
-- Rate limiting for file change events
-- Mouse hover delay timing
-
-### System Time (`SystemTime::now()`)
-
-- Session file timestamps in `session.rs`
-- File explorer modification times
-- Recovery file timestamps
+System time (`SystemTime`) is still used where wall-clock timestamps are required (e.g., file mtimes).
 
 ## Proposed Solution
 
 ### TimeSource Trait
 
-Create a `TimeSource` trait that abstracts all time-related operations:
+The `TimeSource` trait abstracts time-related operations:
 
 ```rust
 // src/services/time_source.rs
@@ -68,7 +53,7 @@ pub trait TimeSource: Send + Sync {
     /// Returns an opaque value that can be compared with other instants
     /// from the same TimeSource.
     fn elapsed_since(&self, earlier: Instant) -> Duration {
-        self.now().duration_since(earlier)
+        self.now().saturating_duration_since(earlier)
     }
 }
 
@@ -78,73 +63,14 @@ pub type SharedTimeSource = Arc<dyn TimeSource>;
 
 ### RealTimeSource Implementation
 
-```rust
-/// Production implementation using actual system time.
-#[derive(Debug, Clone, Default)]
-pub struct RealTimeSource;
-
-impl TimeSource for RealTimeSource {
-    fn now(&self) -> Instant {
-        Instant::now()
-    }
-
-    fn sleep(&self, duration: Duration) {
-        std::thread::sleep(duration);
-    }
-}
-```
+Implemented as `RealTimeSource` in `src/services/time_source.rs`.
 
 ### TestTimeSource Implementation
 
-```rust
-use std::sync::atomic::{AtomicU64, Ordering};
+Implemented as `TestTimeSource` in `src/services/time_source.rs`.
 
-/// Test implementation with controllable time.
-///
-/// - `now()` returns a logical instant based on internal counter
-/// - `sleep()` is a no-op by default (for fast tests)
-/// - Time can be advanced manually via `advance()`
-pub struct TestTimeSource {
-    /// Logical time in nanoseconds since creation
-    logical_nanos: AtomicU64,
-    /// Base instant (real time at creation, used for Instant arithmetic)
-    base_instant: Instant,
-}
-
-impl TestTimeSource {
-    pub fn new() -> Self {
-        Self {
-            logical_nanos: AtomicU64::new(0),
-            base_instant: Instant::now(),
-        }
-    }
-
-    /// Advance logical time by the given duration.
-    pub fn advance(&self, duration: Duration) {
-        self.logical_nanos.fetch_add(
-            duration.as_nanos() as u64,
-            Ordering::SeqCst
-        );
-    }
-
-    /// Get the logical elapsed time since creation.
-    pub fn elapsed(&self) -> Duration {
-        Duration::from_nanos(self.logical_nanos.load(Ordering::SeqCst))
-    }
-}
-
-impl TimeSource for TestTimeSource {
-    fn now(&self) -> Instant {
-        // Return base_instant + logical elapsed time
-        self.base_instant + self.elapsed()
-    }
-
-    fn sleep(&self, duration: Duration) {
-        // No-op for fast tests - just advance logical time
-        self.advance(duration);
-    }
-}
-```
+Note: `TestTimeSource::sleep()` advances logical time (it is not a no-op), which keeps tests fast
+while still letting production code “sleep” against a controllable clock.
 
 ## Integration Architecture
 
@@ -155,7 +81,7 @@ main()
   │
   ├──► Creates RealTimeSource (or TestTimeSource in tests)
   │
-  ├──► Editor::new(..., time_source)
+  ├──► Editor::with_working_dir(..., time_source?)
   │      │
   │      ├──► LspManager::new(..., time_source.clone())
   │      │
@@ -163,61 +89,28 @@ main()
   │      │
   │      └──► Other services that need time...
   │
-  └──► run_event_loop(..., time_source)
+  └──► run_event_loop(...)
          │
-         └──► Uses time_source.now() for frame timing
+         └──► Uses std::time::Instant for frame timing
 ```
 
 ### Changes Required
 
-1. **New module**: `src/services/time_source.rs`
-   - Define `TimeSource` trait
-   - Implement `RealTimeSource`
-   - Implement `TestTimeSource`
+This section is largely complete.
 
-2. **Editor struct**: Add `time_source: SharedTimeSource` field
-   - Pass through constructor
-   - Pass to child services
-
-3. **Services to update**:
-   - `release_checker.rs`: Use time_source for periodic check loop
-   - `script_control.rs`: Use time_source for wait_for polling
-   - `app/mod.rs`: Use time_source for auto-save timing, hover delay
-   - `lsp/manager.rs`: Use time_source for request timing
-   - `lsp/async_handler.rs`: Use time_source for retry delays
-   - `recovery/mod.rs`: Use time_source for auto-save intervals
-
-4. **Main event loop** (`main.rs`):
-   - Create time_source
-   - Pass to Editor
-   - Use for frame timing
-
-5. **Test harness** (`tests/common/harness.rs`):
-   - Create TestTimeSource
-   - Pass to Editor in test setup
-   - Expose `advance_time()` method
+Current status:
+- Implemented: `src/services/time_source.rs` and `src/services/mod.rs`
+- Implemented: `Editor` owns a `SharedTimeSource` (defaulting to `RealTimeSource::shared()` when
+  not provided); see `src/app/mod.rs`
+- Implemented: most editor subsystems use `self.time_source` for timing (mouse hover delays,
+  double-click detection, auto-save timers, file polling debouncing, etc.)
+- Not implemented (by design): the `main.rs` frame loop uses real time (`std::time::Instant` and
+  `crossterm::event::poll`), because terminal polling is inherently wall-clock driven
 
 ## Migration Strategy
 
-### Phase 1: Infrastructure
-1. Create `TimeSource` trait and implementations
-2. Add `time_source` field to `Editor`
-3. Wire through constructor
-
-### Phase 2: Core Services
-1. Update `release_checker.rs`
-2. Update `script_control.rs` wait_for
-3. Update main event loop frame timing
-
-### Phase 3: Secondary Services
-1. Update LSP timing code
-2. Update recovery service
-3. Update auto-save logic
-
-### Phase 4: Test Migration
-1. Update test harness to use `TestTimeSource`
-2. Replace `thread::sleep` calls in tests with time advancement
-3. Verify test speedup
+Most migration steps are complete. Remaining work is to keep new time-based features using
+`TimeSource` rather than introducing ad-hoc `Instant::now()` usage in test-sensitive code.
 
 ## Special Cases
 
@@ -228,8 +121,7 @@ The sleep in `signal_handler.rs` (line 114) should remain as real `thread::sleep
 - Tests don't typically exercise signal handlers
 
 ### Frame Timing
-The frame timing in `main.rs` can use `TimeSource::now()` but the actual event poll
-timeout (`event_poll(Duration)`) necessarily uses real time. This is acceptable because:
+The frame timing in `main.rs` currently uses `std::time::Instant`. This is acceptable because:
 - The poll timeout is for responsiveness, not correctness
 - Tests use the script control mode which doesn't use the event loop
 
@@ -244,20 +136,22 @@ timeout (`event_poll(Duration)`) necessarily uses real time. This is acceptable 
 
 ### Production Usage
 ```rust
-// In main.rs
-let time_source = Arc::new(RealTimeSource);
-let editor = Editor::new(config, width, height, working_dir, dir_context, time_source);
+use fresh::services::time_source::RealTimeSource;
+
+let time_source = RealTimeSource::shared();
+// Editor construction defaults to RealTimeSource when not supplied explicitly.
+// When you want to override (tests, embedding), pass `time_source` through the Editor constructor.
 ```
 
 ### Test Usage
 ```rust
-// In test
-let time_source = Arc::new(TestTimeSource::new());
-let harness = EditorTestHarness::with_time_source(80, 24, time_source.clone())?;
+use fresh::services::time_source::TestTimeSource;
+use std::time::Duration;
+
+let time_source = TestTimeSource::shared();
 
 // Advance time by 5 seconds (instant, no actual waiting)
 time_source.advance(Duration::from_secs(5));
-
 // Check that time-based behavior occurred
 assert!(harness.auto_save_triggered());
 ```

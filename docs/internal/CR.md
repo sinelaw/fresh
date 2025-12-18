@@ -2,6 +2,8 @@
 
 Pending code quality improvements and refactoring opportunities.
 
+Note: file/line references are best-effort and can drift as the code changes; treat line numbers as approximate.
+
 ## Large Functions
 - src/app/render.rs:5 — top-level `render` runs ~450 lines covering layout calculation, plugin hook firing, file explorer rendering, and status/prompt UI. The amount of responsibility in one function hurts readability and testing; factoring into helpers (layout, plugin hook prep, explorer rendering, status/prompt rendering) would make regressions easier to spot.
 - src/input/keybindings.rs:376 — `Action::from_str` is a ~260-line string-to-enum match. A data-driven table would reduce boilerplate and avoid missing new actions when added to the enum.
@@ -33,7 +35,8 @@ Pending code quality improvements and refactoring opportunities.
 - src/services/plugins/process.rs:132/166/195/226 — plugin process bridge uses `recv().unwrap()`; closed channels during shutdown will panic the host. Treat channel closure as cancellation to allow clean teardown.
 - src/services/plugins/process.rs — blocking `recv()` loops have no timeout/backoff; a misbehaving plugin can hang the thread. Consider async or timeout-aware handling to avoid host hangs.
 - src/services/async_bridge.rs — uses unbounded std::sync::mpsc channels with no backpressure or eviction; a burst of async messages (e.g., LSP floods) can grow memory unbounded. Consider bounded channels or dropping strategies plus explicit error propagation on lock/channel failure.
-- src/services/plugins/event_hooks.rs — `apply_event_with_hooks` runs plugin hooks inline and ignores hook panics/poisoned locks. A plugin hook panic will crash core edits; consider isolating hook execution (catch_unwind/log) to keep the editor stable.
+- src/services/plugins/event_hooks.rs — `apply_event_with_hooks` appears to be legacy/test-only and is not part of the current editor edit path (which applies edits via `Editor::apply_event_to_active_buffer` and queues plugin hooks asynchronously). If this module becomes production-critical again, it should isolate hook execution (catch_unwind/log) and avoid panics on poisoned locks.
+- src/app/plugin_commands.rs — some plugin text-editing commands (`InsertText`, `DeleteRange`, `InsertAtCursor`) mutate buffers without going through `Editor::apply_event_to_active_buffer`, which can bypass cross-cutting concerns (LSP change notifications, search highlight clearing, cursor/view sync, plugin after-insert/delete hooks). Consider routing “real edit” plugin commands through the centralized apply path, or document them as “raw/unsafe” edits.
 - src/view/ui/tabs.rs — `render_for_split` packs tab width calculation, scroll computation, and rendering into one long function; consider splitting into layout calculation and render steps to improve readability and reduce bugs in scroll math.
 - src/services/process_limits.rs — applies limits via cgroups/setrlimit with many unwraps noted; also lacks clear fallback/reporting when limits can't be applied (e.g., non-Linux or missing cgroup perms). Return actionable errors so callers can decide to continue without limits.
 
