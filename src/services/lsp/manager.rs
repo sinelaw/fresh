@@ -635,6 +635,7 @@ mod tests {
             "rust".to_string(),
             crate::config::LanguageConfig {
                 extensions: vec!["rs".to_string()],
+                filenames: vec![],
                 grammar: "rust".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
@@ -646,6 +647,7 @@ mod tests {
             "javascript".to_string(),
             crate::config::LanguageConfig {
                 extensions: vec!["js".to_string(), "jsx".to_string()],
+                filenames: vec![],
                 grammar: "javascript".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
@@ -657,6 +659,7 @@ mod tests {
             "csharp".to_string(),
             crate::config::LanguageConfig {
                 extensions: vec!["cs".to_string()],
+                filenames: vec![],
                 grammar: "c_sharp".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
