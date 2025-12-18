@@ -265,7 +265,10 @@ impl EntryDialogState {
 
     /// Calculate total content height for all items
     pub fn total_content_height(&self) -> usize {
-        self.items.iter().map(|item| item.control.control_height() as usize).sum()
+        self.items
+            .iter()
+            .map(|item| item.control.control_height() as usize)
+            .sum()
     }
 
     /// Calculate the Y offset of the selected item

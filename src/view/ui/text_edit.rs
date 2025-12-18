@@ -105,7 +105,10 @@ impl TextEdit {
 
     /// Get the current line
     pub fn current_line(&self) -> &str {
-        self.lines.get(self.cursor_row).map(|s| s.as_str()).unwrap_or("")
+        self.lines
+            .get(self.cursor_row)
+            .map(|s| s.as_str())
+            .unwrap_or("")
     }
 
     /// Get number of lines
@@ -145,7 +148,11 @@ impl TextEdit {
     }
 
     fn move_right_internal(&mut self) {
-        let line_len = self.lines.get(self.cursor_row).map(|l| l.len()).unwrap_or(0);
+        let line_len = self
+            .lines
+            .get(self.cursor_row)
+            .map(|l| l.len())
+            .unwrap_or(0);
         if self.cursor_col < line_len {
             // Move to next char boundary
             let line = &self.lines[self.cursor_row];
@@ -197,7 +204,11 @@ impl TextEdit {
     /// Move to end of line
     pub fn move_end(&mut self) {
         self.clear_selection();
-        self.cursor_col = self.lines.get(self.cursor_row).map(|l| l.len()).unwrap_or(0);
+        self.cursor_col = self
+            .lines
+            .get(self.cursor_row)
+            .map(|l| l.len())
+            .unwrap_or(0);
     }
 
     /// Move to start of previous word
@@ -374,7 +385,11 @@ impl TextEdit {
     /// Move to end of line with selection (Shift+End)
     pub fn move_end_selecting(&mut self) {
         self.ensure_anchor();
-        self.cursor_col = self.lines.get(self.cursor_row).map(|l| l.len()).unwrap_or(0);
+        self.cursor_col = self
+            .lines
+            .get(self.cursor_row)
+            .map(|l| l.len())
+            .unwrap_or(0);
     }
 
     /// Move word left with selection (Ctrl+Shift+Left)
@@ -475,7 +490,11 @@ impl TextEdit {
             return;
         }
 
-        let line_len = self.lines.get(self.cursor_row).map(|l| l.len()).unwrap_or(0);
+        let line_len = self
+            .lines
+            .get(self.cursor_row)
+            .map(|l| l.len())
+            .unwrap_or(0);
         if self.cursor_col < line_len {
             let line = &mut self.lines[self.cursor_row];
             // Find next char boundary

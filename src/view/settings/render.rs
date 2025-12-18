@@ -1873,11 +1873,8 @@ fn render_entry_dialog(
 
         let scrollbar_x = dialog_area.x + dialog_area.width - 3;
         let scrollbar_area = Rect::new(scrollbar_x, inner.y, 1, inner.height);
-        let scrollbar_state = ScrollbarState::new(
-            total_content_height,
-            viewport_height,
-            scroll_offset,
-        );
+        let scrollbar_state =
+            ScrollbarState::new(total_content_height, viewport_height, scroll_offset);
         let scrollbar_colors = ScrollbarColors::from_theme(theme);
         render_scrollbar(frame, scrollbar_area, &scrollbar_state, &scrollbar_colors);
     }
