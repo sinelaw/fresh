@@ -56,6 +56,13 @@ impl ColorCapability {
                 if t.contains("direct") {
                     return ColorCapability::TrueColor;
                 }
+                // Check COLORTERM - tmux can pass through truecolor if configured
+                if let Ok(colorterm) = std::env::var("COLORTERM") {
+                    let ct = colorterm.to_lowercase();
+                    if ct == "truecolor" || ct == "24bit" {
+                        return ColorCapability::TrueColor;
+                    }
+                }
                 return ColorCapability::Color256;
             }
         }
