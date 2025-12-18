@@ -35,7 +35,8 @@ pub use dropdown::{
     DropdownState,
 };
 pub use keybinding_list::{
-    render_keybinding_list, KeybindingListColors, KeybindingListLayout, KeybindingListState,
+    render_keybinding_list, KeybindingListColors, KeybindingListEvent, KeybindingListLayout,
+    KeybindingListState,
 };
 pub use map_input::{render_map, MapColors, MapEvent, MapLayout, MapState};
 pub use number_input::{
