@@ -45,7 +45,9 @@ pub use text_input::{
     render_text_input, render_text_input_aligned, TextInputColors, TextInputLayout, TextInputState,
 };
 pub use text_list::{render_text_list, TextListColors, TextListLayout, TextListState};
-pub use toggle::{render_toggle, render_toggle_aligned, ToggleColors, ToggleLayout, ToggleState};
+pub use toggle::{
+    render_toggle, render_toggle_aligned, ToggleColors, ToggleEvent, ToggleLayout, ToggleState,
+};
 
 use ratatui::style::Color;
 
