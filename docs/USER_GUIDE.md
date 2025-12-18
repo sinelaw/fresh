@@ -142,6 +142,29 @@ For example, to add C# support:
 
 The language name (e.g., `"csharp"`) must match in both sections. Fresh includes built-in language definitions for Rust, JavaScript, TypeScript, and Python, but you can add any language by configuring it in your config file.
 
+#### Configuring Language Detection via Settings UI
+
+You can also configure language detection using the Settings UI instead of editing `config.json` directly:
+
+1. **Open Settings**: Press `Ctrl+,` or use the command palette (`Ctrl+P`) and search for "Settings"
+2. **Navigate to Languages**: Go to the **Languages** section
+3. **Add or Edit a Language**: Click on an existing language to edit it, or add a new one
+4. **Configure Detection**: Set the following fields:
+   - **Extensions**: File extensions that should use this language (e.g., `cs` for C#, `rs` for Rust)
+   - **Filenames**: Specific filenames without extensions (e.g., `Makefile`, `.bashrc`, `.zshrc`)
+   - **Grammar**: The syntax highlighting grammar to use (must match a grammar name from syntect)
+
+##### Example: Adding Shell Script Detection for Dotfiles
+
+To make Fresh recognize `.bashrc`, `.zshrc`, and similar files as shell scripts:
+
+1. Open Settings (`Ctrl+,`)
+2. Go to **Languages** → **bash** (or create a new `bash` entry)
+3. Add filenames: `.bashrc`, `.zshrc`, `.bash_profile`, `.profile`
+4. The grammar should be set to `Bourne Again Shell (bash)` or similar
+
+Fresh checks filenames first, then extensions, allowing dotfiles without traditional extensions to get proper syntax highlighting.
+
 ## Plugins
 
 Fresh's functionality can be extended with plugins written in TypeScript. Fresh comes with a few useful plugins out of the box:
