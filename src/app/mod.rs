@@ -8,12 +8,14 @@ mod input_dispatch;
 mod lsp_actions;
 mod menu_actions;
 mod plugin_commands;
+mod popup_actions;
 mod prompt_actions;
 mod render;
 pub mod session;
 mod terminal;
 mod terminal_input;
 pub mod types;
+mod view_actions;
 
 use std::path::Component;
 

@@ -345,68 +345,7 @@ impl Editor {
                 self.set_status_message(format!("Line wrap {}", state));
             }
             Action::ToggleComposeMode => {
-                let default_wrap = self.config.editor.line_wrap;
-                let default_line_numbers = self.config.editor.line_numbers;
-                let active_split = self.split_manager.active_split();
-                let mut view_mode = {
-                    if let Some(vs) = self.split_view_states.get(&active_split) {
-                        vs.view_mode.clone()
-                    } else {
-                        self.active_state().view_mode.clone()
-                    }
-                };
-
-                view_mode = match view_mode {
-                    crate::state::ViewMode::Compose => crate::state::ViewMode::Source,
-                    _ => crate::state::ViewMode::Compose,
-                };
-
-                // Update split view state
-                let current_line_numbers = self.active_state().margins.show_line_numbers;
-                if let Some(vs) = self.split_view_states.get_mut(&active_split) {
-                    vs.view_mode = view_mode.clone();
-                    // In Compose mode, disable builtin line wrap - the plugin handles
-                    // wrapping by inserting Break tokens in the view transform pipeline.
-                    // In Source mode, respect the user's default_wrap preference.
-                    vs.viewport.line_wrap_enabled = match view_mode {
-                        crate::state::ViewMode::Compose => false,
-                        crate::state::ViewMode::Source => default_wrap,
-                    };
-                    match view_mode {
-                        crate::state::ViewMode::Compose => {
-                            vs.compose_prev_line_numbers = Some(current_line_numbers);
-                            self.active_state_mut().margins.set_line_numbers(false);
-                        }
-                        crate::state::ViewMode::Source => {
-                            // Clear compose width to remove margins
-                            vs.compose_width = None;
-                            vs.view_transform = None;
-                            let restore = vs
-                                .compose_prev_line_numbers
-                                .take()
-                                .unwrap_or(default_line_numbers);
-                            self.active_state_mut().margins.set_line_numbers(restore);
-                        }
-                    }
-                }
-
-                // Keep buffer-level view mode for status/use
-                {
-                    let state = self.active_state_mut();
-                    state.view_mode = view_mode.clone();
-                    // Note: viewport.line_wrap_enabled is now handled in SplitViewState above
-                    // Clear compose state when switching to Source mode
-                    if matches!(view_mode, crate::state::ViewMode::Source) {
-                        state.compose_width = None;
-                        state.view_transform = None;
-                    }
-                }
-
-                let mode_label = match view_mode {
-                    crate::state::ViewMode::Compose => "Compose",
-                    crate::state::ViewMode::Source => "Source",
-                };
-                self.set_status_message(format!("Mode: {}", mode_label));
+                self.handle_toggle_compose_mode();
             }
             Action::SetComposeWidth => {
                 let active_split = self.split_manager.active_split();
@@ -983,113 +922,13 @@ impl Editor {
                 }
             }
             Action::PopupConfirm => {
-                // Check if this is an LSP confirmation popup
-                let lsp_confirmation_action = if let Some(popup) = self.active_state().popups.top()
-                {
-                    if let Some(title) = &popup.title {
-                        if title.starts_with("Start LSP Server:") {
-                            if let Some(item) = popup.selected_item() {
-                                item.data.clone()
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                // Handle LSP confirmation if present
-                if let Some(action) = lsp_confirmation_action {
-                    self.hide_popup();
-                    self.handle_lsp_confirmation_response(&action);
+                use super::popup_actions::PopupConfirmResult;
+                if let PopupConfirmResult::EarlyReturn = self.handle_popup_confirm() {
                     return Ok(());
                 }
-
-                // If it's a completion popup, insert the selected item
-                let completion_text = if let Some(popup) = self.active_state().popups.top() {
-                    if let Some(title) = &popup.title {
-                        if title == "Completion" {
-                            if let Some(item) = popup.selected_item() {
-                                item.data.clone()
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                // Now perform the completion if we have text
-                if let Some(text) = completion_text {
-                    use crate::primitives::word_navigation::find_completion_word_start;
-
-                    let (cursor_id, cursor_pos, word_start) = {
-                        let state = self.active_state();
-                        let cursor_id = state.cursors.primary_id();
-                        let cursor_pos = state.cursors.primary().position;
-                        let word_start = find_completion_word_start(&state.buffer, cursor_pos);
-                        (cursor_id, cursor_pos, word_start)
-                    };
-
-                    let deleted_text = if word_start < cursor_pos {
-                        self.active_state_mut()
-                            .get_text_range(word_start, cursor_pos)
-                    } else {
-                        String::new()
-                    };
-
-                    if word_start < cursor_pos {
-                        let delete_event = crate::model::event::Event::Delete {
-                            range: word_start..cursor_pos,
-                            deleted_text,
-                            cursor_id,
-                        };
-
-                        self.active_event_log_mut().append(delete_event.clone());
-                        self.apply_event_to_active_buffer(&delete_event);
-
-                        let buffer_len = self.active_state().buffer.len();
-                        let insert_pos = word_start.min(buffer_len);
-
-                        let insert_event = crate::model::event::Event::Insert {
-                            position: insert_pos,
-                            text,
-                            cursor_id,
-                        };
-
-                        self.active_event_log_mut().append(insert_event.clone());
-                        self.apply_event_to_active_buffer(&insert_event);
-                    } else {
-                        let insert_event = crate::model::event::Event::Insert {
-                            position: cursor_pos,
-                            text,
-                            cursor_id,
-                        };
-
-                        self.active_event_log_mut().append(insert_event.clone());
-                        self.apply_event_to_active_buffer(&insert_event);
-                    }
-                }
-
-                self.hide_popup();
             }
             Action::PopupCancel => {
-                // Clear pending LSP confirmation if cancelling that popup
-                if self.pending_lsp_confirmation.is_some() {
-                    self.pending_lsp_confirmation = None;
-                    self.set_status_message("LSP server startup cancelled".to_string());
-                }
-                self.hide_popup();
+                self.handle_popup_cancel();
             }
             Action::InsertChar(c) => {
                 // Handle character insertion in prompt mode
