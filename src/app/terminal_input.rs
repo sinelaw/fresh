@@ -155,8 +155,10 @@ mod tests {
         let mut handler = TerminalModeInputHandler::new(false, &resolver);
         let mut ctx = InputContext::new();
 
-        let result =
-            handler.handle_key_event(&key_with_mods(KeyCode::PageUp, KeyModifiers::SHIFT), &mut ctx);
+        let result = handler.handle_key_event(
+            &key_with_mods(KeyCode::PageUp, KeyModifiers::SHIFT),
+            &mut ctx,
+        );
         assert!(matches!(result, InputResult::Consumed));
         assert_eq!(ctx.deferred_actions.len(), 1);
         assert!(matches!(

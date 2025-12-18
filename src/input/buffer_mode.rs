@@ -84,10 +84,11 @@ impl ModeRegistry {
 
         // Register built-in "special" mode (base for all special buffers)
         // This is like Emacs' special-mode
+        // Keybindings map to Action names (see Action::from_str)
         let special_mode = BufferMode::new("special")
             .with_read_only(true)
-            .with_binding(KeyCode::Char('q'), KeyModifiers::NONE, "close-buffer")
-            .with_binding(KeyCode::Char('g'), KeyModifiers::NONE, "revert-buffer");
+            .with_binding(KeyCode::Char('q'), KeyModifiers::NONE, "close")
+            .with_binding(KeyCode::Char('g'), KeyModifiers::NONE, "revert");
 
         registry.register(special_mode);
 
@@ -215,12 +216,12 @@ mod tests {
         assert_eq!(
             mode.keybindings
                 .get(&(KeyCode::Char('q'), KeyModifiers::NONE)),
-            Some(&"close-buffer".to_string())
+            Some(&"close".to_string())
         );
         assert_eq!(
             mode.keybindings
                 .get(&(KeyCode::Char('g'), KeyModifiers::NONE)),
-            Some(&"revert-buffer".to_string())
+            Some(&"revert".to_string())
         );
     }
 
@@ -245,7 +246,7 @@ mod tests {
         // Should find inherited binding from special mode
         assert_eq!(
             registry.resolve_keybinding("diagnostics-list", KeyCode::Char('q'), KeyModifiers::NONE),
-            Some("close-buffer".to_string())
+            Some("close".to_string())
         );
 
         // Should not find non-existent binding
@@ -296,7 +297,7 @@ mod tests {
         // Should have inherited 'g'
         assert_eq!(
             all_bindings.get(&(KeyCode::Char('g'), KeyModifiers::NONE)),
-            Some(&"revert-buffer".to_string())
+            Some(&"revert".to_string())
         );
 
         // Should have child-specific binding

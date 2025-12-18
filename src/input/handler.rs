@@ -131,7 +131,9 @@ pub enum DeferredAction {
     // Terminal mode actions
     ToggleKeyboardCapture,
     SendTerminalKey(crossterm::event::KeyCode, crossterm::event::KeyModifiers),
-    ExitTerminalMode { explicit: bool },
+    ExitTerminalMode {
+        explicit: bool,
+    },
     EnterScrollbackMode,
     EnterTerminalMode,
 
