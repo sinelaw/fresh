@@ -108,7 +108,7 @@ jobs:
 
   test-ubuntu-20-04:
     runs-on: ubuntu-latest
-    name: test ubuntu-20.04 (container)
+    name: test ubuntu-20.04
     container:
       image: ubuntu:20.04
     env:
