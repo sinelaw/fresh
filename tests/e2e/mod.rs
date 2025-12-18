@@ -26,6 +26,7 @@ pub mod movement;
 pub mod multibyte_characters;
 pub mod multicursor;
 pub mod open_folder;
+pub mod paste;
 #[cfg(feature = "plugins")]
 pub mod plugins;
 pub mod position_history;

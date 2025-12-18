@@ -2,9 +2,9 @@ use clap::Parser;
 use crossterm::{
     cursor::SetCursorStyle,
     event::{
-        poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent, KeyEventKind,
-        KeyboardEnhancementFlags, MouseEvent, PopKeyboardEnhancementFlags,
-        PushKeyboardEnhancementFlags,
+        poll as event_poll, read as event_read, DisableBracketedPaste, EnableBracketedPaste,
+        Event as CrosstermEvent, KeyEvent, KeyEventKind, KeyboardEnhancementFlags, MouseEvent,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
@@ -258,6 +258,7 @@ fn initialize_app(args: &Args) -> io::Result<SetupState> {
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
         let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
+        let _ = stdout().execute(DisableBracketedPaste);
         let _ = stdout().execute(SetCursorStyle::DefaultUserShape);
         let _ = stdout().execute(PopKeyboardEnhancementFlags);
         let _ = disable_raw_mode();
@@ -328,6 +329,10 @@ fn initialize_app(args: &Args) -> io::Result<SetupState> {
     } else {
         tracing::info!("Using GPM for mouse capture, skipping crossterm mouse protocol");
     }
+
+    // Enable bracketed paste mode so external pastes arrive as Event::Paste
+    let _ = stdout().execute(EnableBracketedPaste);
+    tracing::info!("Enabled bracketed paste mode");
 
     let _ = stdout().execute(SetCursorStyle::BlinkingBlock);
     tracing::info!("Enabled blinking block cursor");
@@ -501,6 +506,7 @@ fn main() -> io::Result<()> {
 
     // Clean up terminal
     let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
+    let _ = stdout().execute(DisableBracketedPaste);
     let _ = stdout().execute(SetCursorStyle::DefaultUserShape);
     let _ = stdout().execute(PopKeyboardEnhancementFlags);
     disable_raw_mode()?;
@@ -643,6 +649,11 @@ where
             }
             CrosstermEvent::Resize(w, h) => {
                 editor.resize(w, h);
+                needs_render = true;
+            }
+            CrosstermEvent::Paste(text) => {
+                // External paste from terminal (bracketed paste mode)
+                editor.paste_text(text);
                 needs_render = true;
             }
             _ => {}
