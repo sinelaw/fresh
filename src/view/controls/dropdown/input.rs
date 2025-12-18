@@ -244,11 +244,8 @@ mod tests {
 
     #[test]
     fn test_enter_toggles() {
-        let mut state = DropdownState::new(
-            vec!["A".to_string(), "B".to_string()],
-            "Test",
-        )
-        .with_focus(FocusState::Focused);
+        let mut state = DropdownState::new(vec!["A".to_string(), "B".to_string()], "Test")
+            .with_focus(FocusState::Focused);
 
         let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
         let result = state.handle_key(enter);

@@ -173,8 +173,7 @@ mod tests {
 
     #[test]
     fn test_click_remove_button() {
-        let mut state =
-            TextListState::new("Items").with_items(vec!["item".to_string()]);
+        let mut state = TextListState::new("Items").with_items(vec!["item".to_string()]);
         let layout = make_layout();
 
         let result = state.handle_mouse(mouse_down(25, 1), &layout);
@@ -195,8 +194,7 @@ mod tests {
 
     #[test]
     fn test_click_text_field() {
-        let mut state =
-            TextListState::new("Items").with_items(vec!["item".to_string()]);
+        let mut state = TextListState::new("Items").with_items(vec!["item".to_string()]);
         let layout = make_layout();
 
         let result = state.handle_mouse(mouse_down(10, 1), &layout);
@@ -206,8 +204,8 @@ mod tests {
 
     #[test]
     fn test_keyboard_navigation() {
-        let mut state = TextListState::new("Items")
-            .with_items(vec!["a".to_string(), "b".to_string()]);
+        let mut state =
+            TextListState::new("Items").with_items(vec!["a".to_string(), "b".to_string()]);
         state.focus_new_item();
 
         let up = KeyEvent::new(KeyCode::Up, KeyModifiers::empty());
@@ -231,8 +229,8 @@ mod tests {
 
     #[test]
     fn test_delete_removes_focused_item() {
-        let mut state = TextListState::new("Items")
-            .with_items(vec!["a".to_string(), "b".to_string()]);
+        let mut state =
+            TextListState::new("Items").with_items(vec!["a".to_string(), "b".to_string()]);
         state.focus_item(0);
 
         let delete = KeyEvent::new(KeyCode::Delete, KeyModifiers::empty());
@@ -243,12 +241,14 @@ mod tests {
 
     #[test]
     fn test_typing_in_item() {
-        let mut state = TextListState::new("Items")
-            .with_items(vec!["hello".to_string()]);
+        let mut state = TextListState::new("Items").with_items(vec!["hello".to_string()]);
         state.focus_item(0);
 
         let key = KeyEvent::new(KeyCode::Char('!'), KeyModifiers::empty());
         let result = state.handle_key(key);
-        assert_eq!(result, Some(TextListEvent::ItemChanged(0, "hello!".to_string())));
+        assert_eq!(
+            result,
+            Some(TextListEvent::ItemChanged(0, "hello!".to_string()))
+        );
     }
 }
