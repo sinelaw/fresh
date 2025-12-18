@@ -27,7 +27,9 @@ pub mod text_input;
 pub mod text_list;
 pub mod toggle;
 
-pub use button::{render_button, ButtonColors, ButtonLayout, ButtonState};
+pub use button::{
+    render_button, render_button_row, ButtonColors, ButtonEvent, ButtonLayout, ButtonState,
+};
 pub use dropdown::{
     render_dropdown, render_dropdown_aligned, DropdownColors, DropdownLayout, DropdownState,
 };
