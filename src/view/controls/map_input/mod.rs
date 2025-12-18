@@ -47,6 +47,8 @@ pub struct MapState {
     pub expanded: Vec<usize>,
     /// Schema for value type (for creating new entries)
     pub value_schema: Option<Box<crate::view::settings::schema::SettingSchema>>,
+    /// JSON pointer to field within value to display as preview (e.g., "/command")
+    pub display_field: Option<String>,
 }
 
 impl MapState {
@@ -61,6 +63,35 @@ impl MapState {
             focus: FocusState::Normal,
             expanded: Vec::new(),
             value_schema: None,
+            display_field: None,
+        }
+    }
+
+    /// Set the display field (JSON pointer to field within value to show as preview)
+    pub fn with_display_field(mut self, field: String) -> Self {
+        self.display_field = Some(field);
+        self
+    }
+
+    /// Get the display value for an entry (either from display_field or fallback to field count)
+    pub fn get_display_value(&self, value: &serde_json::Value) -> String {
+        if let Some(ref field) = self.display_field {
+            if let Some(v) = value.pointer(field) {
+                return match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Null => "null".to_string(),
+                    serde_json::Value::Array(arr) => format!("[{} items]", arr.len()),
+                    serde_json::Value::Object(obj) => format!("{{{} fields}}", obj.len()),
+                };
+            }
+        }
+        // Fallback to showing field count
+        match value {
+            serde_json::Value::Object(obj) => format!("{{{} fields}}", obj.len()),
+            serde_json::Value::Array(arr) => format!("[{} items]", arr.len()),
+            other => other.to_string(),
         }
     }
 
@@ -210,29 +241,46 @@ impl MapState {
         }
     }
 
-    /// Move focus to previous entry
-    pub fn focus_prev(&mut self) {
+    /// Move focus to previous entry. Returns true if handled, false if should move to prev item.
+    pub fn focus_prev(&mut self) -> bool {
         match self.focused_entry {
-            Some(0) => {} // Stay at first entry
-            Some(idx) => self.focused_entry = Some(idx - 1),
+            Some(0) => false, // At first entry, move to previous item
+            Some(idx) => {
+                self.focused_entry = Some(idx - 1);
+                true
+            }
             None if !self.entries.is_empty() => {
                 self.focused_entry = Some(self.entries.len() - 1);
+                true
             }
-            None => {}
+            None => false, // Empty map, move to previous item
         }
     }
 
-    /// Move focus to next entry
-    pub fn focus_next(&mut self) {
+    /// Move focus to next entry. Returns true if handled, false if should move to next item.
+    pub fn focus_next(&mut self) -> bool {
         match self.focused_entry {
             Some(idx) if idx + 1 < self.entries.len() => {
                 self.focused_entry = Some(idx + 1);
+                true
             }
             Some(_) => {
                 self.focused_entry = None;
                 self.cursor = self.new_key_text.len();
+                true
             }
-            None => {}
+            None => false, // At add-new, move to next item
+        }
+    }
+
+    /// Initialize focus when entering the control.
+    /// `from_above`: true = start at first entry, false = start at add-new field
+    pub fn init_focus(&mut self, from_above: bool) {
+        if from_above && !self.entries.is_empty() {
+            self.focused_entry = Some(0);
+        } else {
+            self.focused_entry = None;
+            self.cursor = self.new_key_text.len();
         }
     }
 

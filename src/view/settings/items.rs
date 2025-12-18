@@ -447,7 +447,10 @@ fn build_item(schema: &SettingSchema, config_value: &serde_json::Value) -> Setti
             type_name: "Object".to_string(),
         },
 
-        SettingType::Map { value_schema } => {
+        SettingType::Map {
+            value_schema,
+            display_field,
+        } => {
             // Get current map value or default
             let map_value = current_value
                 .cloned()
@@ -456,6 +459,9 @@ fn build_item(schema: &SettingSchema, config_value: &serde_json::Value) -> Setti
 
             let mut state = MapState::new(&schema.name).with_entries(&map_value);
             state = state.with_value_schema((**value_schema).clone());
+            if let Some(field) = display_field {
+                state = state.with_display_field(field.clone());
+            }
             SettingControl::Map(state)
         }
 

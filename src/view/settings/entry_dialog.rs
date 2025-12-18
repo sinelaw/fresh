@@ -1043,6 +1043,7 @@ mod tests {
             "configs",
             SettingType::Map {
                 value_schema: Box::new(inner),
+                display_field: None,
             },
         );
         let field = build_field_from_property(&schema, Some(&json!({"key": "val"})));

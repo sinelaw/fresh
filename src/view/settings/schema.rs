@@ -96,7 +96,11 @@ pub enum SettingType {
     /// Nested object (category)
     Object { properties: Vec<SettingSchema> },
     /// Map with string keys (for languages, lsp configs)
-    Map { value_schema: Box<SettingSchema> },
+    Map {
+        value_schema: Box<SettingSchema>,
+        /// JSON pointer to field within value to display as preview (e.g., "/command")
+        display_field: Option<String>,
+    },
     /// Complex type we can't edit directly
     Complex,
 }
@@ -403,8 +407,16 @@ fn determine_type(
                         let inner_resolved = resolve_ref(schema_box, defs);
                         let value_schema =
                             parse_setting("value", "", inner_resolved, defs, enum_values_map);
+
+                        // Determine display field based on the $ref path
+                        let display_field = schema_box
+                            .ref_path
+                            .as_ref()
+                            .and_then(|ref_path| get_display_field_for_ref(ref_path));
+
                         return SettingType::Map {
                             value_schema: Box::new(value_schema),
+                            display_field,
                         };
                     }
                     AdditionalProperties::Bool(true) => {
@@ -425,6 +437,20 @@ fn determine_type(
             SettingType::Complex
         }
         _ => SettingType::Complex,
+    }
+}
+
+/// Get the display field for a known $ref type
+/// This maps type names to the field that should be shown as a preview in map entries
+fn get_display_field_for_ref(ref_path: &str) -> Option<String> {
+    // Extract type name from ref path like "#/$defs/LspServerConfig"
+    let type_name = ref_path.strip_prefix("#/$defs/")?;
+
+    match type_name {
+        "LspServerConfig" => Some("/command".to_string()),
+        "LanguageConfig" => Some("/grammar".to_string()),
+        "KeymapConfig" => Some("/inherits".to_string()),
+        _ => None,
     }
 }
 

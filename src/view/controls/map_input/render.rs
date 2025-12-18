@@ -69,8 +69,15 @@ pub fn render_map(
             colors.key
         };
 
-        // Value preview (truncated)
-        let value_preview = format_value_preview(value, 20);
+        // Value preview using display_field if available
+        let value_preview = state.get_display_value(value);
+        // Truncate if too long
+        let max_preview_len = 30;
+        let value_preview = if value_preview.len() > max_preview_len {
+            format!("{}...", &value_preview[..max_preview_len - 3])
+        } else {
+            value_preview
+        };
 
         let line = Line::from(vec![
             Span::raw(" ".repeat(indent as usize)),
@@ -82,8 +89,6 @@ pub fn render_map(
             ),
             Span::raw(" "),
             Span::styled(value_preview, Style::default().fg(colors.value_preview)),
-            Span::raw(" "),
-            Span::styled("[x]", Style::default().fg(colors.remove_button)),
         ]);
 
         let row_area = Rect::new(area.x, y, area.width, 1);

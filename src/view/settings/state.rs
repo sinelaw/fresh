@@ -148,6 +148,16 @@ impl SettingsState {
             .and_then(|page| page.items.get_mut(self.selected_item))
     }
 
+    /// Initialize map focus when entering a Map control.
+    /// `from_above`: true = start at first entry, false = start at add-new field
+    fn init_map_focus(&mut self, from_above: bool) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Map(ref mut map_state) = item.control {
+                map_state.init_focus(from_above);
+            }
+        }
+    }
+
     /// Move selection up
     pub fn select_prev(&mut self) {
         match self.focus_panel {
@@ -160,11 +170,21 @@ impl SettingsState {
                 }
             }
             FocusPanel::Settings => {
-                if self.selected_item > 0 {
+                // Try to navigate within current Map control first
+                let handled = self
+                    .current_item_mut()
+                    .and_then(|item| match &mut item.control {
+                        SettingControl::Map(map_state) => Some(map_state.focus_prev()),
+                        _ => None,
+                    })
+                    .unwrap_or(false);
+
+                if !handled && self.selected_item > 0 {
                     self.selected_item -= 1;
                     self.sub_focus = None;
-                    self.ensure_visible();
+                    self.init_map_focus(false); // entering from below
                 }
+                self.ensure_visible();
             }
             FocusPanel::Footer => {
                 // Navigate between footer buttons (left)
@@ -187,13 +207,26 @@ impl SettingsState {
                 }
             }
             FocusPanel::Settings => {
-                if let Some(page) = self.current_page() {
-                    if self.selected_item + 1 < page.items.len() {
+                // Try to navigate within current Map control first
+                let handled = self
+                    .current_item_mut()
+                    .and_then(|item| match &mut item.control {
+                        SettingControl::Map(map_state) => Some(map_state.focus_next()),
+                        _ => None,
+                    })
+                    .unwrap_or(false);
+
+                if !handled {
+                    let can_move = self
+                        .current_page()
+                        .map_or(false, |page| self.selected_item + 1 < page.items.len());
+                    if can_move {
                         self.selected_item += 1;
                         self.sub_focus = None;
-                        self.ensure_visible();
+                        self.init_map_focus(true); // entering from above
                     }
                 }
+                self.ensure_visible();
             }
             FocusPanel::Footer => {
                 // Navigate between footer buttons (right)
@@ -219,6 +252,11 @@ impl SettingsState {
             self.selected_item = 0;
         }
         self.sub_focus = None;
+
+        if self.focus_panel == FocusPanel::Settings {
+            self.init_map_focus(true); // entering from above
+        }
+
         self.ensure_visible();
     }
 
@@ -408,6 +446,7 @@ impl SettingsState {
                 self.scroll_panel.update_content_height(&page.items);
             }
             self.sub_focus = None;
+            self.init_map_focus(true);
             self.ensure_visible();
             self.cancel_search();
         }
@@ -707,51 +746,26 @@ impl SettingsState {
         }
     }
 
-    /// Move focus to previous item in TextList/Map
+    /// Move focus to previous item in TextList/Map (wraps within control)
     pub fn text_focus_prev(&mut self) {
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
                 SettingControl::TextList(state) => state.focus_prev(),
                 SettingControl::Map(state) => {
-                    // Move focus to previous entry (None = add-new field)
-                    match state.focused_entry {
-                        None if !state.entries.is_empty() => {
-                            state.focused_entry = Some(state.entries.len() - 1);
-                        }
-                        Some(0) => {
-                            state.focused_entry = None;
-                        }
-                        Some(idx) => {
-                            state.focused_entry = Some(idx - 1);
-                        }
-                        _ => {}
-                    }
+                    state.focus_prev();
                 }
                 _ => {}
             }
         }
     }
 
-    /// Move focus to next item in TextList/Map
+    /// Move focus to next item in TextList/Map (wraps within control)
     pub fn text_focus_next(&mut self) {
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
                 SettingControl::TextList(state) => state.focus_next(),
                 SettingControl::Map(state) => {
-                    // Move focus to next entry (None = add-new field)
-                    match state.focused_entry {
-                        None => {
-                            if !state.entries.is_empty() {
-                                state.focused_entry = Some(0);
-                            }
-                        }
-                        Some(idx) if idx + 1 < state.entries.len() => {
-                            state.focused_entry = Some(idx + 1);
-                        }
-                        Some(_) => {
-                            state.focused_entry = None;
-                        }
-                    }
+                    state.focus_next();
                 }
                 _ => {}
             }
