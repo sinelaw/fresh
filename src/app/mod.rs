@@ -6,6 +6,7 @@ mod help;
 mod input;
 mod input_dispatch;
 mod lsp_actions;
+mod menu_actions;
 mod plugin_commands;
 mod render;
 pub mod session;

@@ -616,134 +616,30 @@ impl Editor {
 
             // Menu navigation actions
             Action::MenuActivate => {
-                // Dismiss transient popups and clear hover state when opening menu
-                self.on_editor_focus_lost();
-                // Open the first menu
-                self.menu_state.open_menu(0);
+                self.handle_menu_activate();
             }
             Action::MenuClose => {
-                self.menu_state.close_menu();
+                self.handle_menu_close();
             }
             Action::MenuLeft => {
-                // If in a submenu, close it and go back to parent
-                // Otherwise, go to the previous menu
-                if !self.menu_state.close_submenu() {
-                    let total_menus =
-                        self.config.menu.menus.len() + self.menu_state.plugin_menus.len();
-                    self.menu_state.prev_menu(total_menus);
-                }
+                self.handle_menu_left();
             }
             Action::MenuRight => {
-                // If on a submenu item, open it
-                // Otherwise, go to the next menu
-                let all_menus: Vec<crate::config::Menu> = self
-                    .config
-                    .menu
-                    .menus
-                    .iter()
-                    .chain(self.menu_state.plugin_menus.iter())
-                    .cloned()
-                    .collect();
-
-                if !self.menu_state.open_submenu(&all_menus) {
-                    let total_menus =
-                        self.config.menu.menus.len() + self.menu_state.plugin_menus.len();
-                    self.menu_state.next_menu(total_menus);
-                }
+                self.handle_menu_right();
             }
             Action::MenuUp => {
-                if let Some(active_idx) = self.menu_state.active_menu {
-                    let all_menus: Vec<crate::config::Menu> = self
-                        .config
-                        .menu
-                        .menus
-                        .iter()
-                        .chain(self.menu_state.plugin_menus.iter())
-                        .cloned()
-                        .collect();
-                    if let Some(menu) = all_menus.get(active_idx) {
-                        self.menu_state.prev_item(menu);
-                    }
-                }
+                self.handle_menu_up();
             }
             Action::MenuDown => {
-                if let Some(active_idx) = self.menu_state.active_menu {
-                    let all_menus: Vec<crate::config::Menu> = self
-                        .config
-                        .menu
-                        .menus
-                        .iter()
-                        .chain(self.menu_state.plugin_menus.iter())
-                        .cloned()
-                        .collect();
-                    if let Some(menu) = all_menus.get(active_idx) {
-                        self.menu_state.next_item(menu);
-                    }
-                }
+                self.handle_menu_down();
             }
             Action::MenuExecute => {
-                // Execute the highlighted menu item's action, or open submenu if it's a submenu
-                let all_menus: Vec<crate::config::Menu> = self
-                    .config
-                    .menu
-                    .menus
-                    .iter()
-                    .chain(self.menu_state.plugin_menus.iter())
-                    .cloned()
-                    .collect();
-
-                // Check if highlighted item is a submenu - if so, open it
-                if self.menu_state.is_highlighted_submenu(&all_menus) {
-                    self.menu_state.open_submenu(&all_menus);
-                    return Ok(());
-                }
-
-                // Update context before checking if action is enabled
-                use crate::view::ui::context_keys;
-                self.menu_state
-                    .context
-                    .set(context_keys::HAS_SELECTION, self.has_active_selection())
-                    .set(
-                        context_keys::FILE_EXPLORER_FOCUSED,
-                        self.key_context == crate::input::keybindings::KeyContext::FileExplorer,
-                    );
-
-                if let Some((action_name, args)) =
-                    self.menu_state.get_highlighted_action(&all_menus)
-                {
-                    // Close the menu
-                    self.menu_state.close_menu();
-
-                    // Parse and execute the action
-                    // First try built-in actions, then fall back to plugin actions
-                    if let Some(action) = Action::from_str(&action_name, &args) {
-                        return self.handle_action(action);
-                    } else {
-                        // Treat as a plugin action (global Lua function)
-                        return self.handle_action(Action::PluginAction(action_name));
-                    }
+                if let Some(action) = self.handle_menu_execute() {
+                    return self.handle_action(action);
                 }
             }
             Action::MenuOpen(menu_name) => {
-                // Dismiss transient popups and clear hover state when opening menu
-                self.on_editor_focus_lost();
-
-                // Find the menu by name and open it
-                let all_menus: Vec<crate::config::Menu> = self
-                    .config
-                    .menu
-                    .menus
-                    .iter()
-                    .chain(self.menu_state.plugin_menus.iter())
-                    .cloned()
-                    .collect();
-
-                for (idx, menu) in all_menus.iter().enumerate() {
-                    if menu.label.eq_ignore_ascii_case(&menu_name) {
-                        self.menu_state.open_menu(idx);
-                        break;
-                    }
-                }
+                self.handle_menu_open(&menu_name);
             }
 
             Action::SwitchKeybindingMap(map_name) => {
