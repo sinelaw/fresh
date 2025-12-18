@@ -148,6 +148,34 @@ impl SettingsState {
             .and_then(|page| page.items.get_mut(self.selected_item))
     }
 
+    /// Check if the current text field can be exited (valid JSON if required)
+    pub fn can_exit_text_editing(&self) -> bool {
+        self.current_item()
+            .map(|item| {
+                if let SettingControl::Text(state) = &item.control {
+                    state.is_valid()
+                } else {
+                    true
+                }
+            })
+            .unwrap_or(true)
+    }
+
+    /// Check if entry dialog's current text field can be exited (valid JSON if required)
+    pub fn entry_dialog_can_exit_text_editing(&self) -> bool {
+        self.entry_dialog
+            .as_ref()
+            .and_then(|dialog| dialog.current_item())
+            .map(|item| {
+                if let SettingControl::Text(state) = &item.control {
+                    state.is_valid()
+                } else {
+                    true
+                }
+            })
+            .unwrap_or(true)
+    }
+
     /// Initialize map focus when entering a Map control.
     /// `from_above`: true = start at first entry, false = start at add-new field
     fn init_map_focus(&mut self, from_above: bool) {
@@ -374,6 +402,7 @@ impl SettingsState {
                     SettingControl::TextList(state) => state.focus = focus,
                     SettingControl::Map(state) => state.focus = focus,
                     SettingControl::KeybindingList(state) => state.focus = focus,
+                    SettingControl::Json(state) => state.focus = focus,
                     SettingControl::Complex { .. } => {}
                 }
             }
@@ -1052,6 +1081,19 @@ fn update_control_from_value(control: &mut SettingControl, value: &serde_json::V
             if let Some(arr) = value.as_array() {
                 state.bindings = arr.clone();
             }
+        }
+        SettingControl::Json(state) => {
+            // Re-create from value with pretty printing
+            let json_str =
+                serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string());
+            state.lines = json_str.lines().map(String::from).collect();
+            if state.lines.is_empty() {
+                state.lines = vec!["null".to_string()];
+            }
+            state.original_lines = state.lines.clone();
+            state.cursor_row = 0;
+            state.cursor_col = 0;
+            state.scroll_offset = 0;
         }
         SettingControl::Complex { .. } => {}
     }

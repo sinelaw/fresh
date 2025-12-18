@@ -249,6 +249,7 @@ impl EntryDialogState {
                 SettingControl::TextList(s) => s.focus = state,
                 SettingControl::Map(s) => s.focus = state,
                 SettingControl::KeybindingList(s) => s.focus = state,
+                SettingControl::Json(s) => s.focus = state,
                 SettingControl::Complex { .. } => {}
             }
         }
@@ -306,6 +307,9 @@ impl EntryDialogState {
                 SettingControl::Number(state) => {
                     state.insert_char(c);
                 }
+                SettingControl::Json(state) => {
+                    state.insert(c);
+                }
                 _ => {}
             }
         }
@@ -327,6 +331,9 @@ impl EntryDialogState {
                 SettingControl::Number(state) => {
                     state.backspace();
                 }
+                SettingControl::Json(state) => {
+                    state.backspace();
+                }
                 _ => {}
             }
         }
@@ -343,6 +350,9 @@ impl EntryDialogState {
                     state.move_left();
                 }
                 SettingControl::TextList(state) => {
+                    state.move_left();
+                }
+                SettingControl::Json(state) => {
                     state.move_left();
                 }
                 _ => {}
@@ -363,9 +373,68 @@ impl EntryDialogState {
                 SettingControl::TextList(state) => {
                     state.move_right();
                 }
+                SettingControl::Json(state) => {
+                    state.move_right();
+                }
                 _ => {}
             }
         }
+    }
+
+    /// Handle cursor up (for multiline controls)
+    pub fn cursor_up(&mut self) {
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.move_up();
+            }
+        }
+    }
+
+    /// Handle cursor down (for multiline controls)
+    pub fn cursor_down(&mut self) {
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.move_down();
+            }
+        }
+    }
+
+    /// Insert newline in JSON editor
+    pub fn insert_newline(&mut self) {
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.insert('\n');
+            }
+        }
+    }
+
+    /// Revert JSON changes to original and stop editing
+    pub fn revert_json_and_stop(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.revert();
+            }
+        }
+        self.editing_text = false;
+    }
+
+    /// Check if current control is a JSON editor
+    pub fn is_editing_json(&self) -> bool {
+        if !self.editing_text {
+            return false;
+        }
+        self.current_item()
+            .map(|item| matches!(&item.control, SettingControl::Json(_)))
+            .unwrap_or(false)
     }
 
     /// Toggle boolean value

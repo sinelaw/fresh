@@ -587,6 +587,10 @@ fn render_control(
             }
         }
 
+        SettingControl::Json(state) => {
+            render_json_control(frame, area, state, name, modified, skip_rows, theme)
+        }
+
         SettingControl::Complex { type_name } => {
             if skip_rows > 0 {
                 return ControlLayoutInfo::Complex;
@@ -605,6 +609,142 @@ fn render_control(
             frame.render_widget(Paragraph::new(Line::from(vec![label, value])), area);
             ControlLayoutInfo::Complex
         }
+    }
+}
+
+/// Render a multiline JSON editor control
+fn render_json_control(
+    frame: &mut Frame,
+    area: Rect,
+    state: &super::items::JsonEditState,
+    name: &str,
+    modified: bool,
+    skip_rows: u16,
+    theme: &Theme,
+) -> ControlLayoutInfo {
+    use crate::view::controls::FocusState;
+
+    let empty_layout = ControlLayoutInfo::Json {
+        edit_area: Rect::default(),
+    };
+
+    if area.height == 0 || area.width < 10 {
+        return empty_layout;
+    }
+
+    let is_focused = state.focus == FocusState::Focused;
+    let is_valid = state.is_valid();
+
+    let label_color = if is_focused {
+        theme.menu_highlight_fg
+    } else {
+        theme.editor_fg
+    };
+
+    let text_color = theme.editor_fg;
+    let border_color = if !is_valid {
+        theme.diagnostic_error_fg
+    } else if is_focused {
+        theme.menu_highlight_fg
+    } else {
+        theme.split_separator_fg
+    };
+
+    let mut y = area.y;
+    let mut content_row = 0u16;
+
+    // Row 0: label
+    if content_row >= skip_rows {
+        let modified_indicator = if modified { "• " } else { "" };
+        let label_line = Line::from(vec![Span::styled(
+            format!("{}{}:", modified_indicator, name),
+            Style::default().fg(label_color),
+        )]);
+        frame.render_widget(
+            Paragraph::new(label_line),
+            Rect::new(area.x, y, area.width, 1),
+        );
+        y += 1;
+    }
+    content_row += 1;
+
+    let indent = 2u16;
+    let edit_width = area.width.saturating_sub(indent + 1);
+    let edit_x = area.x + indent;
+    let edit_start_y = y;
+
+    // Render visible lines
+    let visible_lines = state.max_visible_lines;
+    for line_idx in 0..visible_lines {
+        let actual_line_idx = state.scroll_offset + line_idx;
+
+        if content_row < skip_rows {
+            content_row += 1;
+            continue;
+        }
+
+        if y >= area.y + area.height {
+            break;
+        }
+
+        let line_content = state
+            .lines
+            .get(actual_line_idx)
+            .map(|s| s.as_str())
+            .unwrap_or("");
+
+        // Truncate line if too long
+        let display_len = edit_width.saturating_sub(2) as usize;
+        let display_text: String = line_content.chars().take(display_len).collect();
+        let padded = format!("{:width$}", display_text, width = display_len);
+
+        // Build line with border
+        let line = Line::from(vec![
+            Span::raw(" ".repeat(indent as usize)),
+            Span::styled("│", Style::default().fg(border_color)),
+            Span::styled(padded, Style::default().fg(text_color)),
+            Span::styled("│", Style::default().fg(border_color)),
+        ]);
+
+        frame.render_widget(Paragraph::new(line), Rect::new(area.x, y, area.width, 1));
+
+        // Draw cursor if focused and on this line
+        if is_focused && actual_line_idx == state.cursor_row {
+            let cursor_x = edit_x + 1 + state.cursor_col.min(display_len) as u16;
+            if cursor_x < area.x + area.width - 1 {
+                let cursor_char = line_content.chars().nth(state.cursor_col).unwrap_or(' ');
+                let cursor_span = Span::styled(
+                    cursor_char.to_string(),
+                    Style::default()
+                        .fg(theme.cursor)
+                        .add_modifier(Modifier::REVERSED),
+                );
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![cursor_span])),
+                    Rect::new(cursor_x, y, 1, 1),
+                );
+            }
+        }
+
+        y += 1;
+        content_row += 1;
+    }
+
+    // Show invalid JSON indicator
+    if !is_valid && y < area.y + area.height {
+        let warning = Span::styled(
+            "  ⚠ Invalid JSON",
+            Style::default().fg(theme.diagnostic_warning_fg),
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![warning])),
+            Rect::new(area.x, y, area.width, 1),
+        );
+    }
+
+    let edit_height = y.saturating_sub(edit_start_y);
+    ControlLayoutInfo::Json {
+        edit_area: Rect::new(edit_x, edit_start_y, edit_width, edit_height),
     }
 }
 
@@ -1046,6 +1186,9 @@ pub enum ControlLayoutInfo {
     },
     KeybindingList {
         entry_rows: Vec<Rect>,
+    },
+    Json {
+        edit_area: Rect,
     },
     Complex,
 }
@@ -1603,18 +1746,46 @@ fn render_entry_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
         x += label.len() as u16 + 2;
     }
 
-    // Render help text
-    let help = "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit/Confirm  Esc:Cancel";
-    let help_style = Style::default().fg(theme.line_number_fg);
-    frame.render_widget(
-        Paragraph::new(help).style(help_style),
-        Rect::new(
-            dialog_area.x + 2,
-            button_y + 1,
-            dialog_area.width.saturating_sub(4),
-            1,
-        ),
+    // Check if current item has invalid JSON (for Text controls with validation)
+    // and if we're actively editing a JSON control
+    let is_editing_json = dialog.editing_text && dialog.is_editing_json();
+    let (has_invalid_json, is_json_control) = dialog
+        .current_item()
+        .map(|item| match &item.control {
+            SettingControl::Text(state) => (!state.is_valid(), false),
+            SettingControl::Json(state) => (!state.is_valid(), is_editing_json),
+            _ => (false, false),
+        })
+        .unwrap_or((false, false));
+
+    // Render help text or warning
+    let help_area = Rect::new(
+        dialog_area.x + 2,
+        button_y + 1,
+        dialog_area.width.saturating_sub(4),
+        1,
     );
+
+    if has_invalid_json && !is_json_control {
+        // Text control with JSON validation - must fix before leaving
+        let warning = "⚠ Invalid JSON - fix before leaving field";
+        let warning_style = Style::default().fg(theme.diagnostic_warning_fg);
+        frame.render_widget(Paragraph::new(warning).style(warning_style), help_area);
+    } else if has_invalid_json && is_json_control {
+        // JSON control - can press Esc to revert
+        let warning = "⚠ Invalid JSON - press Esc to revert changes";
+        let warning_style = Style::default().fg(theme.diagnostic_warning_fg);
+        frame.render_widget(Paragraph::new(warning).style(warning_style), help_area);
+    } else if is_json_control {
+        // Editing JSON control
+        let help = "↑↓←→:Move  Enter:Newline  Tab:Save & exit  Esc:Discard";
+        let help_style = Style::default().fg(theme.line_number_fg);
+        frame.render_widget(Paragraph::new(help).style(help_style), help_area);
+    } else {
+        let help = "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit/Confirm  Esc:Cancel";
+        let help_style = Style::default().fg(theme.line_number_fg);
+        frame.render_widget(Paragraph::new(help).style(help_style), help_area);
+    }
 }
 
 /// Render the help overlay showing keyboard shortcuts

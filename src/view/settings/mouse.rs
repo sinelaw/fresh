@@ -15,6 +15,15 @@ impl Editor {
     ) -> std::io::Result<bool> {
         use crossterm::event::{MouseButton, MouseEventKind};
 
+        // When entry dialog, confirm dialog, or help overlay is open, consume all mouse events
+        // to prevent interaction with the underlying settings modal
+        if let Some(ref state) = self.settings_state {
+            if state.showing_entry_dialog() || state.showing_confirm_dialog || state.showing_help {
+                // Just consume the event without doing anything
+                return Ok(false);
+            }
+        }
+
         let col = mouse_event.column;
         let row = mouse_event.row;
 
@@ -81,10 +90,7 @@ impl Editor {
 
         match hit {
             SettingsHit::Outside => {
-                // Click outside modal - close settings
-                if let Some(ref mut state) = self.settings_state {
-                    state.visible = false;
-                }
+                // Click outside modal - do nothing (only Cancel button closes)
             }
             SettingsHit::Category(idx) => {
                 if let Some(ref mut state) = self.settings_state {

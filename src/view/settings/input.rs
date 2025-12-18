@@ -78,19 +78,43 @@ impl SettingsState {
 
     /// Handle text editing input in entry dialog (same pattern as handle_text_editing_input)
     fn handle_entry_dialog_text_editing(&mut self, event: &KeyEvent) -> InputResult {
+        // Check if we're editing JSON
+        let is_editing_json = self
+            .entry_dialog
+            .as_ref()
+            .map(|d| d.is_editing_json())
+            .unwrap_or(false);
+
+        // Check validation first before borrowing dialog mutably
+        let can_exit = self.entry_dialog_can_exit_text_editing();
+
         let Some(ref mut dialog) = self.entry_dialog else {
             return InputResult::Consumed;
         };
 
         match event.code {
             KeyCode::Esc => {
-                dialog.stop_editing();
+                if is_editing_json {
+                    // For JSON editor, always revert on Escape (ignore validation)
+                    dialog.revert_json_and_stop();
+                } else {
+                    // Check if current text field requires JSON validation
+                    if !can_exit {
+                        return InputResult::Consumed;
+                    }
+                    dialog.stop_editing();
+                }
             }
             KeyCode::Enter => {
-                // Add item for TextList, or stop editing
-                if let Some(item) = dialog.current_item_mut() {
-                    if let SettingControl::TextList(state) = &mut item.control {
-                        state.add_item();
+                if is_editing_json {
+                    // Insert newline in JSON editor
+                    dialog.insert_newline();
+                } else {
+                    // Add item for TextList, or stop editing
+                    if let Some(item) = dialog.current_item_mut() {
+                        if let SettingControl::TextList(state) = &mut item.control {
+                            state.add_item();
+                        }
                     }
                 }
             }
@@ -110,19 +134,55 @@ impl SettingsState {
                 dialog.cursor_right();
             }
             KeyCode::Up => {
-                // Move to previous item in TextList
-                if let Some(item) = dialog.current_item_mut() {
-                    if let SettingControl::TextList(state) = &mut item.control {
-                        state.focus_prev();
+                if is_editing_json {
+                    // Move cursor up in JSON editor
+                    dialog.cursor_up();
+                } else {
+                    // Move to previous item in TextList
+                    if let Some(item) = dialog.current_item_mut() {
+                        if let SettingControl::TextList(state) = &mut item.control {
+                            state.focus_prev();
+                        }
                     }
                 }
             }
             KeyCode::Down => {
-                // Move to next item in TextList
-                if let Some(item) = dialog.current_item_mut() {
-                    if let SettingControl::TextList(state) = &mut item.control {
-                        state.focus_next();
+                if is_editing_json {
+                    // Move cursor down in JSON editor
+                    dialog.cursor_down();
+                } else {
+                    // Move to next item in TextList
+                    if let Some(item) = dialog.current_item_mut() {
+                        if let SettingControl::TextList(state) = &mut item.control {
+                            state.focus_next();
+                        }
                     }
+                }
+            }
+            KeyCode::Tab => {
+                if is_editing_json {
+                    // Tab exits JSON editor if JSON is valid, otherwise ignored
+                    let is_valid = dialog
+                        .current_item()
+                        .map(|item| {
+                            if let SettingControl::Json(state) = &item.control {
+                                state.is_valid()
+                            } else {
+                                true
+                            }
+                        })
+                        .unwrap_or(true);
+
+                    if is_valid {
+                        // Commit changes and stop editing
+                        if let Some(item) = dialog.current_item_mut() {
+                            if let SettingControl::Json(state) = &mut item.control {
+                                state.commit();
+                            }
+                        }
+                        dialog.stop_editing();
+                    }
+                    // If not valid, Tab is ignored (user must fix or press Esc)
                 }
             }
             _ => {}
@@ -464,6 +524,10 @@ impl SettingsState {
     ) -> InputResult {
         match event.code {
             KeyCode::Esc => {
+                // Check if current text field requires JSON validation
+                if !self.can_exit_text_editing() {
+                    return InputResult::Consumed;
+                }
                 self.stop_editing();
                 InputResult::Consumed
             }
@@ -576,6 +640,9 @@ impl SettingsState {
                         }
                     }
                     self.on_value_changed();
+                }
+                SettingControl::Json(_) => {
+                    self.start_editing();
                 }
                 SettingControl::KeybindingList(_) | SettingControl::Complex { .. } => {
                     // Not editable via simple controls

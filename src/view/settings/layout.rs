@@ -179,6 +179,11 @@ impl SettingsLayout {
                             }
                         }
                     }
+                    ControlLayoutInfo::Json { edit_area } => {
+                        if self.contains(*edit_area, x, y) {
+                            return Some(SettingsHit::ControlText(item.index));
+                        }
+                    }
                     ControlLayoutInfo::Complex => {}
                 }
 

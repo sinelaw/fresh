@@ -32,6 +32,8 @@ pub struct TextInputState {
     pub placeholder: String,
     /// Focus state
     pub focus: FocusState,
+    /// If true, validate that value is valid JSON before allowing exit
+    pub validate_json: bool,
 }
 
 impl TextInputState {
@@ -43,6 +45,22 @@ impl TextInputState {
             label: label.into(),
             placeholder: String::new(),
             focus: FocusState::Normal,
+            validate_json: false,
+        }
+    }
+
+    /// Set JSON validation mode
+    pub fn with_json_validation(mut self) -> Self {
+        self.validate_json = true;
+        self
+    }
+
+    /// Check if the current value is valid (valid JSON if validate_json is set)
+    pub fn is_valid(&self) -> bool {
+        if self.validate_json {
+            serde_json::from_str::<serde_json::Value>(&self.value).is_ok()
+        } else {
+            true
         }
     }
 

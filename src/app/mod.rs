@@ -1869,6 +1869,7 @@ impl Editor {
                     SettingControl::TextList(_) => "textlist",
                     SettingControl::Map(_) => "map",
                     SettingControl::KeybindingList(_) => "keybindinglist",
+                    SettingControl::Json(_) => "json",
                     SettingControl::Complex { .. } => "complex",
                 })
             } else {

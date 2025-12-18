@@ -4,11 +4,195 @@
 
 use super::schema::{SettingCategory, SettingSchema, SettingType};
 use crate::view::controls::{
-    DropdownState, KeybindingListState, MapState, NumberInputState, TextInputState, TextListState,
-    ToggleState,
+    DropdownState, FocusState, KeybindingListState, MapState, NumberInputState, TextInputState,
+    TextListState, ToggleState,
 };
 use crate::view::ui::{FocusRegion, ScrollItem};
 use std::collections::HashSet;
+
+/// State for multiline JSON editing
+#[derive(Debug, Clone)]
+pub struct JsonEditState {
+    /// Lines of JSON text
+    pub lines: Vec<String>,
+    /// Original lines (for revert on Escape)
+    pub original_lines: Vec<String>,
+    /// Current cursor row (0-indexed)
+    pub cursor_row: usize,
+    /// Current cursor column (0-indexed)
+    pub cursor_col: usize,
+    /// Label for the control
+    pub label: String,
+    /// Focus state
+    pub focus: FocusState,
+    /// Scroll offset for viewing
+    pub scroll_offset: usize,
+    /// Maximum visible lines
+    pub max_visible_lines: usize,
+}
+
+impl JsonEditState {
+    /// Create a new JSON edit state with pretty-printed JSON
+    pub fn new(label: impl Into<String>, value: Option<&serde_json::Value>) -> Self {
+        let json_str = value
+            .map(|v| serde_json::to_string_pretty(v).unwrap_or_else(|_| "null".to_string()))
+            .unwrap_or_else(|| "null".to_string());
+
+        let lines: Vec<String> = json_str.lines().map(String::from).collect();
+        let lines = if lines.is_empty() {
+            vec!["null".to_string()]
+        } else {
+            lines
+        };
+
+        Self {
+            original_lines: lines.clone(),
+            lines,
+            cursor_row: 0,
+            cursor_col: 0,
+            label: label.into(),
+            focus: FocusState::Normal,
+            scroll_offset: 0,
+            max_visible_lines: 6,
+        }
+    }
+
+    /// Revert to original value (for Escape key)
+    pub fn revert(&mut self) {
+        self.lines = self.original_lines.clone();
+        self.cursor_row = 0;
+        self.cursor_col = 0;
+        self.scroll_offset = 0;
+    }
+
+    /// Commit current value as the new original (after saving)
+    pub fn commit(&mut self) {
+        self.original_lines = self.lines.clone();
+    }
+
+    /// Get the full text value
+    pub fn value(&self) -> String {
+        self.lines.join("\n")
+    }
+
+    /// Check if the JSON is valid
+    pub fn is_valid(&self) -> bool {
+        serde_json::from_str::<serde_json::Value>(&self.value()).is_ok()
+    }
+
+    /// Get number of lines to display
+    pub fn display_height(&self) -> usize {
+        self.lines.len().min(self.max_visible_lines)
+    }
+
+    /// Insert a character at cursor position
+    pub fn insert(&mut self, c: char) {
+        if c == '\n' {
+            // Split line at cursor
+            let current_line = &self.lines[self.cursor_row];
+            let (before, after) = current_line.split_at(self.cursor_col.min(current_line.len()));
+            let before = before.to_string();
+            let after = after.to_string();
+            self.lines[self.cursor_row] = before;
+            self.lines.insert(self.cursor_row + 1, after);
+            self.cursor_row += 1;
+            self.cursor_col = 0;
+        } else {
+            if self.cursor_row < self.lines.len() {
+                let line = &mut self.lines[self.cursor_row];
+                let col = self.cursor_col.min(line.len());
+                line.insert(col, c);
+                self.cursor_col = col + 1;
+            }
+        }
+        self.ensure_cursor_visible();
+    }
+
+    /// Delete character before cursor (backspace)
+    pub fn backspace(&mut self) {
+        if self.cursor_col > 0 {
+            let line = &mut self.lines[self.cursor_row];
+            let col = (self.cursor_col - 1).min(line.len());
+            if col < line.len() {
+                line.remove(col);
+            }
+            self.cursor_col = col;
+        } else if self.cursor_row > 0 {
+            // Join with previous line
+            let current_line = self.lines.remove(self.cursor_row);
+            self.cursor_row -= 1;
+            self.cursor_col = self.lines[self.cursor_row].len();
+            self.lines[self.cursor_row].push_str(&current_line);
+        }
+        self.ensure_cursor_visible();
+    }
+
+    /// Move cursor left
+    pub fn move_left(&mut self) {
+        if self.cursor_col > 0 {
+            self.cursor_col -= 1;
+        } else if self.cursor_row > 0 {
+            self.cursor_row -= 1;
+            self.cursor_col = self.lines[self.cursor_row].len();
+        }
+        self.ensure_cursor_visible();
+    }
+
+    /// Move cursor right
+    pub fn move_right(&mut self) {
+        let line_len = self
+            .lines
+            .get(self.cursor_row)
+            .map(|l| l.len())
+            .unwrap_or(0);
+        if self.cursor_col < line_len {
+            self.cursor_col += 1;
+        } else if self.cursor_row + 1 < self.lines.len() {
+            self.cursor_row += 1;
+            self.cursor_col = 0;
+        }
+        self.ensure_cursor_visible();
+    }
+
+    /// Move cursor up
+    pub fn move_up(&mut self) {
+        if self.cursor_row > 0 {
+            self.cursor_row -= 1;
+            let line_len = self.lines[self.cursor_row].len();
+            self.cursor_col = self.cursor_col.min(line_len);
+        }
+        self.ensure_cursor_visible();
+    }
+
+    /// Move cursor down
+    pub fn move_down(&mut self) {
+        if self.cursor_row + 1 < self.lines.len() {
+            self.cursor_row += 1;
+            let line_len = self.lines[self.cursor_row].len();
+            self.cursor_col = self.cursor_col.min(line_len);
+        }
+        self.ensure_cursor_visible();
+    }
+
+    /// Ensure cursor row is visible
+    fn ensure_cursor_visible(&mut self) {
+        if self.cursor_row < self.scroll_offset {
+            self.scroll_offset = self.cursor_row;
+        } else if self.cursor_row >= self.scroll_offset + self.max_visible_lines {
+            self.scroll_offset = self.cursor_row - self.max_visible_lines + 1;
+        }
+    }
+}
+
+/// Create a JSON control for editing arbitrary JSON values (multiline)
+fn json_control(
+    name: &str,
+    current_value: Option<&serde_json::Value>,
+    default: Option<&serde_json::Value>,
+) -> SettingControl {
+    let value = current_value.or(default);
+    SettingControl::Json(JsonEditState::new(name, value))
+}
 
 /// A renderable setting item
 #[derive(Debug, Clone)]
@@ -39,6 +223,8 @@ pub enum SettingControl {
     Map(MapState),
     /// Keybinding list control
     KeybindingList(KeybindingListState),
+    /// Multiline JSON editor
+    Json(JsonEditState),
     /// Complex settings that can't be edited inline
     Complex {
         type_name: String,
@@ -85,6 +271,11 @@ impl SettingControl {
             SettingControl::KeybindingList(state) => {
                 // 1 for label + bindings count + 1 for add-new row
                 (state.bindings.len() + 2) as u16
+            }
+            // Json needs: 1 label + visible lines
+            SettingControl::Json(state) => {
+                // 1 for label + displayed lines
+                1 + state.display_height() as u16
             }
             // All other controls fit in 1 line
             _ => 1,
@@ -443,9 +634,9 @@ pub fn build_item(schema: &SettingSchema, config_value: &serde_json::Value) -> S
             SettingControl::TextList(state)
         }
 
-        SettingType::Object { .. } => SettingControl::Complex {
-            type_name: "Object".to_string(),
-        },
+        SettingType::Object { .. } => {
+            json_control(&schema.name, current_value, schema.default.as_ref())
+        }
 
         SettingType::Map {
             value_schema,
@@ -476,9 +667,7 @@ pub fn build_item(schema: &SettingSchema, config_value: &serde_json::Value) -> S
             SettingControl::KeybindingList(state)
         }
 
-        SettingType::Complex => SettingControl::Complex {
-            type_name: "Complex".to_string(),
-        },
+        SettingType::Complex => json_control(&schema.name, current_value, schema.default.as_ref()),
     };
 
     // Check if modified from default
@@ -596,9 +785,9 @@ pub fn build_item_from_value(
             SettingControl::TextList(state)
         }
 
-        SettingType::Object { .. } => SettingControl::Complex {
-            type_name: "Object".to_string(),
-        },
+        SettingType::Object { .. } => {
+            json_control(&schema.name, current_value, schema.default.as_ref())
+        }
 
         SettingType::Map {
             value_schema,
@@ -627,9 +816,7 @@ pub fn build_item_from_value(
             SettingControl::KeybindingList(state)
         }
 
-        SettingType::Complex => SettingControl::Complex {
-            type_name: "Complex".to_string(),
-        },
+        SettingType::Complex => json_control(&schema.name, current_value, schema.default.as_ref()),
     };
 
     // Check if modified from default
@@ -678,6 +865,11 @@ pub fn control_to_value(control: &SettingControl) -> serde_json::Value {
         SettingControl::Map(state) => state.to_value(),
 
         SettingControl::KeybindingList(state) => state.to_value(),
+
+        SettingControl::Json(state) => {
+            // Parse the JSON string back to a value
+            serde_json::from_str(&state.value()).unwrap_or(serde_json::Value::Null)
+        }
 
         SettingControl::Complex { .. } => serde_json::Value::Null,
     }
