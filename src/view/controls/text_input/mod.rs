@@ -1,12 +1,21 @@
 //! Single-line text input control
 //!
 //! Renders as: `Label: [text content     ]`
+//!
+//! This module provides a complete text input component with:
+//! - State management (`TextInputState`)
+//! - Rendering (`render_text_input`, `render_text_input_aligned`)
+//! - Input handling (`TextInputState::handle_mouse`, `handle_key`)
+//! - Layout/hit testing (`TextInputLayout`)
+
+mod input;
+mod render;
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
-use ratatui::Frame;
+use ratatui::style::Color;
+
+pub use input::TextInputEvent;
+pub use render::{render_text_input, render_text_input_aligned};
 
 use super::FocusState;
 
@@ -56,9 +65,14 @@ impl TextInputState {
         self
     }
 
+    /// Check if the control is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.focus != FocusState::Disabled
+    }
+
     /// Insert a character at the cursor position
     pub fn insert(&mut self, c: char) {
-        if self.focus == FocusState::Disabled {
+        if !self.is_enabled() {
             return;
         }
         self.value.insert(self.cursor, c);
@@ -67,7 +81,7 @@ impl TextInputState {
 
     /// Delete the character before the cursor (backspace)
     pub fn backspace(&mut self) {
-        if self.focus == FocusState::Disabled || self.cursor == 0 {
+        if !self.is_enabled() || self.cursor == 0 {
             return;
         }
         self.cursor -= 1;
@@ -76,7 +90,7 @@ impl TextInputState {
 
     /// Delete the character at the cursor (delete)
     pub fn delete(&mut self) {
-        if self.focus == FocusState::Disabled || self.cursor >= self.value.len() {
+        if !self.is_enabled() || self.cursor >= self.value.len() {
             return;
         }
         self.value.remove(self.cursor);
@@ -108,7 +122,7 @@ impl TextInputState {
 
     /// Clear the input
     pub fn clear(&mut self) {
-        if self.focus != FocusState::Disabled {
+        if self.is_enabled() {
             self.value.clear();
             self.cursor = 0;
         }
@@ -116,7 +130,7 @@ impl TextInputState {
 
     /// Set the value directly
     pub fn set_value(&mut self, value: impl Into<String>) {
-        if self.focus != FocusState::Disabled {
+        if self.is_enabled() {
             self.value = value.into();
             self.cursor = self.value.len();
         }
@@ -172,7 +186,7 @@ impl TextInputColors {
 }
 
 /// Layout information returned after rendering for hit testing
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct TextInputLayout {
     /// The text input field area
     pub input_area: Rect,
@@ -190,167 +204,13 @@ impl TextInputLayout {
             && y >= self.input_area.y
             && y < self.input_area.y + self.input_area.height
     }
-}
 
-/// Render a text input control
-///
-/// # Arguments
-/// * `frame` - The ratatui frame to render to
-/// * `area` - Rectangle where the control should be rendered
-/// * `state` - The text input state
-/// * `colors` - Colors for rendering
-/// * `field_width` - Width of the input field (not including label)
-///
-/// # Returns
-/// Layout information for hit testing
-pub fn render_text_input(
-    frame: &mut Frame,
-    area: Rect,
-    state: &TextInputState,
-    colors: &TextInputColors,
-    field_width: u16,
-) -> TextInputLayout {
-    render_text_input_aligned(frame, area, state, colors, field_width, None)
-}
-
-/// Render a text input control with optional label width alignment
-///
-/// # Arguments
-/// * `frame` - The ratatui frame to render to
-/// * `area` - Rectangle where the control should be rendered
-/// * `state` - The text input state
-/// * `colors` - Colors for rendering
-/// * `field_width` - Width of the input field (not including label)
-/// * `label_width` - Optional minimum label width for alignment
-///
-/// # Returns
-/// Layout information for hit testing
-pub fn render_text_input_aligned(
-    frame: &mut Frame,
-    area: Rect,
-    state: &TextInputState,
-    colors: &TextInputColors,
-    field_width: u16,
-    label_width: Option<u16>,
-) -> TextInputLayout {
-    let empty_layout = TextInputLayout {
-        input_area: Rect::default(),
-        full_area: area,
-        cursor_pos: None,
-    };
-
-    if area.height == 0 || area.width < 5 {
-        return empty_layout;
-    }
-
-    let (label_color, text_color, border_color, placeholder_color) = match state.focus {
-        FocusState::Normal => (colors.label, colors.text, colors.border, colors.placeholder),
-        FocusState::Focused => (
-            colors.focused,
-            colors.text,
-            colors.focused,
-            colors.placeholder,
-        ),
-        FocusState::Hovered => (
-            colors.focused,
-            colors.text,
-            colors.focused,
-            colors.placeholder,
-        ),
-        FocusState::Disabled => (
-            colors.disabled,
-            colors.disabled,
-            colors.disabled,
-            colors.disabled,
-        ),
-    };
-
-    // Use provided label_width for alignment, or default to label length
-    let actual_label_width = label_width.unwrap_or(state.label.len() as u16);
-    let final_label_width = actual_label_width + 2; // label + ": "
-    let actual_field_width = field_width.min(area.width.saturating_sub(final_label_width + 2)); // "[" + "]"
-
-    // Determine what text to display
-    let (display_text, is_placeholder) = if state.value.is_empty() && !state.placeholder.is_empty()
-    {
-        (&state.placeholder, true)
-    } else {
-        (&state.value, false)
-    };
-
-    // Calculate visible portion of text
-    let inner_width = actual_field_width.saturating_sub(2) as usize; // Inside brackets
-    let scroll_offset = if state.cursor > inner_width {
-        state.cursor - inner_width
-    } else {
-        0
-    };
-
-    let visible_text: String = display_text
-        .chars()
-        .skip(scroll_offset)
-        .take(inner_width)
-        .collect();
-
-    let padded = format!("{:width$}", visible_text, width = inner_width);
-
-    let text_style = if is_placeholder {
-        Style::default().fg(placeholder_color)
-    } else {
-        Style::default().fg(text_color)
-    };
-
-    let padded_label = format!(
-        "{:width$}",
-        state.label,
-        width = actual_label_width as usize
-    );
-
-    let line = Line::from(vec![
-        Span::styled(padded_label, Style::default().fg(label_color)),
-        Span::styled(": ", Style::default().fg(label_color)),
-        Span::styled("[", Style::default().fg(border_color)),
-        Span::styled(padded, text_style),
-        Span::styled("]", Style::default().fg(border_color)),
-    ]);
-
-    let paragraph = Paragraph::new(line);
-    frame.render_widget(paragraph, area);
-
-    let input_start = area.x + final_label_width;
-    let input_area = Rect::new(input_start, area.y, actual_field_width + 2, 1);
-
-    // Calculate cursor position if focused
-    let cursor_pos = if state.focus == FocusState::Focused && !is_placeholder {
-        let cursor_x = input_start + 1 + (state.cursor - scroll_offset) as u16;
-        if cursor_x < input_start + actual_field_width + 1 {
-            // Render cursor by overwriting the character at cursor position
-            let cursor_area = Rect::new(cursor_x, area.y, 1, 1);
-            let cursor_char = state.value.chars().nth(state.cursor).unwrap_or(' ');
-            let cursor_span = Span::styled(
-                cursor_char.to_string(),
-                Style::default()
-                    .fg(colors.cursor)
-                    .add_modifier(Modifier::REVERSED),
-            );
-            frame.render_widget(Paragraph::new(Line::from(vec![cursor_span])), cursor_area);
-            Some((cursor_x, area.y))
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    TextInputLayout {
-        input_area,
-        full_area: Rect::new(
-            area.x,
-            area.y,
-            input_start - area.x + actual_field_width + 2,
-            1,
-        ),
-        cursor_pos,
+    /// Check if a point is within the full control area
+    pub fn contains(&self, x: u16, y: u16) -> bool {
+        x >= self.full_area.x
+            && x < self.full_area.x + self.full_area.width
+            && y >= self.full_area.y
+            && y < self.full_area.y + self.full_area.height
     }
 }
 
@@ -362,7 +222,7 @@ mod tests {
 
     fn test_frame<F>(width: u16, height: u16, f: F)
     where
-        F: FnOnce(&mut Frame, Rect),
+        F: FnOnce(&mut ratatui::Frame, Rect),
     {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();

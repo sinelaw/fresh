@@ -42,7 +42,8 @@ pub use number_input::{
     NumberInputLayout, NumberInputState,
 };
 pub use text_input::{
-    render_text_input, render_text_input_aligned, TextInputColors, TextInputLayout, TextInputState,
+    render_text_input, render_text_input_aligned, TextInputColors, TextInputEvent, TextInputLayout,
+    TextInputState,
 };
 pub use text_list::{render_text_list, TextListColors, TextListLayout, TextListState};
 pub use toggle::{
