@@ -149,6 +149,7 @@ impl Editor {
                     MenuItem::Action { label, .. } => Some(label.len() + 20),
                     MenuItem::Submenu { label, .. } => Some(label.len() + 20),
                     MenuItem::Separator { .. } => Some(20),
+                    MenuItem::Label { info } => Some(info.len() + 4),
                 })
                 .max()
                 .unwrap_or(20)
@@ -235,6 +236,7 @@ impl Editor {
                     MenuItem::Action { label, .. } => Some(label.len() + 20),
                     MenuItem::Submenu { label, .. } => Some(label.len() + 20),
                     MenuItem::Separator { .. } => Some(20),
+                    MenuItem::Label { info } => Some(info.len() + 4),
                 })
                 .max()
                 .unwrap_or(20)
@@ -276,8 +278,8 @@ impl Editor {
                 if item_idx < items.len() {
                     // Check what kind of item was clicked
                     match &items[item_idx] {
-                        MenuItem::Separator { .. } => {
-                            // Clicked on separator - do nothing but consume the click
+                        MenuItem::Separator { .. } | MenuItem::Label { .. } => {
+                            // Clicked on separator or label - do nothing but consume the click
                             return Ok(Some(Ok(())));
                         }
                         MenuItem::Submenu {

@@ -728,6 +728,9 @@ impl Editor {
                 self.apply_keyboard_capture_dimming(frame, terminal_area);
             }
         }
+
+        // Convert all colors for terminal capability (256/16 color fallback)
+        crate::view::color_support::convert_buffer_colors(frame.buffer_mut());
     }
 
     /// Apply dimming effect to UI elements outside the focused terminal area

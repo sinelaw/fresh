@@ -2,6 +2,7 @@
 //!
 //! This module contains all presentation and rendering components.
 
+pub mod color_support;
 pub mod controls;
 pub mod dimming;
 pub mod file_browser_input;

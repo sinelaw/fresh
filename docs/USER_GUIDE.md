@@ -271,6 +271,58 @@ Follow these steps to map **Shift + Up** and **Shift + Down** to specific escape
 | **Shift + Up** | Cursor Up | Shift | Send Text | `\033[1;2A` |
 | **Shift + Down** | Cursor Down | Shift | Send Text | `\033[1;2B` |
 
+## Troubleshooting
+
+### Terminal Color Support
+
+Fresh automatically detects your terminal's color capability and converts theme colors accordingly. Most modern terminals support 24-bit "truecolor", but some terminals and multiplexers have limited support.
+
+#### Color Modes
+
+- **Truecolor (24-bit)**: Full RGB color support (16 million colors). Used by modern terminals like Kitty, Alacritty, iTerm2, and most others with `COLORTERM=truecolor`.
+- **256 colors**: Extended palette. Used by xterm-256color and similar terminals.
+- **16 colors**: Basic ANSI colors. Used by the Linux console and very old terminals.
+
+#### Terminal Multiplexers
+
+GNU Screen and tmux add a layer between your terminal and Fresh, which can affect color rendering:
+
+- **GNU Screen**: Does not support truecolor. Fresh automatically uses 256 colors when `TERM` starts with `screen`.
+- **tmux**: Supports 256 colors by default. Some configurations support truecolor with `TERM=tmux-direct`.
+
+#### Manual Override
+
+If colors look wrong, you can force a specific color mode with the `FRESH_COLOR_MODE` environment variable:
+
+```bash
+# Force 256-color mode (recommended for GNU Screen)
+FRESH_COLOR_MODE=256 fresh
+
+# Force 16-color mode
+FRESH_COLOR_MODE=16 fresh
+
+# Force truecolor (if auto-detection is wrong)
+FRESH_COLOR_MODE=truecolor fresh
+```
+
+#### Common Issues
+
+| Symptom | Likely Cause | Solution |
+| :--- | :--- | :--- |
+| Colors look completely wrong | Truecolor detected but not supported | Use `FRESH_COLOR_MODE=256` |
+| Weird artifacts/rendering issues | Terminal multiplexer interference | Try `FRESH_COLOR_MODE=256` or check TERM |
+| Very limited/ugly colors | 16-color mode detected | Check your terminal supports 256 colors |
+
+#### Checking Your Terminal
+
+```bash
+# Check TERM variable
+echo $TERM
+
+# Check COLORTERM (if set, indicates truecolor support)
+echo $COLORTERM
+```
+
 ## Advanced Topics
 
 ### Visual Regression Testing

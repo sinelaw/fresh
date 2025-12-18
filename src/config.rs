@@ -561,6 +561,8 @@ pub enum MenuItem {
     },
     /// A submenu (for future extensibility)
     Submenu { label: String, items: Vec<MenuItem> },
+    /// A disabled info label (no action)
+    Label { info: String },
 }
 
 impl Default for Config {
@@ -1599,6 +1601,17 @@ impl Config {
                         args: HashMap::new(),
                         when: None,
                         checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Label {
+                        info: format!(
+                            "Color: {}",
+                            match crate::view::color_support::get_color_capability() {
+                                crate::view::color_support::ColorCapability::TrueColor => "Truecolor",
+                                crate::view::color_support::ColorCapability::Color256 => "256 colors",
+                                crate::view::color_support::ColorCapability::Color16 => "16 colors",
+                            }
+                        ),
                     },
                 ],
             },

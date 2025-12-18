@@ -532,6 +532,7 @@ impl MenuRenderer {
                 MenuItem::Action { label, .. } => Some(label.len() + 20),
                 MenuItem::Submenu { label, .. } => Some(label.len() + 20),
                 MenuItem::Separator { .. } => Some(20),
+                MenuItem::Label { info } => Some(info.len() + 4),
             })
             .max()
             .unwrap_or(20)
@@ -701,6 +702,17 @@ impl MenuRenderer {
                     let label_width = content_width.saturating_sub(5);
                     Line::from(vec![Span::styled(
                         format!(" {:<label_width$} ▶  ", label),
+                        style,
+                    )])
+                }
+                MenuItem::Label { info } => {
+                    // Disabled info label - always shown in disabled style
+                    let style = Style::default()
+                        .fg(theme.menu_disabled_fg)
+                        .bg(theme.menu_dropdown_bg);
+                    let padding = content_width;
+                    Line::from(vec![Span::styled(
+                        format!(" {:<width$}", info, width = padding),
                         style,
                     )])
                 }
