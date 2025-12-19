@@ -42,11 +42,11 @@ fn test_paste_replaces_selection() {
         "Anchor should be at start of 'world'"
     );
 
-    // Set clipboard content and paste
+    // Set clipboard content and paste (use test-only paste to avoid system clipboard interference)
     harness
         .editor_mut()
         .set_clipboard_for_test("universe".to_string());
-    harness.editor_mut().paste();
+    harness.editor_mut().paste_for_test();
     harness.render().unwrap();
 
     // "world" should be replaced with "universe"
@@ -75,7 +75,7 @@ fn test_paste_with_multiple_cursors() {
 
     // Set clipboard and paste
     harness.editor_mut().set_clipboard_for_test("X".to_string());
-    harness.editor_mut().paste();
+    harness.editor_mut().paste_for_test();
     harness.render().unwrap();
 
     // Should have X inserted at start of each line
@@ -125,7 +125,7 @@ fn test_paste_replaces_multiple_selections() {
     harness
         .editor_mut()
         .set_clipboard_for_test("XXX".to_string());
-    harness.editor_mut().paste();
+    harness.editor_mut().paste_for_test();
     harness.render().unwrap();
 
     // All "foo"s should be replaced with "XXX"
@@ -145,7 +145,7 @@ fn test_paste_undo_is_atomic() {
     harness
         .editor_mut()
         .set_clipboard_for_test(" world".to_string());
-    harness.editor_mut().paste();
+    harness.editor_mut().paste_for_test();
     harness.render().unwrap();
     harness.assert_buffer_content("hello world");
 
@@ -187,7 +187,7 @@ fn test_multi_cursor_paste_undo_is_atomic() {
 
     // Paste
     harness.editor_mut().set_clipboard_for_test("X".to_string());
-    harness.editor_mut().paste();
+    harness.editor_mut().paste_for_test();
     harness.render().unwrap();
 
     // Verify paste worked
@@ -238,7 +238,7 @@ fn test_paste_with_selection_undo_is_atomic() {
     harness
         .editor_mut()
         .set_clipboard_for_test("universe".to_string());
-    harness.editor_mut().paste();
+    harness.editor_mut().paste_for_test();
     harness.render().unwrap();
     harness.assert_buffer_content("hello universe");
 
@@ -271,7 +271,7 @@ fn test_paste_multiline_text() {
     harness
         .editor_mut()
         .set_clipboard_for_test("line1\nline2\nline3".to_string());
-    harness.editor_mut().paste();
+    harness.editor_mut().paste_for_test();
     harness.render().unwrap();
 
     harness.assert_buffer_content("line1\nline2\nline3");
@@ -297,7 +297,7 @@ fn test_paste_at_end_of_line() {
     harness
         .editor_mut()
         .set_clipboard_for_test(" world".to_string());
-    harness.editor_mut().paste();
+    harness.editor_mut().paste_for_test();
     harness.render().unwrap();
 
     harness.assert_buffer_content("hello world");
@@ -320,7 +320,7 @@ fn test_paste_in_middle() {
     }
 
     harness.editor_mut().set_clipboard_for_test(" ".to_string());
-    harness.editor_mut().paste();
+    harness.editor_mut().paste_for_test();
     harness.render().unwrap();
 
     harness.assert_buffer_content("hello world");

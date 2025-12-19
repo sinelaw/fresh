@@ -3827,6 +3827,20 @@ impl Editor {
         self.clipboard.set_internal(text);
     }
 
+    /// Paste from internal clipboard only (for testing)
+    /// This bypasses the system clipboard to avoid interference from CI environments
+    #[doc(hidden)]
+    pub fn paste_for_test(&mut self) {
+        // Get content from internal clipboard only (ignores system clipboard)
+        let paste_text = match self.clipboard.paste_internal() {
+            Some(text) => text,
+            None => return,
+        };
+
+        // Use the same paste logic as the regular paste method
+        self.paste_text(paste_text);
+    }
+
     /// Add a cursor at the next occurrence of the selected text
     /// If no selection, does nothing
     pub fn add_cursor_at_next_match(&mut self) {

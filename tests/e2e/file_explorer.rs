@@ -1555,12 +1555,11 @@ fn test_close_last_buffer_focuses_file_explorer() {
         .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
         .unwrap();
 
-    // Wait for async file explorer initialization
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    // Wait for file explorer to become visible (with timeout for CI environments)
+    harness
+        .wait_until(|h| h.editor().file_explorer_visible())
+        .unwrap();
 
-    // After closing the last buffer, file explorer should be visible and focused
     let screen_after_close = harness.screen_to_string();
     println!("Screen after closing last buffer:\n{}", screen_after_close);
 

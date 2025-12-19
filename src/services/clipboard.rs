@@ -124,6 +124,16 @@ impl Clipboard {
         self.internal = text;
     }
 
+    /// Get text from internal clipboard only (ignores system clipboard)
+    /// This is useful for testing where we don't want system clipboard interference
+    pub fn paste_internal(&self) -> Option<String> {
+        if self.internal.is_empty() {
+            None
+        } else {
+            Some(self.internal.clone())
+        }
+    }
+
     /// Check if clipboard is empty (checks both internal and system)
     pub fn is_empty(&self) -> bool {
         if !self.internal.is_empty() {
