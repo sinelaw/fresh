@@ -5,16 +5,15 @@
 //!
 //! # Usage
 //!
-//! Use `tc(color)` to convert any color for the current terminal:
+//! Detect capability at startup and pass it to the Editor:
 //! ```ignore
-//! use crate::view::color_support::tc;
-//! let style = Style::default().fg(tc(theme.editor_fg));
+//! let capability = ColorCapability::detect();
+//! let editor = Editor::new(config, width, height, dir_context, capability)?;
 //! ```
 //!
-//! For true-color terminals, `tc()` is essentially a no-op.
+//! The Editor will automatically convert colors during rendering based on the capability.
 
 use ratatui::style::Color;
-use std::sync::OnceLock;
 
 /// Terminal color capability levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,14 +114,6 @@ impl ColorCapability {
         // Default to 256 as safe middle ground
         ColorCapability::Color256
     }
-}
-
-/// Global cached color capability (detected once at startup)
-static COLOR_CAPABILITY: OnceLock<ColorCapability> = OnceLock::new();
-
-/// Get the detected color capability (cached after first call)
-pub fn get_color_capability() -> ColorCapability {
-    *COLOR_CAPABILITY.get_or_init(ColorCapability::detect)
 }
 
 /// Convert an RGB color to the nearest 256-color palette index
@@ -274,14 +265,6 @@ fn rgb_to_16(r: u8, g: u8, b: u8) -> Color {
     }
 }
 
-/// Convert a color for the current terminal's capability (cached detection)
-/// This is the main function to use - call it when setting colors in styles.
-/// For true-color terminals, this is essentially a no-op.
-#[inline]
-pub fn tc(color: Color) -> Color {
-    convert_color(color, get_color_capability())
-}
-
 /// Convert a Color to the appropriate format for the terminal's capability
 pub fn convert_color(color: Color, capability: ColorCapability) -> Color {
     match capability {
@@ -343,11 +326,9 @@ fn indexed_to_16(idx: u8) -> Color {
     }
 }
 
-/// Convert all colors in a ratatui Buffer for the terminal's capability
+/// Convert all colors in a ratatui Buffer for the given color capability
 /// This is the main entry point - call once after all widgets have rendered
-pub fn convert_buffer_colors(buffer: &mut ratatui::buffer::Buffer) {
-    let capability = get_color_capability();
-
+pub fn convert_buffer_colors(buffer: &mut ratatui::buffer::Buffer, capability: ColorCapability) {
     // For true color terminals, no conversion needed
     if capability == ColorCapability::TrueColor {
         return;

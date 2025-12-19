@@ -170,6 +170,7 @@ impl EditorTestHarness {
             Some(temp_path),
             dir_context,
             time_source,
+            fresh::view::color_support::ColorCapability::TrueColor,
         )?;
 
         Ok(EditorTestHarness {
@@ -213,6 +214,7 @@ impl EditorTestHarness {
             Some(temp_path),
             dir_context,
             time_source,
+            fresh::view::color_support::ColorCapability::TrueColor,
         )?;
 
         Ok(EditorTestHarness {
@@ -273,6 +275,7 @@ impl EditorTestHarness {
             Some(project_root),
             dir_context,
             time_source,
+            fresh::view::color_support::ColorCapability::TrueColor,
         )?;
 
         Ok(EditorTestHarness {
@@ -335,6 +338,7 @@ impl EditorTestHarness {
             Some(working_dir),
             dir_context,
             time_source,
+            fresh::view::color_support::ColorCapability::TrueColor,
         )?;
 
         // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
@@ -392,6 +396,7 @@ impl EditorTestHarness {
             Some(working_dir),
             dir_context,
             time_source,
+            fresh::view::color_support::ColorCapability::TrueColor,
         )?;
 
         // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
@@ -447,6 +452,7 @@ impl EditorTestHarness {
             fs_backend,
             dir_context,
             time_source,
+            fresh::view::color_support::ColorCapability::TrueColor,
         )?;
 
         Ok(EditorTestHarness {

@@ -422,6 +422,9 @@ fn main() -> io::Result<()> {
         let first_run = is_first_run;
         let session_enabled = !args.no_session && file_to_open.is_none();
 
+        // Detect terminal color capability
+        let color_capability = fresh::view::color_support::ColorCapability::detect();
+
         let mut editor = Editor::with_working_dir(
             config.clone(),
             terminal_width,
@@ -429,6 +432,7 @@ fn main() -> io::Result<()> {
             current_working_dir.clone(),
             dir_context.clone(),
             !args.no_plugins,
+            color_capability,
         )?;
 
         #[cfg(target_os = "linux")]

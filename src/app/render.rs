@@ -730,7 +730,10 @@ impl Editor {
         }
 
         // Convert all colors for terminal capability (256/16 color fallback)
-        crate::view::color_support::convert_buffer_colors(frame.buffer_mut());
+        crate::view::color_support::convert_buffer_colors(
+            frame.buffer_mut(),
+            self.color_capability,
+        );
     }
 
     /// Apply dimming effect to UI elements outside the focused terminal area

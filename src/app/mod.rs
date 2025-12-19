@@ -465,6 +465,9 @@ pub struct Editor {
 
     /// Settings UI state (when settings modal is open)
     pub(crate) settings_state: Option<crate::view::settings::SettingsState>,
+
+    /// Terminal color capability (true color, 256, or 16 colors)
+    color_capability: crate::view::color_support::ColorCapability,
 }
 
 impl Editor {
@@ -475,8 +478,17 @@ impl Editor {
         width: u16,
         height: u16,
         dir_context: DirectoryContext,
+        color_capability: crate::view::color_support::ColorCapability,
     ) -> io::Result<Self> {
-        Self::with_working_dir(config, width, height, None, dir_context, true)
+        Self::with_working_dir(
+            config,
+            width,
+            height,
+            None,
+            dir_context,
+            true,
+            color_capability,
+        )
     }
 
     /// Create a new editor with an explicit working directory
@@ -488,6 +500,7 @@ impl Editor {
         working_dir: Option<PathBuf>,
         dir_context: DirectoryContext,
         plugins_enabled: bool,
+        color_capability: crate::view::color_support::ColorCapability,
     ) -> io::Result<Self> {
         Self::with_options(
             config,
@@ -498,6 +511,7 @@ impl Editor {
             plugins_enabled,
             dir_context,
             None,
+            color_capability,
         )
     }
 
@@ -510,6 +524,7 @@ impl Editor {
         working_dir: Option<PathBuf>,
         fs_backend: Arc<dyn FsBackend>,
         dir_context: DirectoryContext,
+        color_capability: crate::view::color_support::ColorCapability,
     ) -> io::Result<Self> {
         Self::with_options(
             config,
@@ -520,6 +535,7 @@ impl Editor {
             true,
             dir_context,
             None,
+            color_capability,
         )
     }
 
@@ -532,6 +548,7 @@ impl Editor {
         working_dir: Option<PathBuf>,
         dir_context: DirectoryContext,
         time_source: SharedTimeSource,
+        color_capability: crate::view::color_support::ColorCapability,
     ) -> io::Result<Self> {
         Self::with_options(
             config,
@@ -542,6 +559,7 @@ impl Editor {
             true,
             dir_context,
             Some(time_source),
+            color_capability,
         )
     }
 
@@ -555,6 +573,7 @@ impl Editor {
         fs_backend: Arc<dyn FsBackend>,
         dir_context: DirectoryContext,
         time_source: SharedTimeSource,
+        color_capability: crate::view::color_support::ColorCapability,
     ) -> io::Result<Self> {
         Self::with_options(
             config,
@@ -565,6 +584,7 @@ impl Editor {
             true,
             dir_context,
             Some(time_source),
+            color_capability,
         )
     }
 
@@ -580,6 +600,7 @@ impl Editor {
         enable_plugins: bool,
         dir_context: DirectoryContext,
         time_source: Option<SharedTimeSource>,
+        color_capability: crate::view::color_support::ColorCapability,
     ) -> io::Result<Self> {
         // Use provided time_source or default to RealTimeSource
         let time_source = time_source.unwrap_or_else(RealTimeSource::shared);
@@ -887,6 +908,7 @@ impl Editor {
             previous_click_time: None,
             previous_click_position: None,
             settings_state: None,
+            color_capability,
         })
     }
 
