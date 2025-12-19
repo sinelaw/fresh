@@ -8158,7 +8158,7 @@ mod tests {
     fn test_editor_new() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         assert_eq!(editor.buffers.len(), 1);
         assert!(!editor.should_quit());
@@ -8168,7 +8168,7 @@ mod tests {
     fn test_new_buffer() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         let id = editor.new_buffer();
         assert_eq!(editor.buffers.len(), 2);
@@ -8180,7 +8180,7 @@ mod tests {
     fn test_clipboard() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Manually set clipboard (using internal to avoid system clipboard in tests)
         editor.clipboard.set_internal("test".to_string());
@@ -8196,7 +8196,7 @@ mod tests {
     fn test_action_to_events_insert_char() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         let events = editor.action_to_events(Action::InsertChar('a'));
         assert!(events.is_some());
@@ -8217,7 +8217,7 @@ mod tests {
     fn test_action_to_events_move_right() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -8251,7 +8251,7 @@ mod tests {
     fn test_action_to_events_move_up_down() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Insert multi-line text
         let state = editor.active_state_mut();
@@ -8290,7 +8290,7 @@ mod tests {
     fn test_action_to_events_insert_newline() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         let events = editor.action_to_events(Action::InsertNewline);
         assert!(events.is_some());
@@ -8310,7 +8310,7 @@ mod tests {
     fn test_action_to_events_unimplemented() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // These actions should return None (not yet implemented)
         assert!(editor.action_to_events(Action::Save).is_none());
@@ -8322,7 +8322,7 @@ mod tests {
     fn test_action_to_events_delete_backward() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -8355,7 +8355,7 @@ mod tests {
     fn test_action_to_events_delete_forward() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -8399,7 +8399,7 @@ mod tests {
     fn test_action_to_events_select_right() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -8443,7 +8443,7 @@ mod tests {
     fn test_action_to_events_select_all() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -8476,7 +8476,7 @@ mod tests {
     fn test_action_to_events_document_nav() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Insert multi-line text
         let state = editor.active_state_mut();
@@ -8515,7 +8515,7 @@ mod tests {
 
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Insert some text first to have positions to place cursors
         {
@@ -8581,7 +8581,7 @@ mod tests {
     fn test_action_to_events_scroll() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Test ScrollUp
         let events = editor.action_to_events(Action::ScrollUp);
@@ -8612,7 +8612,7 @@ mod tests {
     fn test_action_to_events_none() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // None action should return None
         let events = editor.action_to_events(Action::None);
@@ -8790,7 +8790,7 @@ mod tests {
     fn test_goto_matching_bracket_forward() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Insert text with brackets
         let state = editor.active_state_mut();
@@ -8827,7 +8827,7 @@ mod tests {
     fn test_goto_matching_bracket_backward() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Insert text with brackets
         let state = editor.active_state_mut();
@@ -8859,7 +8859,7 @@ mod tests {
     fn test_goto_matching_bracket_nested() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Insert text with nested brackets
         let state = editor.active_state_mut();
@@ -8891,7 +8891,7 @@ mod tests {
     fn test_search_case_sensitive() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Insert text
         let state = editor.active_state_mut();
@@ -8932,7 +8932,7 @@ mod tests {
     fn test_search_whole_word() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Insert text
         let state = editor.active_state_mut();
@@ -8972,7 +8972,7 @@ mod tests {
     fn test_bookmarks() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Insert text
         let state = editor.active_state_mut();
@@ -9160,7 +9160,7 @@ mod tests {
 
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Set buffer content: "fn foo(val: i32) {\n    val + 1\n}\n"
         // Line 0: positions 0-19 (includes newline)
@@ -9300,7 +9300,7 @@ mod tests {
 
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Set buffer content: "fn foo(val: i32) {\n    val + 1\n}\n"
         // Line 0: positions 0-19 (includes newline)
@@ -9395,7 +9395,7 @@ mod tests {
 
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
 
         // Initial content: "fn foo(val: i32) {\n    val + 1\n}\n"
         let initial = "fn foo(val: i32) {\n    val + 1\n}\n";
@@ -9564,7 +9564,7 @@ mod tests {
     fn test_ensure_active_tab_visible_static_offset() {
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
-        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
+        let mut editor = Editor::new(config, 80, 24, dir_context, crate::view::color_support::ColorCapability::TrueColor).unwrap();
         let split_id = editor.split_manager.active_split();
 
         // Create three buffers with long names to force scrolling.

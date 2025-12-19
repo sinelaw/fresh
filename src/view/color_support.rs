@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn test_rgb_to_256_grayscale() {
         let idx = rgb_to_256(128, 128, 128);
-        assert!(idx >= 232 && idx <= 255); // Should be in grayscale range
+        assert!(idx >= 232); // Should be in grayscale range (232-255, u8 max is 255)
     }
 
     #[test]
