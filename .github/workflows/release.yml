@@ -170,6 +170,15 @@ jobs:
       version: ${{ needs.plan.outputs.version }}
     secrets: inherit
 
+  # Build AppImage
+  build-appimage:
+    needs: [plan, build]
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    uses: ./.github/workflows/appimage-build.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+    secrets: inherit
+
   # Build npm package
   build-npm-package:
     needs: [plan, build]
@@ -448,7 +457,7 @@ jobs:
 
   # Create GitHub Release
   release:
-    needs: [plan, build, build-musl, build-linux-packages, build-flatpak, build-npm-package, build-homebrew-formula]
+    needs: [plan, build, build-musl, build-linux-packages, build-flatpak, build-appimage, build-npm-package, build-homebrew-formula]
     if: ${{ always() && needs.plan.outputs.publishing == 'true' && needs.plan.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-22.04
     env:
@@ -512,6 +521,8 @@ jobs:
             artifacts/*.rpm \
             artifacts/*.flatpak \
             artifacts/*.flatpak.sha256 \
+            artifacts/*.AppImage \
+            artifacts/*.AppImage.sha256 \
             artifacts/fresh.rb \
             2>/dev/null || true
 

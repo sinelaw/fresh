@@ -1,0 +1,124 @@
+# AppImage build workflow - packages pre-built binary as an AppImage
+# Called from the release workflow after the build job completes
+
+name: AppImage Build
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to build'
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build'
+        required: true
+        type: string
+
+jobs:
+  build-appimage:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: x86_64
+            runner: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            arch: aarch64
+            runner: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download pre-built binary
+        uses: actions/download-artifact@v7
+        with:
+          name: artifacts-${{ matrix.target }}
+          path: artifacts/
+
+      - name: Extract pre-built binary
+        run: |
+          mkdir -p binary
+          cd artifacts
+          tar -xJf fresh-editor-${{ matrix.target }}.tar.xz
+          cp -r fresh-editor-${{ matrix.target }}/* ../binary/
+
+      - name: Install AppImage tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file libfuse2
+
+      - name: Build AppImage
+        run: |
+          ./scripts/build-appimage.sh binary "$VERSION" "${{ matrix.arch }}"
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v6
+        with:
+          name: artifacts-appimage-${{ matrix.arch }}
+          path: |
+            fresh-editor-*.AppImage
+            fresh-editor-*.AppImage.sha256
+
+  # Test AppImage on multiple distributions
+  test-appimage:
+    needs: build-appimage
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu:22.04
+            name: Ubuntu 22.04
+          - distro: ubuntu:24.04
+            name: Ubuntu 24.04
+          - distro: debian:12
+            name: Debian 12
+          - distro: fedora:40
+            name: Fedora 40
+    runs-on: ubuntu-22.04
+    container:
+      image: ${{ matrix.distro }}
+      options: --privileged
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Install dependencies
+        run: |
+          if command -v apt-get &> /dev/null; then
+            apt-get update
+            apt-get install -y file libfuse2 || apt-get install -y file fuse
+          elif command -v dnf &> /dev/null; then
+            dnf install -y file fuse fuse-libs
+          fi
+
+      - name: Download AppImage
+        uses: actions/download-artifact@v7
+        with:
+          name: artifacts-appimage-x86_64
+          path: ./
+
+      - name: Test AppImage
+        run: |
+          echo "=== Testing on ${{ matrix.name }} ==="
+
+          chmod +x fresh-editor-${VERSION}-x86_64.AppImage
+
+          echo ""
+          echo "=== File info ==="
+          file fresh-editor-${VERSION}-x86_64.AppImage
+
+          echo ""
+          echo "=== Testing --version ==="
+          ./fresh-editor-${VERSION}-x86_64.AppImage --version
+
+          echo ""
+          echo "=== Testing --help ==="
+          ./fresh-editor-${VERSION}-x86_64.AppImage --help | head -20 || true
+
+          echo ""
+          echo "AppImage test PASSED on ${{ matrix.name }}"

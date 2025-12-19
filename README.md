@@ -56,7 +56,7 @@ Or, pick your preferred method:
 | Arch Linux | [AUR](#arch-linux-aur) |
 | Debian/Ubuntu | [.deb](#debianubuntu-deb) |
 | Fedora/RHEL | [.rpm](#fedorarhelopensuse-rpm) |
-| Linux (any distro) | [Flatpak](#flatpak) |
+| Linux (any distro) | [AppImage](#appimage), [Flatpak](#flatpak) |
 | All platforms | [Pre-built binaries](#pre-built-binaries) |
 | npm | [npm / npx](#npm) |
 | Rust users (Fast) | [cargo-binstall](#using-cargo-binstall) |
@@ -120,6 +120,26 @@ curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | 
 ```
 
 Or download the `.rpm` file manually from the [releases page](https://github.com/sinelaw/fresh/releases).
+
+### AppImage
+
+Download the `.AppImage` file from the [releases page](https://github.com/sinelaw/fresh/releases) and run:
+
+```bash
+chmod +x fresh-editor-VERSION-x86_64.AppImage
+./fresh-editor-VERSION-x86_64.AppImage
+```
+
+**For faster startup** (recommended): Extract the AppImage instead of running it directly. This avoids the FUSE mount overhead on each launch (~10x faster):
+
+```bash
+./fresh-editor-VERSION-x86_64.AppImage --appimage-extract
+mkdir -p ~/.local/share/fresh-editor ~/.local/bin
+mv squashfs-root/* ~/.local/share/fresh-editor/
+ln -sf ~/.local/share/fresh-editor/usr/bin/fresh ~/.local/bin/fresh
+```
+
+Ensure `~/.local/bin` is in your PATH. Available for x86_64 and aarch64 architectures.
 
 ### Flatpak
 

@@ -12,8 +12,8 @@ set -e
 # 1. Fallback Priority Order
 #    If the native OS method (apt, dnf, pacman, brew) fails or is unavailable,
 #    the script will try these universal methods in the order listed below.
-#    Valid options: "nix" "cargo" "npm"
-FALLBACK_PRIORITY="nix cargo npm"
+#    Valid options: "nix" "cargo" "npm" "appimage"
+FALLBACK_PRIORITY="nix cargo npm appimage"
 
 # 2. Arch Linux: AUR Helper Priority
 #    The script will check for these helpers in order.
@@ -142,6 +142,65 @@ install_fedora() {
 
 # --- Universal Installers (Called by priority list) ---
 
+do_install_appimage() {
+    log_info "Attempting AppImage install..."
+    if ! check_cmd curl; then log_error "curl is required."; fi
+
+    ARCH=$(uname -m)
+    # Map architecture to AppImage naming
+    case "$ARCH" in
+        x86_64)  APPIMAGE_ARCH="x86_64" ;;
+        aarch64) APPIMAGE_ARCH="aarch64" ;;
+        arm64)   APPIMAGE_ARCH="aarch64" ;;
+        *)       log_warn "AppImage not available for architecture: $ARCH"; return 1 ;;
+    esac
+
+    URL=$(get_release_url "\.AppImage$" "$APPIMAGE_ARCH")
+
+    if [ -z "$URL" ]; then
+        log_warn "No AppImage found for $APPIMAGE_ARCH."
+        return 1
+    fi
+
+    INSTALL_DIR="${HOME}/.local/share/fresh-editor"
+    BIN_DIR="${HOME}/.local/bin"
+    SYMLINK_PATH="${BIN_DIR}/fresh"
+
+    # Download to temp file
+    TEMP_APPIMAGE=$(mktemp)
+    log_info "Downloading AppImage from $URL..."
+    curl -sL "$URL" -o "$TEMP_APPIMAGE"
+    chmod +x "$TEMP_APPIMAGE"
+
+    # Extract AppImage (faster startup than running via FUSE)
+    log_info "Extracting AppImage..."
+    TEMP_EXTRACT=$(mktemp -d)
+    (cd "$TEMP_EXTRACT" && "$TEMP_APPIMAGE" --appimage-extract > /dev/null 2>&1)
+    rm -f "$TEMP_APPIMAGE"
+
+    # Remove old installation and move new one in place
+    rm -rf "$INSTALL_DIR"
+    mkdir -p "$INSTALL_DIR" "$BIN_DIR"
+    mv "$TEMP_EXTRACT/squashfs-root"/* "$INSTALL_DIR/"
+    rm -rf "$TEMP_EXTRACT"
+
+    # Create symlink to the binary
+    ln -sf "$INSTALL_DIR/usr/bin/fresh" "$SYMLINK_PATH"
+
+    # Check if ~/.local/bin is in PATH
+    case ":$PATH:" in
+        *":${BIN_DIR}:"*) ;;
+        *)
+            log_warn "${BIN_DIR} is not in your PATH."
+            log_info "Add this to your shell profile:"
+            log_info "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+            ;;
+    esac
+
+    log_success "Installed to $INSTALL_DIR"
+    log_success "Symlink created at $SYMLINK_PATH"
+}
+
 do_install_nix() {
     log_info "Attempting Nix install..."
     nix profile install "github:${REPO_OWNER}/${REPO_NAME}"
@@ -173,9 +232,15 @@ do_install_npm() {
 
 run_fallbacks() {
     log_info "Checking universal fallback methods in order: $FALLBACK_PRIORITY"
-    
+
     for method in $FALLBACK_PRIORITY; do
         case "$method" in
+            appimage)
+                # AppImage works on most Linux distros (only requires FUSE)
+                if [ "$(uname -s)" = "Linux" ]; then
+                    if do_install_appimage; then return; fi
+                fi
+                ;;
             nix)
                 if check_cmd nix; then do_install_nix; return; fi
                 ;;
@@ -187,8 +252,8 @@ run_fallbacks() {
                 ;;
         esac
     done
-    
-    log_error "Installation failed. No supported native package manager or fallback (nix/cargo/npm) found."
+
+    log_error "Installation failed. No supported native package manager or fallback (appimage/nix/cargo/npm) found."
 }
 
 # --- Main Detection ---
