@@ -927,13 +927,13 @@ fn main() {
 
 **Usage:**
 ```bash
-cargo run --bin generate_schema > plugins/config-schema.json
+cargo run --features dev-bins --bin generate_schema > plugins/config-schema.json
 ```
 
 **CI verification** (in `.github/workflows/ci.yml`):
 ```yaml
 - name: Generate schema
-  run: cargo run --bin generate_schema > /tmp/config-schema.json
+  run: cargo run --features dev-bins --bin generate_schema > /tmp/config-schema.json
 - name: Check schema is up-to-date
   run: diff -u plugins/config-schema.json /tmp/config-schema.json
 ```

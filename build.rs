@@ -1,7 +1,7 @@
 //! Build script for Fresh editor
 //!
 //! Generates TypeScript type definitions from Rust op definitions.
-//! JSON Schema for configuration is now generated via `cargo run --bin generate_schema`.
+//! JSON Schema for configuration is now generated via `cargo run --features dev-bins --bin generate_schema`.
 
 use std::collections::HashMap;
 use std::fs;

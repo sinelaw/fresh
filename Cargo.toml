@@ -19,7 +19,12 @@ required-features = ["runtime"]
 [[bin]]
 name = "generate_schema"
 path = "src/bin/generate_schema.rs"
-# No required-features - works with minimal deps via --no-default-features
+required-features = ["dev-bins"]
+
+[[bin]]
+name = "event_debug"
+path = "src/bin/event_debug.rs"
+required-features = ["dev-bins", "runtime"]
 
 [lib]
 name = "fresh"
@@ -28,6 +33,8 @@ path = "src/lib.rs"
 [features]
 default = ["plugins", "runtime"]
 plugins = ["dep:deno_core", "dep:deno_ast", "dep:deno_error"]
+# Feature for optional development binaries (generate_schema, event_debug)
+dev-bins = []
 # Runtime feature includes all heavy dependencies needed for the actual editor
 runtime = [
     "dep:crossterm",

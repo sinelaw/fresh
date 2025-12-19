@@ -72,7 +72,7 @@ jobs:
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
       - name: Generate schema
-        run: cargo run --bin generate_schema > /tmp/config-schema.json
+        run: cargo run --features dev-bins --bin generate_schema > /tmp/config-schema.json
       - name: Check schema is up-to-date
         run: diff -u plugins/config-schema.json /tmp/config-schema.json
 

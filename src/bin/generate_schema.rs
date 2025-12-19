@@ -4,7 +4,7 @@
 //! It's used to generate plugins/config-schema.json for the config editor.
 //!
 //! Usage:
-//!   cargo run --bin generate_schema > plugins/config-schema.json
+//!   cargo run --features dev-bins --bin generate_schema > plugins/config-schema.json
 
 use fresh::config::Config;
 use schemars::schema_for;
