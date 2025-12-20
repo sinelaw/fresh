@@ -1,5 +1,27 @@
 # Release Notes
 
+## 0.1.57
+
+### Features
+
+* **Per-Language Tab Settings**: Added `use_tabs` and `show_whitespace_tabs` config options per language. Go and Makefile default to tabs; Go hides tab indicators by default (#364).
+
+* **AppImage Packaging**: AppImage bundles are now included in GitHub releases (#365).
+
+### Bug Fixes
+
+* **LSP Missing Error Messages**: Improved error messages when LSP server is not found (#363).
+
+* **LSP didOpen Ordering**: Ensure didOpen is sent before any LSP request, fixing "trying to get preamble for non-added document" errors (#399).
+
+* **LSP Diagnostics Capability Check**: Check diagnosticProvider capability before sending pull diagnostics requests (#399).
+
+* **Terminal Mode Reset**: Fixed terminal_mode not being reset when closing a terminal buffer.
+
+* **cargo-binstall**: Fixed cargo-binstall complaining about missing binaries by making dev binaries optional (#388).
+
+---
+
 ## 0.1.56
 
 ### Features
