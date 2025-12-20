@@ -59,10 +59,6 @@
 
 * **rust-analyzer Defaults**: Added minimal performance defaults for rust-analyzer LSP.
 
-### Packaging
-
-* **Ubuntu 20.04**: Added CI coverage for Ubuntu 20.04 (#374).
-
 ### Internal
 
 * **Input Handling Refactor**: New hierarchical `InputHandler` trait system for cleaner modal input routing.
