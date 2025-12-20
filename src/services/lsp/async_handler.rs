@@ -1613,6 +1613,15 @@ impl LspTask {
         tracing::info!("Process limits: {:?}", process_limits);
         tracing::info!("LSP stderr will be logged to: {:?}", stderr_log_path);
 
+        // Check if the command exists before trying to spawn
+        // This provides a clearer error message than the generic "No such file or directory"
+        if !Self::command_exists(command) {
+            return Err(format!(
+                "LSP server executable '{}' not found. Please install it or check your PATH.",
+                command
+            ));
+        }
+
         // Create stderr log file and redirect process stderr directly to it
         let stderr_file = std::fs::File::create(&stderr_log_path).map_err(|e| {
             format!(
@@ -1633,9 +1642,19 @@ impl LspTask {
             .apply_to_command(&mut cmd)
             .map_err(|e| format!("Failed to apply process limits: {}", e))?;
 
-        let mut process = cmd
-            .spawn()
-            .map_err(|e| format!("Failed to spawn LSP process: {}", e))?;
+        let mut process = cmd.spawn().map_err(|e| {
+            format!(
+                "Failed to spawn LSP server '{}': {}",
+                command,
+                match e.kind() {
+                    std::io::ErrorKind::NotFound =>
+                        "executable not found in PATH".to_string(),
+                    std::io::ErrorKind::PermissionDenied =>
+                        "permission denied (check file permissions)".to_string(),
+                    _ => e.to_string(),
+                }
+            )
+        })?;
 
         let stdin = process
             .stdin
@@ -1664,6 +1683,42 @@ impl LspTask {
             server_command: command.to_string(),
             stderr_log_path,
         })
+    }
+
+    /// Check if a command exists in PATH or as an absolute path
+    fn command_exists(command: &str) -> bool {
+        use std::path::Path;
+
+        // If it's an absolute path, check if the file exists and is executable
+        if command.contains('/') || command.contains('\\') {
+            let path = Path::new(command);
+            return path.exists() && path.is_file();
+        }
+
+        // Otherwise, search in PATH
+        if let Ok(path_var) = std::env::var("PATH") {
+            #[cfg(unix)]
+            let separator = ':';
+            #[cfg(windows)]
+            let separator = ';';
+
+            for dir in path_var.split(separator) {
+                let full_path = Path::new(dir).join(command);
+                if full_path.exists() && full_path.is_file() {
+                    return true;
+                }
+                // On Windows, also check with .exe extension
+                #[cfg(windows)]
+                {
+                    let with_exe = Path::new(dir).join(format!("{}.exe", command));
+                    if with_exe.exists() && with_exe.is_file() {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// Spawn the stdout reader task that continuously reads and dispatches LSP messages
