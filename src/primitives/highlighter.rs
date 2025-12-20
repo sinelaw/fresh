@@ -143,6 +143,7 @@ pub enum Language {
     Ruby,
     Bash,
     Lua,
+    Pascal,
     // Markdown,  // Disabled due to tree-sitter version conflict
 }
 
@@ -166,6 +167,7 @@ impl Language {
             "rb" => Some(Language::Ruby),
             "sh" | "bash" => Some(Language::Bash),
             "lua" => Some(Language::Lua),
+            "pas" | "p" => Some(Language::Pascal),
             // "md" => Some(Language::Markdown),  // Disabled
             _ => None,
         }
@@ -616,6 +618,39 @@ impl Language {
                 ]);
 
                 Ok(config)
+            }
+            Language::Pascal => {
+                // Pascal highlighting is handled by syntect (TextMate) via Sublime's default packages
+                // Tree-sitter is still used for auto-indentation and semantic highlighting
+                tracing::warn!("Pascal highlighting uses TextMate/syntect, not tree-sitter. Tree-sitter is still used for auto-indentation and semantic highlighting.");
+
+                let locals_query = include_str!("../../queries/pascal/locals.scm");
+
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_pascal::LANGUAGE.into(),
+                    "pascal",
+                    "", // No highlights query - syntect handles highlighting
+                    "", // injections query
+                    locals_query,
+                )
+                .map_err(|e| format!("Failed to create Pascal highlight config: {e}"))?;
+
+                // Configure highlight names (even though we don't use highlights query)
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
             } // Language::Markdown => {
               //     // Disabled due to tree-sitter version conflict
               //     Err("Markdown highlighting not available".to_string())
@@ -904,6 +939,12 @@ mod tests {
 
         let path = std::path::Path::new("test.lua");
         assert!(matches!(Language::from_path(path), Some(Language::Lua)));
+
+        let path = std::path::Path::new("test.pas");
+        assert!(matches!(Language::from_path(path), Some(Language::Pascal)));
+
+        let path = std::path::Path::new("test.p");
+        assert!(matches!(Language::from_path(path), Some(Language::Pascal)));
 
         // Markdown disabled due to tree-sitter version conflict
         // let path = std::path::Path::new("test.md");

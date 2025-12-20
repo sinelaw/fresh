@@ -216,6 +216,7 @@ impl SemanticHighlighter {
             Language::Ruby => tree_sitter_ruby::LANGUAGE.into(),
             Language::Bash => tree_sitter_bash::LANGUAGE.into(),
             Language::Lua => tree_sitter_lua::LANGUAGE.into(),
+            Language::Pascal => tree_sitter_pascal::LANGUAGE.into(),
             Language::Json => tree_sitter_json::LANGUAGE.into(),
             Language::HTML => tree_sitter_html::LANGUAGE.into(),
             Language::CSS => tree_sitter_css::LANGUAGE.into(),
