@@ -2085,7 +2085,7 @@ impl SplitRenderer {
                     });
 
                     // Determine display character (tabs already expanded in ViewLineIterator)
-                    // Show tab indicator (→) at the start of tab expansions
+                    // Show tab indicator (→) at the start of tab expansions (if enabled for this language)
                     let tab_indicator: String;
                     let display_char: &str = if is_cursor && lsp_waiting && is_active {
                         "⋯"
@@ -2093,7 +2093,7 @@ impl SplitRenderer {
                         ""
                     } else if ch == '\n' {
                         ""
-                    } else if is_tab_start {
+                    } else if is_tab_start && state.show_whitespace_tabs {
                         // Visual indicator for tab: show → at the first position
                         tab_indicator = "→".to_string();
                         &tab_indicator

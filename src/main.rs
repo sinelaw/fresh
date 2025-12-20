@@ -52,6 +52,10 @@ struct Args {
     /// Don't restore previous session (start fresh)
     #[arg(long)]
     no_session: bool,
+
+    /// Print the effective configuration as JSON and exit
+    #[arg(long)]
+    dump_config: bool,
 }
 
 /// Parsed file location from CLI argument in file:line:col format
@@ -390,6 +394,37 @@ fn run_editor_iteration(
 fn main() -> io::Result<()> {
     // Parse command-line arguments
     let args = Args::parse();
+
+    // Handle --dump-config early (no terminal setup needed)
+    if args.dump_config {
+        let config = if let Some(config_path) = &args.config {
+            match config::Config::load_from_file(config_path) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    eprintln!(
+                        "Error: Failed to load config from {}: {}",
+                        config_path.display(),
+                        e
+                    );
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
+                }
+            }
+        } else {
+            config::Config::load_for_working_dir(&std::env::current_dir().unwrap_or_default())
+        };
+
+        // Pretty-print the config as JSON
+        match serde_json::to_string_pretty(&config) {
+            Ok(json) => {
+                println!("{}", json);
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("Error: Failed to serialize config: {}", e);
+                return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
+            }
+        }
+    }
 
     let SetupState {
         config,

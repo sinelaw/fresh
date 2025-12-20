@@ -3528,7 +3528,10 @@ fn test_hover_popup_dismissed_on_focus_change() -> std::io::Result<()> {
 ///
 /// Uses a fake LSP server to properly trigger hover flow via user-style events.
 #[test]
-#[cfg_attr(windows, ignore = "FakeLspServer uses a Bash script which is not available on Windows")]
+#[cfg_attr(
+    windows,
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
 fn test_hover_popup_persists_within_symbol_and_popup() -> std::io::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 

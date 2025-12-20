@@ -1,5 +1,6 @@
 {
-  "theme": "dark",
+  "theme": "high-contrast",
+  "check_for_updates": true,
   "editor": {
     "tab_size": 4,
     "auto_indent": true,
@@ -7,86 +8,1079 @@
     "relative_line_numbers": false,
     "scroll_offset": 3,
     "syntax_highlighting": true,
+    "line_wrap": true,
     "highlight_timeout_ms": 5,
     "snapshot_interval": 100,
-    "enable_inlay_hints": true
+    "large_file_threshold_bytes": 1048576,
+    "estimated_line_length": 80,
+    "enable_inlay_hints": true,
+    "recovery_enabled": true,
+    "auto_save_interval_secs": 2,
+    "highlight_context_bytes": 10000,
+    "mouse_hover_enabled": true,
+    "mouse_hover_delay_ms": 500,
+    "double_click_time_ms": 500,
+    "auto_revert_poll_interval_ms": 2000,
+    "file_tree_poll_interval_ms": 3000
+  },
+  "file_explorer": {
+    "respect_gitignore": true,
+    "show_hidden": false,
+    "show_gitignored": false,
+    "custom_ignore_patterns": [],
+    "width": 0.3
+  },
+  "terminal": {
+    "jump_to_end_on_output": true
   },
   "keybindings": [],
+  "keybinding_maps": {},
+  "active_keybinding_map": "default",
   "languages": {
+    "javascript": {
+      "extensions": [
+        "js",
+        "jsx",
+        "mjs"
+      ],
+      "filenames": [],
+      "grammar": "javascript",
+      "comment_prefix": "//",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true
+    },
+    "yaml": {
+      "extensions": [
+        "yml",
+        "yaml"
+      ],
+      "filenames": [],
+      "grammar": "yaml",
+      "comment_prefix": "#",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true
+    },
+    "csharp": {
+      "extensions": [
+        "cs"
+      ],
+      "filenames": [],
+      "grammar": "c_sharp",
+      "comment_prefix": "//",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true
+    },
+    "typescript": {
+      "extensions": [
+        "ts",
+        "tsx",
+        "mts"
+      ],
+      "filenames": [],
+      "grammar": "typescript",
+      "comment_prefix": "//",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true
+    },
+    "bash": {
+      "extensions": [
+        "sh",
+        "bash"
+      ],
+      "filenames": [
+        ".bashrc",
+        ".bash_profile",
+        ".bash_aliases",
+        ".bash_logout",
+        ".profile",
+        ".zshrc",
+        ".zprofile",
+        ".zshenv",
+        ".zlogin",
+        ".zlogout"
+      ],
+      "grammar": "bash",
+      "comment_prefix": "#",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true
+    },
+    "toml": {
+      "extensions": [
+        "toml"
+      ],
+      "filenames": [
+        "Cargo.lock"
+      ],
+      "grammar": "toml",
+      "comment_prefix": "#",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true
+    },
+    "dockerfile": {
+      "extensions": [
+        "dockerfile"
+      ],
+      "filenames": [
+        "Dockerfile",
+        "Containerfile"
+      ],
+      "grammar": "dockerfile",
+      "comment_prefix": "#",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true
+    },
     "rust": {
-      "extensions": ["rs"],
+      "extensions": [
+        "rs"
+      ],
+      "filenames": [],
       "grammar": "rust",
       "comment_prefix": "//",
-      "auto_indent": true
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true
+    },
+    "c": {
+      "extensions": [
+        "c",
+        "h"
+      ],
+      "filenames": [],
+      "grammar": "c",
+      "comment_prefix": "//",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true
+    },
+    "cpp": {
+      "extensions": [
+        "cpp",
+        "cc",
+        "cxx",
+        "hpp",
+        "hh",
+        "hxx"
+      ],
+      "filenames": [],
+      "grammar": "cpp",
+      "comment_prefix": "//",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true
+    },
+    "json": {
+      "extensions": [
+        "json",
+        "jsonc"
+      ],
+      "filenames": [],
+      "grammar": "json",
+      "comment_prefix": null,
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true
+    },
+    "markdown": {
+      "extensions": [
+        "md",
+        "markdown"
+      ],
+      "filenames": [
+        "README"
+      ],
+      "grammar": "markdown",
+      "comment_prefix": null,
+      "auto_indent": false,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true
+    },
+    "python": {
+      "extensions": [
+        "py",
+        "pyi"
+      ],
+      "filenames": [],
+      "grammar": "python",
+      "comment_prefix": "#",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true
+    },
+    "makefile": {
+      "extensions": [
+        "mk"
+      ],
+      "filenames": [
+        "Makefile",
+        "makefile",
+        "GNUmakefile"
+      ],
+      "grammar": "make",
+      "comment_prefix": "#",
+      "auto_indent": false,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true
+    },
+    "go": {
+      "extensions": [
+        "go"
+      ],
+      "filenames": [],
+      "grammar": "go",
+      "comment_prefix": "//",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": false
     }
   },
   "lsp": {
-    "rust": {
-      "command": "rust-analyzer",
+    "json": {
+      "command": "vscode-json-languageserver",
+      "args": [
+        "--stdio"
+      ],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "html": {
+      "command": "vscode-html-languageserver-bin",
+      "args": [
+        "--stdio"
+      ],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "cpp": {
+      "command": "clangd",
       "args": [],
       "enabled": true,
+      "auto_start": false,
       "process_limits": {
-        "max_memory_mb": null,
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "csharp": {
+      "command": "csharp-ls",
+      "args": [],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "go": {
+      "command": "gopls",
+      "args": [],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "python": {
+      "command": "pylsp",
+      "args": [],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "javascript": {
+      "command": "typescript-language-server",
+      "args": [
+        "--stdio"
+      ],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "c": {
+      "command": "clangd",
+      "args": [],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "rust": {
+      "command": "rust-analyzer",
+      "args": [
+        "--log-file",
+        "/tmp/rust-analyzer-74252.log"
+      ],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
         "max_cpu_percent": 90,
         "enabled": true
       },
       "initialization_options": {
         "checkOnSave": false,
-        "cachePriming": { "enable": false },
-        "procMacro": { "enable": false },
+        "cachePriming": {
+          "enable": false
+        },
+        "procMacro": {
+          "enable": false
+        },
         "cargo": {
-          "buildScripts": { "enable": false },
+          "buildScripts": {
+            "enable": false
+          },
           "autoreload": false
         },
-        "diagnostics": { "enable": true },
-        "files": { "watcher": "server" }
+        "diagnostics": {
+          "enable": true
+        },
+        "files": {
+          "watcher": "server"
+        }
       }
-    },
-    "python": {
-      "command": "pylsp",
-      "args": [],
-      "enabled": true
-    },
-    "javascript": {
-      "command": "typescript-language-server",
-      "args": ["--stdio"],
-      "enabled": true
     },
     "typescript": {
       "command": "typescript-language-server",
-      "args": ["--stdio"],
-      "enabled": true
-    },
-    "html": {
-      "command": "vscode-html-languageserver-bin",
-      "args": ["--stdio"],
-      "enabled": true
+      "args": [
+        "--stdio"
+      ],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
     },
     "css": {
       "command": "vscode-css-languageserver-bin",
-      "args": ["--stdio"],
-      "enabled": true
-    },
-    "c": {
-      "command": "clangd",
-      "args": [],
-      "enabled": true
-    },
-    "cpp": {
-      "command": "clangd",
-      "args": [],
-      "enabled": true
-    },
-    "go": {
-      "command": "gopls",
-      "args": [],
-      "enabled": true
-    },
-    "json": {
-      "command": "vscode-json-languageserver",
-      "args": ["--stdio"],
-      "enabled": true
+      "args": [
+        "--stdio"
+      ],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
     }
   },
-  "_comment_lsp": "Process limits: max_memory_mb defaults to 50% of system memory if null, max_cpu_percent defaults to 90% of total CPU. Only enabled on Linux by default."
+  "menu": {
+    "menus": [
+      {
+        "label": "File",
+        "items": [
+          {
+            "label": "New File",
+            "action": "new",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Open File...",
+            "action": "open",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Save",
+            "action": "save",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Save As...",
+            "action": "save_as",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Revert",
+            "action": "revert",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Close Buffer",
+            "action": "close",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Switch Project...",
+            "action": "switch_project",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Quit",
+            "action": "quit",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          }
+        ]
+      },
+      {
+        "label": "Edit",
+        "items": [
+          {
+            "label": "Undo",
+            "action": "undo",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Redo",
+            "action": "redo",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Cut",
+            "action": "cut",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Copy",
+            "action": "copy",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Paste",
+            "action": "paste",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Select All",
+            "action": "select_all",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Find...",
+            "action": "search",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Find in Selection",
+            "action": "find_in_selection",
+            "args": {},
+            "when": "has_selection",
+            "checkbox": null
+          },
+          {
+            "label": "Find Next",
+            "action": "find_next",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Find Previous",
+            "action": "find_previous",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Replace...",
+            "action": "query_replace",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Delete Line",
+            "action": "delete_line",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          }
+        ]
+      },
+      {
+        "label": "View",
+        "items": [
+          {
+            "label": "File Explorer",
+            "action": "toggle_file_explorer",
+            "args": {},
+            "when": null,
+            "checkbox": "file_explorer"
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Line Numbers",
+            "action": "toggle_line_numbers",
+            "args": {},
+            "when": null,
+            "checkbox": "line_numbers"
+          },
+          {
+            "label": "Line Wrap",
+            "action": "toggle_line_wrap",
+            "args": {},
+            "when": null,
+            "checkbox": "line_wrap"
+          },
+          {
+            "label": "Mouse Support",
+            "action": "toggle_mouse_capture",
+            "args": {},
+            "when": null,
+            "checkbox": "mouse_capture"
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Set Background...",
+            "action": "set_background",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Set Background Blend...",
+            "action": "set_background_blend",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Set Compose Width...",
+            "action": "set_compose_width",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Select Theme...",
+            "action": "select_theme",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Settings...",
+            "action": "open_settings",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Split Horizontal",
+            "action": "split_horizontal",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Split Vertical",
+            "action": "split_vertical",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Close Split",
+            "action": "close_split",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Focus Next Split",
+            "action": "next_split",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Focus Previous Split",
+            "action": "prev_split",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Toggle Maximize Split",
+            "action": "toggle_maximize_split",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Terminal",
+            "items": [
+              {
+                "label": "Open Terminal",
+                "action": "open_terminal",
+                "args": {},
+                "when": null,
+                "checkbox": null
+              },
+              {
+                "label": "Close Terminal",
+                "action": "close_terminal",
+                "args": {},
+                "when": null,
+                "checkbox": null
+              },
+              {
+                "separator": true
+              },
+              {
+                "label": "Toggle Keyboard Capture",
+                "action": "toggle_keyboard_capture",
+                "args": {},
+                "when": null,
+                "checkbox": null
+              }
+            ]
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Keybinding Style",
+            "items": [
+              {
+                "label": "Default",
+                "action": "switch_keybinding_map",
+                "args": {
+                  "map": "default"
+                },
+                "when": null,
+                "checkbox": null
+              },
+              {
+                "label": "Emacs",
+                "action": "switch_keybinding_map",
+                "args": {
+                  "map": "emacs"
+                },
+                "when": null,
+                "checkbox": null
+              },
+              {
+                "label": "VSCode",
+                "action": "switch_keybinding_map",
+                "args": {
+                  "map": "vscode"
+                },
+                "when": null,
+                "checkbox": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Selection",
+        "items": [
+          {
+            "label": "Select All",
+            "action": "select_all",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Select Word",
+            "action": "select_word",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Select Line",
+            "action": "select_line",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Expand Selection",
+            "action": "expand_selection",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Add Cursor Above",
+            "action": "add_cursor_above",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Add Cursor Below",
+            "action": "add_cursor_below",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Add Cursor at Next Match",
+            "action": "add_cursor_next_match",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Remove Secondary Cursors",
+            "action": "remove_secondary_cursors",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          }
+        ]
+      },
+      {
+        "label": "Go",
+        "items": [
+          {
+            "label": "Go to Line...",
+            "action": "goto_line",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Go to Definition",
+            "action": "lsp_goto_definition",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Find References",
+            "action": "lsp_references",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Next Buffer",
+            "action": "next_buffer",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Previous Buffer",
+            "action": "prev_buffer",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Command Palette...",
+            "action": "command_palette",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          }
+        ]
+      },
+      {
+        "label": "LSP",
+        "items": [
+          {
+            "label": "Show Hover Info",
+            "action": "lsp_hover",
+            "args": {},
+            "when": "lsp_available",
+            "checkbox": null
+          },
+          {
+            "label": "Go to Definition",
+            "action": "lsp_goto_definition",
+            "args": {},
+            "when": "lsp_available",
+            "checkbox": null
+          },
+          {
+            "label": "Find References",
+            "action": "lsp_references",
+            "args": {},
+            "when": "lsp_available",
+            "checkbox": null
+          },
+          {
+            "label": "Rename Symbol",
+            "action": "lsp_rename",
+            "args": {},
+            "when": "lsp_available",
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Show Completions",
+            "action": "lsp_completion",
+            "args": {},
+            "when": "lsp_available",
+            "checkbox": null
+          },
+          {
+            "label": "Show Signature Help",
+            "action": "lsp_signature_help",
+            "args": {},
+            "when": "lsp_available",
+            "checkbox": null
+          },
+          {
+            "label": "Code Actions",
+            "action": "lsp_code_actions",
+            "args": {},
+            "when": "lsp_available",
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Toggle Inlay Hints",
+            "action": "toggle_inlay_hints",
+            "args": {},
+            "when": "lsp_available",
+            "checkbox": null
+          },
+          {
+            "label": "Toggle Mouse Hover",
+            "action": "toggle_mouse_hover",
+            "args": {},
+            "when": null,
+            "checkbox": "mouse_hover"
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Restart Server",
+            "action": "lsp_restart",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Stop Server",
+            "action": "lsp_stop",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          }
+        ]
+      },
+      {
+        "label": "Explorer",
+        "items": [
+          {
+            "label": "New File",
+            "action": "file_explorer_new_file",
+            "args": {},
+            "when": "file_explorer_focused",
+            "checkbox": null
+          },
+          {
+            "label": "New Folder",
+            "action": "file_explorer_new_directory",
+            "args": {},
+            "when": "file_explorer_focused",
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Open",
+            "action": "file_explorer_open",
+            "args": {},
+            "when": "file_explorer_focused",
+            "checkbox": null
+          },
+          {
+            "label": "Rename",
+            "action": "file_explorer_rename",
+            "args": {},
+            "when": "file_explorer_focused",
+            "checkbox": null
+          },
+          {
+            "label": "Delete",
+            "action": "file_explorer_delete",
+            "args": {},
+            "when": "file_explorer_focused",
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Refresh",
+            "action": "file_explorer_refresh",
+            "args": {},
+            "when": "file_explorer_focused",
+            "checkbox": null
+          },
+          {
+            "separator": true
+          },
+          {
+            "label": "Show Hidden Files",
+            "action": "file_explorer_toggle_hidden",
+            "args": {},
+            "when": "file_explorer",
+            "checkbox": "file_explorer_show_hidden"
+          },
+          {
+            "label": "Show Gitignored Files",
+            "action": "file_explorer_toggle_gitignored",
+            "args": {},
+            "when": "file_explorer",
+            "checkbox": "file_explorer_show_gitignored"
+          }
+        ]
+      },
+      {
+        "label": "Help",
+        "items": [
+          {
+            "label": "Show Fresh Manual",
+            "action": "show_help",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
+            "label": "Keyboard Shortcuts",
+            "action": "keyboard_shortcuts",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          }
+        ]
+      }
+    ]
+  }
 }

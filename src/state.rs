@@ -84,6 +84,10 @@ pub struct EditorState {
     /// but navigation, selection, and copy are still allowed
     pub editing_disabled: bool,
 
+    /// Whether to show whitespace tab indicators (→) for this buffer
+    /// Set based on language config; defaults to true
+    pub show_whitespace_tabs: bool,
+
     /// Semantic highlighter for word occurrence highlighting
     pub semantic_highlighter: SemanticHighlighter,
 
@@ -124,6 +128,7 @@ impl EditorState {
             text_properties: TextPropertyManager::new(),
             show_cursors: true,
             editing_disabled: false,
+            show_whitespace_tabs: true,
             semantic_highlighter: SemanticHighlighter::new(),
             view_mode: ViewMode::Source,
             compose_width: None,
@@ -201,6 +206,7 @@ impl EditorState {
             text_properties: TextPropertyManager::new(),
             show_cursors: true,
             editing_disabled: false,
+            show_whitespace_tabs: true,
             semantic_highlighter,
             view_mode: ViewMode::Source,
             compose_width: None,

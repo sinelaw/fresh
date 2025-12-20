@@ -511,6 +511,11 @@ pub struct LanguageConfig {
     /// If specified, this grammar will be used when highlighter is "textmate"
     #[serde(default)]
     pub textmate_grammar: Option<std::path::PathBuf>,
+
+    /// Whether to show whitespace tab indicators (→) for this language
+    /// Defaults to true. Set to false for languages like Go that use tabs for indentation.
+    #[serde(default = "default_true")]
+    pub show_whitespace_tabs: bool,
 }
 
 /// Preference for which syntax highlighting backend to use
@@ -724,6 +729,7 @@ impl Config {
                 auto_indent: true,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: true,
             },
         );
 
@@ -737,6 +743,7 @@ impl Config {
                 auto_indent: true,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: true,
             },
         );
 
@@ -750,6 +757,7 @@ impl Config {
                 auto_indent: true,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: true,
             },
         );
 
@@ -763,6 +771,7 @@ impl Config {
                 auto_indent: true,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: true,
             },
         );
 
@@ -776,6 +785,7 @@ impl Config {
                 auto_indent: true,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: true,
             },
         );
 
@@ -796,6 +806,7 @@ impl Config {
                 auto_indent: true,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: true,
             },
         );
 
@@ -809,6 +820,7 @@ impl Config {
                 auto_indent: true,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: true,
             },
         );
 
@@ -833,6 +845,7 @@ impl Config {
                 auto_indent: true,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: true,
             },
         );
 
@@ -850,6 +863,7 @@ impl Config {
                 auto_indent: false,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: true,
             },
         );
 
@@ -863,6 +877,7 @@ impl Config {
                 auto_indent: true,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: true,
             },
         );
 
@@ -876,6 +891,7 @@ impl Config {
                 auto_indent: true,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: true,
             },
         );
 
@@ -889,6 +905,7 @@ impl Config {
                 auto_indent: true,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: true,
             },
         );
 
@@ -902,6 +919,7 @@ impl Config {
                 auto_indent: true,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: true,
             },
         );
 
@@ -915,6 +933,22 @@ impl Config {
                 auto_indent: false,
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: true,
+            },
+        );
+
+        // Go uses tabs for indentation by convention, so hide tab indicators
+        languages.insert(
+            "go".to_string(),
+            LanguageConfig {
+                extensions: vec!["go".to_string()],
+                filenames: vec![],
+                grammar: "go".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: false,
             },
         );
 
