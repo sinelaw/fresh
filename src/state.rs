@@ -401,9 +401,11 @@ impl EditorState {
 
             Event::ClearAnchor { cursor_id } => {
                 // Clear the anchor and reset deselect_on_move to cancel mark mode
+                // Also clear block selection if active
                 if let Some(cursor) = self.cursors.get_mut(*cursor_id) {
                     cursor.anchor = None;
                     cursor.deselect_on_move = true;
+                    cursor.clear_block_selection();
                 }
             }
 
