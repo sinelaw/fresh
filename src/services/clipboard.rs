@@ -20,6 +20,8 @@ static SYSTEM_CLIPBOARD: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
 pub struct Clipboard {
     /// Internal clipboard content (always available)
     internal: String,
+    /// When true, paste() uses internal clipboard only (for testing)
+    internal_only: bool,
 }
 
 impl Clipboard {
@@ -27,7 +29,14 @@ impl Clipboard {
     pub fn new() -> Self {
         Self {
             internal: String::new(),
+            internal_only: false,
         }
+    }
+
+    /// Enable internal-only mode (for testing)
+    /// When enabled, paste() uses internal clipboard only, ignoring system clipboard
+    pub fn set_internal_only(&mut self, enabled: bool) {
+        self.internal_only = enabled;
     }
 
     /// Copy text to both internal and system clipboard
@@ -85,8 +94,14 @@ impl Clipboard {
 
     /// Get text from clipboard, preferring system clipboard
     ///
-    /// Tries system clipboard first, falls back to internal clipboard
+    /// Tries system clipboard first, falls back to internal clipboard.
+    /// If internal_only mode is enabled (for testing), skips system clipboard.
     pub fn paste(&mut self) -> Option<String> {
+        // In internal-only mode, skip system clipboard entirely
+        if self.internal_only {
+            return self.paste_internal();
+        }
+
         // Try arboard crate via the static clipboard (reads from system clipboard)
         if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
             // Create clipboard if it doesn't exist yet

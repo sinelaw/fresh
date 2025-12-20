@@ -3700,8 +3700,18 @@ impl Editor {
     /// This is similar to `paste()` but takes the text directly instead of
     /// getting it from the clipboard. Used when the terminal provides paste
     /// content through an event (e.g., CrosstermEvent::Paste).
+    ///
+    /// Routes paste to the prompt if one is open, otherwise to the editor buffer.
     pub fn paste_text(&mut self, paste_text: String) {
         if paste_text.is_empty() {
+            return;
+        }
+
+        // If a prompt is open, paste into the prompt instead of the buffer
+        if let Some(prompt) = self.prompt.as_mut() {
+            prompt.insert_str(&paste_text);
+            self.update_prompt_suggestions();
+            self.status_message = Some("Pasted".to_string());
             return;
         }
 
@@ -3770,10 +3780,12 @@ impl Editor {
     }
 
     /// Set clipboard content for testing purposes
-    /// This bypasses the system clipboard and sets the internal clipboard directly
+    /// This sets the internal clipboard and enables internal-only mode to avoid
+    /// system clipboard interference between parallel tests
     #[doc(hidden)]
     pub fn set_clipboard_for_test(&mut self, text: String) {
         self.clipboard.set_internal(text);
+        self.clipboard.set_internal_only(true);
     }
 
     /// Paste from internal clipboard only (for testing)

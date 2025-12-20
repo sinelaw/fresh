@@ -325,3 +325,381 @@ fn test_paste_in_middle() {
 
     harness.assert_buffer_content("hello world");
 }
+
+// ============================================================================
+// Prompt paste tests
+// ============================================================================
+
+/// Test that external paste (bracketed paste / Ctrl+Shift+V) goes to prompt when prompt is open
+///
+/// Bug: Previously, external paste always went to the editor buffer, ignoring the open prompt
+#[test]
+fn test_external_paste_goes_to_prompt() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type some text in the buffer first
+    harness.type_text("buffer content").unwrap();
+    harness.assert_buffer_content("buffer content");
+
+    // Open the command palette prompt
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Command:");
+
+    // Simulate external paste (bracketed paste) - this should go to the prompt, not the buffer
+    harness.editor_mut().paste_text("pasted text".to_string());
+    harness.render().unwrap();
+
+    // The pasted text should appear in the prompt
+    harness.assert_screen_contains("Command: pasted text");
+
+    // The buffer should NOT be modified
+    harness.assert_buffer_content("buffer content");
+}
+
+/// Test that external paste works in the Open File prompt
+#[test]
+fn test_external_paste_in_open_file_prompt() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open the "Open File" prompt
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Open:");
+
+    // Simulate external paste of a file path
+    harness
+        .editor_mut()
+        .paste_text("/path/to/file.txt".to_string());
+    harness.render().unwrap();
+
+    // The path should appear in the prompt
+    harness.assert_screen_contains("/path/to/file.txt");
+}
+
+/// Test that external paste appends to existing text in prompt
+#[test]
+fn test_external_paste_appends_to_prompt() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open prompt and type some text
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("hello ").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Command: hello ");
+
+    // Paste more text
+    harness.editor_mut().paste_text("world".to_string());
+    harness.render().unwrap();
+
+    // Should see both typed and pasted text
+    harness.assert_screen_contains("Command: hello world");
+}
+
+/// Test that Ctrl+V paste works in prompt
+#[test]
+fn test_ctrl_v_paste_in_prompt() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Set clipboard content
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("clipboard content".to_string());
+
+    // Open prompt
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Command:");
+
+    // Press Ctrl+V to paste
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should see pasted text in prompt
+    harness.assert_screen_contains("Command: clipboard content");
+}
+
+/// Test copy and paste workflow within prompt
+#[test]
+fn test_prompt_copy_paste_workflow() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open prompt and type some text
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("copy me").unwrap();
+    harness.render().unwrap();
+
+    // Copy all text with Ctrl+C
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Clear the prompt by selecting all and deleting
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The prompt should be empty now
+    harness.assert_screen_contains("Command:");
+
+    // Paste the copied text back
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should see the copied text
+    harness.assert_screen_contains("Command: copy me");
+}
+
+/// Test cut and paste workflow in prompt
+#[test]
+fn test_prompt_cut_paste_workflow() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open prompt and type some text
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("cut me").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Command: cut me");
+
+    // Cut all text with Ctrl+X
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The prompt should be empty now (text was cut)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Command:") && !screen.contains("cut me"),
+        "Prompt should be empty after cut. Screen:\n{}",
+        screen
+    );
+
+    // Paste the cut text back
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should see the cut text pasted back
+    harness.assert_screen_contains("Command: cut me");
+}
+
+/// Test that copy with selection only copies selected text
+#[test]
+fn test_prompt_copy_selection() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open prompt and type some text
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("hello world").unwrap();
+    harness.render().unwrap();
+
+    // Move to start and select "hello" (5 characters)
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+
+    // Copy selection
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Cancel prompt and open a new one
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Paste - should only paste "hello", not "hello world"
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("Command: hello");
+    // Verify we didn't paste "world"
+    let screen = harness.screen_to_string();
+    // Find the Command: line
+    let prompt_content = screen
+        .lines()
+        .find(|line| line.contains("Command:"))
+        .unwrap_or("");
+    assert!(
+        !prompt_content.contains("world"),
+        "Should only paste selected text 'hello', not 'world'. Line: {}",
+        prompt_content
+    );
+}
+
+/// Test that cut with selection only cuts selected text
+#[test]
+fn test_prompt_cut_selection() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open prompt and type some text
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("hello world").unwrap();
+    harness.render().unwrap();
+
+    // Move to start and select "hello " (6 characters)
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..6 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+
+    // Cut selection
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should only have "world" remaining
+    harness.assert_screen_contains("Command: world");
+
+    // Cancel and open new prompt to verify cut text
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should paste "hello "
+    harness.assert_screen_contains("Command: hello ");
+}
+
+/// Test paste replaces selection in prompt
+#[test]
+fn test_prompt_paste_replaces_selection() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Set clipboard
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("replaced".to_string());
+
+    // Open prompt and type some text
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("hello world").unwrap();
+    harness.render().unwrap();
+
+    // Select "world" (move to position 6, then select 5 chars)
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..6 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+
+    // Paste - should replace "world" with "replaced"
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("Command: hello replaced");
+}
+
+/// Test external paste replaces selection in prompt
+#[test]
+fn test_external_paste_replaces_prompt_selection() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open prompt and type some text
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("old text").unwrap();
+    harness.render().unwrap();
+
+    // Select all
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // External paste should replace selection
+    harness.editor_mut().paste_text("new text".to_string());
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("Command: new text");
+    let screen = harness.screen_to_string();
+    let prompt_line = screen
+        .lines()
+        .find(|l| l.contains("Command:"))
+        .unwrap_or("");
+    assert!(
+        !prompt_line.contains("old"),
+        "Old text should be replaced. Line: {}",
+        prompt_line
+    );
+}
+
+/// Test that paste in search prompt works
+#[test]
+fn test_paste_in_search_prompt() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type some content to search in
+    harness.type_text("find this text").unwrap();
+
+    // Set clipboard
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("this".to_string());
+
+    // Open search prompt
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Search:");
+
+    // Paste the search term
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("Search: this");
+}

@@ -905,6 +905,41 @@ impl Editor {
                     self.handle_insert_char_editor(c)?;
                 }
             }
+            // Prompt clipboard actions
+            Action::PromptCopy => {
+                if let Some(prompt) = &self.prompt {
+                    let text = prompt.selected_text().unwrap_or_else(|| prompt.get_text());
+                    if !text.is_empty() {
+                        self.clipboard.copy(text);
+                        self.set_status_message("Copied".to_string());
+                    }
+                }
+            }
+            Action::PromptCut => {
+                if let Some(prompt) = &self.prompt {
+                    let text = prompt.selected_text().unwrap_or_else(|| prompt.get_text());
+                    if !text.is_empty() {
+                        self.clipboard.copy(text);
+                    }
+                }
+                if let Some(prompt) = self.prompt.as_mut() {
+                    if prompt.has_selection() {
+                        prompt.delete_selection();
+                    } else {
+                        prompt.clear();
+                    }
+                }
+                self.set_status_message("Cut".to_string());
+                self.update_prompt_suggestions();
+            }
+            Action::PromptPaste => {
+                if let Some(text) = self.clipboard.paste() {
+                    if let Some(prompt) = self.prompt.as_mut() {
+                        prompt.insert_str(&text);
+                    }
+                    self.update_prompt_suggestions();
+                }
+            }
             _ => {
                 // TODO: Why do we have this catch-all? It seems like actions should either:
                 // 1. Be handled explicitly above (like InsertChar, PopupConfirm, etc.)
