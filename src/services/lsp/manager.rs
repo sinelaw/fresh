@@ -641,6 +641,8 @@ mod tests {
                 auto_indent: true,
                 highlighter: crate::config::HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: false,
+                use_tabs: false,
             },
         );
         languages.insert(
@@ -653,6 +655,8 @@ mod tests {
                 auto_indent: true,
                 highlighter: crate::config::HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: false,
+                use_tabs: false,
             },
         );
         languages.insert(
@@ -665,6 +669,8 @@ mod tests {
                 auto_indent: true,
                 highlighter: crate::config::HighlighterPreference::Auto,
                 textmate_grammar: None,
+                show_whitespace_tabs: false,
+                use_tabs: false,
             },
         );
         languages
