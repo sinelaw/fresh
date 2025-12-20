@@ -829,6 +829,136 @@ done
         std::env::temp_dir().join("fake_lsp_server_inlay_hints.sh")
     }
 
+    /// Spawn a fake LSP server that logs all received methods to a file
+    ///
+    /// This variant logs each method name to a log file, which can be used
+    /// to verify the order of LSP messages (e.g., that didOpen is sent before hover).
+    pub fn spawn_with_logging() -> std::io::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        // Create a Bash script that logs all methods to a file
+        let script = r#"#!/bin/bash
+
+# Log file path (passed as first argument, or default)
+LOG_FILE="${1:-/tmp/fake_lsp_log.txt}"
+
+# Clear log file at start
+> "$LOG_FILE"
+
+# Function to read a message
+read_message() {
+    # Read headers
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        # Empty line marks end of headers
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+
+    # Read content
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+# Function to send a message
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+
+# Main loop
+while true; do
+    # Read incoming message
+    msg=$(read_message)
+
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    # Extract method from JSON
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+    # Log the method to file
+    if [ -n "$method" ]; then
+        echo "$method" >> "$LOG_FILE"
+    fi
+
+case "$method" in
+    "initialize")
+        # Send initialize response
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1}}}'
+        ;;
+    "textDocument/hover")
+        # Send hover response with range
+        line=$(echo "$msg" | grep -o '"line":[0-9]*' | head -1 | cut -d':' -f2)
+        char=$(echo "$msg" | grep -o '"character":[0-9]*' | head -1 | cut -d':' -f2)
+        end_char=$((char + 10))
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"contents":{"kind":"markdown","value":"Test hover content"},"range":{"start":{"line":'$line',"character":'$char'},"end":{"line":'$line',"character":'$end_char'}}}}'
+        ;;
+    "textDocument/completion")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[{"label":"test_function","kind":3,"detail":"fn test_function()","insertText":"test_function"}]}}'
+        ;;
+    "textDocument/definition")
+        uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"uri":"'$uri'","range":{"start":{"line":0,"character":0},"end":{"line":0,"character":10}}}}'
+        ;;
+    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave")
+        # Notifications - no response needed
+        ;;
+    "textDocument/diagnostic")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[]}}'
+        ;;
+    "textDocument/inlayHint")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "shutdown")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        break
+        ;;
+esac
+done
+"#;
+
+        // Write script to a temporary file
+        let script_path = std::env::temp_dir().join("fake_lsp_server_logging.sh");
+        std::fs::write(&script_path, script)?;
+
+        // Make it executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            // Wait for stop signal
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Get the path to the logging fake LSP server script
+    pub fn logging_script_path() -> std::path::PathBuf {
+        std::env::temp_dir().join("fake_lsp_server_logging.sh")
+    }
+
+    /// Get the default log file path used by the logging server
+    pub fn default_log_path() -> std::path::PathBuf {
+        std::path::PathBuf::from("/tmp/fake_lsp_log.txt")
+    }
+
     /// Stop the server
     pub fn stop(&mut self) {
         let _ = self.stop_tx.send(());

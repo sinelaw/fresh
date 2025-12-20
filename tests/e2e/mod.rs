@@ -17,6 +17,7 @@ pub mod lifecycle;
 pub mod line_wrapping;
 pub mod live_grep;
 pub mod lsp;
+pub mod lsp_order;
 pub mod margin;
 pub mod markdown_compose;
 pub mod menu_bar;
