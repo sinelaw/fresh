@@ -71,12 +71,23 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Download source tarball and compute checksum
+        id: checksum
+        run: |
+          # Download the source tarball from GitHub
+          curl -sL "https://github.com/noamteyssier/fresh/archive/refs/tags/v${VERSION}.tar.gz" -o source.tar.gz
+          SHA256=$(sha256sum source.tar.gz | cut -d' ' -f1)
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "Computed SHA256: $SHA256"
+
       - name: Clone AUR repo and update PKGBUILD
         run: |
           git clone https://aur.archlinux.org/fresh-editor.git aur-repo
           cd aur-repo
           sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          # Update sha256sums (use double quotes to match PKGBUILD style)
+          sed -i 's/^sha256sums=.*/sha256sums=("${{ steps.checksum.outputs.sha256 }}")/' PKGBUILD
           echo "Updated PKGBUILD:"
           cat PKGBUILD
 
