@@ -2842,54 +2842,37 @@ impl Editor {
             return;
         }
 
-        // Get metadata for the active buffer
-        let metadata = match self.buffer_metadata.get(&self.active_buffer()) {
-            Some(m) => m,
-            None => return,
-        };
-
-        let uri = match metadata.file_uri() {
-            Some(uri) => uri.clone(),
-            None => return,
-        };
-
-        let path = match metadata.file_path() {
-            Some(p) => p.clone(),
-            None => return,
-        };
-
-        let language = match detect_language(&path, &self.config.languages) {
-            Some(lang) => lang,
-            None => return,
-        };
+        let buffer_id = self.active_buffer();
 
         // Get line count from buffer state
-        let line_count = if let Some(state) = self.buffers.get(&self.active_buffer()) {
+        let line_count = if let Some(state) = self.buffers.get(&buffer_id) {
             state.buffer.line_count().unwrap_or(1000)
         } else {
             return;
         };
         let last_line = line_count.saturating_sub(1) as u32;
+        let request_id = self.next_lsp_request_id;
 
-        // Get LSP client for this language
-        if let Some(lsp) = &mut self.lsp {
-            if let Some(client) = lsp.get_or_spawn(&language) {
-                let request_id = self.next_lsp_request_id;
-                self.next_lsp_request_id += 1;
-                self.pending_inlay_hints_request = Some(request_id);
-
-                if let Err(e) = client.inlay_hints(request_id, uri.clone(), 0, 0, last_line, 10000)
-                {
-                    tracing::debug!("Failed to request inlay hints: {}", e);
-                    self.pending_inlay_hints_request = None;
-                } else {
+        // Use helper to ensure didOpen is sent before the request
+        let sent = self
+            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
+                let result = handle.inlay_hints(request_id, uri.clone(), 0, 0, last_line, 10000);
+                if result.is_ok() {
                     tracing::info!(
                         "Requested inlay hints for {} (request_id={})",
                         uri.as_str(),
                         request_id
                     );
+                } else if let Err(e) = &result {
+                    tracing::debug!("Failed to request inlay hints: {}", e);
                 }
-            }
+                result.is_ok()
+            })
+            .unwrap_or(false);
+
+        if sent {
+            self.next_lsp_request_id += 1;
+            self.pending_inlay_hints_request = Some(request_id);
         }
     }
 
@@ -4258,6 +4241,9 @@ impl Editor {
                     }
                     tracing::info!("Successfully sent didOpen to LSP");
 
+                    // Mark this buffer as opened with this server instance
+                    metadata.lsp_opened_with.insert(client.id());
+
                     // Request pull diagnostics
                     let request_id = self.next_lsp_request_id;
                     self.next_lsp_request_id += 1;
@@ -4325,32 +4311,77 @@ impl Editor {
 
     /// Notify LSP that a file's contents changed (e.g., after revert)
     fn notify_lsp_file_changed(&mut self, path: &Path) {
-        if let Some(lsp) = &mut self.lsp {
-            if let Ok(uri) = url::Url::from_file_path(path) {
-                if let Ok(lsp_uri) = uri.as_str().parse::<lsp_types::Uri>() {
-                    // Detect language for this file
-                    if let Some(language) = detect_language(path, &self.config.languages) {
-                        // Get the new content
-                        let content = self
-                            .buffers
-                            .values()
-                            .find(|s| s.buffer.file_path() == Some(path))
-                            .and_then(|state| state.buffer.to_string());
+        let Ok(uri) = url::Url::from_file_path(path) else {
+            return;
+        };
+        let Ok(lsp_uri) = uri.as_str().parse::<lsp_types::Uri>() else {
+            return;
+        };
+        let Some(language) = detect_language(path, &self.config.languages) else {
+            return;
+        };
 
-                        // Use full document sync - send the entire new content
-                        if let Some(content) = content {
-                            if let Some(client) = lsp.get_or_spawn(&language) {
-                                let content_change = TextDocumentContentChangeEvent {
-                                    range: None, // None means full document replacement
-                                    range_length: None,
-                                    text: content,
-                                };
-                                if let Err(e) = client.did_change(lsp_uri, vec![content_change]) {
-                                    tracing::warn!("Failed to notify LSP of file change: {}", e);
-                                }
-                            }
-                        }
+        // Find the buffer ID for this path
+        let Some((buffer_id, content)) = self
+            .buffers
+            .iter()
+            .find(|(_, s)| s.buffer.file_path() == Some(path))
+            .and_then(|(id, state)| state.buffer.to_string().map(|t| (*id, t)))
+        else {
+            return;
+        };
+
+        // Get handle ID
+        let handle_id = {
+            let Some(lsp) = self.lsp.as_mut() else {
+                return;
+            };
+            let Some(handle) = lsp.get_or_spawn(&language) else {
+                return;
+            };
+            handle.id()
+        };
+
+        // Check if didOpen needs to be sent first
+        let needs_open = {
+            let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+                return;
+            };
+            !metadata.lsp_opened_with.contains(&handle_id)
+        };
+
+        if needs_open {
+            // Send didOpen first
+            if let Some(lsp) = self.lsp.as_mut() {
+                if let Some(handle) = lsp.get_or_spawn(&language) {
+                    if let Err(e) = handle.did_open(lsp_uri.clone(), content.clone(), language.clone()) {
+                        tracing::warn!("Failed to send didOpen before didChange: {}", e);
+                        return;
                     }
+                    tracing::debug!(
+                        "Sent didOpen for {} to LSP handle {} before file change notification",
+                        lsp_uri.as_str(),
+                        handle_id
+                    );
+                }
+            }
+
+            // Mark as opened
+            if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+                metadata.lsp_opened_with.insert(handle_id);
+            }
+        }
+
+        // Use full document sync - send the entire new content
+        if let Some(lsp) = &mut self.lsp {
+            if let Some(client) = lsp.get_or_spawn(&language) {
+                let content_change = TextDocumentContentChangeEvent {
+                    range: None, // None means full document replacement
+                    range_length: None,
+                    text: content,
+                };
+                if let Err(e) = client.did_change(lsp_uri, vec![content_change]) {
+                    tracing::warn!("Failed to notify LSP of file change: {}", e);
                 }
             }
         }
@@ -6703,6 +6734,76 @@ impl Editor {
         }
     }
 
+    /// Execute a closure with LSP handle, ensuring didOpen was sent first.
+    ///
+    /// This helper centralizes the logic for:
+    /// 1. Getting buffer metadata, URI, and language
+    /// 2. Getting or spawning the LSP handle
+    /// 3. Ensuring didOpen was sent to this server instance (lazy - only gets text if needed)
+    /// 4. Calling the provided closure with the handle
+    ///
+    /// Returns None if any step fails (no file, no language, LSP disabled, etc.)
+    fn with_lsp_for_buffer<F, R>(&mut self, buffer_id: BufferId, f: F) -> Option<R>
+    where
+        F: FnOnce(&crate::services::lsp::async_handler::LspHandle, &lsp_types::Uri, &str) -> R,
+    {
+        // Get metadata (immutable borrow first to extract what we need)
+        let (uri, _path, language) = {
+            let metadata = self.buffer_metadata.get(&buffer_id)?;
+            if !metadata.lsp_enabled {
+                return None;
+            }
+            let uri = metadata.file_uri()?.clone();
+            let path = metadata.file_path()?.to_path_buf();
+            let language = detect_language(&path, &self.config.languages)?;
+            (uri, path, language)
+        };
+
+        // Get handle ID (spawning if needed)
+        let handle_id = {
+            let lsp = self.lsp.as_mut()?;
+            let handle = lsp.get_or_spawn(&language)?;
+            handle.id()
+        };
+
+        // Check if didOpen is needed
+        let needs_open = {
+            let metadata = self.buffer_metadata.get(&buffer_id)?;
+            !metadata.lsp_opened_with.contains(&handle_id)
+        };
+
+        if needs_open {
+            // Only now get the text (can be expensive for large buffers)
+            let text = self.buffers.get(&buffer_id)?.buffer.to_string()?;
+
+            // Send didOpen
+            {
+                let lsp = self.lsp.as_mut()?;
+                let handle = lsp.get_or_spawn(&language)?;
+                if let Err(e) = handle.did_open(uri.clone(), text, language.clone()) {
+                    tracing::warn!("Failed to send didOpen: {}", e);
+                    return None;
+                }
+            }
+
+            // Mark as opened with this server instance
+            let metadata = self.buffer_metadata.get_mut(&buffer_id)?;
+            metadata.lsp_opened_with.insert(handle_id);
+
+            tracing::debug!(
+                "Sent didOpen for {} to LSP handle {} (language: {})",
+                uri.as_str(),
+                handle_id,
+                language
+            );
+        }
+
+        // Call the closure with the handle
+        let lsp = self.lsp.as_mut()?;
+        let handle = lsp.get_or_spawn(&language)?;
+        Some(f(handle, &uri, &language))
+    }
+
     /// Request LSP completion at current cursor position
     fn request_completion(&mut self) -> io::Result<()> {
         // Get the current buffer and cursor position
@@ -6711,41 +6812,24 @@ impl Editor {
 
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
+        let buffer_id = self.active_buffer();
+        let request_id = self.next_lsp_request_id;
 
-        // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer());
-        let (uri, file_path) = if let Some(meta) = metadata {
-            (meta.file_uri(), meta.file_path())
-        } else {
-            (None, None)
-        };
-
-        if let (Some(uri), Some(path)) = (uri, file_path) {
-            // Detect language from file extension
-            if let Some(language) = detect_language(path, &self.config.languages) {
-                // Get LSP handle
-                if let Some(lsp) = self.lsp.as_mut() {
-                    if let Some(handle) = lsp.get_or_spawn(&language) {
-                        let request_id = self.next_lsp_request_id;
-                        self.next_lsp_request_id += 1;
-                        self.pending_completion_request = Some(request_id);
-                        self.lsp_status = "LSP: completion...".to_string();
-
-                        let _ = handle.completion(
-                            request_id,
-                            uri.clone(),
-                            line as u32,
-                            character as u32,
-                        );
-                        tracing::info!(
-                            "Requested completion at {}:{}:{}",
-                            uri.as_str(),
-                            line,
-                            character
-                        );
-                    }
+        // Use helper to ensure didOpen is sent before the request
+        let sent = self
+            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
+                let result = handle.completion(request_id, uri.clone(), line as u32, character as u32);
+                if result.is_ok() {
+                    tracing::info!("Requested completion at {}:{}:{}", uri.as_str(), line, character);
                 }
-            }
+                result.is_ok()
+            })
+            .unwrap_or(false);
+
+        if sent {
+            self.next_lsp_request_id += 1;
+            self.pending_completion_request = Some(request_id);
+            self.lsp_status = "LSP: completion...".to_string();
         }
 
         Ok(())
@@ -6759,40 +6843,29 @@ impl Editor {
 
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
+        let buffer_id = self.active_buffer();
+        let request_id = self.next_lsp_request_id;
 
-        // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer());
-        let (uri, file_path) = if let Some(meta) = metadata {
-            (meta.file_uri(), meta.file_path())
-        } else {
-            (None, None)
-        };
-
-        if let (Some(uri), Some(path)) = (uri, file_path) {
-            // Detect language from file extension
-            if let Some(language) = detect_language(path, &self.config.languages) {
-                // Get LSP handle
-                if let Some(lsp) = self.lsp.as_mut() {
-                    if let Some(handle) = lsp.get_or_spawn(&language) {
-                        let request_id = self.next_lsp_request_id;
-                        self.next_lsp_request_id += 1;
-                        self.pending_goto_definition_request = Some(request_id);
-
-                        let _ = handle.goto_definition(
-                            request_id,
-                            uri.clone(),
-                            line as u32,
-                            character as u32,
-                        );
-                        tracing::info!(
-                            "Requested go-to-definition at {}:{}:{}",
-                            uri.as_str(),
-                            line,
-                            character
-                        );
-                    }
+        // Use helper to ensure didOpen is sent before the request
+        let sent = self
+            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
+                let result =
+                    handle.goto_definition(request_id, uri.clone(), line as u32, character as u32);
+                if result.is_ok() {
+                    tracing::info!(
+                        "Requested go-to-definition at {}:{}:{}",
+                        uri.as_str(),
+                        line,
+                        character
+                    );
                 }
-            }
+                result.is_ok()
+            })
+            .unwrap_or(false);
+
+        if sent {
+            self.next_lsp_request_id += 1;
+            self.pending_goto_definition_request = Some(request_id);
         }
 
         Ok(())
@@ -6818,37 +6891,30 @@ impl Editor {
             );
         }
 
-        // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer());
-        let (uri, file_path) = if let Some(meta) = metadata {
-            (meta.file_uri(), meta.file_path())
-        } else {
-            (None, None)
-        };
+        let buffer_id = self.active_buffer();
+        let request_id = self.next_lsp_request_id;
 
-        if let (Some(uri), Some(path)) = (uri, file_path) {
-            // Detect language from file extension
-            if let Some(language) = detect_language(path, &self.config.languages) {
-                // Get LSP handle
-                if let Some(lsp) = self.lsp.as_mut() {
-                    if let Some(handle) = lsp.get_or_spawn(&language) {
-                        let request_id = self.next_lsp_request_id;
-                        self.next_lsp_request_id += 1;
-                        self.pending_hover_request = Some(request_id);
-                        self.lsp_status = "LSP: hover...".to_string();
-
-                        let _ =
-                            handle.hover(request_id, uri.clone(), line as u32, character as u32);
-                        tracing::info!(
-                            "Requested hover at {}:{}:{} (byte_pos={})",
-                            uri.as_str(),
-                            line,
-                            character,
-                            cursor_pos
-                        );
-                    }
+        // Use helper to ensure didOpen is sent before the request
+        let sent = self
+            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
+                let result = handle.hover(request_id, uri.clone(), line as u32, character as u32);
+                if result.is_ok() {
+                    tracing::info!(
+                        "Requested hover at {}:{}:{} (byte_pos={})",
+                        uri.as_str(),
+                        line,
+                        character,
+                        cursor_pos
+                    );
                 }
-            }
+                result.is_ok()
+            })
+            .unwrap_or(false);
+
+        if sent {
+            self.next_lsp_request_id += 1;
+            self.pending_hover_request = Some(request_id);
+            self.lsp_status = "LSP: hover...".to_string();
         }
 
         Ok(())
@@ -6874,37 +6940,30 @@ impl Editor {
             );
         }
 
-        // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer());
-        let (uri, file_path) = if let Some(meta) = metadata {
-            (meta.file_uri(), meta.file_path())
-        } else {
-            (None, None)
-        };
+        let buffer_id = self.active_buffer();
+        let request_id = self.next_lsp_request_id;
 
-        if let (Some(uri), Some(path)) = (uri, file_path) {
-            // Detect language from file extension
-            if let Some(language) = detect_language(path, &self.config.languages) {
-                // Get LSP handle
-                if let Some(lsp) = self.lsp.as_mut() {
-                    if let Some(handle) = lsp.get_or_spawn(&language) {
-                        let request_id = self.next_lsp_request_id;
-                        self.next_lsp_request_id += 1;
-                        self.pending_hover_request = Some(request_id);
-                        self.lsp_status = "LSP: hover...".to_string();
-
-                        let _ =
-                            handle.hover(request_id, uri.clone(), line as u32, character as u32);
-                        tracing::debug!(
-                            "Mouse hover requested at {}:{}:{} (byte_pos={})",
-                            uri.as_str(),
-                            line,
-                            character,
-                            byte_pos
-                        );
-                    }
+        // Use helper to ensure didOpen is sent before the request
+        let sent = self
+            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
+                let result = handle.hover(request_id, uri.clone(), line as u32, character as u32);
+                if result.is_ok() {
+                    tracing::debug!(
+                        "Mouse hover requested at {}:{}:{} (byte_pos={})",
+                        uri.as_str(),
+                        line,
+                        character,
+                        byte_pos
+                    );
                 }
-            }
+                result.is_ok()
+            })
+            .unwrap_or(false);
+
+        if sent {
+            self.next_lsp_request_id += 1;
+            self.pending_hover_request = Some(request_id);
+            self.lsp_status = "LSP: hover...".to_string();
         }
 
         Ok(())
@@ -7139,43 +7198,32 @@ impl Editor {
 
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
+        let buffer_id = self.active_buffer();
+        let request_id = self.next_lsp_request_id;
 
-        // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer());
-        let (uri, file_path) = if let Some(meta) = metadata {
-            (meta.file_uri(), meta.file_path())
-        } else {
-            (None, None)
-        };
-
-        if let (Some(uri), Some(path)) = (uri, file_path) {
-            // Detect language from file extension
-            if let Some(language) = detect_language(path, &self.config.languages) {
-                // Get LSP handle
-                if let Some(lsp) = self.lsp.as_mut() {
-                    if let Some(handle) = lsp.get_or_spawn(&language) {
-                        let request_id = self.next_lsp_request_id;
-                        self.next_lsp_request_id += 1;
-                        self.pending_references_request = Some(request_id);
-                        self.pending_references_symbol = symbol;
-                        self.lsp_status = "LSP: finding references...".to_string();
-
-                        let _ = handle.references(
-                            request_id,
-                            uri.clone(),
-                            line as u32,
-                            character as u32,
-                        );
-                        tracing::info!(
-                            "Requested find references at {}:{}:{} (byte_pos={})",
-                            uri.as_str(),
-                            line,
-                            character,
-                            cursor_pos
-                        );
-                    }
+        // Use helper to ensure didOpen is sent before the request
+        let sent = self
+            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
+                let result =
+                    handle.references(request_id, uri.clone(), line as u32, character as u32);
+                if result.is_ok() {
+                    tracing::info!(
+                        "Requested find references at {}:{}:{} (byte_pos={})",
+                        uri.as_str(),
+                        line,
+                        character,
+                        cursor_pos
+                    );
                 }
-            }
+                result.is_ok()
+            })
+            .unwrap_or(false);
+
+        if sent {
+            self.next_lsp_request_id += 1;
+            self.pending_references_request = Some(request_id);
+            self.pending_references_symbol = symbol;
+            self.lsp_status = "LSP: finding references...".to_string();
         }
 
         Ok(())
@@ -7189,42 +7237,31 @@ impl Editor {
 
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
+        let buffer_id = self.active_buffer();
+        let request_id = self.next_lsp_request_id;
 
-        // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer());
-        let (uri, file_path) = if let Some(meta) = metadata {
-            (meta.file_uri(), meta.file_path())
-        } else {
-            (None, None)
-        };
-
-        if let (Some(uri), Some(path)) = (uri, file_path) {
-            // Detect language from file extension
-            if let Some(language) = detect_language(path, &self.config.languages) {
-                // Get LSP handle
-                if let Some(lsp) = self.lsp.as_mut() {
-                    if let Some(handle) = lsp.get_or_spawn(&language) {
-                        let request_id = self.next_lsp_request_id;
-                        self.next_lsp_request_id += 1;
-                        self.pending_signature_help_request = Some(request_id);
-                        self.lsp_status = "LSP: signature help...".to_string();
-
-                        let _ = handle.signature_help(
-                            request_id,
-                            uri.clone(),
-                            line as u32,
-                            character as u32,
-                        );
-                        tracing::info!(
-                            "Requested signature help at {}:{}:{} (byte_pos={})",
-                            uri.as_str(),
-                            line,
-                            character,
-                            cursor_pos
-                        );
-                    }
+        // Use helper to ensure didOpen is sent before the request
+        let sent = self
+            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
+                let result =
+                    handle.signature_help(request_id, uri.clone(), line as u32, character as u32);
+                if result.is_ok() {
+                    tracing::info!(
+                        "Requested signature help at {}:{}:{} (byte_pos={})",
+                        uri.as_str(),
+                        line,
+                        character,
+                        cursor_pos
+                    );
                 }
-            }
+                result.is_ok()
+            })
+            .unwrap_or(false);
+
+        if sent {
+            self.next_lsp_request_id += 1;
+            self.pending_signature_help_request = Some(request_id);
+            self.lsp_status = "LSP: signature help...".to_string();
         }
 
         Ok(())
@@ -7367,48 +7404,41 @@ impl Editor {
 
         // Get diagnostics at cursor position for context
         // TODO: Implement diagnostic retrieval when needed
-        let diagnostics = Vec::new();
+        let diagnostics: Vec<lsp_types::Diagnostic> = Vec::new();
+        let buffer_id = self.active_buffer();
+        let request_id = self.next_lsp_request_id;
 
-        // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer());
-        let (uri, file_path) = if let Some(meta) = metadata {
-            (meta.file_uri(), meta.file_path())
-        } else {
-            (None, None)
-        };
-
-        if let (Some(uri), Some(path)) = (uri, file_path) {
-            // Detect language from file extension
-            if let Some(language) = detect_language(path, &self.config.languages) {
-                // Get LSP handle
-                if let Some(lsp) = self.lsp.as_mut() {
-                    if let Some(handle) = lsp.get_or_spawn(&language) {
-                        let request_id = self.next_lsp_request_id;
-                        self.next_lsp_request_id += 1;
-                        self.pending_code_actions_request = Some(request_id);
-                        self.lsp_status = "LSP: code actions...".to_string();
-
-                        let _ = handle.code_actions(
-                            request_id,
-                            uri.clone(),
-                            start_line,
-                            start_char,
-                            end_line,
-                            end_char,
-                            diagnostics,
-                        );
-                        tracing::info!(
-                            "Requested code actions at {}:{}:{}-{}:{} (byte_pos={})",
-                            uri.as_str(),
-                            start_line,
-                            start_char,
-                            end_line,
-                            end_char,
-                            cursor_pos
-                        );
-                    }
+        // Use helper to ensure didOpen is sent before the request
+        let sent = self
+            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
+                let result = handle.code_actions(
+                    request_id,
+                    uri.clone(),
+                    start_line,
+                    start_char,
+                    end_line,
+                    end_char,
+                    diagnostics,
+                );
+                if result.is_ok() {
+                    tracing::info!(
+                        "Requested code actions at {}:{}:{}-{}:{} (byte_pos={})",
+                        uri.as_str(),
+                        start_line,
+                        start_char,
+                        end_line,
+                        end_char,
+                        cursor_pos
+                    );
                 }
-            }
+                result.is_ok()
+            })
+            .unwrap_or(false);
+
+        if sent {
+            self.next_lsp_request_id += 1;
+            self.pending_code_actions_request = Some(request_id);
+            self.lsp_status = "LSP: code actions...".to_string();
         }
 
         Ok(())
@@ -7913,6 +7943,64 @@ impl Editor {
             uri.as_str()
         );
 
+        // Get handle ID first
+        let handle_id = {
+            let Some(lsp) = self.lsp.as_mut() else {
+                tracing::debug!("send_lsp_changes_for_buffer: no LSP manager available");
+                return;
+            };
+            let Some(handle) = lsp.get_or_spawn(&language) else {
+                tracing::warn!(
+                    "send_lsp_changes_for_buffer: failed to get or spawn LSP client for {}",
+                    language
+                );
+                return;
+            };
+            handle.id()
+        };
+
+        // Check if didOpen needs to be sent first
+        let needs_open = {
+            let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+                return;
+            };
+            !metadata.lsp_opened_with.contains(&handle_id)
+        };
+
+        if needs_open {
+            // Get text for didOpen
+            let text = match self.buffers.get(&buffer_id).and_then(|s| s.buffer.to_string()) {
+                Some(t) => t,
+                None => {
+                    tracing::debug!(
+                        "send_lsp_changes_for_buffer: buffer text not available for didOpen"
+                    );
+                    return;
+                }
+            };
+
+            // Send didOpen first
+            if let Some(lsp) = self.lsp.as_mut() {
+                if let Some(handle) = lsp.get_or_spawn(&language) {
+                    if let Err(e) = handle.did_open(uri.clone(), text, language.clone()) {
+                        tracing::warn!("Failed to send didOpen before didChange: {}", e);
+                        return;
+                    }
+                    tracing::debug!(
+                        "Sent didOpen for {} to LSP handle {} before didChange",
+                        uri.as_str(),
+                        handle_id
+                    );
+                }
+            }
+
+            // Mark as opened
+            if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+                metadata.lsp_opened_with.insert(handle_id);
+            }
+        }
+
+        // Now send didChange
         if let Some(lsp) = &mut self.lsp {
             if let Some(client) = lsp.get_or_spawn(&language) {
                 if let Err(e) = client.did_change(uri, changes) {
@@ -7920,14 +8008,7 @@ impl Editor {
                 } else {
                     tracing::trace!("Successfully sent batched didChange to LSP");
                 }
-            } else {
-                tracing::warn!(
-                    "send_lsp_changes_for_buffer: failed to get or spawn LSP client for {}",
-                    language
-                );
             }
-        } else {
-            tracing::debug!("send_lsp_changes_for_buffer: no LSP manager available");
         }
     }
 
@@ -8015,43 +8096,36 @@ impl Editor {
         // LSP uses UTF-16 code units for character offsets, not byte offsets
         let state = self.active_state();
         let (line, character) = state.buffer.position_to_lsp_position(rename_pos);
+        let buffer_id = self.active_buffer();
+        let request_id = self.next_lsp_request_id;
 
-        // Get the current file URI and path
-        let metadata = self.buffer_metadata.get(&self.active_buffer());
-        let (uri, file_path) = if let Some(meta) = metadata {
-            (meta.file_uri(), meta.file_path())
-        } else {
-            (None, None)
-        };
-
-        if let (Some(uri), Some(path)) = (uri, file_path) {
-            // Detect language from file extension
-            if let Some(language) = detect_language(path, &self.config.languages) {
-                // Get LSP handle
-                if let Some(lsp) = self.lsp.as_mut() {
-                    if let Some(handle) = lsp.get_or_spawn(&language) {
-                        let request_id = self.next_lsp_request_id;
-                        self.next_lsp_request_id += 1;
-                        self.lsp_status = "LSP: rename...".to_string();
-
-                        let _ = handle.rename(
-                            request_id,
-                            uri.clone(),
-                            line as u32,
-                            character as u32,
-                            new_name.clone(),
-                        );
-                        tracing::info!(
-                            "Requested rename at {}:{}:{} to '{}'",
-                            uri.as_str(),
-                            line,
-                            character,
-                            new_name
-                        );
-                    }
+        // Use helper to ensure didOpen is sent before the request
+        let sent = self
+            .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
+                let result = handle.rename(
+                    request_id,
+                    uri.clone(),
+                    line as u32,
+                    character as u32,
+                    new_name.clone(),
+                );
+                if result.is_ok() {
+                    tracing::info!(
+                        "Requested rename at {}:{}:{} to '{}'",
+                        uri.as_str(),
+                        line,
+                        character,
+                        new_name
+                    );
                 }
-            }
-        } else {
+                result.is_ok()
+            })
+            .unwrap_or(false);
+
+        if sent {
+            self.next_lsp_request_id += 1;
+            self.lsp_status = "LSP: rename...".to_string();
+        } else if self.buffer_metadata.get(&buffer_id).and_then(|m| m.file_path()).is_none() {
             self.status_message = Some("Cannot rename in unsaved buffer".to_string());
         }
     }

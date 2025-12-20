@@ -3078,6 +3078,7 @@ impl Editor {
             lsp_disabled_reason: Some("Virtual macro buffer".to_string()),
             read_only: false, // Allow editing for saving
             binary: false,
+            lsp_opened_with: std::collections::HashSet::new(),
         };
         self.buffer_metadata.insert(buffer_id, metadata);
 
@@ -3149,6 +3150,7 @@ impl Editor {
             lsp_disabled_reason: Some("Virtual macro list buffer".to_string()),
             read_only: true,
             binary: false,
+            lsp_opened_with: std::collections::HashSet::new(),
         };
         self.buffer_metadata.insert(buffer_id, metadata);
 

@@ -3104,8 +3104,14 @@ async fn handle_notification_dispatch(
     Ok(())
 }
 
+/// Counter for generating unique LSP handle IDs
+static NEXT_HANDLE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 /// Synchronous handle to an async LSP task
 pub struct LspHandle {
+    /// Unique identifier for this handle instance
+    id: u64,
+
     /// Channel for sending commands to the task
     command_tx: mpsc::Sender<LspCommand>,
 
@@ -3180,11 +3186,19 @@ impl LspHandle {
             }
         });
 
+        let id = NEXT_HANDLE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         Ok(Self {
+            id,
             command_tx,
             state,
             runtime: runtime.clone(),
         })
+    }
+
+    /// Get the unique ID for this handle instance
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     /// Initialize the server (non-blocking)

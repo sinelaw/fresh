@@ -3,7 +3,7 @@ use crate::input::keybindings::Action;
 use crate::model::event::{BufferId, SplitDirection, SplitId};
 use crate::services::async_bridge::LspMessageType;
 use ratatui::layout::Rect;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -101,6 +101,12 @@ pub struct BufferMetadata {
     /// Whether the buffer contains binary content
     /// Binary buffers are automatically read-only and render unprintable chars as code points
     pub binary: bool,
+
+    /// LSP server instance IDs that have received didOpen for this buffer.
+    /// Used to ensure didOpen is sent before any requests to a new/restarted server.
+    /// When a server restarts, it gets a new ID, so didOpen is automatically resent.
+    /// Old IDs are harmless - they just remain in the set but don't match any active server.
+    pub lsp_opened_with: HashSet<u64>,
 }
 
 impl BufferMetadata {
@@ -147,6 +153,7 @@ impl BufferMetadata {
             lsp_disabled_reason: None,
             read_only: false,
             binary: false,
+            lsp_opened_with: HashSet::new(),
         }
     }
 
@@ -175,6 +182,7 @@ impl BufferMetadata {
             lsp_disabled_reason: None,
             read_only: false,
             binary: false,
+            lsp_opened_with: HashSet::new(),
         }
     }
 
@@ -222,6 +230,7 @@ impl BufferMetadata {
             lsp_disabled_reason: Some("Virtual buffer".to_string()),
             read_only,
             binary: false,
+            lsp_opened_with: HashSet::new(),
         }
     }
 
