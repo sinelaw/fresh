@@ -37,32 +37,20 @@
   "keybinding_maps": {},
   "active_keybinding_map": "default",
   "languages": {
-    "javascript": {
+    "toml": {
       "extensions": [
-        "js",
-        "jsx",
-        "mjs"
+        "toml"
       ],
-      "filenames": [],
-      "grammar": "javascript",
-      "comment_prefix": "//",
-      "auto_indent": true,
-      "highlighter": "auto",
-      "textmate_grammar": null,
-      "show_whitespace_tabs": true
-    },
-    "yaml": {
-      "extensions": [
-        "yml",
-        "yaml"
+      "filenames": [
+        "Cargo.lock"
       ],
-      "filenames": [],
-      "grammar": "yaml",
+      "grammar": "toml",
       "comment_prefix": "#",
       "auto_indent": true,
       "highlighter": "auto",
       "textmate_grammar": null,
-      "show_whitespace_tabs": true
+      "show_whitespace_tabs": true,
+      "use_tabs": false
     },
     "csharp": {
       "extensions": [
@@ -74,21 +62,8 @@
       "auto_indent": true,
       "highlighter": "auto",
       "textmate_grammar": null,
-      "show_whitespace_tabs": true
-    },
-    "typescript": {
-      "extensions": [
-        "ts",
-        "tsx",
-        "mts"
-      ],
-      "filenames": [],
-      "grammar": "typescript",
-      "comment_prefix": "//",
-      "auto_indent": true,
-      "highlighter": "auto",
-      "textmate_grammar": null,
-      "show_whitespace_tabs": true
+      "show_whitespace_tabs": true,
+      "use_tabs": false
     },
     "bash": {
       "extensions": [
@@ -112,36 +87,65 @@
       "auto_indent": true,
       "highlighter": "auto",
       "textmate_grammar": null,
-      "show_whitespace_tabs": true
+      "show_whitespace_tabs": true,
+      "use_tabs": false
     },
-    "toml": {
+    "yaml": {
       "extensions": [
-        "toml"
+        "yml",
+        "yaml"
       ],
-      "filenames": [
-        "Cargo.lock"
-      ],
-      "grammar": "toml",
+      "filenames": [],
+      "grammar": "yaml",
       "comment_prefix": "#",
       "auto_indent": true,
       "highlighter": "auto",
       "textmate_grammar": null,
-      "show_whitespace_tabs": true
+      "show_whitespace_tabs": true,
+      "use_tabs": false
     },
-    "dockerfile": {
+    "python": {
       "extensions": [
-        "dockerfile"
+        "py",
+        "pyi"
       ],
-      "filenames": [
-        "Dockerfile",
-        "Containerfile"
-      ],
-      "grammar": "dockerfile",
+      "filenames": [],
+      "grammar": "python",
       "comment_prefix": "#",
       "auto_indent": true,
       "highlighter": "auto",
       "textmate_grammar": null,
-      "show_whitespace_tabs": true
+      "show_whitespace_tabs": true,
+      "use_tabs": false
+    },
+    "go": {
+      "extensions": [
+        "go"
+      ],
+      "filenames": [],
+      "grammar": "go",
+      "comment_prefix": "//",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": false,
+      "use_tabs": true
+    },
+    "markdown": {
+      "extensions": [
+        "md",
+        "markdown"
+      ],
+      "filenames": [
+        "README"
+      ],
+      "grammar": "markdown",
+      "comment_prefix": null,
+      "auto_indent": false,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true,
+      "use_tabs": false
     },
     "rust": {
       "extensions": [
@@ -153,20 +157,40 @@
       "auto_indent": true,
       "highlighter": "auto",
       "textmate_grammar": null,
-      "show_whitespace_tabs": true
+      "show_whitespace_tabs": true,
+      "use_tabs": false
     },
-    "c": {
+    "makefile": {
       "extensions": [
-        "c",
-        "h"
+        "mk"
+      ],
+      "filenames": [
+        "Makefile",
+        "makefile",
+        "GNUmakefile"
+      ],
+      "grammar": "make",
+      "comment_prefix": "#",
+      "auto_indent": false,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true,
+      "use_tabs": true
+    },
+    "javascript": {
+      "extensions": [
+        "js",
+        "jsx",
+        "mjs"
       ],
       "filenames": [],
-      "grammar": "c",
+      "grammar": "javascript",
       "comment_prefix": "//",
       "auto_indent": true,
       "highlighter": "auto",
       "textmate_grammar": null,
-      "show_whitespace_tabs": true
+      "show_whitespace_tabs": true,
+      "use_tabs": false
     },
     "cpp": {
       "extensions": [
@@ -183,7 +207,23 @@
       "auto_indent": true,
       "highlighter": "auto",
       "textmate_grammar": null,
-      "show_whitespace_tabs": true
+      "show_whitespace_tabs": true,
+      "use_tabs": false
+    },
+    "typescript": {
+      "extensions": [
+        "ts",
+        "tsx",
+        "mts"
+      ],
+      "filenames": [],
+      "grammar": "typescript",
+      "comment_prefix": "//",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true,
+      "use_tabs": false
     },
     "json": {
       "extensions": [
@@ -196,71 +236,44 @@
       "auto_indent": true,
       "highlighter": "auto",
       "textmate_grammar": null,
-      "show_whitespace_tabs": true
+      "show_whitespace_tabs": true,
+      "use_tabs": false
     },
-    "markdown": {
+    "dockerfile": {
       "extensions": [
-        "md",
-        "markdown"
+        "dockerfile"
       ],
       "filenames": [
-        "README"
+        "Dockerfile",
+        "Containerfile"
       ],
-      "grammar": "markdown",
-      "comment_prefix": null,
-      "auto_indent": false,
-      "highlighter": "auto",
-      "textmate_grammar": null,
-      "show_whitespace_tabs": true
-    },
-    "python": {
-      "extensions": [
-        "py",
-        "pyi"
-      ],
-      "filenames": [],
-      "grammar": "python",
+      "grammar": "dockerfile",
       "comment_prefix": "#",
       "auto_indent": true,
       "highlighter": "auto",
       "textmate_grammar": null,
-      "show_whitespace_tabs": true
+      "show_whitespace_tabs": true,
+      "use_tabs": false
     },
-    "makefile": {
+    "c": {
       "extensions": [
-        "mk"
-      ],
-      "filenames": [
-        "Makefile",
-        "makefile",
-        "GNUmakefile"
-      ],
-      "grammar": "make",
-      "comment_prefix": "#",
-      "auto_indent": false,
-      "highlighter": "auto",
-      "textmate_grammar": null,
-      "show_whitespace_tabs": true
-    },
-    "go": {
-      "extensions": [
-        "go"
+        "c",
+        "h"
       ],
       "filenames": [],
-      "grammar": "go",
+      "grammar": "c",
       "comment_prefix": "//",
       "auto_indent": true,
       "highlighter": "auto",
       "textmate_grammar": null,
-      "show_whitespace_tabs": false
+      "show_whitespace_tabs": true,
+      "use_tabs": false
     }
   },
   "lsp": {
-    "json": {
-      "command": "vscode-json-languageserver",
-      "args": [
-        "--stdio"
-      ],
+    "csharp": {
+      "command": "csharp-ls",
+      "args": [],
       "enabled": true,
       "auto_start": false,
       "process_limits": {
@@ -284,44 +297,8 @@
       },
       "initialization_options": null
     },
-    "cpp": {
+    "c": {
       "command": "clangd",
-      "args": [],
-      "enabled": true,
-      "auto_start": false,
-      "process_limits": {
-        "max_memory_percent": 50,
-        "max_cpu_percent": 90,
-        "enabled": true
-      },
-      "initialization_options": null
-    },
-    "csharp": {
-      "command": "csharp-ls",
-      "args": [],
-      "enabled": true,
-      "auto_start": false,
-      "process_limits": {
-        "max_memory_percent": 50,
-        "max_cpu_percent": 90,
-        "enabled": true
-      },
-      "initialization_options": null
-    },
-    "go": {
-      "command": "gopls",
-      "args": [],
-      "enabled": true,
-      "auto_start": false,
-      "process_limits": {
-        "max_memory_percent": 50,
-        "max_cpu_percent": 90,
-        "enabled": true
-      },
-      "initialization_options": null
-    },
-    "python": {
-      "command": "pylsp",
       "args": [],
       "enabled": true,
       "auto_start": false,
@@ -346,9 +323,63 @@
       },
       "initialization_options": null
     },
-    "c": {
+    "css": {
+      "command": "vscode-css-languageserver-bin",
+      "args": [
+        "--stdio"
+      ],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "cpp": {
       "command": "clangd",
       "args": [],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "python": {
+      "command": "pylsp",
+      "args": [],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "typescript": {
+      "command": "typescript-language-server",
+      "args": [
+        "--stdio"
+      ],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "json": {
+      "command": "vscode-json-languageserver",
+      "args": [
+        "--stdio"
+      ],
       "enabled": true,
       "auto_start": false,
       "process_limits": {
@@ -362,7 +393,7 @@
       "command": "rust-analyzer",
       "args": [
         "--log-file",
-        "/tmp/rust-analyzer-74252.log"
+        "/tmp/rust-analyzer-77535.log"
       ],
       "enabled": true,
       "auto_start": false,
@@ -393,25 +424,9 @@
         }
       }
     },
-    "typescript": {
-      "command": "typescript-language-server",
-      "args": [
-        "--stdio"
-      ],
-      "enabled": true,
-      "auto_start": false,
-      "process_limits": {
-        "max_memory_percent": 50,
-        "max_cpu_percent": 90,
-        "enabled": true
-      },
-      "initialization_options": null
-    },
-    "css": {
-      "command": "vscode-css-languageserver-bin",
-      "args": [
-        "--stdio"
-      ],
+    "go": {
+      "command": "gopls",
+      "args": [],
       "enabled": true,
       "auto_start": false,
       "process_limits": {

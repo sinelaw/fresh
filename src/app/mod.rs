@@ -1330,10 +1330,11 @@ impl Editor {
             tracing::info!("Detected binary file: {}", path.display());
         }
 
-        // Set show_whitespace_tabs based on language config
+        // Set show_whitespace_tabs and use_tabs based on language config
         if let Some(language) = detect_language(path, &self.config.languages) {
             if let Some(lang_config) = self.config.languages.get(&language) {
                 state.show_whitespace_tabs = lang_config.show_whitespace_tabs;
+                state.use_tabs = lang_config.use_tabs;
             }
         }
 

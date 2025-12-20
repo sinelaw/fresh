@@ -516,6 +516,12 @@ pub struct LanguageConfig {
     /// Defaults to true. Set to false for languages like Go that use tabs for indentation.
     #[serde(default = "default_true")]
     pub show_whitespace_tabs: bool,
+
+    /// Whether pressing Tab should insert a tab character instead of spaces.
+    /// Defaults to false (insert spaces based on tab_size).
+    /// Set to true for languages like Go and Makefile that require tabs.
+    #[serde(default = "default_false")]
+    pub use_tabs: bool,
 }
 
 /// Preference for which syntax highlighting backend to use
@@ -730,6 +736,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                use_tabs: false,
             },
         );
 
@@ -744,6 +751,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                use_tabs: false,
             },
         );
 
@@ -758,6 +766,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                use_tabs: false,
             },
         );
 
@@ -772,6 +781,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                use_tabs: false,
             },
         );
 
@@ -786,6 +796,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                use_tabs: false,
             },
         );
 
@@ -807,6 +818,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                use_tabs: false,
             },
         );
 
@@ -821,6 +833,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                use_tabs: false,
             },
         );
 
@@ -846,6 +859,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                use_tabs: false,
             },
         );
 
@@ -864,6 +878,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                use_tabs: true, // Makefiles require tabs for recipes
             },
         );
 
@@ -878,6 +893,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                use_tabs: false,
             },
         );
 
@@ -892,6 +908,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                use_tabs: false,
             },
         );
 
@@ -906,6 +923,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                use_tabs: false,
             },
         );
 
@@ -920,6 +938,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                use_tabs: false,
             },
         );
 
@@ -934,10 +953,11 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
+                use_tabs: false,
             },
         );
 
-        // Go uses tabs for indentation by convention, so hide tab indicators
+        // Go uses tabs for indentation by convention, so hide tab indicators and use tabs
         languages.insert(
             "go".to_string(),
             LanguageConfig {
@@ -949,6 +969,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: false,
+                use_tabs: true, // Go convention is to use tabs
             },
         );
 

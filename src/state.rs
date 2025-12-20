@@ -88,6 +88,10 @@ pub struct EditorState {
     /// Set based on language config; defaults to true
     pub show_whitespace_tabs: bool,
 
+    /// Whether pressing Tab should insert a tab character instead of spaces.
+    /// Set based on language config; defaults to false (insert spaces).
+    pub use_tabs: bool,
+
     /// Semantic highlighter for word occurrence highlighting
     pub semantic_highlighter: SemanticHighlighter,
 
@@ -129,6 +133,7 @@ impl EditorState {
             show_cursors: true,
             editing_disabled: false,
             show_whitespace_tabs: true,
+            use_tabs: false,
             semantic_highlighter: SemanticHighlighter::new(),
             view_mode: ViewMode::Source,
             compose_width: None,
@@ -207,6 +212,7 @@ impl EditorState {
             show_cursors: true,
             editing_disabled: false,
             show_whitespace_tabs: true,
+            use_tabs: false,
             semantic_highlighter,
             view_mode: ViewMode::Source,
             compose_width: None,

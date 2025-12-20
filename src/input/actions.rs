@@ -634,7 +634,12 @@ pub fn action_to_events(
         }
 
         Action::InsertTab => {
-            let tab_str = " ".repeat(tab_size);
+            // Insert a tab character or spaces based on language config
+            let tab_str = if state.use_tabs {
+                "\t".to_string()
+            } else {
+                " ".repeat(tab_size)
+            };
             // Sort cursors by position (reverse order) to avoid position shifts
             let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
             cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
