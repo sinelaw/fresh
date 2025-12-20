@@ -75,12 +75,8 @@ fn test_did_open_sent_before_hover() -> std::io::Result<()> {
     println!("LSP methods received: {:?}", methods);
 
     // Find indices of didOpen and hover
-    let did_open_index = methods
-        .iter()
-        .position(|m| *m == "textDocument/didOpen");
-    let hover_index = methods
-        .iter()
-        .position(|m| *m == "textDocument/hover");
+    let did_open_index = methods.iter().position(|m| *m == "textDocument/didOpen");
+    let hover_index = methods.iter().position(|m| *m == "textDocument/hover");
 
     // Verify didOpen was received
     assert!(

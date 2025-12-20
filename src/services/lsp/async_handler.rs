@@ -1647,8 +1647,7 @@ impl LspTask {
                 "Failed to spawn LSP server '{}': {}",
                 command,
                 match e.kind() {
-                    std::io::ErrorKind::NotFound =>
-                        "executable not found in PATH".to_string(),
+                    std::io::ErrorKind::NotFound => "executable not found in PATH".to_string(),
                     std::io::ErrorKind::PermissionDenied =>
                         "permission denied (check file permissions)".to_string(),
                     _ => e.to_string(),

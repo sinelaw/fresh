@@ -4354,7 +4354,9 @@ impl Editor {
             // Send didOpen first
             if let Some(lsp) = self.lsp.as_mut() {
                 if let Some(handle) = lsp.get_or_spawn(&language) {
-                    if let Err(e) = handle.did_open(lsp_uri.clone(), content.clone(), language.clone()) {
+                    if let Err(e) =
+                        handle.did_open(lsp_uri.clone(), content.clone(), language.clone())
+                    {
                         tracing::warn!("Failed to send didOpen before didChange: {}", e);
                         return;
                     }
@@ -6818,9 +6820,15 @@ impl Editor {
         // Use helper to ensure didOpen is sent before the request
         let sent = self
             .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
-                let result = handle.completion(request_id, uri.clone(), line as u32, character as u32);
+                let result =
+                    handle.completion(request_id, uri.clone(), line as u32, character as u32);
                 if result.is_ok() {
-                    tracing::info!("Requested completion at {}:{}:{}", uri.as_str(), line, character);
+                    tracing::info!(
+                        "Requested completion at {}:{}:{}",
+                        uri.as_str(),
+                        line,
+                        character
+                    );
                 }
                 result.is_ok()
             })
@@ -7969,7 +7977,11 @@ impl Editor {
 
         if needs_open {
             // Get text for didOpen
-            let text = match self.buffers.get(&buffer_id).and_then(|s| s.buffer.to_string()) {
+            let text = match self
+                .buffers
+                .get(&buffer_id)
+                .and_then(|s| s.buffer.to_string())
+            {
                 Some(t) => t,
                 None => {
                     tracing::debug!(
@@ -8125,7 +8137,12 @@ impl Editor {
         if sent {
             self.next_lsp_request_id += 1;
             self.lsp_status = "LSP: rename...".to_string();
-        } else if self.buffer_metadata.get(&buffer_id).and_then(|m| m.file_path()).is_none() {
+        } else if self
+            .buffer_metadata
+            .get(&buffer_id)
+            .and_then(|m| m.file_path())
+            .is_none()
+        {
             self.status_message = Some("Cannot rename in unsaved buffer".to_string());
         }
     }
