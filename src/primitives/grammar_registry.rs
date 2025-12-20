@@ -25,6 +25,12 @@ pub struct GrammarRegistry {
 }
 
 impl GrammarRegistry {
+    /// Create a fully-loaded grammar registry for the editor
+    /// Loads built-in, embedded, and user grammars
+    pub fn for_editor() -> Arc<Self> {
+        Arc::new(Self::load())
+    }
+
     /// Load grammar registry, scanning user grammars directory
     pub fn load() -> Self {
         let mut user_extensions = HashMap::new();
@@ -55,6 +61,16 @@ impl GrammarRegistry {
             syntax_set: Arc::new(syntax_set),
             user_extensions,
         }
+    }
+
+    /// Create an empty grammar registry (fast, for tests that don't need syntax highlighting)
+    pub fn empty() -> Arc<Self> {
+        let mut builder = SyntaxSetBuilder::new();
+        builder.add_plain_text_syntax();
+        Arc::new(Self {
+            syntax_set: Arc::new(builder.build()),
+            user_extensions: HashMap::new(),
+        })
     }
 
     /// Get the grammars directory path

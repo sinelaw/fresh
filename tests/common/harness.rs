@@ -163,14 +163,15 @@ impl EditorTestHarness {
         config.check_for_updates = false; // Disable update checking in tests
         config.editor.double_click_time_ms = 10; // Fast double-click for faster tests
                                                  // Use temp directory to avoid loading project plugins in tests
-        let editor = Editor::with_time_source(
+        let editor = Editor::for_test(
             config,
             width,
             height,
             Some(temp_path),
             dir_context,
-            time_source,
             fresh::view::color_support::ColorCapability::TrueColor,
+            None,
+            Some(time_source),
         )?;
 
         Ok(EditorTestHarness {
@@ -207,14 +208,15 @@ impl EditorTestHarness {
         // Disable update checking in tests to avoid flaky status bar changes
         config.check_for_updates = false;
         // Use temp directory to avoid loading project plugins in tests
-        let editor = Editor::with_time_source(
+        let editor = Editor::for_test(
             config,
             width,
             height,
             Some(temp_path),
             dir_context,
-            time_source,
             fresh::view::color_support::ColorCapability::TrueColor,
+            None,
+            Some(time_source),
         )?;
 
         Ok(EditorTestHarness {
@@ -268,14 +270,15 @@ impl EditorTestHarness {
         let terminal = Terminal::new(backend)?;
         // Disable update checking in tests to avoid flaky status bar changes
         config.check_for_updates = false;
-        let editor = Editor::with_time_source(
+        let editor = Editor::for_test(
             config,
             width,
             height,
             Some(project_root),
             dir_context,
-            time_source,
             fresh::view::color_support::ColorCapability::TrueColor,
+            None,
+            Some(time_source),
         )?;
 
         Ok(EditorTestHarness {
@@ -331,14 +334,15 @@ impl EditorTestHarness {
         // Disable update checking in tests to avoid flaky status bar changes
         config.check_for_updates = false;
         // Create editor - it will create its own tokio runtime for async operations
-        let mut editor = Editor::with_time_source(
+        let mut editor = Editor::for_test(
             config,
             width,
             height,
             Some(working_dir),
             dir_context,
-            time_source,
             fresh::view::color_support::ColorCapability::TrueColor,
+            None,
+            Some(time_source),
         )?;
 
         // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
@@ -389,14 +393,15 @@ impl EditorTestHarness {
         // Disable update checking in tests to avoid flaky status bar changes
         config.check_for_updates = false;
         // Create editor - it will create its own tokio runtime for async operations
-        let mut editor = Editor::with_time_source(
+        let mut editor = Editor::for_test(
             config,
             width,
             height,
             Some(working_dir),
             dir_context,
-            time_source,
             fresh::view::color_support::ColorCapability::TrueColor,
+            None,
+            Some(time_source),
         )?;
 
         // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
@@ -444,15 +449,15 @@ impl EditorTestHarness {
         config.check_for_updates = false;
 
         // Create editor with custom filesystem backend and time source
-        let editor = Editor::with_fs_backend_and_time_source(
+        let editor = Editor::for_test(
             config,
             width,
             height,
             Some(temp_path),
-            fs_backend,
             dir_context,
-            time_source,
             fresh::view::color_support::ColorCapability::TrueColor,
+            Some(fs_backend),
+            Some(time_source),
         )?;
 
         Ok(EditorTestHarness {

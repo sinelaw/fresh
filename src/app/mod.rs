@@ -512,79 +512,33 @@ impl Editor {
             dir_context,
             None,
             color_capability,
+            crate::primitives::grammar_registry::GrammarRegistry::for_editor(),
         )
     }
 
-    /// Create a new editor with a custom filesystem backend (for testing)
-    /// This allows injecting slow or mock backends to test editor behavior
-    pub fn with_fs_backend_for_test(
+    /// Create a new editor for testing with optional custom backends
+    /// Uses empty grammar registry for fast initialization
+    pub fn for_test(
         config: Config,
         width: u16,
         height: u16,
         working_dir: Option<PathBuf>,
-        fs_backend: Arc<dyn FsBackend>,
         dir_context: DirectoryContext,
         color_capability: crate::view::color_support::ColorCapability,
+        fs_backend: Option<Arc<dyn FsBackend>>,
+        time_source: Option<SharedTimeSource>,
     ) -> io::Result<Self> {
         Self::with_options(
             config,
             width,
             height,
             working_dir,
-            Some(fs_backend),
+            fs_backend,
             true,
             dir_context,
-            None,
+            time_source,
             color_capability,
-        )
-    }
-
-    /// Create a new editor with a custom time source (for testing)
-    /// This allows tests to control time for deterministic testing
-    pub fn with_time_source(
-        config: Config,
-        width: u16,
-        height: u16,
-        working_dir: Option<PathBuf>,
-        dir_context: DirectoryContext,
-        time_source: SharedTimeSource,
-        color_capability: crate::view::color_support::ColorCapability,
-    ) -> io::Result<Self> {
-        Self::with_options(
-            config,
-            width,
-            height,
-            working_dir,
-            None,
-            true,
-            dir_context,
-            Some(time_source),
-            color_capability,
-        )
-    }
-
-    /// Create a new editor with custom filesystem backend and time source (for testing)
-    /// This allows injecting slow/mock backends while also controlling time
-    pub fn with_fs_backend_and_time_source(
-        config: Config,
-        width: u16,
-        height: u16,
-        working_dir: Option<PathBuf>,
-        fs_backend: Arc<dyn FsBackend>,
-        dir_context: DirectoryContext,
-        time_source: SharedTimeSource,
-        color_capability: crate::view::color_support::ColorCapability,
-    ) -> io::Result<Self> {
-        Self::with_options(
-            config,
-            width,
-            height,
-            working_dir,
-            Some(fs_backend),
-            true,
-            dir_context,
-            Some(time_source),
-            color_capability,
+            crate::primitives::grammar_registry::GrammarRegistry::empty(),
         )
     }
 
@@ -601,6 +555,7 @@ impl Editor {
         dir_context: DirectoryContext,
         time_source: Option<SharedTimeSource>,
         color_capability: crate::view::color_support::ColorCapability,
+        grammar_registry: Arc<crate::primitives::grammar_registry::GrammarRegistry>,
     ) -> io::Result<Self> {
         // Use provided time_source or default to RealTimeSource
         let time_source = time_source.unwrap_or_else(RealTimeSource::shared);
@@ -617,11 +572,8 @@ impl Editor {
         // Load theme from config
         let theme = crate::view::theme::Theme::from_name(&config.theme);
 
-        // Load grammar registry for TextMate syntax highlighting
-        let grammar_registry =
-            Arc::new(crate::primitives::grammar_registry::GrammarRegistry::load());
         tracing::info!(
-            "Loaded grammar registry with {} syntaxes",
+            "Grammar registry has {} syntaxes",
             grammar_registry.available_syntaxes().len()
         );
 
