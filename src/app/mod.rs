@@ -2085,6 +2085,12 @@ impl Editor {
 
     /// Internal helper to close a buffer (shared by close_buffer and force_close_buffer)
     fn close_buffer_internal(&mut self, id: BufferId) -> io::Result<()> {
+        // If closing a terminal buffer while in terminal mode, exit terminal mode
+        if self.terminal_mode && self.is_terminal_buffer(id) {
+            self.terminal_mode = false;
+            self.key_context = crate::input::keybindings::KeyContext::Normal;
+        }
+
         // If it's the last buffer, create a new empty buffer and focus file explorer
         let is_last_buffer = self.buffers.len() == 1;
         let replacement_buffer = if is_last_buffer {
