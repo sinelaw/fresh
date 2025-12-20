@@ -1276,6 +1276,20 @@ impl LspState {
             WorkDoneProgressParams,
         };
 
+        // Check if server supports pull diagnostics (diagnosticProvider capability)
+        if self
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.diagnostic_provider.as_ref())
+            .is_none()
+        {
+            tracing::trace!(
+                "LSP: server does not support pull diagnostics, skipping request for {}",
+                uri.as_str()
+            );
+            return Ok(());
+        }
+
         tracing::trace!(
             "LSP: document diagnostic request for {} (previous_result_id: {:?})",
             uri.as_str(),
