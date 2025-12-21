@@ -62,7 +62,10 @@ impl KeybindingListState {
     }
 
     /// Set the item schema for creating new entries
-    pub fn with_item_schema(mut self, schema: crate::view::settings::schema::SettingSchema) -> Self {
+    pub fn with_item_schema(
+        mut self,
+        schema: crate::view::settings::schema::SettingSchema,
+    ) -> Self {
         self.item_schema = Some(Box::new(schema));
         self
     }

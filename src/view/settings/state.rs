@@ -628,13 +628,8 @@ impl SettingsState {
         let path = item.path.clone();
 
         // Create dialog with empty value - user will fill it in
-        let dialog = EntryDialogState::for_array_item(
-            None,
-            &serde_json::json!({}),
-            schema,
-            &path,
-            true,
-        );
+        let dialog =
+            EntryDialogState::for_array_item(None, &serde_json::json!({}), schema, &path, true);
         self.entry_dialog_stack.push(dialog);
     }
 

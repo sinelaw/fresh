@@ -295,22 +295,25 @@ impl SettingsState {
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 // Check button state first with immutable borrow
-                let button_action = self.entry_dialog().map(|dialog| {
-                    if dialog.focus_on_buttons {
-                        let cancel_idx = dialog.button_count() - 1;
-                        if dialog.focused_button == 0 {
-                            Some(ButtonAction::Save)
-                        } else if !dialog.is_new && dialog.focused_button == 1 {
-                            Some(ButtonAction::Delete)
-                        } else if dialog.focused_button == cancel_idx {
-                            Some(ButtonAction::Cancel)
+                let button_action = self
+                    .entry_dialog()
+                    .map(|dialog| {
+                        if dialog.focus_on_buttons {
+                            let cancel_idx = dialog.button_count() - 1;
+                            if dialog.focused_button == 0 {
+                                Some(ButtonAction::Save)
+                            } else if !dialog.is_new && dialog.focused_button == 1 {
+                                Some(ButtonAction::Delete)
+                            } else if dialog.focused_button == cancel_idx {
+                                Some(ButtonAction::Cancel)
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
-                    } else {
-                        None
-                    }
-                }).flatten();
+                    })
+                    .flatten();
 
                 if let Some(action) = button_action {
                     match action {
@@ -323,20 +326,23 @@ impl SettingsState {
                     self.save_entry_dialog();
                 } else {
                     // Activate current control
-                    let control_action = self.entry_dialog().and_then(|dialog| {
-                        dialog.current_item().map(|item| match &item.control {
-                            SettingControl::Toggle(_) => Some(ControlAction::ToggleBool),
-                            SettingControl::Dropdown(_) => Some(ControlAction::ToggleDropdown),
-                            SettingControl::Text(_)
-                            | SettingControl::TextList(_)
-                            | SettingControl::Number(_)
-                            | SettingControl::Json(_) => Some(ControlAction::StartEditing),
-                            SettingControl::Map(_) | SettingControl::ObjectArray(_) => {
-                                Some(ControlAction::OpenNestedDialog)
-                            }
-                            _ => None,
+                    let control_action = self
+                        .entry_dialog()
+                        .and_then(|dialog| {
+                            dialog.current_item().map(|item| match &item.control {
+                                SettingControl::Toggle(_) => Some(ControlAction::ToggleBool),
+                                SettingControl::Dropdown(_) => Some(ControlAction::ToggleDropdown),
+                                SettingControl::Text(_)
+                                | SettingControl::TextList(_)
+                                | SettingControl::Number(_)
+                                | SettingControl::Json(_) => Some(ControlAction::StartEditing),
+                                SettingControl::Map(_) | SettingControl::ObjectArray(_) => {
+                                    Some(ControlAction::OpenNestedDialog)
+                                }
+                                _ => None,
+                            })
                         })
-                    }).flatten();
+                        .flatten();
 
                     if let Some(action) = control_action {
                         match action {
