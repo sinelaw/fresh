@@ -1,7 +1,7 @@
 //! Action to event conversion - translates high-level actions into buffer events
 
 use crate::input::keybindings::Action;
-use crate::model::buffer::Buffer;
+use crate::model::buffer::{Buffer, LineEnding};
 use crate::model::cursor::{Position2D, SelectionMode};
 use crate::model::event::{CursorId, Event};
 use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
@@ -63,6 +63,15 @@ fn calculate_visual_column(
     } else {
         (byte_column, byte_column) // Fallback
     }
+}
+
+/// Pattern for matching line ending characters (\r and \n)
+const LINE_ENDING_CHARS: &[char] = &['\r', '\n'];
+
+/// Get the length of line content excluding line ending characters (\r and \n).
+/// Handles CRLF, LF, and CR line endings.
+fn content_len_without_line_ending(content: &str) -> usize {
+    content.trim_end_matches(LINE_ENDING_CHARS).len()
 }
 
 /// Convert deletion ranges to Delete events
@@ -599,9 +608,10 @@ pub fn action_to_events(
             }
 
             // Now process insertions
+            let line_ending = state.buffer.line_ending().as_str();
             for (cursor_id, indent_position) in indent_positions {
                 // Calculate indent for new line
-                let mut text = "\n".to_string();
+                let mut text = line_ending.to_string();
 
                 if auto_indent {
                     if let Some(language) = state.highlighter.language() {
@@ -847,9 +857,7 @@ pub fn action_to_events(
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
                 if let Some((line_start, line_content)) = iter.next() {
-                    // Calculate end position (exclude newline)
-                    let line_len = line_content.trim_end_matches('\n').len();
-                    let line_end = line_start + line_len;
+                    let line_end = line_start + content_len_without_line_ending(&line_content);
 
                     // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                     let new_anchor = if cursor.deselect_on_move {
@@ -1185,9 +1193,7 @@ pub fn action_to_events(
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
 
                 if let Some((line_start, line_content)) = iter.next() {
-                    // Calculate end position (exclude newline)
-                    let line_len = line_content.trim_end_matches('\n').len();
-                    let line_end = line_start + line_len;
+                    let line_end = line_start + content_len_without_line_ending(&line_content);
 
                     events.push(Event::MoveCursor {
                         cursor_id,
@@ -1402,7 +1408,28 @@ pub fn action_to_events(
                         Some((*cursor_id, range))
                     } else if cursor.position > 0 {
                         // Use prev_char_boundary to properly handle multi-byte UTF-8 characters
-                        let delete_from = state.buffer.prev_char_boundary(cursor.position);
+                        let mut delete_from = state.buffer.prev_char_boundary(cursor.position);
+
+                        // In CRLF files, delete \r\n as a unit when backspacing at line start
+                        if state.buffer.line_ending() == LineEnding::CRLF && delete_from > 0 {
+                            let prev_byte = state
+                                .buffer
+                                .slice_bytes(delete_from..cursor.position)
+                                .first()
+                                .copied();
+                            if prev_byte == Some(b'\n') {
+                                // Check if there's a \r before the \n
+                                let before_that = state
+                                    .buffer
+                                    .slice_bytes(delete_from - 1..delete_from)
+                                    .first()
+                                    .copied();
+                                if before_that == Some(b'\r') {
+                                    // Delete both \r and \n
+                                    delete_from -= 1;
+                                }
+                            }
+                        }
 
                         // Check for auto-pair deletion when auto_indent is enabled
                         // Note: Auto-pairs are ASCII-only, so we can safely check single bytes
@@ -1463,7 +1490,30 @@ pub fn action_to_events(
                         Some((*cursor_id, range))
                     } else if cursor.position < buffer_len {
                         // Use next_char_boundary to properly handle multi-byte UTF-8 characters
-                        let delete_to = state.buffer.next_char_boundary(cursor.position);
+                        let mut delete_to = state.buffer.next_char_boundary(cursor.position);
+
+                        // In CRLF files, delete \r\n as a unit when deleting at line end
+                        if state.buffer.line_ending() == LineEnding::CRLF && delete_to < buffer_len
+                        {
+                            let curr_byte = state
+                                .buffer
+                                .slice_bytes(cursor.position..delete_to)
+                                .first()
+                                .copied();
+                            if curr_byte == Some(b'\r') {
+                                // Check if there's a \n after the \r
+                                let next_byte = state
+                                    .buffer
+                                    .slice_bytes(delete_to..delete_to + 1)
+                                    .first()
+                                    .copied();
+                                if next_byte == Some(b'\n') {
+                                    // Delete both \r and \n
+                                    delete_to += 1;
+                                }
+                            }
+                        }
+
                         Some((*cursor_id, cursor.position..delete_to))
                     } else {
                         None
@@ -1553,8 +1603,7 @@ pub fn action_to_events(
                         .line_iterator(cursor.position, estimated_line_length);
                     let line_start = iter.current_position();
                     iter.next().map(|(_start, content)| {
-                        // Find the end of line (excluding newline)
-                        let line_end = line_start + content.trim_end_matches('\n').len();
+                        let line_end = line_start + content_len_without_line_ending(&content);
                         if cursor.position < line_end {
                             Some((cursor_id, cursor.position..line_end))
                         } else {
@@ -1609,10 +1658,11 @@ pub fn action_to_events(
         Action::OpenLine => {
             // Insert a newline at cursor position but don't move cursor
             // (like pressing Enter but staying on current line)
+            let line_ending = state.buffer.line_ending().as_str();
             for (cursor_id, cursor) in state.cursors.iter() {
                 events.push(Event::Insert {
                     position: cursor.position,
-                    text: "\n".to_string(),
+                    text: line_ending.to_string(),
                     cursor_id,
                 });
             }

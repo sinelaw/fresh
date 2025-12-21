@@ -914,20 +914,19 @@ fn test_binary_like_content_roundtrip() {
 }
 
 #[test]
-fn test_cr_normalization_in_binary_content() {
-    // This test documents the behavior that CR bytes are normalized to LF
-    // This is expected behavior for the text editor.
+fn test_cr_preserved_in_binary_content() {
+    // CR bytes are preserved in the buffer (no normalization)
     let temp_dir = TempDir::new().unwrap();
 
-    // Content with CR followed by other byte (not CRLF)
+    // Content with standalone CR (not CRLF)
     let initial = b"hello\rworld".to_vec();
     let file_path = create_temp_file(&temp_dir, "cr.txt", &initial);
 
     let mut buffer = TextBuffer::load_from_file(&file_path, 0).unwrap();
     let content = read_buffer_content(&mut buffer);
 
-    // CR should be normalized to LF
-    assert_eq!(content, b"hello\nworld");
+    // CR should be preserved
+    assert_eq!(content, b"hello\rworld");
 
     // Save and reload
     let save_path = temp_dir.path().join("saved.txt");
@@ -935,7 +934,7 @@ fn test_cr_normalization_in_binary_content() {
 
     let mut reloaded = TextBuffer::load_from_file(&save_path, 0).unwrap();
     let reloaded_content = read_buffer_content(&mut reloaded);
-    assert_eq!(reloaded_content, b"hello\nworld");
+    assert_eq!(reloaded_content, b"hello\rworld");
 }
 
 #[test]
@@ -1053,7 +1052,7 @@ proptest! {
         ..ProptestConfig::default()
     })]
 
-    /// Property: CRLF files are normalized to LF internally but preserved on save
+    /// Property: CRLF files are preserved exactly (no normalization)
     #[test]
     fn prop_crlf_file_roundtrip(
         content in content_with_crlf_strategy(20),
@@ -1062,43 +1061,38 @@ proptest! {
         let temp_dir = TempDir::new().unwrap();
         let file_path = create_temp_file(&temp_dir, "crlf.txt", &content);
 
-        // Load the file (should normalize to LF internally)
+        // Load the file (bytes are preserved, no normalization)
         let mut buffer = TextBuffer::load_from_file(&file_path, 0).unwrap();
 
-        // Content internally should have LF, not CRLF
+        // Content internally should preserve original bytes including CRLF
         let internal_content = read_buffer_content(&mut buffer);
-
-        // Verify CRLF was normalized to LF
-        assert!(
-            !internal_content.windows(2).any(|w| w == b"\r\n"),
-            "Internal content should not have CRLF"
+        prop_assert_eq!(
+            &internal_content,
+            &content,
+            "Internal content should match original file"
         );
 
-        // Apply some operations
+        // Apply some operations (shadow also tracks CRLF bytes)
+        let mut shadow = content.clone();
         for op in &ops {
             op.apply(&mut buffer);
+            op.apply_to_shadow(&mut shadow);
         }
 
         let content_before_save = read_buffer_content(&mut buffer);
+        prop_assert_eq!(&content_before_save, &shadow, "Buffer should match shadow");
 
         // Save the file
         let save_path = temp_dir.path().join("saved.txt");
         buffer.save_to_file(&save_path).unwrap();
 
-        // The saved file should have CRLF restored (since original was CRLF)
+        // The saved file should match exactly what was in the buffer
         let saved_bytes = fs::read(&save_path).unwrap();
-
-        // Count line endings
-        let lf_count = saved_bytes.iter().filter(|&&b| b == b'\n').count();
-        let crlf_count = saved_bytes.windows(2).filter(|w| w == b"\r\n").count();
-
-        // If original had CRLF, saved should have CRLF (all LF should be part of CRLF)
-        if content.windows(2).any(|w| w == b"\r\n") && lf_count > 0 {
-            prop_assert_eq!(
-                crlf_count, lf_count,
-                "CRLF file should preserve CRLF line endings"
-            );
-        }
+        prop_assert_eq!(
+            &saved_bytes,
+            &content_before_save,
+            "Saved file should match buffer content exactly"
+        );
 
         // Reload and verify content matches
         let mut reloaded = TextBuffer::load_from_file(&save_path, 0).unwrap();
@@ -1107,7 +1101,7 @@ proptest! {
         prop_assert_eq!(
             &reloaded_content,
             &content_before_save,
-            "Reloaded content should match pre-save content (normalized)"
+            "Reloaded content should match pre-save content"
         );
     }
 
@@ -1149,9 +1143,9 @@ proptest! {
         );
     }
 
-    /// Property: mixed line endings are normalized and saved consistently
+    /// Property: mixed line endings are preserved exactly (no normalization)
     #[test]
-    fn prop_mixed_endings_normalized(
+    fn prop_mixed_endings_preserved(
         content in content_with_mixed_endings_strategy(15),
     ) {
         let temp_dir = TempDir::new().unwrap();
@@ -1159,17 +1153,22 @@ proptest! {
 
         let mut buffer = TextBuffer::load_from_file(&file_path, 0).unwrap();
 
-        // Internal content should be normalized (no CRLF, only LF or no CR at all)
+        // Internal content should preserve original bytes
         let internal_content = read_buffer_content(&mut buffer);
-        prop_assert!(
-            !internal_content.windows(2).any(|w| w == b"\r\n"),
-            "Internal content should be normalized to LF"
+        prop_assert_eq!(
+            &internal_content,
+            &content,
+            "Internal content should match original file"
         );
 
         // Edit and save
         buffer.insert_bytes(0, b"PREFIX: ".to_vec());
 
+        let mut expected = b"PREFIX: ".to_vec();
+        expected.extend(&content);
+
         let content_before_save = read_buffer_content(&mut buffer);
+        prop_assert_eq!(&content_before_save, &expected, "Buffer should match expected");
 
         let save_path = temp_dir.path().join("saved.txt");
         buffer.save_to_file(&save_path).unwrap();
@@ -1197,17 +1196,16 @@ fn test_crlf_preserved_after_edit() {
 
     let mut buffer = TextBuffer::load_from_file(&file_path, 0).unwrap();
 
-    // Edit in the middle
-    // After normalization, content is "line1\nline2\nline3\n"
-    // Insert after "line1\n" (offset 6)
-    buffer.insert_bytes(6, b"inserted\n".to_vec());
+    // Content is preserved as-is: "line1\r\nline2\r\nline3\r\n"
+    // Insert after "line1\r\n" (offset 7)
+    buffer.insert_bytes(7, b"inserted\r\n".to_vec());
 
     let save_path = temp_dir.path().join("saved.txt");
     buffer.save_to_file(&save_path).unwrap();
 
     let saved = fs::read(&save_path).unwrap();
 
-    // Should have CRLF throughout
+    // Should have CRLF throughout (original preserved, inserted has CRLF too)
     assert_eq!(
         saved, b"line1\r\ninserted\r\nline2\r\nline3\r\n",
         "CRLF should be preserved"
@@ -1242,11 +1240,12 @@ fn test_empty_lines_with_crlf() {
 
     let mut buffer = TextBuffer::load_from_file(&file_path, 0).unwrap();
 
-    // Verify internal normalization
+    // Content is preserved (no normalization)
     let internal = read_buffer_content(&mut buffer);
-    assert_eq!(internal, b"line1\n\n\nline2\n");
+    assert_eq!(internal, b"line1\r\n\r\n\r\nline2\r\n");
 
-    buffer.insert_bytes(6, b"X".to_vec()); // After first newline
+    // Insert after "line1\r\n" (offset 7)
+    buffer.insert_bytes(7, b"X".to_vec());
 
     let save_path = temp_dir.path().join("saved.txt");
     buffer.save_to_file(&save_path).unwrap();

@@ -290,3 +290,177 @@ fn test_lf_new_line_insertion() {
         "File should maintain LF format throughout"
     );
 }
+
+/// Test backspace at beginning of line in CRLF buffer
+/// Should delete the entire \r\n sequence, joining lines
+#[test]
+fn test_crlf_backspace_at_line_start() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("crlf_backspace.txt");
+
+    // Create a test file with CRLF line endings
+    let content = "Line 1\r\nLine 2\r\n";
+    std::fs::write(&file_path, content).unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to beginning of second line
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+
+    // Press backspace - should delete \r\n and join lines
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Lines should be joined
+    harness.assert_screen_contains("Line 1Line 2");
+
+    // Save and verify
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let saved_content = std::fs::read_to_string(&file_path).unwrap();
+    assert_eq!(
+        saved_content, "Line 1Line 2\r\n",
+        "Backspace should have joined the lines"
+    );
+}
+
+/// Test delete at end of line in CRLF buffer
+/// Should delete the entire \r\n sequence, joining lines
+#[test]
+fn test_crlf_delete_at_line_end() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("crlf_delete.txt");
+
+    // Create a test file with CRLF line endings
+    let content = "Line 1\r\nLine 2\r\n";
+    std::fs::write(&file_path, content).unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to end of first line
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+
+    // Press delete - should delete \r\n and join lines
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Lines should be joined
+    harness.assert_screen_contains("Line 1Line 2");
+
+    // Save and verify
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let saved_content = std::fs::read_to_string(&file_path).unwrap();
+    assert_eq!(
+        saved_content, "Line 1Line 2\r\n",
+        "Delete should have joined the lines"
+    );
+}
+
+/// Test cut and paste in CRLF buffer
+/// Cut text should preserve CRLF when pasted
+#[test]
+fn test_crlf_cut_paste() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("crlf_cut_paste.txt");
+
+    // Create a test file with CRLF line endings
+    let content = "Line 1\r\nLine 2\r\nLine 3\r\n";
+    std::fs::write(&file_path, content).unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Select "Line 2\r\n" - go to start of line 2, select to start of line 3
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+
+    // Cut (Ctrl+X)
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should now have Line 1 and Line 3
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Line 2"),
+        "Line 2 should be cut from display"
+    );
+
+    // Go to end of file and paste
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should now see Line 2 at end
+    harness.assert_screen_contains("Line 2");
+
+    // Save and verify CRLF preserved
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let saved_content = std::fs::read_to_string(&file_path).unwrap();
+    // The pasted line should have CRLF
+    assert!(
+        saved_content.contains("Line 2\r\n"),
+        "Pasted line should preserve CRLF ending"
+    );
+}
+
+/// Test that CR characters in LF files are shown as <0D>
+/// In Unix/LF files, \r is unusual and should be visible - even in \r\n sequences
+#[test]
+fn test_cr_shown_in_lf_file() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("lf_with_cr.txt");
+
+    // Create a test file with LF line endings but containing CR characters
+    // The file has more LF than CRLF, so it should be detected as LF
+    // Even the \r\n sequence should show \r as <0D> because this is a Unix file
+    let content = "Line1\nHello\rWorld\nLine3\r\nLine4\n";
+    std::fs::write(&file_path, content).unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // Both standalone \r and \r in \r\n should be shown as <0D> in LF files
+    // because any \r is unusual in a Unix file
+    assert!(
+        screen.contains("<0D>"),
+        "CR characters in LF file should be shown as <0D>, screen: {}",
+        screen
+    );
+
+    // The text should still be visible
+    harness.assert_screen_contains("Line1");
+    harness.assert_screen_contains("Hello");
+    harness.assert_screen_contains("World");
+    harness.assert_screen_contains("Line3");
+    harness.assert_screen_contains("Line4");
+}

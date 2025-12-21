@@ -179,6 +179,7 @@ impl Editor {
                     // This allows plugins to transform the view (e.g., soft breaks for markdown)
                     let visible_count = split_area.height as usize;
                     let is_binary = state.buffer.is_binary();
+                    let line_ending = state.buffer.line_ending();
                     let base_tokens =
                         crate::view::ui::split_rendering::SplitRenderer::build_base_tokens_for_hook(
                             &mut state.buffer,
@@ -186,6 +187,7 @@ impl Editor {
                             self.config.editor.estimated_line_length,
                             visible_count,
                             is_binary,
+                            line_ending,
                         );
                     let viewport_start = viewport_top_byte;
                     let viewport_end = base_tokens
