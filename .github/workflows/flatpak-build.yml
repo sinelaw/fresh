@@ -33,6 +33,11 @@ jobs:
           tar -xJf fresh-editor-x86_64-unknown-linux-gnu.tar.xz
           cp fresh-editor-x86_64-unknown-linux-gnu/fresh ../target/release/
 
+      - name: Strip binary
+        run: |
+          strip --strip-all target/release/fresh
+          ls -lh target/release/fresh
+
       - name: Update metainfo version
         run: |
           VERSION="${{ inputs.version }}"
