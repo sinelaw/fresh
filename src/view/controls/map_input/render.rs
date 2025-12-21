@@ -57,7 +57,7 @@ pub fn render_map(
         let is_focused = state.focused_entry == Some(idx) && state.focus == FocusState::Focused;
         let is_expanded = state.is_expanded(idx);
 
-        let arrow = if is_expanded { "▼" } else { "▶" };
+        let arrow = if is_expanded { "▼" } else { ">" };
 
         // Value preview using display_field if available
         let value_preview = state.get_display_value(value);

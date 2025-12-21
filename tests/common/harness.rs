@@ -1437,10 +1437,10 @@ impl EditorTestHarness {
             }
             let screen = h.screen_to_string();
             // Look for the item in a file explorer tree line (contains │ tree connector)
-            // or in a line with tree markers like ▶ or ▼
+            // or in a line with tree markers like > or ▼
             screen.lines().any(|line| {
                 line.contains(&name)
-                    && (line.contains("│") || line.contains("▶") || line.contains("▼"))
+                    && (line.contains("│") || line.contains(">") || line.contains("▼"))
             })
         })
     }

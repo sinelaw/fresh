@@ -7348,7 +7348,7 @@ impl Editor {
                 };
 
                 if !param_label.is_empty() {
-                    lines.push(format!("▶ {}", param_label));
+                    lines.push(format!("> {}", param_label));
                 }
 
                 // Add parameter documentation if available

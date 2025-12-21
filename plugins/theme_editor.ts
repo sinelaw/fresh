@@ -574,7 +574,7 @@ function buildDisplayEntries(): TextPropertyEntry[] {
 
     if (field.isSection) {
       // Section header
-      const icon = field.expanded ? "▼" : "▶";
+      const icon = field.expanded ? "▼" : ">";
       entries.push({
         text: `${indent}${icon} ${field.def.displayName}\n`,
         properties: {

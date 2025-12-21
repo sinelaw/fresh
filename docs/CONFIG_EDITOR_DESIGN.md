@@ -855,8 +855,8 @@ The following issues make the Settings UI difficult or impossible to use for com
 | View doesn't scroll to selection | Medium | Open | After search jump, view doesn't scroll to show the selected item. |
 | Search text input broken | High | ✅ Fixed | Search field now displays typed text correctly. |
 | Confirmation dialog empty | Medium | ✅ Fixed | Dialog height calculation was off by 1, causing changes to overlap with separator. |
-| No button selection indicator | Medium | ✅ Fixed | Added ▶ indicator and bold styling for selected button. |
-| No panel focus indicator | Low | Open | Can't visually tell if categories or settings panel has focus. Footer panel shows focus (▶) but categories/settings don't. |
+| No button selection indicator | Medium | ✅ Fixed | Added > indicator and bold styling for selected button. |
+| No panel focus indicator | Low | Open | Can't visually tell if categories or settings panel has focus. Footer panel shows focus (>) but categories/settings don't. |
 | Terminal captures input when Settings opens | High | ✅ Fixed | Added Settings to popup/prompt check in input routing. Also added OpenSettings to terminal UI actions. |
 | Footer buttons inaccessible via keyboard | High | ✅ Fixed | Added FocusPanel enum with Categories/Settings/Footer states. Tab now cycles through all three panels. Footer buttons now navigable with Left/Right arrows. |
 | Global shortcuts leak through Settings | High | ✅ Fixed | Ctrl+P (palette), Ctrl+Q (quit), etc. were not consumed when Settings was open. Fixed by consuming all unhandled keys in Settings context. |

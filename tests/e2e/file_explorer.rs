@@ -627,7 +627,7 @@ fn test_enter_toggles_directory() {
 
     // Should be on testdir now - verify it's collapsed
     assert!(
-        screen_before_expand.contains("▶ testdir") || screen_before_expand.contains("▶  testdir"),
+        screen_before_expand.contains("> testdir") || screen_before_expand.contains(">  testdir"),
         "testdir should initially be collapsed"
     );
 
@@ -666,9 +666,9 @@ fn test_enter_toggles_directory() {
     println!("Screen after collapse:\n{}", screen_after_collapse);
 
     // After collapsing, directory tree structure should return to original state
-    // We check that testdir shows collapsed indicator (▶)
+    // We check that testdir shows collapsed indicator (>)
     assert!(
-        screen_after_collapse.contains("▶ testdir") || screen_after_collapse.contains("▶  testdir"),
+        screen_after_collapse.contains("> testdir") || screen_after_collapse.contains(">  testdir"),
         "testdir should be collapsed after pressing Enter again. Screen:\n{}",
         screen_after_collapse
     );
@@ -772,7 +772,7 @@ fn test_project_directory_expanded_on_open() {
 
     let screen = harness.screen_to_string();
 
-    // Root directory should be expanded (show ▼ not ▶)
+    // Root directory should be expanded (show ▼ not >)
     assert!(
         screen.contains("▼"),
         "Root directory should be expanded on initial open"
@@ -793,7 +793,7 @@ fn test_project_directory_expanded_on_open() {
                 || l.contains("file2.txt")
                 || l.contains("subdir")
                 || l.contains("project_root"))
-                && (l.contains("▼") || l.contains("▶") || l.contains("  "))
+                && (l.contains("▼") || l.contains(">") || l.contains("  "))
         })
         .count();
 
@@ -1132,7 +1132,7 @@ fn test_auto_select_file_on_focus_switch() {
     println!("Screen after opening nested file:\n{}", screen);
 
     // The file explorer should have auto-expanded to show App.js
-    // Check that src is expanded (▼ not ▶)
+    // Check that src is expanded (▼ not >)
     let lines: Vec<&str> = screen.lines().collect();
     let src_line = lines.iter().find(|l| l.contains("src")).unwrap_or(&"");
 

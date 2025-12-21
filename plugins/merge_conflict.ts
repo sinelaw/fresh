@@ -630,7 +630,7 @@ function buildOursEntries(): TextPropertyEntry[] {
   // Show each conflict's OURS side
   for (const conflict of mergeState.conflicts) {
     const isSelected = conflict.index === mergeState.selectedIndex;
-    const marker = isSelected ? "▶ " : "  ";
+    const marker = isSelected ? "> " : "  ";
     const status = conflict.resolved ? "[RESOLVED]" : "[PENDING]";
 
     entries.push({
@@ -688,7 +688,7 @@ function buildTheirsEntries(): TextPropertyEntry[] {
   // Show each conflict's THEIRS side
   for (const conflict of mergeState.conflicts) {
     const isSelected = conflict.index === mergeState.selectedIndex;
-    const marker = isSelected ? "▶ " : "  ";
+    const marker = isSelected ? "> " : "  ";
     const status = conflict.resolved ? "[RESOLVED]" : "[PENDING]";
 
     entries.push({
@@ -762,7 +762,7 @@ function buildResultEntries(): TextPropertyEntry[] {
   // Show resolved content or action buttons for each conflict
   for (const conflict of mergeState.conflicts) {
     const isSelected = conflict.index === mergeState.selectedIndex;
-    const marker = isSelected ? "▶ " : "  ";
+    const marker = isSelected ? "> " : "  ";
 
     entries.push({
       text: `${marker}Conflict ${conflict.index + 1}:\n`,

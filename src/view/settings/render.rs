@@ -1349,10 +1349,10 @@ fn render_footer(
     let cancel_focused = footer_focused && state.footer_button_index == 2;
 
     // Calculate button positions from right
-    // When focused, buttons get a "▶" prefix adding 1 char
-    let cancel_width = if cancel_focused { 11 } else { 10 }; // "▶[ Cancel ]" or "[ Cancel ]"
-    let save_width = if save_focused { 9 } else { 8 }; // "▶[ Save ]" or "[ Save ]"
-    let reset_width = if reset_focused { 10 } else { 9 }; // "▶[ Reset ]" or "[ Reset ]"
+    // When focused, buttons get a ">" prefix adding 1 char
+    let cancel_width = if cancel_focused { 11 } else { 10 }; // ">[ Cancel ]" or "[ Cancel ]"
+    let save_width = if save_focused { 9 } else { 8 }; // ">[ Save ]" or "[ Save ]"
+    let reset_width = if reset_focused { 10 } else { 9 }; // ">[ Reset ]" or "[ Reset ]"
     let gap = 2;
 
     let cancel_x = footer_area.x + footer_area.width - cancel_width;
@@ -1367,7 +1367,7 @@ fn render_footer(
             .fg(theme.menu_highlight_fg)
             .bg(theme.menu_highlight_bg)
             .add_modifier(Modifier::BOLD);
-        frame.render_widget(Paragraph::new("▶[ Reset ]").style(style), reset_area);
+        frame.render_widget(Paragraph::new(">[ Reset ]").style(style), reset_area);
     } else if reset_hovered {
         let style = Style::default()
             .fg(theme.menu_hover_fg)
@@ -1388,7 +1388,7 @@ fn render_footer(
             .fg(theme.menu_highlight_fg)
             .bg(theme.menu_highlight_bg)
             .add_modifier(Modifier::BOLD);
-        frame.render_widget(Paragraph::new("▶[ Save ]").style(style), save_area);
+        frame.render_widget(Paragraph::new(">[ Save ]").style(style), save_area);
     } else if save_hovered {
         let style = Style::default()
             .fg(theme.menu_hover_fg)
@@ -1409,7 +1409,7 @@ fn render_footer(
             .fg(theme.menu_highlight_fg)
             .bg(theme.menu_highlight_bg)
             .add_modifier(Modifier::BOLD);
-        frame.render_widget(Paragraph::new("▶[ Cancel ]").style(style), cancel_area);
+        frame.render_widget(Paragraph::new(">[ Cancel ]").style(style), cancel_area);
     } else if cancel_hovered {
         let style = Style::default()
             .fg(theme.menu_hover_fg)
@@ -1714,7 +1714,7 @@ fn render_confirm_dialog(
         };
 
         let text = if is_selected {
-            format!("▶[ {} ]", label)
+            format!(">[ {} ]", label)
         } else {
             format!(" [ {} ]", label)
         };

@@ -3,8 +3,8 @@
 //! Renders as an expandable list of entries:
 //! ```text
 //! Languages:
-//!   ▶ rust
-//!   ▶ python
+//!   > rust
+//!   > python
 //!   ▼ javascript (expanded)
 //!       tab_size: 2
 //!       auto_indent: [x]

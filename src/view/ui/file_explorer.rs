@@ -186,7 +186,7 @@ impl FileExplorerRenderer {
             let indicator = if node.is_expanded() {
                 "▼ "
             } else if node.is_collapsed() {
-                "▶ "
+                "> "
             } else if node.is_loading() {
                 "⟳ "
             } else {

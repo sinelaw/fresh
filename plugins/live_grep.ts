@@ -108,7 +108,7 @@ async function updatePreview(match: GrepMatch): Promise<void> {
       const lineNum = i + 1;
       const lineContent = lines[i] || "";
       const isMatchLine = lineNum === match.line;
-      const prefix = isMatchLine ? "▶ " : "  ";
+      const prefix = isMatchLine ? "> " : "  ";
       const lineNumStr = String(lineNum).padStart(4, " ");
 
       entries.push({

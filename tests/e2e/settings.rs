@@ -319,8 +319,8 @@ fn test_confirmation_dialog_button_navigation() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // First button should be selected (Save and Exit has ▶ indicator)
-    harness.assert_screen_contains("▶[ Save and Exit ]");
+    // First button should be selected (Save and Exit has > indicator)
+    harness.assert_screen_contains(">[ Save and Exit ]");
 
     // Navigate right to Discard
     harness
@@ -329,7 +329,7 @@ fn test_confirmation_dialog_button_navigation() {
     harness.render().unwrap();
 
     // Discard should now be selected
-    harness.assert_screen_contains("▶[ Discard ]");
+    harness.assert_screen_contains(">[ Discard ]");
 
     // Navigate right to Cancel
     harness
@@ -338,7 +338,7 @@ fn test_confirmation_dialog_button_navigation() {
     harness.render().unwrap();
 
     // Cancel should now be selected
-    harness.assert_screen_contains("▶[ Cancel ]");
+    harness.assert_screen_contains(">[ Cancel ]");
 
     // Press Enter on Cancel to close dialog
     harness
@@ -930,8 +930,8 @@ fn test_settings_footer_buttons_keyboard_accessible() {
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Save button should be selected (has ▶ indicator)
-    harness.assert_screen_contains("▶[ Save ]");
+    // Save button should be selected (has > indicator)
+    harness.assert_screen_contains(">[ Save ]");
 
     // Navigate right to Cancel
     harness
@@ -940,7 +940,7 @@ fn test_settings_footer_buttons_keyboard_accessible() {
     harness.render().unwrap();
 
     // Cancel button should now be selected
-    harness.assert_screen_contains("▶[ Cancel ]");
+    harness.assert_screen_contains(">[ Cancel ]");
 
     // Press Enter on Cancel - this shows confirmation dialog when there are changes
     harness
