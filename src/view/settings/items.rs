@@ -349,7 +349,6 @@ impl SettingItem {
 
 /// Clean a description to remove redundancy with the name.
 /// Returns None if the description is empty or essentially just repeats the name.
-/// Otherwise returns the description with lowercase first letter.
 pub fn clean_description(name: &str, description: Option<&str>) -> Option<String> {
     let desc = description?;
     if desc.is_empty() {
@@ -389,13 +388,7 @@ pub fn clean_description(name: &str, description: Option<&str>) -> Option<String
         return None;
     }
 
-    // Keep the full description, just lowercase the first letter
-    let mut chars: Vec<char> = desc.chars().collect();
-    if !chars.is_empty() && chars[0].is_uppercase() {
-        chars[0] = chars[0].to_lowercase().next().unwrap_or(chars[0]);
-    }
-
-    Some(chars.into_iter().collect())
+    Some(desc.to_string())
 }
 
 impl ScrollItem for SettingItem {
