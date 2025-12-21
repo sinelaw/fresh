@@ -361,7 +361,7 @@ fn test_confirmation_dialog_button_navigation() {
 }
 
 /// Test selection via keyboard navigation works
-/// (Selection is shown via background highlight, not a text indicator)
+/// Settings panel shows focus indicator ">" on focused item
 #[test]
 fn test_settings_selection_indicator() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
@@ -376,18 +376,26 @@ fn test_settings_selection_indicator() {
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Settings panel should have items visible
-    // (Selection is indicated via background highlight, not a text character)
-    // General category has: Active Keybinding Map, Check For Updates, etc.
-    harness.assert_screen_contains("Check For Updates");
+    // Settings panel should show focus indicator ">" on selected item
+    // General category has: Active Keybinding Map (first item)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("> Active Keybinding Map"),
+        "Focus indicator '>' should appear before focused item in settings panel. Screen:\n{}",
+        screen
+    );
 
     // Navigate down
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Items should still be visible after navigation
-    // (Check For Updates should still be visible as we're only one item down)
-    harness.assert_screen_contains("Check For Updates");
+    // Now Check For Updates should have the focus indicator
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("> Check For Updates"),
+        "Focus indicator '>' should move to Check For Updates. Screen:\n{}",
+        screen
+    );
 
     // Close settings
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();

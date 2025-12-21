@@ -497,9 +497,12 @@ fn render_setting_item_pure(
 
     let is_focused_or_hovered = is_selected || is_item_hovered;
 
+    // Focus indicator takes 2 chars ("> ")
+    let focus_indicator_width: u16 = 2;
+
     // Calculate content height - expanded when focused/hovered
     let content_height = if is_focused_or_hovered {
-        item.content_height_expanded(area.width)
+        item.content_height_expanded(area.width.saturating_sub(focus_indicator_width))
     } else {
         item.content_height()
     };
@@ -519,13 +522,24 @@ fn render_setting_item_pure(
         }
     }
 
-    // Calculate control height and area
+    // Render focus indicator ">" for selected items (when settings panel is focused)
+    if is_selected && skip_top == 0 {
+        let indicator_style = Style::default()
+            .fg(theme.menu_highlight_fg)
+            .add_modifier(Modifier::BOLD);
+        frame.render_widget(
+            Paragraph::new(">").style(indicator_style),
+            Rect::new(area.x, area.y, 1, 1),
+        );
+    }
+
+    // Calculate control height and area (offset by focus indicator)
     let control_height = item.control.control_height();
     let visible_control_height = control_height.saturating_sub(skip_top);
     let control_area = Rect::new(
-        area.x,
+        area.x + focus_indicator_width,
         area.y,
-        area.width,
+        area.width.saturating_sub(focus_indicator_width),
         visible_control_height.min(area.height),
     );
 
@@ -538,17 +552,20 @@ fn render_setting_item_pure(
         item.modified,
         skip_top,
         theme,
-        label_width,
+        label_width.map(|w| w.saturating_sub(focus_indicator_width)),
     );
 
     // Render description below the control (if visible and exists)
+    // Description is also offset by focus_indicator_width to align with control
     if let Some(ref description) = item.description {
         // Description starts after the control
         let desc_start_row = control_height.saturating_sub(skip_top);
         if desc_start_row < area.height {
+            let desc_x = area.x + focus_indicator_width;
             let desc_y = area.y + desc_start_row;
+            let desc_width = area.width.saturating_sub(focus_indicator_width);
             let desc_style = Style::default().fg(theme.line_number_fg);
-            let max_width = area.width.saturating_sub(2) as usize;
+            let max_width = desc_width.saturating_sub(2) as usize;
 
             if is_focused_or_hovered && description.len() > max_width {
                 // Wrap description to multiple lines when focused/hovered
@@ -558,7 +575,7 @@ fn render_setting_item_pure(
                 for (i, line) in wrapped_lines.iter().take(available_rows).enumerate() {
                     frame.render_widget(
                         Paragraph::new(line.as_str()).style(desc_style),
-                        Rect::new(area.x, desc_y + i as u16, area.width, 1),
+                        Rect::new(desc_x, desc_y + i as u16, desc_width, 1),
                     );
                 }
             } else {
@@ -570,7 +587,7 @@ fn render_setting_item_pure(
                 };
                 frame.render_widget(
                     Paragraph::new(display_desc).style(desc_style),
-                    Rect::new(area.x, desc_y, area.width, 1),
+                    Rect::new(desc_x, desc_y, desc_width, 1),
                 );
             }
         }
