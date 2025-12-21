@@ -1,6 +1,6 @@
 //! Number input handling
 
-use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use super::{FocusState, NumberInputLayout, NumberInputState};
 
@@ -51,7 +51,7 @@ impl NumberInputState {
                     self.decrement();
                     Some(NumberInputEvent::Decremented(self.value))
                 } else if layout.is_value(event.column, event.row) {
-                    if !self.editing {
+                    if !self.editing() {
                         self.start_editing();
                         Some(NumberInputEvent::StartedEditing)
                     } else {
@@ -89,7 +89,10 @@ impl NumberInputState {
             return None;
         }
 
-        if self.editing {
+        if self.editing() {
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
             match key.code {
                 KeyCode::Enter => {
                     let old_value = self.value;
@@ -104,8 +107,72 @@ impl NumberInputState {
                     self.cancel_editing();
                     Some(NumberInputEvent::CancelledEditing)
                 }
+                KeyCode::Backspace if ctrl => {
+                    self.delete_word_backward();
+                    None
+                }
                 KeyCode::Backspace => {
                     self.backspace();
+                    None
+                }
+                KeyCode::Delete if ctrl => {
+                    self.delete_word_forward();
+                    None
+                }
+                KeyCode::Delete => {
+                    self.delete();
+                    None
+                }
+                KeyCode::Left if ctrl && shift => {
+                    self.move_word_left_selecting();
+                    None
+                }
+                KeyCode::Left if ctrl => {
+                    self.move_word_left();
+                    None
+                }
+                KeyCode::Left if shift => {
+                    self.move_left_selecting();
+                    None
+                }
+                KeyCode::Left => {
+                    self.move_left();
+                    None
+                }
+                KeyCode::Right if ctrl && shift => {
+                    self.move_word_right_selecting();
+                    None
+                }
+                KeyCode::Right if ctrl => {
+                    self.move_word_right();
+                    None
+                }
+                KeyCode::Right if shift => {
+                    self.move_right_selecting();
+                    None
+                }
+                KeyCode::Right => {
+                    self.move_right();
+                    None
+                }
+                KeyCode::Home if shift => {
+                    self.move_home_selecting();
+                    None
+                }
+                KeyCode::Home => {
+                    self.move_home();
+                    None
+                }
+                KeyCode::End if shift => {
+                    self.move_end_selecting();
+                    None
+                }
+                KeyCode::End => {
+                    self.move_end();
+                    None
+                }
+                KeyCode::Char('a') if ctrl => {
+                    self.select_all();
                     None
                 }
                 KeyCode::Char(c) => {
@@ -196,7 +263,7 @@ mod tests {
 
         let result = state.handle_mouse(mouse_down(10, 0), &layout);
         assert_eq!(result, Some(NumberInputEvent::StartedEditing));
-        assert!(state.editing);
+        assert!(state.editing());
     }
 
     #[test]
@@ -235,25 +302,64 @@ mod tests {
     fn test_editing_confirm() {
         let mut state = NumberInputState::new(42, "Value");
         state.start_editing();
-        state.edit_text = "100".to_string();
+        // Select all and replace with new value
+        state.select_all();
+        state.insert_str("100");
 
         let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
         let result = state.handle_key(enter);
         assert_eq!(result, Some(NumberInputEvent::Changed(100)));
-        assert!(!state.editing);
+        assert!(!state.editing());
     }
 
     #[test]
     fn test_editing_cancel() {
         let mut state = NumberInputState::new(42, "Value");
         state.start_editing();
-        state.edit_text = "100".to_string();
+        // Modify the value
+        state.select_all();
+        state.insert_str("100");
 
         let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
         let result = state.handle_key(esc);
         assert_eq!(result, Some(NumberInputEvent::CancelledEditing));
-        assert!(!state.editing);
+        assert!(!state.editing());
         assert_eq!(state.value, 42);
+    }
+
+    #[test]
+    fn test_editing_cursor_navigation() {
+        let mut state = NumberInputState::new(12345, "Value");
+        state.start_editing();
+        assert_eq!(state.cursor_col(), 5); // Cursor at end
+
+        let left = KeyEvent::new(KeyCode::Left, KeyModifiers::empty());
+        state.handle_key(left);
+        assert_eq!(state.cursor_col(), 4);
+
+        let home = KeyEvent::new(KeyCode::Home, KeyModifiers::empty());
+        state.handle_key(home);
+        assert_eq!(state.cursor_col(), 0);
+
+        let end = KeyEvent::new(KeyCode::End, KeyModifiers::empty());
+        state.handle_key(end);
+        assert_eq!(state.cursor_col(), 5);
+    }
+
+    #[test]
+    fn test_editing_selection() {
+        let mut state = NumberInputState::new(123, "Value");
+        state.start_editing();
+
+        // Select all with Ctrl+A
+        let ctrl_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
+        state.handle_key(ctrl_a);
+        assert!(state.has_selection());
+
+        // Type to replace selection
+        let key_9 = KeyEvent::new(KeyCode::Char('9'), KeyModifiers::empty());
+        state.handle_key(key_9);
+        assert_eq!(state.display_text(), "9");
     }
 
     #[test]

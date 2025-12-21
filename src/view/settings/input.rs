@@ -438,6 +438,11 @@ impl SettingsState {
             return self.handle_text_editing_input(event, ctx);
         }
 
+        // If editing number input, handle number input
+        if self.is_number_editing() {
+            return self.handle_number_editing_input(event, ctx);
+        }
+
         // If dropdown is open, handle dropdown navigation
         if self.is_dropdown_open() {
             return self.handle_dropdown_input(event, ctx);
@@ -577,6 +582,81 @@ impl SettingsState {
             }
             _ => InputResult::Consumed, // Consume all during text edit
         }
+    }
+
+    /// Handle input when editing a number input control
+    fn handle_number_editing_input(
+        &mut self,
+        event: &KeyEvent,
+        _ctx: &mut InputContext,
+    ) -> InputResult {
+        let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = event.modifiers.contains(KeyModifiers::SHIFT);
+
+        match event.code {
+            KeyCode::Esc => {
+                self.number_cancel();
+            }
+            KeyCode::Enter => {
+                self.number_confirm();
+            }
+            KeyCode::Char('a') if ctrl => {
+                self.number_select_all();
+            }
+            KeyCode::Char(c) => {
+                self.number_insert(c);
+            }
+            KeyCode::Backspace if ctrl => {
+                self.number_delete_word_backward();
+            }
+            KeyCode::Backspace => {
+                self.number_backspace();
+            }
+            KeyCode::Delete if ctrl => {
+                self.number_delete_word_forward();
+            }
+            KeyCode::Delete => {
+                self.number_delete();
+            }
+            KeyCode::Left if ctrl && shift => {
+                self.number_move_word_left_selecting();
+            }
+            KeyCode::Left if ctrl => {
+                self.number_move_word_left();
+            }
+            KeyCode::Left if shift => {
+                self.number_move_left_selecting();
+            }
+            KeyCode::Left => {
+                self.number_move_left();
+            }
+            KeyCode::Right if ctrl && shift => {
+                self.number_move_word_right_selecting();
+            }
+            KeyCode::Right if ctrl => {
+                self.number_move_word_right();
+            }
+            KeyCode::Right if shift => {
+                self.number_move_right_selecting();
+            }
+            KeyCode::Right => {
+                self.number_move_right();
+            }
+            KeyCode::Home if shift => {
+                self.number_move_home_selecting();
+            }
+            KeyCode::Home => {
+                self.number_move_home();
+            }
+            KeyCode::End if shift => {
+                self.number_move_end_selecting();
+            }
+            KeyCode::End => {
+                self.number_move_end();
+            }
+            _ => {}
+        }
+        InputResult::Consumed // Consume all during number edit
     }
 
     /// Handle input when dropdown is open

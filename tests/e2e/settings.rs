@@ -1332,3 +1332,251 @@ fn test_settings_percentage_value_saves_correctly() {
         new_width
     );
 }
+
+/// Test number input editing mode - enter editing, type value, confirm
+#[test]
+fn test_number_input_enter_editing_mode() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for hover delay (a number setting)
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "hover delay".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Jump to result
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The default value is 500
+    harness.assert_screen_contains("500");
+
+    // Press Enter to start editing mode
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type Ctrl+A to select all, then type new value
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    for c in "750".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Should show 750
+    harness.assert_screen_contains("750");
+
+    // Press Enter to confirm
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show modified indicator
+    harness.assert_screen_contains("modified");
+
+    // Discard and close
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+}
+
+/// Test number input editing - Escape cancels and reverts value
+#[test]
+fn test_number_input_escape_cancels_editing() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for hover delay
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "hover delay".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Start editing mode
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Select all and type a new value
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    for c in "999".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Should show 999
+    harness.assert_screen_contains("999");
+
+    // Press Escape to cancel
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should revert back to 500
+    harness.assert_screen_contains("500");
+
+    // Close settings without changes
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test number input editing - cursor navigation works
+#[test]
+fn test_number_input_cursor_navigation() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for hover delay
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "hover delay".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Value is 500, start editing
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Move cursor to beginning with Home
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+
+    // Type 1 at the beginning
+    harness
+        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show 1500 (1 inserted at beginning)
+    harness.assert_screen_contains("1500");
+
+    // Confirm the value
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show modified indicator
+    harness.assert_screen_contains("modified");
+
+    // Discard and close
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+}
+
+/// Test number input editing - backspace works
+#[test]
+fn test_number_input_backspace() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for hover delay
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "hover delay".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Value is 500, start editing
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Backspace should delete the last digit (0)
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show 50
+    harness.assert_screen_contains("50");
+
+    // Backspace again should delete another digit (0)
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show 5
+    harness.assert_screen_contains("5");
+
+    // Cancel editing
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should revert to 500
+    harness.assert_screen_contains("500");
+
+    // Close settings
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}

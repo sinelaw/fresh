@@ -1,7 +1,7 @@
 //! Number input rendering functions
 
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
@@ -63,11 +63,6 @@ pub fn render_number_input_aligned(
 
     // Format: "Label: [ value ] [-] [+]"
     let value_str = state.display_text();
-    let value_padded = if state.editing {
-        format!("{}_", value_str)
-    } else {
-        format!("{:^5}", value_str)
-    };
 
     let actual_label_width = label_width.unwrap_or(state.label.len() as u16);
     let padded_label = format!(
@@ -76,17 +71,31 @@ pub fn render_number_input_aligned(
         width = actual_label_width as usize
     );
 
-    let line = Line::from(vec![
+    // Build value spans with cursor and selection support
+    let value_spans = if state.editing() {
+        build_editing_spans(&value_str, state, value_color, colors)
+    } else {
+        vec![Span::styled(
+            format!("{:^5}", value_str),
+            Style::default().fg(value_color),
+        )]
+    };
+
+    let mut spans = vec![
         Span::styled(padded_label, Style::default().fg(label_color)),
         Span::styled(": ", Style::default().fg(label_color)),
         Span::styled("[", Style::default().fg(border_color)),
-        Span::styled(value_padded, Style::default().fg(value_color)),
+    ];
+    spans.extend(value_spans);
+    spans.extend(vec![
         Span::styled("]", Style::default().fg(border_color)),
         Span::raw(" "),
         Span::styled("[-]", Style::default().fg(button_color)),
         Span::raw(" "),
         Span::styled("[+]", Style::default().fg(button_color)),
     ]);
+
+    let line = Line::from(spans);
 
     let paragraph = Paragraph::new(line);
     frame.render_widget(paragraph, area);
@@ -107,4 +116,75 @@ pub fn render_number_input_aligned(
         increment_area: Rect::new(inc_start, area.y, inc_width, 1),
         full_area: Rect::new(area.x, area.y, inc_start - area.x + inc_width, 1),
     }
+}
+
+/// Build spans for the editing value with cursor and selection highlighting
+fn build_editing_spans(
+    value: &str,
+    state: &NumberInputState,
+    value_color: ratatui::style::Color,
+    colors: &NumberInputColors,
+) -> Vec<Span<'static>> {
+    let cursor_pos = state.cursor_col();
+    let selection_range = state.selection_range();
+
+    let normal_style = Style::default().fg(value_color);
+    let cursor_style = Style::default()
+        .fg(value_color)
+        .add_modifier(Modifier::REVERSED);
+    let selection_style = Style::default().fg(colors.value).bg(colors.focused);
+
+    let chars: Vec<char> = value.chars().collect();
+    let mut spans = Vec::new();
+
+    if let Some((sel_start, sel_end)) = selection_range {
+        // Render with selection highlighting
+        // Text before selection
+        if sel_start > 0 {
+            let before: String = chars[..sel_start.min(chars.len())].iter().collect();
+            spans.push(Span::styled(before, normal_style));
+        }
+
+        // Selected text
+        let sel_end_clamped = sel_end.min(chars.len());
+        if sel_start < sel_end_clamped {
+            let selected: String = chars[sel_start..sel_end_clamped].iter().collect();
+            spans.push(Span::styled(selected, selection_style));
+        }
+
+        // Text after selection
+        if sel_end_clamped < chars.len() {
+            let after: String = chars[sel_end_clamped..].iter().collect();
+            spans.push(Span::styled(after, normal_style));
+        }
+    } else {
+        // Render with cursor (no selection)
+        // Text before cursor
+        if cursor_pos > 0 && cursor_pos <= chars.len() {
+            let before: String = chars[..cursor_pos].iter().collect();
+            spans.push(Span::styled(before, normal_style));
+        } else if cursor_pos == 0 {
+            // Cursor at start, no text before
+        } else {
+            // Cursor beyond text - show all text
+            spans.push(Span::styled(value.to_string(), normal_style));
+        }
+
+        // Cursor character (shown as reversed)
+        if cursor_pos < chars.len() {
+            let cursor_char = chars[cursor_pos].to_string();
+            spans.push(Span::styled(cursor_char, cursor_style));
+
+            // Text after cursor
+            if cursor_pos + 1 < chars.len() {
+                let after: String = chars[cursor_pos + 1..].iter().collect();
+                spans.push(Span::styled(after, normal_style));
+            }
+        } else {
+            // Cursor at end - show block cursor
+            spans.push(Span::styled(" ", cursor_style));
+        }
+    }
+
+    spans
 }

@@ -18,6 +18,7 @@ pub use input::NumberInputEvent;
 pub use render::{render_number_input, render_number_input_aligned};
 
 use super::FocusState;
+use crate::view::ui::text_edit::TextEdit;
 
 /// State for a number input control
 #[derive(Debug, Clone)]
@@ -34,10 +35,8 @@ pub struct NumberInputState {
     pub label: String,
     /// Focus state
     pub focus: FocusState,
-    /// Whether currently editing the text value
-    pub editing: bool,
-    /// Text being edited (when editing=true)
-    pub edit_text: String,
+    /// Text editor for editing mode (None when not editing)
+    pub editor: Option<TextEdit>,
     /// Whether this value is a percentage (float value * 100 for display)
     /// When true, the value should be divided by 100 when converting back to JSON
     pub is_percentage: bool,
@@ -53,10 +52,14 @@ impl NumberInputState {
             step: 1,
             label: label.into(),
             focus: FocusState::Normal,
-            editing: false,
-            edit_text: String::new(),
+            editor: None,
             is_percentage: false,
         }
+    }
+
+    /// Check if currently editing
+    pub fn editing(&self) -> bool {
+        self.editor.is_some()
     }
 
     /// Set the minimum value
@@ -138,52 +141,207 @@ impl NumberInputState {
         if !self.is_enabled() {
             return;
         }
-        self.editing = true;
-        self.edit_text = self.value.to_string();
+        let mut editor = TextEdit::single_line();
+        editor.set_value(&self.value.to_string());
+        // Move cursor to end
+        editor.move_end();
+        self.editor = Some(editor);
     }
 
     /// Cancel editing and restore original value
     pub fn cancel_editing(&mut self) {
-        self.editing = false;
-        self.edit_text.clear();
+        self.editor = None;
     }
 
     /// Confirm editing and apply the new value
     pub fn confirm_editing(&mut self) {
-        if self.editing {
-            if let Ok(new_value) = self.edit_text.parse::<i64>() {
+        if let Some(editor) = self.editor.take() {
+            if let Ok(new_value) = editor.value().parse::<i64>() {
                 self.set_value(new_value);
             }
-            self.editing = false;
-            self.edit_text.clear();
         }
     }
 
-    /// Insert a character while editing (only digits and minus sign)
+    /// Insert a character while editing
+    /// Allows digits, minus sign, and decimal point for number input
     pub fn insert_char(&mut self, c: char) {
-        if !self.editing {
-            return;
-        }
-        // Allow digits and minus sign at the start
-        if c.is_ascii_digit() || (c == '-' && self.edit_text.is_empty()) {
-            self.edit_text.push(c);
+        if let Some(editor) = &mut self.editor {
+            // Allow digits, minus sign, and decimal point
+            if c.is_ascii_digit() || c == '-' || c == '.' {
+                editor.insert_char(c);
+            }
         }
     }
 
     /// Backspace while editing
     pub fn backspace(&mut self) {
-        if self.editing {
-            self.edit_text.pop();
+        if let Some(editor) = &mut self.editor {
+            editor.backspace();
+        }
+    }
+
+    /// Delete character at cursor
+    pub fn delete(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.delete();
+        }
+    }
+
+    /// Move cursor left
+    pub fn move_left(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_left();
+        }
+    }
+
+    /// Move cursor right
+    pub fn move_right(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_right();
+        }
+    }
+
+    /// Move cursor to start of text
+    pub fn move_home(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_home();
+        }
+    }
+
+    /// Move cursor to end of text
+    pub fn move_end(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_end();
+        }
+    }
+
+    /// Move cursor left by word (Ctrl+Left)
+    pub fn move_word_left(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_word_left();
+        }
+    }
+
+    /// Move cursor right by word (Ctrl+Right)
+    pub fn move_word_right(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_word_right();
+        }
+    }
+
+    /// Move cursor left with selection (Shift+Left)
+    pub fn move_left_selecting(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_left_selecting();
+        }
+    }
+
+    /// Move cursor right with selection (Shift+Right)
+    pub fn move_right_selecting(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_right_selecting();
+        }
+    }
+
+    /// Move to start with selection (Shift+Home)
+    pub fn move_home_selecting(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_home_selecting();
+        }
+    }
+
+    /// Move to end with selection (Shift+End)
+    pub fn move_end_selecting(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_end_selecting();
+        }
+    }
+
+    /// Move word left with selection (Ctrl+Shift+Left)
+    pub fn move_word_left_selecting(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_word_left_selecting();
+        }
+    }
+
+    /// Move word right with selection (Ctrl+Shift+Right)
+    pub fn move_word_right_selecting(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.move_word_right_selecting();
+        }
+    }
+
+    /// Select all text (Ctrl+A)
+    pub fn select_all(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.select_all();
+        }
+    }
+
+    /// Delete from cursor to end of word (Ctrl+Delete)
+    pub fn delete_word_forward(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.delete_word_forward();
+        }
+    }
+
+    /// Delete from start of word to cursor (Ctrl+Backspace)
+    pub fn delete_word_backward(&mut self) {
+        if let Some(editor) = &mut self.editor {
+            editor.delete_word_backward();
+        }
+    }
+
+    /// Get selected text for copy
+    pub fn selected_text(&self) -> Option<String> {
+        self.editor.as_ref().and_then(|e| e.selected_text())
+    }
+
+    /// Delete selection and return deleted text (for cut)
+    pub fn delete_selection(&mut self) -> Option<String> {
+        self.editor.as_mut().and_then(|e| e.delete_selection())
+    }
+
+    /// Insert string at cursor (for paste)
+    pub fn insert_str(&mut self, text: &str) {
+        if let Some(editor) = &mut self.editor {
+            // Filter to only allow valid number characters
+            let filtered: String = text
+                .chars()
+                .filter(|c| c.is_ascii_digit() || *c == '-' || *c == '.')
+                .collect();
+            editor.insert_str(&filtered);
         }
     }
 
     /// Get the display text (edit text when editing, value otherwise)
     pub fn display_text(&self) -> String {
-        if self.editing {
-            self.edit_text.clone()
+        if let Some(editor) = &self.editor {
+            editor.value()
         } else {
             self.value.to_string()
         }
+    }
+
+    /// Get cursor position when editing (column in single-line text)
+    pub fn cursor_col(&self) -> usize {
+        self.editor.as_ref().map(|e| e.cursor_col).unwrap_or(0)
+    }
+
+    /// Check if there's an active selection
+    pub fn has_selection(&self) -> bool {
+        self.editor
+            .as_ref()
+            .map(|e| e.has_selection())
+            .unwrap_or(false)
+    }
+
+    /// Get selection range as (start, end) column positions
+    pub fn selection_range(&self) -> Option<(usize, usize)> {
+        self.editor.as_ref().and_then(|e| {
+            e.selection_range()
+                .map(|((_, start_col), (_, end_col))| (start_col, end_col))
+        })
     }
 }
 
@@ -372,12 +530,12 @@ mod tests {
     #[test]
     fn test_number_input_start_editing() {
         let mut state = NumberInputState::new(42, "Value");
-        assert!(!state.editing);
-        assert!(state.edit_text.is_empty());
+        assert!(!state.editing());
+        assert_eq!(state.display_text(), "42");
 
         state.start_editing();
-        assert!(state.editing);
-        assert_eq!(state.edit_text, "42");
+        assert!(state.editing());
+        assert_eq!(state.display_text(), "42");
     }
 
     #[test]
@@ -387,11 +545,11 @@ mod tests {
         state.insert_char('1');
         state.insert_char('0');
         state.insert_char('0');
-        assert_eq!(state.edit_text, "42100");
+        assert_eq!(state.display_text(), "42100");
 
         state.cancel_editing();
-        assert!(!state.editing);
-        assert!(state.edit_text.is_empty());
+        assert!(!state.editing());
+        assert_eq!(state.display_text(), "42");
         assert_eq!(state.value, 42);
     }
 
@@ -399,11 +557,12 @@ mod tests {
     fn test_number_input_confirm_editing() {
         let mut state = NumberInputState::new(42, "Value");
         state.start_editing();
-        state.edit_text = "100".to_string();
+        // Clear and type new value
+        state.select_all();
+        state.insert_str("100");
 
         state.confirm_editing();
-        assert!(!state.editing);
-        assert!(state.edit_text.is_empty());
+        assert!(!state.editing());
         assert_eq!(state.value, 100);
     }
 
@@ -411,10 +570,13 @@ mod tests {
     fn test_number_input_confirm_invalid_resets() {
         let mut state = NumberInputState::new(42, "Value");
         state.start_editing();
-        state.edit_text = "abc".to_string();
+        // Type invalid text - only valid chars will be inserted
+        state.select_all();
+        state.insert_str("abc"); // This will be filtered to empty
 
         state.confirm_editing();
-        assert!(!state.editing);
+        assert!(!state.editing());
+        // Value remains unchanged since empty string can't be parsed
         assert_eq!(state.value, 42);
     }
 
@@ -422,38 +584,37 @@ mod tests {
     fn test_number_input_insert_char() {
         let mut state = NumberInputState::new(0, "Value");
         state.start_editing();
-        state.edit_text.clear();
-
+        // Clear and insert new chars
+        state.select_all();
         state.insert_char('1');
         state.insert_char('2');
         state.insert_char('3');
-        assert_eq!(state.edit_text, "123");
+        assert_eq!(state.display_text(), "123");
 
         let mut state2 = NumberInputState::new(0, "Value");
         state2.start_editing();
-        state2.edit_text.clear();
+        state2.select_all();
         state2.insert_char('-');
-        assert_eq!(state2.edit_text, "-");
-        state2.insert_char('-');
-        assert_eq!(state2.edit_text, "-");
+        assert_eq!(state2.display_text(), "-");
+        state2.insert_char('-'); // Multiple minus signs allowed by TextEdit
         state2.insert_char('5');
-        assert_eq!(state2.edit_text, "-5");
+        assert_eq!(state2.display_text(), "--5");
     }
 
     #[test]
     fn test_number_input_backspace() {
         let mut state = NumberInputState::new(123, "Value");
         state.start_editing();
-        assert_eq!(state.edit_text, "123");
+        assert_eq!(state.display_text(), "123");
 
         state.backspace();
-        assert_eq!(state.edit_text, "12");
+        assert_eq!(state.display_text(), "12");
         state.backspace();
-        assert_eq!(state.edit_text, "1");
+        assert_eq!(state.display_text(), "1");
         state.backspace();
-        assert_eq!(state.edit_text, "");
+        assert_eq!(state.display_text(), "");
         state.backspace();
-        assert_eq!(state.edit_text, "");
+        assert_eq!(state.display_text(), "");
     }
 
     #[test]
@@ -472,7 +633,8 @@ mod tests {
     fn test_number_input_editing_respects_minmax() {
         let mut state = NumberInputState::new(50, "Value").with_min(0).with_max(100);
         state.start_editing();
-        state.edit_text = "200".to_string();
+        state.select_all();
+        state.insert_str("200");
 
         state.confirm_editing();
         assert_eq!(state.value, 100);
@@ -482,6 +644,49 @@ mod tests {
     fn test_number_input_disabled_no_editing() {
         let mut state = NumberInputState::new(42, "Value").with_focus(FocusState::Disabled);
         state.start_editing();
-        assert!(!state.editing);
+        assert!(!state.editing());
+    }
+
+    #[test]
+    fn test_number_input_decimal_point() {
+        let mut state = NumberInputState::new(0, "Value");
+        state.start_editing();
+        state.select_all();
+        state.insert_str("0.25");
+        assert_eq!(state.display_text(), "0.25");
+
+        // Confirm won't parse as i64, so value stays at 0
+        state.confirm_editing();
+        assert_eq!(state.value, 0);
+    }
+
+    #[test]
+    fn test_number_input_selection() {
+        let mut state = NumberInputState::new(12345, "Value");
+        state.start_editing();
+        assert_eq!(state.display_text(), "12345");
+
+        // Select all and replace
+        state.select_all();
+        assert!(state.has_selection());
+        state.insert_char('9');
+        assert_eq!(state.display_text(), "9");
+    }
+
+    #[test]
+    fn test_number_input_cursor_navigation() {
+        let mut state = NumberInputState::new(123, "Value");
+        state.start_editing();
+        // Cursor starts at end
+        assert_eq!(state.cursor_col(), 3);
+
+        state.move_left();
+        assert_eq!(state.cursor_col(), 2);
+
+        state.move_home();
+        assert_eq!(state.cursor_col(), 0);
+
+        state.move_end();
+        assert_eq!(state.cursor_col(), 3);
     }
 }

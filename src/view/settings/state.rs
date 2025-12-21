@@ -967,7 +967,7 @@ impl SettingsState {
     pub fn is_number_editing(&self) -> bool {
         self.current_item().map_or(false, |item| {
             if let SettingControl::Number(ref n) = item.control {
-                n.editing
+                n.editing()
             } else {
                 false
             }
@@ -1016,6 +1016,150 @@ impl SettingsState {
         if let Some(item) = self.current_item_mut() {
             if let SettingControl::Number(ref mut n) = item.control {
                 n.cancel_editing();
+            }
+        }
+    }
+
+    /// Delete character forward in number input
+    pub fn number_delete(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.delete();
+            }
+        }
+    }
+
+    /// Move cursor left in number input
+    pub fn number_move_left(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.move_left();
+            }
+        }
+    }
+
+    /// Move cursor right in number input
+    pub fn number_move_right(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.move_right();
+            }
+        }
+    }
+
+    /// Move cursor to start of number input
+    pub fn number_move_home(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.move_home();
+            }
+        }
+    }
+
+    /// Move cursor to end of number input
+    pub fn number_move_end(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.move_end();
+            }
+        }
+    }
+
+    /// Move cursor left selecting in number input
+    pub fn number_move_left_selecting(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.move_left_selecting();
+            }
+        }
+    }
+
+    /// Move cursor right selecting in number input
+    pub fn number_move_right_selecting(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.move_right_selecting();
+            }
+        }
+    }
+
+    /// Move cursor to start selecting in number input
+    pub fn number_move_home_selecting(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.move_home_selecting();
+            }
+        }
+    }
+
+    /// Move cursor to end selecting in number input
+    pub fn number_move_end_selecting(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.move_end_selecting();
+            }
+        }
+    }
+
+    /// Move word left in number input
+    pub fn number_move_word_left(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.move_word_left();
+            }
+        }
+    }
+
+    /// Move word right in number input
+    pub fn number_move_word_right(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.move_word_right();
+            }
+        }
+    }
+
+    /// Move word left selecting in number input
+    pub fn number_move_word_left_selecting(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.move_word_left_selecting();
+            }
+        }
+    }
+
+    /// Move word right selecting in number input
+    pub fn number_move_word_right_selecting(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.move_word_right_selecting();
+            }
+        }
+    }
+
+    /// Select all text in number input
+    pub fn number_select_all(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.select_all();
+            }
+        }
+    }
+
+    /// Delete word backward in number input
+    pub fn number_delete_word_backward(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.delete_word_backward();
+            }
+        }
+    }
+
+    /// Delete word forward in number input
+    pub fn number_delete_word_forward(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Number(ref mut n) = item.control {
+                n.delete_word_forward();
             }
         }
     }
@@ -1389,15 +1533,15 @@ mod tests {
         state.number_backspace();
 
         // Check edit text was modified
-        let edit_text = state.current_item().and_then(|item| {
+        let display_text = state.current_item().and_then(|item| {
             if let SettingControl::Number(ref n) = item.control {
-                Some(n.edit_text.clone())
+                Some(n.display_text())
             } else {
                 None
             }
         });
         // Original "4" should have last char removed, leaving ""
-        assert_eq!(edit_text, Some(String::new()));
+        assert_eq!(display_text, Some(String::new()));
 
         state.number_cancel();
     }
