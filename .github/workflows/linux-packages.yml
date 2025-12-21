@@ -202,13 +202,13 @@ jobs:
           test -x /usr/share/fresh-editor/fresh || { echo "Binary not executable"; exit 1; }
 
           echo ""
-          echo "=== Verifying symlink ==="
+          echo "=== Verifying wrapper script ==="
           ls -la /usr/bin/fresh
-          test -L /usr/bin/fresh || { echo "/usr/bin/fresh is not a symlink"; exit 1; }
-          readlink /usr/bin/fresh | grep -q "/usr/share/fresh-editor/fresh" || { echo "Symlink points to wrong location"; exit 1; }
+          test -x /usr/bin/fresh || { echo "/usr/bin/fresh is not executable"; exit 1; }
+          head -1 /usr/bin/fresh | grep -q "#!/bin/sh" || { echo "/usr/bin/fresh is not a shell script"; exit 1; }
 
           echo ""
-          echo "=== Testing binary via symlink ==="
+          echo "=== Testing binary via wrapper ==="
           fresh --version
           /usr/bin/fresh --version
           /usr/share/fresh-editor/fresh --version
@@ -227,8 +227,8 @@ jobs:
           dnf remove -y fresh-editor
 
           echo ""
-          echo "=== Verifying symlink removed ==="
-          test ! -e /usr/bin/fresh || { echo "Symlink not removed after uninstall"; exit 1; }
+          echo "=== Verifying wrapper removed ==="
+          test ! -e /usr/bin/fresh || { echo "Wrapper not removed after uninstall"; exit 1; }
 
           echo ""
           echo "rpm package test PASSED on ${{ matrix.name }}"
