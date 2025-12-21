@@ -414,3 +414,23 @@ jobs:
 
           echo ""
           echo "=== rpm upgrade test PASSED ==="
+
+  # Final job that depends on all tests to ensure failures propagate to caller
+  # This job will fail if any dependent job fails, causing the reusable workflow to fail
+  linux-packages-complete:
+    needs: [build-linux-packages, test-deb-package, test-rpm-package, test-deb-upgrade, test-rpm-upgrade]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check all jobs succeeded
+        if: ${{ failure() || contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "One or more jobs failed:"
+          echo "  build-linux-packages: ${{ needs.build-linux-packages.result }}"
+          echo "  test-deb-package: ${{ needs.test-deb-package.result }}"
+          echo "  test-rpm-package: ${{ needs.test-rpm-package.result }}"
+          echo "  test-deb-upgrade: ${{ needs.test-deb-upgrade.result }}"
+          echo "  test-rpm-upgrade: ${{ needs.test-rpm-upgrade.result }}"
+          exit 1
+      - name: All jobs succeeded
+        run: echo "All linux package jobs succeeded!"

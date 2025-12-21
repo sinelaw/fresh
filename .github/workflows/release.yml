@@ -483,9 +483,11 @@ jobs:
           path: fresh.rb
 
   # Create GitHub Release
+  # Only runs if ALL needed jobs succeed - uses !cancelled() to run after all jobs complete,
+  # then !failure() ensures none failed
   release:
     needs: [plan, build, build-musl, build-linux-packages, build-flatpak, build-appimage, build-npm-package, build-homebrew-formula, test-nix-build]
-    if: ${{ always() && needs.plan.outputs.publishing == 'true' && needs.plan.result == 'success' && needs.build.result == 'success' && needs.test-nix-build.result == 'success' }}
+    if: ${{ !cancelled() && !failure() && needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

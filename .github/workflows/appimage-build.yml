@@ -133,3 +133,19 @@ jobs:
 
           echo ""
           echo "AppImage test PASSED on ${{ matrix.name }}"
+
+  # Final job to ensure test failures propagate to caller
+  appimage-complete:
+    needs: [build-appimage, test-appimage]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check all jobs succeeded
+        if: ${{ failure() || contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "One or more jobs failed:"
+          echo "  build-appimage: ${{ needs.build-appimage.result }}"
+          echo "  test-appimage: ${{ needs.test-appimage.result }}"
+          exit 1
+      - name: All jobs succeeded
+        run: echo "All AppImage jobs succeeded!"
