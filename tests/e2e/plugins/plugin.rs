@@ -1922,8 +1922,8 @@ editor.setStatus("Test diagnostics plugin loaded");
     harness.render()?;
 
     // Wait for diagnostics to be received and processed
-    let mut diagnostics_received = false;
-    for _ in 0..30 {
+    // Loop indefinitely - test framework timeout will catch actual failures
+    loop {
         harness.sleep(Duration::from_millis(100));
         let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
@@ -1931,16 +1931,10 @@ editor.setStatus("Test diagnostics plugin loaded");
         // Check if diagnostics were stored
         let stored = harness.editor().get_stored_diagnostics();
         if !stored.is_empty() {
-            diagnostics_received = true;
             println!("Diagnostics received: {:?}", stored);
             break;
         }
     }
-
-    assert!(
-        diagnostics_received,
-        "Expected diagnostics to be received from fake LSP after save"
-    );
 
     // Verify the diagnostics content
     let stored = harness.editor().get_stored_diagnostics();

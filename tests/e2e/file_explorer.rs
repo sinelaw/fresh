@@ -1555,9 +1555,11 @@ fn test_close_last_buffer_focuses_file_explorer() {
         .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
         .unwrap();
 
-    // Wait for file explorer to become visible (with timeout for CI environments)
+    // Wait for file explorer to be visible AND rendered on screen
     harness
-        .wait_until(|h| h.editor().file_explorer_visible())
+        .wait_until(|h| {
+            h.editor().file_explorer_visible() && h.screen_to_string().contains("File Explorer")
+        })
         .unwrap();
 
     let screen_after_close = harness.screen_to_string();

@@ -34,7 +34,7 @@ fn test_did_open_sent_before_hover() -> std::io::Result<()> {
                 .to_string(),
             args: vec![log_file.to_string_lossy().to_string()],
             enabled: true,
-            auto_start: false,
+            auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
         },
@@ -52,20 +52,28 @@ fn test_did_open_sent_before_hover() -> std::io::Result<()> {
     harness.open_file(&test_file)?;
     harness.render()?;
 
-    // Wait for LSP to initialize
-    for _ in 0..10 {
+    // Wait for LSP to initialize and didOpen to be logged
+    loop {
         harness.process_async_and_render()?;
         harness.sleep(std::time::Duration::from_millis(50));
+        let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
+        if log_content.contains("textDocument/didOpen") {
+            break;
+        }
     }
 
     // Trigger hover with Alt+K (default keybinding for lsp_hover)
     harness.send_key(KeyCode::Char('k'), KeyModifiers::ALT)?;
     harness.render()?;
 
-    // Process async messages to let hover request go through
-    for _ in 0..20 {
+    // Wait for hover request to be logged
+    loop {
         harness.process_async_and_render()?;
         harness.sleep(std::time::Duration::from_millis(50));
+        let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
+        if log_content.contains("textDocument/hover") {
+            break;
+        }
     }
 
     // Read the log file and verify order

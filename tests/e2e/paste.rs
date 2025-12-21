@@ -479,14 +479,14 @@ fn test_prompt_cut_paste_workflow() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.type_text("cut me").unwrap();
-    harness.render().unwrap();
+    harness.process_async_and_render().unwrap();
     harness.assert_screen_contains("Command: cut me");
 
     // Cut all text with Ctrl+X
     harness
         .send_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
+    harness.process_async_and_render().unwrap();
 
     // The prompt should be empty now (text was cut)
     let screen = harness.screen_to_string();
@@ -500,7 +500,7 @@ fn test_prompt_cut_paste_workflow() {
     harness
         .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
+    harness.process_async_and_render().unwrap();
 
     // Should see the cut text pasted back
     harness.assert_screen_contains("Command: cut me");
