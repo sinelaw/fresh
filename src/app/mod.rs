@@ -2778,6 +2778,45 @@ impl Editor {
         }
     }
 
+    /// Reset buffer settings (tab_size, use_tabs, show_whitespace_tabs) to config defaults
+    pub fn reset_buffer_settings(&mut self) {
+        let buffer_id = self.active_buffer();
+
+        // Get the file path to determine language-specific settings
+        let file_path = self
+            .buffer_metadata
+            .get(&buffer_id)
+            .and_then(|m| m.file_path().cloned());
+
+        // Determine settings from config (with language fallback)
+        let (tab_size, use_tabs, show_whitespace_tabs) = if let Some(path) = &file_path {
+            if let Some(language) = detect_language(path, &self.config.languages) {
+                if let Some(lang_config) = self.config.languages.get(&language) {
+                    (
+                        lang_config.tab_size.unwrap_or(self.config.editor.tab_size),
+                        lang_config.use_tabs,
+                        lang_config.show_whitespace_tabs,
+                    )
+                } else {
+                    (self.config.editor.tab_size, false, true)
+                }
+            } else {
+                (self.config.editor.tab_size, false, true)
+            }
+        } else {
+            (self.config.editor.tab_size, false, true)
+        };
+
+        // Apply settings to buffer
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.tab_size = tab_size;
+            state.use_tabs = use_tabs;
+            state.show_whitespace_tabs = show_whitespace_tabs;
+        }
+
+        self.set_status_message("Buffer settings reset to config defaults".to_string());
+    }
+
     /// Toggle mouse capture on/off
     pub fn toggle_mouse_capture(&mut self) {
         use std::io::stdout;

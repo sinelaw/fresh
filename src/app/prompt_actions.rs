@@ -244,6 +244,9 @@ impl Editor {
                     let _ = self.handle_interactive_replace_key(c);
                 }
             }
+            PromptType::SetTabSize => {
+                self.handle_set_tab_size(&input);
+            }
         }
         PromptResult::Done
     }
@@ -351,6 +354,27 @@ impl Editor {
                 _ => {
                     self.set_status_message(format!("Invalid compose width: {}", input));
                 }
+            }
+        }
+    }
+
+    /// Handle SetTabSize prompt confirmation.
+    fn handle_set_tab_size(&mut self, input: &str) {
+        let buffer_id = self.active_buffer();
+        let trimmed = input.trim();
+
+        match trimmed.parse::<usize>() {
+            Ok(val) if val > 0 => {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    state.tab_size = val;
+                }
+                self.set_status_message(format!("Tab size set to {}", val));
+            }
+            Ok(_) => {
+                self.set_status_message("Tab size must be greater than 0".to_string());
+            }
+            Err(_) => {
+                self.set_status_message(format!("Invalid tab size: {}", input));
             }
         }
     }

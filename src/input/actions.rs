@@ -1905,7 +1905,11 @@ pub fn action_to_events(
         | Action::SettingsSearch
         | Action::SettingsHelp
         | Action::SettingsIncrement
-        | Action::SettingsDecrement => return None,
+        | Action::SettingsDecrement
+        | Action::SetTabSize
+        | Action::ToggleIndentationStyle
+        | Action::ToggleTabIndicators
+        | Action::ResetBufferSettings => return None,
 
         // Block/rectangular selection actions
         Action::BlockSelectLeft => {

@@ -891,7 +891,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
-                use_tabs: true, // Makefiles require tabs for recipes
+                use_tabs: true,    // Makefiles require tabs for recipes
                 tab_size: Some(8), // Makefiles traditionally use 8-space tabs
             },
         );
@@ -988,7 +988,7 @@ impl Config {
                 highlighter: HighlighterPreference::Auto,
                 textmate_grammar: None,
                 show_whitespace_tabs: false,
-                use_tabs: true, // Go convention is to use tabs
+                use_tabs: true,    // Go convention is to use tabs
                 tab_size: Some(8), // Go convention is 8-space tab width
             },
         );

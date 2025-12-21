@@ -524,7 +524,10 @@ fn test_issue_384_tab_width_affects_rendering() {
     let screen_2 = harness_2.screen_to_string();
     let offset_2 = get_x_visual_offset_from_indicator(&screen_2).unwrap();
     println!("Screen with tab_size=2:\n{}", screen_2);
-    println!("X visual offset from indicator with tab_size=2: {}", offset_2);
+    println!(
+        "X visual offset from indicator with tab_size=2: {}",
+        offset_2
+    );
 
     // Test with tab_size = 8
     let mut config_8 = Config::default();
@@ -535,7 +538,10 @@ fn test_issue_384_tab_width_affects_rendering() {
     let screen_8 = harness_8.screen_to_string();
     let offset_8 = get_x_visual_offset_from_indicator(&screen_8).unwrap();
     println!("Screen with tab_size=8:\n{}", screen_8);
-    println!("X visual offset from indicator with tab_size=8: {}", offset_8);
+    println!(
+        "X visual offset from indicator with tab_size=8: {}",
+        offset_8
+    );
 
     // The key assertion: with different tab_size values, the X should appear
     // at different visual positions relative to the tab indicator.

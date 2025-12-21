@@ -4,6 +4,7 @@ pub mod auto_revert;
 pub mod basic;
 pub mod binary_file;
 pub mod buffer_lifecycle;
+pub mod buffer_settings_commands;
 pub mod command_palette;
 pub mod crlf_rendering;
 pub mod document_model;

@@ -484,6 +484,40 @@ pub fn get_all_commands() -> Vec<Command> {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
         },
+        // Buffer settings commands
+        Command {
+            name: "Set Tab Size".to_string(),
+            description: "Set the tab size for the current buffer".to_string(),
+            action: Action::SetTabSize,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
+            name: "Toggle Indentation: Spaces ↔ Tabs".to_string(),
+            description: "Switch between spaces and tabs for indentation".to_string(),
+            action: Action::ToggleIndentationStyle,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
+            name: "Toggle Tab Indicators".to_string(),
+            description: "Show or hide tab arrow indicators (→)".to_string(),
+            action: Action::ToggleTabIndicators,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
+            name: "Reset Buffer Settings".to_string(),
+            description: "Reset buffer settings (tab size, indentation) to config defaults"
+                .to_string(),
+            action: Action::ResetBufferSettings,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
         Command {
             name: "Scroll Up".to_string(),
             description: "Scroll the view up without moving cursor".to_string(),

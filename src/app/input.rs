@@ -480,6 +480,42 @@ impl Editor {
             Action::ToggleLineNumbers => self.toggle_line_numbers(),
             Action::ToggleMouseCapture => self.toggle_mouse_capture(),
             Action::ToggleMouseHover => self.toggle_mouse_hover(),
+            // Buffer settings
+            Action::SetTabSize => {
+                let current = self
+                    .buffers
+                    .get(&self.active_buffer())
+                    .map(|s| s.tab_size.to_string())
+                    .unwrap_or_else(|| "4".to_string());
+                self.start_prompt_with_initial_text(
+                    "Tab size: ".to_string(),
+                    PromptType::SetTabSize,
+                    current,
+                );
+            }
+            Action::ToggleIndentationStyle => {
+                if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+                    state.use_tabs = !state.use_tabs;
+                    let status = if state.use_tabs {
+                        "Indentation: Tabs"
+                    } else {
+                        "Indentation: Spaces"
+                    };
+                    self.set_status_message(status.to_string());
+                }
+            }
+            Action::ToggleTabIndicators => {
+                if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+                    state.show_whitespace_tabs = !state.show_whitespace_tabs;
+                    let status = if state.show_whitespace_tabs {
+                        "Tab indicators: Visible"
+                    } else {
+                        "Tab indicators: Hidden"
+                    };
+                    self.set_status_message(status.to_string());
+                }
+            }
+            Action::ResetBufferSettings => self.reset_buffer_settings(),
             Action::FocusFileExplorer => self.focus_file_explorer(),
             Action::FocusEditor => self.focus_editor(),
             Action::FileExplorerUp => self.file_explorer_navigate_up(),

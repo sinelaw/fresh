@@ -445,6 +445,12 @@ pub enum Action {
     SetBackground,
     SetBackgroundBlend,
 
+    // Buffer settings (per-buffer overrides)
+    SetTabSize,
+    ToggleIndentationStyle,
+    ToggleTabIndicators,
+    ResetBufferSettings,
+
     // Config operations
     DumpConfig,
 
@@ -743,6 +749,12 @@ impl Action {
             "set_background_blend" => Some(Action::SetBackgroundBlend),
             "select_theme" => Some(Action::SelectTheme),
             "select_keybinding_map" => Some(Action::SelectKeybindingMap),
+
+            // Buffer settings
+            "set_tab_size" => Some(Action::SetTabSize),
+            "toggle_indentation_style" => Some(Action::ToggleIndentationStyle),
+            "toggle_tab_indicators" => Some(Action::ToggleTabIndicators),
+            "reset_buffer_settings" => Some(Action::ResetBufferSettings),
 
             "dump_config" => Some(Action::DumpConfig),
 
@@ -1667,6 +1679,10 @@ impl KeybindingResolver {
             Action::ToggleMouseCapture => "Toggle mouse support".to_string(),
             Action::SetBackground => "Set ANSI background file".to_string(),
             Action::SetBackgroundBlend => "Set background blend ratio".to_string(),
+            Action::SetTabSize => "Set tab size for current buffer".to_string(),
+            Action::ToggleIndentationStyle => "Toggle indentation style (spaces/tabs)".to_string(),
+            Action::ToggleTabIndicators => "Toggle tab indicator visibility".to_string(),
+            Action::ResetBufferSettings => "Reset buffer settings to config".to_string(),
             Action::DumpConfig => "Dump config to file".to_string(),
             Action::Search => "Search for text in buffer".to_string(),
             Action::FindInSelection => "Search within selection".to_string(),

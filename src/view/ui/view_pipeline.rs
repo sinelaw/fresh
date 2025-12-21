@@ -514,9 +514,12 @@ impl Layout {
     }
 
     /// Build a Layout from a token stream
-    pub fn from_tokens(tokens: &[ViewTokenWire], source_range: Range<usize>, tab_size: usize) -> Self {
-        let lines: Vec<ViewLine> =
-            ViewLineIterator::new(tokens, false, false, tab_size).collect();
+    pub fn from_tokens(
+        tokens: &[ViewTokenWire],
+        source_range: Range<usize>,
+        tab_size: usize,
+    ) -> Self {
+        let lines: Vec<ViewLine> = ViewLineIterator::new(tokens, false, false, tab_size).collect();
         Self::new(lines, source_range)
     }
 
@@ -625,8 +628,7 @@ mod tests {
             make_newline_token(Some(13)),
         ];
 
-        let lines: Vec<_> =
-            ViewLineIterator::new(&tokens, false, false, DEFAULT_TAB_WIDTH).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
 
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].text, "Line 1\n");
@@ -647,8 +649,7 @@ mod tests {
             make_newline_token(Some(21)),
         ];
 
-        let lines: Vec<_> =
-            ViewLineIterator::new(&tokens, false, false, DEFAULT_TAB_WIDTH).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
 
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].line_start, LineStart::Beginning);
@@ -673,8 +674,7 @@ mod tests {
             make_newline_token(Some(6)),
         ];
 
-        let lines: Vec<_> =
-            ViewLineIterator::new(&tokens, false, false, DEFAULT_TAB_WIDTH).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
 
         assert_eq!(lines.len(), 2);
 
@@ -722,8 +722,7 @@ mod tests {
             make_newline_token(Some(33)),
         ];
 
-        let lines: Vec<_> =
-            ViewLineIterator::new(&tokens, false, false, DEFAULT_TAB_WIDTH).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
 
         assert_eq!(lines.len(), 5);
 
@@ -804,13 +803,12 @@ mod tests {
         ];
 
         // Without binary mode - control chars would be rendered raw or as replacement
-        let lines_normal: Vec<_> =
-            ViewLineIterator::new(&tokens, false, false, DEFAULT_TAB_WIDTH).collect();
+        let lines_normal: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
         assert_eq!(lines_normal.len(), 1);
         // In normal mode, we don't format control chars specially
 
         // With binary mode - control chars should be formatted as <XX>
-        let lines_binary: Vec<_> = ViewLineIterator::new(&tokens, true, false, DEFAULT_TAB_WIDTH).collect();
+        let lines_binary: Vec<_> = ViewLineIterator::new(&tokens, true, false, 4).collect();
         assert_eq!(lines_binary.len(), 1);
         assert!(
             lines_binary[0].text.contains("<00>"),
@@ -835,7 +833,7 @@ mod tests {
             style: None,
         }];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens, true, false, DEFAULT_TAB_WIDTH).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, true, false, 4).collect();
 
         // Should have rendered the 0x1A as <1A>
         let combined: String = lines.iter().map(|l| l.text.as_str()).collect();
@@ -857,7 +855,7 @@ mod tests {
             make_newline_token(Some(15)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens, true, false, DEFAULT_TAB_WIDTH).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, true, false, 4).collect();
         assert_eq!(lines.len(), 1);
         assert!(
             lines[0].text.contains("Normal text 123"),
@@ -875,8 +873,7 @@ mod tests {
             make_newline_token(Some(6)),
         ];
 
-        let lines: Vec<_> =
-            ViewLineIterator::new(&tokens, false, false, DEFAULT_TAB_WIDTH).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
         assert_eq!(lines.len(), 1);
 
         // visual_to_char should have one entry per visual column
@@ -939,8 +936,7 @@ mod tests {
             make_newline_token(Some(5)),
         ];
 
-        let lines: Vec<_> =
-            ViewLineIterator::new(&tokens, false, false, DEFAULT_TAB_WIDTH).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
         assert_eq!(lines.len(), 1);
 
         // a=1 col, 你=2 cols, b=1 col, \n=1 col = 5 total visual width

@@ -55,6 +55,8 @@ pub enum PromptType {
     JumpToBookmark,
     /// Set compose width (empty clears to viewport)
     SetComposeWidth,
+    /// Set tab size for current buffer
+    SetTabSize,
     /// Stop a running LSP server (select from list)
     StopLspServer,
     /// Select a theme (select from list)

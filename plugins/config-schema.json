@@ -1104,6 +1104,16 @@
           "description": "Whether pressing Tab should insert a tab character instead of spaces.\nDefaults to false (insert spaces based on tab_size).\nSet to true for languages like Go and Makefile that require tabs.",
           "type": "boolean",
           "default": false
+        },
+        "tab_size": {
+          "description": "Tab size (number of spaces per tab) for this language.\nIf not specified, falls back to the global editor.tab_size setting.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0,
+          "default": null
         }
       }
     },
