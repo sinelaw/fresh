@@ -155,13 +155,15 @@ impl SplitViewState {
     /// # Arguments
     /// * `tokens` - ViewTokenWire array (from view_transform or built from buffer)
     /// * `source_range` - The byte range this layout covers
+    /// * `tab_size` - Tab width for rendering
     pub fn ensure_layout(
         &mut self,
         tokens: &[crate::services::plugins::api::ViewTokenWire],
         source_range: std::ops::Range<usize>,
+        tab_size: usize,
     ) -> &Layout {
         if self.layout.is_none() || self.layout_dirty {
-            self.layout = Some(Layout::from_tokens(tokens, source_range));
+            self.layout = Some(Layout::from_tokens(tokens, source_range, tab_size));
             self.layout_dirty = false;
         }
         self.layout.as_ref().unwrap()

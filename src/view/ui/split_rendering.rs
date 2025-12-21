@@ -997,7 +997,7 @@ impl SplitRenderer {
         let is_binary = state.buffer.is_binary();
         let ansi_aware = !is_binary; // ANSI parsing for normal text files
         let source_lines: Vec<ViewLine> =
-            ViewLineIterator::with_options(&tokens, is_binary, ansi_aware).collect();
+            ViewLineIterator::new(&tokens, is_binary, ansi_aware, state.tab_size).collect();
 
         // Inject virtual lines (LineAbove/LineBelow) from VirtualTextManager
         let lines = Self::inject_virtual_lines(source_lines, state);

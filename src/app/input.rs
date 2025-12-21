@@ -1026,7 +1026,9 @@ impl Editor {
             if let Some(tokens) = view_transform_tokens {
                 // Use view-aware scrolling with the transform's tokens
                 use crate::view::ui::view_pipeline::ViewLineIterator;
-                let view_lines: Vec<_> = ViewLineIterator::new(&tokens).collect();
+                let tab_size = self.config.editor.tab_size;
+                let view_lines: Vec<_> =
+                    ViewLineIterator::new(&tokens, false, false, tab_size).collect();
                 view_state
                     .viewport
                     .scroll_view_lines(&view_lines, delta as isize);

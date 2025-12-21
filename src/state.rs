@@ -92,6 +92,10 @@ pub struct EditorState {
     /// Set based on language config; defaults to false (insert spaces).
     pub use_tabs: bool,
 
+    /// Tab size (number of spaces per tab character) for rendering.
+    /// Used for visual display of tab characters and indent calculations.
+    pub tab_size: usize,
+
     /// Semantic highlighter for word occurrence highlighting
     pub semantic_highlighter: SemanticHighlighter,
 
@@ -134,6 +138,7 @@ impl EditorState {
             editing_disabled: false,
             show_whitespace_tabs: true,
             use_tabs: false,
+            tab_size: 4, // Default tab size
             semantic_highlighter: SemanticHighlighter::new(),
             view_mode: ViewMode::Source,
             compose_width: None,
@@ -213,6 +218,7 @@ impl EditorState {
             editing_disabled: false,
             show_whitespace_tabs: true,
             use_tabs: false,
+            tab_size: 4, // Default tab size
             semantic_highlighter,
             view_mode: ViewMode::Source,
             compose_width: None,

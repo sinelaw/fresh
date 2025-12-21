@@ -115,14 +115,6 @@ impl LineStart {
     }
 }
 
-/// Standard tab width for terminal display
-pub const TAB_WIDTH: usize = 8;
-
-/// Expand a tab to spaces based on current column
-fn tab_expansion_width(col: usize) -> usize {
-    TAB_WIDTH - (col % TAB_WIDTH)
-}
-
 /// Iterator that converts a token stream into display lines
 pub struct ViewLineIterator<'a> {
     tokens: &'a [ViewTokenWire],
@@ -133,50 +125,38 @@ pub struct ViewLineIterator<'a> {
     binary_mode: bool,
     /// Whether to parse ANSI escape sequences (giving them zero visual width)
     ansi_aware: bool,
+    /// Tab width for rendering (number of spaces per tab)
+    tab_size: usize,
 }
 
 impl<'a> ViewLineIterator<'a> {
-    pub fn new(tokens: &'a [ViewTokenWire]) -> Self {
-        Self {
-            tokens,
-            token_idx: 0,
-            next_line_start: LineStart::Beginning,
-            binary_mode: false,
-            ansi_aware: false,
-        }
-    }
-
-    /// Create a new ViewLineIterator with binary mode enabled
-    pub fn with_binary_mode(tokens: &'a [ViewTokenWire], binary: bool) -> Self {
-        Self {
-            tokens,
-            token_idx: 0,
-            next_line_start: LineStart::Beginning,
-            binary_mode: binary,
-            ansi_aware: false,
-        }
-    }
-
-    /// Create a new ViewLineIterator with ANSI awareness enabled
-    pub fn with_ansi_aware(tokens: &'a [ViewTokenWire], ansi_aware: bool) -> Self {
-        Self {
-            tokens,
-            token_idx: 0,
-            next_line_start: LineStart::Beginning,
-            binary_mode: false,
-            ansi_aware,
-        }
-    }
-
-    /// Create a new ViewLineIterator with both binary mode and ANSI awareness configurable
-    pub fn with_options(tokens: &'a [ViewTokenWire], binary_mode: bool, ansi_aware: bool) -> Self {
+    /// Create a new ViewLineIterator with all options
+    ///
+    /// - `tokens`: The token stream to convert to display lines
+    /// - `binary_mode`: Whether to render unprintable chars as code points
+    /// - `ansi_aware`: Whether to parse ANSI escape sequences (giving them zero visual width)
+    /// - `tab_size`: Tab width for rendering (number of spaces per tab, must be > 0)
+    pub fn new(
+        tokens: &'a [ViewTokenWire],
+        binary_mode: bool,
+        ansi_aware: bool,
+        tab_size: usize,
+    ) -> Self {
+        debug_assert!(tab_size > 0, "tab_size must be > 0");
         Self {
             tokens,
             token_idx: 0,
             next_line_start: LineStart::Beginning,
             binary_mode,
             ansi_aware,
+            tab_size,
         }
+    }
+
+    /// Expand a tab to spaces based on current column and configured tab_size
+    #[inline]
+    fn tab_expansion_width(&self, col: usize) -> usize {
+        self.tab_size - (col % self.tab_size)
     }
 }
 
@@ -334,7 +314,7 @@ impl<'a> Iterator for ViewLineIterator<'a> {
                             // Tab expands to spaces - record start position
                             let tab_start_pos = char_source_bytes.len();
                             tab_starts.insert(tab_start_pos);
-                            let spaces = tab_expansion_width(col);
+                            let spaces = self.tab_expansion_width(col);
 
                             // Tab is ONE character that expands to multiple visual columns
                             let char_idx = char_source_bytes.len();
@@ -534,8 +514,9 @@ impl Layout {
     }
 
     /// Build a Layout from a token stream
-    pub fn from_tokens(tokens: &[ViewTokenWire], source_range: Range<usize>) -> Self {
-        let lines: Vec<ViewLine> = ViewLineIterator::new(tokens).collect();
+    pub fn from_tokens(tokens: &[ViewTokenWire], source_range: Range<usize>, tab_size: usize) -> Self {
+        let lines: Vec<ViewLine> =
+            ViewLineIterator::new(tokens, false, false, tab_size).collect();
         Self::new(lines, source_range)
     }
 
@@ -644,7 +625,8 @@ mod tests {
             make_newline_token(Some(13)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens).collect();
+        let lines: Vec<_> =
+            ViewLineIterator::new(&tokens, false, false, DEFAULT_TAB_WIDTH).collect();
 
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].text, "Line 1\n");
@@ -665,7 +647,8 @@ mod tests {
             make_newline_token(Some(21)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens).collect();
+        let lines: Vec<_> =
+            ViewLineIterator::new(&tokens, false, false, DEFAULT_TAB_WIDTH).collect();
 
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].line_start, LineStart::Beginning);
@@ -690,7 +673,8 @@ mod tests {
             make_newline_token(Some(6)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens).collect();
+        let lines: Vec<_> =
+            ViewLineIterator::new(&tokens, false, false, DEFAULT_TAB_WIDTH).collect();
 
         assert_eq!(lines.len(), 2);
 
@@ -738,7 +722,8 @@ mod tests {
             make_newline_token(Some(33)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens).collect();
+        let lines: Vec<_> =
+            ViewLineIterator::new(&tokens, false, false, DEFAULT_TAB_WIDTH).collect();
 
         assert_eq!(lines.len(), 5);
 
@@ -819,12 +804,13 @@ mod tests {
         ];
 
         // Without binary mode - control chars would be rendered raw or as replacement
-        let lines_normal: Vec<_> = ViewLineIterator::new(&tokens).collect();
+        let lines_normal: Vec<_> =
+            ViewLineIterator::new(&tokens, false, false, DEFAULT_TAB_WIDTH).collect();
         assert_eq!(lines_normal.len(), 1);
         // In normal mode, we don't format control chars specially
 
         // With binary mode - control chars should be formatted as <XX>
-        let lines_binary: Vec<_> = ViewLineIterator::with_binary_mode(&tokens, true).collect();
+        let lines_binary: Vec<_> = ViewLineIterator::new(&tokens, true, false, DEFAULT_TAB_WIDTH).collect();
         assert_eq!(lines_binary.len(), 1);
         assert!(
             lines_binary[0].text.contains("<00>"),
@@ -849,7 +835,7 @@ mod tests {
             style: None,
         }];
 
-        let lines: Vec<_> = ViewLineIterator::with_binary_mode(&tokens, true).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, true, false, DEFAULT_TAB_WIDTH).collect();
 
         // Should have rendered the 0x1A as <1A>
         let combined: String = lines.iter().map(|l| l.text.as_str()).collect();
@@ -871,7 +857,7 @@ mod tests {
             make_newline_token(Some(15)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::with_binary_mode(&tokens, true).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, true, false, DEFAULT_TAB_WIDTH).collect();
         assert_eq!(lines.len(), 1);
         assert!(
             lines[0].text.contains("Normal text 123"),
@@ -889,7 +875,8 @@ mod tests {
             make_newline_token(Some(6)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens).collect();
+        let lines: Vec<_> =
+            ViewLineIterator::new(&tokens, false, false, DEFAULT_TAB_WIDTH).collect();
         assert_eq!(lines.len(), 1);
 
         // visual_to_char should have one entry per visual column
@@ -952,7 +939,8 @@ mod tests {
             make_newline_token(Some(5)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens).collect();
+        let lines: Vec<_> =
+            ViewLineIterator::new(&tokens, false, false, DEFAULT_TAB_WIDTH).collect();
         assert_eq!(lines.len(), 1);
 
         // a=1 col, 你=2 cols, b=1 col, \n=1 col = 5 total visual width

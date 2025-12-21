@@ -399,3 +399,244 @@ fn test_use_tabs_rust_multiple_tabs() {
         "Should NOT contain any tab characters"
     );
 }
+
+// =============================================================================
+// GitHub Issue #384: Better Tab Indentation Support
+// https://github.com/sinelaw/fresh/issues/384
+// =============================================================================
+
+/// Issue #384 - Auto-indent should use tabs when use_tabs is true
+/// When pressing Enter after `{` in a Go file, the auto-indent should insert
+/// tab characters, not spaces.
+#[test]
+fn test_issue_384_auto_indent_uses_tabs_in_go() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.go");
+
+    // Create an empty Go file
+    std::fs::write(&file_path, "").unwrap();
+
+    let config = Config::default();
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Type "func main() {" and press Enter
+    harness.type_text("func main() {").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Get buffer content - the auto-indent should use a tab, not spaces
+    let content = harness.get_buffer_content().unwrap();
+    println!("Buffer content after Enter in Go file: {:?}", content);
+
+    // The auto-indent after { should insert a tab character, not spaces
+    assert!(
+        content.contains("\n\t"),
+        "Auto-indent should use tab character in Go files, but got: {:?}",
+        content
+    );
+    assert!(
+        !content.contains("\n    "),
+        "Auto-indent should NOT use spaces in Go files"
+    );
+}
+
+/// Issue #384 - Auto-indent should use spaces when use_tabs is false
+/// When pressing Enter after `{` in a Rust file, the auto-indent should insert
+/// spaces (confirming the opposite case works).
+#[test]
+fn test_issue_384_auto_indent_uses_spaces_in_rust() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+
+    // Create an empty Rust file
+    std::fs::write(&file_path, "").unwrap();
+
+    let config = Config::default();
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Type "fn main() {" and press Enter
+    harness.type_text("fn main() {").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Get buffer content - the auto-indent should use spaces
+    let content = harness.get_buffer_content().unwrap();
+    println!("Buffer content after Enter in Rust file: {:?}", content);
+
+    // The auto-indent after { should insert 4 spaces
+    assert!(
+        content.contains("\n    "),
+        "Auto-indent should use spaces in Rust files, but got: {:?}",
+        content
+    );
+    assert!(
+        !content.contains("\n\t"),
+        "Auto-indent should NOT use tabs in Rust files"
+    );
+}
+
+/// Issue #384 - Tab width configuration should affect rendering
+/// Compares rendering with tab_size=2 vs tab_size=8 to verify that
+/// the tab_size config actually affects how tabs are displayed.
+#[test]
+fn test_issue_384_tab_width_affects_rendering() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Create a file with a tab followed by text marker
+    std::fs::write(&file_path, "\tX").unwrap();
+
+    // Helper to get X visual column relative to the tab indicator
+    fn get_x_visual_offset_from_indicator(screen: &str) -> Option<usize> {
+        let lines: Vec<&str> = screen.lines().collect();
+        let x_line = lines.iter().find(|line| line.contains('X'))?;
+
+        // Find visual column positions by iterating through chars
+        let mut indicator_col = None;
+        let mut x_col = None;
+        let mut col = 0;
+        for ch in x_line.chars() {
+            if ch == '→' {
+                indicator_col = Some(col);
+            }
+            if ch == 'X' {
+                x_col = Some(col);
+            }
+            // Each char is 1 visual column (assuming no double-width chars here)
+            col += 1;
+        }
+
+        Some(x_col? - indicator_col?)
+    }
+
+    // Test with tab_size = 2
+    let mut config_2 = Config::default();
+    config_2.editor.tab_size = 2;
+    let mut harness_2 = EditorTestHarness::with_config(80, 24, config_2).unwrap();
+    harness_2.open_file(&file_path).unwrap();
+    harness_2.render().unwrap();
+    let screen_2 = harness_2.screen_to_string();
+    let offset_2 = get_x_visual_offset_from_indicator(&screen_2).unwrap();
+    println!("Screen with tab_size=2:\n{}", screen_2);
+    println!("X visual offset from indicator with tab_size=2: {}", offset_2);
+
+    // Test with tab_size = 8
+    let mut config_8 = Config::default();
+    config_8.editor.tab_size = 8;
+    let mut harness_8 = EditorTestHarness::with_config(80, 24, config_8).unwrap();
+    harness_8.open_file(&file_path).unwrap();
+    harness_8.render().unwrap();
+    let screen_8 = harness_8.screen_to_string();
+    let offset_8 = get_x_visual_offset_from_indicator(&screen_8).unwrap();
+    println!("Screen with tab_size=8:\n{}", screen_8);
+    println!("X visual offset from indicator with tab_size=8: {}", offset_8);
+
+    // The key assertion: with different tab_size values, the X should appear
+    // at different visual positions relative to the tab indicator.
+    // With tab_size=2: indicator (1 col) + 1 space = 2 visual columns to X
+    // With tab_size=8: indicator (1 col) + 7 spaces = 8 visual columns to X
+    assert_ne!(
+        offset_2, offset_8,
+        "Tab width should affect rendering: tab_size=2 offset={}, tab_size=8 offset={}, but they should differ!",
+        offset_2, offset_8
+    );
+
+    // Visual offset should match tab_size
+    assert_eq!(
+        offset_2, 2,
+        "With tab_size=2, X should be 2 visual columns after the indicator, got {}",
+        offset_2
+    );
+    assert_eq!(
+        offset_8, 8,
+        "With tab_size=8, X should be 8 visual columns after the indicator, got {}",
+        offset_8
+    );
+}
+
+/// Issue #384 - Indent calculation should respect tab_size when counting existing tabs
+/// When a line contains tab characters, the indent calculation should use tab_size
+/// to determine the visual width, not a hardcoded value.
+#[test]
+fn test_issue_384_indent_respects_tab_size_in_calculation() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.go");
+
+    // Create a Go file with tab-indented code
+    // The existing tabs should be counted with the correct tab_size
+    std::fs::write(&file_path, "func main() {\n\tif true {").unwrap();
+
+    // Test with tab_size = 2 (tabs should be counted as 2 spaces)
+    let mut config = Config::default();
+    config.editor.tab_size = 2;
+    config.editor.auto_indent = true;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to end of file
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Press Enter - auto-indent should add one more level (tab_size=2 means 2 more columns)
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    println!(
+        "Buffer content with tab_size=2 after Enter in Go: {:?}",
+        content
+    );
+
+    // With tab_size=2, the existing "\t" is 2 columns, so the new indent should be
+    // 2 + 2 = 4 columns, which could be "\t\t" (two tabs) if using tabs
+    // The key assertion: the indent should respect tab_size
+    // If hardcoded to 4, we'd get wrong indentation
+
+    // Count the visual indent of the new line
+    // The content should look like: "func main() {\n\tif true {\n<indent>"
+    let lines: Vec<&str> = content.lines().collect();
+    assert!(lines.len() >= 3, "Should have at least 3 lines");
+
+    let last_line = lines[2];
+    println!("Last line after Enter: {:?}", last_line);
+
+    // With use_tabs=true for Go and tab_size=2:
+    // - Line 2 has "\tif true {" = 2 visual columns of indent
+    // - After Enter and auto-indent (one more level): should be 4 visual columns
+    // - With use_tabs=true, this should be 2 tabs ("\t\t") = 4 columns at tab_size=2
+    //
+    // BUG: Currently the indent calculation might use hardcoded tab width (4)
+    // instead of the configured tab_size (2), leading to wrong indent level
+
+    // The new line should have tabs (since Go uses tabs)
+    let indent_tabs = last_line.chars().take_while(|c| *c == '\t').count();
+    let indent_spaces = last_line
+        .chars()
+        .skip(indent_tabs)
+        .take_while(|c| *c == ' ')
+        .count();
+    let visual_indent = indent_tabs * 2 + indent_spaces; // tab_size=2
+
+    println!(
+        "Indent analysis: {} tabs, {} spaces, {} visual columns",
+        indent_tabs, indent_spaces, visual_indent
+    );
+
+    // Expected: 4 visual columns (2 from existing + 2 for new level)
+    // With tabs, this should be 2 tabs
+    assert_eq!(
+        visual_indent, 4,
+        "With tab_size=2, nested indent should be 4 visual columns (2+2), but got {}",
+        visual_indent
+    );
+}

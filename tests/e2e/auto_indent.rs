@@ -313,7 +313,7 @@ fn test_cpp_class_indent() {
     );
 }
 
-/// Test Go function indent
+/// Test Go function indent (Go uses tabs for indentation)
 #[test]
 fn test_go_function_indent() {
     let temp_dir = TempDir::new().unwrap();
@@ -330,11 +330,11 @@ fn test_go_function_indent() {
         .unwrap();
     harness.render().unwrap();
 
-    // Should have indent
+    // Should have tab indent (Go uses tabs)
     let content = harness.get_buffer_content().unwrap();
     assert!(
-        content.contains("func main() {\n    "),
-        "Expected indent in Go function, got: {:?}",
+        content.contains("func main() {\n\t"),
+        "Expected tab indent in Go function, got: {:?}",
         content
     );
 }

@@ -1330,12 +1330,19 @@ impl Editor {
             tracing::info!("Detected binary file: {}", path.display());
         }
 
-        // Set show_whitespace_tabs and use_tabs based on language config
+        // Set show_whitespace_tabs, use_tabs, and tab_size based on language config
+        // with fallback to global editor config for tab_size
         if let Some(language) = detect_language(path, &self.config.languages) {
             if let Some(lang_config) = self.config.languages.get(&language) {
                 state.show_whitespace_tabs = lang_config.show_whitespace_tabs;
                 state.use_tabs = lang_config.use_tabs;
+                // Use language-specific tab_size if set, otherwise fall back to global
+                state.tab_size = lang_config.tab_size.unwrap_or(self.config.editor.tab_size);
+            } else {
+                state.tab_size = self.config.editor.tab_size;
             }
+        } else {
+            state.tab_size = self.config.editor.tab_size;
         }
 
         self.buffers.insert(buffer_id, state);
@@ -3383,6 +3390,7 @@ impl Editor {
 
         let active_split = self.split_manager.active_split();
         let buffer_id = self.active_buffer();
+        let tab_size = self.config.editor.tab_size;
 
         // Get view_transform tokens from SplitViewState (if any)
         let view_transform_tokens = self
@@ -3398,7 +3406,8 @@ impl Editor {
         if let Some(view_state) = view_state {
             if let Some(tokens) = view_transform_tokens {
                 // Use view-aware scrolling with the transform's tokens
-                let view_lines: Vec<_> = ViewLineIterator::new(&tokens).collect();
+                let view_lines: Vec<_> =
+                    ViewLineIterator::new(&tokens, false, false, tab_size).collect();
                 view_state
                     .viewport
                     .scroll_view_lines(&view_lines, line_offset);

@@ -238,6 +238,24 @@ fn calculate_closing_delimiter_indent(
     }
 }
 
+/// Convert a visual indent width to actual indent characters.
+/// When `use_tabs` is true, uses tab characters; otherwise uses spaces.
+/// The `indent_width` is the visual width in columns, and `tab_size` is
+/// how many columns a tab character represents.
+fn indent_to_string(indent_width: usize, use_tabs: bool, tab_size: usize) -> String {
+    if use_tabs && tab_size > 0 {
+        let num_tabs = indent_width / tab_size;
+        let remaining_spaces = indent_width % tab_size;
+        let mut result = "\t".repeat(num_tabs);
+        if remaining_spaces > 0 {
+            result.push_str(&" ".repeat(remaining_spaces));
+        }
+        result
+    } else {
+        " ".repeat(indent_width)
+    }
+}
+
 /// Handle skip-over with dedent: when typing a closing delimiter that exists after cursor,
 /// and the line has incorrect indentation, fix the indent and skip over.
 /// Returns true if handled (caller should continue to next cursor).
@@ -614,24 +632,25 @@ pub fn action_to_events(
                 let mut text = line_ending.to_string();
 
                 if auto_indent {
+                    let use_tabs = state.use_tabs;
                     if let Some(language) = state.highlighter.language() {
                         // Use tree-sitter-based indent when we have a highlighter
-                        if let Some(indent_spaces) = state
+                        if let Some(indent_width) = state
                             .indent_calculator
                             .borrow_mut()
                             .calculate_indent(&state.buffer, indent_position, language, tab_size)
                         {
-                            text.push_str(&" ".repeat(indent_spaces));
+                            text.push_str(&indent_to_string(indent_width, use_tabs, tab_size));
                         }
                     } else {
                         // Fallback for files without syntax highlighting (e.g., .txt)
-                        let indent_spaces =
+                        let indent_width =
                             crate::primitives::indent::IndentCalculator::calculate_indent_no_language(
                                 &state.buffer,
                                 indent_position,
                                 tab_size,
                             );
-                        text.push_str(&" ".repeat(indent_spaces));
+                        text.push_str(&indent_to_string(indent_width, use_tabs, tab_size));
                     }
                 }
 

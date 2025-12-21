@@ -196,7 +196,7 @@ impl IndentCalculator {
         }
 
         // Final fallback: copy current line's indent (maintain indentation)
-        Some(Self::get_current_line_indent(buffer, position))
+        Some(Self::get_current_line_indent(buffer, position, tab_size))
     }
 
     /// Calculate indent without language/tree-sitter support
@@ -213,7 +213,7 @@ impl IndentCalculator {
         }
 
         // Final fallback: copy current line's indent
-        Self::get_current_line_indent(buffer, position)
+        Self::get_current_line_indent(buffer, position, tab_size)
     }
 
     /// Calculate the correct indent for a closing delimiter being typed
@@ -567,7 +567,7 @@ impl IndentCalculator {
         // Hybrid heuristic: find previous non-empty line for reference
         let reference_indent = if !current_line_is_empty {
             // Current line has content - use its indent as reference
-            Self::get_current_line_indent(buffer, position)
+            Self::get_current_line_indent(buffer, position, tab_size)
         } else {
             // Current line is empty - find previous non-empty line and check for indent triggers
             let mut search_pos = if line_start > 0 {
@@ -886,7 +886,7 @@ impl IndentCalculator {
     }
 
     /// Get the indent of the current line (the line cursor is on)
-    fn get_current_line_indent(buffer: &Buffer, position: usize) -> usize {
+    fn get_current_line_indent(buffer: &Buffer, position: usize, tab_size: usize) -> usize {
         // Find start of current line
         let mut line_start = position;
         while line_start > 0 {
@@ -902,8 +902,8 @@ impl IndentCalculator {
         while pos < position {
             match Self::byte_at(buffer, pos) {
                 Some(b' ') => indent += 1,
-                Some(b'\t') => indent += 4, // Assuming tab = 4 spaces
-                Some(_) => break,           // Hit non-whitespace
+                Some(b'\t') => indent += tab_size,
+                Some(_) => break, // Hit non-whitespace
                 None => break,
             }
             pos += 1;
@@ -914,7 +914,7 @@ impl IndentCalculator {
 
     /// Get the indent of the previous line (line before cursor's line)
     #[cfg(test)]
-    fn get_previous_line_indent(buffer: &Buffer, position: usize) -> usize {
+    fn get_previous_line_indent(buffer: &Buffer, position: usize, tab_size: usize) -> usize {
         // Find start of current line
         let mut line_start = position;
         while line_start > 0 {
@@ -943,8 +943,8 @@ impl IndentCalculator {
         while pos < line_start - 1 {
             match Self::byte_at(buffer, pos) {
                 Some(b' ') => indent += 1,
-                Some(b'\t') => indent += 4, // Assuming tab = 4 spaces
-                Some(_) => break,           // Hit non-whitespace
+                Some(b'\t') => indent += tab_size,
+                Some(_) => break, // Hit non-whitespace
                 None => break,
             }
             pos += 1;
@@ -968,12 +968,15 @@ mod tests {
     #[test]
     fn test_current_and_previous_line_indent() {
         let buffer = Buffer::from_str_test("fn main() {\n    let x = 1;");
+        let tab_size = 4;
 
         // At end of buffer (end of line 2)
-        let current_indent = IndentCalculator::get_current_line_indent(&buffer, buffer.len());
+        let current_indent =
+            IndentCalculator::get_current_line_indent(&buffer, buffer.len(), tab_size);
         assert_eq!(current_indent, 4, "Current line (line 2) has 4 spaces");
 
-        let prev_indent = IndentCalculator::get_previous_line_indent(&buffer, buffer.len());
+        let prev_indent =
+            IndentCalculator::get_previous_line_indent(&buffer, buffer.len(), tab_size);
         assert_eq!(prev_indent, 0, "Previous line (line 1) has 0 spaces");
     }
 

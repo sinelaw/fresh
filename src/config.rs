@@ -522,6 +522,11 @@ pub struct LanguageConfig {
     /// Set to true for languages like Go and Makefile that require tabs.
     #[serde(default = "default_false")]
     pub use_tabs: bool,
+
+    /// Tab size (number of spaces per tab) for this language.
+    /// If not specified, falls back to the global editor.tab_size setting.
+    #[serde(default)]
+    pub tab_size: Option<usize>,
 }
 
 /// Preference for which syntax highlighting backend to use
@@ -737,6 +742,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 use_tabs: false,
+                tab_size: None,
             },
         );
 
@@ -752,6 +758,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 use_tabs: false,
+                tab_size: None,
             },
         );
 
@@ -767,6 +774,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 use_tabs: false,
+                tab_size: None,
             },
         );
 
@@ -782,6 +790,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 use_tabs: false,
+                tab_size: None,
             },
         );
 
@@ -797,6 +806,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 use_tabs: false,
+                tab_size: None,
             },
         );
 
@@ -819,6 +829,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 use_tabs: false,
+                tab_size: None,
             },
         );
 
@@ -834,6 +845,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 use_tabs: false,
+                tab_size: None,
             },
         );
 
@@ -860,6 +872,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 use_tabs: false,
+                tab_size: None,
             },
         );
 
@@ -879,6 +892,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 use_tabs: true, // Makefiles require tabs for recipes
+                tab_size: Some(8), // Makefiles traditionally use 8-space tabs
             },
         );
 
@@ -894,6 +908,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 use_tabs: false,
+                tab_size: None,
             },
         );
 
@@ -909,6 +924,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 use_tabs: false,
+                tab_size: None,
             },
         );
 
@@ -924,6 +940,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 use_tabs: false,
+                tab_size: None,
             },
         );
 
@@ -939,6 +956,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 use_tabs: false,
+                tab_size: None,
             },
         );
 
@@ -954,6 +972,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: true,
                 use_tabs: false,
+                tab_size: None,
             },
         );
 
@@ -970,6 +989,7 @@ impl Config {
                 textmate_grammar: None,
                 show_whitespace_tabs: false,
                 use_tabs: true, // Go convention is to use tabs
+                tab_size: Some(8), // Go convention is 8-space tab width
             },
         );
 

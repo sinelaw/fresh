@@ -643,6 +643,7 @@ mod tests {
                 textmate_grammar: None,
                 show_whitespace_tabs: false,
                 use_tabs: false,
+                tab_size: None,
             },
         );
         languages.insert(
@@ -657,6 +658,7 @@ mod tests {
                 textmate_grammar: None,
                 show_whitespace_tabs: false,
                 use_tabs: false,
+                tab_size: None,
             },
         );
         languages.insert(
@@ -671,6 +673,7 @@ mod tests {
                 textmate_grammar: None,
                 show_whitespace_tabs: false,
                 use_tabs: false,
+                tab_size: None,
             },
         );
         languages
