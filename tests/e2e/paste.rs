@@ -434,6 +434,9 @@ fn test_ctrl_v_paste_in_prompt() {
 fn test_prompt_copy_paste_workflow() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
+    // Enable internal-only clipboard to avoid system clipboard interference in parallel tests
+    harness.editor_mut().set_clipboard_for_test("".to_string());
+
     // Open prompt and type some text
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -474,6 +477,9 @@ fn test_prompt_copy_paste_workflow() {
 fn test_prompt_cut_paste_workflow() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
+    // Enable internal-only clipboard to avoid system clipboard interference in parallel tests
+    harness.editor_mut().set_clipboard_for_test("".to_string());
+
     // Open prompt and type some text
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -510,6 +516,9 @@ fn test_prompt_cut_paste_workflow() {
 #[test]
 fn test_prompt_copy_selection() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Enable internal-only clipboard to avoid system clipboard interference in parallel tests
+    harness.editor_mut().set_clipboard_for_test("".to_string());
 
     // Open prompt and type some text
     harness
@@ -563,6 +572,9 @@ fn test_prompt_copy_selection() {
 #[test]
 fn test_prompt_cut_selection() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Enable internal-only clipboard to avoid system clipboard interference in parallel tests
+    harness.editor_mut().set_clipboard_for_test("".to_string());
 
     // Open prompt and type some text
     harness
