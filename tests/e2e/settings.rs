@@ -1580,3 +1580,183 @@ fn test_number_input_backspace() {
     // Close settings
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
+
+/// BUG: Settings UI doesn't load saved values when reopened
+///
+/// When the user changes a setting, saves, closes settings, and reopens,
+/// the Settings UI should show the saved value. Instead, it shows the
+/// default value from when the editor was first started.
+///
+/// Expected: After saving auto_save_interval_secs = 5 and reopening, show 5
+/// Actual: Shows 2 (the default)
+#[test]
+fn test_settings_loads_saved_values_on_reopen() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    harness.render().unwrap();
+
+    // Verify initial auto_save_interval_secs is 2 (default)
+    let initial_value = harness.config().editor.auto_save_interval_secs;
+    assert_eq!(initial_value, 2, "Initial auto_save_interval_secs should be 2");
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for "auto save" to find the setting
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "auto save interval".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Jump to result
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show the default value of 2
+    harness.assert_screen_contains("2");
+
+    // Increment the value 3 times (2 -> 3 -> 4 -> 5)
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Should now show 5
+    harness.assert_screen_contains("5");
+
+    // Tab to footer (Save button)
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to save
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Settings should be closed after saving
+    assert!(
+        !harness.editor().is_settings_open(),
+        "Settings should be closed after saving"
+    );
+
+    // Verify the config was updated
+    let saved_value = harness.config().editor.auto_save_interval_secs;
+    assert_eq!(saved_value, 5, "auto_save_interval_secs should be 5 after saving");
+
+    // CRITICAL TEST: Reopen settings and verify the saved value is displayed
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for the same setting again
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "auto save interval".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Jump to result
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify the saved value is displayed (not the default)
+    harness.assert_screen_contains("5");
+
+    // Close settings
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test that entering edit mode on a numeric field selects all text
+///
+/// When the user presses Enter on a numeric field to edit it, the text
+/// should be selected so that typing immediately replaces the value,
+/// rather than appending to the existing value.
+///
+/// Expected: Press Enter → type "100" → value becomes "100"
+/// Actual (bug): Press Enter → type "100" → value becomes "500100"
+#[test]
+fn test_number_input_enter_selects_all_text() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for hover delay (a number setting with value 500)
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "hover delay".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Jump to result
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify initial value is 500
+    harness.assert_screen_contains("500");
+
+    // Press Enter to start editing mode
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type "100" - this should REPLACE the value, not append
+    for c in "100".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Should show 100, not 500100 (the bug behavior)
+    harness.assert_screen_contains("100");
+    harness.assert_screen_not_contains("500100");
+
+    // Press Enter to confirm
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show modified indicator
+    harness.assert_screen_contains("modified");
+
+    // Discard and close
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+}

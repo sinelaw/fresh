@@ -143,8 +143,8 @@ impl NumberInputState {
         }
         let mut editor = TextEdit::single_line();
         editor.set_value(&self.value.to_string());
-        // Move cursor to end
-        editor.move_end();
+        // Select all text so typing replaces the value
+        editor.select_all();
         self.editor = Some(editor);
     }
 
@@ -542,10 +542,11 @@ mod tests {
     fn test_number_input_cancel_editing() {
         let mut state = NumberInputState::new(42, "Value");
         state.start_editing();
+        // After start_editing, text is selected so typing replaces it
         state.insert_char('1');
         state.insert_char('0');
         state.insert_char('0');
-        assert_eq!(state.display_text(), "42100");
+        assert_eq!(state.display_text(), "100");
 
         state.cancel_editing();
         assert!(!state.editing());
@@ -607,6 +608,9 @@ mod tests {
         state.start_editing();
         assert_eq!(state.display_text(), "123");
 
+        // After start_editing, text is selected. Move to end to deselect.
+        state.move_end();
+
         state.backspace();
         assert_eq!(state.display_text(), "12");
         state.backspace();
@@ -625,6 +629,8 @@ mod tests {
 
         state.start_editing();
         assert_eq!(state.display_text(), "42");
+        // After start_editing, text is selected. Move to end to append.
+        state.move_end();
         state.insert_char('0');
         assert_eq!(state.display_text(), "420");
     }
