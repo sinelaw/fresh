@@ -6,12 +6,30 @@
 use super::entry_dialog::EntryDialogState;
 use super::items::{control_to_value, SettingControl, SettingItem, SettingsPage};
 use super::layout::SettingsHit;
-use super::schema::{parse_schema, SettingCategory};
+use super::schema::{parse_schema, SettingCategory, SettingSchema};
 use super::search::{search_settings, SearchResult};
 use crate::config::Config;
 use crate::view::controls::FocusState;
 use crate::view::ui::ScrollablePanel;
 use std::collections::HashMap;
+
+/// Info needed to open a nested dialog (extracted before mutable borrow)
+enum NestedDialogInfo {
+    MapEntry {
+        key: String,
+        value: serde_json::Value,
+        schema: SettingSchema,
+        path: String,
+        is_new: bool,
+    },
+    ArrayItem {
+        index: Option<usize>,
+        value: serde_json::Value,
+        schema: SettingSchema,
+        path: String,
+        is_new: bool,
+    },
+}
 
 /// Which panel currently has keyboard focus
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -70,8 +88,9 @@ pub struct SettingsState {
     pub hover_position: Option<(u16, u16)>,
     /// Current hover hit result (computed from hover_position and cached layout)
     pub hover_hit: Option<SettingsHit>,
-    /// Entry detail dialog state (for editing Language/LSP/Keybinding entries)
-    pub entry_dialog: Option<EntryDialogState>,
+    /// Stack of entry dialogs (for nested editing of Maps/ObjectArrays)
+    /// The top of the stack (last element) is the currently active dialog.
+    pub entry_dialog_stack: Vec<EntryDialogState>,
 }
 
 impl SettingsState {
@@ -103,7 +122,7 @@ impl SettingsState {
             editing_text: false,
             hover_position: None,
             hover_hit: None,
-            entry_dialog: None,
+            entry_dialog_stack: Vec::new(),
         })
     }
 
@@ -123,6 +142,21 @@ impl SettingsState {
         self.visible = false;
         self.search_active = false;
         self.search_query.clear();
+    }
+
+    /// Get the current entry dialog (top of stack), if any
+    pub fn entry_dialog(&self) -> Option<&EntryDialogState> {
+        self.entry_dialog_stack.last()
+    }
+
+    /// Get the current entry dialog mutably (top of stack), if any
+    pub fn entry_dialog_mut(&mut self) -> Option<&mut EntryDialogState> {
+        self.entry_dialog_stack.last_mut()
+    }
+
+    /// Check if any entry dialog is open
+    pub fn has_entry_dialog(&self) -> bool {
+        !self.entry_dialog_stack.is_empty()
     }
 
     /// Get the currently selected page
@@ -163,8 +197,7 @@ impl SettingsState {
 
     /// Check if entry dialog's current text field can be exited (valid JSON if required)
     pub fn entry_dialog_can_exit_text_editing(&self) -> bool {
-        self.entry_dialog
-            .as_ref()
+        self.entry_dialog()
             .and_then(|dialog| dialog.current_item())
             .map(|item| {
                 if let SettingControl::Text(state) = &item.control {
@@ -401,7 +434,7 @@ impl SettingsState {
                     SettingControl::Text(state) => state.focus = focus,
                     SettingControl::TextList(state) => state.focus = focus,
                     SettingControl::Map(state) => state.focus = focus,
-                    SettingControl::KeybindingList(state) => state.focus = focus,
+                    SettingControl::ObjectArray(state) => state.focus = focus,
                     SettingControl::Json(state) => state.focus = focus,
                     SettingControl::Complex { .. } => {}
                 }
@@ -524,7 +557,7 @@ impl SettingsState {
 
     /// Check if the entry dialog is showing
     pub fn showing_entry_dialog(&self) -> bool {
-        self.entry_dialog.is_some()
+        self.has_entry_dialog()
     }
 
     /// Open the entry dialog for the currently focused map entry
@@ -554,7 +587,7 @@ impl SettingsState {
 
         // Create dialog from schema
         let dialog = EntryDialogState::from_schema(key.clone(), value, schema, &path, false);
-        self.entry_dialog = Some(dialog);
+        self.entry_dialog_stack.push(dialog);
     }
 
     /// Open entry dialog for adding a new entry (with empty key)
@@ -578,17 +611,165 @@ impl SettingsState {
             &path,
             true,
         );
-        self.entry_dialog = Some(dialog);
+        self.entry_dialog_stack.push(dialog);
     }
 
-    /// Close the entry dialog without saving
+    /// Open dialog for adding a new array item
+    pub fn open_add_array_item_dialog(&mut self) {
+        let Some(item) = self.current_item() else {
+            return;
+        };
+        let SettingControl::ObjectArray(array_state) = &item.control else {
+            return;
+        };
+        let Some(schema) = array_state.item_schema.as_ref() else {
+            return;
+        };
+        let path = item.path.clone();
+
+        // Create dialog with empty value - user will fill it in
+        let dialog = EntryDialogState::for_array_item(
+            None,
+            &serde_json::json!({}),
+            schema,
+            &path,
+            true,
+        );
+        self.entry_dialog_stack.push(dialog);
+    }
+
+    /// Open dialog for editing an existing array item
+    pub fn open_edit_array_item_dialog(&mut self) {
+        let Some(item) = self.current_item() else {
+            return;
+        };
+        let SettingControl::ObjectArray(array_state) = &item.control else {
+            return;
+        };
+        let Some(schema) = array_state.item_schema.as_ref() else {
+            return;
+        };
+        let Some(index) = array_state.focused_index else {
+            return;
+        };
+        let Some(value) = array_state.bindings.get(index) else {
+            return;
+        };
+        let path = item.path.clone();
+
+        let dialog = EntryDialogState::for_array_item(Some(index), value, schema, &path, false);
+        self.entry_dialog_stack.push(dialog);
+    }
+
+    /// Close the entry dialog without saving (pops from stack)
     pub fn close_entry_dialog(&mut self) {
-        self.entry_dialog = None;
+        self.entry_dialog_stack.pop();
+    }
+
+    /// Open a nested entry dialog for a Map or ObjectArray field within the current dialog
+    ///
+    /// This enables recursive editing: if a dialog field is itself a Map or ObjectArray,
+    /// pressing Enter will open a new dialog on top of the stack for that nested structure.
+    pub fn open_nested_entry_dialog(&mut self) {
+        // Get info from the current dialog's focused field
+        let nested_info = self.entry_dialog().and_then(|dialog| {
+            let item = dialog.current_item()?;
+            let path = format!("{}/{}", dialog.map_path, item.path.trim_start_matches('/'));
+
+            match &item.control {
+                SettingControl::Map(map_state) => {
+                    let schema = map_state.value_schema.as_ref()?;
+                    if let Some(entry_idx) = map_state.focused_entry {
+                        // Edit existing entry
+                        let (key, value) = map_state.entries.get(entry_idx)?;
+                        Some(NestedDialogInfo::MapEntry {
+                            key: key.clone(),
+                            value: value.clone(),
+                            schema: schema.as_ref().clone(),
+                            path,
+                            is_new: false,
+                        })
+                    } else {
+                        // Add new entry
+                        Some(NestedDialogInfo::MapEntry {
+                            key: String::new(),
+                            value: serde_json::json!({}),
+                            schema: schema.as_ref().clone(),
+                            path,
+                            is_new: true,
+                        })
+                    }
+                }
+                SettingControl::ObjectArray(array_state) => {
+                    let schema = array_state.item_schema.as_ref()?;
+                    if let Some(index) = array_state.focused_index {
+                        // Edit existing item
+                        let value = array_state.bindings.get(index)?;
+                        Some(NestedDialogInfo::ArrayItem {
+                            index: Some(index),
+                            value: value.clone(),
+                            schema: schema.as_ref().clone(),
+                            path,
+                            is_new: false,
+                        })
+                    } else {
+                        // Add new item
+                        Some(NestedDialogInfo::ArrayItem {
+                            index: None,
+                            value: serde_json::json!({}),
+                            schema: schema.as_ref().clone(),
+                            path,
+                            is_new: true,
+                        })
+                    }
+                }
+                _ => None,
+            }
+        });
+
+        // Now create and push the dialog (outside the borrow)
+        if let Some(info) = nested_info {
+            let dialog = match info {
+                NestedDialogInfo::MapEntry {
+                    key,
+                    value,
+                    schema,
+                    path,
+                    is_new,
+                } => EntryDialogState::from_schema(key, &value, &schema, &path, is_new),
+                NestedDialogInfo::ArrayItem {
+                    index,
+                    value,
+                    schema,
+                    path,
+                    is_new,
+                } => EntryDialogState::for_array_item(index, &value, &schema, &path, is_new),
+            };
+            self.entry_dialog_stack.push(dialog);
+        }
     }
 
     /// Save the entry dialog and apply changes
+    ///
+    /// Automatically detects whether this is a Map or ObjectArray dialog
+    /// and handles saving appropriately.
     pub fn save_entry_dialog(&mut self) {
-        let Some(dialog) = self.entry_dialog.take() else {
+        // Check what type of control we're dealing with
+        let is_array = self
+            .current_item()
+            .map(|item| matches!(item.control, SettingControl::ObjectArray(_)))
+            .unwrap_or(false);
+
+        if is_array {
+            self.save_array_item_dialog_inner();
+        } else {
+            self.save_map_entry_dialog_inner();
+        }
+    }
+
+    /// Save a Map entry dialog
+    fn save_map_entry_dialog_inner(&mut self) {
+        let Some(dialog) = self.entry_dialog_stack.pop() else {
             return;
         };
 
@@ -640,9 +821,46 @@ impl SettingsState {
         self.set_pending_change(&path, value);
     }
 
+    /// Save an ObjectArray item dialog
+    fn save_array_item_dialog_inner(&mut self) {
+        let Some(dialog) = self.entry_dialog_stack.pop() else {
+            return;
+        };
+
+        let value = dialog.to_value();
+        let array_path = dialog.map_path.clone();
+        let is_new = dialog.is_new;
+
+        // Update the array control with the new value
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::ObjectArray(array_state) = &mut item.control {
+                if is_new {
+                    // Add new item to the array
+                    array_state.bindings.push(value.clone());
+                } else {
+                    // Update existing item by index
+                    if let Ok(index) = dialog.entry_key.parse::<usize>() {
+                        if index < array_state.bindings.len() {
+                            array_state.bindings[index] = value.clone();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Record the pending change for the entire array
+        // Build the new array value from all bindings
+        if let Some(item) = self.current_item() {
+            if let SettingControl::ObjectArray(array_state) = &item.control {
+                let array_value = serde_json::Value::Array(array_state.bindings.clone());
+                self.set_pending_change(&array_path, array_value);
+            }
+        }
+    }
+
     /// Delete the entry from the map and close the dialog
     pub fn delete_entry_dialog(&mut self) {
-        let Some(dialog) = self.entry_dialog.take() else {
+        let Some(dialog) = self.entry_dialog_stack.pop() else {
             return;
         };
 
@@ -1221,7 +1439,7 @@ fn update_control_from_value(control: &mut SettingControl, value: &serde_json::V
                 state.entries.sort_by(|a, b| a.0.cmp(&b.0));
             }
         }
-        SettingControl::KeybindingList(state) => {
+        SettingControl::ObjectArray(state) => {
             if let Some(arr) = value.as_array() {
                 state.bindings = arr.clone();
             }

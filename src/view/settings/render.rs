@@ -680,7 +680,7 @@ fn render_control(
             }
         }
 
-        SettingControl::KeybindingList(state) => {
+        SettingControl::ObjectArray(state) => {
             let colors = crate::view::controls::KeybindingListColors {
                 label_fg: theme.editor_fg,
                 key_fg: theme.help_key_fg,
@@ -691,7 +691,7 @@ fn render_control(
             };
             let kb_layout =
                 render_keybinding_list_partial(frame, area, state, &colors, skip_rows, modified);
-            ControlLayoutInfo::KeybindingList {
+            ControlLayoutInfo::ObjectArray {
                 entry_rows: kb_layout.entry_rects,
             }
         }
@@ -1321,7 +1321,7 @@ pub enum ControlLayoutInfo {
     Map {
         entry_rows: Vec<Rect>,
     },
-    KeybindingList {
+    ObjectArray {
         entry_rows: Vec<Rect>,
     },
     Json {
@@ -1772,7 +1772,7 @@ fn render_entry_dialog(
     state: &mut SettingsState,
     theme: &Theme,
 ) {
-    let Some(dialog) = &mut state.entry_dialog else {
+    let Some(dialog) = state.entry_dialog_mut() else {
         return;
     };
 
@@ -1935,7 +1935,7 @@ fn render_entry_dialog(
     } else {
         vec!["[ Save ]", "[ Delete ]", "[ Cancel ]"]
     };
-    let button_width: u16 = buttons.iter().map(|b| b.len() as u16 + 2).sum();
+    let button_width: u16 = buttons.iter().map(|b: &&str| b.len() as u16 + 2).sum();
     let button_x = dialog_area.x + (dialog_area.width.saturating_sub(button_width)) / 2;
 
     let mut x = button_x;

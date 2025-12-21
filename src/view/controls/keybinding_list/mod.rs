@@ -17,27 +17,33 @@ use serde_json::Value;
 pub use input::KeybindingListEvent;
 pub use render::{format_key_combo, render_keybinding_list};
 
-/// State for a keybinding list control
+/// State for an object array control (keybindings, etc.)
 #[derive(Debug, Clone)]
 pub struct KeybindingListState {
-    /// List of keybindings as JSON values
+    /// List of items as JSON values
     pub bindings: Vec<Value>,
-    /// Currently focused binding index (None = add-new row)
+    /// Currently focused item index (None = add-new row)
     pub focused_index: Option<usize>,
     /// Label for this control
     pub label: String,
     /// Focus state
     pub focus: FocusState,
+    /// Schema for item type (for creating new entries via dialog)
+    pub item_schema: Option<Box<crate::view::settings::schema::SettingSchema>>,
+    /// JSON pointer to field within item to display as preview (e.g., "/action")
+    pub display_field: Option<String>,
 }
 
 impl KeybindingListState {
-    /// Create a new keybinding list state
+    /// Create a new object array state
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             bindings: Vec::new(),
             focused_index: None,
             label: label.into(),
             focus: FocusState::Normal,
+            item_schema: None,
+            display_field: None,
         }
     }
 
@@ -52,6 +58,18 @@ impl KeybindingListState {
     /// Set the focus state
     pub fn with_focus(mut self, focus: FocusState) -> Self {
         self.focus = focus;
+        self
+    }
+
+    /// Set the item schema for creating new entries
+    pub fn with_item_schema(mut self, schema: crate::view::settings::schema::SettingSchema) -> Self {
+        self.item_schema = Some(Box::new(schema));
+        self
+    }
+
+    /// Set the display field for previewing items
+    pub fn with_display_field(mut self, field: String) -> Self {
+        self.display_field = Some(field);
         self
     }
 

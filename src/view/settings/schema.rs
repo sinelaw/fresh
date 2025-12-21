@@ -91,8 +91,12 @@ pub enum SettingType {
     Enum { options: Vec<EnumOption> },
     /// Array of strings
     StringArray,
-    /// Array of keybindings
-    KeybindingArray,
+    /// Array of objects with a schema (for keybindings, etc.)
+    ObjectArray {
+        item_schema: Box<SettingSchema>,
+        /// JSON pointer to field within item to display as preview (e.g., "/action")
+        display_field: Option<String>,
+    },
     /// Nested object (category)
     Object { properties: Vec<SettingSchema> },
     /// Map with string keys (for languages, lsp configs)
@@ -384,16 +388,25 @@ fn determine_type(
         }
         Some("string") => SettingType::String,
         Some("array") => {
-            // Check if it's an array of strings or keybindings
+            // Check if it's an array of strings or objects
             if let Some(ref items) = resolved.items {
                 let item_resolved = resolve_ref(items, defs);
                 if item_resolved.schema_type.as_ref().and_then(|t| t.primary()) == Some("string") {
                     return SettingType::StringArray;
                 }
-                // Check if it's an array of Keybinding objects
+                // Check if items reference an object type
                 if let Some(ref ref_path) = items.ref_path {
-                    if ref_path.ends_with("/Keybinding") {
-                        return SettingType::KeybindingArray;
+                    // Parse the item schema from the referenced definition
+                    let item_schema =
+                        parse_setting("item", "", item_resolved, defs, enum_values_map);
+
+                    // Only create ObjectArray if the item is an object with properties
+                    if matches!(item_schema.setting_type, SettingType::Object { .. }) {
+                        let display_field = get_display_field_for_ref(ref_path);
+                        return SettingType::ObjectArray {
+                            item_schema: Box::new(item_schema),
+                            display_field,
+                        };
                     }
                 }
             }
@@ -450,6 +463,7 @@ fn get_display_field_for_ref(ref_path: &str) -> Option<String> {
         "LspServerConfig" => Some("/command".to_string()),
         "LanguageConfig" => Some("/grammar".to_string()),
         "KeymapConfig" => Some("/inherits".to_string()),
+        "Keybinding" => Some("/action".to_string()),
         _ => None,
     }
 }

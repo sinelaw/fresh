@@ -241,8 +241,8 @@ pub enum SettingControl {
     TextList(TextListState),
     /// Map/dictionary control for key-value pairs
     Map(MapState),
-    /// Keybinding list control
-    KeybindingList(KeybindingListState),
+    /// Array of objects control (for keybindings, etc.)
+    ObjectArray(KeybindingListState),
     /// Multiline JSON editor
     Json(JsonEditState),
     /// Complex settings that can't be edited inline
@@ -288,7 +288,7 @@ impl SettingControl {
                 }
             }
             // KeybindingList needs: 1 label + bindings + 1 add-new row
-            SettingControl::KeybindingList(state) => {
+            SettingControl::ObjectArray(state) => {
                 // 1 for label + bindings count + 1 for add-new row
                 (state.bindings.len() + 2) as u16
             }
@@ -465,7 +465,7 @@ impl ScrollItem for SettingItem {
                 regions
             }
             // KeybindingList: each entry row is a focus region
-            SettingControl::KeybindingList(state) => {
+            SettingControl::ObjectArray(state) => {
                 let mut regions = Vec::new();
                 // Label row
                 regions.push(FocusRegion {
@@ -669,15 +669,22 @@ pub fn build_item(schema: &SettingSchema, config_value: &serde_json::Value) -> S
             SettingControl::Map(state)
         }
 
-        SettingType::KeybindingArray => {
-            // Get current keybindings array or default
-            let bindings_value = current_value
+        SettingType::ObjectArray {
+            item_schema,
+            display_field,
+        } => {
+            // Get current array or default
+            let array_value = current_value
                 .cloned()
                 .or_else(|| schema.default.clone())
                 .unwrap_or_else(|| serde_json::json!([]));
 
-            let state = KeybindingListState::new(&schema.name).with_bindings(&bindings_value);
-            SettingControl::KeybindingList(state)
+            let mut state = KeybindingListState::new(&schema.name).with_bindings(&array_value);
+            state = state.with_item_schema((**item_schema).clone());
+            if let Some(field) = display_field {
+                state = state.with_display_field(field.clone());
+            }
+            SettingControl::ObjectArray(state)
         }
 
         SettingType::Complex => json_control(&schema.name, current_value, schema.default.as_ref()),
@@ -819,14 +826,21 @@ pub fn build_item_from_value(
             SettingControl::Map(state)
         }
 
-        SettingType::KeybindingArray => {
-            let bindings_value = current_value
+        SettingType::ObjectArray {
+            item_schema,
+            display_field,
+        } => {
+            let array_value = current_value
                 .cloned()
                 .or_else(|| schema.default.clone())
                 .unwrap_or_else(|| serde_json::json!([]));
 
-            let state = KeybindingListState::new(&schema.name).with_bindings(&bindings_value);
-            SettingControl::KeybindingList(state)
+            let mut state = KeybindingListState::new(&schema.name).with_bindings(&array_value);
+            state = state.with_item_schema((**item_schema).clone());
+            if let Some(field) = display_field {
+                state = state.with_display_field(field.clone());
+            }
+            SettingControl::ObjectArray(state)
         }
 
         SettingType::Complex => json_control(&schema.name, current_value, schema.default.as_ref()),
@@ -884,7 +898,7 @@ pub fn control_to_value(control: &SettingControl) -> serde_json::Value {
 
         SettingControl::Map(state) => state.to_value(),
 
-        SettingControl::KeybindingList(state) => state.to_value(),
+        SettingControl::ObjectArray(state) => state.to_value(),
 
         SettingControl::Json(state) => {
             // Parse the JSON string back to a value

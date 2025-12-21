@@ -172,7 +172,7 @@ impl SettingsLayout {
                             }
                         }
                     }
-                    ControlLayoutInfo::KeybindingList { entry_rows } => {
+                    ControlLayoutInfo::ObjectArray { entry_rows } => {
                         for (row_idx, row_area) in entry_rows.iter().enumerate() {
                             if self.contains(*row_area, x, y) {
                                 return Some(SettingsHit::ControlMapRow(item.index, row_idx));

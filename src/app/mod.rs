@@ -1857,7 +1857,7 @@ impl Editor {
                     SettingControl::Text(_) => "text",
                     SettingControl::TextList(_) => "textlist",
                     SettingControl::Map(_) => "map",
-                    SettingControl::KeybindingList(_) => "keybindinglist",
+                    SettingControl::ObjectArray(_) => "objectarray",
                     SettingControl::Json(_) => "json",
                     SettingControl::Complex { .. } => "complex",
                 })

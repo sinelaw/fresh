@@ -104,6 +104,53 @@ impl EntryDialogState {
         }
     }
 
+    /// Create a dialog for an array item (no key field)
+    ///
+    /// Used for ObjectArray controls where items are identified by index, not key.
+    pub fn for_array_item(
+        index: Option<usize>,
+        value: &Value,
+        schema: &SettingSchema,
+        array_path: &str,
+        is_new: bool,
+    ) -> Self {
+        let mut items = Vec::new();
+
+        // Add schema-driven items from object properties (no key field for arrays)
+        if let SettingType::Object { properties } = &schema.setting_type {
+            for prop in properties {
+                let field_name = prop.path.trim_start_matches('/');
+                let field_value = value.get(field_name);
+                let item = build_item_from_value(prop, field_value);
+                items.push(item);
+            }
+        }
+
+        let title = if is_new {
+            format!("Add {}", schema.name)
+        } else {
+            format!("Edit {}", schema.name)
+        };
+
+        Self {
+            entry_key: index.map_or(String::new(), |i| i.to_string()),
+            map_path: array_path.to_string(),
+            title,
+            is_new,
+            items,
+            selected_item: 0,
+            sub_focus: None,
+            editing_text: false,
+            focused_button: 0,
+            focus_on_buttons: false,
+            delete_requested: false,
+            scroll_offset: 0,
+            viewport_height: 20,
+            hover_item: None,
+            hover_button: None,
+        }
+    }
+
     /// Get the current key value from the key item
     pub fn get_key(&self) -> String {
         if let Some(item) = self.items.first() {
@@ -272,7 +319,7 @@ impl EntryDialogState {
                 SettingControl::Text(s) => s.focus = state,
                 SettingControl::TextList(s) => s.focus = state,
                 SettingControl::Map(s) => s.focus = state,
-                SettingControl::KeybindingList(s) => s.focus = state,
+                SettingControl::ObjectArray(s) => s.focus = state,
                 SettingControl::Json(s) => s.focus = state,
                 SettingControl::Complex { .. } => {}
             }

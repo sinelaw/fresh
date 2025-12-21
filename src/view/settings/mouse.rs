@@ -94,13 +94,13 @@ impl Editor {
                         return Ok(self.entry_dialog_update_hover(col, row));
                     }
                     MouseEventKind::ScrollUp => {
-                        if let Some(ref mut dialog) = state.entry_dialog {
+                        if let Some(dialog) = state.entry_dialog_mut() {
                             dialog.scroll_up();
                             return Ok(true);
                         }
                     }
                     MouseEventKind::ScrollDown => {
-                        if let Some(ref mut dialog) = state.entry_dialog {
+                        if let Some(dialog) = state.entry_dialog_mut() {
                             dialog.scroll_down(20);
                             return Ok(true);
                         }
@@ -318,7 +318,7 @@ impl Editor {
             let ratio = (relative_y as f32 / layout.inner_height as f32).clamp(0.0, 1.0);
 
             if let Some(ref mut state) = self.settings_state {
-                if let Some(ref mut dialog) = state.entry_dialog {
+                if let Some(dialog) = state.entry_dialog_mut() {
                     dialog.scroll_to_ratio(ratio);
                     return true;
                 }
@@ -335,7 +335,7 @@ impl Editor {
         let Some(ref mut state) = self.settings_state else {
             return false;
         };
-        let Some(ref mut dialog) = state.entry_dialog else {
+        let Some(dialog) = state.entry_dialog_mut() else {
             return false;
         };
 
@@ -423,7 +423,7 @@ impl Editor {
         let Some(ref mut state) = self.settings_state else {
             return Ok(false);
         };
-        let Some(ref mut dialog) = state.entry_dialog else {
+        let Some(dialog) = state.entry_dialog_mut() else {
             return Ok(false);
         };
 
@@ -455,7 +455,7 @@ impl Editor {
         let Some(ref mut state) = self.settings_state else {
             return Ok(false);
         };
-        let Some(ref mut dialog) = state.entry_dialog else {
+        let Some(dialog) = state.entry_dialog_mut() else {
             return Ok(false);
         };
 
@@ -484,7 +484,7 @@ impl Editor {
         };
 
         let (btn, is_new) = {
-            let Some(ref dialog) = state.entry_dialog else {
+            let Some(dialog) = state.entry_dialog() else {
                 return Ok(false);
             };
             (dialog.focused_button, dialog.is_new)

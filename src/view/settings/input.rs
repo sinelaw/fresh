@@ -8,10 +8,25 @@ use super::state::{FocusPanel, SettingsState};
 use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputResult};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+/// Button action in entry dialog
+enum ButtonAction {
+    Save,
+    Delete,
+    Cancel,
+}
+
+/// Control activation action in entry dialog
+enum ControlAction {
+    ToggleBool,
+    ToggleDropdown,
+    StartEditing,
+    OpenNestedDialog,
+}
+
 impl InputHandler for SettingsState {
     fn handle_key_event(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
         // Entry dialog takes priority when open
-        if self.entry_dialog.is_some() {
+        if self.has_entry_dialog() {
             return self.handle_entry_dialog_input(event, ctx);
         }
 
@@ -64,7 +79,7 @@ impl SettingsState {
         _ctx: &mut InputContext,
     ) -> InputResult {
         // Check if we're in a special editing mode
-        let (editing_text, dropdown_open) = if let Some(ref dialog) = self.entry_dialog {
+        let (editing_text, dropdown_open) = if let Some(dialog) = self.entry_dialog() {
             let dropdown_open = dialog
                 .current_item()
                 .map(|item| matches!(&item.control, SettingControl::Dropdown(s) if s.open))
@@ -88,15 +103,14 @@ impl SettingsState {
     fn handle_entry_dialog_text_editing(&mut self, event: &KeyEvent) -> InputResult {
         // Check if we're editing JSON
         let is_editing_json = self
-            .entry_dialog
-            .as_ref()
+            .entry_dialog()
             .map(|d| d.is_editing_json())
             .unwrap_or(false);
 
         // Check validation first before borrowing dialog mutably
         let can_exit = self.entry_dialog_can_exit_text_editing();
 
-        let Some(ref mut dialog) = self.entry_dialog else {
+        let Some(dialog) = self.entry_dialog_mut() else {
             return InputResult::Consumed;
         };
 
@@ -211,7 +225,7 @@ impl SettingsState {
 
     /// Handle dropdown navigation in entry dialog (same pattern as handle_dropdown_input)
     fn handle_entry_dialog_dropdown(&mut self, event: &KeyEvent) -> InputResult {
-        let Some(ref mut dialog) = self.entry_dialog else {
+        let Some(dialog) = self.entry_dialog_mut() else {
             return InputResult::Consumed;
         };
 
@@ -240,28 +254,28 @@ impl SettingsState {
                 self.close_entry_dialog();
             }
             KeyCode::Up => {
-                if let Some(ref mut dialog) = self.entry_dialog {
+                if let Some(dialog) = self.entry_dialog_mut() {
                     dialog.focus_prev();
                 }
             }
             KeyCode::Down => {
-                if let Some(ref mut dialog) = self.entry_dialog {
+                if let Some(dialog) = self.entry_dialog_mut() {
                     dialog.focus_next();
                 }
             }
             KeyCode::Tab => {
-                if let Some(ref mut dialog) = self.entry_dialog {
+                if let Some(dialog) = self.entry_dialog_mut() {
                     dialog.focus_next();
                 }
             }
             KeyCode::BackTab => {
-                if let Some(ref mut dialog) = self.entry_dialog {
+                if let Some(dialog) = self.entry_dialog_mut() {
                     dialog.focus_prev();
                 }
             }
             KeyCode::Left => {
                 // Decrement number or navigate within control
-                if let Some(ref mut dialog) = self.entry_dialog {
+                if let Some(dialog) = self.entry_dialog_mut() {
                     if !dialog.focus_on_buttons {
                         dialog.decrement_number();
                     } else if dialog.focused_button > 0 {
@@ -271,7 +285,7 @@ impl SettingsState {
             }
             KeyCode::Right => {
                 // Increment number or navigate within control
-                if let Some(ref mut dialog) = self.entry_dialog {
+                if let Some(dialog) = self.entry_dialog_mut() {
                     if !dialog.focus_on_buttons {
                         dialog.increment_number();
                     } else if dialog.focused_button + 1 < dialog.button_count() {
@@ -280,37 +294,70 @@ impl SettingsState {
                 }
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
-                if let Some(ref mut dialog) = self.entry_dialog {
+                // Check button state first with immutable borrow
+                let button_action = self.entry_dialog().map(|dialog| {
                     if dialog.focus_on_buttons {
-                        // Button actions: Save=0, Delete=1 (existing only), Cancel=last
                         let cancel_idx = dialog.button_count() - 1;
                         if dialog.focused_button == 0 {
-                            self.save_entry_dialog();
+                            Some(ButtonAction::Save)
                         } else if !dialog.is_new && dialog.focused_button == 1 {
-                            self.delete_entry_dialog();
+                            Some(ButtonAction::Delete)
                         } else if dialog.focused_button == cancel_idx {
-                            self.close_entry_dialog();
+                            Some(ButtonAction::Cancel)
+                        } else {
+                            None
                         }
-                    } else if event.modifiers.contains(KeyModifiers::CONTROL) {
-                        // Ctrl+Enter always saves
-                        self.save_entry_dialog();
                     } else {
-                        // Activate current control
-                        if let Some(item) = dialog.current_item() {
-                            match &item.control {
-                                SettingControl::Toggle(_) => {
+                        None
+                    }
+                }).flatten();
+
+                if let Some(action) = button_action {
+                    match action {
+                        ButtonAction::Save => self.save_entry_dialog(),
+                        ButtonAction::Delete => self.delete_entry_dialog(),
+                        ButtonAction::Cancel => self.close_entry_dialog(),
+                    }
+                } else if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    // Ctrl+Enter always saves
+                    self.save_entry_dialog();
+                } else {
+                    // Activate current control
+                    let control_action = self.entry_dialog().and_then(|dialog| {
+                        dialog.current_item().map(|item| match &item.control {
+                            SettingControl::Toggle(_) => Some(ControlAction::ToggleBool),
+                            SettingControl::Dropdown(_) => Some(ControlAction::ToggleDropdown),
+                            SettingControl::Text(_)
+                            | SettingControl::TextList(_)
+                            | SettingControl::Number(_)
+                            | SettingControl::Json(_) => Some(ControlAction::StartEditing),
+                            SettingControl::Map(_) | SettingControl::ObjectArray(_) => {
+                                Some(ControlAction::OpenNestedDialog)
+                            }
+                            _ => None,
+                        })
+                    }).flatten();
+
+                    if let Some(action) = control_action {
+                        match action {
+                            ControlAction::ToggleBool => {
+                                if let Some(dialog) = self.entry_dialog_mut() {
                                     dialog.toggle_bool();
                                 }
-                                SettingControl::Dropdown(_) => {
+                            }
+                            ControlAction::ToggleDropdown => {
+                                if let Some(dialog) = self.entry_dialog_mut() {
                                     dialog.toggle_dropdown();
                                 }
-                                SettingControl::Text(_)
-                                | SettingControl::TextList(_)
-                                | SettingControl::Number(_)
-                                | SettingControl::Json(_) => {
+                            }
+                            ControlAction::StartEditing => {
+                                if let Some(dialog) = self.entry_dialog_mut() {
                                     dialog.start_editing();
                                 }
-                                _ => {}
+                            }
+                            ControlAction::OpenNestedDialog => {
+                                // Handle nested Map or ObjectArray - open a nested dialog
+                                self.open_nested_entry_dialog();
                             }
                         }
                     }
@@ -744,7 +791,18 @@ impl SettingsState {
                 SettingControl::Json(_) => {
                     self.start_editing();
                 }
-                SettingControl::KeybindingList(_) | SettingControl::Complex { .. } => {
+                SettingControl::ObjectArray(ref state) => {
+                    if state.focused_index.is_none() {
+                        // On add-new row: open dialog with empty item
+                        if state.item_schema.is_some() {
+                            self.open_add_array_item_dialog();
+                        }
+                    } else if state.item_schema.is_some() {
+                        // Has schema: open edit dialog
+                        self.open_edit_array_item_dialog();
+                    }
+                }
+                SettingControl::Complex { .. } => {
                     // Not editable via simple controls
                 }
             }
@@ -775,6 +833,9 @@ impl SettingsState {
                         }
                     }
                 }
+                SettingControl::ObjectArray(ref mut state) => {
+                    state.focus_next();
+                }
                 _ => {}
             }
         }
@@ -804,7 +865,22 @@ impl SettingsState {
                         }
                     }
                 }
+                SettingControl::ObjectArray(ref mut state) => {
+                    state.focus_prev();
+                }
                 _ => {}
+            }
+        }
+    }
+
+    /// Handle delete on a keybinding list entry
+    fn handle_keybinding_delete(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::ObjectArray(ref mut state) = &mut item.control {
+                if state.focused_index.is_some() {
+                    state.remove_focused();
+                    self.on_value_changed();
+                }
             }
         }
     }
