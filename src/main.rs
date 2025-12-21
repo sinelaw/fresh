@@ -29,9 +29,9 @@ use std::{
 #[command(about = "A terminal text editor with multi-cursor support", long_about = None)]
 #[command(version)]
 struct Args {
-    /// File to open
-    #[arg(value_name = "FILE")]
-    file: Option<PathBuf>,
+    /// Files to open
+    #[arg(value_name = "FILES")]
+    files: Vec<String>,
 
     /// Disable plugin loading
     #[arg(long)]
@@ -77,8 +77,7 @@ struct SetupState {
     warning_log_handle: Option<WarningLogHandle>,
     terminal: Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     terminal_size: (u16, u16),
-    file_location: Option<FileLocation>,
-    file_to_open: Option<PathBuf>,
+    file_locations: Vec<FileLocation>,
     show_file_explorer: bool,
     dir_context: DirectoryContext,
     current_working_dir: Option<PathBuf>,
@@ -91,8 +90,7 @@ struct SetupState {
 fn handle_first_run_setup(
     editor: &mut Editor,
     args: &Args,
-    file_to_open: &Option<PathBuf>,
-    file_location: &Option<FileLocation>,
+    file_locations: &[FileLocation],
     show_file_explorer: bool,
     warning_log_handle: &mut Option<WarningLogHandle>,
     session_enabled: bool,
@@ -120,13 +118,14 @@ fn handle_first_run_setup(
         }
     }
 
-    if let Some(path) = &file_to_open {
-        editor.open_file(path)?;
+    for loc in file_locations {
+        if loc.path.is_dir() {
+            continue;
+        }
+        editor.open_file(&loc.path)?;
 
-        if let Some(ref loc) = file_location {
-            if let Some(line) = loc.line {
-                editor.goto_line_col(line, loc.column);
-            }
+        if let Some(line) = loc.line {
+            editor.goto_line_col(line, loc.column);
         }
     }
 
@@ -271,20 +270,21 @@ fn initialize_app(args: &Args) -> io::Result<SetupState> {
     }));
 
     // Determine working directory early for config loading
-    let file_location = args
-        .file
-        .as_ref()
-        .map(|p| parse_file_location(p.to_string_lossy().as_ref()));
+    let file_locations: Vec<FileLocation> = args
+        .files
+        .iter()
+        .map(|f| parse_file_location(f))
+        .collect();
 
-    let (working_dir, file_to_open, show_file_explorer) = if let Some(ref loc) = file_location {
-        if loc.path.is_dir() {
-            (Some(loc.path.clone()), None, true)
-        } else {
-            (None, Some(loc.path.clone()), false)
+    let mut working_dir = None;
+    let mut show_file_explorer = false;
+
+    if let Some(first_loc) = file_locations.first() {
+        if first_loc.path.is_dir() {
+            working_dir = Some(first_loc.path.clone());
+            show_file_explorer = true;
         }
-    } else {
-        (None, None, false)
-    };
+    }
 
     // Load config - checking working directory first, then system paths
     let effective_working_dir = working_dir
@@ -356,8 +356,7 @@ fn initialize_app(args: &Args) -> io::Result<SetupState> {
         warning_log_handle,
         terminal,
         terminal_size: (size.width, size.height),
-        file_location,
-        file_to_open,
+        file_locations,
         show_file_explorer,
         dir_context,
         current_working_dir,
@@ -431,8 +430,7 @@ fn main() -> io::Result<()> {
         mut warning_log_handle,
         mut terminal,
         terminal_size,
-        file_location,
-        file_to_open,
+        file_locations,
         show_file_explorer,
         dir_context,
         current_working_dir: initial_working_dir,
@@ -455,7 +453,7 @@ fn main() -> io::Result<()> {
     // Returns (loop_result, last_update_result) tuple
     let (result, last_update_result) = loop {
         let first_run = is_first_run;
-        let session_enabled = !args.no_session && file_to_open.is_none();
+        let session_enabled = !args.no_session && file_locations.is_empty();
 
         // Detect terminal color capability
         let color_capability = fresh::view::color_support::ColorCapability::detect();
@@ -479,8 +477,7 @@ fn main() -> io::Result<()> {
             handle_first_run_setup(
                 &mut editor,
                 &args,
-                &file_to_open,
-                &file_location,
+                &file_locations,
                 show_file_explorer,
                 &mut warning_log_handle,
                 session_enabled,
@@ -862,6 +859,20 @@ mod tests {
         assert_eq!(loc.path, PathBuf::from("foo.txt"));
         assert_eq!(loc.line, None);
         assert_eq!(loc.column, None);
+    }
+
+    #[test]
+    fn test_parse_multiple_files() {
+        let inputs = vec!["file1.txt", "sub/file2.rs:10", "file3.cpp:20:5"];
+        let locs: Vec<FileLocation> = inputs.iter().map(|i| parse_file_location(i)).collect();
+
+        assert_eq!(locs.len(), 3);
+        assert_eq!(locs[0].path, PathBuf::from("file1.txt"));
+        assert_eq!(locs[1].path, PathBuf::from("sub/file2.rs"));
+        assert_eq!(locs[1].line, Some(10));
+        assert_eq!(locs[2].path, PathBuf::from("file3.cpp"));
+        assert_eq!(locs[2].line, Some(20));
+        assert_eq!(locs[2].column, Some(5));
     }
 
     #[test]
