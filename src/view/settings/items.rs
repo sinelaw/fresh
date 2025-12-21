@@ -1002,8 +1002,8 @@ mod tests {
         let result = clean_description("Tab Size", Some("Number of spaces per tab character"));
         assert!(result.is_some());
         let cleaned = result.unwrap();
-        // Should start lowercase and contain the full info
-        assert!(cleaned.starts_with('n')); // lowercase 'n' from "Number"
+        // Should preserve original casing and contain the full info
+        assert!(cleaned.starts_with('N')); // uppercase 'N' from "Number"
         assert!(cleaned.contains("spaces"));
         assert!(cleaned.contains("character"));
     }
