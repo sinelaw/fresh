@@ -1993,7 +1993,6 @@ fn render_help_overlay(frame: &mut Frame, parent_area: Rect, theme: &Theme) {
             "Actions",
             vec![
                 ("Ctrl+S", "Save settings"),
-                ("Ctrl+R", "Reset to default"),
                 ("Esc", "Close settings"),
                 ("?", "Toggle this help"),
             ],

@@ -1813,3 +1813,63 @@ fn test_category_selection_indicator_visible() {
     // Close settings
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
+
+/// Test that Ctrl+S saves settings from any panel
+///
+/// Ctrl+S is a global shortcut that should save settings regardless
+/// of which panel is currently focused.
+#[test]
+fn test_ctrl_s_saves_settings() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    harness.render().unwrap();
+
+    // Verify initial check_for_updates is false (test default)
+    assert!(!harness.config().check_for_updates);
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for "check for updates" and toggle it
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "check".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Jump to result and toggle
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show modified indicator
+    harness.assert_screen_contains("modified");
+
+    // Press Ctrl+S to save (should work from any panel)
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Settings should be closed after Ctrl+S
+    assert!(
+        !harness.editor().is_settings_open(),
+        "Settings should be closed after Ctrl+S"
+    );
+
+    // Verify the setting was saved
+    assert!(
+        harness.config().check_for_updates,
+        "check_for_updates should be true after saving"
+    );
+}

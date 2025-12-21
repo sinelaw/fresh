@@ -30,6 +30,14 @@ impl InputHandler for SettingsState {
             return self.handle_search_input(event, ctx);
         }
 
+        // Global shortcut: Ctrl+S to save
+        if event.modifiers.contains(KeyModifiers::CONTROL) {
+            if matches!(event.code, KeyCode::Char('s') | KeyCode::Char('S')) {
+                ctx.defer(DeferredAction::CloseSettings { save: true });
+                return InputResult::Consumed;
+            }
+        }
+
         // Route to focused panel
         match self.focus_panel {
             FocusPanel::Categories => self.handle_categories_input(event, ctx),
