@@ -25,6 +25,7 @@ pub mod menu_bar;
 pub mod merge_conflict;
 pub mod mouse;
 pub mod movement;
+pub mod multi_file_opening;
 pub mod multibyte_characters;
 pub mod multicursor;
 pub mod open_folder;
