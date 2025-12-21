@@ -589,7 +589,7 @@ pub fn build_item(schema: &SettingSchema, config_value: &serde_json::Value) -> S
         }
 
         SettingType::Number { minimum, maximum } => {
-            // For floats, we'll display as integers (multiply by 100 for percentages)
+            // For floats, we display as integers (multiply by 100 for percentages)
             let value = current_value
                 .and_then(|v| v.as_f64())
                 .or_else(|| schema.default.as_ref().and_then(|d| d.as_f64()))
@@ -597,7 +597,7 @@ pub fn build_item(schema: &SettingSchema, config_value: &serde_json::Value) -> S
 
             // Convert to integer representation
             let int_value = (value * 100.0).round() as i64;
-            let mut state = NumberInputState::new(int_value, &schema.name);
+            let mut state = NumberInputState::new(int_value, &schema.name).with_percentage();
             if let Some(min) = minimum {
                 state = state.with_min((*min * 100.0) as i64);
             }
@@ -748,7 +748,7 @@ pub fn build_item_from_value(
                 .unwrap_or(0.0);
 
             let int_value = (value * 100.0).round() as i64;
-            let mut state = NumberInputState::new(int_value, &schema.name);
+            let mut state = NumberInputState::new(int_value, &schema.name).with_percentage();
             if let Some(min) = minimum {
                 state = state.with_min((*min * 100.0) as i64);
             }
@@ -862,8 +862,15 @@ pub fn control_to_value(control: &SettingControl) -> serde_json::Value {
         SettingControl::Toggle(state) => serde_json::Value::Bool(state.checked),
 
         SettingControl::Number(state) => {
-            // TODO: Handle float values properly (check schema for type)
-            serde_json::Value::Number(state.value.into())
+            if state.is_percentage {
+                // Convert back to float (divide by 100)
+                let float_value = state.value as f64 / 100.0;
+                serde_json::Number::from_f64(float_value)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Number(state.value.into()))
+            } else {
+                serde_json::Value::Number(state.value.into())
+            }
         }
 
         SettingControl::Dropdown(state) => state

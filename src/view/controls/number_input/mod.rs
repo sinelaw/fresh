@@ -38,6 +38,9 @@ pub struct NumberInputState {
     pub editing: bool,
     /// Text being edited (when editing=true)
     pub edit_text: String,
+    /// Whether this value is a percentage (float value * 100 for display)
+    /// When true, the value should be divided by 100 when converting back to JSON
+    pub is_percentage: bool,
 }
 
 impl NumberInputState {
@@ -52,6 +55,7 @@ impl NumberInputState {
             focus: FocusState::Normal,
             editing: false,
             edit_text: String::new(),
+            is_percentage: false,
         }
     }
 
@@ -76,6 +80,12 @@ impl NumberInputState {
     /// Set the focus state
     pub fn with_focus(mut self, focus: FocusState) -> Self {
         self.focus = focus;
+        self
+    }
+
+    /// Mark this value as a percentage (float * 100 for display)
+    pub fn with_percentage(mut self) -> Self {
+        self.is_percentage = true;
         self
     }
 
