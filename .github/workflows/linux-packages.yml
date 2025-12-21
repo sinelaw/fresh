@@ -232,3 +232,185 @@ jobs:
 
           echo ""
           echo "rpm package test PASSED on ${{ matrix.name }}"
+
+  # Test .deb package upgrade from previous version
+  test-deb-upgrade:
+    needs:
+      - build-linux-packages
+    runs-on: ubuntu-22.04
+    container:
+      image: ubuntu:22.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Get version info
+        id: version
+        run: |
+          # Get current version from Cargo.toml
+          CURRENT_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "current=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Current version: $CURRENT_VERSION"
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y curl jq
+
+      - name: Find and install previous version
+        id: prev
+        run: |
+          # Get previous release version from GitHub
+          PREV_VERSION=$(curl -s "https://api.github.com/repos/sinelaw/fresh/releases" | \
+            jq -r '[.[] | select(.prerelease == false and .tag_name != "v${{ steps.version.outputs.current }}")] | .[0].tag_name' | \
+            sed 's/^v//')
+
+          if [ -z "$PREV_VERSION" ] || [ "$PREV_VERSION" = "null" ]; then
+            echo "No previous release found, skipping upgrade test"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Previous version: $PREV_VERSION"
+          echo "version=$PREV_VERSION" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+          # Download and install previous version .deb package
+          DEB_URL="https://github.com/sinelaw/fresh/releases/download/v${PREV_VERSION}/fresh-editor_${PREV_VERSION}-1_amd64.deb"
+          echo "Downloading: $DEB_URL"
+          curl -L -o /tmp/fresh-prev.deb "$DEB_URL" || {
+            echo "Failed to download previous .deb, skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          apt-get install -y /tmp/fresh-prev.deb
+
+          # Verify previous version is installed
+          INSTALLED=$(fresh --version)
+          echo "Installed version: $INSTALLED"
+          echo "$INSTALLED" | grep -q "$PREV_VERSION" || {
+            echo "Warning: version mismatch, got $INSTALLED expected $PREV_VERSION"
+          }
+
+      - name: Download new .deb package
+        if: steps.prev.outputs.skip != 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: artifacts-linux-packages-amd64
+          path: packages/
+
+      - name: Upgrade to new version
+        if: steps.prev.outputs.skip != 'true'
+        run: |
+          echo "=== Upgrading from v${{ steps.prev.outputs.version }} to v${{ steps.version.outputs.current }} ==="
+
+          # Install (upgrade) to new version
+          apt-get install -y ./packages/*.deb
+
+          # Verify upgrade
+          INSTALLED=$(fresh --version)
+          echo "Installed version after upgrade: $INSTALLED"
+
+          # Check version matches expected
+          echo "$INSTALLED" | grep -q "${{ steps.version.outputs.current }}" || {
+            echo "ERROR: Version mismatch after upgrade!"
+            echo "Expected: ${{ steps.version.outputs.current }}"
+            echo "Got: $INSTALLED"
+            exit 1
+          }
+
+          echo ""
+          echo "=== deb upgrade test PASSED ==="
+
+  # Test .rpm package upgrade from previous version
+  test-rpm-upgrade:
+    needs:
+      - build-linux-packages
+    runs-on: ubuntu-22.04
+    container:
+      image: fedora:40
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Get version info
+        id: version
+        run: |
+          # Get current version from Cargo.toml
+          CURRENT_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "current=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Current version: $CURRENT_VERSION"
+
+      - name: Install dependencies
+        run: |
+          dnf install -y curl jq
+
+      - name: Find and install previous version
+        id: prev
+        run: |
+          # Get previous release version from GitHub
+          PREV_VERSION=$(curl -s "https://api.github.com/repos/sinelaw/fresh/releases" | \
+            jq -r '[.[] | select(.prerelease == false and .tag_name != "v${{ steps.version.outputs.current }}")] | .[0].tag_name' | \
+            sed 's/^v//')
+
+          if [ -z "$PREV_VERSION" ] || [ "$PREV_VERSION" = "null" ]; then
+            echo "No previous release found, skipping upgrade test"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Previous version: $PREV_VERSION"
+          echo "version=$PREV_VERSION" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+          # Download and install previous version .rpm package
+          RPM_URL="https://github.com/sinelaw/fresh/releases/download/v${PREV_VERSION}/fresh-editor-${PREV_VERSION}-1.x86_64.rpm"
+          echo "Downloading: $RPM_URL"
+          curl -L -o /tmp/fresh-prev.rpm "$RPM_URL" || {
+            echo "Failed to download previous .rpm, skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          dnf install -y /tmp/fresh-prev.rpm
+
+          # Verify previous version is installed
+          INSTALLED=$(fresh --version)
+          echo "Installed version: $INSTALLED"
+          echo "$INSTALLED" | grep -q "$PREV_VERSION" || {
+            echo "Warning: version mismatch, got $INSTALLED expected $PREV_VERSION"
+          }
+
+      - name: Download new .rpm package
+        if: steps.prev.outputs.skip != 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: artifacts-linux-packages-amd64
+          path: packages/
+
+      - name: Upgrade to new version
+        if: steps.prev.outputs.skip != 'true'
+        run: |
+          echo "=== Upgrading from v${{ steps.prev.outputs.version }} to v${{ steps.version.outputs.current }} ==="
+
+          # Upgrade to new version using rpm -U
+          rpm -U ./packages/*.rpm
+
+          # Verify upgrade
+          INSTALLED=$(fresh --version)
+          echo "Installed version after upgrade: $INSTALLED"
+
+          # Check version matches expected
+          echo "$INSTALLED" | grep -q "${{ steps.version.outputs.current }}" || {
+            echo "ERROR: Version mismatch after upgrade!"
+            echo "Expected: ${{ steps.version.outputs.current }}"
+            echo "Got: $INSTALLED"
+            exit 1
+          }
+
+          echo ""
+          echo "=== rpm upgrade test PASSED ==="

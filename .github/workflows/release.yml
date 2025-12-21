@@ -57,6 +57,33 @@ jobs:
           echo "Publishing: $PUBLISHING"
           echo "Is prerelease: $IS_PRERELEASE"
 
+  # Test Nix build
+  test-nix-build:
+    needs: plan
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Build with Nix
+        run: |
+          echo "=== Building fresh with nix build ==="
+          nix build .#fresh --print-build-logs
+
+          echo ""
+          echo "=== Verifying binary ==="
+          ./result/bin/fresh --version
+
+          echo ""
+          echo "=== Nix build test PASSED ==="
+
   # Build binaries for each platform
   build:
     needs: plan
@@ -457,8 +484,8 @@ jobs:
 
   # Create GitHub Release
   release:
-    needs: [plan, build, build-musl, build-linux-packages, build-flatpak, build-appimage, build-npm-package, build-homebrew-formula]
-    if: ${{ always() && needs.plan.outputs.publishing == 'true' && needs.plan.result == 'success' && needs.build.result == 'success' }}
+    needs: [plan, build, build-musl, build-linux-packages, build-flatpak, build-appimage, build-npm-package, build-homebrew-formula, test-nix-build]
+    if: ${{ always() && needs.plan.outputs.publishing == 'true' && needs.plan.result == 'success' && needs.build.result == 'success' && needs.test-nix-build.result == 'success' }}
     runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
