@@ -1760,3 +1760,56 @@ fn test_number_input_enter_selects_all_text() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 }
+
+/// Test that the focused category shows a ">" selection indicator
+///
+/// When the categories panel is focused, the selected category should
+/// have a ">" prefix to make the selection more visible.
+/// Format is: "{selection}{modified} {name}" where:
+/// - selection is ">" when selected and focused, " " otherwise
+/// - modified is "●" when category has changes, " " otherwise
+#[test]
+fn test_category_selection_indicator_visible() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Categories panel is focused by default, should show ">" before General
+    // General may have "●" modified indicator due to test defaults
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(">● General") || screen.contains(">  General"),
+        "Expected '>' indicator on General category when focused. Screen: {}",
+        screen
+    );
+
+    // Navigate down to Editor category
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Now Editor should have the ">" indicator
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(">● Editor") || screen.contains(">  Editor"),
+        "Expected '>' indicator on Editor category when focused. Screen: {}",
+        screen
+    );
+
+    // Tab to settings panel (categories panel loses focus)
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Now Editor should not have the ">" indicator (panel not focused)
+    harness.assert_screen_not_contains(">● Editor");
+    harness.assert_screen_not_contains(">  Editor");
+
+    // But Editor should still be visible (just highlighted differently)
+    harness.assert_screen_contains("Editor");
+
+    // Close settings
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}

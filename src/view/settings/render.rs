@@ -273,9 +273,16 @@ fn render_categories(
 
         // Indicator for categories with modified settings
         let has_changes = page.items.iter().any(|i| i.modified);
-        let prefix = if has_changes { "● " } else { "  " };
+        let modified_indicator = if has_changes { "●" } else { " " };
 
-        let text = format!("{}{}", prefix, page.name);
+        // Show ">" when selected and focused for clearer selection indicator
+        let selection_indicator = if is_selected && state.focus_panel == FocusPanel::Categories {
+            ">"
+        } else {
+            " "
+        };
+
+        let text = format!("{}{} {}", selection_indicator, modified_indicator, page.name);
         let line = Line::from(Span::styled(text, style));
         frame.render_widget(Paragraph::new(line), row_area);
     }
