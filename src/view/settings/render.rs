@@ -1860,8 +1860,25 @@ fn render_entry_dialog(
             }
         }
 
-        // Calculate control area
-        let control_area = Rect::new(inner.x, screen_y, inner.width, render_height as u16);
+        // Render focus indicator ">" for the focused item
+        let focus_indicator_width: u16 = 2; // "> "
+        if is_focused && skip_rows == 0 {
+            let indicator_style = Style::default()
+                .fg(theme.menu_highlight_fg)
+                .add_modifier(Modifier::BOLD);
+            frame.render_widget(
+                Paragraph::new(">").style(indicator_style),
+                Rect::new(inner.x, screen_y, 1, 1),
+            );
+        }
+
+        // Calculate control area (offset by focus indicator width)
+        let control_area = Rect::new(
+            inner.x + focus_indicator_width,
+            screen_y,
+            inner.width.saturating_sub(focus_indicator_width),
+            render_height as u16,
+        );
 
         // Render using the same render_control function as main settings
         let _layout = render_control(
@@ -1872,7 +1889,7 @@ fn render_entry_dialog(
             item.modified,
             skip_rows,
             theme,
-            Some(label_col_width),
+            Some(label_col_width.saturating_sub(focus_indicator_width)),
         );
 
         screen_y += render_height as u16;

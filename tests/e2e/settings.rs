@@ -1547,9 +1547,14 @@ fn test_number_input_backspace() {
         .unwrap();
     harness.render().unwrap();
 
-    // Value is 500, start editing
+    // Value is 500, start editing (Enter selects all text)
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Move cursor to end (deselects text so backspace deletes one char)
+    harness
+        .send_key(KeyCode::End, KeyModifiers::NONE)
         .unwrap();
 
     // Backspace should delete the last digit (0)
@@ -1872,4 +1877,63 @@ fn test_ctrl_s_saves_settings() {
         harness.config().check_for_updates,
         "check_for_updates should be true after saving"
     );
+}
+
+/// Test that entry dialog (Edit Value) shows focus indicator on focused field
+#[test]
+fn test_entry_dialog_focus_indicator() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // We're in General category. Tab to content panel
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Navigate down to find a language entry in the Languages list
+    // Languages section is after Keybinding Maps and Keybindings sections
+    // Navigate down many times to reach Languages
+    for _ in 0..10 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // Should see language items like "bash", "c", "rust", etc.
+    let screen = harness.screen_to_string();
+    // Find any language item that shows "[Enter to edit]" - that means we're on it
+    if !screen.contains("[Enter to edit]") {
+        // Navigate more to find language items
+        for _ in 0..5 {
+            harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        harness.render().unwrap();
+    }
+
+    // Press Enter to open the Edit Value dialog on the current language
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Entry dialog should be open
+    harness.assert_screen_contains("Edit Value");
+
+    // The focused field should have a ">" indicator
+    // First field is "Key" which should be focused by default
+    harness.assert_screen_contains("> Key");
+
+    // Navigate down to next field
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Now "Auto Indent" should be focused with ">" indicator
+    harness.assert_screen_contains("> Auto Indent");
+
+    // Close dialog
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
