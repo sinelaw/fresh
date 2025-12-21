@@ -282,7 +282,10 @@ fn render_categories(
             " "
         };
 
-        let text = format!("{}{} {}", selection_indicator, modified_indicator, page.name);
+        let text = format!(
+            "{}{} {}",
+            selection_indicator, modified_indicator, page.name
+        );
         let line = Line::from(Span::styled(text, style));
         frame.render_widget(Paragraph::new(line), row_area);
     }

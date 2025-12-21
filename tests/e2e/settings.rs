@@ -1561,9 +1561,7 @@ fn test_number_input_backspace() {
         .unwrap();
 
     // Move cursor to end (deselects text so backspace deletes one char)
-    harness
-        .send_key(KeyCode::End, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
 
     // Backspace should delete the last digit (0)
     harness
@@ -1609,7 +1607,10 @@ fn test_settings_loads_saved_values_on_reopen() {
 
     // Verify initial auto_save_interval_secs is 2 (default)
     let initial_value = harness.config().editor.auto_save_interval_secs;
-    assert_eq!(initial_value, 2, "Initial auto_save_interval_secs should be 2");
+    assert_eq!(
+        initial_value, 2,
+        "Initial auto_save_interval_secs should be 2"
+    );
 
     // Open settings
     harness
@@ -1666,7 +1667,10 @@ fn test_settings_loads_saved_values_on_reopen() {
 
     // Verify the config was updated
     let saved_value = harness.config().editor.auto_save_interval_secs;
-    assert_eq!(saved_value, 5, "auto_save_interval_secs should be 5 after saving");
+    assert_eq!(
+        saved_value, 5,
+        "auto_save_interval_secs should be 5 after saving"
+    );
 
     // CRITICAL TEST: Reopen settings and verify the saved value is displayed
     harness
@@ -2010,7 +2014,10 @@ fn test_entry_dialog_add_new_textlist_item() {
 
     // After adding, the item should appear in the list
     let after_add = harness.screen_to_string();
-    assert_ne!(before_add, after_add, "Screen should change after adding item");
+    assert_ne!(
+        before_add, after_add,
+        "Screen should change after adding item"
+    );
 
     // The new item should be visible
     harness.assert_screen_contains("test_ext");
