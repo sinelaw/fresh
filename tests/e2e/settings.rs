@@ -1937,3 +1937,165 @@ fn test_entry_dialog_focus_indicator() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
+
+/// Test that [+] Add new button in entry dialog works for TextList items
+#[test]
+fn test_entry_dialog_add_new_textlist_item() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Navigate to Languages section - Tab to content, then down to a language
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    for _ in 0..10 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // Open a language entry dialog
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Edit Value");
+
+    // Navigate to Extensions section which has "[+] Add new"
+    // Navigate down until we see the Extensions section
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // The Extensions section should have items and "[+] Add new"
+    harness.assert_screen_contains("[+] Add new");
+
+    // Get current screen to compare after adding
+    let before_add = harness.screen_to_string();
+
+    // Press Enter to start editing the "[+] Add new" field
+    // This focuses the add-new input and enables typing
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type a new extension value
+    for c in "test_ext".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // The typed text should be visible
+    harness.assert_screen_contains("test_ext");
+
+    // Press Enter to add the item
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // After adding, the item should appear in the list
+    let after_add = harness.screen_to_string();
+    assert_ne!(before_add, after_add, "Screen should change after adding item");
+
+    // The new item should be visible
+    harness.assert_screen_contains("test_ext");
+
+    // Close dialog without saving
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test that [x] delete button in entry dialog works via keyboard (Delete key)
+#[test]
+fn test_entry_dialog_delete_textlist_item() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Navigate to Languages section - Tab to content, then down to a language
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    for _ in 0..10 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // Open a language entry dialog
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Edit Value");
+
+    // Navigate to Extensions section which has existing items
+    // Fields in order: Key, Auto Indent, Comment Prefix, Extensions (3 downs)
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // The Extensions section should have items and "[x]" delete buttons
+    harness.assert_screen_contains("[x]");
+
+    // First, add an item so we have something to delete
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type a new extension value
+    for c in "to_delete".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Press Enter to add the item
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify the item was added
+    harness.assert_screen_contains("to_delete");
+
+    // Now navigate UP to focus on the newly added item
+    // (we should be on the add-new row, so Up goes to the last item)
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Get screen before delete
+    let before_delete = harness.screen_to_string();
+    assert!(
+        before_delete.contains("to_delete"),
+        "Item should be visible before delete"
+    );
+
+    // Press Delete to remove the focused item
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The item should be removed
+    let after_delete = harness.screen_to_string();
+    assert!(
+        !after_delete.contains("to_delete"),
+        "Item should be removed after Delete key"
+    );
+
+    // Close dialog without saving
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
