@@ -48,6 +48,8 @@
             (craneLib.fileset.commonCargoSources unfilteredRoot)
             # Also keep any javascript files
             (lib.fileset.fileFilter (file: file.hasExt "js") unfilteredRoot)
+            # Keep sublime-syntax grammar files (used by include_str! in grammar_registry.rs)
+            (lib.fileset.fileFilter (file: file.hasExt "sublime-syntax") unfilteredRoot)
             ./docs
             ./keymaps
             ./plugins
