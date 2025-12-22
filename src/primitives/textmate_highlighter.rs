@@ -166,33 +166,78 @@ impl TextMateHighlighter {
             }
         };
 
-        // Parse line by line (syntect works on lines)
+        // Parse line by line - manually track line boundaries to handle CRLF correctly
+        // str::lines() strips both \n and \r\n, losing the distinction
+        let content_bytes = content_str.as_bytes();
+        let mut pos = 0;
         let mut current_offset = start_byte;
         let mut current_scopes = ScopeStack::new();
 
-        for line in content_str.lines() {
-            let line_with_newline = if current_offset + line.len() < end_byte {
-                format!("{}\n", line)
+        while pos < content_bytes.len() {
+            let line_start = pos;
+            let mut line_end = pos;
+
+            // Scan for line ending (find \n or \r\n or end of content)
+            while line_end < content_bytes.len() {
+                if content_bytes[line_end] == b'\n' {
+                    line_end += 1;
+                    break;
+                } else if content_bytes[line_end] == b'\r' {
+                    if line_end + 1 < content_bytes.len() && content_bytes[line_end + 1] == b'\n' {
+                        line_end += 2; // CRLF
+                    } else {
+                        line_end += 1; // CR only
+                    }
+                    break;
+                }
+                line_end += 1;
+            }
+
+            // Get the line content and actual byte length
+            let line_bytes = &content_bytes[line_start..line_end];
+            let actual_line_byte_len = line_bytes.len();
+
+            // Create line string for syntect - strip CR if present, ensure single \n
+            let line_str = match std::str::from_utf8(line_bytes) {
+                Ok(s) => s,
+                Err(_) => {
+                    pos = line_end;
+                    current_offset += actual_line_byte_len;
+                    continue;
+                }
+            };
+
+            // Remove trailing \r\n or \n, then add single \n for syntect
+            let line_content = line_str.trim_end_matches(&['\r', '\n'][..]);
+            let line_for_syntect = if line_end < content_bytes.len() || line_str.ends_with('\n') {
+                format!("{}\n", line_content)
             } else {
-                line.to_string()
+                line_content.to_string()
             };
 
             // Parse this line
-            let ops = match state.parse_line(&line_with_newline, &self.syntax_set) {
+            let ops = match state.parse_line(&line_for_syntect, &self.syntax_set) {
                 Ok(ops) => ops,
-                Err(_) => continue, // Skip lines that fail to parse
+                Err(_) => {
+                    pos = line_end;
+                    current_offset += actual_line_byte_len;
+                    continue;
+                }
             };
 
             // Convert parse operations to spans
-            let mut char_offset = 0;
+            // Note: syntect offsets are relative to line_for_syntect, but we need
+            // to map them to the actual buffer positions
+            let mut syntect_offset = 0;
+            let line_content_len = line_content.len();
 
-            // ops is Vec<(usize, ScopeStackOp)>
             for (op_offset, op) in ops {
-                // Handle any text before this operation
-                if op_offset > char_offset {
+                // Handle any text before this operation (but only within content, not newline)
+                let clamped_op_offset = op_offset.min(line_content_len);
+                if clamped_op_offset > syntect_offset {
                     if let Some(category) = scope_stack_to_category(&current_scopes) {
-                        let byte_start = current_offset + char_offset;
-                        let byte_end = current_offset + op_offset;
+                        let byte_start = current_offset + syntect_offset;
+                        let byte_end = current_offset + clamped_op_offset;
                         if byte_start < byte_end {
                             spans.push(CachedSpan {
                                 range: byte_start..byte_end,
@@ -201,18 +246,17 @@ impl TextMateHighlighter {
                         }
                     }
                 }
-                char_offset = op_offset;
+                syntect_offset = clamped_op_offset;
 
                 // Apply the scope operation
                 let _ = current_scopes.apply(&op);
             }
 
-            // Handle remaining text on line
-            let line_byte_len = line_with_newline.len();
-            if char_offset < line_byte_len {
+            // Handle remaining text on line (content only, not line ending)
+            if syntect_offset < line_content_len {
                 if let Some(category) = scope_stack_to_category(&current_scopes) {
-                    let byte_start = current_offset + char_offset;
-                    let byte_end = current_offset + line_byte_len;
+                    let byte_start = current_offset + syntect_offset;
+                    let byte_end = current_offset + line_content_len;
                     if byte_start < byte_end {
                         spans.push(CachedSpan {
                             range: byte_start..byte_end,
@@ -222,7 +266,9 @@ impl TextMateHighlighter {
                 }
             }
 
-            current_offset += line_byte_len;
+            // Advance by actual byte length (including real line terminator)
+            pos = line_end;
+            current_offset += actual_line_byte_len;
         }
 
         // Merge adjacent spans with same category for efficiency
@@ -600,5 +646,199 @@ mod tests {
         assert_eq!(spans[0].category, HighlightCategory::Keyword);
         assert_eq!(spans[1].range, 10..15);
         assert_eq!(spans[1].category, HighlightCategory::String);
+    }
+
+    /// Test that CRLF line endings are handled correctly in byte offset calculations.
+    /// This is a regression test for the bug where using str::lines() caused
+    /// byte offset drift because it strips line terminators, losing the distinction
+    /// between \n (1 byte) and \r\n (2 bytes).
+    #[test]
+    fn test_crlf_line_boundary_detection() {
+        // Simulate what parse_region does for CRLF content
+        // Content: "abc\r\ndef\r\nghi"
+        // Byte positions:
+        //   a=0, b=1, c=2, \r=3, \n=4
+        //   d=5, e=6, f=7, \r=8, \n=9
+        //   g=10, h=11, i=12
+        let content = "abc\r\ndef\r\nghi";
+        let content_bytes = content.as_bytes();
+
+        // Track line boundaries the way parse_region should
+        let mut line_starts: Vec<usize> = vec![];
+        let mut line_ends: Vec<usize> = vec![];
+        let mut pos = 0;
+
+        while pos < content_bytes.len() {
+            let line_start = pos;
+            let mut line_end = pos;
+
+            // Scan for line ending (same logic as parse_region)
+            while line_end < content_bytes.len() {
+                if content_bytes[line_end] == b'\n' {
+                    line_end += 1;
+                    break;
+                } else if content_bytes[line_end] == b'\r' {
+                    if line_end + 1 < content_bytes.len() && content_bytes[line_end + 1] == b'\n' {
+                        line_end += 2; // CRLF
+                    } else {
+                        line_end += 1; // Standalone CR
+                    }
+                    break;
+                }
+                line_end += 1;
+            }
+
+            line_starts.push(line_start);
+            line_ends.push(line_end);
+            pos = line_end;
+        }
+
+        // Verify line boundaries
+        assert_eq!(line_starts.len(), 3, "Should detect 3 lines");
+
+        // Line 1: "abc\r\n" at bytes 0..5
+        assert_eq!(line_starts[0], 0, "Line 1 should start at byte 0");
+        assert_eq!(line_ends[0], 5, "Line 1 should end at byte 5 (after CRLF)");
+
+        // Line 2: "def\r\n" at bytes 5..10
+        assert_eq!(line_starts[1], 5, "Line 2 should start at byte 5");
+        assert_eq!(line_ends[1], 10, "Line 2 should end at byte 10 (after CRLF)");
+
+        // Line 3: "ghi" at bytes 10..13 (no terminator)
+        assert_eq!(line_starts[2], 10, "Line 3 should start at byte 10");
+        assert_eq!(line_ends[2], 13, "Line 3 should end at byte 13");
+
+        // Contrast with the buggy behavior using str::lines()
+        // which would give line lengths of 3, 3, 3 instead of 5, 5, 3
+        let buggy_offsets: Vec<usize> = content
+            .lines()
+            .scan(0usize, |offset, line| {
+                let start = *offset;
+                // Bug: lines() strips terminators, so we'd add wrong length
+                *offset += line.len() + 1; // Always adds 1 for \n, wrong for CRLF!
+                Some(start)
+            })
+            .collect();
+
+        // The buggy approach would give wrong offsets for lines 2 and 3
+        assert_eq!(buggy_offsets[0], 0, "Buggy: Line 1 start correct");
+        assert_eq!(buggy_offsets[1], 4, "Buggy: Line 2 would start at 4 (wrong! should be 5)");
+        assert_eq!(buggy_offsets[2], 8, "Buggy: Line 3 would start at 8 (wrong! should be 10)");
+    }
+
+    /// Test LF-only content still works correctly
+    #[test]
+    fn test_lf_line_boundary_detection() {
+        // Content: "abc\ndef\nghi"
+        // Byte positions:
+        //   a=0, b=1, c=2, \n=3
+        //   d=4, e=5, f=6, \n=7
+        //   g=8, h=9, i=10
+        let content = "abc\ndef\nghi";
+        let content_bytes = content.as_bytes();
+
+        let mut line_starts: Vec<usize> = vec![];
+        let mut pos = 0;
+
+        while pos < content_bytes.len() {
+            let line_start = pos;
+            let mut line_end = pos;
+
+            while line_end < content_bytes.len() {
+                if content_bytes[line_end] == b'\n' {
+                    line_end += 1;
+                    break;
+                } else if content_bytes[line_end] == b'\r' {
+                    if line_end + 1 < content_bytes.len() && content_bytes[line_end + 1] == b'\n' {
+                        line_end += 2;
+                    } else {
+                        line_end += 1;
+                    }
+                    break;
+                }
+                line_end += 1;
+            }
+
+            line_starts.push(line_start);
+            pos = line_end;
+        }
+
+        // Verify: LF content should have correct offsets
+        assert_eq!(line_starts[0], 0, "Line 1 starts at 0");
+        assert_eq!(line_starts[1], 4, "Line 2 starts at 4 (after 'abc\\n')");
+        assert_eq!(line_starts[2], 8, "Line 3 starts at 8 (after 'def\\n')");
+    }
+
+    /// Test that TextMateHighlighter produces correct byte offsets for CRLF content.
+    /// This is a regression test for a bug where using str::lines() caused 1-byte
+    /// offset drift per line because it strips line terminators.
+    #[test]
+    fn test_textmate_highlighter_crlf_byte_offsets() {
+        use crate::primitives::grammar_registry::GrammarRegistry;
+        use crate::view::theme::Theme;
+
+        let registry = GrammarRegistry::load();
+        let syntax_set = registry.syntax_set_arc();
+
+        // Find Java syntax (should be available in syntect)
+        let java_syntax = syntax_set
+            .find_syntax_by_extension("java")
+            .expect("Java syntax should be available");
+
+        let mut highlighter = TextMateHighlighter::new(
+            // SAFETY: syntax_set is Arc and lives for test duration
+            unsafe { &*(java_syntax as *const _) },
+            syntax_set,
+        );
+
+        // Create CRLF content with keywords on each line
+        // Each "public" keyword should be highlighted at byte positions:
+        // Line 1: "public" at bytes 0-5
+        // Line 2: "public" at bytes 9-14 (after "public\r\n" = 8 bytes)
+        // Line 3: "public" at bytes 18-23 (after two "public\r\n" = 16 bytes)
+        let content = b"public\r\npublic\r\npublic\r\n";
+        let buffer = crate::model::buffer::TextBuffer::from_bytes(content.to_vec());
+        let theme = Theme::dark();
+
+        // Highlight the entire content
+        let spans = highlighter.highlight_viewport(&buffer, 0, content.len(), &theme, 0);
+
+        // Find spans that cover keyword positions
+        // The keyword "public" should have spans at these byte ranges:
+        // Line 1: 0..6
+        // Line 2: 8..14 (NOT 7..13 which would be the buggy offset)
+        // Line 3: 16..22 (NOT 14..20 which would be the buggy offset)
+
+        eprintln!("Spans: {:?}", spans.iter().map(|s| &s.range).collect::<Vec<_>>());
+
+        // Check that we have spans covering the correct positions
+        let has_span_at = |start: usize, end: usize| -> bool {
+            spans.iter().any(|s| s.range.start <= start && s.range.end >= end)
+        };
+
+        // Line 1: "public" at bytes 0-6
+        assert!(
+            has_span_at(0, 6),
+            "Should have span covering bytes 0-6 (line 1 'public'). Spans: {:?}",
+            spans.iter().map(|s| &s.range).collect::<Vec<_>>()
+        );
+
+        // Line 2: "public" at bytes 8-14 (after "public\r\n")
+        // If buggy, would be at 7-13
+        assert!(
+            has_span_at(8, 14),
+            "Should have span covering bytes 8-14 (line 2 'public'). \
+             If this fails, CRLF offset drift is occurring. Spans: {:?}",
+            spans.iter().map(|s| &s.range).collect::<Vec<_>>()
+        );
+
+        // Line 3: "public" at bytes 16-22 (after two "public\r\n")
+        // If buggy, would be at 14-20
+        assert!(
+            has_span_at(16, 22),
+            "Should have span covering bytes 16-22 (line 3 'public'). \
+             If this fails, CRLF offset drift is occurring. Spans: {:?}",
+            spans.iter().map(|s| &s.range).collect::<Vec<_>>()
+        );
     }
 }

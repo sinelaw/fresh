@@ -519,4 +519,75 @@ mod tests {
             "Should find start of long line at position 7, not estimation boundary"
         );
     }
+
+    /// Test that LineIterator correctly handles CRLF line endings
+    /// Each line should have the correct byte offset, accounting for 2 bytes per line ending
+    #[test]
+    fn test_line_iterator_crlf() {
+        // CRLF content: "abc\r\ndef\r\nghi\r\n"
+        // Bytes: a=0, b=1, c=2, \r=3, \n=4, d=5, e=6, f=7, \r=8, \n=9, g=10, h=11, i=12, \r=13, \n=14
+        let content = b"abc\r\ndef\r\nghi\r\n";
+        let mut buffer = TextBuffer::from_bytes(content.to_vec());
+
+        let mut iter = buffer.line_iterator(0, 80);
+
+        // First line: starts at 0, content is "abc\r\n"
+        let (pos, line_content) = iter.next().expect("Should have first line");
+        assert_eq!(pos, 0, "First line should start at byte 0");
+        assert_eq!(line_content, "abc\r\n", "First line content");
+
+        // Second line: starts at 5 (after "abc\r\n"), content is "def\r\n"
+        let (pos, line_content) = iter.next().expect("Should have second line");
+        assert_eq!(pos, 5, "Second line should start at byte 5 (after CRLF)");
+        assert_eq!(line_content, "def\r\n", "Second line content");
+
+        // Third line: starts at 10 (after "abc\r\ndef\r\n"), content is "ghi\r\n"
+        let (pos, line_content) = iter.next().expect("Should have third line");
+        assert_eq!(pos, 10, "Third line should start at byte 10 (after two CRLFs)");
+        assert_eq!(line_content, "ghi\r\n", "Third line content");
+
+        // No more lines
+        assert!(iter.next().is_none(), "Should have no more lines");
+    }
+
+    /// Test that line_start values are correct for CRLF files when starting from middle
+    #[test]
+    fn test_line_iterator_crlf_from_middle() {
+        // CRLF content: "abc\r\ndef\r\nghi"
+        // Bytes: a=0, b=1, c=2, \r=3, \n=4, d=5, e=6, f=7, \r=8, \n=9, g=10, h=11, i=12
+        let content = b"abc\r\ndef\r\nghi";
+        let mut buffer = TextBuffer::from_bytes(content.to_vec());
+
+        // Start iterator from middle of second line (byte 6 = 'e')
+        let iter = buffer.line_iterator(6, 80);
+        assert_eq!(
+            iter.current_position(),
+            5,
+            "Iterator at byte 6 should find line start at byte 5"
+        );
+
+        // Start iterator from the \r of first line (byte 3)
+        let iter = buffer.line_iterator(3, 80);
+        assert_eq!(
+            iter.current_position(),
+            0,
+            "Iterator at byte 3 (\\r) should find line start at byte 0"
+        );
+
+        // Start iterator from the \n of first line (byte 4)
+        let iter = buffer.line_iterator(4, 80);
+        assert_eq!(
+            iter.current_position(),
+            0,
+            "Iterator at byte 4 (\\n) should find line start at byte 0"
+        );
+
+        // Start iterator from first char of third line (byte 10 = 'g')
+        let iter = buffer.line_iterator(10, 80);
+        assert_eq!(
+            iter.current_position(),
+            10,
+            "Iterator at byte 10 should be at line start already"
+        );
+    }
 }

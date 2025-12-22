@@ -169,6 +169,9 @@ impl TextBuffer {
     pub fn from_bytes(content: Vec<u8>) -> Self {
         let bytes = content.len();
 
+        // Auto-detect line ending format from content
+        let line_ending = Self::detect_line_ending(&content);
+
         // Create initial StringBuffer with ID 0
         let buffer = StringBuffer::new(0, content);
         let line_feed_cnt = buffer.line_feed_count();
@@ -182,6 +185,7 @@ impl TextBuffer {
         let saved_root = piece_tree.root();
 
         TextBuffer {
+            line_ending,
             piece_tree,
             saved_root,
             buffers: vec![buffer],
@@ -191,7 +195,6 @@ impl TextBuffer {
             recovery_pending: false,
             large_file: false,
             is_binary: false,
-            line_ending: LineEnding::default(),
             saved_file_size: Some(bytes), // Treat initial content as "saved" state
         }
     }

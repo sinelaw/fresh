@@ -2236,6 +2236,12 @@ impl SplitRenderer {
                     let tab_indicator: String;
                     let display_char: &str = if is_cursor && lsp_waiting && is_active {
                         "⋯"
+                    } else if debug_tracker.is_some() && ch == '\r' {
+                        // Debug mode: show CR explicitly
+                        "\\r"
+                    } else if debug_tracker.is_some() && ch == '\n' {
+                        // Debug mode: show LF explicitly
+                        "\\n"
                     } else if is_cursor && is_active && ch == '\n' {
                         ""
                     } else if ch == '\n' {
@@ -2277,6 +2283,17 @@ impl SplitRenderer {
                             );
                             for tag in opening_tags {
                                 push_debug_tag(&mut line_spans, &mut line_view_map, tag);
+                            }
+                        }
+
+                        // Debug mode: show byte position before each character
+                        if debug_tracker.is_some() {
+                            if let Some(bp) = byte_pos {
+                                push_debug_tag(
+                                    &mut line_spans,
+                                    &mut line_view_map,
+                                    format!("[{}]", bp),
+                                );
                             }
                         }
 
