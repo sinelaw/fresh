@@ -102,6 +102,10 @@ pub struct EditorState {
     /// View mode for this buffer (Source or Compose)
     pub view_mode: ViewMode,
 
+    /// Debug mode: show highlight/overlay byte ranges
+    /// When enabled, each character shows its byte position and highlight info
+    pub debug_highlight_mode: bool,
+
     /// Optional compose width for centered rendering
     pub compose_width: Option<u16>,
 
@@ -141,6 +145,7 @@ impl EditorState {
             tab_size: 4, // Default tab size
             semantic_highlighter: SemanticHighlighter::new(),
             view_mode: ViewMode::Source,
+            debug_highlight_mode: false,
             compose_width: None,
             compose_prev_line_numbers: None,
             compose_column_guides: None,
@@ -221,6 +226,7 @@ impl EditorState {
             tab_size: 4, // Default tab size
             semantic_highlighter,
             view_mode: ViewMode::Source,
+            debug_highlight_mode: false,
             compose_width: None,
             compose_prev_line_numbers: None,
             compose_column_guides: None,

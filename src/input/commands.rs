@@ -484,6 +484,14 @@ pub fn get_all_commands() -> Vec<Command> {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
         },
+        Command {
+            name: "Debug: Toggle Highlight Debug Mode".to_string(),
+            description: "Show highlight/overlay byte ranges for debugging".to_string(),
+            action: Action::ToggleDebugHighlights,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
         // Buffer settings commands
         Command {
             name: "Set Tab Size".to_string(),

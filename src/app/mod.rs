@@ -2778,6 +2778,19 @@ impl Editor {
         }
     }
 
+    /// Toggle debug highlight mode for the active buffer
+    /// When enabled, shows byte positions and highlight span info for debugging
+    pub fn toggle_debug_highlights(&mut self) {
+        if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+            state.debug_highlight_mode = !state.debug_highlight_mode;
+            if state.debug_highlight_mode {
+                self.set_status_message("Debug highlight mode ON - showing byte ranges".to_string());
+            } else {
+                self.set_status_message("Debug highlight mode OFF".to_string());
+            }
+        }
+    }
+
     /// Reset buffer settings (tab_size, use_tabs, show_whitespace_tabs) to config defaults
     pub fn reset_buffer_settings(&mut self) {
         let buffer_id = self.active_buffer();

@@ -1975,6 +1975,7 @@ pub fn action_to_events(
         | Action::SetLineEnding
         | Action::ToggleIndentationStyle
         | Action::ToggleTabIndicators
+        | Action::ToggleDebugHighlights
         | Action::ResetBufferSettings => return None,
 
         // Block/rectangular selection actions

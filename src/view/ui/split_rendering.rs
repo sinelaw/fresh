@@ -48,6 +48,107 @@ fn push_span_with_map(
     spans.push(Span::styled(text, style));
 }
 
+/// Debug tag style - dim/muted color to distinguish from actual content
+fn debug_tag_style() -> Style {
+    Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM)
+}
+
+/// Push a debug tag span (no map entries since these aren't real content)
+fn push_debug_tag(spans: &mut Vec<Span<'static>>, map: &mut Vec<Option<usize>>, text: String) {
+    if text.is_empty() {
+        return;
+    }
+    // Debug tags don't map to source positions - they're visual-only
+    for ch in text.chars() {
+        let width = char_width(ch);
+        for _ in 0..width {
+            map.push(None);
+        }
+    }
+    spans.push(Span::styled(text, debug_tag_style()));
+}
+
+/// Context for tracking active spans in debug mode
+#[derive(Default)]
+struct DebugSpanTracker {
+    /// Currently active highlight span (byte range)
+    active_highlight: Option<Range<usize>>,
+    /// Currently active overlay spans (byte ranges)
+    active_overlays: Vec<Range<usize>>,
+}
+
+impl DebugSpanTracker {
+    /// Get opening tags for spans that start at this byte position
+    fn get_opening_tags(
+        &mut self,
+        byte_pos: Option<usize>,
+        highlight_spans: &[crate::primitives::highlighter::HighlightSpan],
+        viewport_overlays: &[(crate::view::overlay::Overlay, Range<usize>)],
+    ) -> Vec<String> {
+        let mut tags = Vec::new();
+
+        if let Some(bp) = byte_pos {
+            // Check if we're entering a new highlight span
+            if let Some(span) = highlight_spans
+                .iter()
+                .find(|s| s.range.start == bp)
+            {
+                tags.push(format!("<hl:{}-{}>", span.range.start, span.range.end));
+                self.active_highlight = Some(span.range.clone());
+            }
+
+            // Check if we're entering new overlay spans
+            for (overlay, range) in viewport_overlays.iter() {
+                if range.start == bp {
+                    let overlay_type = match &overlay.face {
+                        crate::view::overlay::OverlayFace::Underline { .. } => "ul",
+                        crate::view::overlay::OverlayFace::Background { .. } => "bg",
+                        crate::view::overlay::OverlayFace::Foreground { .. } => "fg",
+                        crate::view::overlay::OverlayFace::Style { .. } => "st",
+                    };
+                    tags.push(format!("<{}:{}-{}>", overlay_type, range.start, range.end));
+                    self.active_overlays.push(range.clone());
+                }
+            }
+        }
+
+        tags
+    }
+
+    /// Get closing tags for spans that end at this byte position
+    fn get_closing_tags(
+        &mut self,
+        byte_pos: Option<usize>,
+    ) -> Vec<String> {
+        let mut tags = Vec::new();
+
+        if let Some(bp) = byte_pos {
+            // Check if we're exiting the active highlight span
+            if let Some(ref range) = self.active_highlight {
+                if bp >= range.end {
+                    tags.push("</hl>".to_string());
+                    self.active_highlight = None;
+                }
+            }
+
+            // Check if we're exiting any overlay spans
+            let mut closed_indices = Vec::new();
+            for (i, range) in self.active_overlays.iter().enumerate() {
+                if bp >= range.end {
+                    tags.push("</ov>".to_string());
+                    closed_indices.push(i);
+                }
+            }
+            // Remove closed overlays (in reverse order to preserve indices)
+            for i in closed_indices.into_iter().rev() {
+                self.active_overlays.remove(i);
+            }
+        }
+
+        tags
+    }
+}
+
 /// Processed view data containing display lines from the view pipeline
 struct ViewData {
     /// Display lines with all token information preserved
@@ -2016,6 +2117,13 @@ impl SplitRenderer {
             // Track visible characters separately from byte position for ANSI handling
             let mut visible_char_count = 0usize;
 
+            // Debug mode: track active highlight/overlay spans for WordPerfect-style reveal codes
+            let mut debug_tracker = if state.debug_highlight_mode {
+                Some(DebugSpanTracker::default())
+            } else {
+                None
+            };
+
             let mut chars_iterator = line_content.chars().peekable();
             while let Some(ch) = chars_iterator.next() {
                 // Get source byte for this character using character index
@@ -2160,6 +2268,18 @@ impl SplitRenderer {
                     }
 
                     if !display_char.is_empty() {
+                        // Debug mode: insert opening tags for spans starting at this position
+                        if let Some(ref mut tracker) = debug_tracker {
+                            let opening_tags = tracker.get_opening_tags(
+                                byte_pos,
+                                highlight_spans,
+                                viewport_overlays,
+                            );
+                            for tag in opening_tags {
+                                push_debug_tag(&mut line_spans, &mut line_view_map, tag);
+                            }
+                        }
+
                         push_span_with_map(
                             &mut line_spans,
                             &mut line_view_map,
@@ -2167,6 +2287,17 @@ impl SplitRenderer {
                             style,
                             byte_pos,
                         );
+
+                        // Debug mode: insert closing tags for spans ending at this position
+                        // Check using the NEXT byte position to see if we're leaving a span
+                        if let Some(ref mut tracker) = debug_tracker {
+                            // Look ahead to next byte position to determine closing tags
+                            let next_byte_pos = byte_pos.map(|bp| bp + ch.len_utf8());
+                            let closing_tags = tracker.get_closing_tags(next_byte_pos);
+                            for tag in closing_tags {
+                                push_debug_tag(&mut line_spans, &mut line_view_map, tag);
+                            }
+                        }
                     }
 
                     // Track cursor position for zero-width characters

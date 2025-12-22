@@ -480,6 +480,7 @@ impl Editor {
             Action::ToggleLineNumbers => self.toggle_line_numbers(),
             Action::ToggleMouseCapture => self.toggle_mouse_capture(),
             Action::ToggleMouseHover => self.toggle_mouse_hover(),
+            Action::ToggleDebugHighlights => self.toggle_debug_highlights(),
             // Buffer settings
             Action::SetTabSize => {
                 let current = self

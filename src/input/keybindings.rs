@@ -442,6 +442,7 @@ pub enum Action {
     // View toggles
     ToggleLineNumbers,
     ToggleMouseCapture,
+    ToggleDebugHighlights, // Debug mode: show highlight/overlay byte ranges
     SetBackground,
     SetBackgroundBlend,
 
@@ -746,6 +747,7 @@ impl Action {
 
             "toggle_line_numbers" => Some(Action::ToggleLineNumbers),
             "toggle_mouse_capture" => Some(Action::ToggleMouseCapture),
+            "toggle_debug_highlights" => Some(Action::ToggleDebugHighlights),
             "set_background" => Some(Action::SetBackground),
             "set_background_blend" => Some(Action::SetBackgroundBlend),
             "select_theme" => Some(Action::SelectTheme),
@@ -1679,6 +1681,7 @@ impl KeybindingResolver {
             Action::ToggleMouseHover => "Toggle LSP hover on mouse".to_string(),
             Action::ToggleLineNumbers => "Toggle line numbers".to_string(),
             Action::ToggleMouseCapture => "Toggle mouse support".to_string(),
+            Action::ToggleDebugHighlights => "Toggle debug highlight mode (show byte ranges)".to_string(),
             Action::SetBackground => "Set ANSI background file".to_string(),
             Action::SetBackgroundBlend => "Set background blend ratio".to_string(),
             Action::SetTabSize => "Set tab size for current buffer".to_string(),
