@@ -279,10 +279,13 @@ fn initialize_app(args: &Args) -> io::Result<SetupState> {
     let mut working_dir = None;
     let mut show_file_explorer = false;
 
-    if let Some(first_loc) = file_locations.first() {
-        if first_loc.path.is_dir() {
-            working_dir = Some(first_loc.path.clone());
-            show_file_explorer = true;
+    // Only set working_dir if exactly one parameter is passed and it's a directory
+    if file_locations.len() == 1 {
+        if let Some(first_loc) = file_locations.first() {
+            if first_loc.path.is_dir() {
+                working_dir = Some(first_loc.path.clone());
+                show_file_explorer = true;
+            }
         }
     }
 
@@ -868,8 +871,11 @@ mod tests {
 
         assert_eq!(locs.len(), 3);
         assert_eq!(locs[0].path, PathBuf::from("file1.txt"));
+        assert_eq!(locs[0].line, None);
+        assert_eq!(locs[0].column, None);
         assert_eq!(locs[1].path, PathBuf::from("sub/file2.rs"));
         assert_eq!(locs[1].line, Some(10));
+        assert_eq!(locs[1].column, None);
         assert_eq!(locs[2].path, PathBuf::from("file3.cpp"));
         assert_eq!(locs[2].line, Some(20));
         assert_eq!(locs[2].column, Some(5));
