@@ -703,7 +703,23 @@ pub fn action_to_events(
         Action::MoveLeft => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 // Use prev_char_boundary to ensure we land on a valid UTF-8 character boundary
-                let new_pos = state.buffer.prev_char_boundary(cursor.position);
+                let mut new_pos = state.buffer.prev_char_boundary(cursor.position);
+
+                // In CRLF mode, if we land on \n preceded by \r, skip to the \r
+                // Cursor should never be between \r and \n
+                if state.buffer.line_ending() == LineEnding::CRLF && new_pos > 0 {
+                    let byte_at_pos = state.buffer.slice_bytes(new_pos..new_pos + 1);
+                    if byte_at_pos.first() == Some(&b'\n') {
+                        let prev_byte = state
+                            .buffer
+                            .slice_bytes(new_pos.saturating_sub(1)..new_pos);
+                        if prev_byte.first() == Some(&b'\r') {
+                            // Skip back to \r (the valid end-of-line position)
+                            new_pos -= 1;
+                        }
+                    }
+                }
+
                 // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
                     None
@@ -725,11 +741,27 @@ pub fn action_to_events(
         Action::MoveRight => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
-                // Use next_char_boundary to ensure we land on a valid UTF-8 character boundary
-                let new_pos = state
-                    .buffer
-                    .next_char_boundary(cursor.position)
-                    .min(max_pos);
+
+                // In CRLF mode, if cursor is on \r followed by \n, skip both
+                // This treats \r\n as a unit - cursor goes from \r directly to next line
+                let new_pos = if state.buffer.line_ending() == LineEnding::CRLF {
+                    let cur_byte = state
+                        .buffer
+                        .slice_bytes(cursor.position..cursor.position + 1);
+                    let next_byte = state
+                        .buffer
+                        .slice_bytes(cursor.position + 1..cursor.position + 2);
+                    if cur_byte.first() == Some(&b'\r') && next_byte.first() == Some(&b'\n') {
+                        // Skip both \r and \n
+                        (cursor.position + 2).min(max_pos)
+                    } else {
+                        // Normal movement
+                        state.buffer.next_char_boundary(cursor.position).min(max_pos)
+                    }
+                } else {
+                    state.buffer.next_char_boundary(cursor.position).min(max_pos)
+                };
+
                 // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
                     None
@@ -876,6 +908,8 @@ pub fn action_to_events(
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
                 if let Some((line_start, line_content)) = iter.next() {
+                    // In both LF and CRLF mode, cursor lands at the first byte of line ending
+                    // For LF: cursor on \n. For CRLF: cursor on \r (before both \r\n)
                     let line_end = line_start + content_len_without_line_ending(&line_content);
 
                     // Preserve anchor if deselect_on_move is false (Emacs mark mode)
@@ -1080,7 +1114,22 @@ pub fn action_to_events(
         Action::SelectLeft => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 // Use prev_char_boundary to ensure we land on a valid UTF-8 character boundary
-                let new_pos = state.buffer.prev_char_boundary(cursor.position);
+                let mut new_pos = state.buffer.prev_char_boundary(cursor.position);
+
+                // In CRLF mode, if we land on \n preceded by \r, skip to the \r
+                // Cursor should never be between \r and \n
+                if state.buffer.line_ending() == LineEnding::CRLF && new_pos > 0 {
+                    let byte_at_pos = state.buffer.slice_bytes(new_pos..new_pos + 1);
+                    if byte_at_pos.first() == Some(&b'\n') {
+                        let prev_byte = state
+                            .buffer
+                            .slice_bytes(new_pos.saturating_sub(1)..new_pos);
+                        if prev_byte.first() == Some(&b'\r') {
+                            new_pos -= 1; // Skip back to \r
+                        }
+                    }
+                }
+
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
                 events.push(Event::MoveCursor {
                     cursor_id,
@@ -1097,11 +1146,25 @@ pub fn action_to_events(
         Action::SelectRight => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
-                // Use next_char_boundary to ensure we land on a valid UTF-8 character boundary
-                let new_pos = state
-                    .buffer
-                    .next_char_boundary(cursor.position)
-                    .min(max_pos);
+
+                // In CRLF mode, if cursor is on \r followed by \n, skip both
+                let new_pos = if state.buffer.line_ending() == LineEnding::CRLF {
+                    let cur_byte = state
+                        .buffer
+                        .slice_bytes(cursor.position..cursor.position + 1);
+                    let next_byte = state
+                        .buffer
+                        .slice_bytes(cursor.position + 1..cursor.position + 2);
+                    if cur_byte.first() == Some(&b'\r') && next_byte.first() == Some(&b'\n') {
+                        // Skip both \r and \n
+                        (cursor.position + 2).min(max_pos)
+                    } else {
+                        state.buffer.next_char_boundary(cursor.position).min(max_pos)
+                    }
+                } else {
+                    state.buffer.next_char_boundary(cursor.position).min(max_pos)
+                };
+
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
                 events.push(Event::MoveCursor {
                     cursor_id,
@@ -1212,6 +1275,8 @@ pub fn action_to_events(
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
 
                 if let Some((line_start, line_content)) = iter.next() {
+                    // In both LF and CRLF mode, cursor lands at the first byte of line ending
+                    // For LF: cursor on \n. For CRLF: cursor on \r (before both \r\n)
                     let line_end = line_start + content_len_without_line_ending(&line_content);
 
                     events.push(Event::MoveCursor {

@@ -1146,20 +1146,27 @@ impl SplitRenderer {
             if let Some((line_start, line_content)) = iter.next() {
                 let mut byte_offset = 0usize;
                 let content_bytes = line_content.as_bytes();
+                let mut skip_next_lf = false; // Track if we should skip \n after \r in CRLF
                 for ch in line_content.chars() {
                     let ch_len = ch.len_utf8();
                     let source_offset = Some(line_start + byte_offset);
 
                     match ch {
                         '\r' => {
-                            // Only skip \r if:
-                            // 1. The file is detected as CRLF, AND
-                            // 2. The \r is followed by \n
+                            // In CRLF mode with \r\n: emit Newline at \r position, skip the \n
+                            // This allows cursor at \r (end of line) to be visible
                             // In LF/Unix files, ANY \r is unusual and should be shown as <0D>
                             let is_crlf_file = line_ending == LineEnding::CRLF;
                             let next_byte = content_bytes.get(byte_offset + 1);
                             if is_crlf_file && next_byte == Some(&b'\n') {
-                                // CRLF file with \r\n - skip the \r, \n will be processed next
+                                // CRLF: emit Newline token at \r position for cursor visibility
+                                tokens.push(ViewTokenWire {
+                                    source_offset,
+                                    kind: ViewTokenWireKind::Newline,
+                                    style: None,
+                                });
+                                // Mark to skip the following \n in the char iterator
+                                skip_next_lf = true;
                                 byte_offset += ch_len;
                                 continue;
                             }
@@ -1169,6 +1176,12 @@ impl SplitRenderer {
                                 kind: ViewTokenWireKind::BinaryByte(ch as u8),
                                 style: None,
                             });
+                        }
+                        '\n' if skip_next_lf => {
+                            // Skip \n that follows \r in CRLF mode (already emitted Newline at \r)
+                            skip_next_lf = false;
+                            byte_offset += ch_len;
+                            continue;
                         }
                         '\n' => {
                             tokens.push(ViewTokenWire {
