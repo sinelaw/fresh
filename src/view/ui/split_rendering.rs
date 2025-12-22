@@ -50,7 +50,9 @@ fn push_span_with_map(
 
 /// Debug tag style - dim/muted color to distinguish from actual content
 fn debug_tag_style() -> Style {
-    Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM)
+    Style::default()
+        .fg(Color::DarkGray)
+        .add_modifier(Modifier::DIM)
 }
 
 /// Push a debug tag span (no map entries since these aren't real content)
@@ -89,10 +91,7 @@ impl DebugSpanTracker {
 
         if let Some(bp) = byte_pos {
             // Check if we're entering a new highlight span
-            if let Some(span) = highlight_spans
-                .iter()
-                .find(|s| s.range.start == bp)
-            {
+            if let Some(span) = highlight_spans.iter().find(|s| s.range.start == bp) {
                 tags.push(format!("<hl:{}-{}>", span.range.start, span.range.end));
                 self.active_highlight = Some(span.range.clone());
             }
@@ -116,10 +115,7 @@ impl DebugSpanTracker {
     }
 
     /// Get closing tags for spans that end at this byte position
-    fn get_closing_tags(
-        &mut self,
-        byte_pos: Option<usize>,
-    ) -> Vec<String> {
+    fn get_closing_tags(&mut self, byte_pos: Option<usize>) -> Vec<String> {
         let mut tags = Vec::new();
 
         if let Some(bp) = byte_pos {
@@ -3714,9 +3710,9 @@ mod tests {
 
         let tokens = SplitRenderer::build_base_tokens_for_hook(
             &mut buffer,
-            0,   // top_byte
-            80,  // estimated_line_length
-            10,  // visible_count
+            0,     // top_byte
+            80,    // estimated_line_length
+            10,    // visible_count
             false, // is_binary
             LineEnding::CRLF,
         );
@@ -3726,12 +3722,16 @@ mod tests {
         // Should have: Text("abc") at 0, Newline at 3
         // The \n at byte 4 should be skipped
         assert!(
-            offsets.iter().any(|(kind, off)| kind == "Text(abc)" && *off == Some(0)),
+            offsets
+                .iter()
+                .any(|(kind, off)| kind == "Text(abc)" && *off == Some(0)),
             "Expected Text(abc) at offset 0, got: {:?}",
             offsets
         );
         assert!(
-            offsets.iter().any(|(kind, off)| kind == "Newline" && *off == Some(3)),
+            offsets
+                .iter()
+                .any(|(kind, off)| kind == "Newline" && *off == Some(3)),
             "Expected Newline at offset 3 (\\r position), got: {:?}",
             offsets
         );
@@ -3775,36 +3775,48 @@ mod tests {
 
         // Verify line 1 tokens
         assert!(
-            offsets.iter().any(|(kind, off)| kind == "Text(abc)" && *off == Some(0)),
+            offsets
+                .iter()
+                .any(|(kind, off)| kind == "Text(abc)" && *off == Some(0)),
             "Line 1: Expected Text(abc) at 0, got: {:?}",
             offsets
         );
         assert!(
-            offsets.iter().any(|(kind, off)| kind == "Newline" && *off == Some(3)),
+            offsets
+                .iter()
+                .any(|(kind, off)| kind == "Newline" && *off == Some(3)),
             "Line 1: Expected Newline at 3, got: {:?}",
             offsets
         );
 
         // Verify line 2 tokens - THIS IS WHERE OFFSET DRIFT WOULD APPEAR
         assert!(
-            offsets.iter().any(|(kind, off)| kind == "Text(def)" && *off == Some(5)),
+            offsets
+                .iter()
+                .any(|(kind, off)| kind == "Text(def)" && *off == Some(5)),
             "Line 2: Expected Text(def) at 5, got: {:?}",
             offsets
         );
         assert!(
-            offsets.iter().any(|(kind, off)| kind == "Newline" && *off == Some(8)),
+            offsets
+                .iter()
+                .any(|(kind, off)| kind == "Newline" && *off == Some(8)),
             "Line 2: Expected Newline at 8, got: {:?}",
             offsets
         );
 
         // Verify line 3 tokens - DRIFT ACCUMULATES HERE
         assert!(
-            offsets.iter().any(|(kind, off)| kind == "Text(ghi)" && *off == Some(10)),
+            offsets
+                .iter()
+                .any(|(kind, off)| kind == "Text(ghi)" && *off == Some(10)),
             "Line 3: Expected Text(ghi) at 10, got: {:?}",
             offsets
         );
         assert!(
-            offsets.iter().any(|(kind, off)| kind == "Newline" && *off == Some(13)),
+            offsets
+                .iter()
+                .any(|(kind, off)| kind == "Newline" && *off == Some(13)),
             "Line 3: Expected Newline at 13, got: {:?}",
             offsets
         );
@@ -3838,19 +3850,27 @@ mod tests {
 
         // Verify LF offsets
         assert!(
-            offsets.iter().any(|(kind, off)| kind == "Text(abc)" && *off == Some(0)),
+            offsets
+                .iter()
+                .any(|(kind, off)| kind == "Text(abc)" && *off == Some(0)),
             "LF Line 1: Expected Text(abc) at 0"
         );
         assert!(
-            offsets.iter().any(|(kind, off)| kind == "Newline" && *off == Some(3)),
+            offsets
+                .iter()
+                .any(|(kind, off)| kind == "Newline" && *off == Some(3)),
             "LF Line 1: Expected Newline at 3"
         );
         assert!(
-            offsets.iter().any(|(kind, off)| kind == "Text(def)" && *off == Some(4)),
+            offsets
+                .iter()
+                .any(|(kind, off)| kind == "Text(def)" && *off == Some(4)),
             "LF Line 2: Expected Text(def) at 4"
         );
         assert!(
-            offsets.iter().any(|(kind, off)| kind == "Newline" && *off == Some(7)),
+            offsets
+                .iter()
+                .any(|(kind, off)| kind == "Newline" && *off == Some(7)),
             "LF Line 2: Expected Newline at 7"
         );
     }
@@ -3908,12 +3928,16 @@ mod tests {
         // Text("def") at 5, Newline at 8
         // Text("ghi") at 10, Newline at 13
         assert!(
-            offsets.iter().any(|(kind, off)| kind == "Text(def)" && *off == Some(5)),
+            offsets
+                .iter()
+                .any(|(kind, off)| kind == "Text(def)" && *off == Some(5)),
             "Starting from byte 5: Expected Text(def) at 5, got: {:?}",
             offsets
         );
         assert!(
-            offsets.iter().any(|(kind, off)| kind == "Text(ghi)" && *off == Some(10)),
+            offsets
+                .iter()
+                .any(|(kind, off)| kind == "Text(ghi)" && *off == Some(10)),
             "Starting from byte 5: Expected Text(ghi) at 10, got: {:?}",
             offsets
         );
@@ -3953,30 +3977,68 @@ mod tests {
 
         // Step 3: Verify char_source_bytes mapping for each line
         // Line 1: "int x;\n" displayed, maps to bytes 0-6
-        eprintln!("Line 1 char_source_bytes: {:?}", view_lines[0].char_source_bytes);
+        eprintln!(
+            "Line 1 char_source_bytes: {:?}",
+            view_lines[0].char_source_bytes
+        );
         assert_eq!(
             view_lines[0].char_source_bytes.len(),
             7,
             "Line 1 should have 7 chars: 'i','n','t',' ','x',';','\\n'"
         );
         // Check specific mappings
-        assert_eq!(view_lines[0].char_source_bytes[0], Some(0), "Line 1 'i' -> byte 0");
-        assert_eq!(view_lines[0].char_source_bytes[4], Some(4), "Line 1 'x' -> byte 4");
-        assert_eq!(view_lines[0].char_source_bytes[5], Some(5), "Line 1 ';' -> byte 5");
-        assert_eq!(view_lines[0].char_source_bytes[6], Some(6), "Line 1 newline -> byte 6 (\\r pos)");
+        assert_eq!(
+            view_lines[0].char_source_bytes[0],
+            Some(0),
+            "Line 1 'i' -> byte 0"
+        );
+        assert_eq!(
+            view_lines[0].char_source_bytes[4],
+            Some(4),
+            "Line 1 'x' -> byte 4"
+        );
+        assert_eq!(
+            view_lines[0].char_source_bytes[5],
+            Some(5),
+            "Line 1 ';' -> byte 5"
+        );
+        assert_eq!(
+            view_lines[0].char_source_bytes[6],
+            Some(6),
+            "Line 1 newline -> byte 6 (\\r pos)"
+        );
 
         // Line 2: "int y;\n" displayed, maps to bytes 8-14
-        eprintln!("Line 2 char_source_bytes: {:?}", view_lines[1].char_source_bytes);
+        eprintln!(
+            "Line 2 char_source_bytes: {:?}",
+            view_lines[1].char_source_bytes
+        );
         assert_eq!(
             view_lines[1].char_source_bytes.len(),
             7,
             "Line 2 should have 7 chars: 'i','n','t',' ','y',';','\\n'"
         );
         // Check specific mappings - THIS IS WHERE DRIFT WOULD SHOW
-        assert_eq!(view_lines[1].char_source_bytes[0], Some(8), "Line 2 'i' -> byte 8");
-        assert_eq!(view_lines[1].char_source_bytes[4], Some(12), "Line 2 'y' -> byte 12");
-        assert_eq!(view_lines[1].char_source_bytes[5], Some(13), "Line 2 ';' -> byte 13");
-        assert_eq!(view_lines[1].char_source_bytes[6], Some(14), "Line 2 newline -> byte 14 (\\r pos)");
+        assert_eq!(
+            view_lines[1].char_source_bytes[0],
+            Some(8),
+            "Line 2 'i' -> byte 8"
+        );
+        assert_eq!(
+            view_lines[1].char_source_bytes[4],
+            Some(12),
+            "Line 2 'y' -> byte 12"
+        );
+        assert_eq!(
+            view_lines[1].char_source_bytes[5],
+            Some(13),
+            "Line 2 ';' -> byte 13"
+        );
+        assert_eq!(
+            view_lines[1].char_source_bytes[6],
+            Some(14),
+            "Line 2 newline -> byte 14 (\\r pos)"
+        );
 
         // Step 4: Simulate highlight span lookup
         // If TreeSitter highlights "int" as keyword (bytes 0-3 for line 1, bytes 8-11 for line 2),

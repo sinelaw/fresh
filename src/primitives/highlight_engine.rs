@@ -18,12 +18,154 @@
 
 use crate::model::buffer::Buffer;
 use crate::primitives::grammar_registry::GrammarRegistry;
-use crate::primitives::highlighter::{HighlightSpan, Highlighter, Language};
+use crate::primitives::highlighter::{HighlightCategory, HighlightSpan, Highlighter, Language};
 use crate::view::theme::Theme;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 use syntect::parsing::SyntaxSet;
+
+/// Map TextMate scope to highlight category
+fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
+    let scope_lower = scope.to_lowercase();
+
+    // Comments - highest priority
+    if scope_lower.starts_with("comment") {
+        return Some(HighlightCategory::Comment);
+    }
+
+    // Strings
+    if scope_lower.starts_with("string") {
+        return Some(HighlightCategory::String);
+    }
+
+    // Markdown/markup scopes - handle before generic keyword/punctuation checks
+    // See: https://macromates.com/manual/en/language_grammars (TextMate scope naming)
+    // Headings: markup.heading and entity.name.section (used by syntect's markdown grammar)
+    if scope_lower.starts_with("markup.heading") || scope_lower.starts_with("entity.name.section") {
+        return Some(HighlightCategory::Keyword); // Headers styled like keywords (bold, prominent)
+    }
+    // Bold: markup.bold
+    if scope_lower.starts_with("markup.bold") {
+        return Some(HighlightCategory::Constant); // Bold styled like constants (bright)
+    }
+    // Italic: markup.italic
+    if scope_lower.starts_with("markup.italic") {
+        return Some(HighlightCategory::Variable); // Italic styled like variables
+    }
+    // Inline code and code blocks: markup.raw, markup.inline.raw
+    if scope_lower.starts_with("markup.raw") || scope_lower.starts_with("markup.inline.raw") {
+        return Some(HighlightCategory::String); // Code styled like strings
+    }
+    // Links: markup.underline.link
+    if scope_lower.starts_with("markup.underline.link") {
+        return Some(HighlightCategory::Function); // Links styled like functions (distinct color)
+    }
+    // Generic underline (often links)
+    if scope_lower.starts_with("markup.underline") {
+        return Some(HighlightCategory::Function);
+    }
+    // Block quotes: markup.quote
+    if scope_lower.starts_with("markup.quote") {
+        return Some(HighlightCategory::Comment); // Quotes styled like comments (subdued)
+    }
+    // Lists: markup.list
+    if scope_lower.starts_with("markup.list") {
+        return Some(HighlightCategory::Operator); // List markers styled like operators
+    }
+    // Strikethrough: markup.strikethrough
+    if scope_lower.starts_with("markup.strikethrough") {
+        return Some(HighlightCategory::Comment); // Strikethrough styled subdued
+    }
+
+    // Keywords
+    if scope_lower.starts_with("keyword.control")
+        || scope_lower.starts_with("keyword.other")
+        || scope_lower.starts_with("keyword.declaration")
+        || scope_lower.starts_with("keyword")
+    {
+        // keyword.operator should map to Operator, not Keyword
+        if !scope_lower.starts_with("keyword.operator") {
+            return Some(HighlightCategory::Keyword);
+        }
+    }
+
+    // Operators (including keyword.operator)
+    if scope_lower.starts_with("keyword.operator") || scope_lower.starts_with("punctuation") {
+        return Some(HighlightCategory::Operator);
+    }
+
+    // Functions
+    if scope_lower.starts_with("entity.name.function")
+        || scope_lower.starts_with("support.function")
+        || scope_lower.starts_with("meta.function-call")
+        || scope_lower.starts_with("variable.function")
+    {
+        return Some(HighlightCategory::Function);
+    }
+
+    // Types
+    if scope_lower.starts_with("entity.name.type")
+        || scope_lower.starts_with("entity.name.class")
+        || scope_lower.starts_with("entity.name.struct")
+        || scope_lower.starts_with("entity.name.enum")
+        || scope_lower.starts_with("entity.name.interface")
+        || scope_lower.starts_with("entity.name.trait")
+        || scope_lower.starts_with("support.type")
+        || scope_lower.starts_with("support.class")
+        || scope_lower.starts_with("storage.type")
+    {
+        return Some(HighlightCategory::Type);
+    }
+
+    // Storage modifiers (pub, static, const as keywords)
+    if scope_lower.starts_with("storage.modifier") {
+        return Some(HighlightCategory::Keyword);
+    }
+
+    // Constants and numbers
+    if scope_lower.starts_with("constant.numeric")
+        || scope_lower.starts_with("constant.language.boolean")
+    {
+        return Some(HighlightCategory::Number);
+    }
+    if scope_lower.starts_with("constant") {
+        return Some(HighlightCategory::Constant);
+    }
+
+    // Variables
+    if scope_lower.starts_with("variable.parameter")
+        || scope_lower.starts_with("variable.other")
+        || scope_lower.starts_with("variable.language")
+    {
+        return Some(HighlightCategory::Variable);
+    }
+
+    // Properties / object keys
+    if scope_lower.starts_with("entity.name.tag")
+        || scope_lower.starts_with("support.other.property")
+        || scope_lower.starts_with("meta.object-literal.key")
+        || scope_lower.starts_with("variable.other.property")
+        || scope_lower.starts_with("variable.other.object.property")
+    {
+        return Some(HighlightCategory::Property);
+    }
+
+    // Attributes (decorators, annotations)
+    if scope_lower.starts_with("entity.other.attribute")
+        || scope_lower.starts_with("meta.attribute")
+        || scope_lower.starts_with("entity.name.decorator")
+    {
+        return Some(HighlightCategory::Attribute);
+    }
+
+    // Generic variable fallback
+    if scope_lower.starts_with("variable") {
+        return Some(HighlightCategory::Variable);
+    }
+
+    None
+}
 
 /// Preference for which highlighting backend to use
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -162,31 +304,77 @@ impl TextMateEngine {
             Err(_) => return Vec::new(),
         };
 
-        // Parse line by line
+        // Parse line by line - manually track line boundaries to handle CRLF correctly
+        // str::lines() strips both \n and \r\n, losing the distinction
+        let content_bytes = content_str.as_bytes();
+        let mut pos = 0;
         let mut current_offset = parse_start;
         let mut current_scopes = ScopeStack::new();
 
-        for line in content_str.lines() {
-            let line_with_newline = if current_offset + line.len() < parse_end {
-                format!("{}\n", line)
-            } else {
-                line.to_string()
+        while pos < content_bytes.len() {
+            let line_start = pos;
+            let mut line_end = pos;
+
+            // Scan for line ending (find \n or \r\n or end of content)
+            while line_end < content_bytes.len() {
+                if content_bytes[line_end] == b'\n' {
+                    line_end += 1;
+                    break;
+                } else if content_bytes[line_end] == b'\r' {
+                    if line_end + 1 < content_bytes.len() && content_bytes[line_end + 1] == b'\n' {
+                        line_end += 2; // CRLF
+                    } else {
+                        line_end += 1; // CR only
+                    }
+                    break;
+                }
+                line_end += 1;
+            }
+
+            // Get the line content and actual byte length
+            let line_bytes = &content_bytes[line_start..line_end];
+            let actual_line_byte_len = line_bytes.len();
+
+            // Create line string for syntect - strip CR if present, ensure single \n
+            let line_str = match std::str::from_utf8(line_bytes) {
+                Ok(s) => s,
+                Err(_) => {
+                    pos = line_end;
+                    current_offset += actual_line_byte_len;
+                    continue;
+                }
             };
 
-            let ops = match state.parse_line(&line_with_newline, &self.syntax_set) {
+            // Remove trailing \r\n or \n, then add single \n for syntect
+            let line_content = line_str.trim_end_matches(&['\r', '\n'][..]);
+            let line_for_syntect = if line_end < content_bytes.len() || line_str.ends_with('\n') {
+                format!("{}\n", line_content)
+            } else {
+                line_content.to_string()
+            };
+
+            let ops = match state.parse_line(&line_for_syntect, &self.syntax_set) {
                 Ok(ops) => ops,
-                Err(_) => continue, // Skip lines that fail to parse
+                Err(_) => {
+                    pos = line_end;
+                    current_offset += actual_line_byte_len;
+                    continue;
+                }
             };
 
             // Convert operations to spans
-            let mut char_offset = 0;
+            // Note: syntect offsets are relative to line_for_syntect, but we need
+            // to map them to the actual buffer positions
+            let mut syntect_offset = 0;
+            let line_content_len = line_content.len();
 
-            // ops is Vec<(usize, ScopeStackOp)>
             for (op_offset, op) in ops {
-                if op_offset > char_offset {
+                // Handle any text before this operation (but only within content, not newline)
+                let clamped_op_offset = op_offset.min(line_content_len);
+                if clamped_op_offset > syntect_offset {
                     if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
-                        let byte_start = current_offset + char_offset;
-                        let byte_end = current_offset + op_offset;
+                        let byte_start = current_offset + syntect_offset;
+                        let byte_end = current_offset + clamped_op_offset;
                         if byte_start < byte_end {
                             spans.push(CachedSpan {
                                 range: byte_start..byte_end,
@@ -195,23 +383,28 @@ impl TextMateEngine {
                         }
                     }
                 }
-                char_offset = op_offset;
+                syntect_offset = clamped_op_offset;
 
                 let _ = current_scopes.apply(&op);
             }
 
-            // Handle remaining text
-            let line_len = line_with_newline.len();
-            if char_offset < line_len {
+            // Handle remaining text on line (content only, not line ending)
+            if syntect_offset < line_content_len {
                 if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
-                    spans.push(CachedSpan {
-                        range: (current_offset + char_offset)..(current_offset + line_len),
-                        category,
-                    });
+                    let byte_start = current_offset + syntect_offset;
+                    let byte_end = current_offset + line_content_len;
+                    if byte_start < byte_end {
+                        spans.push(CachedSpan {
+                            range: byte_start..byte_end,
+                            category,
+                        });
+                    }
                 }
             }
 
-            current_offset += line_len;
+            // Advance by actual byte length (including real line terminator)
+            pos = line_end;
+            current_offset += actual_line_byte_len;
         }
 
         // Merge adjacent spans
@@ -236,11 +429,7 @@ impl TextMateEngine {
     }
 
     /// Map scope stack to highlight category
-    fn scope_stack_to_category(
-        scopes: &syntect::parsing::ScopeStack,
-    ) -> Option<crate::primitives::highlighter::HighlightCategory> {
-        use crate::primitives::textmate_highlighter::scope_to_category;
-
+    fn scope_stack_to_category(scopes: &syntect::parsing::ScopeStack) -> Option<HighlightCategory> {
         for scope in scopes.as_slice().iter().rev() {
             let scope_str = scope.build_string();
             if let Some(cat) = scope_to_category(&scope_str) {
@@ -537,6 +726,75 @@ mod tests {
             // Small context_bytes so parse_start remains > 0
             let spans = tm.highlight_viewport(&buffer, 100, 200, &theme, 10);
             assert!(spans.is_empty());
+        }
+    }
+
+    /// Test that TextMateEngine produces correct byte offsets for CRLF content.
+    /// This is a regression test for a bug where using str::lines() caused 1-byte
+    /// offset drift per line because it strips line terminators.
+    #[test]
+    fn test_textmate_engine_crlf_byte_offsets() {
+        let registry = GrammarRegistry::load();
+
+        let mut engine = HighlightEngine::for_file(Path::new("test.java"), &registry);
+
+        // Create CRLF content with keywords on each line
+        // Each "public" keyword should be highlighted at byte positions:
+        // Line 1: "public" at bytes 0-5
+        // Line 2: "public" at bytes 8-13 (after "public\r\n" = 8 bytes)
+        // Line 3: "public" at bytes 16-21 (after two "public\r\n" = 16 bytes)
+        let content = b"public\r\npublic\r\npublic\r\n";
+        let buffer = Buffer::from_bytes(content.to_vec());
+        let theme = Theme::default();
+
+        if let HighlightEngine::TextMate(ref mut tm) = engine {
+            // Highlight the entire content
+            let spans = tm.highlight_viewport(&buffer, 0, content.len(), &theme, 0);
+
+            // Find spans that cover keyword positions
+            // The keyword "public" should have spans at these byte ranges:
+            // Line 1: 0..6
+            // Line 2: 8..14 (NOT 7..13 which would be the buggy offset)
+            // Line 3: 16..22 (NOT 14..20 which would be the buggy offset)
+
+            eprintln!(
+                "Spans: {:?}",
+                spans.iter().map(|s| &s.range).collect::<Vec<_>>()
+            );
+
+            // Check that we have spans covering the correct positions
+            let has_span_at = |start: usize, end: usize| -> bool {
+                spans
+                    .iter()
+                    .any(|s| s.range.start <= start && s.range.end >= end)
+            };
+
+            // Line 1: "public" at bytes 0-6
+            assert!(
+                has_span_at(0, 6),
+                "Should have span covering bytes 0-6 (line 1 'public'). Spans: {:?}",
+                spans.iter().map(|s| &s.range).collect::<Vec<_>>()
+            );
+
+            // Line 2: "public" at bytes 8-14 (after "public\r\n")
+            // If buggy, would be at 7-13
+            assert!(
+                has_span_at(8, 14),
+                "Should have span covering bytes 8-14 (line 2 'public'). \
+                 If this fails, CRLF offset drift is occurring. Spans: {:?}",
+                spans.iter().map(|s| &s.range).collect::<Vec<_>>()
+            );
+
+            // Line 3: "public" at bytes 16-22 (after two "public\r\n")
+            // If buggy, would be at 14-20
+            assert!(
+                has_span_at(16, 22),
+                "Should have span covering bytes 16-22 (line 3 'public'). \
+                 If this fails, CRLF offset drift is occurring. Spans: {:?}",
+                spans.iter().map(|s| &s.range).collect::<Vec<_>>()
+            );
+        } else {
+            panic!("Expected TextMate engine for .java file");
         }
     }
 }
