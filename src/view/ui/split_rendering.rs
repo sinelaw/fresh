@@ -3770,4 +3770,97 @@ mod tests {
             offsets
         );
     }
+
+    /// End-to-end test: verify full pipeline from CRLF buffer to ViewLine to highlighting lookup
+    /// This test simulates the complete flow that would trigger the offset drift bug.
+    #[test]
+    fn test_crlf_highlight_span_lookup() {
+        use crate::view::ui::view_pipeline::ViewLineIterator;
+
+        // Simulate Java-like CRLF content:
+        // "int x;\r\nint y;\r\n"
+        // Bytes: i=0, n=1, t=2, ' '=3, x=4, ;=5, \r=6, \n=7,
+        //        i=8, n=9, t=10, ' '=11, y=12, ;=13, \r=14, \n=15
+        let content = b"int x;\r\nint y;\r\n";
+        let mut buffer = Buffer::from_bytes(content.to_vec());
+        buffer.set_line_ending(LineEnding::CRLF);
+
+        // Step 1: Generate tokens
+        let tokens = SplitRenderer::build_base_tokens_for_hook(
+            &mut buffer,
+            0,
+            80,
+            10,
+            false,
+            LineEnding::CRLF,
+        );
+
+        // Verify tokens have correct offsets
+        let offsets = extract_token_offsets(&tokens);
+        eprintln!("Tokens: {:?}", offsets);
+
+        // Step 2: Convert tokens to ViewLines
+        let view_lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+        assert_eq!(view_lines.len(), 2, "Should have 2 view lines");
+
+        // Step 3: Verify char_source_bytes mapping for each line
+        // Line 1: "int x;\n" displayed, maps to bytes 0-6
+        eprintln!("Line 1 char_source_bytes: {:?}", view_lines[0].char_source_bytes);
+        assert_eq!(
+            view_lines[0].char_source_bytes.len(),
+            7,
+            "Line 1 should have 7 chars: 'i','n','t',' ','x',';','\\n'"
+        );
+        // Check specific mappings
+        assert_eq!(view_lines[0].char_source_bytes[0], Some(0), "Line 1 'i' -> byte 0");
+        assert_eq!(view_lines[0].char_source_bytes[4], Some(4), "Line 1 'x' -> byte 4");
+        assert_eq!(view_lines[0].char_source_bytes[5], Some(5), "Line 1 ';' -> byte 5");
+        assert_eq!(view_lines[0].char_source_bytes[6], Some(6), "Line 1 newline -> byte 6 (\\r pos)");
+
+        // Line 2: "int y;\n" displayed, maps to bytes 8-14
+        eprintln!("Line 2 char_source_bytes: {:?}", view_lines[1].char_source_bytes);
+        assert_eq!(
+            view_lines[1].char_source_bytes.len(),
+            7,
+            "Line 2 should have 7 chars: 'i','n','t',' ','y',';','\\n'"
+        );
+        // Check specific mappings - THIS IS WHERE DRIFT WOULD SHOW
+        assert_eq!(view_lines[1].char_source_bytes[0], Some(8), "Line 2 'i' -> byte 8");
+        assert_eq!(view_lines[1].char_source_bytes[4], Some(12), "Line 2 'y' -> byte 12");
+        assert_eq!(view_lines[1].char_source_bytes[5], Some(13), "Line 2 ';' -> byte 13");
+        assert_eq!(view_lines[1].char_source_bytes[6], Some(14), "Line 2 newline -> byte 14 (\\r pos)");
+
+        // Step 4: Simulate highlight span lookup
+        // If TreeSitter highlights "int" as keyword (bytes 0-3 for line 1, bytes 8-11 for line 2),
+        // the lookup should find these correctly.
+        let simulated_highlight_spans = vec![
+            // "int" on line 1: bytes 0-3
+            (0usize..3usize, "keyword"),
+            // "int" on line 2: bytes 8-11
+            (8usize..11usize, "keyword"),
+        ];
+
+        // Verify that looking up byte positions from char_source_bytes finds the right spans
+        for (line_idx, view_line) in view_lines.iter().enumerate() {
+            for (char_idx, byte_pos) in view_line.char_source_bytes.iter().enumerate() {
+                if let Some(bp) = byte_pos {
+                    let in_span = simulated_highlight_spans
+                        .iter()
+                        .find(|(range, _)| range.contains(bp))
+                        .map(|(_, name)| *name);
+
+                    // First 3 chars of each line should be in keyword span
+                    let expected_in_keyword = char_idx < 3;
+                    let actually_in_keyword = in_span == Some("keyword");
+
+                    if expected_in_keyword != actually_in_keyword {
+                        panic!(
+                            "CRLF offset drift detected! Line {} char {} (byte {}): expected keyword={}, got keyword={}",
+                            line_idx + 1, char_idx, bp, expected_in_keyword, actually_in_keyword
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
