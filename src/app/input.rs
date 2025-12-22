@@ -493,6 +493,9 @@ impl Editor {
                     current,
                 );
             }
+            Action::SetLineEnding => {
+                self.start_set_line_ending_prompt();
+            }
             Action::ToggleIndentationStyle => {
                 if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
                     state.use_tabs = !state.use_tabs;
@@ -1691,6 +1694,58 @@ impl Editor {
         }
 
         Ok(())
+    }
+
+    /// Start the line ending selection prompt
+    fn start_set_line_ending_prompt(&mut self) {
+        use crate::model::buffer::LineEnding;
+
+        let current_line_ending = self.active_state().buffer.line_ending();
+
+        let options = [
+            (LineEnding::LF, "LF", "Unix/Linux/Mac"),
+            (LineEnding::CRLF, "CRLF", "Windows"),
+            (LineEnding::CR, "CR", "Classic Mac"),
+        ];
+
+        let current_index = options
+            .iter()
+            .position(|(le, _, _)| *le == current_line_ending)
+            .unwrap_or(0);
+
+        let suggestions: Vec<crate::input::commands::Suggestion> = options
+            .iter()
+            .map(|(le, name, desc)| {
+                let is_current = *le == current_line_ending;
+                crate::input::commands::Suggestion {
+                    text: format!("{} ({})", name, desc),
+                    description: if is_current {
+                        Some("current".to_string())
+                    } else {
+                        None
+                    },
+                    value: Some(name.to_string()),
+                    disabled: false,
+                    keybinding: None,
+                    source: None,
+                }
+            })
+            .collect();
+
+        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+            "Line ending: ".to_string(),
+            PromptType::SetLineEnding,
+            suggestions,
+        ));
+
+        if let Some(prompt) = self.prompt.as_mut() {
+            if !prompt.suggestions.is_empty() {
+                prompt.selected_suggestion = Some(current_index);
+                let (_, name, desc) = options[current_index];
+                prompt.input = format!("{} ({})", name, desc);
+                prompt.cursor_pos = prompt.input.len();
+            }
+        }
     }
 
     /// Start the theme selection prompt with available themes

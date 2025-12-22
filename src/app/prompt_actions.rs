@@ -247,6 +247,9 @@ impl Editor {
             PromptType::SetTabSize => {
                 self.handle_set_tab_size(&input);
             }
+            PromptType::SetLineEnding => {
+                self.handle_set_line_ending(&input);
+            }
         }
         PromptResult::Done
     }
@@ -375,6 +378,32 @@ impl Editor {
             }
             Err(_) => {
                 self.set_status_message(format!("Invalid tab size: {}", input));
+            }
+        }
+    }
+
+    /// Handle SetLineEnding prompt confirmation.
+    fn handle_set_line_ending(&mut self, input: &str) {
+        use crate::model::buffer::LineEnding;
+
+        // Extract the line ending code from the input (e.g., "LF" from "LF (Unix/Linux/Mac)")
+        let trimmed = input.trim();
+        let code = trimmed.split_whitespace().next().unwrap_or(trimmed);
+
+        let line_ending = match code.to_uppercase().as_str() {
+            "LF" => Some(LineEnding::LF),
+            "CRLF" => Some(LineEnding::CRLF),
+            "CR" => Some(LineEnding::CR),
+            _ => None,
+        };
+
+        match line_ending {
+            Some(le) => {
+                self.active_state_mut().buffer.set_line_ending(le);
+                self.set_status_message(format!("Line ending set to {}", le.display_name()));
+            }
+            None => {
+                self.set_status_message(format!("Unknown line ending: {}", input));
             }
         }
     }

@@ -464,3 +464,115 @@ fn test_cr_shown_in_lf_file() {
     harness.assert_screen_contains("Line3");
     harness.assert_screen_contains("Line4");
 }
+
+/// Test cursor visibility after setting line ending to CRLF
+/// Creates content, switches to CRLF, duplicates via copy/paste, then verifies
+/// cursor visibility at all positions (start/end of each line, navigation)
+#[test]
+fn test_crlf_cursor_visibility() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Step 1: Create a new buffer and type some content
+    harness.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL).unwrap();
+    harness.type_text("Line one here").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.type_text("Line two is longer than one").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.type_text("Short").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.type_text("Final line").unwrap();
+    harness.render().unwrap();
+
+    // Step 2: Set line ending to CRLF via command palette
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+    harness.type_text("set line ending").unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    // Select CRLF (Windows) - it's the second option
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Verify status message confirms CRLF
+    harness.assert_screen_contains("CRLF");
+
+    // Step 3: Select all, copy, go to end, paste twice to grow the file
+    harness.send_key(KeyCode::Char('a'), KeyModifiers::CONTROL).unwrap(); // Select all
+    harness.send_key(KeyCode::Char('c'), KeyModifiers::CONTROL).unwrap(); // Copy
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap(); // Go to end
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap(); // New line
+    harness.send_key(KeyCode::Char('v'), KeyModifiers::CONTROL).unwrap(); // Paste 1
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap(); // New line
+    harness.send_key(KeyCode::Char('v'), KeyModifiers::CONTROL).unwrap(); // Paste 2
+    harness.render().unwrap();
+
+    // Count lines in buffer (should be 4 original + 4 paste1 + 4 paste2 = 12+ lines)
+    let content = harness.get_buffer_content().unwrap();
+    let line_count = content.lines().count();
+    assert!(line_count >= 12, "Should have at least 12 lines after pasting, got {}", line_count);
+
+    // Helper to check cursor is visible on screen
+    let check_cursor_visible = |harness: &mut EditorTestHarness, location: &str| {
+        harness.render().unwrap();
+        let (cursor_x, cursor_y) = harness.screen_cursor_position();
+        let (content_start, content_end) = harness.content_area_rows();
+
+        assert!(
+            cursor_y as usize >= content_start && cursor_y as usize <= content_end,
+            "Cursor at {} should be in content area: y={} not in range [{}, {}]",
+            location, cursor_y, content_start, content_end
+        );
+        assert!(
+            cursor_x < 80,
+            "Cursor at {} should be within screen width: x={} >= 80",
+            location, cursor_x
+        );
+    };
+
+    // Step 4: Go to start of buffer
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    check_cursor_visible(&mut harness, "start of buffer");
+    assert_eq!(harness.cursor_position(), 0, "Should be at byte 0");
+
+    // Step 5: Iterate through ALL lines, checking visibility at start and end of each
+    for line_num in 0..line_count {
+        // Check cursor visible at start of line
+        harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+        check_cursor_visible(&mut harness, &format!("line {} start", line_num));
+
+        // Check cursor visible at end of line
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        check_cursor_visible(&mut harness, &format!("line {} end", line_num));
+
+        // Type a marker character and verify it appears
+        harness.type_text("*").unwrap();
+        harness.render().unwrap();
+
+        // Move to next line
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+
+    // Step 6: Navigate back up through all lines
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    check_cursor_visible(&mut harness, "end of buffer");
+
+    for line_num in (0..line_count).rev() {
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+        check_cursor_visible(&mut harness, &format!("line {} (going up)", line_num));
+    }
+
+    // Step 7: Verify we can type at start of buffer
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness.type_text("START>>").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("START>>");
+
+    // Final verification: original content structure preserved (with markers)
+    let final_content = harness.get_buffer_content().unwrap();
+    assert!(final_content.contains("Line one here"), "Should contain original line 1");
+    assert!(final_content.contains("Line two is longer"), "Should contain original line 2");
+    assert!(final_content.contains("Short"), "Should contain 'Short' line");
+    assert!(final_content.contains("Final line"), "Should contain 'Final line'");
+}

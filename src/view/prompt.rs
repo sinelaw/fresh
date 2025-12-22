@@ -57,6 +57,8 @@ pub enum PromptType {
     SetComposeWidth,
     /// Set tab size for current buffer
     SetTabSize,
+    /// Set line ending format for current buffer
+    SetLineEnding,
     /// Stop a running LSP server (select from list)
     StopLspServer,
     /// Select a theme (select from list)

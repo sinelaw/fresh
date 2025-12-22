@@ -1907,6 +1907,7 @@ pub fn action_to_events(
         | Action::SettingsIncrement
         | Action::SettingsDecrement
         | Action::SetTabSize
+        | Action::SetLineEnding
         | Action::ToggleIndentationStyle
         | Action::ToggleTabIndicators
         | Action::ResetBufferSettings => return None,

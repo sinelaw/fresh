@@ -494,6 +494,15 @@ pub fn get_all_commands() -> Vec<Command> {
             source: CommandSource::Builtin,
         },
         Command {
+            name: "Set Line Ending".to_string(),
+            description: "Set line ending format: LF (Unix), CRLF (Windows), or CR (Classic Mac)"
+                .to_string(),
+            action: Action::SetLineEnding,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
             name: "Toggle Indentation: Spaces ↔ Tabs".to_string(),
             description: "Switch between spaces and tabs for indentation".to_string(),
             action: Action::ToggleIndentationStyle,
