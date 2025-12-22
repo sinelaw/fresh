@@ -3670,98 +3670,48 @@ impl Editor {
     /// - Atomic undo (single undo step for entire operation)
     pub fn paste(&mut self) {
         // Get content from clipboard (tries system first, falls back to internal)
-        let paste_text = match self.clipboard.paste() {
+        let text = match self.clipboard.paste() {
             Some(text) => text,
             None => return,
         };
 
-        let mut events = Vec::new();
-
-        // Collect cursor info sorted in reverse order by position to avoid offset issues
-        // when applying multiple edits
-        let state = self.active_state();
-        let mut cursor_data: Vec<_> = state
-            .cursors
-            .iter()
-            .map(|(cursor_id, cursor)| {
-                let selection = cursor.selection_range();
-                let insert_position = selection
-                    .as_ref()
-                    .map(|r| r.start)
-                    .unwrap_or(cursor.position);
-                (cursor_id, selection, insert_position)
-            })
-            .collect();
-        cursor_data.sort_by_key(|(_, _, pos)| std::cmp::Reverse(*pos));
-
-        // Get deleted text for each selection (needs buffer access)
-        let cursor_data_with_text: Vec<_> = {
-            let state = self.active_state_mut();
-            cursor_data
-                .into_iter()
-                .map(|(cursor_id, selection, insert_position)| {
-                    let deleted_text = selection
-                        .as_ref()
-                        .map(|r| state.get_text_range(r.start, r.end));
-                    (cursor_id, selection, insert_position, deleted_text)
-                })
-                .collect()
-        };
-
-        // Build events for each cursor
-        for (cursor_id, selection, insert_position, deleted_text) in cursor_data_with_text {
-            // Delete selection if present
-            if let (Some(range), Some(text)) = (selection, deleted_text) {
-                events.push(Event::Delete {
-                    range,
-                    deleted_text: text,
-                    cursor_id,
-                });
-            }
-
-            // Insert paste text
-            events.push(Event::Insert {
-                position: insert_position,
-                text: paste_text.clone(),
-                cursor_id,
-            });
-        }
-
-        // Apply events - wrap in Batch if multiple for atomic undo
-        if events.len() > 1 {
-            let batch = Event::Batch {
-                events: events.clone(),
-                description: "Paste".to_string(),
-            };
-            self.active_event_log_mut().append(batch.clone());
-            self.apply_event_to_active_buffer(&batch);
-        } else if let Some(event) = events.into_iter().next() {
-            self.active_event_log_mut().append(event.clone());
-            self.apply_event_to_active_buffer(&event);
-        }
-
-        self.status_message = Some("Pasted".to_string());
+        // Use paste_text which handles line ending normalization
+        self.paste_text(text);
     }
 
-    /// Paste text directly (used for external paste events like bracketed paste)
+    /// Paste text directly into the editor
     ///
-    /// This is similar to `paste()` but takes the text directly instead of
-    /// getting it from the clipboard. Used when the terminal provides paste
-    /// content through an event (e.g., CrosstermEvent::Paste).
-    ///
-    /// Routes paste to the prompt if one is open, otherwise to the editor buffer.
+    /// Handles:
+    /// - Line ending normalization (CRLF/CR → buffer's format)
+    /// - Single cursor paste
+    /// - Multi-cursor paste (pastes at each cursor)
+    /// - Selection replacement (deletes selection before inserting)
+    /// - Atomic undo (single undo step for entire operation)
+    /// - Routing to prompt if one is open
     pub fn paste_text(&mut self, paste_text: String) {
         if paste_text.is_empty() {
             return;
         }
 
-        // If a prompt is open, paste into the prompt instead of the buffer
+        // Normalize line endings: first convert all to LF, then to buffer's format
+        // This handles Windows clipboard (CRLF), old Mac (CR), and Unix (LF)
+        let normalized = paste_text.replace("\r\n", "\n").replace('\r', "\n");
+
+        // If a prompt is open, paste into the prompt (prompts use LF internally)
         if let Some(prompt) = self.prompt.as_mut() {
-            prompt.insert_str(&paste_text);
+            prompt.insert_str(&normalized);
             self.update_prompt_suggestions();
             self.status_message = Some("Pasted".to_string());
             return;
         }
+
+        // Convert to buffer's line ending format
+        let buffer_line_ending = self.active_state().buffer.line_ending();
+        let paste_text = match buffer_line_ending {
+            crate::model::buffer::LineEnding::LF => normalized,
+            crate::model::buffer::LineEnding::CRLF => normalized.replace('\n', "\r\n"),
+            crate::model::buffer::LineEnding::CR => normalized.replace('\n', "\r"),
+        };
 
         let mut events = Vec::new();
 

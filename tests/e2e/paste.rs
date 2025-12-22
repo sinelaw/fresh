@@ -715,3 +715,118 @@ fn test_paste_in_search_prompt() {
 
     harness.assert_screen_contains("Search: this");
 }
+
+// ============================================================================
+// CRLF paste normalization tests (Issue #427)
+// ============================================================================
+
+/// Test that pasting CRLF text is normalized to the buffer's line ending format
+/// Issue #427: On Windows, pasting multiline text collapsed into single line
+#[test]
+fn test_paste_crlf_text_normalized() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Start with empty buffer (default LF line endings)
+    harness.assert_buffer_content("");
+
+    // Paste text with Windows CRLF line endings
+    harness
+        .editor_mut()
+        .paste_text("line1\r\nline2\r\nline3".to_string());
+    harness.render().unwrap();
+
+    // Should be normalized to LF (the buffer's default)
+    harness.assert_buffer_content("line1\nline2\nline3");
+}
+
+/// Test that pasting CR-only text (old Mac) is normalized
+#[test]
+fn test_paste_cr_only_text_normalized() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Start with empty buffer
+    harness.assert_buffer_content("");
+
+    // Paste text with old Mac CR-only line endings
+    harness
+        .editor_mut()
+        .paste_text("line1\rline2\rline3".to_string());
+    harness.render().unwrap();
+
+    // Should be normalized to LF
+    harness.assert_buffer_content("line1\nline2\nline3");
+}
+
+/// Test that pasting into a CRLF buffer preserves CRLF format
+#[test]
+fn test_paste_into_crlf_buffer() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("crlf_paste_test.txt");
+
+    // Create a file with CRLF line endings
+    std::fs::write(&file_path, "existing\r\n").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Move to end of buffer
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Paste text (even with LF, should convert to CRLF)
+    harness.editor_mut().paste_text("new\nlines".to_string());
+    harness.render().unwrap();
+
+    // Buffer should now contain both original and pasted text with CRLF
+    let content = harness.get_buffer_content().unwrap();
+    assert!(
+        content.contains("\r\n"),
+        "Pasted text should use CRLF in CRLF buffer"
+    );
+    assert!(
+        content.contains("existing\r\nnew\r\nlines"),
+        "Content should be: {:?}",
+        content
+    );
+}
+
+/// Test that mixed line endings in paste are all normalized
+#[test]
+fn test_paste_mixed_line_endings() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Paste text with mixed line endings (CRLF, CR, LF)
+    harness
+        .editor_mut()
+        .paste_text("crlf\r\ncr\rlf\n".to_string());
+    harness.render().unwrap();
+
+    // All should be normalized to LF
+    harness.assert_buffer_content("crlf\ncr\nlf\n");
+}
+
+/// Test that pasting CRLF into prompt works correctly
+#[test]
+fn test_paste_crlf_into_prompt() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open the command palette prompt
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Command:");
+
+    // Paste text with CRLF (should be normalized to LF for prompt)
+    harness
+        .editor_mut()
+        .paste_text("line1\r\nline2".to_string());
+    harness.render().unwrap();
+
+    // Prompt should contain the text (newlines may be shown differently in prompt)
+    harness.assert_screen_contains("line1");
+}
