@@ -3532,4 +3532,242 @@ mod tests {
     // - test_wrapped_continuation
     // - test_injected_header_then_source
     // - test_mixed_scenario
+
+    // ==================== CRLF Tokenization Tests ====================
+
+    use crate::model::buffer::LineEnding;
+    use crate::services::plugins::api::{ViewTokenWire, ViewTokenWireKind};
+
+    /// Helper to extract source_offset from tokens for easier assertion
+    fn extract_token_offsets(tokens: &[ViewTokenWire]) -> Vec<(String, Option<usize>)> {
+        tokens
+            .iter()
+            .map(|t| {
+                let kind_str = match &t.kind {
+                    ViewTokenWireKind::Text(s) => format!("Text({})", s),
+                    ViewTokenWireKind::Newline => "Newline".to_string(),
+                    ViewTokenWireKind::Space => "Space".to_string(),
+                    ViewTokenWireKind::Break => "Break".to_string(),
+                    ViewTokenWireKind::BinaryByte(b) => format!("Byte(0x{:02x})", b),
+                };
+                (kind_str, t.source_offset)
+            })
+            .collect()
+    }
+
+    /// Test tokenization of CRLF content with a single line.
+    /// Verifies that Newline token is at \r position and \n is skipped.
+    #[test]
+    fn test_build_base_tokens_crlf_single_line() {
+        // Content: "abc\r\n" (5 bytes: a=0, b=1, c=2, \r=3, \n=4)
+        let content = b"abc\r\n";
+        let mut buffer = Buffer::from_bytes(content.to_vec());
+        buffer.set_line_ending(LineEnding::CRLF);
+
+        let tokens = SplitRenderer::build_base_tokens_for_hook(
+            &mut buffer,
+            0,   // top_byte
+            80,  // estimated_line_length
+            10,  // visible_count
+            false, // is_binary
+            LineEnding::CRLF,
+        );
+
+        let offsets = extract_token_offsets(&tokens);
+
+        // Should have: Text("abc") at 0, Newline at 3
+        // The \n at byte 4 should be skipped
+        assert!(
+            offsets.iter().any(|(kind, off)| kind == "Text(abc)" && *off == Some(0)),
+            "Expected Text(abc) at offset 0, got: {:?}",
+            offsets
+        );
+        assert!(
+            offsets.iter().any(|(kind, off)| kind == "Newline" && *off == Some(3)),
+            "Expected Newline at offset 3 (\\r position), got: {:?}",
+            offsets
+        );
+
+        // Verify there's only one Newline token
+        let newline_count = offsets.iter().filter(|(k, _)| k == "Newline").count();
+        assert_eq!(
+            newline_count, 1,
+            "Should have exactly 1 Newline token for CRLF, got {}: {:?}",
+            newline_count, offsets
+        );
+    }
+
+    /// Test tokenization of CRLF content with multiple lines.
+    /// This verifies that source_offset correctly accumulates across lines.
+    #[test]
+    fn test_build_base_tokens_crlf_multiple_lines() {
+        // Content: "abc\r\ndef\r\nghi\r\n" (15 bytes)
+        // Line 1: a=0, b=1, c=2, \r=3, \n=4
+        // Line 2: d=5, e=6, f=7, \r=8, \n=9
+        // Line 3: g=10, h=11, i=12, \r=13, \n=14
+        let content = b"abc\r\ndef\r\nghi\r\n";
+        let mut buffer = Buffer::from_bytes(content.to_vec());
+        buffer.set_line_ending(LineEnding::CRLF);
+
+        let tokens = SplitRenderer::build_base_tokens_for_hook(
+            &mut buffer,
+            0,
+            80,
+            10,
+            false,
+            LineEnding::CRLF,
+        );
+
+        let offsets = extract_token_offsets(&tokens);
+
+        // Expected tokens:
+        // Text("abc") at 0, Newline at 3
+        // Text("def") at 5, Newline at 8
+        // Text("ghi") at 10, Newline at 13
+
+        // Verify line 1 tokens
+        assert!(
+            offsets.iter().any(|(kind, off)| kind == "Text(abc)" && *off == Some(0)),
+            "Line 1: Expected Text(abc) at 0, got: {:?}",
+            offsets
+        );
+        assert!(
+            offsets.iter().any(|(kind, off)| kind == "Newline" && *off == Some(3)),
+            "Line 1: Expected Newline at 3, got: {:?}",
+            offsets
+        );
+
+        // Verify line 2 tokens - THIS IS WHERE OFFSET DRIFT WOULD APPEAR
+        assert!(
+            offsets.iter().any(|(kind, off)| kind == "Text(def)" && *off == Some(5)),
+            "Line 2: Expected Text(def) at 5, got: {:?}",
+            offsets
+        );
+        assert!(
+            offsets.iter().any(|(kind, off)| kind == "Newline" && *off == Some(8)),
+            "Line 2: Expected Newline at 8, got: {:?}",
+            offsets
+        );
+
+        // Verify line 3 tokens - DRIFT ACCUMULATES HERE
+        assert!(
+            offsets.iter().any(|(kind, off)| kind == "Text(ghi)" && *off == Some(10)),
+            "Line 3: Expected Text(ghi) at 10, got: {:?}",
+            offsets
+        );
+        assert!(
+            offsets.iter().any(|(kind, off)| kind == "Newline" && *off == Some(13)),
+            "Line 3: Expected Newline at 13, got: {:?}",
+            offsets
+        );
+
+        // Verify exactly 3 Newline tokens
+        let newline_count = offsets.iter().filter(|(k, _)| k == "Newline").count();
+        assert_eq!(newline_count, 3, "Should have 3 Newline tokens");
+    }
+
+    /// Test tokenization of LF content to compare with CRLF.
+    /// LF mode should NOT skip anything - each character gets its own offset.
+    #[test]
+    fn test_build_base_tokens_lf_mode_for_comparison() {
+        // Content: "abc\ndef\n" (8 bytes)
+        // Line 1: a=0, b=1, c=2, \n=3
+        // Line 2: d=4, e=5, f=6, \n=7
+        let content = b"abc\ndef\n";
+        let mut buffer = Buffer::from_bytes(content.to_vec());
+        buffer.set_line_ending(LineEnding::LF);
+
+        let tokens = SplitRenderer::build_base_tokens_for_hook(
+            &mut buffer,
+            0,
+            80,
+            10,
+            false,
+            LineEnding::LF,
+        );
+
+        let offsets = extract_token_offsets(&tokens);
+
+        // Verify LF offsets
+        assert!(
+            offsets.iter().any(|(kind, off)| kind == "Text(abc)" && *off == Some(0)),
+            "LF Line 1: Expected Text(abc) at 0"
+        );
+        assert!(
+            offsets.iter().any(|(kind, off)| kind == "Newline" && *off == Some(3)),
+            "LF Line 1: Expected Newline at 3"
+        );
+        assert!(
+            offsets.iter().any(|(kind, off)| kind == "Text(def)" && *off == Some(4)),
+            "LF Line 2: Expected Text(def) at 4"
+        );
+        assert!(
+            offsets.iter().any(|(kind, off)| kind == "Newline" && *off == Some(7)),
+            "LF Line 2: Expected Newline at 7"
+        );
+    }
+
+    /// Test that CRLF in LF-mode file shows \r as control character.
+    /// This verifies that \r is rendered as <0D> in LF files.
+    #[test]
+    fn test_build_base_tokens_crlf_in_lf_mode_shows_control_char() {
+        // Content: "abc\r\n" but buffer is in LF mode
+        let content = b"abc\r\n";
+        let mut buffer = Buffer::from_bytes(content.to_vec());
+        buffer.set_line_ending(LineEnding::LF); // Force LF mode
+
+        let tokens = SplitRenderer::build_base_tokens_for_hook(
+            &mut buffer,
+            0,
+            80,
+            10,
+            false,
+            LineEnding::LF,
+        );
+
+        let offsets = extract_token_offsets(&tokens);
+
+        // In LF mode, \r should be rendered as BinaryByte(0x0d)
+        assert!(
+            offsets.iter().any(|(kind, _)| kind == "Byte(0x0d)"),
+            "LF mode should render \\r as control char <0D>, got: {:?}",
+            offsets
+        );
+    }
+
+    /// Test tokenization starting from middle of file (top_byte != 0).
+    /// Verifies that source_offset is correct even when not starting from byte 0.
+    #[test]
+    fn test_build_base_tokens_crlf_from_middle() {
+        // Content: "abc\r\ndef\r\nghi\r\n" (15 bytes)
+        // Start from byte 5 (beginning of "def")
+        let content = b"abc\r\ndef\r\nghi\r\n";
+        let mut buffer = Buffer::from_bytes(content.to_vec());
+        buffer.set_line_ending(LineEnding::CRLF);
+
+        let tokens = SplitRenderer::build_base_tokens_for_hook(
+            &mut buffer,
+            5, // Start from line 2
+            80,
+            10,
+            false,
+            LineEnding::CRLF,
+        );
+
+        let offsets = extract_token_offsets(&tokens);
+
+        // Should have:
+        // Text("def") at 5, Newline at 8
+        // Text("ghi") at 10, Newline at 13
+        assert!(
+            offsets.iter().any(|(kind, off)| kind == "Text(def)" && *off == Some(5)),
+            "Starting from byte 5: Expected Text(def) at 5, got: {:?}",
+            offsets
+        );
+        assert!(
+            offsets.iter().any(|(kind, off)| kind == "Text(ghi)" && *off == Some(10)),
+            "Starting from byte 5: Expected Text(ghi) at 10, got: {:?}",
+            offsets
+        );
+    }
 }

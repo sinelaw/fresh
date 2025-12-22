@@ -982,4 +982,137 @@ mod tests {
             "Column 4 (newline) should map to byte 5"
         );
     }
+
+    // ==================== CRLF Mode Tests ====================
+
+    /// Test that ViewLineIterator correctly maps char_source_bytes for CRLF content.
+    /// In CRLF mode, the Newline token is emitted at the \r position, and \n is skipped.
+    /// This test verifies that char_source_bytes correctly tracks source byte positions.
+    #[test]
+    fn test_crlf_char_source_bytes_single_line() {
+        // Simulate CRLF content "abc\r\n" where:
+        // - bytes: a=0, b=1, c=2, \r=3, \n=4
+        // - Newline token at source_offset=3 (position of \r)
+        let tokens = vec![
+            make_text_token("abc", Some(0)),
+            make_newline_token(Some(3)), // \r position in CRLF
+        ];
+
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+        assert_eq!(lines.len(), 1);
+
+        // The ViewLine should have: 'a', 'b', 'c', '\n'
+        assert_eq!(lines[0].text, "abc\n");
+
+        // char_source_bytes should correctly map each display char to source bytes
+        assert_eq!(
+            lines[0].char_source_bytes.len(),
+            4,
+            "Expected 4 chars: a, b, c, newline"
+        );
+        assert_eq!(
+            lines[0].char_source_bytes[0],
+            Some(0),
+            "char 'a' should map to byte 0"
+        );
+        assert_eq!(
+            lines[0].char_source_bytes[1],
+            Some(1),
+            "char 'b' should map to byte 1"
+        );
+        assert_eq!(
+            lines[0].char_source_bytes[2],
+            Some(2),
+            "char 'c' should map to byte 2"
+        );
+        assert_eq!(
+            lines[0].char_source_bytes[3],
+            Some(3),
+            "newline should map to byte 3 (\\r position)"
+        );
+    }
+
+    /// Test CRLF char_source_bytes across multiple lines.
+    /// This is the critical test for the accumulating offset bug.
+    #[test]
+    fn test_crlf_char_source_bytes_multiple_lines() {
+        // Simulate CRLF content "abc\r\ndef\r\nghi\r\n" where:
+        // Line 1: a=0, b=1, c=2, \r=3, \n=4 (5 bytes)
+        // Line 2: d=5, e=6, f=7, \r=8, \n=9 (5 bytes)
+        // Line 3: g=10, h=11, i=12, \r=13, \n=14 (5 bytes)
+        let tokens = vec![
+            // Line 1
+            make_text_token("abc", Some(0)),
+            make_newline_token(Some(3)), // \r at byte 3
+            // Line 2
+            make_text_token("def", Some(5)),
+            make_newline_token(Some(8)), // \r at byte 8
+            // Line 3
+            make_text_token("ghi", Some(10)),
+            make_newline_token(Some(13)), // \r at byte 13
+        ];
+
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+        assert_eq!(lines.len(), 3);
+
+        // Line 1 verification
+        assert_eq!(lines[0].text, "abc\n");
+        assert_eq!(
+            lines[0].char_source_bytes,
+            vec![Some(0), Some(1), Some(2), Some(3)],
+            "Line 1 char_source_bytes mismatch"
+        );
+
+        // Line 2 verification - THIS IS WHERE THE BUG WOULD MANIFEST
+        // If there's an off-by-one per line, line 2 might have wrong offsets
+        assert_eq!(lines[1].text, "def\n");
+        assert_eq!(
+            lines[1].char_source_bytes,
+            vec![Some(5), Some(6), Some(7), Some(8)],
+            "Line 2 char_source_bytes mismatch - possible CRLF offset drift"
+        );
+
+        // Line 3 verification - error accumulates
+        assert_eq!(lines[2].text, "ghi\n");
+        assert_eq!(
+            lines[2].char_source_bytes,
+            vec![Some(10), Some(11), Some(12), Some(13)],
+            "Line 3 char_source_bytes mismatch - CRLF offset drift accumulated"
+        );
+    }
+
+    /// Test CRLF visual column to source byte mapping.
+    /// Verifies source_byte_at_visual_col works correctly for CRLF content.
+    #[test]
+    fn test_crlf_visual_to_source_mapping() {
+        // CRLF content "ab\r\ncd\r\n"
+        // Line 1: a=0, b=1, \r=2, \n=3
+        // Line 2: c=4, d=5, \r=6, \n=7
+        let tokens = vec![
+            make_text_token("ab", Some(0)),
+            make_newline_token(Some(2)),
+            make_text_token("cd", Some(4)),
+            make_newline_token(Some(6)),
+        ];
+
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+
+        // Line 1: visual columns 0,1 should map to bytes 0,1
+        assert_eq!(lines[0].source_byte_at_visual_col(0), Some(0), "Line 1 col 0");
+        assert_eq!(lines[0].source_byte_at_visual_col(1), Some(1), "Line 1 col 1");
+        assert_eq!(
+            lines[0].source_byte_at_visual_col(2),
+            Some(2),
+            "Line 1 col 2 (newline)"
+        );
+
+        // Line 2: visual columns 0,1 should map to bytes 4,5
+        assert_eq!(lines[1].source_byte_at_visual_col(0), Some(4), "Line 2 col 0");
+        assert_eq!(lines[1].source_byte_at_visual_col(1), Some(5), "Line 2 col 1");
+        assert_eq!(
+            lines[1].source_byte_at_visual_col(2),
+            Some(6),
+            "Line 2 col 2 (newline)"
+        );
+    }
 }
