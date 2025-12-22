@@ -147,7 +147,7 @@ portable-pty = { version = "0.9", optional = true }
 [dev-dependencies]
 proptest = "1.9"
 tempfile = "3.23.0"
-insta = { version = "1.44", features = ["yaml"] }
+insta = { version = "1.45", features = ["yaml"] }
 vt100 = "0.15"  # Virtual terminal emulator for testing real ANSI output
 ctor = "0.6.1"
 tiny_http = "0.12"  # Lightweight HTTP server for testing release checker
