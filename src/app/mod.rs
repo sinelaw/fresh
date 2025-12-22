@@ -2784,7 +2784,9 @@ impl Editor {
         if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
             state.debug_highlight_mode = !state.debug_highlight_mode;
             if state.debug_highlight_mode {
-                self.set_status_message("Debug highlight mode ON - showing byte ranges".to_string());
+                self.set_status_message(
+                    "Debug highlight mode ON - showing byte ranges".to_string(),
+                );
             } else {
                 self.set_status_message("Debug highlight mode OFF".to_string());
             }

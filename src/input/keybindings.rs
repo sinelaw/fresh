@@ -1681,7 +1681,9 @@ impl KeybindingResolver {
             Action::ToggleMouseHover => "Toggle LSP hover on mouse".to_string(),
             Action::ToggleLineNumbers => "Toggle line numbers".to_string(),
             Action::ToggleMouseCapture => "Toggle mouse support".to_string(),
-            Action::ToggleDebugHighlights => "Toggle debug highlight mode (show byte ranges)".to_string(),
+            Action::ToggleDebugHighlights => {
+                "Toggle debug highlight mode (show byte ranges)".to_string()
+            }
             Action::SetBackground => "Set ANSI background file".to_string(),
             Action::SetBackgroundBlend => "Set background blend ratio".to_string(),
             Action::SetTabSize => "Set tab size for current buffer".to_string(),

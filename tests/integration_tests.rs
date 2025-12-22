@@ -1146,7 +1146,10 @@ fn test_crlf_syntax_highlighting_offset() {
 
     // Debug: Check if highlighter is active
     eprintln!("Has highlighter: {}", harness.has_highlighter());
-    eprintln!("Highlighter backend: {}", harness.editor().active_state().highlighter.backend_name());
+    eprintln!(
+        "Highlighter backend: {}",
+        harness.editor().active_state().highlighter.backend_name()
+    );
 
     // Debug: Print buffer line ending mode
     let buffer_content = harness.get_buffer_content().unwrap_or_default();
@@ -1178,8 +1181,10 @@ fn test_crlf_syntax_highlighting_offset() {
     let line5_p_col = find_char_col(&harness, 6, 'p').expect("Should find 'p' on line 5");
     let line6_p_col = find_char_col(&harness, 7, 'p').expect("Should find 'p' on line 6");
 
-    eprintln!("Found 'p' at columns: 1={}, 2={}, 3={}, 4={}, 5={}, 6={}",
-              line1_p_col, line2_p_col, line3_p_col, line4_p_col, line5_p_col, line6_p_col);
+    eprintln!(
+        "Found 'p' at columns: 1={}, 2={}, 3={}, 4={}, 5={}, 6={}",
+        line1_p_col, line2_p_col, line3_p_col, line4_p_col, line5_p_col, line6_p_col
+    );
 
     // All 'pub' keywords should start at the same column
     assert_eq!(
@@ -1214,12 +1219,30 @@ fn test_crlf_syntax_highlighting_offset() {
 
     // Also print what char is at each position
     eprintln!("Chars at 'p' position:");
-    eprintln!("  Line 1: '{}'", harness.get_cell(line1_p_col, 2).unwrap_or_default());
-    eprintln!("  Line 2: '{}'", harness.get_cell(line2_p_col, 3).unwrap_or_default());
-    eprintln!("  Line 3: '{}'", harness.get_cell(line3_p_col, 4).unwrap_or_default());
-    eprintln!("  Line 4: '{}'", harness.get_cell(line4_p_col, 5).unwrap_or_default());
-    eprintln!("  Line 5: '{}'", harness.get_cell(line5_p_col, 6).unwrap_or_default());
-    eprintln!("  Line 6: '{}'", harness.get_cell(line6_p_col, 7).unwrap_or_default());
+    eprintln!(
+        "  Line 1: '{}'",
+        harness.get_cell(line1_p_col, 2).unwrap_or_default()
+    );
+    eprintln!(
+        "  Line 2: '{}'",
+        harness.get_cell(line2_p_col, 3).unwrap_or_default()
+    );
+    eprintln!(
+        "  Line 3: '{}'",
+        harness.get_cell(line3_p_col, 4).unwrap_or_default()
+    );
+    eprintln!(
+        "  Line 4: '{}'",
+        harness.get_cell(line4_p_col, 5).unwrap_or_default()
+    );
+    eprintln!(
+        "  Line 5: '{}'",
+        harness.get_cell(line5_p_col, 6).unwrap_or_default()
+    );
+    eprintln!(
+        "  Line 6: '{}'",
+        harness.get_cell(line6_p_col, 7).unwrap_or_default()
+    );
 
     // Check color of number (should be different from keyword if highlighting works)
     // Format: "public int x = N;" - number is at col+15 from 'p'
@@ -1228,12 +1251,22 @@ fn test_crlf_syntax_highlighting_offset() {
     let line1_num_color = get_fg_color(&harness, 2, line1_p_col + num_offset);
     let line6_num_color = get_fg_color(&harness, 7, line6_p_col + num_offset);
     eprintln!("Number colors:");
-    eprintln!("  Line 1 number (col {}): {:?}, char: '{}'",
-              line1_p_col + num_offset, line1_num_color,
-              harness.get_cell(line1_p_col + num_offset, 2).unwrap_or_default());
-    eprintln!("  Line 6 number (col {}): {:?}, char: '{}'",
-              line6_p_col + num_offset, line6_num_color,
-              harness.get_cell(line6_p_col + num_offset, 7).unwrap_or_default());
+    eprintln!(
+        "  Line 1 number (col {}): {:?}, char: '{}'",
+        line1_p_col + num_offset,
+        line1_num_color,
+        harness
+            .get_cell(line1_p_col + num_offset, 2)
+            .unwrap_or_default()
+    );
+    eprintln!(
+        "  Line 6 number (col {}): {:?}, char: '{}'",
+        line6_p_col + num_offset,
+        line6_num_color,
+        harness
+            .get_cell(line6_p_col + num_offset, 7)
+            .unwrap_or_default()
+    );
 
     // Verify keyword and number have different colors (proves highlighting is working)
     assert_ne!(
@@ -1247,17 +1280,25 @@ fn test_crlf_syntax_highlighting_offset() {
     // because the highlight spans are offset and will hit different characters.
     // With 5 CRLFs before line 6, offset drift would shift highlighting by 5 bytes.
     let all_p_colors = [
-        line1_p_color, line2_p_color, line3_p_color,
-        line4_p_color, line5_p_color, line6_p_color
+        line1_p_color,
+        line2_p_color,
+        line3_p_color,
+        line4_p_color,
+        line5_p_color,
+        line6_p_color,
     ];
 
     for (i, color) in all_p_colors.iter().enumerate() {
         assert_eq!(
-            *color, line1_p_color,
+            *color,
+            line1_p_color,
             "Line {} 'pub' keyword should have same highlight color as line 1. \
              Line 1: {:?}, Line {}: {:?}. \
              If colors differ, CRLF highlight offset is broken.",
-            i + 1, line1_p_color, i + 1, color
+            i + 1,
+            line1_p_color,
+            i + 1,
+            color
         );
     }
 }

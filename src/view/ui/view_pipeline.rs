@@ -1098,8 +1098,16 @@ mod tests {
         let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
 
         // Line 1: visual columns 0,1 should map to bytes 0,1
-        assert_eq!(lines[0].source_byte_at_visual_col(0), Some(0), "Line 1 col 0");
-        assert_eq!(lines[0].source_byte_at_visual_col(1), Some(1), "Line 1 col 1");
+        assert_eq!(
+            lines[0].source_byte_at_visual_col(0),
+            Some(0),
+            "Line 1 col 0"
+        );
+        assert_eq!(
+            lines[0].source_byte_at_visual_col(1),
+            Some(1),
+            "Line 1 col 1"
+        );
         assert_eq!(
             lines[0].source_byte_at_visual_col(2),
             Some(2),
@@ -1107,8 +1115,16 @@ mod tests {
         );
 
         // Line 2: visual columns 0,1 should map to bytes 4,5
-        assert_eq!(lines[1].source_byte_at_visual_col(0), Some(4), "Line 2 col 0");
-        assert_eq!(lines[1].source_byte_at_visual_col(1), Some(5), "Line 2 col 1");
+        assert_eq!(
+            lines[1].source_byte_at_visual_col(0),
+            Some(4),
+            "Line 2 col 0"
+        );
+        assert_eq!(
+            lines[1].source_byte_at_visual_col(1),
+            Some(5),
+            "Line 2 col 1"
+        );
         assert_eq!(
             lines[1].source_byte_at_visual_col(2),
             Some(6),

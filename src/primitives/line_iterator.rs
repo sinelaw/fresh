@@ -543,7 +543,10 @@ mod tests {
 
         // Third line: starts at 10 (after "abc\r\ndef\r\n"), content is "ghi\r\n"
         let (pos, line_content) = iter.next().expect("Should have third line");
-        assert_eq!(pos, 10, "Third line should start at byte 10 (after two CRLFs)");
+        assert_eq!(
+            pos, 10,
+            "Third line should start at byte 10 (after two CRLFs)"
+        );
         assert_eq!(line_content, "ghi\r\n", "Third line content");
 
         // No more lines
