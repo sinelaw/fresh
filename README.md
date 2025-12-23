@@ -156,15 +156,24 @@ Download the latest release for your platform from the [releases page](https://g
 
 > [!TIP]
 > Replace `$ARCH` below with either `x86_64` or `aarch64` depending on your CPU architecture.
+>
+> And replace `$VERSION` below with the desired version (usually the latest one).
+
+**Step 1:** Download the pre-built binary archive from the [GitHub releases page](https://github.com/sinelaw/fresh/releases).
 
 ```bash
-# Step 1: Download the pre-built binary archive from the GitHub releases page
-curl -L "https://github.com/sinelaw/fresh/releases/download/v0.1.59/fresh-editor-$ARCH-unknown-linux-gnu.tar.xz" > fresh-editor-$ARCH-unknown-linux-gnu.tar.xz
+curl -L "https://github.com/sinelaw/fresh/releases/download/v$VERSION/fresh-editor-$ARCH-unknown-linux-gnu.tar.xz" > fresh-editor-$ARCH-unknown-linux-gnu.tar.xz
+```
 
-# Step 2: Extract the downloaded archive
+**Step 2:** Extract the downloaded archive.
+
+```bash
 tar xvf ./fresh-editor-$ARCH-unknown-linux-gnu.tar.xz
+```
 
-# Step 3: Install
+**Step 3:** Install the extracted files.
+
+```bash
 mkdir -pv ~/.local/share/fresh-editor ~/.local/bin
 cp -rv ./fresh-editor-$ARCH-unknown-linux-gnu/* ~/.local/share/fresh-editor
 ln -sfv ~/.local/share/fresh-editor/fresh ~/.local/bin/fresh
