@@ -159,11 +159,11 @@ Download the latest release for your platform from the [releases page](https://g
 >
 > And replace `$RELEASE_TAG` below with the desired release tag (usually the latest one).
 
-**Step 0:** Determine the architecture and release tag to download (if you are too lazy to fulfill the tip above).
+**Step 0:** Determine the architecture and release tag to download if you are too lazy to fulfill the tip above (`jq` required).
 
 ```bash
 ARCH=$(uname -m)
-RELEASE_TAG=$(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | grep -Po '"tag_name": "\K[^"]*')
+RELEASE_TAG=$(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | jq -r .tag_name)
 ```
 
 **Step 1:** Download the pre-built binary archive from the [GitHub releases page](https://github.com/sinelaw/fresh/releases).
