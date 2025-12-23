@@ -51,6 +51,7 @@ pub mod split_tabs;
 pub mod split_view;
 pub mod split_view_expectations;
 pub mod tab_config;
+pub mod tab_indent_selection;
 pub mod tab_scrolling;
 pub mod terminal;
 pub mod terminal_close;

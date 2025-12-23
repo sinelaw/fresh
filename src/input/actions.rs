@@ -700,33 +700,72 @@ pub fn action_to_events(
             } else {
                 " ".repeat(tab_size)
             };
-            // Sort cursors by position (reverse order) to avoid position shifts
-            let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
-            cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
 
-            // Collect deletions and insert positions
-            let deletions: Vec<_> = cursor_vec
+            // Check if any cursor has a selection
+            let has_selection = state
+                .cursors
                 .iter()
-                .filter_map(|(cursor_id, cursor)| {
-                    cursor.selection_range().map(|range| (*cursor_id, range))
-                })
-                .collect();
+                .any(|(_, cursor)| cursor.selection_range().is_some());
 
-            let insert_positions: Vec<_> = cursor_vec
-                .iter()
-                .map(|(cursor_id, cursor)| (*cursor_id, cursor.position))
-                .collect();
+            if has_selection {
+                // Indent selected lines (like IndentSelection action)
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    if let Some(range) = cursor.selection_range() {
+                        let (start_pos, end_pos) = (range.start, range.end);
 
-            // Get text for deletions
-            apply_deletions(state, deletions, &mut events);
+                        // Find all line starts in the range
+                        let buffer_len = state.buffer.len();
+                        let mut line_starts = Vec::new();
+                        let mut iter = state.buffer.line_iterator(start_pos, estimated_line_length);
+                        let mut current_pos = iter.current_position();
+                        line_starts.push(current_pos);
 
-            // Insert tabs
-            for (cursor_id, position) in insert_positions {
-                events.push(Event::Insert {
-                    position,
-                    text: tab_str.clone(),
-                    cursor_id,
-                });
+                        // Collect all line starts by iterating through lines
+                        loop {
+                            if let Some((_, content)) = iter.next() {
+                                current_pos += content.len();
+                                if current_pos > end_pos || current_pos > buffer_len {
+                                    break;
+                                }
+                                let next_iter = state
+                                    .buffer
+                                    .line_iterator(current_pos, estimated_line_length);
+                                let next_start = next_iter.current_position();
+                                if next_start != *line_starts.last().unwrap() {
+                                    line_starts.push(next_start);
+                                }
+                                iter = state
+                                    .buffer
+                                    .line_iterator(current_pos, estimated_line_length);
+                            } else {
+                                break;
+                            }
+                        }
+
+                        // Create insert events for each line start (in reverse order)
+                        for &line_start in line_starts.iter().rev() {
+                            events.push(Event::Insert {
+                                position: line_start,
+                                text: tab_str.clone(),
+                                cursor_id,
+                            });
+                        }
+                    }
+                }
+            } else {
+                // No selection - insert tab character at cursor position
+                // Sort cursors by position (reverse order) to avoid position shifts
+                let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
+                cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
+
+                // Insert tabs
+                for (cursor_id, cursor) in cursor_vec {
+                    events.push(Event::Insert {
+                        position: cursor.position,
+                        text: tab_str.clone(),
+                        cursor_id,
+                    });
+                }
             }
         }
 
