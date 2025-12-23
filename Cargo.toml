@@ -186,6 +186,7 @@ assets = [
     ["plugins/*", "usr/share/fresh-editor/plugins/", "644"],
     ["plugins/lib/*", "usr/share/fresh-editor/plugins/lib/", "644"],
     ["plugins/examples/*", "usr/share/fresh-editor/plugins/examples/", "644"],
+    ["themes/*", "usr/share/fresh-editor/themes/", "644"],
 ]
 # Maintainer scripts to create/remove symlink at /usr/bin/fresh
 maintainer-scripts = "debian/"
@@ -207,6 +208,7 @@ assets = [
     { source = "plugins/*.md", dest = "/usr/share/fresh-editor/plugins/", mode = "644" },
     { source = "plugins/lib/*", dest = "/usr/share/fresh-editor/plugins/lib/", mode = "644" },
     { source = "plugins/examples/*", dest = "/usr/share/fresh-editor/plugins/examples/", mode = "644" },
+    { source = "themes/*.json", dest = "/usr/share/fresh-editor/themes/", mode = "644" },
 ]
 # posttrans runs after ALL transaction operations complete - needed because older versions
 # (<=0.1.56) had a preuninstall script that removes /usr/bin/fresh, which deletes our wrapper

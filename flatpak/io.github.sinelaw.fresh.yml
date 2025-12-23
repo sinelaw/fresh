@@ -30,6 +30,9 @@ modules:
       - cp -r plugins/*.ts plugins/*.json plugins/*.md ${FLATPAK_DEST}/share/fresh-editor/plugins/ 2>/dev/null || true
       - cp -r plugins/lib/* ${FLATPAK_DEST}/share/fresh-editor/plugins/lib/ 2>/dev/null || true
       - cp -r plugins/examples/* ${FLATPAK_DEST}/share/fresh-editor/plugins/examples/ 2>/dev/null || true
+      # Install themes
+      - mkdir -p ${FLATPAK_DEST}/share/fresh-editor/themes
+      - cp -r themes/*.json ${FLATPAK_DEST}/share/fresh-editor/themes/ 2>/dev/null || true
     sources:
       - type: dir
         path: ..

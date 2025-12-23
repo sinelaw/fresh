@@ -84,6 +84,7 @@ mkdir -p "$APPDIR/usr/share/applications"
 mkdir -p "$APPDIR/usr/share/icons/hicolor/scalable/apps"
 mkdir -p "$APPDIR/usr/share/metainfo"
 mkdir -p "$APPDIR/usr/share/fresh-editor/plugins"
+mkdir -p "$APPDIR/usr/share/fresh-editor/themes"
 
 # Copy binary to share directory (next to plugins)
 # This allows fresh to find plugins via current_exe().parent().join("plugins")
@@ -98,6 +99,14 @@ if [ -d "$BINARY_DIR/plugins" ]; then
     echo "Copied plugins from $BINARY_DIR/plugins"
 else
     echo "Warning: No plugins directory found at $BINARY_DIR/plugins"
+fi
+
+# Copy themes next to binary
+if [ -d "$BINARY_DIR/themes" ]; then
+    cp -r "$BINARY_DIR/themes"/* "$APPDIR/usr/share/fresh-editor/themes/" 2>/dev/null || true
+    echo "Copied themes from $BINARY_DIR/themes"
+else
+    echo "Warning: No themes directory found at $BINARY_DIR/themes"
 fi
 
 # Create desktop file

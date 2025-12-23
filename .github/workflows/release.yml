@@ -143,6 +143,7 @@ jobs:
           cp target/${{ matrix.target }}/release/fresh "${ARCHIVE_NAME}/"
           cp README.md LICENSE CHANGELOG.md "${ARCHIVE_NAME}/" 2>/dev/null || true
           cp -r plugins "${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp -r themes "${ARCHIVE_NAME}/" 2>/dev/null || true
 
           if [ "${{ matrix.archive_ext }}" = "tar.xz" ]; then
             tar -cJvf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}"
@@ -161,6 +162,7 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/fresh.exe" "$ARCHIVE_NAME/"
           Copy-Item "README.md", "LICENSE", "CHANGELOG.md" "$ARCHIVE_NAME/" -ErrorAction SilentlyContinue
           Copy-Item -Recurse "plugins" "$ARCHIVE_NAME/" -ErrorAction SilentlyContinue
+          Copy-Item -Recurse "themes" "$ARCHIVE_NAME/" -ErrorAction SilentlyContinue
 
           Compress-Archive -Path "$ARCHIVE_NAME/*" -DestinationPath "$ARCHIVE_NAME.zip"
           $hash = (Get-FileHash "$ARCHIVE_NAME.zip" -Algorithm SHA256).Hash.ToLower()
@@ -258,6 +260,7 @@ jobs:
               "install.js",
               "run-fresh.js",
               "plugins/**/*",
+              "themes/**/*",
               "README.md",
               "LICENSE",
               "CHANGELOG.md"
@@ -396,6 +399,7 @@ jobs:
           # Copy supporting files
           cp README.md LICENSE CHANGELOG.md npm-package/ 2>/dev/null || true
           cp -r plugins npm-package/ 2>/dev/null || true
+          cp -r themes npm-package/ 2>/dev/null || true
 
           # Create the tarball
           cd npm-package
@@ -466,6 +470,7 @@ jobs:
             def install
               bin.install "fresh"
               share.install "plugins" if File.directory?("plugins")
+              share.install "themes" if File.directory?("themes")
             end
 
             test do
@@ -645,6 +650,7 @@ jobs:
               "install.js",
               "run-fresh.js",
               "plugins/**/*",
+              "themes/**/*",
               "README.md",
               "LICENSE",
               "CHANGELOG.md"
@@ -780,6 +786,7 @@ jobs:
           # Copy supporting files
           cp README.md LICENSE CHANGELOG.md npm-package/ 2>/dev/null || true
           cp -r plugins npm-package/ 2>/dev/null || true
+          cp -r themes npm-package/ 2>/dev/null || true
 
           # Create the tarball
           cd npm-package
