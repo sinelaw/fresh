@@ -270,11 +270,8 @@ fn initialize_app(args: &Args) -> io::Result<SetupState> {
     }));
 
     // Determine working directory early for config loading
-    let file_locations: Vec<FileLocation> = args
-        .files
-        .iter()
-        .map(|f| parse_file_location(f))
-        .collect();
+    let file_locations: Vec<FileLocation> =
+        args.files.iter().map(|f| parse_file_location(f)).collect();
 
     let mut working_dir = None;
     let mut show_file_explorer = false;

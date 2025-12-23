@@ -99,20 +99,13 @@ fn test_multiple_files_maintain_cursor_positions() {
     let pos1 = harness.cursor_position();
 
     // Move cursor down a few times to change position
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let pos1_after_move = harness.cursor_position();
 
     // Cursor should have moved
-    assert_ne!(
-        pos1, pos1_after_move,
-        "Cursor in file1 should have moved"
-    );
+    assert_ne!(pos1, pos1_after_move, "Cursor in file1 should have moved");
 
     // Open file2 (cursor position should change to file2's position)
     harness.open_file(&file2).unwrap();
