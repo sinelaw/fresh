@@ -18,5 +18,8 @@ pub mod runtime;
 #[cfg(feature = "plugins")]
 pub mod thread;
 
+#[cfg(feature = "embed-plugins")]
+pub mod embedded;
+
 // Re-export the main interface
 pub use manager::PluginManager;

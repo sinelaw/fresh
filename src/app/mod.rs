@@ -667,6 +667,7 @@ impl Editor {
         // Load TypeScript plugins from multiple directories:
         // 1. Next to the executable (for cargo-dist installations)
         // 2. In the working directory (for development/local usage)
+        // 3. From embedded plugins (for cargo-binstall, when embed-plugins feature is enabled)
         if plugin_manager.is_active() {
             let mut plugin_dirs: Vec<std::path::PathBuf> = vec![];
 
@@ -684,6 +685,17 @@ impl Editor {
             let working_plugin_dir = working_dir.join("plugins");
             if working_plugin_dir.exists() && !plugin_dirs.contains(&working_plugin_dir) {
                 plugin_dirs.push(working_plugin_dir);
+            }
+
+            // If no disk plugins found, try embedded plugins (cargo-binstall builds)
+            #[cfg(feature = "embed-plugins")]
+            if plugin_dirs.is_empty() {
+                if let Some(embedded_dir) =
+                    crate::services::plugins::embedded::get_embedded_plugins_dir()
+                {
+                    tracing::info!("Using embedded plugins from: {:?}", embedded_dir);
+                    plugin_dirs.push(embedded_dir.clone());
+                }
             }
 
             if plugin_dirs.is_empty() {

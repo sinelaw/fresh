@@ -149,6 +149,8 @@ impl EditorTestHarness {
     pub fn new(width: u16, height: u16) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
+        // Create empty plugins directory to prevent fallback to embedded plugins
+        std::fs::create_dir(temp_dir.path().join("plugins"))?;
         // Create DirectoryContext pointing to temp dirs for test isolation
         let dir_context = DirectoryContext::for_testing(temp_dir.path());
 
@@ -196,6 +198,8 @@ impl EditorTestHarness {
     pub fn with_config(width: u16, height: u16, mut config: Config) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
+        // Create empty plugins directory to prevent fallback to embedded plugins
+        std::fs::create_dir(temp_dir.path().join("plugins"))?;
         // Create DirectoryContext pointing to temp dirs for test isolation
         let dir_context = DirectoryContext::for_testing(temp_dir.path());
 
@@ -264,6 +268,8 @@ impl EditorTestHarness {
         // Create a subdirectory with a constant name for deterministic paths
         let project_root = temp_dir.path().join("project_root");
         std::fs::create_dir(&project_root)?;
+        // Create empty plugins directory to prevent fallback to embedded plugins
+        std::fs::create_dir(project_root.join("plugins"))?;
 
         // Create editor with explicit working directory (no global state modification!)
         let backend = TestBackend::new(width, height);
@@ -429,6 +435,8 @@ impl EditorTestHarness {
     pub fn with_slow_fs(width: u16, height: u16, slow_config: SlowFsConfig) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
+        // Create empty plugins directory to prevent fallback to embedded plugins
+        std::fs::create_dir(temp_dir.path().join("plugins"))?;
         // Create DirectoryContext pointing to temp dirs for test isolation
         let dir_context = DirectoryContext::for_testing(temp_dir.path());
 

@@ -31,8 +31,10 @@ name = "fresh"
 path = "src/lib.rs"
 
 [features]
-default = ["plugins", "runtime"]
+default = ["plugins", "runtime", "embed-plugins"]
 plugins = ["dep:deno_core", "dep:deno_ast", "dep:deno_error"]
+# Embed plugins into the binary as a fallback when no disk plugins are found
+embed-plugins = ["plugins", "dep:include_dir", "dep:tempfile"]
 # Feature for optional development binaries (generate_schema, event_debug)
 dev-bins = []
 # Runtime feature includes all heavy dependencies needed for the actual editor
@@ -145,6 +147,10 @@ unicode-width = { version = "0.2", optional = true }
 # Terminal emulation (optional)
 alacritty_terminal = { version = "0.25", optional = true }
 portable-pty = { version = "0.9", optional = true }
+
+# Embedded plugins support (optional)
+include_dir = { version = "0.7", optional = true }
+tempfile = { version = "3.23", optional = true }
 
 [dev-dependencies]
 proptest = "1.9"
