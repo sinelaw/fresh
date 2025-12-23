@@ -159,6 +159,13 @@ Download the latest release for your platform from the [releases page](https://g
 >
 > And replace `$VERSION` below with the desired version (usually the latest one).
 
+**Step 0:** Determine the architecture and version to download (if you are too lazy to fulfill the tip above).
+
+```bash
+ARCH=$(uname -m)
+VERSION=$(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | grep -Po '"tag_name": "v\K[^"]*')
+```
+
 **Step 1:** Download the pre-built binary archive from the [GitHub releases page](https://github.com/sinelaw/fresh/releases).
 
 ```bash
