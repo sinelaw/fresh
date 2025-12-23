@@ -1,0 +1,382 @@
+//! Settings modal UI operations for the Editor.
+//!
+//! This module contains all methods related to the settings modal:
+//! - Opening/closing the settings modal
+//! - Saving settings to config
+//! - Navigation (up/down)
+//! - Activating/toggling settings
+//! - Incrementing/decrementing numeric values
+
+use crate::input::keybindings::KeybindingResolver;
+
+use super::Editor;
+
+impl Editor {
+    /// Open the settings modal
+    pub fn open_settings(&mut self) {
+        // Include schema at compile time
+        const SCHEMA_JSON: &str = include_str!("../../plugins/config-schema.json");
+
+        // Create settings state if not exists, or show existing
+        if self.settings_state.is_none() {
+            match crate::view::settings::SettingsState::new(SCHEMA_JSON, &self.config) {
+                Ok(mut state) => {
+                    state.show();
+                    self.settings_state = Some(state);
+                }
+                Err(e) => {
+                    self.set_status_message(format!("Failed to open settings: {}", e));
+                    return;
+                }
+            }
+        } else if let Some(ref mut state) = self.settings_state {
+            state.show();
+        }
+    }
+
+    /// Close the settings modal
+    ///
+    /// If `save` is true and there are changes, they will be applied first.
+    pub fn close_settings(&mut self, save: bool) {
+        if save {
+            self.save_settings();
+        }
+        if let Some(ref mut state) = self.settings_state {
+            if !save && state.has_changes() {
+                // Discard changes
+                state.discard_changes();
+            }
+            state.hide();
+        }
+    }
+
+    /// Save the settings from the modal to config
+    pub fn save_settings(&mut self) {
+        let old_theme = self.config.theme.clone();
+
+        let new_config = {
+            if let Some(ref state) = self.settings_state {
+                if !state.has_changes() {
+                    return;
+                }
+                match state.apply_changes(&self.config) {
+                    Ok(config) => config,
+                    Err(e) => {
+                        self.set_status_message(format!("Failed to apply settings: {}", e));
+                        return;
+                    }
+                }
+            } else {
+                return;
+            }
+        };
+
+        // Apply the new config
+        self.config = new_config;
+
+        // Apply runtime changes
+        if old_theme != self.config.theme {
+            self.theme = crate::view::theme::Theme::from_name(&self.config.theme);
+            tracing::info!("Theme changed to '{}'", self.config.theme.0);
+        }
+
+        // Update keybindings
+        self.keybindings = KeybindingResolver::new(&self.config);
+
+        // Save to disk
+        if let Err(e) = std::fs::create_dir_all(&self.dir_context.config_dir) {
+            self.set_status_message(format!("Failed to create config directory: {}", e));
+            return;
+        }
+
+        let config_path = self.dir_context.config_path();
+        match self.config.save_to_file(&config_path) {
+            Ok(()) => {
+                self.set_status_message("Settings saved".to_string());
+                // Clear pending changes and hide
+                if let Some(ref mut state) = self.settings_state {
+                    state.discard_changes();
+                    state.hide();
+                }
+            }
+            Err(e) => {
+                self.set_status_message(format!("Failed to save settings: {}", e));
+            }
+        }
+    }
+
+    /// Navigate settings up
+    pub fn settings_navigate_up(&mut self) {
+        if let Some(ref mut state) = self.settings_state {
+            state.select_prev();
+        }
+    }
+
+    /// Navigate settings down
+    pub fn settings_navigate_down(&mut self) {
+        if let Some(ref mut state) = self.settings_state {
+            state.select_next();
+        }
+    }
+
+    /// Activate/toggle the currently selected setting
+    pub fn settings_activate_current(&mut self) {
+        use crate::view::settings::items::SettingControl;
+        use crate::view::settings::FocusPanel;
+
+        // Check if we're in the Footer panel - handle button activation
+        let focus_panel = self
+            .settings_state
+            .as_ref()
+            .map(|s| s.focus_panel)
+            .unwrap_or(FocusPanel::Categories);
+
+        if focus_panel == FocusPanel::Footer {
+            let button_index = self
+                .settings_state
+                .as_ref()
+                .map(|s| s.footer_button_index)
+                .unwrap_or(1);
+            match button_index {
+                0 => {
+                    // Reset button
+                    if let Some(ref mut state) = self.settings_state {
+                        state.reset_current_to_default();
+                    }
+                }
+                1 => {
+                    // Save button - save and close
+                    self.close_settings(true);
+                }
+                2 => {
+                    // Cancel button
+                    self.close_settings(false);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // When Categories panel is focused, Enter does nothing to settings controls
+        // (keys should not leak to the right panel)
+        if focus_panel == FocusPanel::Categories {
+            return;
+        }
+
+        // Get the current item's control type to determine action
+        let control_type = {
+            if let Some(ref state) = self.settings_state {
+                state.current_item().map(|item| match &item.control {
+                    SettingControl::Toggle(_) => "toggle",
+                    SettingControl::Number(_) => "number",
+                    SettingControl::Dropdown(_) => "dropdown",
+                    SettingControl::Text(_) => "text",
+                    SettingControl::TextList(_) => "textlist",
+                    SettingControl::Map(_) => "map",
+                    SettingControl::ObjectArray(_) => "objectarray",
+                    SettingControl::Json(_) => "json",
+                    SettingControl::Complex { .. } => "complex",
+                })
+            } else {
+                None
+            }
+        };
+
+        // Perform the action based on control type
+        match control_type {
+            Some("toggle") => {
+                if let Some(ref mut state) = self.settings_state {
+                    if let Some(item) = state.current_item_mut() {
+                        if let SettingControl::Toggle(ref mut toggle_state) = item.control {
+                            toggle_state.checked = !toggle_state.checked;
+                        }
+                    }
+                    state.on_value_changed();
+                }
+            }
+            Some("dropdown") => {
+                // Toggle dropdown open/closed, or confirm selection if open
+                if let Some(ref mut state) = self.settings_state {
+                    if state.is_dropdown_open() {
+                        state.dropdown_confirm();
+                    } else {
+                        state.dropdown_toggle();
+                    }
+                }
+            }
+            Some("textlist") => {
+                // Enter text editing mode for TextList controls
+                if let Some(ref mut state) = self.settings_state {
+                    state.start_editing();
+                }
+            }
+            Some("map") => {
+                // For Map controls: check if map has a value schema (supports entry dialogs)
+                if let Some(ref mut state) = self.settings_state {
+                    if let Some(item) = state.current_item_mut() {
+                        if let SettingControl::Map(ref mut map_state) = item.control {
+                            if map_state.focused_entry.is_none() {
+                                // On add-new row: start editing to add new entry
+                                state.start_editing();
+                            } else if map_state.value_schema.is_some() {
+                                // Map has schema: open entry dialog
+                                state.open_entry_dialog();
+                            } else {
+                                // For other maps: toggle expanded
+                                if let Some(idx) = map_state.focused_entry {
+                                    if map_state.expanded.contains(&idx) {
+                                        map_state.expanded.retain(|&i| i != idx);
+                                    } else {
+                                        map_state.expanded.push(idx);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    state.on_value_changed();
+                }
+            }
+            Some("text") => {
+                // For Text controls: enter text editing mode
+                if let Some(ref mut state) = self.settings_state {
+                    state.start_editing();
+                }
+            }
+            Some("number") => {
+                // For Number controls: enter number editing mode
+                if let Some(ref mut state) = self.settings_state {
+                    state.start_number_editing();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Increment the current setting value (for Number and Dropdown controls)
+    pub fn settings_increment_current(&mut self) {
+        use crate::view::settings::items::SettingControl;
+        use crate::view::settings::FocusPanel;
+
+        // Check if we're in the Footer panel - navigate buttons instead
+        let focus_panel = self
+            .settings_state
+            .as_ref()
+            .map(|s| s.focus_panel)
+            .unwrap_or(FocusPanel::Categories);
+
+        if focus_panel == FocusPanel::Footer {
+            if let Some(ref mut state) = self.settings_state {
+                // Navigate to next footer button (wrapping around)
+                state.footer_button_index = (state.footer_button_index + 1) % 3;
+            }
+            return;
+        }
+
+        // When Categories panel is focused, Left/Right don't affect settings controls
+        if focus_panel == FocusPanel::Categories {
+            return;
+        }
+
+        let control_type = {
+            if let Some(ref state) = self.settings_state {
+                state.current_item().map(|item| match &item.control {
+                    SettingControl::Number(_) => "number",
+                    SettingControl::Dropdown(_) => "dropdown",
+                    _ => "other",
+                })
+            } else {
+                None
+            }
+        };
+
+        match control_type {
+            Some("number") => {
+                if let Some(ref mut state) = self.settings_state {
+                    if let Some(item) = state.current_item_mut() {
+                        if let SettingControl::Number(ref mut num_state) = item.control {
+                            num_state.increment();
+                        }
+                    }
+                    state.on_value_changed();
+                }
+            }
+            Some("dropdown") => {
+                if let Some(ref mut state) = self.settings_state {
+                    if let Some(item) = state.current_item_mut() {
+                        if let SettingControl::Dropdown(ref mut dropdown_state) = item.control {
+                            dropdown_state.select_next();
+                        }
+                    }
+                    state.on_value_changed();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Decrement the current setting value (for Number and Dropdown controls)
+    pub fn settings_decrement_current(&mut self) {
+        use crate::view::settings::items::SettingControl;
+        use crate::view::settings::FocusPanel;
+
+        // Check if we're in the Footer panel - navigate buttons instead
+        let focus_panel = self
+            .settings_state
+            .as_ref()
+            .map(|s| s.focus_panel)
+            .unwrap_or(FocusPanel::Categories);
+
+        if focus_panel == FocusPanel::Footer {
+            if let Some(ref mut state) = self.settings_state {
+                // Navigate to previous footer button (wrapping around)
+                state.footer_button_index = if state.footer_button_index == 0 {
+                    2
+                } else {
+                    state.footer_button_index - 1
+                };
+            }
+            return;
+        }
+
+        // When Categories panel is focused, Left/Right don't affect settings controls
+        if focus_panel == FocusPanel::Categories {
+            return;
+        }
+
+        let control_type = {
+            if let Some(ref state) = self.settings_state {
+                state.current_item().map(|item| match &item.control {
+                    SettingControl::Number(_) => "number",
+                    SettingControl::Dropdown(_) => "dropdown",
+                    _ => "other",
+                })
+            } else {
+                None
+            }
+        };
+
+        match control_type {
+            Some("number") => {
+                if let Some(ref mut state) = self.settings_state {
+                    if let Some(item) = state.current_item_mut() {
+                        if let SettingControl::Number(ref mut num_state) = item.control {
+                            num_state.decrement();
+                        }
+                    }
+                    state.on_value_changed();
+                }
+            }
+            Some("dropdown") => {
+                if let Some(ref mut state) = self.settings_state {
+                    if let Some(item) = state.current_item_mut() {
+                        if let SettingControl::Dropdown(ref mut dropdown_state) = item.control {
+                            dropdown_state.select_prev();
+                        }
+                    }
+                    state.on_value_changed();
+                }
+            }
+            _ => {}
+        }
+    }
+}

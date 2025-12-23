@@ -5,10 +5,10 @@
 //! - Copy with formatting (HTML with syntax highlighting)
 //! - Multi-cursor add above/below/at next match
 
-use crate::model::event::{CursorId, Event};
 use crate::input::multi_cursor::{
     add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult,
 };
+use crate::model::event::{CursorId, Event};
 
 use super::Editor;
 
