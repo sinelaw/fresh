@@ -662,6 +662,30 @@ interface EditorAPI {
     add_category_ops(&mut output, "Prompt Operations", &categories["prompt"]);
     add_category_ops(&mut output, "Buffer Mutations", &categories["mutation"]);
     add_category_ops(&mut output, "Async Operations", &categories["async"]);
+
+    // Add spawnProcess (JS-only method that wraps the low-level ops)
+    output.push_str(
+        r#"  /**
+   * Spawn an external process and return a cancellable handle
+   *
+   * Returns a ProcessHandle that can be awaited for the result or killed early.
+   * The handle is also a PromiseLike, so `await spawnProcess(...)` works directly.
+   * @param command - Program name (searched in PATH) or absolute path
+   * @param args - Command arguments (each array element is one argument)
+   * @param cwd - Working directory; null uses editor's cwd
+   * @example
+   * // Simple usage (backward compatible)
+   * const result = await editor.spawnProcess("git", ["status"]);
+   *
+   * // Cancellable usage
+   * const search = editor.spawnProcess("rg", ["pattern"]);
+   * // ... later, if user types new query:
+   * search.kill();  // Cancel the search
+   */
+  spawnProcess(command: string, args?: string[], cwd?: string | null): ProcessHandle;
+"#,
+    );
+
     add_category_ops(&mut output, "Overlay Operations", &categories["overlay"]);
     add_category_ops(
         &mut output,

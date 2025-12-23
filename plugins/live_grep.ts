@@ -24,6 +24,7 @@ let originalSplitId: number | null = null;
 let lastQuery: string = "";
 let searchDebounceTimer: number | null = null;
 let previewCreated: boolean = false;
+let currentSearch: ProcessHandle | null = null;
 
 // Parse ripgrep output line
 // Format: file:line:column:content
@@ -171,6 +172,12 @@ function closePreview(): void {
 
 // Run ripgrep search
 async function runSearch(query: string): Promise<void> {
+  // Kill any existing search immediately
+  if (currentSearch) {
+    currentSearch.kill();
+    currentSearch = null;
+  }
+
   if (!query || query.trim().length < 2) {
     editor.setPromptSuggestions([]);
     grepResults = [];
@@ -185,7 +192,7 @@ async function runSearch(query: string): Promise<void> {
 
   try {
     const cwd = editor.getCwd();
-    const result = await editor.spawnProcess("rg", [
+    const search = editor.spawnProcess("rg", [
       "--line-number",
       "--column",
       "--no-heading",
@@ -199,6 +206,15 @@ async function runSearch(query: string): Promise<void> {
       "--",
       query,
     ], cwd);
+
+    currentSearch = search;
+    const result = await search;
+
+    // Check if this search was cancelled (a new search started)
+    if (currentSearch !== search) {
+      return; // Discard stale results
+    }
+    currentSearch = null;
 
     if (result.exit_code === 0) {
       const { results, suggestions } = parseRipgrepOutput(result.stdout);
@@ -217,11 +233,17 @@ async function runSearch(query: string): Promise<void> {
       grepResults = [];
       editor.setPromptSuggestions([]);
       editor.setStatus("No matches found");
+    } else if (result.exit_code === -1) {
+      // Process was killed, ignore
     } else {
       editor.setStatus(`Search error: ${result.stderr}`);
     }
   } catch (e) {
-    editor.setStatus(`Search error: ${e}`);
+    // Ignore errors from killed processes
+    const errorMsg = String(e);
+    if (!errorMsg.includes("killed") && !errorMsg.includes("not found")) {
+      editor.setStatus(`Search error: ${e}`);
+    }
   }
 }
 
@@ -287,6 +309,12 @@ globalThis.onLiveGrepPromptConfirmed = function (args: {
     return true;
   }
 
+  // Kill any running search
+  if (currentSearch) {
+    currentSearch.kill();
+    currentSearch = null;
+  }
+
   // Close preview first
   closePreview();
 
@@ -313,6 +341,12 @@ globalThis.onLiveGrepPromptCancelled = function (args: {
 }): boolean {
   if (args.prompt_type !== "live-grep") {
     return true;
+  }
+
+  // Kill any running search
+  if (currentSearch) {
+    currentSearch.kill();
+    currentSearch = null;
   }
 
   // Close preview and cleanup

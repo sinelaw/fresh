@@ -81,3 +81,13 @@ interface LayoutHints {
   column_guides?: number[] | null;
 }
 
+/** Handle for a cancellable process spawned with spawnProcess */
+interface ProcessHandle extends PromiseLike<SpawnResult> {
+  /** Promise that resolves to the process ID */
+  readonly processId: Promise<number>;
+  /** Promise that resolves to the result when the process completes */
+  readonly result: Promise<SpawnResult>;
+  /** Kill the process. Returns true if killed, false if already completed */
+  kill(): Promise<boolean>;
+}
+

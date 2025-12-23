@@ -81,6 +81,16 @@ interface LayoutHints {
   column_guides?: number[] | null;
 }
 
+/** Handle for a cancellable process spawned with spawnProcess */
+interface ProcessHandle extends PromiseLike<SpawnResult> {
+  /** Promise that resolves to the process ID */
+  readonly processId: Promise<number>;
+  /** Promise that resolves to the result when the process completes */
+  readonly result: Promise<SpawnResult>;
+  /** Kill the process. Returns true if killed, false if already completed */
+  kill(): Promise<boolean>;
+}
+
 /** Result from spawnProcess */
 interface SpawnResult {
   /** Complete stdout as string. Newlines preserved; trailing newline included. */
@@ -626,15 +636,22 @@ interface EditorAPI {
    */
   spawnBackgroundProcess(command: string, args: string[], cwd?: string | null): Promise<BackgroundProcessResult>;
   /**
-   * Kill a background process by ID
+   * Kill a background or cancellable process by ID
    *
    * Sends SIGTERM to gracefully terminate the process.
    * Returns true if the process was found and killed, false if not found.
    *
-   * @param process_id - ID returned from spawnBackgroundProcess
+   * @param process_id - ID returned from spawnBackgroundProcess or spawnProcessStart
    * @returns true if process was killed, false if not found
    */
   killProcess(#[bigint] process_id: number): Promise<boolean>;
+  /**
+   * Wait for a cancellable process to complete and get its result
+   *
+   * @param process_id - ID returned from spawnProcessStart
+   * @returns SpawnResult with stdout, stderr, and exit_code
+   */
+  spawnProcessWait(#[bigint] process_id: number): Promise<SpawnResult>;
   /**
    * Start a prompt with pre-filled initial value
    * @param label - Label to display (e.g., "Git grep: ")
@@ -672,24 +689,24 @@ interface EditorAPI {
    */
   setBufferCursor(buffer_id: number, position: number): boolean;
 
-  // === Async Operations ===
   /**
-   * Run an external command and capture its output
+   * Spawn an external process and return a cancellable handle
    *
-   * Waits for process to complete before returning. For long-running processes,
-   * consider if this will block your plugin. Output is captured completely;
-   * very large outputs may use significant memory.
+   * Returns a ProcessHandle that can be awaited for the result or killed early.
+   * The handle is also a PromiseLike, so `await spawnProcess(...)` works directly.
    * @param command - Program name (searched in PATH) or absolute path
    * @param args - Command arguments (each array element is one argument)
    * @param cwd - Working directory; null uses editor's cwd
    * @example
-   * const result = await editor.spawnProcess("git", ["log", "--oneline", "-5"]);
-   * if (result.exit_code !== 0) {
-   * editor.setStatus(`git failed: ${result.stderr}`);
-   * }
+   * // Simple usage (backward compatible)
+   * const result = await editor.spawnProcess("git", ["status"]);
+   *
+   * // Cancellable usage
+   * const search = editor.spawnProcess("rg", ["pattern"]);
+   * // ... later, if user types new query:
+   * search.kill();  // Cancel the search
    */
-  spawnProcess(command: string, args: string[], cwd?: string | null): Promise<SpawnResult>;
-
+  spawnProcess(command: string, args?: string[], cwd?: string | null): ProcessHandle;
   // === Overlay Operations ===
   /**
    * Add a colored highlight overlay to text without modifying content

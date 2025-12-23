@@ -977,12 +977,26 @@ await editor.killProcess(proc.process_id);
 
 #### `killProcess`
 
-Kill a background process by ID
+Kill a background or cancellable process by ID
 Sends SIGTERM to gracefully terminate the process.
 Returns true if the process was found and killed, false if not found.
 
 ```typescript
 killProcess(#[bigint] process_id: number): Promise<boolean>
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `#[bigint] process_id` | `number` | - |
+
+#### `spawnProcessWait`
+
+Wait for a cancellable process to complete and get its result
+
+```typescript
+spawnProcessWait(#[bigint] process_id: number): Promise<SpawnResult>
 ```
 
 **Parameters:**
@@ -1061,40 +1075,6 @@ setBufferCursor(buffer_id: number, position: number): boolean
 |------|------|-------------|
 | `buffer_id` | `number` | ID of the buffer |
 | `position` | `number` | Byte offset position for the cursor |
-
-### Async Operations
-
-#### `spawnProcess`
-
-Run an external command and capture its output
-Waits for process to complete before returning. For long-running processes,
-consider if this will block your plugin. Output is captured completely;
-very large outputs may use significant memory.
-const result = await editor.spawnProcess("git", ["log", "--oneline", "-5"]);
-if (result.exit_code !== 0) {
-editor.setStatus(`git failed: ${result.stderr}`);
-}
-
-```typescript
-spawnProcess(command: string, args: string[], cwd?: string | null): Promise<SpawnResult>
-```
-
-**Parameters:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| `command` | `string` | Program name (searched in PATH) or absolute path |
-| `args` | `string[]` | Command arguments (each array element is one argument) |
-| `cwd` | `string | null` (optional) | Working directory; null uses editor's cwd |
-
-**Example:**
-
-```typescript
-const result = await editor.spawnProcess("git", ["log", "--oneline", "-5"]);
-if (result.exit_code !== 0) {
-editor.setStatus(`git failed: ${result.stderr}`);
-}
-```
 
 ### Overlay Operations
 
