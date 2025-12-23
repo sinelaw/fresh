@@ -132,16 +132,10 @@ chmod +x fresh-editor-VERSION-x86_64.AppImage
 ./fresh-editor-VERSION-x86_64.AppImage
 ```
 
-**For faster startup** (recommended): Extract the AppImage instead of running it directly. This avoids the FUSE mount overhead on each launch (~10x faster):
-
-```bash
-./fresh-editor-VERSION-x86_64.AppImage --appimage-extract
-mkdir -p ~/.local/share/fresh-editor ~/.local/bin
-mv squashfs-root/* ~/.local/share/fresh-editor/
-ln -sf ~/.local/share/fresh-editor/usr/bin/fresh ~/.local/bin/fresh
-```
-
-Ensure `~/.local/bin` is in your PATH. Available for x86_64 and aarch64 architectures.
+> [!NOTE]
+> The `fresh` binary is already self-contained (i.e. no external dependencies other than libc), this means that you do not need AppImage if you only want a self-contained binary.
+>
+> If you do not find AppImage's desktop integration and auto-update worth the performance overhead (FUSE mount, slower startup), you should download [other pre-built binaries](#pre-built-binaries).
 
 ### Flatpak
 
@@ -157,6 +151,27 @@ See [flatpak/README.md](flatpak/README.md) for building from source.
 ### Pre-built binaries
 
 Download the latest release for your platform from the [releases page](https://github.com/sinelaw/fresh/releases).
+
+#### Linux with GLibC
+
+> [!TIP]
+> Replace `$ARCH` below with either `x86_64` or `aarch64` depending on your CPU architecture.
+
+```bash
+# Step 1: Download the pre-built binary archive from the GitHub releases page
+curl -L "https://github.com/sinelaw/fresh/releases/download/v0.1.59/fresh-editor-$ARCH-unknown-linux-gnu.tar.xz" > fresh-editor-$ARCH-unknown-linux-gnu.tar.xz
+
+# Step 2: Extract the downloaded archive
+tar xvf ./fresh-editor-$ARCH-unknown-linux-gnu.tar.xz
+
+# Step 3: Install
+mkdir -pv ~/.local/share/fresh-editor ~/.local/bin
+cp -rv ./fresh-editor-$ARCH-unknown-linux-gnu/* ~/.local/share/fresh-editor
+ln -sfv ~/.local/share/fresh-editor/fresh ~/.local/bin/fresh
+```
+
+> [!NOTE]
+> Ensure `$HOME/.local/bin` is in your PATH. Available for x86_64 and aarch64 architectures.
 
 ### npm
 
