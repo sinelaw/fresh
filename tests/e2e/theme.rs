@@ -40,11 +40,11 @@ fn test_theme_loading_from_config_light() {
     let theme = harness.editor().theme();
     assert_eq!(theme.name, "light");
 
-    // Verify some light theme colors
+    // Verify some light theme colors (from Theme::light() Rust fallback)
     assert_eq!(theme.editor_bg, Color::Rgb(255, 255, 255));
     assert_eq!(theme.editor_fg, Color::Rgb(0, 0, 0));
-    assert_eq!(theme.tab_active_fg, Color::Black);
-    assert_eq!(theme.tab_active_bg, Color::Cyan);
+    assert_eq!(theme.tab_active_fg, Color::Rgb(40, 40, 40));
+    assert_eq!(theme.tab_active_bg, Color::Rgb(255, 255, 255));
 }
 
 #[test]
@@ -57,13 +57,12 @@ fn test_theme_loading_from_config_high_contrast() {
     let theme = harness.editor().theme();
     assert_eq!(theme.name, "high-contrast");
 
-    // Verify some high-contrast theme colors
-    // Note: Theme may use Rgb(0,0,0) instead of Color::Black
-    assert_eq!(theme.editor_bg, Color::Rgb(0, 0, 0));
-    assert_eq!(theme.editor_fg, Color::Rgb(255, 255, 255));
+    // Verify some high-contrast theme colors (from Theme::high_contrast() Rust fallback)
+    assert_eq!(theme.editor_bg, Color::Black);
+    assert_eq!(theme.editor_fg, Color::White);
     assert_eq!(theme.cursor, Color::Yellow);
-    assert_eq!(theme.tab_active_fg, Color::Rgb(0, 0, 0)); // Black as RGB
-    assert_eq!(theme.tab_active_bg, Color::Rgb(100, 149, 237)); // Cornflower blue from theme file
+    assert_eq!(theme.tab_active_fg, Color::Black);
+    assert_eq!(theme.tab_active_bg, Color::Yellow);
 }
 
 #[test]

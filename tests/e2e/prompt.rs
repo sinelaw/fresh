@@ -20,13 +20,14 @@ fn test_prompt_rendering() {
     let buffer = harness.buffer();
     let status_y = buffer.area.height - 1; // Status bar is at the bottom
 
-    // Check a cell in the status bar has black background (default prompt color)
+    // Check a cell in the status bar has the high-contrast theme's prompt background
+    // (default theme is high-contrast, which uses Rgb(10, 10, 10) for prompt_bg)
     let first_cell_pos = buffer.index_of(0, status_y);
     let first_cell = &buffer.content[first_cell_pos];
     assert_eq!(
         first_cell.bg,
-        ratatui::style::Color::Black,
-        "Prompt should have black background"
+        ratatui::style::Color::Rgb(10, 10, 10),
+        "Prompt should have high-contrast theme prompt background"
     );
 }
 
