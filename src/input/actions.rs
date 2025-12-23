@@ -1828,6 +1828,7 @@ pub fn action_to_events(
         | Action::PopupConfirm
         | Action::PopupCancel
         | Action::ToggleFileExplorer
+        | Action::ToggleMenuBar
         | Action::FocusFileExplorer
         | Action::FocusEditor
         | Action::SetBackground

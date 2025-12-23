@@ -24,14 +24,31 @@ impl Editor {
     }
 
     /// Handle MenuActivate action - opens the first menu.
+    /// If the menu bar is hidden, it will be temporarily shown.
     pub fn handle_menu_activate(&mut self) {
+        // Auto-show menu bar if hidden
+        if !self.menu_bar_visible {
+            self.menu_bar_visible = true;
+            self.menu_bar_auto_shown = true;
+        }
         self.on_editor_focus_lost();
         self.menu_state.open_menu(0);
     }
 
-    /// Handle MenuClose action - closes the active menu.
-    pub fn handle_menu_close(&mut self) {
+    /// Close the menu and auto-hide the menu bar if it was temporarily shown.
+    /// Use this method instead of `menu_state.close_menu()` to ensure auto-hide works.
+    pub fn close_menu_with_auto_hide(&mut self) {
         self.menu_state.close_menu();
+        if self.menu_bar_auto_shown {
+            self.menu_bar_visible = false;
+            self.menu_bar_auto_shown = false;
+        }
+    }
+
+    /// Handle MenuClose action - closes the active menu.
+    /// If the menu bar was auto-shown, it will be hidden again.
+    pub fn handle_menu_close(&mut self) {
+        self.close_menu_with_auto_hide();
     }
 
     /// Handle MenuLeft action - close submenu or go to previous menu.
@@ -94,8 +111,8 @@ impl Editor {
             );
 
         if let Some((action_name, args)) = self.menu_state.get_highlighted_action(&all_menus) {
-            // Close the menu
-            self.menu_state.close_menu();
+            // Close the menu with auto-hide support
+            self.close_menu_with_auto_hide();
 
             // Parse and return the action
             if let Some(action) = Action::from_str(&action_name, &args) {
@@ -110,7 +127,13 @@ impl Editor {
     }
 
     /// Handle MenuOpen action - open a specific menu by name.
+    /// If the menu bar is hidden, it will be temporarily shown.
     pub fn handle_menu_open(&mut self, menu_name: &str) {
+        // Auto-show menu bar if hidden
+        if !self.menu_bar_visible {
+            self.menu_bar_visible = true;
+            self.menu_bar_auto_shown = true;
+        }
         self.on_editor_focus_lost();
 
         let all_menus = self.all_menus();
@@ -317,7 +340,7 @@ impl Editor {
                             let action_name = action.clone();
                             let action_args = args.clone();
 
-                            self.menu_state.close_menu();
+                            self.close_menu_with_auto_hide();
 
                             if let Some(action) = Action::from_str(&action_name, &action_args) {
                                 return Ok(Some(self.handle_action(action)));

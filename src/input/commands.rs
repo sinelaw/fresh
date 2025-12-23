@@ -598,6 +598,18 @@ pub fn get_all_commands() -> Vec<Command> {
             source: CommandSource::Builtin,
         },
         Command {
+            name: "Toggle Menu Bar".to_string(),
+            description: "Show or hide the menu bar".to_string(),
+            action: Action::ToggleMenuBar,
+            contexts: vec![
+                KeyContext::Normal,
+                KeyContext::FileExplorer,
+                KeyContext::Terminal,
+            ],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
             name: "Focus File Explorer".to_string(),
             description: "Move focus to the file explorer".to_string(),
             action: Action::FocusFileExplorer,

@@ -203,6 +203,8 @@ pub struct SessionConfigOverrides {
     pub enable_inlay_hints: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mouse_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub menu_bar_hidden: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

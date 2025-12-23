@@ -775,7 +775,7 @@ impl Editor {
             if let Some(menu_idx) = self.menu_state.get_menu_at_position(&all_menus, col) {
                 // Toggle menu: if same menu is open, close it; otherwise open clicked menu
                 if self.menu_state.active_menu == Some(menu_idx) {
-                    self.menu_state.close_menu();
+                    self.close_menu_with_auto_hide();
                 } else {
                     // Dismiss transient popups and clear hover state when opening menu
                     self.on_editor_focus_lost();
@@ -783,7 +783,7 @@ impl Editor {
                 }
             } else {
                 // Clicked on menu bar but not on a menu label - close any open menu
-                self.menu_state.close_menu();
+                self.close_menu_with_auto_hide();
             }
             return Ok(());
         }
@@ -809,7 +809,7 @@ impl Editor {
             }
 
             // Click outside the dropdown - close the menu
-            self.menu_state.close_menu();
+            self.close_menu_with_auto_hide();
             return Ok(());
         }
 

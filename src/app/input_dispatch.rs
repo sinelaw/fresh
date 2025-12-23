@@ -172,7 +172,7 @@ impl Editor {
 
             // Menu actions
             DeferredAction::CloseMenu => {
-                self.menu_state.close_menu();
+                self.close_menu_with_auto_hide();
             }
             DeferredAction::ExecuteMenuAction { action, args } => {
                 // Convert menu action to keybinding Action and execute

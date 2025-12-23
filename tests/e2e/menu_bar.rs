@@ -614,3 +614,91 @@ fn test_cut_copy_disabled_without_selection() {
         screen_after
     );
 }
+
+/// Test toggling menu bar visibility and auto-show behavior
+/// This tests the full lifecycle:
+/// 1. Menu bar starts visible
+/// 2. Toggle to hide it
+/// 3. Press Alt+F - menu auto-shows and opens
+/// 4. Press Esc - menu closes and auto-hides
+/// 5. Toggle to show it explicitly
+/// 6. Press Alt+F - menu opens (already visible)
+/// 7. Press Esc - menu closes but bar stays visible
+#[test]
+fn test_toggle_menu_bar_visibility_and_auto_show() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // Step 1: Menu bar should be visible initially (default)
+    harness.assert_screen_contains("File");
+    harness.assert_screen_contains("Edit");
+    harness.assert_screen_contains("View");
+
+    // Step 2: Toggle menu bar to hide it
+    harness.editor_mut().toggle_menu_bar();
+    harness.render().unwrap();
+
+    // Menu bar should be hidden
+    let screen = harness.screen_to_string();
+    // First line should NOT contain menu items
+    let first_line = screen.lines().next().unwrap_or("");
+    assert!(
+        !first_line.contains("File"),
+        "Menu bar should be hidden after toggle. First line: {}",
+        first_line
+    );
+
+    // Step 3: Press Alt+F - menu should auto-show and open
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Menu bar should be visible now with dropdown open
+    harness.assert_screen_contains("File");
+    harness.assert_screen_contains("New File"); // dropdown is open
+
+    // Step 4: Press Escape - menu closes and menu bar auto-hides
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Menu dropdown should be closed
+    harness.assert_screen_not_contains("New File");
+
+    // Menu bar should be hidden again (auto-hide after auto-show)
+    let screen = harness.screen_to_string();
+    let first_line = screen.lines().next().unwrap_or("");
+    assert!(
+        !first_line.contains("File"),
+        "Menu bar should auto-hide after menu closed. First line: {}",
+        first_line
+    );
+
+    // Step 5: Toggle menu bar to show it explicitly
+    harness.editor_mut().toggle_menu_bar();
+    harness.render().unwrap();
+
+    // Menu bar should be visible
+    harness.assert_screen_contains("File");
+    harness.assert_screen_contains("Edit");
+
+    // Step 6: Press Alt+F - menu opens (already visible, not auto-shown)
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Dropdown should be open
+    harness.assert_screen_contains("New File");
+
+    // Step 7: Press Escape - menu closes but bar stays visible
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Menu dropdown should be closed
+    harness.assert_screen_not_contains("New File");
+
+    // But menu bar should still be visible (not auto-hidden because it was explicitly shown)
+    harness.assert_screen_contains("File");
+    harness.assert_screen_contains("Edit");
+}

@@ -217,6 +217,7 @@ impl Editor {
             syntax_highlighting: Some(self.config.editor.syntax_highlighting),
             enable_inlay_hints: Some(self.config.editor.enable_inlay_hints),
             mouse_enabled: Some(self.mouse_enabled),
+            menu_bar_hidden: Some(!self.menu_bar_visible),
         };
 
         // Capture histories using the items() accessor
@@ -362,6 +363,9 @@ impl Editor {
         }
         if let Some(mouse_enabled) = session.config_overrides.mouse_enabled {
             self.mouse_enabled = mouse_enabled;
+        }
+        if let Some(menu_bar_hidden) = session.config_overrides.menu_bar_hidden {
+            self.menu_bar_visible = !menu_bar_hidden;
         }
 
         // 2. Restore search options

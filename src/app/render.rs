@@ -59,14 +59,14 @@ impl Editor {
         // Status bar is hidden when suggestions popup is shown
         // Search options bar is shown when in search prompt
         let constraints = vec![
-            Constraint::Length(1), // Menu bar
-            Constraint::Min(0),    // Main content area
+            Constraint::Length(if self.menu_bar_visible { 1 } else { 0 }), // Menu bar
+            Constraint::Min(0),                                            // Main content area
             Constraint::Length(if has_suggestions || has_file_browser {
                 0
             } else {
                 1
             }), // Status bar (hidden with popups)
-            Constraint::Length(if show_search_options { 1 } else { 0 }), // Search options bar
+            Constraint::Length(if show_search_options { 1 } else { 0 }),   // Search options bar
             Constraint::Length(1), // Prompt line (always reserved)
         ];
 
@@ -658,7 +658,8 @@ impl Editor {
             .set(context_keys::LSP_AVAILABLE, lsp_available)
             .set(context_keys::FILE_EXPLORER_SHOW_HIDDEN, show_hidden)
             .set(context_keys::FILE_EXPLORER_SHOW_GITIGNORED, show_gitignored)
-            .set(context_keys::HAS_SELECTION, has_selection);
+            .set(context_keys::HAS_SELECTION, has_selection)
+            .set(context_keys::MENU_BAR, self.menu_bar_visible);
 
         // Render settings modal (before menu bar so menus can overlay)
         // Check visibility first to avoid borrow conflict with dimming
@@ -684,15 +685,17 @@ impl Editor {
             }
         }
 
-        crate::view::ui::MenuRenderer::render(
-            frame,
-            menu_bar_area,
-            &self.config.menu,
-            &self.menu_state,
-            &self.keybindings,
-            &self.theme,
-            self.mouse_state.hover_target.as_ref(),
-        );
+        if self.menu_bar_visible {
+            crate::view::ui::MenuRenderer::render(
+                frame,
+                menu_bar_area,
+                &self.config.menu,
+                &self.menu_state,
+                &self.keybindings,
+                &self.theme,
+                self.mouse_state.hover_target.as_ref(),
+            );
+        }
 
         // Render software mouse cursor when GPM is active
         // GPM can't draw its cursor on the alternate screen buffer used by TUI apps,

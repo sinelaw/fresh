@@ -210,6 +210,13 @@ pub struct Editor {
     /// This is the runtime value that can be modified by dragging the border
     file_explorer_width_percent: f32,
 
+    /// Whether menu bar is visible
+    menu_bar_visible: bool,
+
+    /// Whether menu bar was auto-shown (temporarily visible due to menu activation)
+    /// When true, the menu bar will be hidden again when the menu is closed
+    menu_bar_auto_shown: bool,
+
     /// Whether mouse capture is enabled
     mouse_enabled: bool,
 
@@ -751,6 +758,8 @@ impl Editor {
             file_explorer_visible: false,
             file_explorer_sync_in_progress: false,
             file_explorer_width_percent: file_explorer_width,
+            menu_bar_visible: true,
+            menu_bar_auto_shown: false,
             mouse_enabled: true,
             mouse_cursor_position: None,
             gpm_active: false,
@@ -2791,6 +2800,23 @@ impl Editor {
                 self.set_status_message("Debug highlight mode OFF".to_string());
             }
         }
+    }
+
+    /// Toggle menu bar visibility
+    pub fn toggle_menu_bar(&mut self) {
+        self.menu_bar_visible = !self.menu_bar_visible;
+        // When explicitly toggling, clear auto-show state
+        self.menu_bar_auto_shown = false;
+        // Close any open menu when hiding the menu bar
+        if !self.menu_bar_visible {
+            self.menu_state.close_menu();
+        }
+        let status = if self.menu_bar_visible {
+            "Menu bar shown"
+        } else {
+            "Menu bar hidden"
+        };
+        self.set_status_message(status.to_string());
     }
 
     /// Reset buffer settings (tab_size, use_tabs, show_whitespace_tabs) to config defaults

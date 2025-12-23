@@ -410,6 +410,8 @@ pub enum Action {
 
     // File explorer operations
     ToggleFileExplorer,
+    // Menu bar visibility
+    ToggleMenuBar,
     FocusFileExplorer,
     FocusEditor,
     FileExplorerUp,
@@ -722,6 +724,7 @@ impl Action {
             "popup_cancel" => Some(Action::PopupCancel),
 
             "toggle_file_explorer" => Some(Action::ToggleFileExplorer),
+            "toggle_menu_bar" => Some(Action::ToggleMenuBar),
             "focus_file_explorer" => Some(Action::FocusFileExplorer),
             "focus_editor" => Some(Action::FocusEditor),
             "file_explorer_up" => Some(Action::FileExplorerUp),
@@ -1054,6 +1057,8 @@ impl KeybindingResolver {
                 | Action::TerminalPaste
                 // File explorer
                 | Action::ToggleFileExplorer
+                // Menu bar
+                | Action::ToggleMenuBar
         )
     }
 
@@ -1658,6 +1663,7 @@ impl KeybindingResolver {
             Action::PopupConfirm => "Popup confirm".to_string(),
             Action::PopupCancel => "Popup cancel".to_string(),
             Action::ToggleFileExplorer => "Toggle file explorer".to_string(),
+            Action::ToggleMenuBar => "Toggle menu bar visibility".to_string(),
             Action::FocusFileExplorer => "Focus file explorer".to_string(),
             Action::FocusEditor => "Focus editor".to_string(),
             Action::FileExplorerUp => "File explorer: navigate up".to_string(),
