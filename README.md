@@ -135,7 +135,7 @@ chmod +x fresh-editor-VERSION-x86_64.AppImage
 > [!NOTE]
 > The `fresh` binary is already self-contained (i.e. no external dependencies other than libc), this means that you do not need AppImage if you only want a self-contained binary.
 >
-> If you do not find AppImage's desktop integration and auto-update worth the performance overhead (FUSE mount, slower startup), you should download [other pre-built binaries](#pre-built-binaries).
+> If you do not find AppImage's desktop integration and auto-update worth the performance overhead (FUSE mount, slower startup), you should download [other pre-built binaries](#pre-built-binaries) instead.
 
 ### Flatpak
 
