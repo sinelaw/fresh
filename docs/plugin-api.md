@@ -1005,6 +1005,28 @@ spawnProcessWait(#[bigint] process_id: number): Promise<SpawnResult>
 |------|------|-------------|
 | `#[bigint] process_id` | `number` | - |
 
+#### `delay`
+
+Delay execution for a specified number of milliseconds
+Useful for debouncing user input or adding delays between operations.
+await editor.delay(100);  // Wait 100ms
+
+```typescript
+delay(#[bigint] ms: number): Promise<[]>
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `#[bigint] ms` | `number` | - |
+
+**Example:**
+
+```typescript
+await editor.delay(100);  // Wait 100ms
+```
+
 #### `startPromptWithInitial`
 
 Start a prompt with pre-filled initial value

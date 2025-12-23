@@ -1484,6 +1484,18 @@ async fn op_fresh_spawn_process_wait(
     })
 }
 
+/// Delay execution for a specified number of milliseconds
+///
+/// Useful for debouncing user input or adding delays between operations.
+/// @param ms - Number of milliseconds to delay
+/// @example
+/// await editor.delay(100);  // Wait 100ms
+#[op2(async)]
+async fn op_fresh_delay(#[bigint] ms: u64) -> Result<(), JsErrorBox> {
+    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+    Ok(())
+}
+
 /// Subscribe to an editor event
 ///
 /// Handler must be a global function name (not a closure).
@@ -2914,6 +2926,7 @@ extension!(
         op_fresh_get_all_cursor_positions,
         op_fresh_spawn_process_start,
         op_fresh_spawn_process_wait,
+        op_fresh_delay,
         op_fresh_spawn_background_process,
         op_fresh_kill_process,
         op_fresh_is_process_running,
@@ -3259,6 +3272,9 @@ impl TypeScriptRuntime {
                                 return resultPromise.catch(onRejected);
                             }
                         };
+                    },
+                    delay(ms) {
+                        return core.ops.op_fresh_delay(ms);
                     },
                     spawnBackgroundProcess(command, args = [], cwd = null) {
                         return core.ops.op_fresh_spawn_background_process(command, args, cwd);

@@ -653,6 +653,15 @@ interface EditorAPI {
    */
   spawnProcessWait(#[bigint] process_id: number): Promise<SpawnResult>;
   /**
+   * Delay execution for a specified number of milliseconds
+   *
+   * Useful for debouncing user input or adding delays between operations.
+   * @param ms - Number of milliseconds to delay
+   * @example
+   * await editor.delay(100);  // Wait 100ms
+   */
+  delay(#[bigint] ms: number): Promise<[]>;
+  /**
    * Start a prompt with pre-filled initial value
    * @param label - Label to display (e.g., "Git grep: ")
    * @param prompt_type - Type identifier (e.g., "git-grep")

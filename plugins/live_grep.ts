@@ -22,9 +22,11 @@ let previewBufferId: number | null = null;
 let previewSplitId: number | null = null;
 let originalSplitId: number | null = null;
 let lastQuery: string = "";
-let searchDebounceTimer: number | null = null;
 let previewCreated: boolean = false;
 let currentSearch: ProcessHandle | null = null;
+let searchVersion = 0;  // Incremented on each input change for debouncing
+
+const DEBOUNCE_MS = 150;  // Wait 150ms after last keystroke before searching
 
 // Parse ripgrep output line
 // Format: file:line:column:content
@@ -170,8 +172,11 @@ function closePreview(): void {
   }
 }
 
-// Run ripgrep search
+// Run ripgrep search with debouncing
 async function runSearch(query: string): Promise<void> {
+  // Increment version to invalidate any pending debounced search
+  const thisVersion = ++searchVersion;
+
   // Kill any existing search immediately
   if (currentSearch) {
     currentSearch.kill();
@@ -181,6 +186,14 @@ async function runSearch(query: string): Promise<void> {
   if (!query || query.trim().length < 2) {
     editor.setPromptSuggestions([]);
     grepResults = [];
+    return;
+  }
+
+  // Debounce: wait a bit to see if user is still typing
+  await editor.delay(DEBOUNCE_MS);
+
+  // If version changed during delay, a newer search was triggered - abort this one
+  if (searchVersion !== thisVersion) {
     return;
   }
 
@@ -271,12 +284,7 @@ globalThis.onLiveGrepPromptChanged = function (args: {
     return true;
   }
 
-  // Debounce search to avoid too many requests while typing
-  if (searchDebounceTimer !== null) {
-    // Can't actually cancel in this runtime, but we track it
-  }
-
-  // Run search (with small delay effect via async)
+  // runSearch handles debouncing internally
   runSearch(args.input);
 
   return true;
