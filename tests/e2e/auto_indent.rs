@@ -1,13 +1,22 @@
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use tempfile::TempDir;
 
 /// Helper to create a harness with auto-indent enabled
+/// Uses `.without_empty_plugins_dir()` so that embedded plugins are loaded,
+/// which is required for tree-sitter based auto-indent to work.
 fn harness_with_auto_indent() -> EditorTestHarness {
     let mut config = Config::default();
     config.editor.auto_indent = true;
-    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
     harness.enable_shadow_validation();
     harness
 }

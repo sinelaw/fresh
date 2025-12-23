@@ -301,8 +301,13 @@ impl EditorTestHarness {
         let time_source: SharedTimeSource = test_time_source.clone();
 
         // Prepare config with test-friendly defaults
+        // If no config provided, use defaults; if config provided, respect its settings
+        let config_was_provided = options.config.is_some();
         let mut config = options.config.unwrap_or_default();
-        config.editor.auto_indent = false; // Disable for simpler testing
+        // Only override auto_indent if no config was explicitly provided
+        if !config_was_provided {
+            config.editor.auto_indent = false; // Disable for simpler testing
+        }
         config.check_for_updates = false; // Disable update checking in tests
         config.editor.double_click_time_ms = 10; // Fast double-click for faster tests
 

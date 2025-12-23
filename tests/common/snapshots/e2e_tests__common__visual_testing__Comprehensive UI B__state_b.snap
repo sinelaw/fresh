@@ -19,16 +19,16 @@ expression: "&screen_text"
 ~                                                                                                                      █
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  file1.rs ×   file2.rs* ×                                                                                           □ × 
-    1 │                                                                                                                █
+│   1 │                                                                                                                █
     2 │ fn helper() {                                                                                                  █
     3 │     let x = 42;                                                                                                █
     4 │     let y = x * 2;                                                                                             █
     5 │     println!("Result: {}", y);                                                                                 █
     6 │ }                                                                                                              █
-    7 │                                                                                                                █
-~                                                                                                                      █
-~                                                                                                                      █
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Plugin Demo: Open Help                        Open the editor help page (uses built-in action)               welcome│
 │  Show Signature Help                           Show function parameter hints                                  builtin│
+│  Search and Replace in Project                 Search and replace text across all git-tracked files    search_replace│
+│  Theme: Show Help                              Show theme editor help                                    theme_editor│
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 Command: help

@@ -4,9 +4,9 @@ expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   LSP   Explorer   Help                                        
 ┌ File Explorer (Ctrl+E) ──×─┐ main.rs ×                                                            
-│▼ project_root      4 items │    1 │ // Main entry point                                          █
-│  ▼ plugins         0 items │    2 │ fn main() {                                                  █
-│  > src                     │    3 │     let hello = "world";                                     █
+│▼ project_root      3 items │    1 │ // Main entry point                                          █
+│  ▼ src              1 item │    2 │ fn main() {                                                  █
+│      main.rs        0.4 KB │    3 │     let hello = "world";                                     █
 │    Cargo.toml       0.0 KB │    4 │     let hello = "again";                                     █
 │    README.md        0.1 KB │    5 │     let hello = "once more";                                 █
 │                            │    6 │     println!("{}", hello);                                   █

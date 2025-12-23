@@ -2,7 +2,7 @@
 //! - `show_whitespace_tabs`: Whether to display tab indicators (→) in the editor
 //! - `use_tabs`: Whether pressing Tab inserts a tab character or spaces
 
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use tempfile::TempDir;
@@ -416,8 +416,17 @@ fn test_issue_384_auto_indent_uses_tabs_in_go() {
     // Create an empty Go file
     std::fs::write(&file_path, "").unwrap();
 
-    let config = Config::default();
-    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    // Need embedded plugins for tree-sitter auto-indent to work
+    let mut config = Config::default();
+    config.editor.auto_indent = true;
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
     harness.open_file(&file_path).unwrap();
 
     // Type "func main() {" and press Enter
@@ -454,8 +463,17 @@ fn test_issue_384_auto_indent_uses_spaces_in_rust() {
     // Create an empty Rust file
     std::fs::write(&file_path, "").unwrap();
 
-    let config = Config::default();
-    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    // Need embedded plugins for tree-sitter auto-indent to work
+    let mut config = Config::default();
+    config.editor.auto_indent = true;
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
     harness.open_file(&file_path).unwrap();
 
     // Type "fn main() {" and press Enter
@@ -579,11 +597,19 @@ fn test_issue_384_indent_respects_tab_size_in_calculation() {
     std::fs::write(&file_path, "func main() {\n\tif true {").unwrap();
 
     // Test with tab_size = 2 (tabs should be counted as 2 spaces)
+    // Need embedded plugins for tree-sitter auto-indent to work
     let mut config = Config::default();
     config.editor.tab_size = 2;
     config.editor.auto_indent = true;
 
-    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
     harness.open_file(&file_path).unwrap();
 
     // Move to end of file
