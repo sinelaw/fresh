@@ -73,6 +73,100 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
 
+/// Configuration options for creating an EditorTestHarness.
+///
+/// Use the builder pattern to configure the harness:
+/// ```ignore
+/// let harness = EditorTestHarness::create(
+///     HarnessOptions::new(80, 24)
+///         .with_config(my_config)
+///         .with_project_root()
+/// )?;
+/// ```
+#[derive(Default)]
+pub struct HarnessOptions {
+    /// Editor configuration (defaults to Config::default() with test-friendly settings)
+    pub config: Option<Config>,
+    /// Explicit working directory. If None, uses a temp directory.
+    pub working_dir: Option<PathBuf>,
+    /// Create a "project_root" subdirectory for deterministic paths in snapshots.
+    /// When true, `project_dir()` returns this subdirectory path.
+    pub create_project_root: bool,
+    /// Create an empty plugins directory to prevent embedded plugin loading.
+    /// Defaults to true for test isolation.
+    pub create_empty_plugins_dir: bool,
+    /// Shared DirectoryContext. If None, creates a new one for test isolation.
+    pub dir_context: Option<DirectoryContext>,
+    /// Slow filesystem configuration for performance testing.
+    pub slow_fs_config: Option<SlowFsConfig>,
+}
+
+impl HarnessOptions {
+    /// Create new options with default settings.
+    /// - `create_empty_plugins_dir`: true (prevents embedded plugin loading)
+    /// - `create_project_root`: false
+    pub fn new() -> Self {
+        Self {
+            config: None,
+            working_dir: None,
+            create_project_root: false,
+            create_empty_plugins_dir: true,
+            dir_context: None,
+            slow_fs_config: None,
+        }
+    }
+
+    /// Set a custom editor configuration.
+    pub fn with_config(mut self, config: Config) -> Self {
+        self.config = Some(config);
+        self
+    }
+
+    /// Set an explicit working directory.
+    /// The editor will use this directory for file operations and plugin loading.
+    pub fn with_working_dir(mut self, dir: PathBuf) -> Self {
+        self.working_dir = Some(dir);
+        self
+    }
+
+    /// Create a "project_root" subdirectory for deterministic test paths.
+    /// Use `harness.project_dir()` to get the path.
+    pub fn with_project_root(mut self) -> Self {
+        self.create_project_root = true;
+        // When using project_root, don't auto-create plugins dir inside it
+        // to avoid breaking tests that check project contents or create their own plugins
+        self.create_empty_plugins_dir = false;
+        self
+    }
+
+    /// Create an empty plugins directory to prevent embedded plugin loading.
+    /// This is enabled by default for test isolation.
+    pub fn with_empty_plugins_dir(mut self) -> Self {
+        self.create_empty_plugins_dir = true;
+        self
+    }
+
+    /// Don't create an empty plugins directory.
+    /// Embedded plugins may be loaded if no plugins directory exists.
+    pub fn without_empty_plugins_dir(mut self) -> Self {
+        self.create_empty_plugins_dir = false;
+        self
+    }
+
+    /// Share a DirectoryContext with other harness instances.
+    /// Useful for session restore tests.
+    pub fn with_shared_dir_context(mut self, dir_context: DirectoryContext) -> Self {
+        self.dir_context = Some(dir_context);
+        self
+    }
+
+    /// Configure a slow filesystem backend for performance testing.
+    pub fn with_slow_fs(mut self, config: SlowFsConfig) -> Self {
+        self.slow_fs_config = Some(config);
+        self
+    }
+}
+
 /// A wrapper that captures CrosstermBackend output for vt100 parsing
 struct CaptureBuffer {
     data: Vec<u8>,
@@ -142,204 +236,94 @@ pub struct EditorTestHarness {
 }
 
 impl EditorTestHarness {
-    /// Create new test harness with virtual terminal
-    /// Uses a temporary directory to avoid loading plugins from the project directory
-    /// Auto-indent is disabled by default to match shadow string behavior
-    /// Uses TestTimeSource for fast, deterministic time control
-    pub fn new(width: u16, height: u16) -> io::Result<Self> {
-        let temp_dir = TempDir::new()?;
-        let temp_path = temp_dir.path().to_path_buf();
-        // Create empty plugins directory to prevent fallback to embedded plugins
-        std::fs::create_dir(temp_dir.path().join("plugins"))?;
-        // Create DirectoryContext pointing to temp dirs for test isolation
-        let dir_context = DirectoryContext::for_testing(temp_dir.path());
+    // =========================================================================
+    // Unified constructor
+    // =========================================================================
+
+    /// Create a test harness with full configuration control.
+    ///
+    /// This is the unified constructor that all other constructors delegate to.
+    /// Use `HarnessOptions` builder to configure the harness behavior.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let harness = EditorTestHarness::create(80, 24, HarnessOptions::new()
+    ///     .with_project_root()
+    ///     .with_config(my_config)
+    /// )?;
+    /// ```
+    pub fn create(width: u16, height: u16, options: HarnessOptions) -> io::Result<Self> {
+        // Create temp directory if we don't have a shared dir_context
+        let temp_dir = if options.dir_context.is_none() || options.create_project_root {
+            Some(TempDir::new()?)
+        } else {
+            None
+        };
+
+        // Determine the base path for our temp directory
+        let temp_base = temp_dir.as_ref().map(|d| d.path().to_path_buf());
+
+        // Determine working directory
+        let working_dir = if let Some(dir) = options.working_dir {
+            dir
+        } else if options.create_project_root {
+            let project_root = temp_base
+                .as_ref()
+                .expect("temp_dir must exist when create_project_root is true")
+                .join("project_root");
+            std::fs::create_dir(&project_root)?;
+            project_root
+        } else {
+            temp_base
+                .clone()
+                .expect("temp_dir must exist when no working_dir provided")
+        };
+
+        // Create empty plugins directory if requested
+        if options.create_empty_plugins_dir {
+            let plugins_dir = working_dir.join("plugins");
+            if !plugins_dir.exists() {
+                std::fs::create_dir(&plugins_dir)?;
+            }
+        }
+
+        // Get or create DirectoryContext
+        let dir_context = options.dir_context.unwrap_or_else(|| {
+            DirectoryContext::for_testing(
+                temp_base
+                    .as_ref()
+                    .expect("temp_dir must exist when no dir_context provided"),
+            )
+        });
 
         // Create TestTimeSource for controllable time in tests
         let test_time_source = Arc::new(TestTimeSource::new());
         let time_source: SharedTimeSource = test_time_source.clone();
 
-        let backend = TestBackend::new(width, height);
-        let terminal = Terminal::new(backend)?;
-        let mut config = Config::default();
+        // Prepare config with test-friendly defaults
+        let mut config = options.config.unwrap_or_default();
         config.editor.auto_indent = false; // Disable for simpler testing
         config.check_for_updates = false; // Disable update checking in tests
         config.editor.double_click_time_ms = 10; // Fast double-click for faster tests
-                                                 // Use temp directory to avoid loading project plugins in tests
-        let editor = Editor::for_test(
-            config,
-            width,
-            height,
-            Some(temp_path),
-            dir_context,
-            fresh::view::color_support::ColorCapability::TrueColor,
-            None,
-            Some(time_source),
-        )?;
 
-        Ok(EditorTestHarness {
-            editor,
-            terminal,
-            _temp_dir: Some(temp_dir),
-            fs_metrics: None,
-            _tokio_runtime: None,
-            time_source: test_time_source,
-            shadow_string: String::new(),
-            shadow_cursor: 0,
-            enable_shadow_validation: false,
-            vt100_parser: vt100::Parser::new(height, width, 0),
-            term_width: width,
-            term_height: height,
-        })
-    }
+        // Create filesystem backend (slow or default)
+        let (fs_backend, fs_metrics): (
+            Option<Arc<dyn FsBackend>>,
+            Option<Arc<tokio::sync::Mutex<BackendMetrics>>>,
+        ) = if let Some(slow_config) = options.slow_fs_config {
+            let local_backend = Arc::new(LocalFsBackend::new());
+            let slow_backend = SlowFsBackend::new(local_backend, slow_config);
+            let metrics = slow_backend.metrics_arc();
+            (Some(Arc::new(slow_backend)), Some(metrics))
+        } else {
+            (None, None)
+        };
 
-    /// Create with custom config
-    /// Uses a temporary directory to avoid loading plugins from the project directory
-    /// Uses TestTimeSource for fast, deterministic time control
-    pub fn with_config(width: u16, height: u16, mut config: Config) -> io::Result<Self> {
-        let temp_dir = TempDir::new()?;
-        let temp_path = temp_dir.path().to_path_buf();
-        // Create empty plugins directory to prevent fallback to embedded plugins
-        std::fs::create_dir(temp_dir.path().join("plugins"))?;
-        // Create DirectoryContext pointing to temp dirs for test isolation
-        let dir_context = DirectoryContext::for_testing(temp_dir.path());
-
-        // Create TestTimeSource for controllable time in tests
-        let test_time_source = Arc::new(TestTimeSource::new());
-        let time_source: SharedTimeSource = test_time_source.clone();
-
-        let backend = TestBackend::new(width, height);
-        let terminal = Terminal::new(backend)?;
-        // Disable update checking in tests to avoid flaky status bar changes
-        config.check_for_updates = false;
-        // Use temp directory to avoid loading project plugins in tests
-        let editor = Editor::for_test(
-            config,
-            width,
-            height,
-            Some(temp_path),
-            dir_context,
-            fresh::view::color_support::ColorCapability::TrueColor,
-            None,
-            Some(time_source),
-        )?;
-
-        Ok(EditorTestHarness {
-            editor,
-            terminal,
-            _temp_dir: Some(temp_dir),
-            fs_metrics: None,
-            _tokio_runtime: None,
-            time_source: test_time_source,
-            shadow_string: String::new(),
-            shadow_cursor: 0,
-            enable_shadow_validation: false,
-            vt100_parser: vt100::Parser::new(height, width, 0),
-            term_width: width,
-            term_height: height,
-        })
-    }
-
-    /// Create harness with an isolated temporary project directory
-    /// The temp directory is kept alive for the duration of the harness
-    /// and automatically cleaned up when the harness is dropped.
-    /// This method does NOT modify the process's current directory, making tests
-    /// fully hermetic and safe to run in parallel.
-    ///
-    /// Creates a subdirectory named "project_root" for deterministic paths in snapshots.
-    pub fn with_temp_project(width: u16, height: u16) -> io::Result<Self> {
-        Self::with_temp_project_and_config(width, height, Config::default())
-    }
-
-    /// Create a test harness with a temporary project directory and custom config
-    /// Uses TestTimeSource for fast, deterministic time control
-    pub fn with_temp_project_and_config(
-        width: u16,
-        height: u16,
-        mut config: Config,
-    ) -> io::Result<Self> {
-        let temp_dir = TempDir::new()?;
-        // Create DirectoryContext pointing to temp dirs for test isolation
-        let dir_context = DirectoryContext::for_testing(temp_dir.path());
-
-        // Create TestTimeSource for controllable time in tests
-        let test_time_source = Arc::new(TestTimeSource::new());
-        let time_source: SharedTimeSource = test_time_source.clone();
-
-        // Create a subdirectory with a constant name for deterministic paths
-        let project_root = temp_dir.path().join("project_root");
-        std::fs::create_dir(&project_root)?;
-        // Create empty plugins directory to prevent fallback to embedded plugins
-        std::fs::create_dir(project_root.join("plugins"))?;
-
-        // Create editor with explicit working directory (no global state modification!)
-        let backend = TestBackend::new(width, height);
-        let terminal = Terminal::new(backend)?;
-        // Disable update checking in tests to avoid flaky status bar changes
-        config.check_for_updates = false;
-        let editor = Editor::for_test(
-            config,
-            width,
-            height,
-            Some(project_root),
-            dir_context,
-            fresh::view::color_support::ColorCapability::TrueColor,
-            None,
-            Some(time_source),
-        )?;
-
-        Ok(EditorTestHarness {
-            editor,
-            terminal,
-            _temp_dir: Some(temp_dir),
-            fs_metrics: None,
-            _tokio_runtime: None,
-            time_source: test_time_source,
-            shadow_string: String::new(),
-            shadow_cursor: 0,
-            enable_shadow_validation: false,
-            vt100_parser: vt100::Parser::new(height, width, 0),
-            term_width: width,
-            term_height: height,
-        })
-    }
-
-    /// Create with explicit working directory, loading config from that directory.
-    /// This mirrors production behavior where config is loaded from the working directory.
-    /// Note: Creates a temp dir for DirectoryContext to ensure test isolation
-    /// Uses TestTimeSource for fast, deterministic time control
-    pub fn with_working_dir(
-        width: u16,
-        height: u16,
-        working_dir: std::path::PathBuf,
-    ) -> io::Result<Self> {
-        let config = Config::load_for_working_dir(&working_dir);
-        Self::with_config_and_working_dir(width, height, config, working_dir)
-    }
-
-    /// Create with custom config and explicit working directory
-    /// The working directory is used for LSP initialization and file operations
-    /// Note: Creates a temp dir for DirectoryContext to ensure test isolation
-    /// Uses TestTimeSource for fast, deterministic time control
-    pub fn with_config_and_working_dir(
-        width: u16,
-        height: u16,
-        mut config: Config,
-        working_dir: std::path::PathBuf,
-    ) -> io::Result<Self> {
-        let temp_dir = TempDir::new()?;
-        // Create DirectoryContext pointing to temp dirs for test isolation
-        let dir_context = DirectoryContext::for_testing(temp_dir.path());
-
-        // Create TestTimeSource for controllable time in tests
-        let test_time_source = Arc::new(TestTimeSource::new());
-        let time_source: SharedTimeSource = test_time_source.clone();
-
+        // Create terminal
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
 
-        // Disable update checking in tests to avoid flaky status bar changes
-        config.check_for_updates = false;
-        // Create editor - it will create its own tokio runtime for async operations
+        // Create editor
         let mut editor = Editor::for_test(
             config,
             width,
@@ -347,18 +331,18 @@ impl EditorTestHarness {
             Some(working_dir),
             dir_context,
             fresh::view::color_support::ColorCapability::TrueColor,
-            None,
+            fs_backend,
             Some(time_source),
         )?;
 
-        // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
+        // Process any pending plugin commands
         editor.process_async_messages();
 
         Ok(EditorTestHarness {
             editor,
             terminal,
-            _temp_dir: Some(temp_dir),
-            fs_metrics: None,
+            _temp_dir: temp_dir,
+            fs_metrics,
             _tokio_runtime: None,
             time_source: test_time_source,
             shadow_string: String::new(),
@@ -370,8 +354,67 @@ impl EditorTestHarness {
         })
     }
 
-    /// Create new test harness with line wrapping disabled
-    /// Useful for tests that expect specific cursor positions without line wrapping
+    // =========================================================================
+    // Convenience constructors (delegate to create())
+    // =========================================================================
+
+    /// Create new test harness with virtual terminal.
+    /// Uses a temporary directory and prevents embedded plugin loading.
+    pub fn new(width: u16, height: u16) -> io::Result<Self> {
+        Self::create(width, height, HarnessOptions::new())
+    }
+
+    /// Create with custom config.
+    pub fn with_config(width: u16, height: u16, config: Config) -> io::Result<Self> {
+        Self::create(width, height, HarnessOptions::new().with_config(config))
+    }
+
+    /// Create harness with an isolated temporary project directory.
+    /// Creates a "project_root" subdirectory for deterministic paths in snapshots.
+    /// Does NOT create a plugins directory inside project_root (use `.with_empty_plugins_dir()` if needed).
+    pub fn with_temp_project(width: u16, height: u16) -> io::Result<Self> {
+        Self::create(width, height, HarnessOptions::new().with_project_root())
+    }
+
+    /// Create a test harness with a temporary project directory and custom config.
+    pub fn with_temp_project_and_config(
+        width: u16,
+        height: u16,
+        config: Config,
+    ) -> io::Result<Self> {
+        Self::create(
+            width,
+            height,
+            HarnessOptions::new()
+                .with_project_root()
+                .with_config(config),
+        )
+    }
+
+    /// Create with explicit working directory, loading config from that directory.
+    pub fn with_working_dir(width: u16, height: u16, working_dir: PathBuf) -> io::Result<Self> {
+        let config = Config::load_for_working_dir(&working_dir);
+        Self::with_config_and_working_dir(width, height, config, working_dir)
+    }
+
+    /// Create with custom config and explicit working directory.
+    pub fn with_config_and_working_dir(
+        width: u16,
+        height: u16,
+        config: Config,
+        working_dir: PathBuf,
+    ) -> io::Result<Self> {
+        Self::create(
+            width,
+            height,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(working_dir)
+                .without_empty_plugins_dir(), // Don't create plugins in user-provided dir
+        )
+    }
+
+    /// Create new test harness with line wrapping disabled.
     pub fn new_no_wrap(width: u16, height: u16) -> io::Result<Self> {
         let mut config = Config::default();
         config.editor.line_wrap = false;
@@ -379,109 +422,32 @@ impl EditorTestHarness {
     }
 
     /// Create with custom config, working directory, and shared DirectoryContext.
-    /// This is useful for session restore tests that need to share state directories
-    /// across multiple Editor instances.
-    /// Uses TestTimeSource for fast, deterministic time control
+    /// Useful for session restore tests that need to share state directories.
     pub fn with_shared_dir_context(
         width: u16,
         height: u16,
-        mut config: Config,
-        working_dir: std::path::PathBuf,
+        config: Config,
+        working_dir: PathBuf,
         dir_context: DirectoryContext,
     ) -> io::Result<Self> {
-        // Create TestTimeSource for controllable time in tests
-        let test_time_source = Arc::new(TestTimeSource::new());
-        let time_source: SharedTimeSource = test_time_source.clone();
-
-        let backend = TestBackend::new(width, height);
-        let terminal = Terminal::new(backend)?;
-
-        // Disable update checking in tests to avoid flaky status bar changes
-        config.check_for_updates = false;
-        // Create editor - it will create its own tokio runtime for async operations
-        let mut editor = Editor::for_test(
-            config,
+        Self::create(
             width,
             height,
-            Some(working_dir),
-            dir_context,
-            fresh::view::color_support::ColorCapability::TrueColor,
-            None,
-            Some(time_source),
-        )?;
-
-        // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
-        editor.process_async_messages();
-
-        Ok(EditorTestHarness {
-            editor,
-            terminal,
-            _temp_dir: None, // No owned temp dir - caller manages the shared context
-            fs_metrics: None,
-            _tokio_runtime: None,
-            time_source: test_time_source,
-            shadow_string: String::new(),
-            shadow_cursor: 0,
-            enable_shadow_validation: false,
-            vt100_parser: vt100::Parser::new(height, width, 0),
-            term_width: width,
-            term_height: height,
-        })
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(working_dir)
+                .with_shared_dir_context(dir_context)
+                .without_empty_plugins_dir(),
+        )
     }
 
-    /// Create a test harness with a slow filesystem backend for performance testing
-    /// Returns the harness and provides access to filesystem metrics
-    /// Uses TestTimeSource for fast, deterministic time control
+    /// Create a test harness with a slow filesystem backend for performance testing.
     pub fn with_slow_fs(width: u16, height: u16, slow_config: SlowFsConfig) -> io::Result<Self> {
-        let temp_dir = TempDir::new()?;
-        let temp_path = temp_dir.path().to_path_buf();
-        // Create empty plugins directory to prevent fallback to embedded plugins
-        std::fs::create_dir(temp_dir.path().join("plugins"))?;
-        // Create DirectoryContext pointing to temp dirs for test isolation
-        let dir_context = DirectoryContext::for_testing(temp_dir.path());
-
-        // Create TestTimeSource for controllable time in tests
-        let test_time_source = Arc::new(TestTimeSource::new());
-        let time_source: SharedTimeSource = test_time_source.clone();
-
-        // Create slow filesystem backend wrapping the local backend
-        let local_backend = Arc::new(LocalFsBackend::new());
-        let slow_backend = SlowFsBackend::new(local_backend, slow_config);
-        let metrics_arc = slow_backend.metrics_arc();
-        let fs_backend: Arc<dyn FsBackend> = Arc::new(slow_backend);
-
-        let backend = TestBackend::new(width, height);
-        let terminal = Terminal::new(backend)?;
-        let mut config = Config::default();
-        // Disable update checking in tests to avoid flaky status bar changes
-        config.check_for_updates = false;
-
-        // Create editor with custom filesystem backend and time source
-        let editor = Editor::for_test(
-            config,
+        Self::create(
             width,
             height,
-            Some(temp_path),
-            dir_context,
-            fresh::view::color_support::ColorCapability::TrueColor,
-            Some(fs_backend),
-            Some(time_source),
-        )?;
-
-        Ok(EditorTestHarness {
-            editor,
-            terminal,
-            _temp_dir: Some(temp_dir),
-            fs_metrics: Some(metrics_arc),
-            _tokio_runtime: None,
-            time_source: test_time_source,
-            shadow_string: String::new(),
-            shadow_cursor: 0,
-            enable_shadow_validation: false,
-            vt100_parser: vt100::Parser::new(height, width, 0),
-            term_width: width,
-            term_height: height,
-        })
+            HarnessOptions::new().with_slow_fs(slow_config),
+        )
     }
 
     /// Advance the test time source by the given duration (instant, no real wait).

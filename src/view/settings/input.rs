@@ -878,18 +878,6 @@ impl SettingsState {
             }
         }
     }
-
-    /// Handle delete on a keybinding list entry
-    fn handle_keybinding_delete(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::ObjectArray(ref mut state) = &mut item.control {
-                if state.focused_index.is_some() {
-                    state.remove_focused();
-                    self.on_value_changed();
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
