@@ -162,7 +162,7 @@ Download the latest release for your platform from the [releases page](https://g
 **Step 0:** Determine the architecture and release tag to download if you are too lazy to fulfill the tip above (`jq` required).
 
 ```bash
-ARCH=$(uname -m | sed -e 's/arm64/aarch64/' -e 's/armv8l/aarch64/)
+ARCH=$(uname -m | sed -e 's/arm64/aarch64/' -e 's/armv8l/aarch64/')
 RELEASE_TAG=$(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | jq -r .tag_name)
 ```
 
