@@ -157,19 +157,19 @@ Download the latest release for your platform from the [releases page](https://g
 > [!TIP]
 > Replace `$ARCH` below with either `x86_64` or `aarch64` depending on your CPU architecture.
 >
-> And replace `$VERSION` below with the desired version (usually the latest one).
+> And replace `$RELEASE_TAG` below with the desired release tag (usually the latest one).
 
-**Step 0:** Determine the architecture and version to download (if you are too lazy to fulfill the tip above).
+**Step 0:** Determine the architecture and release tag to download (if you are too lazy to fulfill the tip above).
 
 ```bash
 ARCH=$(uname -m)
-VERSION=$(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | grep -Po '"tag_name": "v\K[^"]*')
+RELEASE_TAG=$(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | grep -Po '"tag_name": "\K[^"]*')
 ```
 
 **Step 1:** Download the pre-built binary archive from the [GitHub releases page](https://github.com/sinelaw/fresh/releases).
 
 ```bash
-curl -L "https://github.com/sinelaw/fresh/releases/download/v$VERSION/fresh-editor-$ARCH-unknown-linux-gnu.tar.xz" > fresh-editor-$ARCH-unknown-linux-gnu.tar.xz
+curl -L "https://github.com/sinelaw/fresh/releases/download/$RELEASE_TAG/fresh-editor-$ARCH-unknown-linux-gnu.tar.xz" > fresh-editor-$ARCH-unknown-linux-gnu.tar.xz
 ```
 
 **Step 2:** Extract the downloaded archive.
