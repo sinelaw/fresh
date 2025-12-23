@@ -185,7 +185,8 @@ async function performSearch(pattern: string, replace: string, isRegex: boolean)
   args.push("--", pattern);
 
   try {
-    const result = await editor.spawnProcess("git", args);
+    const cwd = editor.getCwd();
+    const result = await editor.spawnProcess("git", args, cwd);
 
     searchResults = [];
 

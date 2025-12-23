@@ -89,7 +89,8 @@ globalThis.onGitGrepPromptChanged = function(args: {
   }
 
   // Spawn git grep asynchronously
-  editor.spawnProcess("git", ["grep", "-n", "--column", "-I", "--", query])
+  const cwd = editor.getCwd();
+  editor.spawnProcess("git", ["grep", "-n", "--column", "-I", "--", query], cwd)
     .then((result) => {
       if (result.exit_code === 0) {
         // Parse results and update suggestions

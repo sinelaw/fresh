@@ -184,6 +184,7 @@ async function runSearch(query: string): Promise<void> {
   lastQuery = query;
 
   try {
+    const cwd = editor.getCwd();
     const result = await editor.spawnProcess("rg", [
       "--line-number",
       "--column",
@@ -197,7 +198,7 @@ async function runSearch(query: string): Promise<void> {
       "-g", "!*.lock",
       "--",
       query,
-    ]);
+    ], cwd);
 
     if (result.exit_code === 0) {
       const { results, suggestions } = parseRipgrepOutput(result.stdout);
