@@ -24,6 +24,7 @@ let originalSplitId: number | null = null;
 let lastQuery: string = "";
 let previewCreated: boolean = false;
 let currentSearch: ProcessHandle | null = null;
+let pendingKill: Promise<boolean> | null = null;  // Track pending kill globally
 let searchVersion = 0;  // Incremented on each input change for debouncing
 
 const DEBOUNCE_MS = 150;  // Wait 150ms after last keystroke before searching
@@ -179,18 +180,18 @@ async function runSearch(query: string): Promise<void> {
   editor.debug(`[live_grep] runSearch called: query="${query}", version=${thisVersion}`);
 
   // Kill any existing search immediately (don't wait) to stop wasting CPU
-  // We'll await the kill promise later before spawning a new search
-  let killPromise: Promise<boolean> | null = null;
+  // Store the kill promise globally so ALL pending searches wait for it
   if (currentSearch) {
     editor.debug(`[live_grep] killing existing search immediately`);
-    killPromise = currentSearch.kill();
+    pendingKill = currentSearch.kill();
     currentSearch = null;
   }
 
   if (!query || query.trim().length < 2) {
-    // Wait for kill to complete before returning
-    if (killPromise) {
-      await killPromise;
+    // Wait for any pending kill to complete before returning
+    if (pendingKill) {
+      await pendingKill;
+      pendingKill = null;
     }
     editor.debug(`[live_grep] query too short, clearing`);
     editor.setPromptSuggestions([]);
@@ -201,6 +202,14 @@ async function runSearch(query: string): Promise<void> {
   // Debounce: wait a bit to see if user is still typing
   editor.debug(`[live_grep] debouncing for ${DEBOUNCE_MS}ms...`);
   await editor.delay(DEBOUNCE_MS);
+
+  // Always await any pending kill before continuing - ensures old process is dead
+  if (pendingKill) {
+    editor.debug(`[live_grep] waiting for previous search to terminate`);
+    await pendingKill;
+    pendingKill = null;
+    editor.debug(`[live_grep] previous search terminated`);
+  }
 
   // If version changed during delay, a newer search was triggered - abort this one
   if (searchVersion !== thisVersion) {
@@ -214,13 +223,6 @@ async function runSearch(query: string): Promise<void> {
     return;
   }
   lastQuery = query;
-
-  // Wait for kill to complete before spawning new process
-  if (killPromise) {
-    editor.debug(`[live_grep] waiting for previous search to terminate`);
-    await killPromise;
-    editor.debug(`[live_grep] previous search terminated`);
-  }
 
   try {
     const cwd = editor.getCwd();

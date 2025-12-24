@@ -168,6 +168,8 @@ struct TsRuntimeState {
     background_processes: Rc<RefCell<HashMap<u64, tokio::process::Child>>>,
     /// Cancellable processes: process_id -> CancellableProcess
     cancellable_processes: Rc<RefCell<HashMap<u64, CancellableProcess>>>,
+    /// Process PIDs: process_id -> OS PID (for killing processes that are being waited on)
+    process_pids: Rc<RefCell<HashMap<u64, u32>>>,
     /// Next process ID for background processes
     next_process_id: Rc<RefCell<u64>>,
 }
@@ -1259,7 +1261,7 @@ async fn op_fresh_kill_process(
     #[bigint] process_id: u64,
 ) -> Result<bool, JsErrorBox> {
     // Try to find and remove from either background_processes or cancellable_processes
-    let (bg_child, cancellable) = {
+    let (bg_child, cancellable, os_pid) = {
         let op_state = state.borrow();
         if let Some(runtime_state) = op_state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
             let runtime_state = runtime_state.borrow();
@@ -1271,7 +1273,9 @@ async fn op_fresh_kill_process(
                 .cancellable_processes
                 .borrow_mut()
                 .remove(&process_id);
-            (bg, cancellable)
+            // Also get OS PID for fallback kill-by-pid
+            let os_pid = runtime_state.process_pids.borrow_mut().remove(&process_id);
+            (bg, cancellable, os_pid)
         } else {
             return Ok(false);
         }
@@ -1283,6 +1287,24 @@ async fn op_fresh_kill_process(
         Ok(true)
     } else if let Some(mut process) = cancellable {
         let _ = process.child.kill().await;
+        Ok(true)
+    } else if let Some(pid) = os_pid {
+        // Fallback: kill by OS PID when spawn_process_wait has taken ownership
+        // This happens when await-ing the process while trying to kill it
+        tracing::trace!(process_id, pid, "killing process by OS PID (fallback)");
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{kill, Signal};
+            use nix::unistd::Pid;
+            let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
+        }
+        #[cfg(not(unix))]
+        {
+            // On non-Unix, try using taskkill
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/PID", &pid.to_string()])
+                .status();
+        }
         Ok(true)
     } else {
         Ok(false)
@@ -1372,8 +1394,12 @@ async fn op_fresh_spawn_process_start(
         .spawn()
         .map_err(|e| JsErrorBox::generic(format!("Failed to spawn process: {}", e)))?;
 
+    // Get the OS PID for kill-by-pid (needed because spawn_process_wait takes ownership)
+    let os_pid = child.id();
+
     tracing::trace!(
         command = %command,
+        os_pid = ?os_pid,
         spawn_ms = spawn_start.elapsed().as_micros(),
         "process spawned"
     );
@@ -1438,6 +1464,16 @@ async fn op_fresh_spawn_process_start(
                     output_rx: rx,
                 },
             );
+
+            // Store OS PID separately for kill-by-pid
+            // (needed because spawn_process_wait takes ownership of Child)
+            if let Some(pid) = os_pid {
+                runtime_state
+                    .process_pids
+                    .borrow_mut()
+                    .insert(process_id, pid);
+            }
+
             process_id
         } else {
             return Err(JsErrorBox::generic("Runtime state not available"));
@@ -1501,6 +1537,15 @@ async fn op_fresh_spawn_process_wait(
         .output_rx
         .await
         .unwrap_or_else(|_| (String::new(), String::new()));
+
+    // Clean up process_pids entry (if kill_process hasn't already)
+    {
+        let op_state = state.borrow();
+        if let Some(runtime_state) = op_state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+            let runtime_state = runtime_state.borrow();
+            runtime_state.process_pids.borrow_mut().remove(&process_id);
+        }
+    }
 
     tracing::trace!(
         process_id,
@@ -3062,6 +3107,7 @@ impl TypeScriptRuntime {
             next_request_id: Rc::new(RefCell::new(1)),
             background_processes: Rc::new(RefCell::new(HashMap::new())),
             cancellable_processes: Rc::new(RefCell::new(HashMap::new())),
+            process_pids: Rc::new(RefCell::new(HashMap::new())),
             next_process_id: Rc::new(RefCell::new(1)),
         }));
 
