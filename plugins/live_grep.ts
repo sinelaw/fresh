@@ -178,14 +178,20 @@ async function runSearch(query: string): Promise<void> {
   const thisVersion = ++searchVersion;
   editor.debug(`[live_grep] runSearch called: query="${query}", version=${thisVersion}`);
 
-  // Kill any existing search immediately
+  // Kill any existing search immediately (don't wait) to stop wasting CPU
+  // We'll await the kill promise later before spawning a new search
+  let killPromise: Promise<boolean> | null = null;
   if (currentSearch) {
-    editor.debug(`[live_grep] killing existing search`);
-    currentSearch.kill();
+    editor.debug(`[live_grep] killing existing search immediately`);
+    killPromise = currentSearch.kill();
     currentSearch = null;
   }
 
   if (!query || query.trim().length < 2) {
+    // Wait for kill to complete before returning
+    if (killPromise) {
+      await killPromise;
+    }
     editor.debug(`[live_grep] query too short, clearing`);
     editor.setPromptSuggestions([]);
     grepResults = [];
@@ -208,6 +214,13 @@ async function runSearch(query: string): Promise<void> {
     return;
   }
   lastQuery = query;
+
+  // Wait for kill to complete before spawning new process
+  if (killPromise) {
+    editor.debug(`[live_grep] waiting for previous search to terminate`);
+    await killPromise;
+    editor.debug(`[live_grep] previous search terminated`);
+  }
 
   try {
     const cwd = editor.getCwd();
