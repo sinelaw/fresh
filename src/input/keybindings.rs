@@ -297,7 +297,6 @@ pub enum Action {
 
     // Smart editing
     SmartHome,
-    IndentSelection,
     DedentSelection,
     ToggleComment,
 
@@ -598,7 +597,6 @@ impl Action {
             "jump_to_previous_error" => Some(Action::JumpToPreviousError),
 
             "smart_home" => Some(Action::SmartHome),
-            "indent_selection" => Some(Action::IndentSelection),
             "dedent_selection" => Some(Action::DedentSelection),
             "toggle_comment" => Some(Action::ToggleComment),
 
@@ -1421,6 +1419,7 @@ impl KeybindingResolver {
             "backspace" => Some(KeyCode::Backspace),
             "delete" | "del" => Some(KeyCode::Delete),
             "tab" => Some(KeyCode::Tab),
+            "backtab" => Some(KeyCode::BackTab),
             "esc" | "escape" => Some(KeyCode::Esc),
             "space" => Some(KeyCode::Char(' ')),
 
@@ -1584,7 +1583,6 @@ impl KeybindingResolver {
             Action::SmartHome => {
                 "Smart home (toggle line start / first non-whitespace)".to_string()
             }
-            Action::IndentSelection => "Indent selection".to_string(),
             Action::DedentSelection => "Dedent selection".to_string(),
             Action::ToggleComment => "Toggle comment".to_string(),
             Action::SetBookmark(c) => format!("Set bookmark '{}'", c),
@@ -1862,6 +1860,15 @@ mod tests {
         assert_eq!(
             KeybindingResolver::parse_key("backspace"),
             Some(KeyCode::Backspace)
+        );
+        assert_eq!(KeybindingResolver::parse_key("tab"), Some(KeyCode::Tab));
+        assert_eq!(
+            KeybindingResolver::parse_key("backtab"),
+            Some(KeyCode::BackTab)
+        );
+        assert_eq!(
+            KeybindingResolver::parse_key("BackTab"),
+            Some(KeyCode::BackTab)
         );
         assert_eq!(KeybindingResolver::parse_key("a"), Some(KeyCode::Char('a')));
     }

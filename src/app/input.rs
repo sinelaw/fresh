@@ -612,12 +612,6 @@ impl Editor {
             Action::SmartHome => {
                 self.smart_home();
             }
-            Action::IndentSelection => {
-                self.indent_selection();
-            }
-            Action::DedentSelection => {
-                self.dedent_selection();
-            }
             Action::ToggleComment => {
                 self.toggle_comment();
             }
@@ -2149,7 +2143,6 @@ impl Editor {
                 | Action::DeleteWordBackward
                 | Action::DeleteWordForward
                 | Action::DeleteLine
-                | Action::IndentSelection
                 | Action::DedentSelection
                 | Action::ToggleComment
         );

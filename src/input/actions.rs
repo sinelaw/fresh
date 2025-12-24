@@ -124,6 +124,43 @@ fn apply_deletions(
     }
 }
 
+/// Collect all line start positions in a given byte range
+///
+/// This is used for indent/dedent operations to find all lines that need
+/// to be indented or dedented within a selection.
+fn collect_line_starts(
+    buffer: &mut Buffer,
+    start_pos: usize,
+    end_pos: usize,
+    estimated_line_length: usize,
+) -> Vec<usize> {
+    let buffer_len = buffer.len();
+    let mut line_starts = Vec::new();
+    let mut iter = buffer.line_iterator(start_pos, estimated_line_length);
+    let mut current_pos = iter.current_position();
+    line_starts.push(current_pos);
+
+    // Collect all line starts by iterating through lines
+    loop {
+        if let Some((_, content)) = iter.next() {
+            current_pos += content.len();
+            if current_pos > end_pos || current_pos > buffer_len {
+                break;
+            }
+            let next_iter = buffer.line_iterator(current_pos, estimated_line_length);
+            let next_start = next_iter.current_position();
+            if next_start != *line_starts.last().unwrap() {
+                line_starts.push(next_start);
+            }
+            iter = buffer.line_iterator(current_pos, estimated_line_length);
+        } else {
+            break;
+        }
+    }
+
+    line_starts
+}
+
 /// Handle block selection movement
 fn block_select_action(
     state: &mut EditorState,
@@ -693,6 +730,132 @@ pub fn action_to_events(
             }
         }
 
+        Action::DedentSelection => {
+            // Dedent selected lines and preserve selections
+            // Collect all line starts from all cursors first to avoid position shifts
+            use std::collections::BTreeMap;
+            let mut all_line_deletions: BTreeMap<usize, (usize, String)> = BTreeMap::new();
+            let mut cursor_info = Vec::new();
+
+            let buffer_len = state.buffer.len();
+
+            for (cursor_id, cursor) in state.cursors.iter() {
+                let has_selection = cursor.selection_range().is_some();
+
+                let (start_pos, end_pos) = if let Some(range) = cursor.selection_range() {
+                    (range.start, range.end)
+                } else {
+                    // No selection - dedent current line
+                    let iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                    let line_start = iter.current_position();
+                    (line_start, cursor.position)
+                };
+
+                // Find all line starts in the range using helper function
+                let line_starts =
+                    collect_line_starts(&mut state.buffer, start_pos, end_pos, estimated_line_length);
+
+                // For each line start, calculate what to delete
+                for &line_start in &line_starts {
+                    if !all_line_deletions.contains_key(&line_start) {
+                        // Check what leading whitespace the line has
+                        let line_bytes = state
+                            .buffer
+                            .slice_bytes(line_start..buffer_len.min(line_start + tab_size + 1));
+
+                        // Handle both tabs and spaces
+                        let (chars_to_remove, deleted_text) =
+                            if !line_bytes.is_empty() && line_bytes[0] == b'\t' {
+                                // Remove one tab character
+                                (1, "\t".to_string())
+                            } else {
+                                // Remove up to tab_size spaces
+                                let spaces_to_remove = line_bytes
+                                    .iter()
+                                    .take(tab_size)
+                                    .take_while(|&&b| b == b' ')
+                                    .count();
+                                (spaces_to_remove, " ".repeat(spaces_to_remove))
+                            };
+
+                        if chars_to_remove > 0 {
+                            all_line_deletions.insert(line_start, (chars_to_remove, deleted_text));
+                        }
+                    }
+                }
+
+                // Store cursor info for later restoration
+                cursor_info.push((
+                    cursor_id,
+                    cursor.position,
+                    cursor.anchor,
+                    cursor.sticky_column,
+                    has_selection,
+                    start_pos,
+                    end_pos,
+                ));
+            }
+
+            // Create delete events in reverse order to avoid position shifts
+            let first_cursor_id = state.cursors.iter().next().unwrap().0;
+            for (&line_start, (chars_to_remove, deleted_text)) in all_line_deletions.iter().rev() {
+                events.push(Event::Delete {
+                    range: line_start..line_start + chars_to_remove,
+                    deleted_text: deleted_text.clone(),
+                    cursor_id: first_cursor_id,
+                });
+            }
+
+            // Calculate new cursor/selection positions and add MoveCursor events
+            for (cursor_id, old_position, old_anchor, old_sticky_column, has_selection, start_pos, end_pos) in
+                cursor_info
+            {
+                // Calculate how many chars were removed before start_pos and end_pos
+                let mut removed_before_start = 0;
+                let mut removed_before_end = 0;
+                let mut removed_before_position = 0;
+
+                for (&line_start, &(chars_to_remove, _)) in &all_line_deletions {
+                    if line_start < start_pos {
+                        removed_before_start += chars_to_remove;
+                    }
+                    if line_start <= end_pos {
+                        removed_before_end += chars_to_remove;
+                    }
+                    if line_start < old_position {
+                        removed_before_position += chars_to_remove;
+                    }
+                }
+
+                if has_selection {
+                    // Had selection - restore it with adjusted positions
+                    let new_anchor = start_pos.saturating_sub(removed_before_start);
+                    let new_position = end_pos.saturating_sub(removed_before_end);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        old_position,
+                        new_position,
+                        old_anchor,
+                        new_anchor: Some(new_anchor),
+                        old_sticky_column,
+                        new_sticky_column: 0,
+                    });
+                } else {
+                    // No selection - just move cursor back by amount removed before it
+                    let new_position = old_position.saturating_sub(removed_before_position);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        old_position,
+                        new_position,
+                        old_anchor,
+                        new_anchor: None,
+                        old_sticky_column,
+                        new_sticky_column: 0,
+                    });
+                }
+            }
+        }
+
         Action::InsertTab => {
             // Insert a tab character or spaces based on language config
             let tab_str = if state.use_tabs {
@@ -708,49 +871,67 @@ pub fn action_to_events(
                 .any(|(_, cursor)| cursor.selection_range().is_some());
 
             if has_selection {
-                // Indent selected lines (like IndentSelection action)
+                // Indent selected lines and preserve selections
+                // Collect all line starts from all cursors first to avoid position shifts
+                use std::collections::BTreeSet;
+                let mut all_line_starts = BTreeSet::new();
+                let mut cursor_info = Vec::new();
+
                 for (cursor_id, cursor) in state.cursors.iter() {
                     if let Some(range) = cursor.selection_range() {
                         let (start_pos, end_pos) = (range.start, range.end);
 
-                        // Find all line starts in the range
-                        let buffer_len = state.buffer.len();
-                        let mut line_starts = Vec::new();
-                        let mut iter = state.buffer.line_iterator(start_pos, estimated_line_length);
-                        let mut current_pos = iter.current_position();
-                        line_starts.push(current_pos);
+                        // Find all line starts in the range using helper function
+                        let line_starts =
+                            collect_line_starts(&mut state.buffer, start_pos, end_pos, estimated_line_length);
 
-                        // Collect all line starts by iterating through lines
-                        loop {
-                            if let Some((_, content)) = iter.next() {
-                                current_pos += content.len();
-                                if current_pos > end_pos || current_pos > buffer_len {
-                                    break;
-                                }
-                                let next_iter = state
-                                    .buffer
-                                    .line_iterator(current_pos, estimated_line_length);
-                                let next_start = next_iter.current_position();
-                                if next_start != *line_starts.last().unwrap() {
-                                    line_starts.push(next_start);
-                                }
-                                iter = state
-                                    .buffer
-                                    .line_iterator(current_pos, estimated_line_length);
-                            } else {
-                                break;
-                            }
-                        }
+                        // Add to global set (automatically deduplicates and sorts)
+                        all_line_starts.extend(line_starts.iter());
 
-                        // Create insert events for each line start (in reverse order)
-                        for &line_start in line_starts.iter().rev() {
-                            events.push(Event::Insert {
-                                position: line_start,
-                                text: tab_str.clone(),
-                                cursor_id,
-                            });
-                        }
+                        // Store cursor info for later restoration
+                        cursor_info.push((
+                            cursor_id,
+                            cursor.position,
+                            cursor.anchor,
+                            cursor.sticky_column,
+                            start_pos,
+                            end_pos,
+                        ));
                     }
+                }
+
+                // Create insert events for all line starts in reverse order
+                // This ensures later positions aren't shifted by earlier insertions
+                let first_cursor_id = state.cursors.iter().next().unwrap().0;
+                for &line_start in all_line_starts.iter().rev() {
+                    events.push(Event::Insert {
+                        position: line_start,
+                        text: tab_str.clone(),
+                        cursor_id: first_cursor_id,
+                    });
+                }
+
+                // Calculate new selection positions and add MoveCursor events
+                let indent_len = tab_str.len();
+                for (cursor_id, old_position, old_anchor, old_sticky_column, start_pos, end_pos) in
+                    cursor_info
+                {
+                    // Count how many indents were inserted before start_pos and end_pos
+                    let indents_before_start = all_line_starts.iter().filter(|&&pos| pos < start_pos).count();
+                    let indents_before_end = all_line_starts.iter().filter(|&&pos| pos <= end_pos).count();
+
+                    let new_anchor = start_pos + (indents_before_start * indent_len) + indent_len;
+                    let new_position = end_pos + (indents_before_end * indent_len);
+
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        old_position,
+                        new_position,
+                        old_anchor,
+                        new_anchor: Some(new_anchor),
+                        old_sticky_column,
+                        new_sticky_column: 0,
+                    });
                 }
             } else {
                 // No selection - insert tab character at cursor position
@@ -1810,8 +1991,6 @@ pub fn action_to_events(
         | Action::JumpToPreviousError
         | Action::ShowKeyboardShortcuts
         | Action::SmartHome
-        | Action::IndentSelection
-        | Action::DedentSelection
         | Action::ToggleComment
         | Action::SetBookmark(_)
         | Action::JumpToBookmark(_)

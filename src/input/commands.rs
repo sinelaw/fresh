@@ -874,14 +874,6 @@ pub fn get_all_commands() -> Vec<Command> {
             source: CommandSource::Builtin,
         },
         Command {
-            name: "Indent Selection".to_string(),
-            description: "Increase indentation of selected lines".to_string(),
-            action: Action::IndentSelection,
-            contexts: vec![KeyContext::Normal],
-            custom_contexts: vec![],
-            source: CommandSource::Builtin,
-        },
-        Command {
             name: "Dedent Selection".to_string(),
             description: "Decrease indentation of selected lines".to_string(),
             action: Action::DedentSelection,

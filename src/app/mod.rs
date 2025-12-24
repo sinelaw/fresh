@@ -4577,10 +4577,6 @@ mod tests {
             Some(Action::SmartHome)
         );
         assert_eq!(
-            Action::from_str("indent_selection", &args),
-            Some(Action::IndentSelection)
-        );
-        assert_eq!(
             Action::from_str("dedent_selection", &args),
             Some(Action::DedentSelection)
         );
