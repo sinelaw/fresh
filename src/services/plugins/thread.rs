@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 /// Request messages sent to the plugin thread
 #[derive(Debug)]
@@ -478,6 +479,10 @@ mod plugin_thread_tests {
 }
 
 /// Main loop for the plugin thread
+///
+/// Uses `tokio::select!` to interleave request handling with periodic event loop
+/// polling. This allows long-running promises (like process spawns) to make progress
+/// even when no requests are coming in, preventing the UI from getting stuck.
 async fn plugin_thread_loop(
     runtime: Rc<RefCell<TypeScriptRuntime>>,
     plugins: &mut HashMap<String, TsPluginInfo>,
@@ -486,28 +491,44 @@ async fn plugin_thread_loop(
 ) {
     tracing::info!("Plugin thread event loop started");
 
-    loop {
-        // Wait for requests (async, no polling/sleeping)
-        match request_receiver.recv().await {
-            Some(PluginRequest::ExecuteAction {
-                action_name,
-                response,
-            }) => {
-                // Handle ExecuteAction specially
-                execute_action_with_hooks(&action_name, response, Rc::clone(&runtime)).await;
-            }
-            Some(request) => {
-                let should_shutdown =
-                    handle_request(request, Rc::clone(&runtime), plugins, commands).await;
+    // Interval for polling the JS event loop when there's pending work
+    let poll_interval = Duration::from_millis(1);
+    let mut has_pending_work = false;
 
-                if should_shutdown {
-                    break;
+    loop {
+        tokio::select! {
+            biased; // Prefer handling requests over polling
+
+            request = request_receiver.recv() => {
+                match request {
+                    Some(PluginRequest::ExecuteAction {
+                        action_name,
+                        response,
+                    }) => {
+                        // Handle ExecuteAction specially
+                        execute_action_with_hooks(&action_name, response, Rc::clone(&runtime)).await;
+                        has_pending_work = true; // Action may have started async work
+                    }
+                    Some(request) => {
+                        let should_shutdown =
+                            handle_request(request, Rc::clone(&runtime), plugins, commands).await;
+
+                        if should_shutdown {
+                            break;
+                        }
+                        has_pending_work = true; // Request may have started async work
+                    }
+                    None => {
+                        // Channel closed
+                        tracing::info!("Plugin thread request channel closed");
+                        break;
+                    }
                 }
             }
-            None => {
-                // Channel closed
-                tracing::info!("Plugin thread request channel closed");
-                break;
+
+            // Poll the JS event loop periodically to make progress on pending promises
+            _ = tokio::time::sleep(poll_interval), if has_pending_work => {
+                has_pending_work = runtime.borrow_mut().poll_event_loop_once();
             }
         }
     }
@@ -557,10 +578,22 @@ async fn run_hook_internal_rc(
     args: &HookArgs,
 ) -> Result<()> {
     // Convert HookArgs to JSON
+    let json_start = std::time::Instant::now();
     let json_data = hook_args_to_json(args)?;
+    tracing::trace!(
+        hook = hook_name,
+        json_ms = json_start.elapsed().as_micros(),
+        "hook args serialized"
+    );
 
     // Emit to TypeScript handlers
+    let emit_start = std::time::Instant::now();
     runtime.borrow_mut().emit(hook_name, &json_data).await?;
+    tracing::trace!(
+        hook = hook_name,
+        emit_ms = emit_start.elapsed().as_millis(),
+        "emit completed"
+    );
 
     Ok(())
 }
@@ -611,12 +644,19 @@ async fn handle_request(
 
         PluginRequest::RunHook { hook_name, args } => {
             // Fire-and-forget hook execution
+            let hook_start = std::time::Instant::now();
+            tracing::trace!(hook = %hook_name, "RunHook request received");
             if let Err(e) = run_hook_internal_rc(Rc::clone(&runtime), &hook_name, &args).await {
                 let error_msg = format!("Plugin error in '{}': {}", hook_name, e);
                 tracing::error!("{}", error_msg);
                 // Surface the error to the UI
                 runtime.borrow_mut().send_status(error_msg);
             }
+            tracing::trace!(
+                hook = %hook_name,
+                elapsed_ms = hook_start.elapsed().as_millis(),
+                "RunHook completed"
+            );
         }
 
         PluginRequest::HasHookHandlers {

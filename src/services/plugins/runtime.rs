@@ -1348,6 +1348,14 @@ async fn op_fresh_spawn_process_start(
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::process::Command;
 
+    let spawn_start = std::time::Instant::now();
+    tracing::trace!(
+        command = %command,
+        args = ?args,
+        cwd = ?cwd,
+        "spawn_process_start called"
+    );
+
     // Build the command
     let mut cmd = Command::new(&command);
     cmd.args(&args);
@@ -1363,6 +1371,12 @@ async fn op_fresh_spawn_process_start(
     let mut child = cmd
         .spawn()
         .map_err(|e| JsErrorBox::generic(format!("Failed to spawn process: {}", e)))?;
+
+    tracing::trace!(
+        command = %command,
+        spawn_ms = spawn_start.elapsed().as_micros(),
+        "process spawned"
+    );
 
     // Take stdout and stderr handles
     let stdout_handle = child.stdout.take();
@@ -1443,6 +1457,9 @@ async fn op_fresh_spawn_process_wait(
     state: Rc<RefCell<OpState>>,
     #[bigint] process_id: u64,
 ) -> Result<SpawnResult, JsErrorBox> {
+    let wait_start = std::time::Instant::now();
+    tracing::trace!(process_id, "spawn_process_wait called");
+
     // Take the process from the map
     let process_opt = {
         let op_state = state.borrow();
@@ -1459,6 +1476,7 @@ async fn op_fresh_spawn_process_wait(
     };
 
     let Some(mut process) = process_opt else {
+        tracing::trace!(process_id, "process not found");
         return Err(JsErrorBox::generic(format!(
             "Process {} not found (already completed or killed)",
             process_id
@@ -1466,16 +1484,32 @@ async fn op_fresh_spawn_process_wait(
     };
 
     // Wait for the process to complete
+    tracing::trace!(process_id, "waiting for process...");
     let exit_code = match process.child.wait().await {
         Ok(status) => status.code().unwrap_or(-1),
         Err(_) => -1,
     };
+    tracing::trace!(
+        process_id,
+        exit_code,
+        wait_ms = wait_start.elapsed().as_millis(),
+        "process exited"
+    );
 
     // Get the collected output
     let (stdout, stderr) = process
         .output_rx
         .await
         .unwrap_or_else(|_| (String::new(), String::new()));
+
+    tracing::trace!(
+        process_id,
+        exit_code,
+        stdout_len = stdout.len(),
+        stderr_len = stderr.len(),
+        total_ms = wait_start.elapsed().as_millis(),
+        "spawn_process_wait completed"
+    );
 
     Ok(SpawnResult {
         stdout,
@@ -3579,20 +3613,13 @@ impl TypeScriptRuntime {
                 match self.js_runtime.execute_script("<emit>", script) {
                     Ok(_) => {
                         let call_elapsed = call_start.elapsed();
-
-                        // Run event loop to process any async work (promises)
-                        let event_loop_start = std::time::Instant::now();
-                        self.js_runtime
-                            .run_event_loop(Default::default())
-                            .await
-                            .map_err(|e| anyhow!("Event loop error in emit: {}", e))?;
-                        let event_loop_elapsed = event_loop_start.elapsed();
-
+                        // Don't poll event loop here - the plugin thread's main loop
+                        // will poll it periodically to allow long-running promises
+                        // (like process spawns) to make progress.
                         tracing::trace!(
                             event = event_name,
                             handler = handler_name,
                             call_us = call_elapsed.as_micros(),
-                            event_loop_us = event_loop_elapsed.as_micros(),
                             "emit handler timing"
                         );
                     }
@@ -3634,6 +3661,22 @@ impl TypeScriptRuntime {
             .get(event_name)
             .map(|v| !v.is_empty())
             .unwrap_or(false)
+    }
+
+    /// Poll the event loop once to make progress on pending promises.
+    /// Returns true if there's still pending work, false if all work is done.
+    pub fn poll_event_loop_once(&mut self) -> bool {
+        let waker = std::task::Waker::noop();
+        let mut cx = std::task::Context::from_waker(&waker);
+        match self.js_runtime.poll_event_loop(&mut cx, Default::default()) {
+            std::task::Poll::Ready(result) => {
+                if let Err(e) = result {
+                    tracing::warn!("Event loop error: {}", e);
+                }
+                false // No more pending work
+            }
+            std::task::Poll::Pending => true, // More work pending
+        }
     }
 
     /// Send a status message to the editor UI
