@@ -2,3 +2,10 @@
 [profile.default]
 
 slow-timeout = { period = "2s", terminate-after = 60 }
+
+# Show output immediately for failing tests (including timeouts)
+failure-output = "immediate"
+
+# Store failure output in JUnit reports
+[profile.default.junit]
+store-failure-output = true
