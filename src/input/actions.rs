@@ -789,20 +789,29 @@ pub fn action_to_events(
                     (range.start, range.end)
                 } else {
                     // No selection - dedent current line
-                    let iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                    let iter = state
+                        .buffer
+                        .line_iterator(cursor.position, estimated_line_length);
                     let line_start = iter.current_position();
                     (line_start, cursor.position)
                 };
 
                 // Find all line starts in the range using helper function
-                let line_starts =
-                    collect_line_starts(&mut state.buffer, start_pos, end_pos, estimated_line_length);
+                let line_starts = collect_line_starts(
+                    &mut state.buffer,
+                    start_pos,
+                    end_pos,
+                    estimated_line_length,
+                );
 
                 // For each line start, calculate what to delete
                 for &line_start in &line_starts {
                     if !all_line_deletions.contains_key(&line_start) {
-                        let (chars_to_remove, deleted_text) =
-                            calculate_leading_whitespace_removal(&state.buffer, line_start, tab_size);
+                        let (chars_to_remove, deleted_text) = calculate_leading_whitespace_removal(
+                            &state.buffer,
+                            line_start,
+                            tab_size,
+                        );
 
                         if chars_to_remove > 0 {
                             all_line_deletions.insert(line_start, (chars_to_remove, deleted_text));
@@ -833,8 +842,15 @@ pub fn action_to_events(
             }
 
             // Calculate new cursor/selection positions and add MoveCursor events
-            for (cursor_id, old_position, old_anchor, old_sticky_column, has_selection, start_pos, end_pos) in
-                cursor_info
+            for (
+                cursor_id,
+                old_position,
+                old_anchor,
+                old_sticky_column,
+                has_selection,
+                start_pos,
+                end_pos,
+            ) in cursor_info
             {
                 // Calculate how many chars were removed before start_pos and end_pos
                 let mut removed_before_start = 0;
@@ -908,8 +924,12 @@ pub fn action_to_events(
                         let (start_pos, end_pos) = (range.start, range.end);
 
                         // Find all line starts in the range using helper function
-                        let line_starts =
-                            collect_line_starts(&mut state.buffer, start_pos, end_pos, estimated_line_length);
+                        let line_starts = collect_line_starts(
+                            &mut state.buffer,
+                            start_pos,
+                            end_pos,
+                            estimated_line_length,
+                        );
 
                         // Add to global set (automatically deduplicates and sorts)
                         all_line_starts.extend(line_starts.iter());
@@ -942,12 +962,18 @@ pub fn action_to_events(
                 for (cursor_id, old_position, old_anchor, old_sticky_column, start_pos, end_pos) in
                     cursor_info
                 {
-                    // Count how many indents were inserted before start_pos and end_pos
-                    let indents_before_start = all_line_starts.iter().filter(|&&pos| pos < start_pos).count();
-                    let indents_before_end = all_line_starts.iter().filter(|&&pos| pos <= end_pos).count();
+                    // Count how many indents were inserted at or before each position
+                    // Use <= for anchor because we insert at line starts, and positions >= line_start shift
+                    // Use < for position to avoid double-counting the indent at position itself
+                    let indents_at_or_before_anchor = all_line_starts
+                        .iter()
+                        .filter(|&&pos| pos <= start_pos)
+                        .count();
+                    let indents_before_position =
+                        all_line_starts.iter().filter(|&&pos| pos < end_pos).count();
 
-                    let new_anchor = start_pos + (indents_before_start * indent_len) + indent_len;
-                    let new_position = end_pos + (indents_before_end * indent_len);
+                    let new_anchor = start_pos + (indents_at_or_before_anchor * indent_len);
+                    let new_position = end_pos + (indents_before_position * indent_len);
 
                     add_move_cursor_event(
                         &mut events,

@@ -512,16 +512,23 @@ fn test_dedent_moves_cursor_without_selection() {
     //          0123456789...
     // Position 8 is right before 'H'
     for _ in 0..8 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
     harness.render().unwrap();
 
     // Verify cursor is at position 8
     let cursor_before = harness.editor().active_state().cursors.primary().position;
-    assert_eq!(cursor_before, 8, "Cursor should be at position 8 before dedent");
+    assert_eq!(
+        cursor_before, 8,
+        "Cursor should be at position 8 before dedent"
+    );
 
     // Press Shift+Tab to dedent (no selection)
-    harness.send_key(KeyCode::BackTab, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
 
     // Verify content was dedented
@@ -546,7 +553,7 @@ fn test_dedent_moves_cursor_without_selection() {
 /// Test multi-cursor indent with selections
 #[test]
 fn test_multicursor_indent_with_selections() {
-    use fresh::model::event::{Event, CursorId};
+    use fresh::model::event::{CursorId, Event};
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.txt");
@@ -595,7 +602,11 @@ fn test_multicursor_indent_with_selections() {
     {
         let state = harness.editor().active_state();
         let cursors: Vec<_> = state.cursors.iter().collect();
-        assert_eq!(cursors.len(), 4, "Should have 4 cursors (1 primary + 3 added)");
+        assert_eq!(
+            cursors.len(),
+            4,
+            "Should have 4 cursors (1 primary + 3 added)"
+        );
 
         // Check cursor 1
         let c1 = state.cursors.get(CursorId(1)).unwrap();
@@ -613,70 +624,177 @@ fn test_multicursor_indent_with_selections() {
         assert_eq!(c3.anchor, Some(18));
     }
 
-    // Press Tab to indent all selections
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+    // Press Tab 3 times to test multiple consecutive indents
+    for indent_count in 1..=3 {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
 
-    // Verify content after indent
-    let content = harness.get_buffer_content().unwrap();
-    assert_eq!(
-        content, "    Line one\n    Line two\n    Line three",
-        "All lines should be indented by 4 spaces"
-    );
+        // Verify content after each indent
+        let expected_indent = "    ".repeat(indent_count);
+        let expected_content = format!(
+            "{}Line one\n{}Line two\n{}Line three",
+            expected_indent, expected_indent, expected_indent
+        );
+        let content = harness.get_buffer_content().unwrap();
+        assert_eq!(
+            content,
+            expected_content,
+            "After {} indent(s), all lines should have {} spaces",
+            indent_count,
+            indent_count * 4
+        );
 
-    // Verify all cursors and selections shifted correctly after indent
-    {
+        // Verify all cursors and selections shifted correctly
         let state = harness.editor().active_state();
+        let indent_offset = indent_count * 4;
 
-        // Each cursor should have moved by 4 (one indent added at start of line)
-        // and selection should be preserved
-
-        // Cursor 1: was (0-4), should now be (4-8) because 4 spaces added at position 0
+        // Cursor 1: original (0-4), shifts by 4 per indent on its line
         let c1 = state.cursors.get(CursorId(1)).unwrap();
-        assert_eq!(c1.position, 4 + 4, "Cursor 1 position should shift by 4");
-        assert_eq!(c1.anchor, Some(0 + 4), "Cursor 1 anchor should shift by 4");
+        assert_eq!(
+            c1.position,
+            4 + indent_offset,
+            "Indent {}: Cursor 1 position",
+            indent_count
+        );
+        assert_eq!(
+            c1.anchor,
+            Some(0 + indent_offset),
+            "Indent {}: Cursor 1 anchor",
+            indent_count
+        );
 
-        // Cursor 2: Line 1 and Line 2 both got indented
+        // Cursor 2: original (9-13), line 1 and line 2 both indented
         let c2 = state.cursors.get(CursorId(2)).unwrap();
-        assert_eq!(c2.position, 13 + 4 + 4, "Cursor 2 position: original 13 + 4 (line1 indent) + 4 (line2 indent)");
-        assert_eq!(c2.anchor, Some(9 + 4 + 4), "Cursor 2 anchor: original 9 + 4 (line1 indent) + 4 (line2 indent)");
+        assert_eq!(
+            c2.position,
+            13 + indent_offset * 2,
+            "Indent {}: Cursor 2 position",
+            indent_count
+        );
+        assert_eq!(
+            c2.anchor,
+            Some(9 + indent_offset * 2),
+            "Indent {}: Cursor 2 anchor",
+            indent_count
+        );
 
-        // Cursor 3: All three lines got indented
+        // Cursor 3: original (18-22), all three lines indented
         let c3 = state.cursors.get(CursorId(3)).unwrap();
-        assert_eq!(c3.position, 22 + 4 * 3, "Cursor 3 position: original 22 + 4*3");
-        assert_eq!(c3.anchor, Some(18 + 4 * 3), "Cursor 3 anchor: original 18 + 4*3");
+        assert_eq!(
+            c3.position,
+            22 + indent_offset * 3,
+            "Indent {}: Cursor 3 position",
+            indent_count
+        );
+        assert_eq!(
+            c3.anchor,
+            Some(18 + indent_offset * 3),
+            "Indent {}: Cursor 3 anchor",
+            indent_count
+        );
     }
 
-    // Press Shift+Tab to dedent all selections
-    harness.send_key(KeyCode::BackTab, KeyModifiers::SHIFT).unwrap();
-    harness.render().unwrap();
+    // Press Shift+Tab 3 times to dedent back to original
+    for dedent_count in 1..=3 {
+        harness
+            .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+            .unwrap();
+        harness.render().unwrap();
 
-    // Verify content after dedent (should be back to original)
-    let content = harness.get_buffer_content().unwrap();
-    assert_eq!(
-        content, "Line one\nLine two\nLine three",
-        "All lines should be dedented back to original"
-    );
+        let remaining_indents = 3 - dedent_count;
+        let expected_indent = "    ".repeat(remaining_indents);
+        let expected_content = format!(
+            "{}Line one\n{}Line two\n{}Line three",
+            expected_indent, expected_indent, expected_indent
+        );
+        let content = harness.get_buffer_content().unwrap();
+        assert_eq!(
+            content,
+            expected_content,
+            "After {} dedent(s), all lines should have {} spaces",
+            dedent_count,
+            remaining_indents * 4
+        );
 
-    // Verify all cursors and selections are back to original positions
+        // Verify cursor positions
+        let state = harness.editor().active_state();
+        let indent_offset = remaining_indents * 4;
+
+        let c1 = state.cursors.get(CursorId(1)).unwrap();
+        assert_eq!(
+            c1.position,
+            4 + indent_offset,
+            "Dedent {}: Cursor 1 position",
+            dedent_count
+        );
+        assert_eq!(
+            c1.anchor,
+            Some(0 + indent_offset),
+            "Dedent {}: Cursor 1 anchor",
+            dedent_count
+        );
+
+        let c2 = state.cursors.get(CursorId(2)).unwrap();
+        assert_eq!(
+            c2.position,
+            13 + indent_offset * 2,
+            "Dedent {}: Cursor 2 position",
+            dedent_count
+        );
+        assert_eq!(
+            c2.anchor,
+            Some(9 + indent_offset * 2),
+            "Dedent {}: Cursor 2 anchor",
+            dedent_count
+        );
+
+        let c3 = state.cursors.get(CursorId(3)).unwrap();
+        assert_eq!(
+            c3.position,
+            22 + indent_offset * 3,
+            "Dedent {}: Cursor 3 position",
+            dedent_count
+        );
+        assert_eq!(
+            c3.anchor,
+            Some(18 + indent_offset * 3),
+            "Dedent {}: Cursor 3 anchor",
+            dedent_count
+        );
+    }
+
+    // Verify we're back to original state
     {
         let state = harness.editor().active_state();
         let cursors: Vec<_> = state.cursors.iter().collect();
-        assert_eq!(cursors.len(), 4, "Should still have 4 cursors (1 primary + 3 added)");
+        assert_eq!(
+            cursors.len(),
+            4,
+            "Should still have 4 cursors (1 primary + 3 added)"
+        );
 
-        // Cursor 1: should be back to (0-4)
         let c1 = state.cursors.get(CursorId(1)).unwrap();
-        assert_eq!(c1.position, 4, "Cursor 1 position should be back to 4");
-        assert_eq!(c1.anchor, Some(0), "Cursor 1 anchor should be back to 0");
+        assert_eq!(c1.position, 4, "Final: Cursor 1 position back to original");
+        assert_eq!(
+            c1.anchor,
+            Some(0),
+            "Final: Cursor 1 anchor back to original"
+        );
 
-        // Cursor 2: should be back to (9-13)
         let c2 = state.cursors.get(CursorId(2)).unwrap();
-        assert_eq!(c2.position, 13, "Cursor 2 position should be back to 13");
-        assert_eq!(c2.anchor, Some(9), "Cursor 2 anchor should be back to 9");
+        assert_eq!(c2.position, 13, "Final: Cursor 2 position back to original");
+        assert_eq!(
+            c2.anchor,
+            Some(9),
+            "Final: Cursor 2 anchor back to original"
+        );
 
-        // Cursor 3: should be back to (18-22)
         let c3 = state.cursors.get(CursorId(3)).unwrap();
-        assert_eq!(c3.position, 22, "Cursor 3 position should be back to 22");
-        assert_eq!(c3.anchor, Some(18), "Cursor 3 anchor should be back to 18");
+        assert_eq!(c3.position, 22, "Final: Cursor 3 position back to original");
+        assert_eq!(
+            c3.anchor,
+            Some(18),
+            "Final: Cursor 3 anchor back to original"
+        );
     }
 }
