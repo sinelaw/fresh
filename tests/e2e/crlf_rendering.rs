@@ -384,6 +384,9 @@ fn test_crlf_cut_paste() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
     harness.open_file(&file_path).unwrap();
 
+    // Enable internal-only clipboard to avoid system clipboard interference in parallel tests
+    harness.editor_mut().set_clipboard_for_test("".to_string());
+
     // Select "Line 2\r\n" - go to start of line 2, select to start of line 3
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
