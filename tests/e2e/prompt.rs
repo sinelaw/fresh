@@ -280,8 +280,8 @@ fn test_save_as_functionality() {
         .unwrap();
     harness.render().unwrap();
 
-    // Should show the Save As prompt with current filename
-    harness.assert_screen_contains("Save as:");
+    // Wait for the Save As prompt to appear
+    harness.wait_for_screen_contains("Save as:").unwrap();
 
     // Clear the current filename and type new name
     // First select all with Ctrl+A
@@ -339,6 +339,9 @@ fn test_save_as_relative_path() {
         .unwrap();
     harness.render().unwrap();
 
+    // Wait for the Save As prompt to appear
+    harness.wait_for_screen_contains("Save as:").unwrap();
+
     // Clear and type relative path
     harness
         .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
@@ -386,6 +389,9 @@ fn test_save_as_nested_path() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
+
+    // Wait for the Save As prompt to appear
+    harness.wait_for_screen_contains("Save as:").unwrap();
 
     // Type nested path (parent dir doesn't exist yet)
     let nested_path = project_dir.join("subdir").join("nested.txt");
