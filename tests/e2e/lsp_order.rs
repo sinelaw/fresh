@@ -12,6 +12,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 /// This test verifies that when opening a file and triggering hover,
 /// the LSP client sends textDocument/didOpen before textDocument/hover.
 #[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
 fn test_did_open_sent_before_hover() -> std::io::Result<()> {
     // Initialize tracing for debugging
     let _ = tracing_subscriber::fmt()
@@ -25,12 +26,12 @@ fn test_did_open_sent_before_hover() -> std::io::Result<()> {
     let _fake_server = FakeLspServer::spawn_with_logging()?;
     eprintln!("[TEST] Fake LSP server spawned");
 
-    // Create unique log file for this test
-    let log_file = std::env::temp_dir().join("lsp_order_test_log.txt");
-    eprintln!("[TEST] LSP log file: {:?}", log_file);
-
     // Create temp dir and test file
     let temp_dir = tempfile::tempdir()?;
+
+    // Create unique log file for this test in the per-test temp directory
+    let log_file = temp_dir.path().join("lsp_order_test_log.txt");
+    eprintln!("[TEST] LSP log file: {:?}", log_file);
     let test_file = temp_dir.path().join("test.rs");
     eprintln!("[TEST] Creating test file: {:?}", test_file);
     std::fs::write(&test_file, "fn main() {\n    let x = 5;\n}\n")?;
@@ -69,30 +70,12 @@ fn test_did_open_sent_before_hover() -> std::io::Result<()> {
     eprintln!("[TEST] File opened, waiting for didOpen message");
 
     // Wait for LSP to initialize and didOpen to be logged
-    let mut did_open_wait_count = 0;
-    loop {
-        harness.process_async_and_render()?;
-        harness.sleep(std::time::Duration::from_millis(50));
-        did_open_wait_count += 1;
-
+    eprintln!("[TEST] Waiting for didOpen message");
+    harness.wait_until(|_| {
         let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
-        if did_open_wait_count % 20 == 0 {
-            eprintln!(
-                "[TEST] Still waiting for didOpen ({}s). Log content:\n{}",
-                did_open_wait_count * 50 / 1000,
-                if log_content.is_empty() {
-                    "<empty>".to_string()
-                } else {
-                    log_content.clone()
-                }
-            );
-        }
-
-        if log_content.contains("textDocument/didOpen") {
-            eprintln!("[TEST] didOpen message received!");
-            break;
-        }
-    }
+        log_content.contains("textDocument/didOpen")
+    })?;
+    eprintln!("[TEST] didOpen message received!");
 
     // Trigger hover with Alt+K (default keybinding for lsp_hover)
     eprintln!("[TEST] Triggering hover with Alt+K");
@@ -101,26 +84,12 @@ fn test_did_open_sent_before_hover() -> std::io::Result<()> {
     eprintln!("[TEST] Hover triggered, waiting for hover message");
 
     // Wait for hover request to be logged
-    let mut hover_wait_count = 0;
-    loop {
-        harness.process_async_and_render()?;
-        harness.sleep(std::time::Duration::from_millis(50));
-        hover_wait_count += 1;
-
+    eprintln!("[TEST] Waiting for hover message");
+    harness.wait_until(|_| {
         let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
-        if hover_wait_count % 20 == 0 {
-            eprintln!(
-                "[TEST] Still waiting for hover ({}s). Log content:\n{}",
-                hover_wait_count * 50 / 1000,
-                log_content
-            );
-        }
-
-        if log_content.contains("textDocument/hover") {
-            eprintln!("[TEST] Hover message received!");
-            break;
-        }
-    }
+        log_content.contains("textDocument/hover")
+    })?;
+    eprintln!("[TEST] Hover message received!");
 
     // Read the log file and verify order
     eprintln!("[TEST] Verifying message order");
