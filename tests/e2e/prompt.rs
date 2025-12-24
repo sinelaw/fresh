@@ -352,15 +352,15 @@ fn test_save_as_relative_path() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
 
     // Should save to working directory
     let expected_path = project_dir.join("relative_save.txt");
-    assert!(
-        expected_path.exists(),
-        "File should be created at {:?}",
-        expected_path
-    );
+
+    // Wait for file to be created AND readable
+    // Check both existence and readability to handle filesystem caching issues
+    harness
+        .wait_until(|_| expected_path.exists() && fs::read_to_string(&expected_path).is_ok())
+        .expect(&format!("File should be created at {:?}", expected_path));
 
     let content = fs::read_to_string(&expected_path).unwrap();
     assert_eq!(content, "Test content");
