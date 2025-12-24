@@ -371,11 +371,17 @@ fn test_save_as_relative_path() {
     // Wait for the Save As prompt to appear
     harness.wait_for_screen_contains("Save as:").unwrap();
 
-    eprintln!("[TEST] Typing relative path");
-    // Clear and type relative path
+    eprintln!("[TEST] Clearing and typing relative path");
+    // Clear the prompt field by selecting all and typing new text
+    // Send Ctrl+A to select all
     harness
         .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
         .unwrap();
+
+    // Wait for Ctrl+A to take effect (semantic waiting)
+    // The prompt should process the selection before we type
+    harness.process_async_and_render().unwrap();
+
     harness.type_text("relative_save.txt").unwrap();
 
     eprintln!("[TEST] Pressing Enter to confirm save");
