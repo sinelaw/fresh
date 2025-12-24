@@ -161,6 +161,51 @@ fn collect_line_starts(
     line_starts
 }
 
+/// Calculate how much leading whitespace to remove from a line for dedent
+///
+/// Returns (chars_to_remove, deleted_text) where chars_to_remove is the number
+/// of characters to delete, and deleted_text is the string being deleted.
+fn calculate_leading_whitespace_removal(
+    buffer: &Buffer,
+    line_start: usize,
+    tab_size: usize,
+) -> (usize, String) {
+    let buffer_len = buffer.len();
+    let line_bytes = buffer.slice_bytes(line_start..buffer_len.min(line_start + tab_size + 1));
+
+    if !line_bytes.is_empty() && line_bytes[0] == b'\t' {
+        (1, "\t".to_string())
+    } else {
+        let spaces_to_remove = line_bytes
+            .iter()
+            .take(tab_size)
+            .take_while(|&&b| b == b' ')
+            .count();
+        (spaces_to_remove, " ".repeat(spaces_to_remove))
+    }
+}
+
+/// Add a MoveCursor event to restore cursor position after indent/dedent
+fn add_move_cursor_event(
+    events: &mut Vec<Event>,
+    cursor_id: CursorId,
+    old_position: usize,
+    new_position: usize,
+    old_anchor: Option<usize>,
+    new_anchor: Option<usize>,
+    old_sticky_column: usize,
+) {
+    events.push(Event::MoveCursor {
+        cursor_id,
+        old_position,
+        new_position,
+        old_anchor,
+        new_anchor,
+        old_sticky_column,
+        new_sticky_column: 0,
+    });
+}
+
 /// Handle block selection movement
 fn block_select_action(
     state: &mut EditorState,
@@ -737,8 +782,6 @@ pub fn action_to_events(
             let mut all_line_deletions: BTreeMap<usize, (usize, String)> = BTreeMap::new();
             let mut cursor_info = Vec::new();
 
-            let buffer_len = state.buffer.len();
-
             for (cursor_id, cursor) in state.cursors.iter() {
                 let has_selection = cursor.selection_range().is_some();
 
@@ -758,25 +801,8 @@ pub fn action_to_events(
                 // For each line start, calculate what to delete
                 for &line_start in &line_starts {
                     if !all_line_deletions.contains_key(&line_start) {
-                        // Check what leading whitespace the line has
-                        let line_bytes = state
-                            .buffer
-                            .slice_bytes(line_start..buffer_len.min(line_start + tab_size + 1));
-
-                        // Handle both tabs and spaces
                         let (chars_to_remove, deleted_text) =
-                            if !line_bytes.is_empty() && line_bytes[0] == b'\t' {
-                                // Remove one tab character
-                                (1, "\t".to_string())
-                            } else {
-                                // Remove up to tab_size spaces
-                                let spaces_to_remove = line_bytes
-                                    .iter()
-                                    .take(tab_size)
-                                    .take_while(|&&b| b == b' ')
-                                    .count();
-                                (spaces_to_remove, " ".repeat(spaces_to_remove))
-                            };
+                            calculate_leading_whitespace_removal(&state.buffer, line_start, tab_size);
 
                         if chars_to_remove > 0 {
                             all_line_deletions.insert(line_start, (chars_to_remove, deleted_text));
@@ -831,27 +857,27 @@ pub fn action_to_events(
                     // Had selection - restore it with adjusted positions
                     let new_anchor = start_pos.saturating_sub(removed_before_start);
                     let new_position = end_pos.saturating_sub(removed_before_end);
-                    events.push(Event::MoveCursor {
+                    add_move_cursor_event(
+                        &mut events,
                         cursor_id,
                         old_position,
                         new_position,
                         old_anchor,
-                        new_anchor: Some(new_anchor),
+                        Some(new_anchor),
                         old_sticky_column,
-                        new_sticky_column: 0,
-                    });
+                    );
                 } else {
                     // No selection - just move cursor back by amount removed before it
                     let new_position = old_position.saturating_sub(removed_before_position);
-                    events.push(Event::MoveCursor {
+                    add_move_cursor_event(
+                        &mut events,
                         cursor_id,
                         old_position,
                         new_position,
                         old_anchor,
-                        new_anchor: None,
+                        None,
                         old_sticky_column,
-                        new_sticky_column: 0,
-                    });
+                    );
                 }
             }
         }
@@ -923,15 +949,15 @@ pub fn action_to_events(
                     let new_anchor = start_pos + (indents_before_start * indent_len) + indent_len;
                     let new_position = end_pos + (indents_before_end * indent_len);
 
-                    events.push(Event::MoveCursor {
+                    add_move_cursor_event(
+                        &mut events,
                         cursor_id,
                         old_position,
                         new_position,
                         old_anchor,
-                        new_anchor: Some(new_anchor),
+                        Some(new_anchor),
                         old_sticky_column,
-                        new_sticky_column: 0,
-                    });
+                    );
                 }
             } else {
                 // No selection - insert tab character at cursor position
