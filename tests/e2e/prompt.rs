@@ -321,39 +321,64 @@ fn test_save_as_relative_path() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use std::fs;
 
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("fresh=debug")
+        .try_init();
+
+    eprintln!("[TEST] Starting test_save_as_relative_path");
+
     let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
     let project_dir = harness.project_dir().unwrap();
+    eprintln!("[TEST] Project dir: {:?}", project_dir);
 
     // Create and open original file
     let original_path = project_dir.join("original.txt");
     fs::write(&original_path, "Test content").unwrap();
+    eprintln!("[TEST] Opening file: {:?}", original_path);
     harness.open_file(&original_path).unwrap();
 
+    eprintln!("[TEST] Opening command palette");
     // Trigger command palette
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    eprintln!("[TEST] Typing 'Save File As'");
     harness.type_text("Save File As").unwrap();
 
+    eprintln!("[TEST] Waiting for 'Save File As' to appear in palette");
     // Wait for command to appear in palette before executing
     harness
-        .wait_until(|h| h.screen_to_string().contains("Save File As"))
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            let found = screen.contains("Save File As");
+            if !found {
+                eprintln!(
+                    "[TEST] Still waiting for 'Save File As' in palette. Screen:\n{}",
+                    screen
+                );
+            }
+            found
+        })
         .unwrap();
 
+    eprintln!("[TEST] Pressing Enter to execute command");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
+    eprintln!("[TEST] Waiting for 'Save as:' prompt");
     // Wait for the Save As prompt to appear
     harness.wait_for_screen_contains("Save as:").unwrap();
 
+    eprintln!("[TEST] Typing relative path");
     // Clear and type relative path
     harness
         .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
         .unwrap();
     harness.type_text("relative_save.txt").unwrap();
 
+    eprintln!("[TEST] Pressing Enter to confirm save");
     // Confirm
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -361,15 +386,28 @@ fn test_save_as_relative_path() {
 
     // Should save to working directory
     let expected_path = project_dir.join("relative_save.txt");
+    eprintln!(
+        "[TEST] Waiting for file to be created at: {:?}",
+        expected_path
+    );
 
     // Wait for file to be created AND readable
     // Check both existence and readability to handle filesystem caching issues
     harness
-        .wait_until(|_| expected_path.exists() && fs::read_to_string(&expected_path).is_ok())
+        .wait_until(|_| {
+            let exists = expected_path.exists();
+            let readable = exists && fs::read_to_string(&expected_path).is_ok();
+            if !readable {
+                eprintln!("[TEST] File not yet created/readable. Exists: {}", exists);
+            }
+            readable
+        })
         .expect(&format!("File should be created at {:?}", expected_path));
 
+    eprintln!("[TEST] File created successfully, verifying content");
     let content = fs::read_to_string(&expected_path).unwrap();
     assert_eq!(content, "Test content");
+    eprintln!("[TEST] Test completed successfully");
 }
 
 /// Test Save As creates parent directories if needed
