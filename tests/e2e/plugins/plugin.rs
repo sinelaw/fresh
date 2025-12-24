@@ -166,6 +166,11 @@ TODO FIXME HACK NOTE XXX BUG (not in comments)
     // Type "TODO Highlighter: Enable" command
     harness.type_text("TODO Highlighter: Enable").unwrap();
 
+    // Wait for command to appear in palette before executing
+    harness
+        .wait_until(|h| h.screen_to_string().contains("TODO Highlighter: Enable"))
+        .unwrap();
+
     // Execute the command
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -257,6 +262,9 @@ fn test_todo_highlighter_disable() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.type_text("TODO Highlighter: Enable").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("TODO Highlighter: Enable"))
+        .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -416,6 +424,9 @@ fn test_todo_highlighter_updates_on_edit() {
         .unwrap();
     harness.type_text("TODO Highlighter: Enable").unwrap();
     harness
+        .wait_until(|h| h.screen_to_string().contains("TODO Highlighter: Enable"))
+        .unwrap();
+    harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
@@ -550,6 +561,9 @@ fn test_todo_highlighter_updates_on_delete() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.type_text("TODO Highlighter: Enable").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("TODO Highlighter: Enable"))
+        .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -1189,6 +1203,9 @@ fn test_todo_highlighter_cursor_perf() {
         .unwrap();
     harness.type_text("TODO Highlighter: Enable").unwrap();
     harness
+        .wait_until(|h| h.screen_to_string().contains("TODO Highlighter: Enable"))
+        .unwrap();
+    harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
@@ -1295,6 +1312,11 @@ Color::Rgb(128, 0, 255)
     // Type "Color Highlighter: Enable" command
     harness.type_text("Color Highlighter: Enable").unwrap();
 
+    // Wait for command to appear in palette before executing
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Color Highlighter: Enable"))
+        .unwrap();
+
     // Execute the command
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -1399,6 +1421,9 @@ fn test_color_highlighter_disable() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.type_text("Color Highlighter: Enable").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Color Highlighter: Enable"))
+        .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
