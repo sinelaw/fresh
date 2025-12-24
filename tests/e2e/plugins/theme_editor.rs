@@ -574,7 +574,9 @@ fn test_cursor_position_preserved_after_section_toggle() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+
+    // Process async operations and render to ensure key is handled
+    harness.process_async_and_render().unwrap();
 
     let (_, cursor_y_after) = harness.screen_cursor_position();
 
@@ -1120,7 +1122,9 @@ fn test_cursor_x_position_preserved_after_section_toggle() {
 
     // Press Tab to toggle the section (expand)
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+
+    // Process async operations and render to ensure key is handled
+    harness.process_async_and_render().unwrap();
 
     let screen_after = harness.screen_to_string();
     let (cursor_x_after, cursor_y_after) = harness.screen_cursor_position();
