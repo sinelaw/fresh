@@ -322,6 +322,15 @@ fn test_live_grep_input_preserved() {
 /// working directory (where the user's project is) rather than where fresh was launched.
 #[test]
 fn test_live_grep_uses_working_dir() {
+    // Check if ripgrep is available (required by live_grep plugin)
+    let rg_check = std::process::Command::new("rg").arg("--version").output();
+
+    if rg_check.is_err() || !rg_check.as_ref().unwrap().status.success() {
+        eprintln!("Skipping test: ripgrep (rg) is not installed or not in PATH");
+        eprintln!("Live Grep plugin requires ripgrep to function");
+        return;
+    }
+
     // Create a temporary project directory - this will be our working_dir
     // It is intentionally different from std::env::current_dir()
     let temp_dir = tempfile::TempDir::new().unwrap();
