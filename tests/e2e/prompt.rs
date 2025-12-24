@@ -334,6 +334,12 @@ fn test_save_as_relative_path() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.type_text("Save File As").unwrap();
+
+    // Wait for command to appear in palette before executing
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Save File As"))
+        .unwrap();
+
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
