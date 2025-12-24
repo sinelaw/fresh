@@ -79,17 +79,26 @@ impl Editor {
     ///
     /// If the file doesn't exist, creates an unsaved buffer with that filename.
     pub fn open_file_no_focus(&mut self, path: &Path) -> io::Result<BufferId> {
+        // Resolve relative paths against working_dir, not process current directory
+        let resolved_path = if path.is_relative() {
+            self.working_dir.join(path)
+        } else {
+            path.to_path_buf()
+        };
+
         // Determine if we're opening a non-existent file (for creating new files)
-        let file_exists = path.exists();
+        let file_exists = resolved_path.exists();
 
         // Canonicalize the path to resolve symlinks and normalize path components
         // This ensures consistent path representation throughout the editor
         // For non-existent files, we need to canonicalize the parent directory and append the filename
         let canonical_path = if file_exists {
-            path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+            resolved_path
+                .canonicalize()
+                .unwrap_or_else(|_| resolved_path.clone())
         } else {
             // For non-existent files, canonicalize parent dir and append filename
-            if let Some(parent) = path.parent() {
+            if let Some(parent) = resolved_path.parent() {
                 let canonical_parent = if parent.as_os_str().is_empty() {
                     // No parent means just a filename, use working dir
                     self.working_dir.clone()
@@ -98,13 +107,13 @@ impl Editor {
                         .canonicalize()
                         .unwrap_or_else(|_| parent.to_path_buf())
                 };
-                if let Some(filename) = path.file_name() {
+                if let Some(filename) = resolved_path.file_name() {
                     canonical_parent.join(filename)
                 } else {
-                    path.to_path_buf()
+                    resolved_path
                 }
             } else {
-                path.to_path_buf()
+                resolved_path
             }
         };
         let path = canonical_path.as_path();

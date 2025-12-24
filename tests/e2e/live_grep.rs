@@ -314,3 +314,111 @@ fn test_live_grep_input_preserved() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 }
+
+/// Test Live Grep searches in the working directory, not the process current directory
+///
+/// This test verifies that when the editor's working directory is set to a path
+/// different from the process's current directory, Live Grep searches in the
+/// working directory (where the user's project is) rather than where fresh was launched.
+#[test]
+fn test_live_grep_uses_working_dir() {
+    // Create a temporary project directory - this will be our working_dir
+    // It is intentionally different from std::env::current_dir()
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the live_grep plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/live_grep.ts");
+    let plugin_dest = plugins_dir.join("live_grep.ts");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create a test file with a unique marker that only exists in our temp project
+    // This marker should NOT exist in the fresh repo's actual directory
+    let unique_marker = "WORKDIR_TEST_UNIQUE_7f3a9b2c";
+    let test_content = format!(
+        "// This file contains {}\n// It should be found by live grep\nlet x = 42;\n",
+        unique_marker
+    );
+    fs::write(project_root.join("workdir_test.rs"), test_content).unwrap();
+
+    // Create initial file in project dir
+    let start_file = project_root.join("start.txt");
+    fs::write(&start_file, "Starting point for workdir test\n").unwrap();
+
+    // Create harness with working_dir set to project_root
+    // This is the key: working_dir != current_dir()
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(100, 30, Default::default(), project_root)
+            .unwrap();
+
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    // Start Live Grep via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Live Grep").unwrap();
+
+    // Wait for Live Grep command to appear (plugin loaded)
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Live Grep"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for our unique marker
+    harness.type_text(unique_marker).unwrap();
+
+    // Wait for results - should find our file in the working directory
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("workdir_test.rs")
+        })
+        .unwrap();
+
+    // Verify the result is from our working directory
+    harness.assert_screen_contains("workdir_test.rs");
+
+    // Press Enter to open the file at the match location
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for the file to open - look for the unique marker in the screen
+    // (it will appear in the editor content area once the file is loaded)
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(unique_marker)
+        })
+        .unwrap();
+
+    // Verify the buffer content is from our working directory
+    let content = harness.get_buffer_content().unwrap();
+    assert!(
+        content.contains(unique_marker),
+        "Buffer should contain the unique marker from working_dir. Got: {}",
+        content
+    );
+
+    // Verify we're on line 1 (where the marker is)
+    // The status bar format is "Ln X, Col Y"
+    let status_bar = harness.get_status_bar();
+    assert!(
+        status_bar.contains("Ln 1") || status_bar.contains("Ln 0"),
+        "Cursor should be on line 1 (the match line). Status bar: {}",
+        status_bar
+    );
+}
