@@ -459,6 +459,11 @@ fn test_shell_command_replace_clamps_cursor_when_buffer_shrinks() {
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
+    // Wait for buffer to be updated with shell command output
+    harness
+        .wait_until(|h| h.get_buffer_content().as_deref() == Some("short\n"))
+        .unwrap();
+
     // Verify content is replaced
     harness.assert_buffer_content("short\n");
 
