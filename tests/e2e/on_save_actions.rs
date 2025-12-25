@@ -33,6 +33,7 @@ fn test_on_save_replace_buffer_formatter() {
         replace_buffer: true,
         timeout_ms: 5000,
         optional: false,
+        enabled: true,
     };
 
     // Create config for "plaintext" language (matches .txt files)
@@ -96,6 +97,7 @@ fn test_on_save_linter_style() {
         replace_buffer: false,
         timeout_ms: 5000,
         optional: false,
+        enabled: true,
     };
 
     let mut config = Config::default();
@@ -158,6 +160,7 @@ fn test_on_save_action_failure() {
         replace_buffer: false,
         timeout_ms: 5000,
         optional: false,
+        enabled: true,
     };
 
     let mut config = Config::default();
@@ -231,6 +234,7 @@ fn test_on_save_file_placeholder() {
         replace_buffer: false,
         timeout_ms: 5000,
         optional: false,
+        enabled: true,
     };
 
     let mut config = Config::default();
@@ -298,6 +302,7 @@ fn test_on_save_stdin_mode() {
         replace_buffer: true,
         timeout_ms: 5000,
         optional: false,
+        enabled: true,
     };
 
     let mut config = Config::default();
@@ -359,6 +364,7 @@ fn test_on_save_multiple_actions() {
         replace_buffer: true,
         timeout_ms: 5000,
         optional: false,
+        enabled: true,
     };
 
     let action2 = OnSaveAction {
@@ -369,6 +375,7 @@ fn test_on_save_multiple_actions() {
         replace_buffer: true,
         timeout_ms: 5000,
         optional: false,
+        enabled: true,
     };
 
     let mut config = Config::default();
@@ -429,6 +436,7 @@ fn test_on_save_stops_on_failure() {
         replace_buffer: false,
         timeout_ms: 5000,
         optional: false,
+        enabled: true,
     };
 
     let action2 = OnSaveAction {
@@ -439,6 +447,7 @@ fn test_on_save_stops_on_failure() {
         replace_buffer: false,
         timeout_ms: 5000,
         optional: false,
+        enabled: true,
     };
 
     let mut config = Config::default();
@@ -535,6 +544,7 @@ fn test_on_save_optional_command_not_found() {
         replace_buffer: true,
         timeout_ms: 5000,
         optional: true, // This is optional, so missing command should not error
+        enabled: true,
     };
 
     let mut config = Config::default();
@@ -599,6 +609,7 @@ fn test_on_save_required_command_not_found() {
         replace_buffer: true,
         timeout_ms: 5000,
         optional: false, // This is NOT optional, so missing command should error
+        enabled: true,
     };
 
     let mut config = Config::default();
