@@ -84,6 +84,7 @@ runtime = [
     "dep:unicode-width",
     "dep:alacritty_terminal",
     "dep:portable-pty",
+    "dep:trash",
 ]
 # Schema-only feature for minimal builds (just schema generation)
 schema-only = []
@@ -151,6 +152,7 @@ portable-pty = { version = "0.9", optional = true }
 # Embedded plugins support (optional)
 include_dir = { version = "0.7", optional = true }
 tempfile = { version = "3.23", optional = true }
+trash = { version = "5.2.5", optional = true }
 
 [dev-dependencies]
 proptest = "1.9"

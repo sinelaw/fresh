@@ -84,6 +84,11 @@ pub enum PromptType {
         original_path: std::path::PathBuf,
         original_name: String,
     },
+    /// Confirm deleting a file or directory in the file explorer
+    ConfirmDeleteFile {
+        path: std::path::PathBuf,
+        is_dir: bool,
+    },
     /// Switch to a tab by name (from the current split's open buffers)
     SwitchToTab,
     /// Run shell command on buffer/selection

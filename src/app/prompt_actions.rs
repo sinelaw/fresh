@@ -223,6 +223,14 @@ impl Editor {
             } => {
                 self.perform_file_explorer_rename(original_path, original_name, input);
             }
+            PromptType::ConfirmDeleteFile { path, is_dir } => {
+                let input_lower = input.trim().to_lowercase();
+                if input_lower == "y" || input_lower == "yes" {
+                    self.perform_file_explorer_delete(path, is_dir);
+                } else {
+                    self.set_status_message("Delete cancelled".to_string());
+                }
+            }
             PromptType::StopLspServer => {
                 self.handle_stop_lsp_server(&input);
             }

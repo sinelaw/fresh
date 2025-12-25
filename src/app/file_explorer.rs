@@ -439,7 +439,7 @@ impl Editor {
     }
 
     pub fn file_explorer_delete(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        if let Some(explorer) = &self.file_explorer {
             if let Some(selected_id) = explorer.get_selected() {
                 // Don't allow deleting the root directory
                 if selected_id == explorer.tree().root_id() {
@@ -451,29 +451,44 @@ impl Editor {
                 if let Some(node) = node {
                     let path = node.entry.path.clone();
                     let name = node.entry.name.clone();
+                    let is_dir = node.is_dir();
 
+                    let type_str = if is_dir { "directory" } else { "file" };
+                    self.start_prompt(
+                        format!("Delete {} '{}'? (y)es, (N)o: ", type_str, name),
+                        PromptType::ConfirmDeleteFile { path, is_dir },
+                    );
+                }
+            }
+        }
+    }
+
+    /// Perform the actual file explorer delete operation (called after prompt confirmation)
+    /// Moves the file/directory to the system trash/recycle bin
+    pub fn perform_file_explorer_delete(&mut self, path: std::path::PathBuf, _is_dir: bool) {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // Move to trash instead of permanent deletion
+        match trash::delete(&path) {
+            Ok(_) => {
+                // Refresh the parent directory in the file explorer
+                if let Some(explorer) = &mut self.file_explorer {
                     if let Some(runtime) = &self.tokio_runtime {
-                        let result = if node.is_dir() {
-                            runtime.block_on(async { tokio::fs::remove_dir_all(&path).await })
-                        } else {
-                            runtime.block_on(async { tokio::fs::remove_file(&path).await })
-                        };
-
-                        match result {
-                            Ok(_) => {
-                                // For delete, always get the parent (the deleted item can't be refreshed)
-                                let parent_id =
-                                    get_parent_node_id(explorer.tree(), selected_id, false);
-                                let tree = explorer.tree_mut();
-                                let _ = runtime.block_on(tree.refresh_node(parent_id));
-                                self.set_status_message(format!("Deleted {}", name));
-                            }
-                            Err(e) => {
-                                self.set_status_message(format!("Error deleting: {}", e));
-                            }
+                        // Find the node for the deleted path and get its parent
+                        if let Some(node) = explorer.tree().get_node_by_path(&path) {
+                            let node_id = node.id;
+                            let parent_id = get_parent_node_id(explorer.tree(), node_id, false);
+                            let _ = runtime.block_on(explorer.tree_mut().refresh_node(parent_id));
                         }
                     }
                 }
+                self.set_status_message(format!("Moved to trash: {}", name));
+            }
+            Err(e) => {
+                self.set_status_message(format!("Error moving to trash: {}", e));
             }
         }
     }
