@@ -450,7 +450,10 @@ fn test_shell_command_replace_clamps_cursor_when_buffer_shrinks() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.wait_for_prompt().unwrap(); // Wait for shell command input prompt
+    // Wait for the shell command prompt specifically (not the command palette)
+    harness
+        .wait_for_screen_contains("Shell command (replace):")
+        .unwrap();
 
     // Replace with just "short"
     harness.type_text("echo short").unwrap();
