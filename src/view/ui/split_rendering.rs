@@ -223,6 +223,8 @@ struct LineRenderInput<'a> {
     estimated_lines: usize,
     /// Left column offset for horizontal scrolling
     left_column: usize,
+    /// Whether to show relative line numbers (distance from cursor)
+    relative_line_numbers: bool,
 }
 
 /// Context for computing the style of a single character
@@ -256,6 +258,10 @@ struct LeftMarginContext<'a> {
     diagnostic_lines: &'a HashSet<usize>,
     /// Pre-computed line indicators (line_num -> indicator)
     line_indicators: &'a BTreeMap<usize, crate::view::margin::LineIndicator>,
+    /// Line number where the primary cursor is located (for relative line numbers)
+    cursor_line: usize,
+    /// Whether to show relative line numbers
+    relative_line_numbers: bool,
 }
 
 /// Render the left margin (indicators + line numbers + separator) to line_spans
@@ -317,6 +323,27 @@ fn render_left_margin(
             Style::default().fg(ctx.theme.line_number_fg),
             None,
         );
+    } else if ctx.relative_line_numbers {
+        // Relative line numbers: show distance from cursor, or absolute for cursor line
+        let display_num = if ctx.current_source_line_num == ctx.cursor_line {
+            // Show absolute line number for the cursor line (1-indexed)
+            ctx.current_source_line_num + 1
+        } else {
+            // Show relative distance for other lines
+            ctx.current_source_line_num.abs_diff(ctx.cursor_line)
+        };
+        let rendered_text = format!(
+            "{:>width$}",
+            display_num,
+            width = ctx.state.margins.left_config.width
+        );
+        // Use brighter color for the cursor line
+        let margin_style = if ctx.current_source_line_num == ctx.cursor_line {
+            Style::default().fg(ctx.theme.editor_fg)
+        } else {
+            Style::default().fg(ctx.theme.line_number_fg)
+        };
+        push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
     } else {
         let margin_content = ctx.state.margins.render_line(
             ctx.current_source_line_num,
@@ -524,6 +551,7 @@ impl SplitRenderer {
         hovered_close_split: Option<crate::model::event::SplitId>,
         hovered_maximize_split: Option<crate::model::event::SplitId>,
         is_maximized: bool,
+        relative_line_numbers: bool,
     ) -> (
         Vec<(
             crate::model::event::SplitId,
@@ -691,6 +719,7 @@ impl SplitRenderer {
                     highlight_context_bytes,
                     buffer_id,
                     hide_cursor,
+                    relative_line_numbers,
                 );
 
                 // Store view line mappings for mouse click handling
@@ -1958,12 +1987,16 @@ impl SplitRenderer {
             line_wrap,
             estimated_lines,
             left_column,
+            relative_line_numbers,
         } = input;
 
         let selection_ranges = &selection.ranges;
         let block_selections = &selection.block_rects;
         let cursor_positions = &selection.cursor_positions;
         let primary_cursor_position = selection.primary_cursor_position;
+
+        // Compute cursor line number for relative line numbers display
+        let cursor_line = state.buffer.get_line_number(primary_cursor_position);
 
         let highlight_spans = &decorations.highlight_spans;
         let semantic_spans = &decorations.semantic_spans;
@@ -2075,6 +2108,8 @@ impl SplitRenderer {
                     estimated_lines,
                     diagnostic_lines,
                     line_indicators,
+                    cursor_line,
+                    relative_line_numbers,
                 },
                 &mut line_spans,
                 &mut line_view_map,
@@ -2652,6 +2687,7 @@ impl SplitRenderer {
         highlight_context_bytes: usize,
         _buffer_id: BufferId,
         hide_cursor: bool,
+        relative_line_numbers: bool,
     ) -> Vec<ViewLineMapping> {
         let _span = tracing::trace_span!("render_buffer_in_split").entered();
 
@@ -2779,6 +2815,7 @@ impl SplitRenderer {
             line_wrap,
             estimated_lines,
             left_column: viewport.left_column,
+            relative_line_numbers,
         });
 
         let mut lines = render_output.lines;
@@ -3084,6 +3121,7 @@ mod tests {
             line_wrap: viewport.line_wrap_enabled,
             estimated_lines,
             left_column: viewport.left_column,
+            relative_line_numbers: false,
         });
 
         (

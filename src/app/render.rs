@@ -334,6 +334,7 @@ impl Editor {
                 hovered_close_split,
                 hovered_maximize_split,
                 is_maximized,
+                self.config.editor.relative_line_numbers,
             );
 
         // Render terminal content on top of split content for terminal buffers
