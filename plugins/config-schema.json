@@ -290,7 +290,6 @@
     "Keybinding": {
       "description": "Keybinding definition",
       "type": "object",
-      "x-display-field": "/action",
       "properties": {
         "key": {
           "description": "Key name (e.g., \"a\", \"Enter\", \"F1\") - for single-key bindings",
@@ -331,7 +330,8 @@
       },
       "required": [
         "action"
-      ]
+      ],
+      "x-display-field": "/action"
     },
     "KeyPress": {
       "description": "A single key in a sequence",
@@ -357,7 +357,6 @@
     "KeymapConfig": {
       "description": "Keymap configuration (for built-in and user-defined keymaps)",
       "type": "object",
-      "x-display-field": "/inherits",
       "properties": {
         "inherits": {
           "description": "Optional parent keymap to inherit from",
@@ -374,7 +373,8 @@
           },
           "default": []
         }
-      }
+      },
+      "x-display-field": "/inherits"
     },
     "KeybindingMapOptions": {
       "description": "Available keybinding maps",
@@ -388,7 +388,6 @@
     "LanguageConfig": {
       "description": "Language-specific configuration",
       "type": "object",
-      "x-display-field": "/grammar",
       "properties": {
         "extensions": {
           "description": "File extensions for this language (e.g., [\"rs\"] for Rust)",
@@ -465,7 +464,8 @@
           },
           "default": []
         }
-      }
+      },
+      "x-display-field": "/grammar"
     },
     "HighlighterPreference": {
       "description": "Preference for which syntax highlighting backend to use",
@@ -490,7 +490,6 @@
     "OnSaveAction": {
       "description": "Action to run when a file is saved",
       "type": "object",
-      "x-display-field": "/command",
       "properties": {
         "command": {
           "description": "The shell command to run\nThe file path is available as $FILE or as an argument",
@@ -542,12 +541,12 @@
       },
       "required": [
         "command"
-      ]
+      ],
+      "x-display-field": "/command"
     },
     "LspServerConfig": {
       "description": "LSP server configuration",
       "type": "object",
-      "x-display-field": "/command",
       "properties": {
         "command": {
           "description": "Command to spawn the server",
@@ -587,7 +586,8 @@
       },
       "required": [
         "command"
-      ]
+      ],
+      "x-display-field": "/command"
     },
     "ProcessLimits": {
       "description": "Configuration for process resource limits",

@@ -749,11 +749,22 @@ impl SettingsState {
     /// Automatically detects whether this is a Map or ObjectArray dialog
     /// and handles saving appropriately.
     pub fn save_entry_dialog(&mut self) {
-        // Check what type of control we're dealing with
-        let is_array = self
-            .current_item()
-            .map(|item| matches!(item.control, SettingControl::ObjectArray(_)))
-            .unwrap_or(false);
+        // Determine if this is an array dialog by checking where we need to save
+        // For nested dialogs (stack len > 1), check the parent dialog's item type
+        // For top-level dialogs (stack len == 1), check current_item()
+        let is_array = if self.entry_dialog_stack.len() > 1 {
+            // Nested dialog - check parent dialog's focused item
+            self.entry_dialog_stack
+                .get(self.entry_dialog_stack.len() - 2)
+                .and_then(|parent| parent.current_item())
+                .map(|item| matches!(item.control, SettingControl::ObjectArray(_)))
+                .unwrap_or(false)
+        } else {
+            // Top-level dialog - check main settings page item
+            self.current_item()
+                .map(|item| matches!(item.control, SettingControl::ObjectArray(_)))
+                .unwrap_or(false)
+        };
 
         if is_array {
             self.save_array_item_dialog_inner();
@@ -825,30 +836,62 @@ impl SettingsState {
         let value = dialog.to_value();
         let array_path = dialog.map_path.clone();
         let is_new = dialog.is_new;
+        let entry_key = dialog.entry_key.clone();
 
-        // Update the array control with the new value
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::ObjectArray(array_state) = &mut item.control {
-                if is_new {
-                    // Add new item to the array
-                    array_state.bindings.push(value.clone());
-                } else {
-                    // Update existing item by index
-                    if let Ok(index) = dialog.entry_key.parse::<usize>() {
+        // Determine if this is a nested dialog (parent still in stack)
+        let is_nested = !self.entry_dialog_stack.is_empty();
+
+        if is_nested {
+            // Nested dialog - update the parent dialog's ObjectArray item
+            // Extract the array field name from the path (last segment)
+            let array_field = array_path.rsplit('/').next().unwrap_or("").to_string();
+            let item_path = format!("/{}", array_field);
+
+            // Find and update the ObjectArray in the parent dialog
+            if let Some(parent) = self.entry_dialog_stack.last_mut() {
+                if let Some(item) = parent.items.iter_mut().find(|i| i.path == item_path) {
+                    if let SettingControl::ObjectArray(array_state) = &mut item.control {
+                        if is_new {
+                            array_state.bindings.push(value.clone());
+                        } else if let Ok(index) = entry_key.parse::<usize>() {
+                            if index < array_state.bindings.len() {
+                                array_state.bindings[index] = value.clone();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // For nested arrays, the pending change will be recorded when parent dialog saves
+            // We still record a pending change so the value persists
+            if let Some(parent) = self.entry_dialog_stack.last() {
+                if let Some(item) = parent.items.iter().find(|i| i.path == item_path) {
+                    if let SettingControl::ObjectArray(array_state) = &item.control {
+                        let array_value = serde_json::Value::Array(array_state.bindings.clone());
+                        self.set_pending_change(&array_path, array_value);
+                    }
+                }
+            }
+        } else {
+            // Top-level dialog - update the main settings page item
+            if let Some(item) = self.current_item_mut() {
+                if let SettingControl::ObjectArray(array_state) = &mut item.control {
+                    if is_new {
+                        array_state.bindings.push(value.clone());
+                    } else if let Ok(index) = entry_key.parse::<usize>() {
                         if index < array_state.bindings.len() {
                             array_state.bindings[index] = value.clone();
                         }
                     }
                 }
             }
-        }
 
-        // Record the pending change for the entire array
-        // Build the new array value from all bindings
-        if let Some(item) = self.current_item() {
-            if let SettingControl::ObjectArray(array_state) = &item.control {
-                let array_value = serde_json::Value::Array(array_state.bindings.clone());
-                self.set_pending_change(&array_path, array_value);
+            // Record the pending change for the entire array
+            if let Some(item) = self.current_item() {
+                if let SettingControl::ObjectArray(array_state) = &item.control {
+                    let array_value = serde_json::Value::Array(array_state.bindings.clone());
+                    self.set_pending_change(&array_path, array_value);
+                }
             }
         }
     }

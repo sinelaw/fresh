@@ -223,14 +223,68 @@ impl EntryDialogState {
                 self.focus_on_buttons = false;
                 self.selected_item = 0;
             }
-        } else if self.selected_item + 1 < self.items.len() {
-            // Move to next item
-            self.selected_item += 1;
-            self.sub_focus = None;
         } else {
-            // Move to buttons
-            self.focus_on_buttons = true;
-            self.focused_button = 0;
+            // Check if current item is an ObjectArray that can navigate internally
+            let array_nav_result = self
+                .items
+                .get(self.selected_item)
+                .map(|item| {
+                    if let SettingControl::ObjectArray(state) = &item.control {
+                        // Navigation order: entries -> add-new -> exit
+                        match state.focused_index {
+                            Some(idx) if idx + 1 < state.bindings.len() => {
+                                // On entry, can go to next entry
+                                Some(true)
+                            }
+                            Some(_) => {
+                                // On last entry, can go to add-new
+                                Some(true)
+                            }
+                            None => {
+                                // On add-new, exit to next dialog item
+                                Some(false)
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .flatten();
+
+            match array_nav_result {
+                Some(true) => {
+                    // Navigate within the ObjectArray
+                    if let Some(item) = self.items.get_mut(self.selected_item) {
+                        if let SettingControl::ObjectArray(state) = &mut item.control {
+                            state.focus_next();
+                        }
+                    }
+                }
+                Some(false) => {
+                    // Exit ObjectArray, go to next item
+                    if self.selected_item + 1 < self.items.len() {
+                        self.selected_item += 1;
+                        self.sub_focus = None;
+                        // Initialize next item's ObjectArray if it has entries
+                        self.init_object_array_focus();
+                    } else {
+                        self.focus_on_buttons = true;
+                        self.focused_button = 0;
+                    }
+                }
+                None => {
+                    // Not an ObjectArray, normal navigation
+                    if self.selected_item + 1 < self.items.len() {
+                        self.selected_item += 1;
+                        self.sub_focus = None;
+                        // Initialize next item's ObjectArray if it has entries
+                        self.init_object_array_focus();
+                    } else {
+                        self.focus_on_buttons = true;
+                        self.focused_button = 0;
+                    }
+                }
+            }
         }
 
         self.update_focus_states();
@@ -251,17 +305,98 @@ impl EntryDialogState {
                 self.focus_on_buttons = false;
                 self.selected_item = self.items.len().saturating_sub(1);
             }
-        } else if self.selected_item > 0 {
-            self.selected_item -= 1;
-            self.sub_focus = None;
         } else {
-            // Wrap to last button
-            self.focus_on_buttons = true;
-            self.focused_button = self.button_count().saturating_sub(1);
+            // Check if current item is an ObjectArray that can navigate internally
+            let array_nav_result = self
+                .items
+                .get(self.selected_item)
+                .map(|item| {
+                    if let SettingControl::ObjectArray(state) = &item.control {
+                        // Navigation order (reverse): exit <- entries <- add-new
+                        match state.focused_index {
+                            None => {
+                                // On add-new, can go back to last entry (if any)
+                                if !state.bindings.is_empty() {
+                                    Some(true)
+                                } else {
+                                    Some(false) // No entries, exit
+                                }
+                            }
+                            Some(0) => {
+                                // On first entry, exit to previous dialog item
+                                Some(false)
+                            }
+                            Some(_) => {
+                                // On entry, can go to previous entry
+                                Some(true)
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .flatten();
+
+            match array_nav_result {
+                Some(true) => {
+                    // Navigate within the ObjectArray
+                    if let Some(item) = self.items.get_mut(self.selected_item) {
+                        if let SettingControl::ObjectArray(state) = &mut item.control {
+                            state.focus_prev();
+                        }
+                    }
+                }
+                Some(false) => {
+                    // Exit ObjectArray, go to previous item
+                    if self.selected_item > 0 {
+                        self.selected_item -= 1;
+                        self.sub_focus = None;
+                        // Initialize previous item's ObjectArray to add-new (end)
+                        self.init_object_array_focus_end();
+                    } else {
+                        self.focus_on_buttons = true;
+                        self.focused_button = self.button_count().saturating_sub(1);
+                    }
+                }
+                None => {
+                    // Not an ObjectArray, normal navigation
+                    if self.selected_item > 0 {
+                        self.selected_item -= 1;
+                        self.sub_focus = None;
+                        // Initialize previous item's ObjectArray to add-new (end)
+                        self.init_object_array_focus_end();
+                    } else {
+                        self.focus_on_buttons = true;
+                        self.focused_button = self.button_count().saturating_sub(1);
+                    }
+                }
+            }
         }
 
         self.update_focus_states();
         self.ensure_selected_visible(self.viewport_height);
+    }
+
+    /// Initialize ObjectArray focus to first entry (when arriving from above)
+    fn init_object_array_focus(&mut self) {
+        if let Some(item) = self.items.get_mut(self.selected_item) {
+            if let SettingControl::ObjectArray(state) = &mut item.control {
+                // Start at first entry if there are any, otherwise stay on add-new
+                if !state.bindings.is_empty() {
+                    state.focused_index = Some(0);
+                }
+            }
+        }
+    }
+
+    /// Initialize ObjectArray focus to add-new (when arriving from below)
+    fn init_object_array_focus_end(&mut self) {
+        if let Some(item) = self.items.get_mut(self.selected_item) {
+            if let SettingControl::ObjectArray(state) = &mut item.control {
+                // Start at add-new row (None)
+                state.focused_index = None;
+            }
+        }
     }
 
     /// Move to next sub-item within current control (for TextList, Map)

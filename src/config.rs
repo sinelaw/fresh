@@ -442,6 +442,7 @@ pub struct KeyPress {
 
 /// Keybinding definition
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-display-field" = "/action"))]
 pub struct Keybinding {
     /// Key name (e.g., "a", "Enter", "F1") - for single-key bindings
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -470,6 +471,7 @@ pub struct Keybinding {
 
 /// Keymap configuration (for built-in and user-defined keymaps)
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-display-field" = "/inherits"))]
 pub struct KeymapConfig {
     /// Optional parent keymap to inherit from
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -482,6 +484,7 @@ pub struct KeymapConfig {
 
 /// Action to run when a file is saved
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-display-field" = "/command"))]
 pub struct OnSaveAction {
     /// The shell command to run
     /// The file path is available as $FILE or as an argument
@@ -531,6 +534,7 @@ fn default_on_save_timeout() -> u64 {
 
 /// Language-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-display-field" = "/grammar"))]
 pub struct LanguageConfig {
     /// File extensions for this language (e.g., ["rs"] for Rust)
     #[serde(default)]
