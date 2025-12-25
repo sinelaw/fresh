@@ -130,18 +130,28 @@ jobs:
           function download(url, dest) {
             return new Promise((resolve, reject) => {
               const file = fs.createWriteStream(dest);
+              file.on('error', (err) => {
+                file.close();
+                reject(err);
+              });
               https.get(url, (response) => {
                 if (response.statusCode === 302 || response.statusCode === 301) {
-                  download(response.headers.location, dest).then(resolve).catch(reject);
+                  file.close(() => {
+                    download(response.headers.location, dest).then(resolve).catch(reject);
+                  });
                   return;
                 }
                 if (response.statusCode !== 200) {
+                  file.close();
                   reject(new Error(`Failed to download: ${response.statusCode}`));
                   return;
                 }
                 response.pipe(file);
                 file.on('finish', () => { file.close(); resolve(); });
-              }).on('error', reject);
+              }).on('error', (err) => {
+                file.close();
+                reject(err);
+              });
             });
           }
 
@@ -151,9 +161,17 @@ jobs:
             const url = `https://github.com/${REPO}/releases/download/v${VERSION}/${archiveName}`;
             const archivePath = path.join(__dirname, archiveName);
             const binDir = path.join(__dirname, 'bin');
+            const binaryPath = path.join(binDir, info.binaryName);
 
             console.log(`Downloading ${url}...`);
             await download(url, archivePath);
+
+            // Verify download succeeded
+            const stats = fs.statSync(archivePath);
+            if (stats.size === 0) {
+              throw new Error(`Downloaded file is empty: ${archivePath}`);
+            }
+            console.log(`Downloaded ${stats.size} bytes`);
 
             fs.mkdirSync(binDir, { recursive: true });
 
@@ -176,6 +194,12 @@ jobs:
             }
 
             fs.unlinkSync(archivePath);
+
+            // Verify binary exists
+            if (!fs.existsSync(binaryPath)) {
+              throw new Error(`Installation failed: binary not found at ${binaryPath}`);
+            }
+
             console.log('fresh-editor installed successfully!');
           }
 
