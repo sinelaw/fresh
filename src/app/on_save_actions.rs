@@ -59,8 +59,13 @@ impl Editor {
         let mut missing_commands: Vec<String> = Vec::new();
         let mut ran_any_action = false;
 
-        // Run each action in order
+        // Run each enabled action in order
         for action in &on_save_actions {
+            // Skip disabled actions
+            if !action.enabled {
+                continue;
+            }
+
             match self.run_single_on_save_action(action, &path, &project_root) {
                 OnSaveResult::Success(output) => {
                     ran_any_action = true;

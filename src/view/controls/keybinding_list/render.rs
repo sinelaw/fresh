@@ -49,8 +49,14 @@ pub fn render_keybinding_list(
         };
 
         let key_combo = format_key_combo(binding);
+        // Use display_field from state if available, otherwise default to "action"
+        let field_name = state
+            .display_field
+            .as_ref()
+            .and_then(|p| p.strip_prefix('/'))
+            .unwrap_or("action");
         let action = binding
-            .get("action")
+            .get(field_name)
             .and_then(|a| a.as_str())
             .unwrap_or("(no action)");
 

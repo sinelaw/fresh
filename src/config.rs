@@ -514,6 +514,15 @@ pub struct OnSaveAction {
     /// When true, shows a status message instead of an error if command is missing
     #[serde(default)]
     pub optional: bool,
+
+    /// Whether this action is enabled (default: true)
+    /// Set to false to disable an action without removing it from config
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 fn default_on_save_timeout() -> u64 {
@@ -854,6 +863,7 @@ impl Config {
                     replace_buffer: true,
                     timeout_ms: 10000,
                     optional: true,
+                    enabled: true,
                 }],
             },
         );
@@ -879,6 +889,7 @@ impl Config {
                     replace_buffer: true,
                     timeout_ms: 10000,
                     optional: true,
+                    enabled: true,
                 }],
             },
         );
@@ -904,6 +915,7 @@ impl Config {
                     replace_buffer: true,
                     timeout_ms: 10000,
                     optional: true,
+                    enabled: true,
                 }],
             },
         );
@@ -933,6 +945,7 @@ impl Config {
                     replace_buffer: true,
                     timeout_ms: 10000,
                     optional: true,
+                    enabled: true,
                 }],
             },
         );
@@ -958,6 +971,7 @@ impl Config {
                     replace_buffer: true,
                     timeout_ms: 10000,
                     optional: true,
+                    enabled: true,
                 }],
             },
         );
@@ -990,6 +1004,7 @@ impl Config {
                     replace_buffer: true,
                     timeout_ms: 10000,
                     optional: true,
+                    enabled: true,
                 }],
             },
         );
@@ -1098,6 +1113,7 @@ impl Config {
                     replace_buffer: true,
                     timeout_ms: 10000,
                     optional: true,
+                    enabled: true,
                 }],
             },
         );
@@ -1140,6 +1156,7 @@ impl Config {
                     replace_buffer: true,
                     timeout_ms: 10000,
                     optional: true,
+                    enabled: true,
                 }],
             },
         );
@@ -1183,6 +1200,7 @@ impl Config {
                     replace_buffer: true,
                     timeout_ms: 10000,
                     optional: true,
+                    enabled: true,
                 }],
             },
         );

@@ -155,6 +155,10 @@ struct RawSchema {
     /// Extensible enum values - see module docs for details
     #[serde(rename = "x-enum-values", default)]
     extensible_enum_values: Vec<EnumValueEntry>,
+    /// Custom extension: field to display as preview in Map/ObjectArray entries
+    /// e.g., "/command" for OnSaveAction, "/action" for Keybinding
+    #[serde(rename = "x-display-field")]
+    display_field: Option<String>,
 }
 
 /// An entry in the x-enum-values array
@@ -395,14 +399,15 @@ fn determine_type(
                     return SettingType::StringArray;
                 }
                 // Check if items reference an object type
-                if let Some(ref ref_path) = items.ref_path {
+                if items.ref_path.is_some() {
                     // Parse the item schema from the referenced definition
                     let item_schema =
                         parse_setting("item", "", item_resolved, defs, enum_values_map);
 
                     // Only create ObjectArray if the item is an object with properties
                     if matches!(item_schema.setting_type, SettingType::Object { .. }) {
-                        let display_field = get_display_field_for_ref(ref_path);
+                        // Get display_field from x-display-field in the referenced schema
+                        let display_field = item_resolved.display_field.clone();
                         return SettingType::ObjectArray {
                             item_schema: Box::new(item_schema),
                             display_field,
@@ -421,11 +426,8 @@ fn determine_type(
                         let value_schema =
                             parse_setting("value", "", inner_resolved, defs, enum_values_map);
 
-                        // Determine display field based on the $ref path
-                        let display_field = schema_box
-                            .ref_path
-                            .as_ref()
-                            .and_then(|ref_path| get_display_field_for_ref(ref_path));
+                        // Get display_field from x-display-field in the referenced schema
+                        let display_field = inner_resolved.display_field.clone();
 
                         return SettingType::Map {
                             value_schema: Box::new(value_schema),
@@ -450,21 +452,6 @@ fn determine_type(
             SettingType::Complex
         }
         _ => SettingType::Complex,
-    }
-}
-
-/// Get the display field for a known $ref type
-/// This maps type names to the field that should be shown as a preview in map entries
-fn get_display_field_for_ref(ref_path: &str) -> Option<String> {
-    // Extract type name from ref path like "#/$defs/LspServerConfig"
-    let type_name = ref_path.strip_prefix("#/$defs/")?;
-
-    match type_name {
-        "LspServerConfig" => Some("/command".to_string()),
-        "LanguageConfig" => Some("/grammar".to_string()),
-        "KeymapConfig" => Some("/inherits".to_string()),
-        "Keybinding" => Some("/action".to_string()),
-        _ => None,
     }
 }
 

@@ -290,6 +290,7 @@
     "Keybinding": {
       "description": "Keybinding definition",
       "type": "object",
+      "x-display-field": "/action",
       "properties": {
         "key": {
           "description": "Key name (e.g., \"a\", \"Enter\", \"F1\") - for single-key bindings",
@@ -356,6 +357,7 @@
     "KeymapConfig": {
       "description": "Keymap configuration (for built-in and user-defined keymaps)",
       "type": "object",
+      "x-display-field": "/inherits",
       "properties": {
         "inherits": {
           "description": "Optional parent keymap to inherit from",
@@ -386,6 +388,7 @@
     "LanguageConfig": {
       "description": "Language-specific configuration",
       "type": "object",
+      "x-display-field": "/grammar",
       "properties": {
         "extensions": {
           "description": "File extensions for this language (e.g., [\"rs\"] for Rust)",
@@ -487,6 +490,7 @@
     "OnSaveAction": {
       "description": "Action to run when a file is saved",
       "type": "object",
+      "x-display-field": "/command",
       "properties": {
         "command": {
           "description": "The shell command to run\nThe file path is available as $FILE or as an argument",
@@ -529,6 +533,11 @@
           "description": "Whether this action is optional (won't error if command not found)\nUseful for default formatters that may not be installed\nWhen true, shows a status message instead of an error if command is missing",
           "type": "boolean",
           "default": false
+        },
+        "enabled": {
+          "description": "Whether this action is enabled (default: true)\nSet to false to disable an action without removing it from config",
+          "type": "boolean",
+          "default": true
         }
       },
       "required": [
@@ -538,6 +547,7 @@
     "LspServerConfig": {
       "description": "LSP server configuration",
       "type": "object",
+      "x-display-field": "/command",
       "properties": {
         "command": {
           "description": "Command to spawn the server",
