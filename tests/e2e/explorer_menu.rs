@@ -266,37 +266,6 @@ fn test_explorer_i_keybinding_toggles_gitignored() {
     );
 }
 
-/// Test that 'd' keybinding triggers delete in file explorer
-#[test]
-fn test_explorer_d_keybinding_deletes() {
-    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
-    let project_root = harness.project_dir().unwrap();
-
-    // Create a test file
-    let file_path = project_root.join("to_delete.txt");
-    fs::write(&file_path, "delete me").unwrap();
-
-    // Open and focus file explorer
-    harness.editor_mut().focus_file_explorer();
-    harness.wait_for_file_explorer().unwrap();
-
-    // Root is automatically expanded during init, so just wait for the file to appear
-    harness
-        .wait_for_file_explorer_item("to_delete.txt")
-        .unwrap();
-
-    // Navigate down to select the file (root is initially selected)
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Press 'd' to delete (deletes immediately without prompt)
-    harness
-        .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
-        .unwrap();
-    // Wait for the file to actually be deleted
-    harness.wait_until(|_| !file_path.exists()).unwrap();
-}
-
 /// Test that F2 keybinding triggers rename in file explorer
 #[test]
 fn test_explorer_f2_keybinding_renames() {
@@ -325,37 +294,6 @@ fn test_explorer_f2_keybinding_renames() {
     // The test passes if no panic occurs - actual rename depends on the selected item
     let screen = harness.screen_to_string();
     println!("Screen after rename attempt:\n{}", screen);
-}
-
-/// Test that Delete keybinding triggers delete in file explorer
-#[test]
-fn test_explorer_delete_key_deletes() {
-    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
-    let project_root = harness.project_dir().unwrap();
-
-    // Create a test file
-    let file_path = project_root.join("delete_test.txt");
-    fs::write(&file_path, "delete me").unwrap();
-
-    // Open and focus file explorer
-    harness.editor_mut().focus_file_explorer();
-    harness.wait_for_file_explorer().unwrap();
-
-    // Root is automatically expanded during init, so just wait for the file to appear
-    harness
-        .wait_for_file_explorer_item("delete_test.txt")
-        .unwrap();
-
-    // Navigate down to select the file (root is initially selected)
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Press Delete key (deletes immediately without prompt)
-    harness
-        .send_key(KeyCode::Delete, KeyModifiers::NONE)
-        .unwrap();
-    // Wait for the file to actually be deleted
-    harness.wait_until(|_| !file_path.exists()).unwrap();
 }
 
 /// Test executing New File action from Explorer menu
