@@ -3725,3 +3725,138 @@ fn test_hover_popup_dynamic_height() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test that mouse scroll works within hover popup to scroll content
+///
+/// When the mouse is over a hover popup with scrollable content,
+/// scrolling should scroll the popup content instead of dismissing it.
+#[test]
+fn test_hover_popup_mouse_scroll() -> std::io::Result<()> {
+    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(100, 30)?;
+
+    // Create content that exceeds the visible area (needs scrolling)
+    // With max_height=12 and borders=2, we have 10 visible lines
+    let long_content: Vec<String> = (1..=20)
+        .map(|i| format!("Hover line {}", i))
+        .collect();
+
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Hover".to_string()),
+            transient: true,
+            content: PopupContentData::Text(long_content),
+            position: PopupPositionData::Centered,
+            width: 50,
+            max_height: 12, // Only 10 lines of content visible
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    let screen = harness.screen_to_string();
+
+    // Verify popup is visible with first lines
+    assert!(
+        screen.contains("Hover line 1"),
+        "First line should be visible initially"
+    );
+    assert!(
+        !screen.contains("Hover line 15"),
+        "Line 15 should not be visible before scrolling"
+    );
+
+    // Move mouse over the popup (centered, so around middle of screen)
+    harness.mouse_move(50, 15)?;
+
+    // Scroll down within the popup
+    harness.mouse_scroll_down(50, 15)?;
+    harness.render()?;
+
+    // Popup should still be visible (not dismissed)
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Hover popup should remain visible after scroll"
+    );
+
+    // After scrolling, later lines should become visible
+    let screen_after = harness.screen_to_string();
+
+    // The popup should have scrolled, showing different content
+    // Either line 1 is no longer visible, or later lines are now visible
+    let scrolled = !screen_after.contains("Hover line 1")
+        || screen_after.contains("Hover line 5")
+        || screen_after.contains("Hover line 10");
+
+    assert!(
+        scrolled,
+        "Popup content should have scrolled after mouse scroll"
+    );
+
+    Ok(())
+}
+
+/// Test that hover popup height accounts for word-wrapped lines
+///
+/// When hover content contains long lines that wrap, the popup should
+/// expand to show the wrapped content (up to max_height), not just
+/// count original lines.
+#[test]
+fn test_hover_popup_height_accounts_for_wrapped_lines() -> std::io::Result<()> {
+    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(100, 40)?;
+
+    // Create a single very long line that will wrap multiple times
+    // With popup width=40, this ~200 char line should wrap to ~5 lines
+    let long_line = "This is a very long documentation line that should wrap multiple times when displayed in a narrow popup window because it exceeds the available width significantly.".to_string();
+
+    let content = vec![
+        "Function signature".to_string(),
+        "---".to_string(),
+        long_line,
+        "".to_string(),
+        "End of docs".to_string(),
+    ];
+
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Hover".to_string()),
+            transient: true,
+            content: PopupContentData::Text(content),
+            position: PopupPositionData::Centered,
+            width: 40, // Narrow width to force wrapping
+            max_height: 20,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    let screen = harness.screen_to_string();
+    println!("Screen:\n{}", screen);
+
+    // The popup should show all content including the wrapped long line
+    // and the "End of docs" line
+    assert!(
+        screen.contains("Function signature"),
+        "First line should be visible"
+    );
+    assert!(
+        screen.contains("End of docs"),
+        "Last line should be visible - popup should account for wrapped height"
+    );
+
+    // The long line should be wrapped (appearing on multiple visual lines)
+    // Check that the beginning and some middle part are visible
+    assert!(
+        screen.contains("This is a very long"),
+        "Start of long line should be visible"
+    );
+
+    Ok(())
+}

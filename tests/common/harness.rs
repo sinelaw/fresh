@@ -664,6 +664,32 @@ impl EditorTestHarness {
         Ok(())
     }
 
+    /// Simulate a mouse scroll up at specific coordinates
+    pub fn mouse_scroll_up(&mut self, col: u16, row: u16) -> io::Result<()> {
+        let mouse_event = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        };
+        self.send_mouse(mouse_event)?;
+        self.render()?;
+        Ok(())
+    }
+
+    /// Simulate a mouse scroll down at specific coordinates
+    pub fn mouse_scroll_down(&mut self, col: u16, row: u16) -> io::Result<()> {
+        let mouse_event = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        };
+        self.send_mouse(mouse_event)?;
+        self.render()?;
+        Ok(())
+    }
+
     /// Simulate a mouse drag from one position to another
     pub fn mouse_drag(
         &mut self,

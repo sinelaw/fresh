@@ -599,9 +599,28 @@ impl Popup {
 
     /// Calculate the actual content height based on the popup content
     fn content_height(&self) -> u16 {
+        // Use the popup's configured width for wrapping calculation
+        self.content_height_for_width(self.width)
+    }
+
+    /// Calculate content height for a specific width, accounting for word wrapping
+    fn content_height_for_width(&self, popup_width: u16) -> u16 {
+        // Calculate the effective content width (accounting for borders and scrollbar)
+        let border_width = if self.bordered { 2 } else { 0 };
+        let scrollbar_reserved = 2; // Reserve space for potential scrollbar
+        let content_width = popup_width
+            .saturating_sub(border_width)
+            .saturating_sub(scrollbar_reserved) as usize;
+
         let content_lines = match &self.content {
-            PopupContent::Text(lines) => lines.len() as u16,
-            PopupContent::Markdown(lines) => lines.len() as u16,
+            PopupContent::Text(lines) => {
+                // Count wrapped lines
+                wrap_text_lines(lines, content_width).len() as u16
+            }
+            PopupContent::Markdown(styled_lines) => {
+                // Count wrapped styled lines
+                wrap_styled_lines(styled_lines, content_width).len() as u16
+            }
             PopupContent::List { items, .. } => items.len() as u16,
             PopupContent::Custom(lines) => lines.len() as u16,
         };

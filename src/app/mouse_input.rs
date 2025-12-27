@@ -164,6 +164,10 @@ impl Editor {
                 // Check if file browser is active and should handle scroll
                 if self.is_file_open_active() && self.handle_file_open_scroll(-3) {
                     needs_render = true;
+                } else if self.is_mouse_over_transient_popup(col, row) {
+                    // Scroll the popup content instead of dismissing it
+                    self.scroll_transient_popup(-3);
+                    needs_render = true;
                 } else {
                     // Dismiss hover/signature help popups on scroll
                     self.dismiss_transient_popups();
@@ -176,6 +180,10 @@ impl Editor {
             MouseEventKind::ScrollDown => {
                 // Check if file browser is active and should handle scroll
                 if self.is_file_open_active() && self.handle_file_open_scroll(3) {
+                    needs_render = true;
+                } else if self.is_mouse_over_transient_popup(col, row) {
+                    // Scroll the popup content instead of dismissing it
+                    self.scroll_transient_popup(3);
                     needs_render = true;
                 } else {
                     // Dismiss hover/signature help popups on scroll
