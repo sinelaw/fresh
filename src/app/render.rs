@@ -664,6 +664,22 @@ impl Editor {
                 })
             })
             .unwrap_or(false);
+        // Check if a formatter is configured for the current buffer's language
+        let formatter_available = self
+            .buffer_metadata
+            .get(&self.active_buffer())
+            .and_then(|metadata| {
+                metadata.file_path().and_then(|path| {
+                    detect_language(path, &self.config.languages).and_then(|language| {
+                        self.config
+                            .languages
+                            .get(&language)
+                            .and_then(|lc| lc.formatter.as_ref())
+                            .map(|_| true)
+                    })
+                })
+            })
+            .unwrap_or(false);
         let show_hidden = self
             .file_explorer
             .as_ref()
@@ -689,7 +705,8 @@ impl Editor {
             .set(context_keys::FILE_EXPLORER_SHOW_HIDDEN, show_hidden)
             .set(context_keys::FILE_EXPLORER_SHOW_GITIGNORED, show_gitignored)
             .set(context_keys::HAS_SELECTION, has_selection)
-            .set(context_keys::MENU_BAR, self.menu_bar_visible);
+            .set(context_keys::MENU_BAR, self.menu_bar_visible)
+            .set(context_keys::FORMATTER_AVAILABLE, formatter_available);
 
         // Render settings modal (before menu bar so menus can overlay)
         // Check visibility first to avoid borrow conflict with dimming

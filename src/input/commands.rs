@@ -199,6 +199,14 @@ pub fn get_all_commands() -> Vec<Command> {
             source: CommandSource::Builtin,
         },
         Command {
+            name: "Format Buffer".to_string(),
+            description: "Format the current buffer with the configured formatter".to_string(),
+            action: Action::FormatBuffer,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
             name: "Quit".to_string(),
             description: "Exit the editor".to_string(),
             action: Action::Quit,

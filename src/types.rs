@@ -21,6 +21,7 @@ pub mod context_keys {
     pub const FILE_EXPLORER_SHOW_HIDDEN: &str = "file_explorer_show_hidden";
     pub const FILE_EXPLORER_SHOW_GITIGNORED: &str = "file_explorer_show_gitignored";
     pub const HAS_SELECTION: &str = "has_selection";
+    pub const FORMATTER_AVAILABLE: &str = "formatter_available";
 }
 
 /// Configuration for process resource limits

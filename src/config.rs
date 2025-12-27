@@ -1579,7 +1579,7 @@ impl Config {
                         label: "Format Buffer".to_string(),
                         action: "format_buffer".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::FORMATTER_AVAILABLE.to_string()),
                         checkbox: None,
                     },
                 ],
