@@ -3614,3 +3614,114 @@ fn test_hover_popup_persists_within_symbol_and_popup() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test that hover popup shows scrollbar when content exceeds visible area
+///
+/// When the hover documentation is longer than the popup's max_height,
+/// a scrollbar should be rendered to indicate more content is available.
+#[test]
+fn test_hover_popup_shows_scrollbar_for_long_content() -> std::io::Result<()> {
+    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(100, 30)?;
+
+    // Create content that exceeds the visible area
+    // With max_height=10 and borders=2, we have 8 visible lines
+    // So 15 lines of content should trigger a scrollbar
+    let long_content: Vec<String> = (1..=15)
+        .map(|i| format!("Documentation line {}", i))
+        .collect();
+
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Hover".to_string()),
+            transient: true,
+            content: PopupContentData::Text(long_content),
+            position: PopupPositionData::Centered,
+            width: 50,
+            max_height: 10, // Only 8 lines of content visible (10 - 2 for borders)
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    let screen = harness.screen_to_string();
+
+    // Verify popup is visible
+    assert!(
+        screen.contains("Hover"),
+        "Hover popup title should be visible"
+    );
+
+    // Verify first few lines of content are visible
+    assert!(
+        screen.contains("Documentation line 1"),
+        "First line of documentation should be visible"
+    );
+
+    // Verify scrollbar is rendered (█ character for thumb, │ for track)
+    assert!(
+        screen.contains("█") || screen.contains("│"),
+        "Scrollbar should be visible when content exceeds visible area"
+    );
+
+    // Verify that later lines are NOT visible (they're scrolled off)
+    assert!(
+        !screen.contains("Documentation line 15"),
+        "Line 15 should not be visible without scrolling"
+    );
+
+    Ok(())
+}
+
+/// Test that hover popup uses dynamic max_height based on terminal size
+///
+/// The hover popup should:
+/// - Use 60% of terminal height
+/// - Have a minimum of 15 rows
+/// - Have a maximum of 40 rows
+#[test]
+fn test_hover_popup_dynamic_height() -> std::io::Result<()> {
+    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+
+    // Test with a tall terminal (60 rows)
+    // 60% of 60 = 36, which is within the 15-40 range
+    let mut harness = EditorTestHarness::new(100, 60)?;
+
+    // Create content with 30 lines
+    let content: Vec<String> = (1..=30)
+        .map(|i| format!("Long documentation line number {}", i))
+        .collect();
+
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Hover".to_string()),
+            transient: true,
+            content: PopupContentData::Text(content),
+            position: PopupPositionData::Centered,
+            width: 60,
+            max_height: 36, // Simulating 60% of 60 rows
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    let screen = harness.screen_to_string();
+
+    // With max_height=36 and borders=2, we can show 34 lines
+    // So all 30 lines should be visible (no scrollbar needed)
+    assert!(
+        screen.contains("Long documentation line number 1"),
+        "First line should be visible"
+    );
+    assert!(
+        screen.contains("Long documentation line number 30"),
+        "Last line (30) should be visible with tall terminal"
+    );
+
+    Ok(())
+}

@@ -10,6 +10,140 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use super::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 
+/// Word-wrap a single line of text to fit within a given width.
+/// Uses simple character-based wrapping (breaks at any character).
+/// Returns a vector of wrapped line segments.
+fn wrap_text_line(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![text.to_string()];
+    }
+
+    let mut result = Vec::new();
+    let mut current_line = String::new();
+    let mut current_width = 0;
+
+    for ch in text.chars() {
+        let char_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+
+        if current_width + char_width > max_width && !current_line.is_empty() {
+            result.push(current_line);
+            current_line = String::new();
+            current_width = 0;
+        }
+
+        current_line.push(ch);
+        current_width += char_width;
+    }
+
+    if !current_line.is_empty() || result.is_empty() {
+        result.push(current_line);
+    }
+
+    result
+}
+
+/// Word-wrap a vector of text lines to fit within a given width.
+fn wrap_text_lines(lines: &[String], max_width: usize) -> Vec<String> {
+    let mut result = Vec::new();
+    for line in lines {
+        if line.is_empty() {
+            result.push(String::new());
+        } else {
+            result.extend(wrap_text_line(line, max_width));
+        }
+    }
+    result
+}
+
+/// Word-wrap styled lines to fit within a given width.
+/// This preserves styling across wrapped segments.
+fn wrap_styled_lines(lines: &[StyledLine], max_width: usize) -> Vec<StyledLine> {
+    if max_width == 0 {
+        return lines.to_vec();
+    }
+
+    let mut result = Vec::new();
+
+    for line in lines {
+        // Calculate the total width of this line
+        let total_width: usize = line.spans.iter()
+            .map(|s| unicode_width::UnicodeWidthStr::width(s.text.as_str()))
+            .sum();
+
+        if total_width <= max_width {
+            // Line fits, no wrapping needed
+            result.push(line.clone());
+        } else {
+            // Need to wrap this line
+            let mut current_line = StyledLine::new();
+            let mut current_width = 0;
+
+            for span in &line.spans {
+                let span_text = &span.text;
+                let mut remaining = span_text.as_str();
+
+                while !remaining.is_empty() {
+                    let available = max_width.saturating_sub(current_width);
+
+                    if available == 0 {
+                        // Start new line
+                        result.push(current_line);
+                        current_line = StyledLine::new();
+                        current_width = 0;
+                        continue;
+                    }
+
+                    // Find how many characters fit
+                    let mut char_count = 0;
+                    let mut width_so_far = 0;
+                    for ch in remaining.chars() {
+                        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+                        if width_so_far + ch_width > available {
+                            break;
+                        }
+                        width_so_far += ch_width;
+                        char_count += 1;
+                    }
+
+                    if char_count == 0 {
+                        // Can't fit even one character, force wrap
+                        result.push(current_line);
+                        current_line = StyledLine::new();
+                        current_width = 0;
+                        continue;
+                    }
+
+                    // Take the characters that fit
+                    let (take, rest) = {
+                        let mut idx = 0;
+                        for (i, (byte_idx, _)) in remaining.char_indices().enumerate() {
+                            if i == char_count {
+                                idx = byte_idx;
+                                break;
+                            }
+                        }
+                        if idx == 0 && char_count > 0 {
+                            (remaining, "")
+                        } else {
+                            (&remaining[..idx], &remaining[idx..])
+                        }
+                    };
+
+                    current_line.push(take.to_string(), span.style);
+                    current_width += width_so_far;
+                    remaining = rest;
+                }
+            }
+
+            if !current_line.spans.is_empty() {
+                result.push(current_line);
+            }
+        }
+    }
+
+    result
+}
+
 /// Clamp a rectangle to fit within bounds, preventing out-of-bounds rendering panics.
 /// Returns a rectangle that is guaranteed to be fully contained within `bounds`.
 fn clamp_rect_to_bounds(rect: Rect, bounds: Rect) -> Rect {
@@ -624,17 +758,40 @@ impl Popup {
         let inner_area = block.inner(area);
         frame.render_widget(block, area);
 
-        // Check if we need a scrollbar (content exceeds visible area)
-        let total_lines = self.content_line_count();
+        // For text and markdown content, we need to wrap first to determine if scrollbar is needed.
+        // We wrap to the width that would be available if scrollbar is shown (conservative approach).
+        let scrollbar_reserved_width = 2; // 1 for scrollbar + 1 for spacing
+        let wrap_width = inner_area.width.saturating_sub(scrollbar_reserved_width) as usize;
         let visible_lines_count = inner_area.height as usize;
-        let needs_scrollbar = total_lines > visible_lines_count && inner_area.width > 2;
+
+        // Calculate wrapped line count and determine if scrollbar is needed
+        let (wrapped_total_lines, needs_scrollbar) = match &self.content {
+            PopupContent::Text(lines) => {
+                let wrapped = wrap_text_lines(lines, wrap_width);
+                let count = wrapped.len();
+                (count, count > visible_lines_count && inner_area.width > scrollbar_reserved_width)
+            }
+            PopupContent::Markdown(styled_lines) => {
+                let wrapped = wrap_styled_lines(styled_lines, wrap_width);
+                let count = wrapped.len();
+                (count, count > visible_lines_count && inner_area.width > scrollbar_reserved_width)
+            }
+            PopupContent::List { items, .. } => {
+                let count = items.len();
+                (count, count > visible_lines_count && inner_area.width > scrollbar_reserved_width)
+            }
+            PopupContent::Custom(lines) => {
+                let count = lines.len();
+                (count, count > visible_lines_count && inner_area.width > scrollbar_reserved_width)
+            }
+        };
 
         // Adjust content area to leave room for scrollbar if needed
         let content_area = if needs_scrollbar {
             Rect {
                 x: inner_area.x,
                 y: inner_area.y,
-                width: inner_area.width.saturating_sub(2), // 1 for scrollbar + 1 for spacing
+                width: inner_area.width.saturating_sub(scrollbar_reserved_width),
                 height: inner_area.height,
             }
         } else {
@@ -643,7 +800,9 @@ impl Popup {
 
         match &self.content {
             PopupContent::Text(lines) => {
-                let visible_lines: Vec<Line> = lines
+                // Word-wrap lines to fit content area width
+                let wrapped_lines = wrap_text_lines(lines, content_area.width as usize);
+                let visible_lines: Vec<Line> = wrapped_lines
                     .iter()
                     .skip(self.scroll_offset)
                     .take(content_area.height as usize)
@@ -654,7 +813,9 @@ impl Popup {
                 frame.render_widget(paragraph, content_area);
             }
             PopupContent::Markdown(styled_lines) => {
-                let visible_lines: Vec<Line> = styled_lines
+                // Word-wrap styled lines to fit content area width
+                let wrapped_lines = wrap_styled_lines(styled_lines, content_area.width as usize);
+                let visible_lines: Vec<Line> = wrapped_lines
                     .iter()
                     .skip(self.scroll_offset)
                     .take(content_area.height as usize)
@@ -744,7 +905,7 @@ impl Popup {
             };
 
             let scrollbar_state = ScrollbarState::new(
-                total_lines,
+                wrapped_total_lines,
                 visible_lines_count,
                 self.scroll_offset,
             );
