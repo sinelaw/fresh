@@ -2212,3 +2212,157 @@ fn test_settings_toggle_persists_after_save_and_reopen() {
     // Close settings
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
+
+/// Test that line_numbers config is applied when opening new files.
+///
+/// When line_numbers is set to false via settings, newly opened files
+/// should not show line numbers.
+#[test]
+fn test_line_numbers_config_applied_to_new_buffers() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    harness.render().unwrap();
+
+    // Verify initial state has line numbers (default is true)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("1 │"),
+        "Initial buffer should show line numbers by default"
+    );
+
+    // Open settings and disable line numbers
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for line numbers setting
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    for c in "line numbers".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Toggle it off (it's on by default)
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Save settings
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify config was updated
+    assert!(
+        !harness.config().editor.line_numbers,
+        "line_numbers should be false after saving"
+    );
+
+    // Open a new buffer - it should respect the new config
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The new buffer should NOT show line numbers
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("1 │") && !screen.contains("2 │"),
+        "New buffer should not show line numbers when config.editor.line_numbers=false. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test that line_wrap config is applied when opening new files.
+///
+/// When line_wrap is set to false via settings, newly opened files
+/// should not wrap long lines.
+#[test]
+fn test_line_wrap_config_applied_to_new_buffers() {
+    let mut harness = EditorTestHarness::new(80, 40).unwrap();
+    harness.render().unwrap();
+
+    // Open settings and disable line wrap
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for line wrap setting
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    for c in "line wrap".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Toggle it off (it's on by default)
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Save settings
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify config was updated
+    assert!(
+        !harness.config().editor.line_wrap,
+        "line_wrap should be false after saving"
+    );
+
+    // Open a new buffer
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type a line longer than the screen width (80 chars)
+    let long_text = "X".repeat(100);
+    for c in long_text.chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // With line_wrap=false, the text should stay on one line (with horizontal scroll)
+    // When wrapped, line 2 would show the continuation (no line number, just "│ XXX...")
+    let screen = harness.screen_to_string();
+    let lines: Vec<&str> = screen.lines().collect();
+
+    // Find the content area (after menu bar and tab bar)
+    // Line 2 should be a tilde (empty line marker) when not wrapping
+    // When wrapped, it would contain X's
+    let line2_content = lines.get(3).unwrap_or(&""); // 0=menu, 1=tabs, 2=line1, 3=line2
+    assert!(
+        !line2_content.contains("X"),
+        "Long line should not wrap when config.editor.line_wrap=false. Line 2: '{}'. Screen:\n{}",
+        line2_content,
+        screen
+    );
+}
