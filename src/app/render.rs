@@ -438,6 +438,14 @@ impl Editor {
                     (WarningLevel::None, 0)
                 };
 
+            // Compute status bar hover state for styling
+            use crate::view::ui::status_bar::StatusBarHover;
+            let status_bar_hover = match &self.mouse_state.hover_target {
+                Some(HoverTarget::StatusBarLspIndicator) => StatusBarHover::LspIndicator,
+                Some(HoverTarget::StatusBarWarningBadge) => StatusBarHover::WarningBadge,
+                _ => StatusBarHover::None,
+            };
+
             let status_bar_layout = StatusBarRenderer::render_status_bar(
                 frame,
                 main_chunks[status_bar_idx],
@@ -452,6 +460,7 @@ impl Editor {
                 update_available.as_deref(), // Pass update availability
                 warning_level,               // Pass warning level for colored indicator
                 general_warning_count,       // Pass general warning count for badge
+                status_bar_hover,            // Pass hover state for indicator styling
             );
 
             // Store status bar layout for click detection

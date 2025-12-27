@@ -11,6 +11,7 @@
 use std::io;
 use std::path::Path;
 
+use crate::app::warning_domains::WarningDomain;
 use crate::model::event::{BufferId, Event, SplitId};
 use crate::services::lsp::manager::detect_language;
 use crate::state::EditorState;
@@ -854,55 +855,20 @@ impl Editor {
         self.open_warning_log();
     }
 
-    /// Show a popup with LSP status and troubleshooting information
+    /// Show LSP status - opens the warning log file if there are LSP warnings,
+    /// otherwise shows a brief status message.
     pub fn show_lsp_status_popup(&mut self) {
-        use crate::app::warning_domains::WarningDomain;
-
-        // Build popup content
-        let mut content_lines: Vec<String> = Vec::new();
-
-        if self.warning_domains.lsp.has_warnings() {
-            let popup = self.warning_domains.lsp.popup_content();
-            content_lines.push(format!("─── {} ───", popup.title));
-            content_lines.push(String::new());
-            for line in popup.message.lines() {
-                content_lines.push(line.to_string());
-            }
-            content_lines.push(String::new());
-
-            // Show available actions as hints
-            if !popup.actions.is_empty() {
-                content_lines.push("Suggested actions:".to_string());
-                for action in &popup.actions {
-                    content_lines.push(format!("  • {}", action.label));
-                }
-            }
-        } else {
-            // Show current LSP status
-            content_lines.push("─── LSP Status ───".to_string());
-            content_lines.push(String::new());
-
+        if !self.warning_domains.lsp.has_warnings() {
             if self.lsp_status.is_empty() {
-                content_lines.push("No LSP server active for current file.".to_string());
+                self.status_message = Some("No LSP server active".to_string());
             } else {
-                content_lines.push(format!("Status: {}", self.lsp_status));
-                content_lines.push(String::new());
-                content_lines.push("LSP server is running normally.".to_string());
+                self.status_message = Some(format!("LSP: {}", self.lsp_status));
             }
+            return;
         }
 
-        content_lines.push(String::new());
-        content_lines.push("─────────────────────────".to_string());
-        content_lines.push("Press Esc to close.".to_string());
-
-        // Create and show the popup
-        let popup = crate::view::popup::Popup::text(content_lines, &self.theme)
-            .with_title("LSP Status".to_string())
-            .with_position(crate::view::popup::PopupPosition::Centered)
-            .with_width(60)
-            .with_max_height(15);
-
-        self.active_state_mut().popups.show(popup);
+        // Open the warning log file directly (same as warnings popup)
+        self.open_warning_log();
     }
 
     /// Get text properties at the cursor position in the active buffer

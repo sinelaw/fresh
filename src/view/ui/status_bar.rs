@@ -7,7 +7,7 @@ use crate::primitives::display_width::{char_width, str_width};
 use crate::state::EditorState;
 use crate::view::prompt::Prompt;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
@@ -19,6 +19,17 @@ pub struct StatusBarLayout {
     pub lsp_indicator: Option<(u16, u16, u16)>,
     /// Warning badge area (row, start_col, end_col) - None if no warnings
     pub warning_badge: Option<(u16, u16, u16)>,
+}
+
+/// Status bar hover state for styling clickable indicators
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StatusBarHover {
+    #[default]
+    None,
+    /// Mouse is over the LSP indicator
+    LspIndicator,
+    /// Mouse is over the warning badge
+    WarningBadge,
 }
 
 /// Result of truncating a path for display
@@ -192,6 +203,7 @@ impl StatusBarRenderer {
         update_available: Option<&str>,
         warning_level: WarningLevel,
         general_warning_count: usize,
+        hover: StatusBarHover,
     ) -> StatusBarLayout {
         Self::render_status(
             frame,
@@ -207,6 +219,7 @@ impl StatusBarRenderer {
             update_available,
             warning_level,
             general_warning_count,
+            hover,
         )
     }
 
@@ -373,6 +386,7 @@ impl StatusBarRenderer {
         update_available: Option<&str>,
         warning_level: WarningLevel,
         general_warning_count: usize,
+        hover: StatusBarHover,
     ) -> StatusBarLayout {
         // Initialize layout tracking
         let mut layout = StatusBarLayout::default();
@@ -604,37 +618,52 @@ impl StatusBarRenderer {
 
             // Add LSP indicator with colored background if warning/error
             if !lsp_indicator.is_empty() {
-                let (lsp_fg, lsp_bg) = match warning_level {
-                    WarningLevel::Error => (
+                let is_hovering = hover == StatusBarHover::LspIndicator;
+                let (lsp_fg, lsp_bg) = match (warning_level, is_hovering) {
+                    (WarningLevel::Error, true) => (
+                        theme.status_error_indicator_hover_fg,
+                        theme.status_error_indicator_hover_bg,
+                    ),
+                    (WarningLevel::Error, false) => (
                         theme.status_error_indicator_fg,
                         theme.status_error_indicator_bg,
                     ),
-                    WarningLevel::Warning => (
+                    (WarningLevel::Warning, true) => (
+                        theme.status_warning_indicator_hover_fg,
+                        theme.status_warning_indicator_hover_bg,
+                    ),
+                    (WarningLevel::Warning, false) => (
                         theme.status_warning_indicator_fg,
                         theme.status_warning_indicator_bg,
                     ),
-                    WarningLevel::None => (theme.status_bar_fg, theme.status_bar_bg),
+                    (WarningLevel::None, _) => (theme.status_bar_fg, theme.status_bar_bg),
                 };
                 // Record LSP indicator position for click detection
                 layout.lsp_indicator = Some((area.y, current_col, current_col + lsp_indicator_width as u16));
                 current_col += lsp_indicator_width as u16;
-                spans.push(Span::styled(
-                    lsp_indicator.clone(),
-                    Style::default().fg(lsp_fg).bg(lsp_bg),
-                ));
+                let mut style = Style::default().fg(lsp_fg).bg(lsp_bg);
+                if is_hovering && warning_level != WarningLevel::None {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                spans.push(Span::styled(lsp_indicator.clone(), style));
             }
 
             // Add general warning badge if there are warnings
             if !warning_badge.is_empty() {
+                let is_hovering = hover == StatusBarHover::WarningBadge;
                 // Record warning badge position for click detection
                 layout.warning_badge = Some((area.y, current_col, current_col + warning_badge_width as u16));
                 current_col += warning_badge_width as u16;
-                spans.push(Span::styled(
-                    warning_badge.clone(),
-                    Style::default()
-                        .fg(theme.status_warning_indicator_fg)
-                        .bg(theme.status_warning_indicator_bg),
-                ));
+                let (fg, bg) = if is_hovering {
+                    (theme.status_warning_indicator_hover_fg, theme.status_warning_indicator_hover_bg)
+                } else {
+                    (theme.status_warning_indicator_fg, theme.status_warning_indicator_bg)
+                };
+                let mut style = Style::default().fg(fg).bg(bg);
+                if is_hovering {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                spans.push(Span::styled(warning_badge.clone(), style));
             }
             // Keep current_col in scope to avoid unused warning
             let _ = current_col;

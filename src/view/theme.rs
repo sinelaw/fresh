@@ -155,6 +155,14 @@ struct UiColors {
     status_error_indicator_bg: ColorDef,
     #[serde(default = "default_status_error_indicator_fg")]
     status_error_indicator_fg: ColorDef,
+    #[serde(default = "default_status_warning_indicator_hover_bg")]
+    status_warning_indicator_hover_bg: ColorDef,
+    #[serde(default = "default_status_warning_indicator_hover_fg")]
+    status_warning_indicator_hover_fg: ColorDef,
+    #[serde(default = "default_status_error_indicator_hover_bg")]
+    status_error_indicator_hover_bg: ColorDef,
+    #[serde(default = "default_status_error_indicator_hover_fg")]
+    status_error_indicator_hover_fg: ColorDef,
 }
 
 // Default tab close hover color (for backward compatibility with existing themes)
@@ -249,6 +257,18 @@ fn default_status_error_indicator_bg() -> ColorDef {
 }
 fn default_status_error_indicator_fg() -> ColorDef {
     ColorDef::Rgb(255, 255, 255) // White text on red background
+}
+fn default_status_warning_indicator_hover_bg() -> ColorDef {
+    ColorDef::Rgb(211, 167, 30) // Lighter amber for hover
+}
+fn default_status_warning_indicator_hover_fg() -> ColorDef {
+    ColorDef::Rgb(0, 0, 0) // Black text on hover
+}
+fn default_status_error_indicator_hover_bg() -> ColorDef {
+    ColorDef::Rgb(250, 80, 77) // Lighter red for hover
+}
+fn default_status_error_indicator_hover_fg() -> ColorDef {
+    ColorDef::Rgb(255, 255, 255) // White text on hover
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -373,6 +393,10 @@ pub struct Theme {
     pub status_warning_indicator_fg: Color,
     pub status_error_indicator_bg: Color,
     pub status_error_indicator_fg: Color,
+    pub status_warning_indicator_hover_bg: Color,
+    pub status_warning_indicator_hover_fg: Color,
+    pub status_error_indicator_hover_bg: Color,
+    pub status_error_indicator_hover_fg: Color,
 
     // Search colors
     pub search_match_bg: Color,
@@ -465,6 +489,10 @@ impl From<ThemeFile> for Theme {
             status_warning_indicator_fg: file.ui.status_warning_indicator_fg.into(),
             status_error_indicator_bg: file.ui.status_error_indicator_bg.into(),
             status_error_indicator_fg: file.ui.status_error_indicator_fg.into(),
+            status_warning_indicator_hover_bg: file.ui.status_warning_indicator_hover_bg.into(),
+            status_warning_indicator_hover_fg: file.ui.status_warning_indicator_hover_fg.into(),
+            status_error_indicator_hover_bg: file.ui.status_error_indicator_hover_bg.into(),
+            status_error_indicator_hover_fg: file.ui.status_error_indicator_hover_fg.into(),
             search_match_bg: file.search.match_bg.into(),
             search_match_fg: file.search.match_fg.into(),
             diagnostic_error_fg: file.diagnostic.error_fg.into(),
@@ -614,6 +642,10 @@ impl Theme {
             status_warning_indicator_fg: Color::Rgb(0, 0, 0),     // Black text
             status_error_indicator_bg: Color::Rgb(220, 50, 47),   // Solarized red
             status_error_indicator_fg: Color::Rgb(255, 255, 255), // White text
+            status_warning_indicator_hover_bg: Color::Rgb(211, 167, 30), // Lighter amber
+            status_warning_indicator_hover_fg: Color::Rgb(0, 0, 0),
+            status_error_indicator_hover_bg: Color::Rgb(250, 80, 77), // Lighter red
+            status_error_indicator_hover_fg: Color::Rgb(255, 255, 255),
 
             // Search colors
             search_match_bg: Color::Rgb(100, 100, 20), // Yellow-brown highlight
@@ -730,6 +762,10 @@ impl Theme {
             status_warning_indicator_fg: Color::Rgb(0, 0, 0),     // Black text
             status_error_indicator_bg: Color::Rgb(200, 40, 40),   // Darker red for light bg
             status_error_indicator_fg: Color::Rgb(255, 255, 255), // White text
+            status_warning_indicator_hover_bg: Color::Rgb(232, 175, 30), // Lighter amber
+            status_warning_indicator_hover_fg: Color::Rgb(0, 0, 0),
+            status_error_indicator_hover_bg: Color::Rgb(230, 70, 70), // Lighter red
+            status_error_indicator_hover_fg: Color::Rgb(255, 255, 255),
 
             // Search colors
             search_match_bg: Color::Rgb(255, 255, 150), // Light yellow highlight
@@ -846,6 +882,10 @@ impl Theme {
             status_warning_indicator_fg: Color::Black,  // Black text
             status_error_indicator_bg: Color::Red,      // Bright red
             status_error_indicator_fg: Color::White,    // White text
+            status_warning_indicator_hover_bg: Color::LightYellow, // Lighter yellow
+            status_warning_indicator_hover_fg: Color::Black,
+            status_error_indicator_hover_bg: Color::LightRed, // Lighter red
+            status_error_indicator_hover_fg: Color::White,
 
             // Search colors
             search_match_bg: Color::Yellow,
@@ -1012,6 +1052,10 @@ impl Theme {
             status_warning_indicator_fg: Color::Rgb(255, 255, 255), // White text
             status_error_indicator_bg: Color::Rgb(170, 0, 0),    // DOS red
             status_error_indicator_fg: Color::Rgb(255, 255, 255), // White text
+            status_warning_indicator_hover_bg: Color::Rgb(200, 115, 30), // Lighter brown
+            status_warning_indicator_hover_fg: Color::Rgb(255, 255, 255),
+            status_error_indicator_hover_bg: Color::Rgb(200, 30, 30), // Lighter red
+            status_error_indicator_hover_fg: Color::Rgb(255, 255, 255),
 
             // Search colors
             search_match_bg: Color::Rgb(170, 85, 0), // Orange/brown
