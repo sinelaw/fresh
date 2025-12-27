@@ -449,16 +449,7 @@ impl StatusBarRenderer {
             String::new()
         };
 
-        // Build the status string - LSP indicator rendered separately for colored background
-        let lsp_indicator = if !lsp_status.is_empty() {
-            format!(" {}", lsp_status)
-        } else {
-            String::new()
-        };
-
-        // Determine if LSP indicator should have colored background
-        let lsp_has_colored_bg = warning_level != WarningLevel::None && !lsp_status.is_empty();
-
+        // Build status message parts
         let mut message_parts: Vec<&str> = Vec::new();
         if let Some(msg) = status_message {
             if !msg.is_empty() {
@@ -477,25 +468,31 @@ impl StatusBarRenderer {
             format!(" | {}", message_parts.join(" | "))
         };
 
-        // Build base status WITHOUT LSP indicator (we'll render it separately if colored)
-        let base_status_without_lsp = format!(
+        // Build left status (file info, position, diagnostics, messages)
+        let base_status = format!(
             "{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}{cursor_count_indicator}"
         );
 
-        // If LSP indicator has colored background, we render it as a separate span
-        // Otherwise, include it in the main status string
-        let (base_status, separate_lsp) = if lsp_has_colored_bg {
-            (format!("{} |", base_status_without_lsp), true)
-        } else if !lsp_indicator.is_empty() {
-            (
-                format!("{} |{}", base_status_without_lsp, lsp_indicator),
-                false,
-            )
-        } else {
-            (base_status_without_lsp, false)
-        };
-
         let left_status = format!("{base_status}{chord_display}{message_suffix}");
+
+        // Build right-side indicators (these stay fixed on the right)
+        // Order: [LSP indicator] [warning badge] [update] [Palette]
+
+        // LSP indicator (right-aligned, with colored background if warning/error)
+        let lsp_indicator = if !lsp_status.is_empty() {
+            format!(" {} ", lsp_status)
+        } else {
+            String::new()
+        };
+        let lsp_indicator_width = str_width(&lsp_indicator);
+
+        // General warning badge (right-aligned)
+        let warning_badge = if general_warning_count > 0 {
+            format!(" [⚠ {}] ", general_warning_count)
+        } else {
+            String::new()
+        };
+        let warning_badge_width = str_width(&warning_badge);
 
         // Build update indicator for right side (if update available)
         let update_indicator = update_available.map(|version| format!(" Update: v{} ", version));
@@ -512,10 +509,12 @@ impl StatusBarRenderer {
         let cmd_palette_indicator = format!("Palette: {}", cmd_palette_shortcut);
         let padded_cmd_palette = format!(" {} ", cmd_palette_indicator);
 
-        // Calculate available width - reserve space for right side indicators
+        // Calculate available width and right side width
+        // Right side: [LSP indicator] [warning badge] [update] [Palette]
         let available_width = area.width as usize;
-        let cmd_palette_width = padded_cmd_palette.len();
-        let right_side_width = update_width + cmd_palette_width;
+        let cmd_palette_width = str_width(&padded_cmd_palette);
+        let right_side_width =
+            lsp_indicator_width + warning_badge_width + update_width + cmd_palette_width;
 
         // Only show command palette indicator if there's enough space (at least 15 chars for minimal display)
         let spans = if available_width >= 15 {
@@ -555,53 +554,14 @@ impl StatusBarRenderer {
                 left_status.clone()
             };
 
+            let displayed_left_len = str_width(&displayed_left);
+
             spans.push(Span::styled(
                 displayed_left.clone(),
                 Style::default()
                     .fg(theme.status_bar_fg)
                     .bg(theme.status_bar_bg),
             ));
-
-            // Add LSP indicator with colored background if needed
-            if separate_lsp && !lsp_indicator.is_empty() {
-                let (lsp_fg, lsp_bg) = match warning_level {
-                    WarningLevel::Error => (
-                        theme.status_error_indicator_fg,
-                        theme.status_error_indicator_bg,
-                    ),
-                    WarningLevel::Warning => (
-                        theme.status_warning_indicator_fg,
-                        theme.status_warning_indicator_bg,
-                    ),
-                    WarningLevel::None => (theme.status_bar_fg, theme.status_bar_bg),
-                };
-                spans.push(Span::styled(
-                    lsp_indicator.clone(),
-                    Style::default().fg(lsp_fg).bg(lsp_bg),
-                ));
-            }
-
-            // Add general warning badge if there are warnings
-            let warning_badge = if general_warning_count > 0 {
-                let badge = format!(" [⚠ {}]", general_warning_count);
-                spans.push(Span::styled(
-                    badge.clone(),
-                    Style::default()
-                        .fg(theme.status_warning_indicator_fg)
-                        .bg(theme.status_warning_indicator_bg),
-                ));
-                badge
-            } else {
-                String::new()
-            };
-
-            let lsp_indicator_len = if separate_lsp {
-                str_width(&lsp_indicator)
-            } else {
-                0
-            };
-            let warning_badge_len = str_width(&warning_badge);
-            let displayed_left_len = str_width(&displayed_left) + lsp_indicator_len + warning_badge_len;
 
             // Add spacing to push right side indicators to the right
             if displayed_left_len + right_side_width < available_width {
@@ -622,6 +582,35 @@ impl StatusBarRenderer {
                 ));
             }
 
+            // Add LSP indicator with colored background if warning/error
+            if !lsp_indicator.is_empty() {
+                let (lsp_fg, lsp_bg) = match warning_level {
+                    WarningLevel::Error => (
+                        theme.status_error_indicator_fg,
+                        theme.status_error_indicator_bg,
+                    ),
+                    WarningLevel::Warning => (
+                        theme.status_warning_indicator_fg,
+                        theme.status_warning_indicator_bg,
+                    ),
+                    WarningLevel::None => (theme.status_bar_fg, theme.status_bar_bg),
+                };
+                spans.push(Span::styled(
+                    lsp_indicator.clone(),
+                    Style::default().fg(lsp_fg).bg(lsp_bg),
+                ));
+            }
+
+            // Add general warning badge if there are warnings
+            if !warning_badge.is_empty() {
+                spans.push(Span::styled(
+                    warning_badge.clone(),
+                    Style::default()
+                        .fg(theme.status_warning_indicator_fg)
+                        .bg(theme.status_warning_indicator_bg),
+                ));
+            }
+
             // Add update indicator if available (with highlighted styling)
             if let Some(ref update_text) = update_indicator {
                 spans.push(Span::styled(
@@ -639,27 +628,6 @@ impl StatusBarRenderer {
                     .fg(theme.help_indicator_fg)
                     .bg(theme.help_indicator_bg),
             ));
-
-            // Calculate total width covered by spans
-            let total_width = displayed_left_len
-                + if displayed_left_len + right_side_width < available_width {
-                    available_width - displayed_left_len - right_side_width
-                } else if displayed_left_len < available_width {
-                    1
-                } else {
-                    0
-                }
-                + right_side_width;
-
-            // Add final padding to fill exactly to area width if needed
-            if total_width < available_width {
-                spans.push(Span::styled(
-                    " ".repeat(available_width - total_width),
-                    Style::default()
-                        .fg(theme.status_bar_fg)
-                        .bg(theme.status_bar_bg),
-                ));
-            }
 
             spans
         } else {
