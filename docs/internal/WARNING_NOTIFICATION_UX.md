@@ -391,6 +391,39 @@ Popup closes, user continues editing
 | User control | None | Click to see, Disable LSP option |
 | Extensibility | None | Plugin-based install helpers |
 
+## Implementation Status
+
+### Completed ✓
+
+1. **Status bar colored indicators** - LSP indicator and warning badge with colored backgrounds
+2. **Warning domain architecture** - `WarningDomain` trait, `GeneralWarningDomain`, `LspWarningDomain`
+3. **Theme colors** - `status_warning_indicator_bg/fg`, `status_error_indicator_bg/fg` + hover variants
+4. **Hover styling** - Lighter colors and underline on hover to indicate clickability
+5. **Warning log deduplication** - Tracks seen warnings to avoid repetitive log entries
+6. **Commands** - `ShowWarnings`, `ShowLspStatus`, `ClearWarnings` via command palette
+7. **Mouse click handlers** - Clicking LSP indicator or warning badge opens warning log
+8. **Settings** - `warnings.show_status_indicator` config option
+9. **No auto-open** - Removed intrusive auto-opening of warning log tab
+10. **E2E tests** - Tests for command existence and basic execution
+
+### Not Implemented
+
+1. **Initial appearance animation** - Visual pulse when warning first occurs (T=0 bright, T=2s steady)
+2. **Actionable popup with install commands** - Currently opens log file; design shows popup with:
+   - Error explanation
+   - Install command with Copy button
+   - "Disable LSP" / "Dismiss" buttons
+3. **LspInitError hook** - Plugin hook for LSP initialization errors
+4. **LSP install helper plugin** - `plugins/lsp-install-helper.ts` with install commands registry
+5. **Plugin API for install helpers** - `fresh.lsp.registerInstallHelper()` for user extensions
+6. **Copy button in popup** - Copy install command to clipboard
+7. **Disable LSP action** - Button to disable LSP for specific language
+
+### Deferred / Optional
+
+- Per-language LSP disable (could be done via config instead)
+- Plugin-based warning domain registration (architecture supports it, no plugin API yet)
+
 ## References
 
 - GitHub Issue #493: How to suppress auto opening of warning file
