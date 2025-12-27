@@ -11,6 +11,7 @@ mod input_dispatch;
 mod lsp_actions;
 mod lsp_requests;
 mod menu_actions;
+mod menu_context;
 mod mouse_input;
 mod on_save_actions;
 mod plugin_commands;
