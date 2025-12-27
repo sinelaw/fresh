@@ -221,74 +221,147 @@ Plugins can register additional domains via the plugin API.
 
 ## Plugin Architecture for LSP Install Helpers
 
-LSP installation helpers are implemented as plugins, making them user-extensible.
+LSP installation helpers are fully plugin-based, allowing different plugins for different languages.
 
-### New Hook: LspInitError
+### Required Hooks (Core → Plugin)
 
 ```rust
 // In src/services/plugins/hooks.rs
 
-/// LSP initialization error occurred
-LspInitError {
+/// LSP server failed to start
+LspServerError {
     /// The language that failed (e.g., "python", "rust")
     language: String,
     /// The server command that failed (e.g., "pylsp", "rust-analyzer")
     server_command: String,
-    /// The error type: "server_not_found", "spawn_failed", "init_timeout"
+    /// Error type: "not_found", "spawn_failed", "timeout", "crash"
     error_type: String,
     /// Human-readable error message
     message: String,
 }
+
+/// User clicked the LSP status indicator in the status bar
+LspStatusClicked {
+    /// The language of the current buffer
+    language: String,
+    /// Whether there's an active error
+    has_error: bool,
+}
+
+/// User selected an action from an action popup
+ActionPopupResult {
+    /// The popup ID (set when showing popup)
+    popup_id: String,
+    /// The action ID selected, or "dismissed" if closed without selection
+    action_id: String,
+}
 ```
 
-### Plugin API
+### Required API (Plugin → Core)
 
 ```typescript
-// plugins/lsp-install-helper.ts
+// New API additions to fresh.d.ts
 
-// Extensible registry - users can add their own in ~/.config/fresh/plugins/
-const lspInstallHelpers: Record<string, LspInstallHelper> = {
-  python: {
-    serverName: "pylsp",
-    installCommand: "pip install python-lsp-server",
-    alternatives: [
-      "pip install 'python-lsp-server[all]'",
-      "pipx install python-lsp-server",
-    ],
-  },
-  rust: {
-    serverName: "rust-analyzer",
-    installCommand: "rustup component add rust-analyzer",
-    alternatives: [
-      "brew install rust-analyzer",
-    ],
-  },
-  typescript: {
-    serverName: "typescript-language-server",
-    installCommand: "npm install -g typescript-language-server typescript",
-    alternatives: [],
-  },
+interface ActionPopupAction {
+  id: string;      // Unique action identifier
+  label: string;   // Display text (can include install command)
+}
+
+interface ActionPopupOptions {
+  id: string;                    // Popup identifier for ActionPopupResult
+  title: string;                 // Popup title
+  message: string;               // Body text (supports basic formatting)
+  actions: ActionPopupAction[];  // Action buttons
+}
+
+// Show an action popup (user must click an action or dismiss)
+fresh.ui.showActionPopup(options: ActionPopupOptions): void;
+
+// Disable LSP for a specific language (persists to config)
+fresh.lsp.disableForLanguage(language: string): void;
+
+// Existing API (already implemented):
+fresh.setClipboard(text: string): void;
+fresh.setStatus(message: string): void;
+```
+
+### Example: Python LSP Helper Plugin
+
+```typescript
+// plugins/python-lsp.ts
+// Users can create similar plugins for any language
+
+const INSTALL_COMMANDS = {
+  pip: "pip install python-lsp-server",
+  pipx: "pipx install python-lsp-server",
+  pip_all: "pip install 'python-lsp-server[all]'",
 };
 
-// Users can extend via their own plugins:
-fresh.lsp.registerInstallHelper("go", {
-  serverName: "gopls",
-  installCommand: "go install golang.org/x/tools/gopls@latest",
-  alternatives: ["brew install gopls"],
+// Track error state
+let pythonLspError: { serverCommand: string; message: string } | null = null;
+
+// Listen for LSP errors
+fresh.hooks.on("lspServerError", (event) => {
+  if (event.language === "python") {
+    pythonLspError = {
+      serverCommand: event.serverCommand,
+      message: event.message,
+    };
+  }
 });
-```
 
-### Plugin Hook Handler
+// Handle status bar click
+fresh.hooks.on("lspStatusClicked", (event) => {
+  if (event.language !== "python" || !pythonLspError) return;
 
-```typescript
-fresh.hooks.on("lspInitError", async (event) => {
-  const helper = lspInstallHelpers[event.language];
-  if (helper && event.errorType === "server_not_found") {
-    // Store helper info for when user clicks the status indicator
-    fresh.state.set(`lsp.${event.language}.installHelper`, helper);
+  fresh.ui.showActionPopup({
+    id: "python-lsp-help",
+    title: "Python LSP Error",
+    message: `Server '${pythonLspError.serverCommand}' not found.\n\nInstall with one of these commands:`,
+    actions: [
+      { id: "copy_pip", label: `Copy: ${INSTALL_COMMANDS.pip}` },
+      { id: "copy_pipx", label: `Copy: ${INSTALL_COMMANDS.pipx}` },
+      { id: "disable", label: "Disable Python LSP" },
+      { id: "dismiss", label: "Dismiss" },
+    ],
+  });
+});
+
+// Handle action selection
+fresh.hooks.on("actionPopupResult", (event) => {
+  if (event.popup_id !== "python-lsp-help") return;
+
+  switch (event.action_id) {
+    case "copy_pip":
+      fresh.setClipboard(INSTALL_COMMANDS.pip);
+      fresh.setStatus("Copied: " + INSTALL_COMMANDS.pip);
+      break;
+    case "copy_pipx":
+      fresh.setClipboard(INSTALL_COMMANDS.pipx);
+      fresh.setStatus("Copied: " + INSTALL_COMMANDS.pipx);
+      break;
+    case "disable":
+      fresh.lsp.disableForLanguage("python");
+      fresh.setStatus("Python LSP disabled");
+      pythonLspError = null;
+      break;
   }
 });
 ```
+
+### Plugin Distribution
+
+Each language can have its own plugin file:
+- `plugins/python-lsp.ts` - Python LSP helper (bundled)
+- `plugins/rust-lsp.ts` - Rust LSP helper (bundled)
+- `plugins/typescript-lsp.ts` - TypeScript LSP helper (bundled)
+- `~/.config/fresh/plugins/go-lsp.ts` - User-created Go helper
+
+This allows:
+1. **Language-specific behavior** - Each plugin knows its ecosystem (pip vs npm vs cargo)
+2. **User extensibility** - Users add plugins for languages we don't bundle
+3. **Community sharing** - Plugins can be shared independently
+4. **No core changes** - Adding new language support doesn't require editor changes
 
 ## Theme Colors
 
@@ -406,23 +479,25 @@ Popup closes, user continues editing
 9. **No auto-open** - Removed intrusive auto-opening of warning log tab
 10. **E2E tests** - Tests for command existence and basic execution
 
-### Not Implemented
+### Not Implemented (Plugin API)
 
-1. **Initial appearance animation** - Visual pulse when warning first occurs (T=0 bright, T=2s steady)
-2. **Actionable popup with install commands** - Currently opens log file; design shows popup with:
-   - Error explanation
-   - Install command with Copy button
-   - "Disable LSP" / "Dismiss" buttons
-3. **LspInitError hook** - Plugin hook for LSP initialization errors
-4. **LSP install helper plugin** - `plugins/lsp-install-helper.ts` with install commands registry
-5. **Plugin API for install helpers** - `fresh.lsp.registerInstallHelper()` for user extensions
-6. **Copy button in popup** - Copy install command to clipboard
-7. **Disable LSP action** - Button to disable LSP for specific language
+**New Hooks needed:**
+1. `LspServerError` - Emitted when LSP fails to start (language, server_command, error_type, message)
+2. `LspStatusClicked` - Emitted when user clicks LSP indicator (language, has_error)
+3. `ActionPopupResult` - Emitted when user selects action or dismisses popup (popup_id, action_id)
 
-### Deferred / Optional
+**New API functions needed:**
+1. `fresh.ui.showActionPopup(options)` - Show popup with action buttons
+2. `fresh.lsp.disableForLanguage(language)` - Disable LSP and persist to config
 
-- Per-language LSP disable (could be done via config instead)
-- Plugin-based warning domain registration (architecture supports it, no plugin API yet)
+**Bundled plugins to create:**
+1. `plugins/python-lsp.ts` - Python LSP helper
+2. `plugins/rust-lsp.ts` - Rust LSP helper
+3. `plugins/typescript-lsp.ts` - TypeScript/JavaScript LSP helper
+
+### Dropped
+
+- Initial appearance animation (unnecessary complexity)
 
 ## References
 
