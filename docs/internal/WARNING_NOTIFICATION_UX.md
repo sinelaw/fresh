@@ -157,6 +157,68 @@ Click -> popup:
 
 `[View Full Log]` opens the warning file in a new tab - **user-initiated**, not automatic.
 
+## Generic Warning Domain Architecture
+
+The warning system is designed to be extensible, allowing different subsystems (LSP, plugins,
+config, etc.) to register their own warning domains with custom popup content.
+
+### WarningDomain Trait
+
+```rust
+/// A domain that can report warnings/errors with custom popups
+pub trait WarningDomain: Send + Sync {
+    /// Domain identifier (e.g., "lsp", "plugin", "config")
+    fn id(&self) -> &str;
+
+    /// Display label for status bar (e.g., "LSP [python]", "Plugins")
+    fn label(&self) -> String;
+
+    /// Current warning level
+    fn level(&self) -> WarningLevel;
+
+    /// Content for popup when user clicks the indicator
+    fn popup_content(&self) -> WarningPopupContent;
+}
+
+pub struct WarningPopupContent {
+    pub title: String,
+    pub message: String,           // Supports markdown
+    pub actions: Vec<WarningAction>,
+}
+
+pub struct WarningAction {
+    pub label: String,
+    pub action_id: String,         // e.g., "copy_install_cmd", "disable_lsp", "view_log"
+}
+```
+
+### Status Bar with Multiple Domains
+
+```
+Multiple warning sources:
++-----------------------------------------------------------------------------+
+| file.py | Ln 1, Col 5 | LSP [python: ⚠] | [⚠ 2] |           Palette: Ctrl+P |
++-----------------------------------------------------------------------------+
+                         ^^^^^^^^^^^^^^^^^   ^^^^^^
+                         LSP domain          General warnings
+                         (amber bg)          (amber bg)
+```
+
+### Domain Registration
+
+Built-in domains are registered at startup:
+- `LspWarningDomain` - LSP server errors/warnings
+- `GeneralWarningDomain` - Catch-all for other logged warnings
+
+Plugins can register additional domains via the plugin API.
+
+### Benefits
+
+1. **Extensible** - Plugins can add their own warning indicators
+2. **Consistent UX** - All warnings follow same pattern (colored badge → click → popup)
+3. **Domain-specific actions** - LSP shows install commands, plugins show disable option
+4. **Decoupled** - Each domain manages its own state and popup content
+
 ## Plugin Architecture for LSP Install Helpers
 
 LSP installation helpers are implemented as plugins, making them user-extensible.

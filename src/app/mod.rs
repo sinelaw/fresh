@@ -28,6 +28,7 @@ mod toggle_actions;
 pub mod types;
 mod undo_actions;
 mod view_actions;
+pub mod warning_domains;
 
 use std::path::Component;
 
@@ -105,6 +106,10 @@ use std::sync::{Arc, RwLock};
 
 // Re-export BufferId from event module for backward compatibility
 pub use self::types::{BufferKind, BufferMetadata, HoverTarget};
+pub use self::warning_domains::{
+    GeneralWarningDomain, LspWarningDomain, WarningAction, WarningActionId, WarningDomain,
+    WarningDomainRegistry, WarningLevel, WarningPopupContent,
+};
 pub use crate::model::event::BufferId;
 
 /// Helper function to convert lsp_types::Uri to PathBuf
@@ -442,9 +447,9 @@ pub struct Editor {
     /// Warning log receiver and path (for tracking warnings)
     warning_log: Option<(std::sync::mpsc::Receiver<()>, PathBuf)>,
 
-    /// Warning indicator state: (count, last_update_time)
-    /// Used by status bar to show colored warning indicator
-    warning_indicator: WarningIndicatorState,
+    /// Warning domain registry for extensible warning indicators
+    /// Contains LSP warnings, general warnings, and can be extended by plugins
+    warning_domains: WarningDomainRegistry,
 
     /// Periodic update checker (checks for new releases every hour)
     update_checker: Option<crate::services::release_checker::PeriodicUpdateChecker>,
@@ -489,42 +494,6 @@ pub struct Editor {
 
     /// Stdin streaming state (if reading from stdin)
     stdin_streaming: Option<StdinStreamingState>,
-}
-
-/// Warning indicator level
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum WarningLevel {
-    #[default]
-    None,
-    Warning,
-    Error,
-}
-
-/// State for tracking warning indicator in status bar
-#[derive(Debug, Clone, Default)]
-pub struct WarningIndicatorState {
-    /// Number of warnings since last dismiss
-    pub count: usize,
-    /// Highest warning level (warning vs error)
-    pub level: WarningLevel,
-    /// Path to the warning log file
-    pub log_path: Option<PathBuf>,
-    /// Time when indicator was last updated (for animation)
-    pub last_update: Option<std::time::Instant>,
-}
-
-impl WarningIndicatorState {
-    /// Check if there are any active warnings
-    pub fn has_warnings(&self) -> bool {
-        self.count > 0 || self.level != WarningLevel::None
-    }
-
-    /// Clear the warning indicator (user dismissed)
-    pub fn clear(&mut self) {
-        self.count = 0;
-        self.level = WarningLevel::None;
-        self.last_update = None;
-    }
 }
 
 /// State for tracking stdin streaming in background
@@ -934,7 +903,7 @@ impl Editor {
             last_auto_save: time_source.now(),
             active_custom_contexts: HashSet::new(),
             warning_log: None,
-            warning_indicator: WarningIndicatorState::default(),
+            warning_domains: WarningDomainRegistry::new(),
             update_checker,
             terminal_manager: crate::services::terminal::TerminalManager::new(),
             terminal_buffers: HashMap::new(),
@@ -1169,7 +1138,7 @@ impl Editor {
 
     /// Check for and handle any new warnings in the warning log
     ///
-    /// Updates the warning indicator state for the status bar.
+    /// Updates the general warning domain for the status bar.
     /// Returns true if new warnings were found.
     pub fn check_warning_log(&mut self) -> bool {
         let Some((receiver, path)) = &self.warning_log else {
@@ -1183,65 +1152,64 @@ impl Editor {
         }
 
         if new_warning_count > 0 {
-            // Update warning indicator state (don't auto-open file)
-            self.warning_indicator.count = self
-                .warning_indicator
-                .count
-                .saturating_add(new_warning_count);
-            self.warning_indicator.log_path = Some(path.clone());
-            self.warning_indicator.last_update = Some(std::time::Instant::now());
-
-            // Set level to Warning (LSP errors are tracked separately via lsp_server_statuses)
-            if self.warning_indicator.level == WarningLevel::None {
-                self.warning_indicator.level = WarningLevel::Warning;
-            }
+            // Update general warning domain (don't auto-open file)
+            self.warning_domains.general.add_warnings(new_warning_count);
+            self.warning_domains.general.set_log_path(path.clone());
         }
 
         new_warning_count > 0
     }
 
-    /// Get the current warning indicator state
-    pub fn get_warning_indicator(&self) -> &WarningIndicatorState {
-        &self.warning_indicator
+    /// Get the warning domain registry
+    pub fn get_warning_domains(&self) -> &WarningDomainRegistry {
+        &self.warning_domains
     }
 
     /// Get the warning log path (for opening when user clicks indicator)
     pub fn get_warning_log_path(&self) -> Option<&PathBuf> {
-        self.warning_indicator.log_path.as_ref()
+        self.warning_domains.general.log_path.as_ref()
     }
 
     /// Open the warning log file (user-initiated action)
     pub fn open_warning_log(&mut self) {
-        if let Some(path) = self.warning_indicator.log_path.clone() {
+        if let Some(path) = self.warning_domains.general.log_path.clone() {
             if let Err(e) = self.open_file(&path) {
                 tracing::error!("Failed to open warning log: {}", e);
             }
         }
     }
 
-    /// Clear the warning indicator (user dismissed)
+    /// Clear the general warning indicator (user dismissed)
     pub fn clear_warning_indicator(&mut self) {
-        self.warning_indicator.clear();
+        self.warning_domains.general.clear();
     }
 
     /// Check if any LSP server is in error state
     pub fn has_lsp_error(&self) -> bool {
-        use crate::services::async_bridge::LspServerStatus;
-        self.lsp_server_statuses
-            .values()
-            .any(|status| matches!(status, LspServerStatus::Error))
+        self.warning_domains.lsp.level() == WarningLevel::Error
     }
 
-    /// Get the effective warning level for the status bar
+    /// Get the effective warning level for the status bar (LSP indicator)
     /// Returns Error if LSP has errors, Warning if there are warnings, None otherwise
     pub fn get_effective_warning_level(&self) -> WarningLevel {
-        if self.has_lsp_error() {
-            WarningLevel::Error
-        } else if self.warning_indicator.level != WarningLevel::None {
-            self.warning_indicator.level
-        } else {
-            WarningLevel::None
-        }
+        self.warning_domains.lsp.level()
+    }
+
+    /// Get the general warning level (for the general warning badge)
+    pub fn get_general_warning_level(&self) -> WarningLevel {
+        self.warning_domains.general.level()
+    }
+
+    /// Get the general warning count
+    pub fn get_general_warning_count(&self) -> usize {
+        self.warning_domains.general.count
+    }
+
+    /// Update LSP warning domain from server statuses
+    pub fn update_lsp_warning_domain(&mut self) {
+        self.warning_domains
+            .lsp
+            .update_from_statuses(&self.lsp_server_statuses);
     }
 
     /// Check if mouse hover timer has expired and trigger LSP hover request

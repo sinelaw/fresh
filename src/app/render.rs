@@ -429,6 +429,7 @@ impl Editor {
         if !has_suggestions && !has_file_browser {
             // Get warning level for colored indicator
             let warning_level = self.get_effective_warning_level();
+            let general_warning_count = self.get_general_warning_count();
 
             StatusBarRenderer::render_status_bar(
                 frame,
@@ -443,6 +444,7 @@ impl Editor {
                 &chord_state_cloned,         // Pass the cloned chord state
                 update_available.as_deref(), // Pass update availability
                 warning_level,               // Pass warning level for colored indicator
+                general_warning_count,       // Pass general warning count for badge
             );
         }
 

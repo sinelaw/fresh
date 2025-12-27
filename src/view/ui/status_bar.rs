@@ -164,6 +164,8 @@ impl StatusBarRenderer {
     /// * `display_name` - The display name for the file (project-relative path)
     /// * `chord_state` - Current chord sequence state (for multi-key bindings)
     /// * `update_available` - Optional new version string if an update is available
+    /// * `warning_level` - LSP warning level (for coloring LSP indicator)
+    /// * `general_warning_count` - Number of general warnings (for badge display)
     pub fn render_status_bar(
         frame: &mut Frame,
         area: Rect,
@@ -177,6 +179,7 @@ impl StatusBarRenderer {
         chord_state: &[(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
         update_available: Option<&str>,
         warning_level: WarningLevel,
+        general_warning_count: usize,
     ) {
         Self::render_status(
             frame,
@@ -191,6 +194,7 @@ impl StatusBarRenderer {
             chord_state,
             update_available,
             warning_level,
+            general_warning_count,
         );
     }
 
@@ -356,6 +360,7 @@ impl StatusBarRenderer {
         chord_state: &[(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
         update_available: Option<&str>,
         warning_level: WarningLevel,
+        general_warning_count: usize,
     ) {
         // Use the pre-computed display name from buffer metadata
         let filename = display_name;
@@ -576,12 +581,27 @@ impl StatusBarRenderer {
                 ));
             }
 
+            // Add general warning badge if there are warnings
+            let warning_badge = if general_warning_count > 0 {
+                let badge = format!(" [⚠ {}]", general_warning_count);
+                spans.push(Span::styled(
+                    badge.clone(),
+                    Style::default()
+                        .fg(theme.status_warning_indicator_fg)
+                        .bg(theme.status_warning_indicator_bg),
+                ));
+                badge
+            } else {
+                String::new()
+            };
+
             let lsp_indicator_len = if separate_lsp {
                 str_width(&lsp_indicator)
             } else {
                 0
             };
-            let displayed_left_len = str_width(&displayed_left) + lsp_indicator_len;
+            let warning_badge_len = str_width(&warning_badge);
+            let displayed_left_len = str_width(&displayed_left) + lsp_indicator_len + warning_badge_len;
 
             // Add spacing to push right side indicators to the right
             if displayed_left_len + right_side_width < available_width {

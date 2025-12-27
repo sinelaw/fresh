@@ -336,6 +336,9 @@ impl Editor {
             .insert(language.clone(), status.clone());
         self.update_lsp_status_from_server_statuses();
 
+        // Update warning domain for LSP status indicator
+        self.update_lsp_warning_domain();
+
         // Handle server crash - trigger auto-restart
         if status == LspServerStatus::Error {
             let was_running = old_status
