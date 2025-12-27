@@ -471,16 +471,16 @@ fn test_save_as_nested_path() {
 fn test_save_as_overwrite_confirmation() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use std::fs;
-    use tempfile::TempDir;
 
-    // Create a temporary directory with two files
-    let temp_dir = TempDir::new().unwrap();
-    let original_path = temp_dir.path().join("original.txt");
-    let existing_path = temp_dir.path().join("existing.txt");
+    // Use with_temp_project to get a working directory with short relative paths
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    // Create two files in the project directory
+    let original_path = project_dir.join("original.txt");
+    let existing_path = project_dir.join("existing.txt");
     fs::write(&original_path, "Original content").unwrap();
     fs::write(&existing_path, "Existing content").unwrap();
-
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Open the original file
     harness.open_file(&original_path).unwrap();
@@ -499,12 +499,11 @@ fn test_save_as_overwrite_confirmation() {
     // Wait for the Save As prompt to appear
     harness.wait_for_screen_contains("Save as:").unwrap();
 
-    // Clear and type the existing file's path
+    // Clear and type just the relative filename (existing.txt)
     harness
         .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
         .unwrap();
-    let existing_path_str = existing_path.to_str().unwrap();
-    harness.type_text(existing_path_str).unwrap();
+    harness.type_text("existing.txt").unwrap();
 
     // Confirm with Enter - should show overwrite confirmation
     harness
@@ -540,16 +539,16 @@ fn test_save_as_overwrite_confirmation() {
 fn test_save_as_overwrite_confirmed() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use std::fs;
-    use tempfile::TempDir;
 
-    // Create a temporary directory with two files
-    let temp_dir = TempDir::new().unwrap();
-    let original_path = temp_dir.path().join("original.txt");
-    let existing_path = temp_dir.path().join("existing.txt");
+    // Use with_temp_project to get a working directory with short relative paths
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    // Create two files in the project directory
+    let original_path = project_dir.join("original.txt");
+    let existing_path = project_dir.join("existing.txt");
     fs::write(&original_path, "Original content").unwrap();
     fs::write(&existing_path, "Existing content").unwrap();
-
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Open the original file
     harness.open_file(&original_path).unwrap();
@@ -568,12 +567,11 @@ fn test_save_as_overwrite_confirmed() {
     // Wait for the Save As prompt to appear
     harness.wait_for_screen_contains("Save as:").unwrap();
 
-    // Clear and type the existing file's path
+    // Clear and type just the relative filename (existing.txt)
     harness
         .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
         .unwrap();
-    let existing_path_str = existing_path.to_str().unwrap();
-    harness.type_text(existing_path_str).unwrap();
+    harness.type_text("existing.txt").unwrap();
 
     // Confirm with Enter - should show overwrite confirmation
     harness
@@ -609,14 +607,14 @@ fn test_save_as_overwrite_confirmed() {
 fn test_save_as_same_file_no_confirmation() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use std::fs;
-    use tempfile::TempDir;
 
-    // Create a temporary directory with a file
-    let temp_dir = TempDir::new().unwrap();
-    let file_path = temp_dir.path().join("test.txt");
+    // Use with_temp_project to get a working directory with short relative paths
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    // Create a file in the project directory
+    let file_path = project_dir.join("test.txt");
     fs::write(&file_path, "Test content").unwrap();
-
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Open the file
     harness.open_file(&file_path).unwrap();
