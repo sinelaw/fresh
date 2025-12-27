@@ -93,11 +93,10 @@ impl Editor {
         match self.config.save_to_file(&config_path) {
             Ok(()) => {
                 self.set_status_message("Settings saved".to_string());
-                // Clear pending changes and hide
-                if let Some(ref mut state) = self.settings_state {
-                    state.discard_changes();
-                    state.hide();
-                }
+                // Clear settings state entirely so next open creates fresh state
+                // from the updated config. This fixes issue #474 where reopening
+                // settings after save would show stale values.
+                self.settings_state = None;
             }
             Err(e) => {
                 self.set_status_message(format!("Failed to save settings: {}", e));

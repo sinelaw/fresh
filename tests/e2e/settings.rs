@@ -2112,3 +2112,103 @@ fn test_entry_dialog_delete_textlist_item() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
+
+/// Regression test for issue #474: Settings not persisting after save
+///
+/// This test verifies that when a boolean setting is toggled and saved,
+/// reopening the settings dialog shows the saved value (not the original).
+///
+/// The bug was: after save, discard_changes() rebuilt the UI from
+/// original_config instead of the saved config, resetting displayed values.
+#[test]
+fn test_settings_toggle_persists_after_save_and_reopen() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    harness.render().unwrap();
+
+    // Test harness sets check_for_updates = false by default
+    assert!(
+        !harness.config().check_for_updates,
+        "check_for_updates should be false in test harness"
+    );
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Switch to settings panel
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Navigate down to "Check For Updates" (second item in General)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Verify we're on Check For Updates and it shows as unchecked [ ]
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("> Check For Updates") && screen.contains(": [ ]"),
+        "Check For Updates should be focused and unchecked. Screen:\n{}",
+        screen
+    );
+
+    // Toggle it ON
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify it now shows as checked [x]
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("> Check For Updates") && screen.contains(": [x]"),
+        "Check For Updates should now be checked. Screen:\n{}",
+        screen
+    );
+
+    // Save: Tab to footer, Enter on Save button
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify settings closed and config updated
+    assert!(
+        !harness.editor().is_settings_open(),
+        "Settings should be closed after save"
+    );
+    assert!(
+        harness.config().check_for_updates,
+        "check_for_updates should be true after save"
+    );
+
+    // CRITICAL: Reopen settings and verify the saved value is displayed
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Switch to settings panel
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Navigate to Check For Updates
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // This is the key assertion: the toggle should show the SAVED value [x]
+    // not the ORIGINAL value [ ]
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("> Check For Updates") && screen.contains(": [x]"),
+        "BUG #474: After save and reopen, Check For Updates should still be checked [x], \
+         but it shows the original value [ ]. Screen:\n{}",
+        screen
+    );
+
+    // Close settings
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
