@@ -135,7 +135,7 @@
           "default": true
         },
         "line_numbers": {
-          "description": "Show line numbers in the gutter",
+          "description": "Show line numbers by default. Use View menu to toggle per-buffer.",
           "type": "boolean",
           "default": true
         },

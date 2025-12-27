@@ -2888,11 +2888,14 @@ impl Editor {
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
 
-        let state = EditorState::new(
+        let mut state = EditorState::new(
             self.terminal_width.into(),
             self.terminal_height.into(),
             self.config.editor.large_file_threshold_bytes as usize,
         );
+        state
+            .margins
+            .set_line_numbers(self.config.editor.line_numbers);
 
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
@@ -2960,11 +2963,14 @@ impl Editor {
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
 
-        let state = EditorState::new(
+        let mut state = EditorState::new(
             self.terminal_width.into(),
             self.terminal_height.into(),
             self.config.editor.large_file_threshold_bytes as usize,
         );
+        state
+            .margins
+            .set_line_numbers(self.config.editor.line_numbers);
 
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());

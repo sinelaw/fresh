@@ -192,6 +192,11 @@ impl Editor {
             state.tab_size = self.config.editor.tab_size;
         }
 
+        // Apply line_numbers default from config
+        state
+            .margins
+            .set_line_numbers(self.config.editor.line_numbers);
+
         self.buffers.insert(buffer_id, state);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
@@ -420,12 +425,15 @@ impl Editor {
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
 
-        let state = EditorState::new(
+        let mut state = EditorState::new(
             self.terminal_width,
             self.terminal_height,
             self.config.editor.large_file_threshold_bytes as usize,
         );
         // Note: line_wrap_enabled is set on SplitViewState.viewport when the split is created
+        state
+            .margins
+            .set_line_numbers(self.config.editor.line_numbers);
         self.buffers.insert(buffer_id, state);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
@@ -500,6 +508,11 @@ impl Editor {
 
         // Set tab size from config
         state.tab_size = self.config.editor.tab_size;
+
+        // Apply line_numbers default from config
+        state
+            .margins
+            .set_line_numbers(self.config.editor.line_numbers);
 
         self.buffers.insert(buffer_id, state);
         self.event_logs
@@ -662,6 +675,11 @@ impl Editor {
 
         // Set syntax highlighting based on buffer name (e.g., "*OURS*.c" will get C highlighting)
         state.set_language_from_name(&name, &self.grammar_registry);
+
+        // Apply line_numbers default from config
+        state
+            .margins
+            .set_line_numbers(self.config.editor.line_numbers);
 
         self.buffers.insert(buffer_id, state);
         self.event_logs
