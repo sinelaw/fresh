@@ -286,9 +286,6 @@ impl Editor {
             Action::ShowLspStatus => {
                 self.show_lsp_status_popup();
             }
-            Action::ViewWarningLog => {
-                self.open_warning_log();
-            }
             Action::ClearWarnings => {
                 self.clear_warnings();
             }

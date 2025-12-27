@@ -590,6 +590,26 @@ impl Editor {
             }
         }
 
+        // Check status bar warning indicators
+        if let Some((status_row, _status_x, _status_width)) = self.cached_layout.status_bar_area {
+            if row == status_row {
+                // Check LSP indicator area
+                if let Some((lsp_row, lsp_start, lsp_end)) = self.cached_layout.status_bar_lsp_area {
+                    if row == lsp_row && col >= lsp_start && col < lsp_end {
+                        return Some(HoverTarget::StatusBarLspIndicator);
+                    }
+                }
+
+                // Check warning badge area
+                if let Some((warn_row, warn_start, warn_end)) = self.cached_layout.status_bar_warning_area
+                {
+                    if row == warn_row && col >= warn_start && col < warn_end {
+                        return Some(HoverTarget::StatusBarWarningBadge);
+                    }
+                }
+            }
+        }
+
         // No hover target
         None
     }
@@ -859,6 +879,26 @@ impl Editor {
                 self.handle_scrollbar_jump(col, row, split_id, buffer_id, scrollbar_rect)?;
             }
             return Ok(());
+        }
+
+        // Check if click is on status bar warning indicators
+        if let Some((status_row, _status_x, _status_width)) = self.cached_layout.status_bar_area {
+            if row == status_row {
+                // Check LSP indicator - click opens LSP status popup
+                if let Some((lsp_row, lsp_start, lsp_end)) = self.cached_layout.status_bar_lsp_area {
+                    if row == lsp_row && col >= lsp_start && col < lsp_end {
+                        return self.handle_action(Action::ShowLspStatus);
+                    }
+                }
+
+                // Check warning badge - click opens warning log
+                if let Some((warn_row, warn_start, warn_end)) = self.cached_layout.status_bar_warning_area
+                {
+                    if row == warn_row && col >= warn_start && col < warn_end {
+                        return self.handle_action(Action::ShowWarnings);
+                    }
+                }
+            }
         }
 
         // Check if click is on file explorer border (for drag resizing)

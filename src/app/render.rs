@@ -438,7 +438,7 @@ impl Editor {
                     (WarningLevel::None, 0)
                 };
 
-            StatusBarRenderer::render_status_bar(
+            let status_bar_layout = StatusBarRenderer::render_status_bar(
                 frame,
                 main_chunks[status_bar_idx],
                 self.active_state_mut(), // Use the mutable reference
@@ -453,6 +453,12 @@ impl Editor {
                 warning_level,               // Pass warning level for colored indicator
                 general_warning_count,       // Pass general warning count for badge
             );
+
+            // Store status bar layout for click detection
+            let status_bar_area = main_chunks[status_bar_idx];
+            self.cached_layout.status_bar_area = Some((status_bar_area.y, status_bar_area.x, status_bar_area.width));
+            self.cached_layout.status_bar_lsp_area = status_bar_layout.lsp_indicator;
+            self.cached_layout.status_bar_warning_area = status_bar_layout.warning_badge;
         }
 
         // Render search options bar when in search prompt

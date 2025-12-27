@@ -35,7 +35,7 @@ pub use scroll_panel::{
 };
 pub use scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 pub use split_rendering::SplitRenderer;
-pub use status_bar::{truncate_path, StatusBarRenderer, TruncatedPath};
+pub use status_bar::{truncate_path, StatusBarLayout, StatusBarRenderer, TruncatedPath};
 pub use suggestions::SuggestionsRenderer;
 pub use tabs::TabsRenderer;
 pub use text_edit::TextEdit;

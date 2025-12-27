@@ -325,6 +325,10 @@ pub enum HoverTarget {
     MaximizeSplitButton(SplitId),
     /// Hovering over the file explorer close button
     FileExplorerCloseButton,
+    /// Hovering over the status bar LSP indicator
+    StatusBarLspIndicator,
+    /// Hovering over the status bar warning badge
+    StatusBarWarningBadge,
 }
 
 /// Mouse state tracking
@@ -422,4 +426,10 @@ pub(crate) struct CachedLayout {
     pub view_line_mappings: HashMap<SplitId, Vec<ViewLineMapping>>,
     /// Settings modal layout for hit testing
     pub settings_layout: Option<crate::view::settings::SettingsLayout>,
+    /// Status bar area (row, x, width)
+    pub status_bar_area: Option<(u16, u16, u16)>,
+    /// Status bar LSP indicator area (row, start_col, end_col)
+    pub status_bar_lsp_area: Option<(u16, u16, u16)>,
+    /// Status bar warning badge area (row, start_col, end_col)
+    pub status_bar_warning_area: Option<(u16, u16, u16)>,
 }

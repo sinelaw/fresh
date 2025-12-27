@@ -1014,14 +1014,6 @@ pub fn get_all_commands() -> Vec<Command> {
             source: CommandSource::Builtin,
         },
         Command {
-            name: "View Warning Log".to_string(),
-            description: "Open the warning log file".to_string(),
-            action: Action::ViewWarningLog,
-            contexts: vec![],
-            custom_contexts: vec![],
-            source: CommandSource::Builtin,
-        },
-        Command {
             name: "Clear Warnings".to_string(),
             description: "Dismiss all warning indicators".to_string(),
             action: Action::ClearWarnings,

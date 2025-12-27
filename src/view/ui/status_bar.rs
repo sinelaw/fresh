@@ -12,6 +12,15 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
+/// Layout information returned from status bar rendering for mouse click detection
+#[derive(Debug, Clone, Default)]
+pub struct StatusBarLayout {
+    /// LSP indicator area (row, start_col, end_col) - None if no LSP indicator shown
+    pub lsp_indicator: Option<(u16, u16, u16)>,
+    /// Warning badge area (row, start_col, end_col) - None if no warnings
+    pub warning_badge: Option<(u16, u16, u16)>,
+}
+
 /// Result of truncating a path for display
 #[derive(Debug, Clone)]
 pub struct TruncatedPath {
@@ -166,6 +175,9 @@ impl StatusBarRenderer {
     /// * `update_available` - Optional new version string if an update is available
     /// * `warning_level` - LSP warning level (for coloring LSP indicator)
     /// * `general_warning_count` - Number of general warnings (for badge display)
+    ///
+    /// # Returns
+    /// Layout information with positions of clickable indicators
     pub fn render_status_bar(
         frame: &mut Frame,
         area: Rect,
@@ -180,7 +192,7 @@ impl StatusBarRenderer {
         update_available: Option<&str>,
         warning_level: WarningLevel,
         general_warning_count: usize,
-    ) {
+    ) -> StatusBarLayout {
         Self::render_status(
             frame,
             area,
@@ -195,7 +207,7 @@ impl StatusBarRenderer {
             update_available,
             warning_level,
             general_warning_count,
-        );
+        )
     }
 
     /// Render the prompt/minibuffer
@@ -361,7 +373,9 @@ impl StatusBarRenderer {
         update_available: Option<&str>,
         warning_level: WarningLevel,
         general_warning_count: usize,
-    ) {
+    ) -> StatusBarLayout {
+        // Initialize layout tracking
+        let mut layout = StatusBarLayout::default();
         // Use the pre-computed display name from buffer metadata
         let filename = display_name;
 
@@ -582,6 +596,12 @@ impl StatusBarRenderer {
                 ));
             }
 
+            // Track current column for layout positions
+            let mut current_col = area.x + displayed_left_len as u16;
+            if displayed_left_len + right_side_width < available_width {
+                current_col = area.x + (available_width - right_side_width) as u16;
+            }
+
             // Add LSP indicator with colored background if warning/error
             if !lsp_indicator.is_empty() {
                 let (lsp_fg, lsp_bg) = match warning_level {
@@ -595,6 +615,9 @@ impl StatusBarRenderer {
                     ),
                     WarningLevel::None => (theme.status_bar_fg, theme.status_bar_bg),
                 };
+                // Record LSP indicator position for click detection
+                layout.lsp_indicator = Some((area.y, current_col, current_col + lsp_indicator_width as u16));
+                current_col += lsp_indicator_width as u16;
                 spans.push(Span::styled(
                     lsp_indicator.clone(),
                     Style::default().fg(lsp_fg).bg(lsp_bg),
@@ -603,6 +626,9 @@ impl StatusBarRenderer {
 
             // Add general warning badge if there are warnings
             if !warning_badge.is_empty() {
+                // Record warning badge position for click detection
+                layout.warning_badge = Some((area.y, current_col, current_col + warning_badge_width as u16));
+                current_col += warning_badge_width as u16;
                 spans.push(Span::styled(
                     warning_badge.clone(),
                     Style::default()
@@ -610,6 +636,8 @@ impl StatusBarRenderer {
                         .bg(theme.status_warning_indicator_bg),
                 ));
             }
+            // Keep current_col in scope to avoid unused warning
+            let _ = current_col;
 
             // Add update indicator if available (with highlighted styling)
             if let Some(ref update_text) = update_indicator {
@@ -695,6 +723,8 @@ impl StatusBarRenderer {
         let status_line = Paragraph::new(Line::from(spans));
 
         frame.render_widget(status_line, area);
+
+        layout
     }
 
     /// Render the search options bar (shown when search prompt is active)

@@ -2044,7 +2044,6 @@ pub fn action_to_events(
         | Action::ShowKeyboardShortcuts
         | Action::ShowWarnings
         | Action::ShowLspStatus
-        | Action::ViewWarningLog
         | Action::ClearWarnings
         | Action::SmartHome
         | Action::ToggleComment
