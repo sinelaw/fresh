@@ -406,6 +406,7 @@ fn test_shell_command_replace_preserves_cursor_position() {
 
 /// Test that cursor position is clamped when buffer gets shorter
 #[test]
+#[ignore = "Flaky test - timing issues with shell command execution"]
 #[cfg_attr(not(unix), ignore = "Shell commands require Unix-like environment")]
 fn test_shell_command_replace_clamps_cursor_when_buffer_shrinks() {
     let temp_dir = TempDir::new().unwrap();

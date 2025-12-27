@@ -293,7 +293,7 @@ impl Editor {
             .map(|p| p.to_path_buf());
         let is_different_file = current_file_path.as_ref() != Some(&full_path);
 
-        if is_different_file && full_path.exists() {
+        if is_different_file && full_path.is_file() {
             // File exists and is different from current - ask for confirmation
             let filename = full_path
                 .file_name()
