@@ -8,6 +8,8 @@ use ratatui::{
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
+use super::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
+
 /// Clamp a rectangle to fit within bounds, preventing out-of-bounds rendering panics.
 /// Returns a rectangle that is guaranteed to be fully contained within `bounds`.
 fn clamp_rect_to_bounds(rect: Rect, bounds: Rect) -> Rect {
@@ -476,6 +478,21 @@ impl Popup {
         content_lines + border_height
     }
 
+    /// Get the number of content lines (without borders)
+    pub fn content_line_count(&self) -> usize {
+        match &self.content {
+            PopupContent::Text(lines) => lines.len(),
+            PopupContent::Markdown(lines) => lines.len(),
+            PopupContent::List { items, .. } => items.len(),
+            PopupContent::Custom(lines) => lines.len(),
+        }
+    }
+
+    /// Check if content needs scrolling (has more lines than visible area)
+    pub fn needs_scrollbar(&self, visible_height: u16) -> bool {
+        self.content_line_count() > visible_height as usize
+    }
+
     /// Calculate the area where this popup should be rendered
     pub fn calculate_area(&self, terminal_area: Rect, cursor_pos: Option<(u16, u16)>) -> Rect {
         match self.position {
@@ -607,23 +624,40 @@ impl Popup {
         let inner_area = block.inner(area);
         frame.render_widget(block, area);
 
+        // Check if we need a scrollbar (content exceeds visible area)
+        let total_lines = self.content_line_count();
+        let visible_lines_count = inner_area.height as usize;
+        let needs_scrollbar = total_lines > visible_lines_count && inner_area.width > 2;
+
+        // Adjust content area to leave room for scrollbar if needed
+        let content_area = if needs_scrollbar {
+            Rect {
+                x: inner_area.x,
+                y: inner_area.y,
+                width: inner_area.width.saturating_sub(2), // 1 for scrollbar + 1 for spacing
+                height: inner_area.height,
+            }
+        } else {
+            inner_area
+        };
+
         match &self.content {
             PopupContent::Text(lines) => {
                 let visible_lines: Vec<Line> = lines
                     .iter()
                     .skip(self.scroll_offset)
-                    .take(inner_area.height as usize)
+                    .take(content_area.height as usize)
                     .map(|line| Line::from(line.as_str()))
                     .collect();
 
                 let paragraph = Paragraph::new(visible_lines);
-                frame.render_widget(paragraph, inner_area);
+                frame.render_widget(paragraph, content_area);
             }
             PopupContent::Markdown(styled_lines) => {
                 let visible_lines: Vec<Line> = styled_lines
                     .iter()
                     .skip(self.scroll_offset)
-                    .take(inner_area.height as usize)
+                    .take(content_area.height as usize)
                     .map(|styled_line| {
                         let spans: Vec<Span> = styled_line
                             .spans
@@ -635,14 +669,14 @@ impl Popup {
                     .collect();
 
                 let paragraph = Paragraph::new(visible_lines);
-                frame.render_widget(paragraph, inner_area);
+                frame.render_widget(paragraph, content_area);
             }
             PopupContent::List { items, selected } => {
                 let list_items: Vec<ListItem> = items
                     .iter()
                     .enumerate()
                     .skip(self.scroll_offset)
-                    .take(inner_area.height as usize)
+                    .take(content_area.height as usize)
                     .map(|(idx, item)| {
                         let mut spans = Vec::new();
 
@@ -685,19 +719,37 @@ impl Popup {
                     .collect();
 
                 let list = List::new(list_items);
-                frame.render_widget(list, inner_area);
+                frame.render_widget(list, content_area);
             }
             PopupContent::Custom(lines) => {
                 let visible_lines: Vec<Line> = lines
                     .iter()
                     .skip(self.scroll_offset)
-                    .take(inner_area.height as usize)
+                    .take(content_area.height as usize)
                     .map(|line| Line::from(line.as_str()))
                     .collect();
 
                 let paragraph = Paragraph::new(visible_lines);
-                frame.render_widget(paragraph, inner_area);
+                frame.render_widget(paragraph, content_area);
             }
+        }
+
+        // Render scrollbar if needed
+        if needs_scrollbar {
+            let scrollbar_area = Rect {
+                x: inner_area.x + inner_area.width - 1,
+                y: inner_area.y,
+                width: 1,
+                height: inner_area.height,
+            };
+
+            let scrollbar_state = ScrollbarState::new(
+                total_lines,
+                visible_lines_count,
+                self.scroll_offset,
+            );
+            let scrollbar_colors = ScrollbarColors::from_theme(theme);
+            render_scrollbar(frame, scrollbar_area, &scrollbar_state, &scrollbar_colors);
         }
     }
 }

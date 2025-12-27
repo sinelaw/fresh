@@ -606,7 +606,10 @@ impl Editor {
             PopupPosition::BelowCursor
         };
         popup.width = 80;
-        popup.max_height = 20;
+        // Use dynamic max_height based on terminal size (60% of height, min 15, max 40)
+        // This allows hover popups to show more documentation on larger terminals
+        let dynamic_height = (self.terminal_height * 60 / 100).max(15).min(40);
+        popup.max_height = dynamic_height;
         popup.border_style = Style::default().fg(self.theme.popup_border_fg);
         popup.background_style = Style::default().bg(self.theme.popup_bg);
 
