@@ -997,6 +997,30 @@ pub fn get_all_commands() -> Vec<Command> {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
         },
+        Command {
+            name: "Show Warnings".to_string(),
+            description: "Show current warnings and errors".to_string(),
+            action: Action::ShowWarnings,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
+            name: "View Warning Log".to_string(),
+            description: "Open the warning log file".to_string(),
+            action: Action::ViewWarningLog,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
+            name: "Clear Warnings".to_string(),
+            description: "Dismiss all warning indicators".to_string(),
+            action: Action::ClearWarnings,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
         // Config
         Command {
             name: "Dump Config".to_string(),

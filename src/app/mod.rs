@@ -1184,6 +1184,13 @@ impl Editor {
         self.warning_domains.general.clear();
     }
 
+    /// Clear all warning indicators (user dismissed via command)
+    pub fn clear_warnings(&mut self) {
+        self.warning_domains.general.clear();
+        self.warning_domains.lsp.clear();
+        self.status_message = Some("Warnings cleared".to_string());
+    }
+
     /// Check if any LSP server is in error state
     pub fn has_lsp_error(&self) -> bool {
         self.warning_domains.lsp.level() == WarningLevel::Error

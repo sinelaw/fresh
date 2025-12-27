@@ -280,6 +280,15 @@ impl Editor {
             Action::ShowKeyboardShortcuts => {
                 self.open_keyboard_shortcuts();
             }
+            Action::ShowWarnings => {
+                self.show_warnings_popup();
+            }
+            Action::ViewWarningLog => {
+                self.open_warning_log();
+            }
+            Action::ClearWarnings => {
+                self.clear_warnings();
+            }
             Action::CommandPalette => {
                 // Toggle command palette: close if already open, otherwise open it
                 if let Some(prompt) = &self.prompt {

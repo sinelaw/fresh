@@ -427,9 +427,16 @@ impl Editor {
 
         // Render status bar (hidden when suggestions or file browser popup is shown)
         if !has_suggestions && !has_file_browser {
-            // Get warning level for colored indicator
-            let warning_level = self.get_effective_warning_level();
-            let general_warning_count = self.get_general_warning_count();
+            // Get warning level for colored indicator (respects config setting)
+            let (warning_level, general_warning_count) =
+                if self.config.warnings.show_status_indicator {
+                    (
+                        self.get_effective_warning_level(),
+                        self.get_general_warning_count(),
+                    )
+                } else {
+                    (WarningLevel::None, 0)
+                };
 
             StatusBarRenderer::render_status_bar(
                 frame,

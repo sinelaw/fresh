@@ -2042,6 +2042,9 @@ pub fn action_to_events(
         | Action::JumpToNextError
         | Action::JumpToPreviousError
         | Action::ShowKeyboardShortcuts
+        | Action::ShowWarnings
+        | Action::ViewWarningLog
+        | Action::ClearWarnings
         | Action::SmartHome
         | Action::ToggleComment
         | Action::SetBookmark(_)
