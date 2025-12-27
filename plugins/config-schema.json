@@ -135,7 +135,7 @@
           "default": true
         },
         "line_numbers": {
-          "description": "Show line numbers by default. Use View menu to toggle per-buffer.",
+          "description": "Show line numbers in the gutter (default for new buffers)",
           "type": "boolean",
           "default": true
         },
@@ -157,7 +157,7 @@
           "default": true
         },
         "line_wrap": {
-          "description": "Wrap long lines to fit the window width. Applies to all views.",
+          "description": "Wrap long lines to fit the window width (default for new views)",
           "type": "boolean",
           "default": true
         },

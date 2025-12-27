@@ -191,7 +191,7 @@ pub struct EditorConfig {
     #[serde(default = "default_true")]
     pub auto_indent: bool,
 
-    /// Show line numbers in the gutter
+    /// Show line numbers in the gutter (default for new buffers)
     #[serde(default = "default_true")]
     pub line_numbers: bool,
 
@@ -207,7 +207,7 @@ pub struct EditorConfig {
     #[serde(default = "default_true")]
     pub syntax_highlighting: bool,
 
-    /// Wrap long lines to fit the window width
+    /// Wrap long lines to fit the window width (default for new views)
     #[serde(default = "default_true")]
     pub line_wrap: bool,
 
