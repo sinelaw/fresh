@@ -427,6 +427,9 @@ impl Editor {
 
         // Render status bar (hidden when suggestions or file browser popup is shown)
         if !has_suggestions && !has_file_browser {
+            // Get warning level for colored indicator
+            let warning_level = self.get_effective_warning_level();
+
             StatusBarRenderer::render_status_bar(
                 frame,
                 main_chunks[status_bar_idx],
@@ -439,6 +442,7 @@ impl Editor {
                 &keybindings_cloned,         // Pass the cloned keybindings
                 &chord_state_cloned,         // Pass the cloned chord state
                 update_available.as_deref(), // Pass update availability
+                warning_level,               // Pass warning level for colored indicator
             );
         }
 

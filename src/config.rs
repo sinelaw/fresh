@@ -170,6 +170,10 @@ pub struct Config {
     /// Menu bar configuration
     #[serde(default)]
     pub menu: MenuConfig,
+
+    /// Warning notification settings
+    #[serde(default)]
+    pub warnings: WarningsConfig,
 }
 
 fn default_keybinding_map_name() -> KeybindingMapName {
@@ -419,6 +423,23 @@ impl Default for TerminalConfig {
     fn default() -> Self {
         Self {
             jump_to_end_on_output: true,
+        }
+    }
+}
+
+/// Warning notification configuration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WarningsConfig {
+    /// Show warning/error indicators in the status bar (default: true)
+    /// When enabled, displays a colored indicator for LSP errors and other warnings
+    #[serde(default = "default_true")]
+    pub show_status_indicator: bool,
+}
+
+impl Default for WarningsConfig {
+    fn default() -> Self {
+        Self {
+            show_status_indicator: true,
         }
     }
 }
@@ -737,6 +758,7 @@ impl Default for Config {
             languages: Self::default_languages(),
             lsp: Self::default_lsp_config(),
             menu: MenuConfig::default(),
+            warnings: WarningsConfig::default(),
         }
     }
 }

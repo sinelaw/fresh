@@ -147,6 +147,14 @@ struct UiColors {
     terminal_bg: ColorDef,
     #[serde(default = "default_terminal_fg")]
     terminal_fg: ColorDef,
+    #[serde(default = "default_status_warning_indicator_bg")]
+    status_warning_indicator_bg: ColorDef,
+    #[serde(default = "default_status_warning_indicator_fg")]
+    status_warning_indicator_fg: ColorDef,
+    #[serde(default = "default_status_error_indicator_bg")]
+    status_error_indicator_bg: ColorDef,
+    #[serde(default = "default_status_error_indicator_fg")]
+    status_error_indicator_fg: ColorDef,
 }
 
 // Default tab close hover color (for backward compatibility with existing themes)
@@ -229,6 +237,18 @@ fn default_terminal_bg() -> ColorDef {
 }
 fn default_terminal_fg() -> ColorDef {
     ColorDef::Named("Default".to_string()) // Use terminal's default foreground
+}
+fn default_status_warning_indicator_bg() -> ColorDef {
+    ColorDef::Rgb(181, 137, 0) // Solarized yellow/amber - noticeable but not harsh
+}
+fn default_status_warning_indicator_fg() -> ColorDef {
+    ColorDef::Rgb(0, 0, 0) // Black text on amber background
+}
+fn default_status_error_indicator_bg() -> ColorDef {
+    ColorDef::Rgb(220, 50, 47) // Solarized red - clearly an error
+}
+fn default_status_error_indicator_fg() -> ColorDef {
+    ColorDef::Rgb(255, 255, 255) // White text on red background
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -348,6 +368,12 @@ pub struct Theme {
     pub terminal_bg: Color,
     pub terminal_fg: Color,
 
+    // Status bar warning/error indicator colors
+    pub status_warning_indicator_bg: Color,
+    pub status_warning_indicator_fg: Color,
+    pub status_error_indicator_bg: Color,
+    pub status_error_indicator_fg: Color,
+
     // Search colors
     pub search_match_bg: Color,
     pub search_match_fg: Color,
@@ -435,6 +461,10 @@ impl From<ThemeFile> for Theme {
             semantic_highlight_bg: file.ui.semantic_highlight_bg.into(),
             terminal_bg: file.ui.terminal_bg.into(),
             terminal_fg: file.ui.terminal_fg.into(),
+            status_warning_indicator_bg: file.ui.status_warning_indicator_bg.into(),
+            status_warning_indicator_fg: file.ui.status_warning_indicator_fg.into(),
+            status_error_indicator_bg: file.ui.status_error_indicator_bg.into(),
+            status_error_indicator_fg: file.ui.status_error_indicator_fg.into(),
             search_match_bg: file.search.match_bg.into(),
             search_match_fg: file.search.match_fg.into(),
             diagnostic_error_fg: file.diagnostic.error_fg.into(),
@@ -579,6 +609,12 @@ impl Theme {
             terminal_bg: Color::Reset,
             terminal_fg: Color::Reset,
 
+            // Status bar warning/error indicator colors
+            status_warning_indicator_bg: Color::Rgb(181, 137, 0), // Solarized amber
+            status_warning_indicator_fg: Color::Rgb(0, 0, 0),     // Black text
+            status_error_indicator_bg: Color::Rgb(220, 50, 47),   // Solarized red
+            status_error_indicator_fg: Color::Rgb(255, 255, 255), // White text
+
             // Search colors
             search_match_bg: Color::Rgb(100, 100, 20), // Yellow-brown highlight
             search_match_fg: Color::Rgb(255, 255, 255),
@@ -689,6 +725,12 @@ impl Theme {
             terminal_bg: Color::Reset,
             terminal_fg: Color::Reset,
 
+            // Status bar warning/error indicator colors (darker for light theme)
+            status_warning_indicator_bg: Color::Rgb(202, 145, 0), // Darker amber for light bg
+            status_warning_indicator_fg: Color::Rgb(0, 0, 0),     // Black text
+            status_error_indicator_bg: Color::Rgb(200, 40, 40),   // Darker red for light bg
+            status_error_indicator_fg: Color::Rgb(255, 255, 255), // White text
+
             // Search colors
             search_match_bg: Color::Rgb(255, 255, 150), // Light yellow highlight
             search_match_fg: Color::Rgb(0, 0, 0),
@@ -798,6 +840,12 @@ impl Theme {
             // Terminal colors (use terminal's default colors to preserve transparency)
             terminal_bg: Color::Reset,
             terminal_fg: Color::Reset,
+
+            // Status bar warning/error indicator colors (high visibility)
+            status_warning_indicator_bg: Color::Yellow, // Bright yellow
+            status_warning_indicator_fg: Color::Black,  // Black text
+            status_error_indicator_bg: Color::Red,      // Bright red
+            status_error_indicator_fg: Color::White,    // White text
 
             // Search colors
             search_match_bg: Color::Yellow,
@@ -958,6 +1006,12 @@ impl Theme {
             // Terminal colors (Turbo Pascal style - blue background, yellow text)
             terminal_bg: Color::Rgb(0, 0, 170), // Classic DOS blue
             terminal_fg: Color::Rgb(255, 255, 85), // Bright yellow
+
+            // Status bar warning/error indicator colors (DOS style)
+            status_warning_indicator_bg: Color::Rgb(170, 85, 0), // Brown/orange (DOS warning)
+            status_warning_indicator_fg: Color::Rgb(255, 255, 255), // White text
+            status_error_indicator_bg: Color::Rgb(170, 0, 0),    // DOS red
+            status_error_indicator_fg: Color::Rgb(255, 255, 255), // White text
 
             // Search colors
             search_match_bg: Color::Rgb(170, 85, 0), // Orange/brown

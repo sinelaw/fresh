@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use crate::app::WarningLevel;
 use crate::primitives::display_width::{char_width, str_width};
 use crate::state::EditorState;
 use crate::view::prompt::Prompt;
@@ -175,6 +176,7 @@ impl StatusBarRenderer {
         keybindings: &crate::input::keybindings::KeybindingResolver,
         chord_state: &[(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
         update_available: Option<&str>,
+        warning_level: WarningLevel,
     ) {
         Self::render_status(
             frame,
@@ -188,6 +190,7 @@ impl StatusBarRenderer {
             keybindings,
             chord_state,
             update_available,
+            warning_level,
         );
     }
 
@@ -352,6 +355,7 @@ impl StatusBarRenderer {
         keybindings: &crate::input::keybindings::KeybindingResolver,
         chord_state: &[(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
         update_available: Option<&str>,
+        warning_level: WarningLevel,
     ) {
         // Use the pre-computed display name from buffer metadata
         let filename = display_name;
@@ -440,12 +444,15 @@ impl StatusBarRenderer {
             String::new()
         };
 
-        // Build the status string with optional LSP status and status message
+        // Build the status string - LSP indicator rendered separately for colored background
         let lsp_indicator = if !lsp_status.is_empty() {
-            format!(" | {}", lsp_status)
+            format!(" {}", lsp_status)
         } else {
             String::new()
         };
+
+        // Determine if LSP indicator should have colored background
+        let lsp_has_colored_bg = warning_level != WarningLevel::None && !lsp_status.is_empty();
 
         let mut message_parts: Vec<&str> = Vec::new();
         if let Some(msg) = status_message {
@@ -465,9 +472,24 @@ impl StatusBarRenderer {
             format!(" | {}", message_parts.join(" | "))
         };
 
-        let base_status = format!(
-            "{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}{cursor_count_indicator}{lsp_indicator}"
+        // Build base status WITHOUT LSP indicator (we'll render it separately if colored)
+        let base_status_without_lsp = format!(
+            "{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}{cursor_count_indicator}"
         );
+
+        // If LSP indicator has colored background, we render it as a separate span
+        // Otherwise, include it in the main status string
+        let (base_status, separate_lsp) = if lsp_has_colored_bg {
+            (format!("{} |", base_status_without_lsp), true)
+        } else if !lsp_indicator.is_empty() {
+            (
+                format!("{} |{}", base_status_without_lsp, lsp_indicator),
+                false,
+            )
+        } else {
+            (base_status_without_lsp, false)
+        };
+
         let left_status = format!("{base_status}{chord_display}{message_suffix}");
 
         // Build update indicator for right side (if update available)
@@ -535,7 +557,31 @@ impl StatusBarRenderer {
                     .bg(theme.status_bar_bg),
             ));
 
-            let displayed_left_len = str_width(&displayed_left);
+            // Add LSP indicator with colored background if needed
+            if separate_lsp && !lsp_indicator.is_empty() {
+                let (lsp_fg, lsp_bg) = match warning_level {
+                    WarningLevel::Error => (
+                        theme.status_error_indicator_fg,
+                        theme.status_error_indicator_bg,
+                    ),
+                    WarningLevel::Warning => (
+                        theme.status_warning_indicator_fg,
+                        theme.status_warning_indicator_bg,
+                    ),
+                    WarningLevel::None => (theme.status_bar_fg, theme.status_bar_bg),
+                };
+                spans.push(Span::styled(
+                    lsp_indicator.clone(),
+                    Style::default().fg(lsp_fg).bg(lsp_bg),
+                ));
+            }
+
+            let lsp_indicator_len = if separate_lsp {
+                str_width(&lsp_indicator)
+            } else {
+                0
+            };
+            let displayed_left_len = str_width(&displayed_left) + lsp_indicator_len;
 
             // Add spacing to push right side indicators to the right
             if displayed_left_len + right_side_width < available_width {
