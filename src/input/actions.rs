@@ -2043,6 +2043,7 @@ pub fn action_to_events(
         | Action::JumpToPreviousError
         | Action::ShowKeyboardShortcuts
         | Action::ShowWarnings
+        | Action::ShowLspStatus
         | Action::ViewWarningLog
         | Action::ClearWarnings
         | Action::SmartHome

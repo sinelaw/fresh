@@ -1006,6 +1006,14 @@ pub fn get_all_commands() -> Vec<Command> {
             source: CommandSource::Builtin,
         },
         Command {
+            name: "Show LSP Status".to_string(),
+            description: "Show LSP status and troubleshooting info".to_string(),
+            action: Action::ShowLspStatus,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
             name: "View Warning Log".to_string(),
             description: "Open the warning log file".to_string(),
             action: Action::ViewWarningLog,

@@ -840,22 +840,27 @@ impl Editor {
         self.set_active_buffer(buffer_id);
     }
 
-    /// Show a popup with current warnings and available actions
+    /// Show warnings by opening the warning log file directly
     ///
     /// If there are no warnings, shows a brief status message.
-    /// Otherwise, shows a popup with warning information and action buttons.
+    /// Otherwise, opens the warning log file for the user to view.
     pub fn show_warnings_popup(&mut self) {
-        use crate::app::warning_domains::WarningDomain;
-
         if !self.warning_domains.has_any_warnings() {
             self.status_message = Some("No warnings".to_string());
             return;
         }
 
-        // Build popup content from active warning domains
+        // Open the warning log file directly
+        self.open_warning_log();
+    }
+
+    /// Show a popup with LSP status and troubleshooting information
+    pub fn show_lsp_status_popup(&mut self) {
+        use crate::app::warning_domains::WarningDomain;
+
+        // Build popup content
         let mut content_lines: Vec<String> = Vec::new();
 
-        // Add LSP warnings first
         if self.warning_domains.lsp.has_warnings() {
             let popup = self.warning_domains.lsp.popup_content();
             content_lines.push(format!("─── {} ───", popup.title));
@@ -865,56 +870,38 @@ impl Editor {
             }
             content_lines.push(String::new());
 
-            // Show available actions
+            // Show available actions as hints
             if !popup.actions.is_empty() {
-                content_lines.push("Actions:".to_string());
+                content_lines.push("Suggested actions:".to_string());
                 for action in &popup.actions {
                     content_lines.push(format!("  • {}", action.label));
                 }
             }
-            content_lines.push(String::new());
-        }
-
-        // Add general warnings
-        if self.warning_domains.general.has_warnings() {
-            let popup = self.warning_domains.general.popup_content();
-            content_lines.push(format!("─── {} ───", popup.title));
-            content_lines.push(String::new());
-            for line in popup.message.lines() {
-                content_lines.push(line.to_string());
-            }
+        } else {
+            // Show current LSP status
+            content_lines.push("─── LSP Status ───".to_string());
             content_lines.push(String::new());
 
-            // Show log file path
-            if let Some(path) = &self.warning_domains.general.log_path {
-                content_lines.push(format!("Log file: {}", path.display()));
-            }
-            content_lines.push(String::new());
-
-            // Show available actions
-            if !popup.actions.is_empty() {
-                content_lines.push("Actions:".to_string());
-                for action in &popup.actions {
-                    content_lines.push(format!("  • {}", action.label));
-                }
+            if self.lsp_status.is_empty() {
+                content_lines.push("No LSP server active for current file.".to_string());
+            } else {
+                content_lines.push(format!("Status: {}", self.lsp_status));
+                content_lines.push(String::new());
+                content_lines.push("LSP server is running normally.".to_string());
             }
         }
 
-        // Add instructions
         content_lines.push(String::new());
         content_lines.push("─────────────────────────".to_string());
-        content_lines.push("Use 'View Warning Log' command to open the log file.".to_string());
-        content_lines.push("Use 'Clear Warnings' command to dismiss warnings.".to_string());
-        content_lines.push("Press Esc to close this popup.".to_string());
+        content_lines.push("Press Esc to close.".to_string());
 
-        // Create the popup
+        // Create and show the popup
         let popup = crate::view::popup::Popup::text(content_lines, &self.theme)
-            .with_title("Warnings".to_string())
+            .with_title("LSP Status".to_string())
             .with_position(crate::view::popup::PopupPosition::Centered)
             .with_width(60)
-            .with_max_height(20);
+            .with_max_height(15);
 
-        // Show the popup
         self.active_state_mut().popups.show(popup);
     }
 
