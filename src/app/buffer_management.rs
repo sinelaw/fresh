@@ -224,6 +224,8 @@ impl Editor {
         let active_split = self.split_manager.active_split();
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
             view_state.add_buffer(buffer_id);
+            // Apply line_wrap default from config (per-view setting, applies to split)
+            view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
         }
 
         // Restore global file state (scroll/cursor position) if available
@@ -438,6 +440,12 @@ impl Editor {
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
+        // Apply line_wrap default from config to the active split
+        let active_split = self.split_manager.active_split();
+        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+        }
+
         self.set_active_buffer(buffer_id);
         self.status_message = Some("New buffer".to_string());
 
@@ -526,6 +534,8 @@ impl Editor {
         let active_split = self.split_manager.active_split();
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
             view_state.add_buffer(buffer_id);
+            // Apply line_wrap default from config
+            view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
         }
 
         self.set_active_buffer(buffer_id);

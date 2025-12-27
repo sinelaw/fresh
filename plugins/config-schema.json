@@ -157,7 +157,7 @@
           "default": true
         },
         "line_wrap": {
-          "description": "Wrap long lines to fit the window width",
+          "description": "Wrap long lines to fit the window width. Applies to all views.",
           "type": "boolean",
           "default": true
         },
