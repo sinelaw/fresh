@@ -594,14 +594,16 @@ impl Editor {
         if let Some((status_row, _status_x, _status_width)) = self.cached_layout.status_bar_area {
             if row == status_row {
                 // Check LSP indicator area
-                if let Some((lsp_row, lsp_start, lsp_end)) = self.cached_layout.status_bar_lsp_area {
+                if let Some((lsp_row, lsp_start, lsp_end)) = self.cached_layout.status_bar_lsp_area
+                {
                     if row == lsp_row && col >= lsp_start && col < lsp_end {
                         return Some(HoverTarget::StatusBarLspIndicator);
                     }
                 }
 
                 // Check warning badge area
-                if let Some((warn_row, warn_start, warn_end)) = self.cached_layout.status_bar_warning_area
+                if let Some((warn_row, warn_start, warn_end)) =
+                    self.cached_layout.status_bar_warning_area
                 {
                     if row == warn_row && col >= warn_start && col < warn_end {
                         return Some(HoverTarget::StatusBarWarningBadge);
@@ -885,14 +887,16 @@ impl Editor {
         if let Some((status_row, _status_x, _status_width)) = self.cached_layout.status_bar_area {
             if row == status_row {
                 // Check LSP indicator - click opens LSP status popup
-                if let Some((lsp_row, lsp_start, lsp_end)) = self.cached_layout.status_bar_lsp_area {
+                if let Some((lsp_row, lsp_start, lsp_end)) = self.cached_layout.status_bar_lsp_area
+                {
                     if row == lsp_row && col >= lsp_start && col < lsp_end {
                         return self.handle_action(Action::ShowLspStatus);
                     }
                 }
 
                 // Check warning badge - click opens warning log
-                if let Some((warn_row, warn_start, warn_end)) = self.cached_layout.status_bar_warning_area
+                if let Some((warn_row, warn_start, warn_end)) =
+                    self.cached_layout.status_bar_warning_area
                 {
                     if row == warn_row && col >= warn_start && col < warn_end {
                         return self.handle_action(Action::ShowWarnings);

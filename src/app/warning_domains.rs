@@ -197,7 +197,10 @@ impl LspWarningDomain {
     /// Update from LSP server statuses
     pub fn update_from_statuses(
         &mut self,
-        statuses: &std::collections::HashMap<String, crate::services::async_bridge::LspServerStatus>,
+        statuses: &std::collections::HashMap<
+            String,
+            crate::services::async_bridge::LspServerStatus,
+        >,
     ) {
         use crate::services::async_bridge::LspServerStatus;
 
@@ -239,11 +242,7 @@ impl WarningDomain for LspWarningDomain {
         };
 
         let message = if let Some(cmd) = &self.server_command {
-            format!(
-                "Server '{}' not found.\n\n{}",
-                cmd,
-                self.get_install_hint()
-            )
+            format!("Server '{}' not found.\n\n{}", cmd, self.get_install_hint())
         } else if let Some(err) = &self.error_message {
             err.clone()
         } else {

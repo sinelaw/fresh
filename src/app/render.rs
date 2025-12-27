@@ -465,7 +465,8 @@ impl Editor {
 
             // Store status bar layout for click detection
             let status_bar_area = main_chunks[status_bar_idx];
-            self.cached_layout.status_bar_area = Some((status_bar_area.y, status_bar_area.x, status_bar_area.width));
+            self.cached_layout.status_bar_area =
+                Some((status_bar_area.y, status_bar_area.x, status_bar_area.width));
             self.cached_layout.status_bar_lsp_area = status_bar_layout.lsp_indicator;
             self.cached_layout.status_bar_warning_area = status_bar_layout.warning_badge;
         }

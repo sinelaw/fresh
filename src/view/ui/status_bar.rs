@@ -639,7 +639,11 @@ impl StatusBarRenderer {
                     (WarningLevel::None, _) => (theme.status_bar_fg, theme.status_bar_bg),
                 };
                 // Record LSP indicator position for click detection
-                layout.lsp_indicator = Some((area.y, current_col, current_col + lsp_indicator_width as u16));
+                layout.lsp_indicator = Some((
+                    area.y,
+                    current_col,
+                    current_col + lsp_indicator_width as u16,
+                ));
                 current_col += lsp_indicator_width as u16;
                 let mut style = Style::default().fg(lsp_fg).bg(lsp_bg);
                 if is_hovering && warning_level != WarningLevel::None {
@@ -652,12 +656,22 @@ impl StatusBarRenderer {
             if !warning_badge.is_empty() {
                 let is_hovering = hover == StatusBarHover::WarningBadge;
                 // Record warning badge position for click detection
-                layout.warning_badge = Some((area.y, current_col, current_col + warning_badge_width as u16));
+                layout.warning_badge = Some((
+                    area.y,
+                    current_col,
+                    current_col + warning_badge_width as u16,
+                ));
                 current_col += warning_badge_width as u16;
                 let (fg, bg) = if is_hovering {
-                    (theme.status_warning_indicator_hover_fg, theme.status_warning_indicator_hover_bg)
+                    (
+                        theme.status_warning_indicator_hover_fg,
+                        theme.status_warning_indicator_hover_bg,
+                    )
                 } else {
-                    (theme.status_warning_indicator_fg, theme.status_warning_indicator_bg)
+                    (
+                        theme.status_warning_indicator_fg,
+                        theme.status_warning_indicator_bg,
+                    )
                 };
                 let mut style = Style::default().fg(fg).bg(bg);
                 if is_hovering {
