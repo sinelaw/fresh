@@ -497,8 +497,11 @@ impl StatusBarRenderer {
         };
 
         // Build left status (file info, position, diagnostics, messages)
+        // Line and column are 0-indexed internally, but displayed as 1-indexed (standard editor convention)
         let base_status = format!(
-            "{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}{cursor_count_indicator}"
+            "{filename}{modified} | Ln {}, Col {}{diagnostics_summary}{cursor_count_indicator}",
+            line + 1,
+            col + 1
         );
 
         let left_status = format!("{base_status}{chord_display}{message_suffix}");

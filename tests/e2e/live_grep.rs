@@ -423,10 +423,10 @@ fn test_live_grep_uses_working_dir() {
     );
 
     // Verify we're on line 1 (where the marker is)
-    // The status bar format is "Ln X, Col Y"
+    // The status bar format is "Ln X, Col Y" (1-indexed)
     let status_bar = harness.get_status_bar();
     assert!(
-        status_bar.contains("Ln 1") || status_bar.contains("Ln 0"),
+        status_bar.contains("Ln 1"),
         "Cursor should be on line 1 (the match line). Status bar: {}",
         status_bar
     );
