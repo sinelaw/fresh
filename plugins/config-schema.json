@@ -105,6 +105,13 @@
     "menu": {
       "description": "Menu bar configuration",
       "$ref": "#/$defs/MenuConfig"
+    },
+    "warnings": {
+      "description": "Warning notification settings",
+      "$ref": "#/$defs/WarningsConfig",
+      "default": {
+        "show_status_indicator": true
+      }
     }
   },
   "$defs": {
@@ -802,6 +809,17 @@
           ]
         }
       ]
+    },
+    "WarningsConfig": {
+      "description": "Warning notification configuration",
+      "type": "object",
+      "properties": {
+        "show_status_indicator": {
+          "description": "Show warning/error indicators in the status bar (default: true)\nWhen enabled, displays a colored indicator for LSP errors and other warnings",
+          "type": "boolean",
+          "default": true
+        }
+      }
     }
   }
 }
