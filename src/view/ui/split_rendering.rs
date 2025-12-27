@@ -55,6 +55,46 @@ fn debug_tag_style() -> Style {
         .add_modifier(Modifier::DIM)
 }
 
+/// Compute a dimmed version of a color for EOF tilde lines.
+/// This replaces using Modifier::DIM which can bleed through to overlays.
+fn dim_color_for_tilde(color: Color) -> Color {
+    match color {
+        Color::Rgb(r, g, b) => {
+            // Reduce brightness by ~50% (similar to DIM modifier effect)
+            Color::Rgb(r / 2, g / 2, b / 2)
+        }
+        Color::Indexed(idx) => {
+            // For indexed colors, map to a reasonable dim equivalent
+            // Standard colors 0-7: use corresponding bright versions dimmed
+            // Bright colors 8-15: dim them down
+            // Grayscale and cube colors: just use a dark gray
+            if idx < 16 {
+                Color::Rgb(50, 50, 50) // Dark gray for basic colors
+            } else {
+                Color::Rgb(40, 40, 40) // Slightly darker for extended colors
+            }
+        }
+        // Map named colors to dimmed RGB equivalents
+        Color::Black => Color::Rgb(15, 15, 15),
+        Color::White => Color::Rgb(128, 128, 128),
+        Color::Red => Color::Rgb(100, 30, 30),
+        Color::Green => Color::Rgb(30, 100, 30),
+        Color::Yellow => Color::Rgb(100, 100, 30),
+        Color::Blue => Color::Rgb(30, 30, 100),
+        Color::Magenta => Color::Rgb(100, 30, 100),
+        Color::Cyan => Color::Rgb(30, 100, 100),
+        Color::Gray => Color::Rgb(64, 64, 64),
+        Color::DarkGray => Color::Rgb(40, 40, 40),
+        Color::LightRed => Color::Rgb(128, 50, 50),
+        Color::LightGreen => Color::Rgb(50, 128, 50),
+        Color::LightYellow => Color::Rgb(128, 128, 50),
+        Color::LightBlue => Color::Rgb(50, 50, 128),
+        Color::LightMagenta => Color::Rgb(128, 50, 128),
+        Color::LightCyan => Color::Rgb(50, 128, 128),
+        Color::Reset => Color::Rgb(50, 50, 50),
+    }
+}
+
 /// Push a debug tag span (no map entries since these aren't real content)
 fn push_debug_tag(spans: &mut Vec<Span<'static>>, map: &mut Vec<Option<usize>>, text: String) {
     if text.is_empty() {
@@ -2621,9 +2661,13 @@ impl SplitRenderer {
         // This also ensures proper clearing in differential rendering because tildes
         // are guaranteed to differ from previous content, forcing ratatui to update.
         // See: https://github.com/ratatui/ratatui/issues/1606
-        let eof_style = Style::default()
-            .fg(theme.line_number_fg)
-            .add_modifier(ratatui::style::Modifier::DIM);
+        //
+        // NOTE: We use a computed darker color instead of Modifier::DIM because the DIM
+        // modifier can bleed through to overlays (like menus) rendered on top of these
+        // lines due to how terminal escape sequences are output.
+        // See: https://github.com/sinelaw/fresh/issues/458
+        let eof_fg = dim_color_for_tilde(theme.line_number_fg);
+        let eof_style = Style::default().fg(eof_fg);
         while lines.len() < render_area.height as usize {
             // Show tilde with dim styling, padded with spaces to fill the line
             let tilde_line = format!(
