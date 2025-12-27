@@ -286,7 +286,11 @@ impl Editor {
         };
 
         // Check if we're saving to a different file that already exists
-        let current_file_path = self.active_state().buffer.file_path().map(|p| p.to_path_buf());
+        let current_file_path = self
+            .active_state()
+            .buffer
+            .file_path()
+            .map(|p| p.to_path_buf());
         let is_different_file = current_file_path.as_ref() != Some(&full_path);
 
         if is_different_file && full_path.exists() {

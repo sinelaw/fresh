@@ -72,9 +72,7 @@ pub enum PromptType {
     /// Confirm saving over a file that changed on disk
     ConfirmSaveConflict,
     /// Confirm overwriting an existing file during SaveAs
-    ConfirmOverwriteFile {
-        path: std::path::PathBuf,
-    },
+    ConfirmOverwriteFile { path: std::path::PathBuf },
     /// Confirm closing a modified buffer (save/discard/cancel)
     /// Stores buffer_id to close after user confirms
     ConfirmCloseBuffer {

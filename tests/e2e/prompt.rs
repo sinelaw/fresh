@@ -466,6 +466,193 @@ fn test_save_as_nested_path() {
     }
 }
 
+/// Test Save As prompts for confirmation when overwriting an existing file
+#[test]
+fn test_save_as_overwrite_confirmation() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use std::fs;
+    use tempfile::TempDir;
+
+    // Create a temporary directory with two files
+    let temp_dir = TempDir::new().unwrap();
+    let original_path = temp_dir.path().join("original.txt");
+    let existing_path = temp_dir.path().join("existing.txt");
+    fs::write(&original_path, "Original content").unwrap();
+    fs::write(&existing_path, "Existing content").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open the original file
+    harness.open_file(&original_path).unwrap();
+    harness.assert_screen_contains("original.txt");
+
+    // Trigger Save As via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Save File As").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for the Save As prompt to appear
+    harness.wait_for_screen_contains("Save as:").unwrap();
+
+    // Clear and type the existing file's path
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    let existing_path_str = existing_path.to_str().unwrap();
+    harness.type_text(existing_path_str).unwrap();
+
+    // Confirm with Enter - should show overwrite confirmation
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show the overwrite confirmation prompt
+    harness
+        .wait_for_screen_contains("exists. (o)verwrite, (C)ancel?")
+        .unwrap();
+
+    // Cancel the operation
+    harness.type_text("c").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify cancellation message
+    harness.wait_for_screen_contains("Save cancelled").unwrap();
+
+    // Verify the existing file was NOT overwritten
+    let existing_content = fs::read_to_string(&existing_path).unwrap();
+    assert_eq!(existing_content, "Existing content");
+
+    // Buffer should still show original filename
+    harness.assert_screen_contains("original.txt");
+}
+
+/// Test Save As overwrites file when user confirms
+#[test]
+fn test_save_as_overwrite_confirmed() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use std::fs;
+    use tempfile::TempDir;
+
+    // Create a temporary directory with two files
+    let temp_dir = TempDir::new().unwrap();
+    let original_path = temp_dir.path().join("original.txt");
+    let existing_path = temp_dir.path().join("existing.txt");
+    fs::write(&original_path, "Original content").unwrap();
+    fs::write(&existing_path, "Existing content").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open the original file
+    harness.open_file(&original_path).unwrap();
+    harness.assert_screen_contains("original.txt");
+
+    // Trigger Save As via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Save File As").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for the Save As prompt to appear
+    harness.wait_for_screen_contains("Save as:").unwrap();
+
+    // Clear and type the existing file's path
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    let existing_path_str = existing_path.to_str().unwrap();
+    harness.type_text(existing_path_str).unwrap();
+
+    // Confirm with Enter - should show overwrite confirmation
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show the overwrite confirmation prompt
+    harness
+        .wait_for_screen_contains("exists. (o)verwrite, (C)ancel?")
+        .unwrap();
+
+    // Confirm overwrite with 'o'
+    harness.type_text("o").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify file was saved
+    harness.wait_for_screen_contains("Saved as:").unwrap();
+
+    // Verify the existing file WAS overwritten with original content
+    let existing_content = fs::read_to_string(&existing_path).unwrap();
+    assert_eq!(existing_content, "Original content");
+
+    // Buffer should now show the new filename
+    harness.assert_screen_contains("existing.txt");
+}
+
+/// Test Save As to same file does NOT prompt for confirmation
+#[test]
+fn test_save_as_same_file_no_confirmation() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use std::fs;
+    use tempfile::TempDir;
+
+    // Create a temporary directory with a file
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    fs::write(&file_path, "Test content").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open the file
+    harness.open_file(&file_path).unwrap();
+    harness.assert_screen_contains("test.txt");
+
+    // Trigger Save As via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Save File As").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for the Save As prompt to appear with current filename
+    harness.wait_for_screen_contains("Save as:").unwrap();
+    harness.assert_screen_contains("test.txt");
+
+    // Just press Enter to save to the same file
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should save directly without confirmation (same file)
+    harness.wait_for_screen_contains("Saved as:").unwrap();
+
+    // Should NOT have shown confirmation prompt
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("overwrite"),
+        "Should not prompt for confirmation when saving to the same file"
+    );
+}
+
 /// Test that long paths are truncated in the Open File prompt
 ///
 /// When the path + input would exceed 90% of the prompt width, the path should be
