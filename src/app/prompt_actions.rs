@@ -196,6 +196,14 @@ impl Editor {
                     self.set_status_message("Save cancelled".to_string());
                 }
             }
+            PromptType::ConfirmOverwriteFile { path } => {
+                let input_lower = input.trim().to_lowercase();
+                if input_lower == "o" || input_lower == "overwrite" {
+                    self.perform_save_file_as(path);
+                } else {
+                    self.set_status_message("Save cancelled".to_string());
+                }
+            }
             PromptType::ConfirmCloseBuffer { buffer_id } => {
                 if self.handle_confirm_close_buffer(&input, buffer_id) {
                     return PromptResult::EarlyReturn;
@@ -277,6 +285,29 @@ impl Editor {
             normalize_path(&self.working_dir.join(input_path))
         };
 
+        // Check if we're saving to a different file that already exists
+        let current_file_path = self.active_state().buffer.file_path().map(|p| p.to_path_buf());
+        let is_different_file = current_file_path.as_ref() != Some(&full_path);
+
+        if is_different_file && full_path.exists() {
+            // File exists and is different from current - ask for confirmation
+            let filename = full_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| full_path.display().to_string());
+            self.start_prompt(
+                format!("'{}' exists. (o)verwrite, (C)ancel? ", filename),
+                PromptType::ConfirmOverwriteFile { path: full_path },
+            );
+            return;
+        }
+
+        // Proceed with save
+        self.perform_save_file_as(full_path);
+    }
+
+    /// Perform the actual SaveFileAs operation (called after confirmation if needed).
+    fn perform_save_file_as(&mut self, full_path: std::path::PathBuf) {
         let before_idx = self.active_event_log().current_index();
         let before_len = self.active_event_log().len();
         tracing::debug!(
