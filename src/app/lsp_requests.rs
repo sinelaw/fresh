@@ -475,7 +475,7 @@ impl Editor {
 
         // Debug: Log the position conversion details
         if let Some(pos) = state.buffer.offset_to_position(byte_pos) {
-            tracing::debug!(
+            tracing::trace!(
                 "Mouse hover request: byte_pos={}, line={}, byte_col={}, utf16_col={}",
                 byte_pos,
                 pos.line,
@@ -492,7 +492,7 @@ impl Editor {
             .with_lsp_for_buffer(buffer_id, |handle, uri, _language| {
                 let result = handle.hover(request_id, uri.clone(), line as u32, character as u32);
                 if result.is_ok() {
-                    tracing::debug!(
+                    tracing::trace!(
                         "Mouse hover requested at {}:{}:{} (byte_pos={})",
                         uri.as_str(),
                         line,

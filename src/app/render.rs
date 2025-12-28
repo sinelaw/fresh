@@ -911,7 +911,7 @@ impl Editor {
 
         if is_transient_popup {
             self.hide_popup();
-            tracing::debug!("Dismissed transient popup");
+            tracing::trace!("Dismissed transient popup");
         }
     }
 

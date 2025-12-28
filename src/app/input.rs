@@ -1463,7 +1463,7 @@ impl Editor {
         let content_col = col.saturating_sub(content_rect.x);
         let content_row = row.saturating_sub(content_rect.y);
 
-        tracing::debug!(
+        tracing::trace!(
             col,
             row,
             ?content_rect,

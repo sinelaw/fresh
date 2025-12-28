@@ -1004,7 +1004,7 @@ fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> io::Result<()> 
 /// Handle a mouse event
 /// Returns true if a re-render is needed
 fn handle_mouse_event(editor: &mut Editor, mouse_event: MouseEvent) -> io::Result<bool> {
-    tracing::debug!(
+    tracing::trace!(
         "Mouse event received: kind={:?}, column={}, row={}, modifiers={:?}",
         mouse_event.kind,
         mouse_event.column,

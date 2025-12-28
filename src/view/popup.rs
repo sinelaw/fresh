@@ -11,7 +11,8 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use super::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 
 /// Word-wrap a single line of text to fit within a given width.
-/// Uses simple character-based wrapping (breaks at any character).
+/// Breaks at word boundaries (spaces) when possible.
+/// Falls back to character-based breaking for words longer than max_width.
 /// Returns a vector of wrapped line segments.
 fn wrap_text_line(text: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {
@@ -22,17 +23,63 @@ fn wrap_text_line(text: &str, max_width: usize) -> Vec<String> {
     let mut current_line = String::new();
     let mut current_width = 0;
 
-    for ch in text.chars() {
-        let char_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+    // Split into words while preserving spaces
+    let mut chars = text.chars().peekable();
+    while chars.peek().is_some() {
+        // Collect a "word" (non-space characters) or a space sequence
+        let mut word = String::new();
+        let mut word_width = 0;
 
-        if current_width + char_width > max_width && !current_line.is_empty() {
-            result.push(current_line);
-            current_line = String::new();
-            current_width = 0;
+        // Collect spaces first
+        while let Some(&ch) = chars.peek() {
+            if ch != ' ' {
+                break;
+            }
+            let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+            word.push(ch);
+            word_width += ch_width;
+            chars.next();
         }
 
-        current_line.push(ch);
-        current_width += char_width;
+        // Then collect non-space characters
+        while let Some(&ch) = chars.peek() {
+            if ch == ' ' {
+                break;
+            }
+            let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+            word.push(ch);
+            word_width += ch_width;
+            chars.next();
+        }
+
+        if word.is_empty() {
+            continue;
+        }
+
+        // Check if word fits on current line
+        if current_width + word_width <= max_width {
+            current_line.push_str(&word);
+            current_width += word_width;
+        } else if current_line.is_empty() {
+            // Word is too long for a single line, must break mid-word
+            for ch in word.chars() {
+                let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+                if current_width + ch_width > max_width && !current_line.is_empty() {
+                    result.push(current_line);
+                    current_line = String::new();
+                    current_width = 0;
+                }
+                current_line.push(ch);
+                current_width += ch_width;
+            }
+        } else {
+            // Start a new line with this word
+            result.push(current_line);
+            // Trim leading spaces from the word when starting a new line
+            let trimmed = word.trim_start();
+            current_line = trimmed.to_string();
+            current_width = unicode_width::UnicodeWidthStr::width(trimmed);
+        }
     }
 
     if !current_line.is_empty() || result.is_empty() {
@@ -283,8 +330,10 @@ pub fn parse_markdown(text: &str, theme: &crate::view::theme::Theme) -> Vec<Styl
                         }
                     }
                     Tag::Paragraph => {
-                        // Start paragraphs on new line if we have content
-                        if !lines.last().map(|l| l.spans.is_empty()).unwrap_or(true) {
+                        // Start paragraphs on new line if we have any prior content.
+                        // This preserves blank lines from previous paragraph ends.
+                        let has_prior_content = lines.iter().any(|l| !l.spans.is_empty());
+                        if has_prior_content {
                             lines.push(StyledLine::new());
                         }
                     }
@@ -1209,5 +1258,118 @@ mod tests {
         assert_eq!(clamped.y, 49); // y clamped to last valid position
         assert_eq!(clamped.width, 1); // width clamped to fit
         assert_eq!(clamped.height, 1); // height clamped to fit
+    }
+
+    #[test]
+    fn test_wrap_styled_lines_long_hover_content() {
+        // Test that long hover lines get wrapped correctly
+        let theme = crate::view::theme::Theme::dark();
+
+        // Simulate a long LSP hover response (e.g., a function signature that's too long)
+        let long_text = "def very_long_function_name(param1: str, param2: int, param3: float, param4: list, param5: dict) -> tuple[str, int, float]";
+        let markdown = format!("```python\n{}\n```", long_text);
+
+        let lines = parse_markdown(&markdown, &theme);
+
+        // The code block should produce styled lines
+        assert!(!lines.is_empty(), "Should have parsed lines");
+
+        // Now wrap to a narrow width (40 chars)
+        let wrapped = super::wrap_styled_lines(&lines, 40);
+
+        // The long line should be wrapped into multiple lines
+        assert!(wrapped.len() > lines.len(),
+            "Long line should wrap into multiple lines. Original: {}, Wrapped: {}",
+            lines.len(), wrapped.len());
+
+        // Each wrapped line should not exceed max width
+        for (i, line) in wrapped.iter().enumerate() {
+            let line_width: usize = line.spans.iter()
+                .map(|s| unicode_width::UnicodeWidthStr::width(s.text.as_str()))
+                .sum();
+            assert!(line_width <= 40,
+                "Wrapped line {} exceeds max width: {} > 40, content: {:?}",
+                i, line_width,
+                line.spans.iter().map(|s| s.text.as_str()).collect::<Vec<_>>());
+        }
+
+        // Verify the content is preserved (concatenate all wrapped text)
+        let original_text: String = lines.iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.text.as_str()))
+            .collect();
+        let wrapped_text: String = wrapped.iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.text.as_str()))
+            .collect();
+        assert_eq!(original_text, wrapped_text, "Content should be preserved after wrapping");
+    }
+
+    #[test]
+    fn test_wrap_text_line_at_word_boundaries() {
+        // Test that wrapping happens at word boundaries, not mid-word
+        let text = "Path represents a filesystem path but unlike PurePath also offers methods";
+        let wrapped = super::wrap_text_line(text, 30);
+
+        // Should wrap at word boundaries
+        for (i, line) in wrapped.iter().enumerate() {
+            // Lines should not start with a space (spaces are trimmed when wrapping)
+            if !line.is_empty() {
+                assert!(!line.starts_with(' '),
+                    "Line {} should not start with space: {:?}", i, line);
+            }
+
+            // Each line should fit within max_width
+            let line_width = unicode_width::UnicodeWidthStr::width(line.as_str());
+            assert!(line_width <= 30,
+                "Line {} exceeds max width: {} > 30, content: {:?}", i, line_width, line);
+        }
+
+        // Check that we didn't break any words mid-character
+        // All words in wrapped output should be complete words from original
+        let original_words: Vec<&str> = text.split_whitespace().collect();
+        let wrapped_words: Vec<&str> = wrapped.iter()
+            .flat_map(|line| line.split_whitespace())
+            .collect();
+        assert_eq!(original_words, wrapped_words,
+            "Words should be preserved without breaking mid-word");
+
+        // Verify specific expected wrapping (28 chars fits: "Path represents a filesystem")
+        assert_eq!(wrapped[0], "Path represents a filesystem",
+            "First line should break at word boundary");
+        assert_eq!(wrapped[1], "path but unlike PurePath also",
+            "Second line should contain next words (30 chars fits)");
+        assert_eq!(wrapped[2], "offers methods",
+            "Third line should contain remaining words");
+    }
+
+    #[test]
+    fn test_parse_markdown_double_newline_creates_blank_line() {
+        // This is a real LSP hover response from pyright for Path
+        let markdown = "PurePath subclass that can make system calls.\n\nPath represents a filesystem path but unlike PurePath, also offers\nmethods to do system calls on path objects. Depending on your system,\ninstantiating a Path will return either a PosixPath or a WindowsPath\nobject. You can also instantiate a PosixPath or WindowsPath directly,\nbut cannot instantiate a WindowsPath on a POSIX system or vice versa.";
+
+        let theme = crate::view::theme::Theme::dark();
+        let lines = parse_markdown(markdown, &theme);
+
+        // Should have 3 lines:
+        // 1. "PurePath subclass that can make system calls."
+        // 2. (empty line from paragraph break)
+        // 3. "Path represents..." (with soft breaks converted to spaces)
+        assert_eq!(lines.len(), 3, "Expected 3 lines, got {}: {:?}", lines.len(),
+            lines.iter().map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join("")).collect::<Vec<_>>());
+
+        // First line should have the first paragraph
+        assert!(!lines[0].spans.is_empty(), "First line should have content");
+        let first_line_text: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(first_line_text, "PurePath subclass that can make system calls.");
+
+        // Second line should be empty (blank line from \n\n)
+        assert!(lines[1].spans.is_empty(), "Second line should be empty (paragraph break), but was: {:?}",
+            lines[1].spans.iter().map(|s| s.text.as_str()).collect::<Vec<_>>());
+
+        // Third line should have the second paragraph with soft breaks as spaces
+        assert!(!lines[2].spans.is_empty(), "Third line should have content");
+        let third_line_text: String = lines[2].spans.iter().map(|s| s.text.as_str()).collect();
+        assert!(third_line_text.starts_with("Path represents"), "Third line should start with 'Path represents', got: {}", third_line_text);
+        // Soft breaks (\n without blank line) should become spaces
+        assert!(third_line_text.contains("offers methods"), "Soft break should become space: {}", third_line_text);
     }
 }

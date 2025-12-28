@@ -956,6 +956,7 @@ impl LspState {
             .await
         {
             Ok(result) => {
+                tracing::debug!("Raw LSP hover response: {:?}", result);
                 // Parse the hover response
                 let (contents, is_markdown, range) = if result.is_null() {
                     // No hover information available

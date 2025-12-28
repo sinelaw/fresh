@@ -76,7 +76,7 @@ impl Editor {
             needs_render = true;
         }
 
-        tracing::debug!(
+        tracing::trace!(
             "handle_mouse: kind={:?}, col={}, row={}",
             mouse_event.kind,
             col,

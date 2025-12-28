@@ -2950,13 +2950,13 @@ impl SplitRenderer {
     /// This captures the char_source_bytes and visual_to_char from each ViewLine
     /// for accurate mouse click positioning with O(1) lookup
     fn extract_view_line_mappings(view_lines: &[ViewLine]) -> Vec<ViewLineMapping> {
-        tracing::debug!(
+        tracing::trace!(
             "extract_view_line_mappings: {} view_lines",
             view_lines.len()
         );
         for (i, vl) in view_lines.iter().enumerate().take(5) {
             let first_bytes: Vec<_> = vl.char_source_bytes.iter().take(5).collect();
-            tracing::debug!(
+            tracing::trace!(
                 "  ViewLine {}: text={:?} (len={}), first_source_bytes={:?}",
                 i,
                 vl.text.chars().take(20).collect::<String>(),
