@@ -673,6 +673,20 @@ impl Editor {
             }
         }
 
+        // Check search options bar checkboxes
+        if let Some(ref layout) = self.cached_layout.search_options_layout {
+            use crate::view::ui::status_bar::SearchOptionsHover;
+            if let Some(hover) = layout.checkbox_at(col, row) {
+                return Some(match hover {
+                    SearchOptionsHover::CaseSensitive => HoverTarget::SearchOptionCaseSensitive,
+                    SearchOptionsHover::WholeWord => HoverTarget::SearchOptionWholeWord,
+                    SearchOptionsHover::Regex => HoverTarget::SearchOptionRegex,
+                    SearchOptionsHover::ConfirmEach => HoverTarget::SearchOptionConfirmEach,
+                    SearchOptionsHover::None => return None,
+                });
+            }
+        }
+
         // No hover target
         None
     }
@@ -962,6 +976,28 @@ impl Editor {
                     if row == warn_row && col >= warn_start && col < warn_end {
                         return self.handle_action(Action::ShowWarnings);
                     }
+                }
+            }
+        }
+
+        // Check if click is on search options checkboxes
+        if let Some(ref layout) = self.cached_layout.search_options_layout.clone() {
+            use crate::view::ui::status_bar::SearchOptionsHover;
+            if let Some(hover) = layout.checkbox_at(col, row) {
+                match hover {
+                    SearchOptionsHover::CaseSensitive => {
+                        return self.handle_action(Action::ToggleSearchCaseSensitive);
+                    }
+                    SearchOptionsHover::WholeWord => {
+                        return self.handle_action(Action::ToggleSearchWholeWord);
+                    }
+                    SearchOptionsHover::Regex => {
+                        return self.handle_action(Action::ToggleSearchRegex);
+                    }
+                    SearchOptionsHover::ConfirmEach => {
+                        return self.handle_action(Action::ToggleSearchConfirmEach);
+                    }
+                    SearchOptionsHover::None => {}
                 }
             }
         }

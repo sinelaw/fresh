@@ -32,6 +32,63 @@ pub enum StatusBarHover {
     WarningBadge,
 }
 
+/// Which search option checkbox is being hovered
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchOptionsHover {
+    #[default]
+    None,
+    CaseSensitive,
+    WholeWord,
+    Regex,
+    ConfirmEach,
+}
+
+/// Layout information for search options bar hit testing
+#[derive(Debug, Clone, Default)]
+pub struct SearchOptionsLayout {
+    /// Row where the search options are rendered
+    pub row: u16,
+    /// Case Sensitive checkbox area (start_col, end_col)
+    pub case_sensitive: Option<(u16, u16)>,
+    /// Whole Word checkbox area (start_col, end_col)
+    pub whole_word: Option<(u16, u16)>,
+    /// Regex checkbox area (start_col, end_col)
+    pub regex: Option<(u16, u16)>,
+    /// Confirm Each checkbox area (start_col, end_col) - only present in replace mode
+    pub confirm_each: Option<(u16, u16)>,
+}
+
+impl SearchOptionsLayout {
+    /// Check which search option checkbox (if any) is at the given position
+    pub fn checkbox_at(&self, x: u16, y: u16) -> Option<SearchOptionsHover> {
+        if y != self.row {
+            return None;
+        }
+
+        if let Some((start, end)) = self.case_sensitive {
+            if x >= start && x < end {
+                return Some(SearchOptionsHover::CaseSensitive);
+            }
+        }
+        if let Some((start, end)) = self.whole_word {
+            if x >= start && x < end {
+                return Some(SearchOptionsHover::WholeWord);
+            }
+        }
+        if let Some((start, end)) = self.regex {
+            if x >= start && x < end {
+                return Some(SearchOptionsHover::Regex);
+            }
+        }
+        if let Some((start, end)) = self.confirm_each {
+            if x >= start && x < end {
+                return Some(SearchOptionsHover::ConfirmEach);
+            }
+        }
+        None
+    }
+}
+
 /// Result of truncating a path for display
 #[derive(Debug, Clone)]
 pub struct TruncatedPath {
@@ -793,6 +850,9 @@ impl StatusBarRenderer {
     /// - Whole Word (Alt+W)
     /// - Regex (Alt+R)
     /// - Confirm Each (Alt+I) - only shown in replace mode
+    ///
+    /// # Returns
+    /// Layout information for hit testing mouse clicks on checkboxes
     pub fn render_search_options(
         frame: &mut Frame,
         area: Rect,
@@ -802,11 +862,24 @@ impl StatusBarRenderer {
         confirm_each: Option<bool>, // None = don't show, Some(value) = show with this state
         theme: &crate::view::theme::Theme,
         keybindings: &crate::input::keybindings::KeybindingResolver,
-    ) {
+        hover: SearchOptionsHover,
+    ) -> SearchOptionsLayout {
+        use crate::primitives::display_width::str_width;
+
+        let mut layout = SearchOptionsLayout {
+            row: area.y,
+            ..Default::default()
+        };
+
         // Use menu dropdown background (dark gray) for the options bar
         let base_style = Style::default()
             .fg(theme.menu_dropdown_fg)
             .bg(theme.menu_dropdown_bg);
+
+        // Style for hovered options - use menu hover colors
+        let hover_style = Style::default()
+            .fg(theme.menu_hover_fg)
+            .bg(theme.menu_hover_bg);
 
         // Helper to look up keybinding for an action (Prompt context first, then Global)
         let get_shortcut = |action: &crate::input::keybindings::Action| -> Option<String> {
@@ -836,55 +909,122 @@ impl StatusBarRenderer {
             .fg(theme.menu_highlight_fg)
             .bg(theme.menu_dropdown_bg);
 
-        // Style for keyboard shortcuts - use a lighter gray that's visible on dark background
+        // Style for keyboard shortcuts - use theme color for consistency
         let shortcut_style = Style::default()
-            .fg(ratatui::style::Color::Rgb(140, 140, 140))
+            .fg(theme.help_separator_fg)
             .bg(theme.menu_dropdown_bg);
 
+        // Hovered shortcut style
+        let hover_shortcut_style = Style::default()
+            .fg(theme.menu_hover_fg)
+            .bg(theme.menu_hover_bg);
+
         let mut spans = Vec::new();
+        let mut current_col = area.x;
 
         // Left padding
         spans.push(Span::styled(" ", base_style));
+        current_col += 1;
 
-        // Case Sensitive option
-        spans.push(Span::styled(
-            case_checkbox,
-            if case_sensitive {
+        // Helper to get style based on hover and checked state
+        let get_checkbox_style = |is_hovered: bool, is_checked: bool| -> Style {
+            if is_hovered {
+                hover_style
+            } else if is_checked {
                 active_style
             } else {
                 base_style
-            },
+            }
+        };
+
+        // Case Sensitive option
+        let case_hovered = hover == SearchOptionsHover::CaseSensitive;
+        let case_start = current_col;
+        let case_label = format!("{} Case Sensitive", case_checkbox);
+        let case_shortcut_text = case_shortcut
+            .as_ref()
+            .map(|s| format!(" ({})", s))
+            .unwrap_or_default();
+        let case_full_width = str_width(&case_label) + str_width(&case_shortcut_text);
+
+        spans.push(Span::styled(
+            case_label,
+            get_checkbox_style(case_hovered, case_sensitive),
         ));
-        spans.push(Span::styled(" Case Sensitive", base_style));
-        if let Some(shortcut) = &case_shortcut {
-            spans.push(Span::styled(format!(" ({})", shortcut), shortcut_style));
+        if !case_shortcut_text.is_empty() {
+            spans.push(Span::styled(
+                case_shortcut_text,
+                if case_hovered {
+                    hover_shortcut_style
+                } else {
+                    shortcut_style
+                },
+            ));
         }
+        current_col += case_full_width as u16;
+        layout.case_sensitive = Some((case_start, current_col));
 
         // Separator
         spans.push(Span::styled("   ", base_style));
+        current_col += 3;
 
         // Whole Word option
+        let word_hovered = hover == SearchOptionsHover::WholeWord;
+        let word_start = current_col;
+        let word_label = format!("{} Whole Word", word_checkbox);
+        let word_shortcut_text = word_shortcut
+            .as_ref()
+            .map(|s| format!(" ({})", s))
+            .unwrap_or_default();
+        let word_full_width = str_width(&word_label) + str_width(&word_shortcut_text);
+
         spans.push(Span::styled(
-            word_checkbox,
-            if whole_word { active_style } else { base_style },
+            word_label,
+            get_checkbox_style(word_hovered, whole_word),
         ));
-        spans.push(Span::styled(" Whole Word", base_style));
-        if let Some(shortcut) = &word_shortcut {
-            spans.push(Span::styled(format!(" ({})", shortcut), shortcut_style));
+        if !word_shortcut_text.is_empty() {
+            spans.push(Span::styled(
+                word_shortcut_text,
+                if word_hovered {
+                    hover_shortcut_style
+                } else {
+                    shortcut_style
+                },
+            ));
         }
+        current_col += word_full_width as u16;
+        layout.whole_word = Some((word_start, current_col));
 
         // Separator
         spans.push(Span::styled("   ", base_style));
+        current_col += 3;
 
         // Regex option
+        let regex_hovered = hover == SearchOptionsHover::Regex;
+        let regex_start = current_col;
+        let regex_label = format!("{} Regex", regex_checkbox);
+        let regex_shortcut_text = regex_shortcut
+            .as_ref()
+            .map(|s| format!(" ({})", s))
+            .unwrap_or_default();
+        let regex_full_width = str_width(&regex_label) + str_width(&regex_shortcut_text);
+
         spans.push(Span::styled(
-            regex_checkbox,
-            if use_regex { active_style } else { base_style },
+            regex_label,
+            get_checkbox_style(regex_hovered, use_regex),
         ));
-        spans.push(Span::styled(" Regex", base_style));
-        if let Some(shortcut) = &regex_shortcut {
-            spans.push(Span::styled(format!(" ({})", shortcut), shortcut_style));
+        if !regex_shortcut_text.is_empty() {
+            spans.push(Span::styled(
+                regex_shortcut_text,
+                if regex_hovered {
+                    hover_shortcut_style
+                } else {
+                    shortcut_style
+                },
+            ));
         }
+        current_col += regex_full_width as u16;
+        layout.regex = Some((regex_start, current_col));
 
         // Confirm Each option (only shown in replace mode)
         if let Some(confirm_value) = confirm_each {
@@ -894,23 +1034,37 @@ impl StatusBarRenderer {
 
             // Separator
             spans.push(Span::styled("   ", base_style));
+            current_col += 3;
+
+            let confirm_hovered = hover == SearchOptionsHover::ConfirmEach;
+            let confirm_start = current_col;
+            let confirm_label = format!("{} Confirm each", confirm_checkbox);
+            let confirm_shortcut_text = confirm_shortcut
+                .as_ref()
+                .map(|s| format!(" ({})", s))
+                .unwrap_or_default();
+            let confirm_full_width = str_width(&confirm_label) + str_width(&confirm_shortcut_text);
 
             spans.push(Span::styled(
-                confirm_checkbox,
-                if confirm_value {
-                    active_style
-                } else {
-                    base_style
-                },
+                confirm_label,
+                get_checkbox_style(confirm_hovered, confirm_value),
             ));
-            spans.push(Span::styled(" Confirm each", base_style));
-            if let Some(shortcut) = &confirm_shortcut {
-                spans.push(Span::styled(format!(" ({})", shortcut), shortcut_style));
+            if !confirm_shortcut_text.is_empty() {
+                spans.push(Span::styled(
+                    confirm_shortcut_text,
+                    if confirm_hovered {
+                        hover_shortcut_style
+                    } else {
+                        shortcut_style
+                    },
+                ));
             }
+            current_col += confirm_full_width as u16;
+            layout.confirm_each = Some((confirm_start, current_col));
         }
 
         // Fill remaining space
-        let current_width: usize = spans.iter().map(|s| s.content.len()).sum();
+        let current_width = (current_col - area.x) as usize;
         let available_width = area.width as usize;
         if current_width < available_width {
             spans.push(Span::styled(
@@ -921,6 +1075,8 @@ impl StatusBarRenderer {
 
         let options_line = Paragraph::new(Line::from(spans));
         frame.render_widget(options_line, area);
+
+        layout
     }
 }
 

@@ -489,7 +489,17 @@ impl Editor {
                 }
             });
 
-            StatusBarRenderer::render_search_options(
+            // Determine hover state for search options
+            use crate::view::ui::status_bar::SearchOptionsHover;
+            let search_options_hover = match &self.mouse_state.hover_target {
+                Some(HoverTarget::SearchOptionCaseSensitive) => SearchOptionsHover::CaseSensitive,
+                Some(HoverTarget::SearchOptionWholeWord) => SearchOptionsHover::WholeWord,
+                Some(HoverTarget::SearchOptionRegex) => SearchOptionsHover::Regex,
+                Some(HoverTarget::SearchOptionConfirmEach) => SearchOptionsHover::ConfirmEach,
+                _ => SearchOptionsHover::None,
+            };
+
+            let search_options_layout = StatusBarRenderer::render_search_options(
                 frame,
                 main_chunks[search_options_idx],
                 self.search_case_sensitive,
@@ -498,7 +508,11 @@ impl Editor {
                 confirm_each,
                 &theme,
                 &keybindings_cloned,
+                search_options_hover,
             );
+            self.cached_layout.search_options_layout = Some(search_options_layout);
+        } else {
+            self.cached_layout.search_options_layout = None;
         }
 
         // Render prompt line if active
