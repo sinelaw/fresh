@@ -3858,3 +3858,397 @@ fn test_hover_popup_height_accounts_for_wrapped_lines() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test Home key jumps to first item in completion popup
+#[test]
+fn test_popup_home_key_selects_first_item() -> std::io::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Show completion popup with many items
+    let items: Vec<PopupListItemData> = (0..20)
+        .map(|i| PopupListItemData {
+            text: format!("item_{}", i),
+            detail: None,
+            icon: None,
+            data: Some(format!("item_{}", i)),
+        })
+        .collect();
+
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            transient: false,
+            content: PopupContentData::List { items, selected: 0 },
+            position: PopupPositionData::Centered,
+            width: 30,
+            max_height: 10,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Navigate down several times
+    for _ in 0..15 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    }
+    harness.render()?;
+
+    // Press Home to jump to first item
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Confirm selection
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify item_0 was inserted (first item)
+    let buffer_content = harness.get_buffer_content().unwrap();
+    assert!(
+        buffer_content.contains("item_0"),
+        "Expected 'item_0' to be inserted after Home key, got: {buffer_content}"
+    );
+
+    Ok(())
+}
+
+/// Test End key jumps to last item in completion popup
+#[test]
+fn test_popup_end_key_selects_last_item() -> std::io::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Show completion popup with many items
+    let items: Vec<PopupListItemData> = (0..20)
+        .map(|i| PopupListItemData {
+            text: format!("item_{}", i),
+            detail: None,
+            icon: None,
+            data: Some(format!("item_{}", i)),
+        })
+        .collect();
+
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            transient: false,
+            content: PopupContentData::List { items, selected: 0 },
+            position: PopupPositionData::Centered,
+            width: 30,
+            max_height: 10,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Press End to jump to last item
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Confirm selection
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify item_19 was inserted (last item)
+    let buffer_content = harness.get_buffer_content().unwrap();
+    assert!(
+        buffer_content.contains("item_19"),
+        "Expected 'item_19' to be inserted after End key, got: {buffer_content}"
+    );
+
+    Ok(())
+}
+
+/// Test mouse wheel scrolls popup instead of dismissing it
+#[test]
+fn test_popup_mouse_wheel_scrolls() -> std::io::Result<()> {
+    use crossterm::event::{MouseEvent, MouseEventKind};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Show completion popup with many items (more than visible)
+    let items: Vec<PopupListItemData> = (0..30)
+        .map(|i| PopupListItemData {
+            text: format!("completion_item_{}", i),
+            detail: None,
+            icon: None,
+            data: Some(format!("completion_item_{}", i)),
+        })
+        .collect();
+
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            transient: false,
+            content: PopupContentData::List { items, selected: 0 },
+            position: PopupPositionData::Centered,
+            width: 40,
+            max_height: 10,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Verify popup is visible
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Popup should be visible before scroll"
+    );
+
+    // Get initial scroll offset
+    let initial_offset = harness
+        .editor()
+        .active_state()
+        .popups
+        .top()
+        .map(|p| p.scroll_state().2)
+        .unwrap_or(0);
+
+    // Send scroll down event at a position over the popup (center of screen)
+    let scroll_event = MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 40,
+        row: 12,
+        modifiers: KeyModifiers::empty(),
+    };
+    harness.send_mouse(scroll_event)?;
+    harness.render()?;
+
+    // Verify popup is still visible (not dismissed)
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Popup should still be visible after scroll"
+    );
+
+    // Verify scroll offset changed
+    let new_offset = harness
+        .editor()
+        .active_state()
+        .popups
+        .top()
+        .map(|p| p.scroll_state().2)
+        .unwrap_or(0);
+
+    assert!(
+        new_offset > initial_offset,
+        "Scroll offset should increase after scroll down: {} -> {}",
+        initial_offset,
+        new_offset
+    );
+
+    Ok(())
+}
+
+/// Test scrollbar appears when popup content exceeds visible area
+#[test]
+fn test_popup_scrollbar_visible_for_long_list() -> std::io::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Show completion popup with many items (more than max_height)
+    let items: Vec<PopupListItemData> = (0..50)
+        .map(|i| PopupListItemData {
+            text: format!("item_{}", i),
+            detail: None,
+            icon: None,
+            data: Some(format!("item_{}", i)),
+        })
+        .collect();
+
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            transient: false,
+            content: PopupContentData::List { items, selected: 0 },
+            position: PopupPositionData::Centered,
+            width: 30,
+            max_height: 10,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Verify popup needs scrollbar (50 items > 10 max_height)
+    let needs_scrollbar = harness
+        .editor()
+        .active_state()
+        .popups
+        .top()
+        .map(|p| p.needs_scrollbar())
+        .unwrap_or(false);
+
+    assert!(
+        needs_scrollbar,
+        "Popup with 50 items should need scrollbar when max_height is 10"
+    );
+
+    // Check that the screen contains the scrollbar character
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("█") || screen.contains("│"),
+        "Screen should contain scrollbar characters (█ or │)"
+    );
+
+    Ok(())
+}
+
+/// Test scrollbar is not shown for short lists
+#[test]
+fn test_popup_no_scrollbar_for_short_list() -> std::io::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Show completion popup with few items (less than max_height)
+    let items: Vec<PopupListItemData> = (0..3)
+        .map(|i| PopupListItemData {
+            text: format!("item_{}", i),
+            detail: None,
+            icon: None,
+            data: Some(format!("item_{}", i)),
+        })
+        .collect();
+
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            transient: false,
+            content: PopupContentData::List { items, selected: 0 },
+            position: PopupPositionData::Centered,
+            width: 30,
+            max_height: 10,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Verify popup does NOT need scrollbar (3 items < 10 max_height)
+    let needs_scrollbar = harness
+        .editor()
+        .active_state()
+        .popups
+        .top()
+        .map(|p| p.needs_scrollbar())
+        .unwrap_or(true);
+
+    assert!(
+        !needs_scrollbar,
+        "Popup with 3 items should not need scrollbar when max_height is 10"
+    );
+
+    Ok(())
+}
+
+/// Test mouse wheel scroll up in popup
+#[test]
+fn test_popup_mouse_wheel_scroll_up() -> std::io::Result<()> {
+    use crossterm::event::{MouseEvent, MouseEventKind};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Show completion popup with many items
+    let items: Vec<PopupListItemData> = (0..30)
+        .map(|i| PopupListItemData {
+            text: format!("item_{}", i),
+            detail: None,
+            icon: None,
+            data: Some(format!("item_{}", i)),
+        })
+        .collect();
+
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            transient: false,
+            content: PopupContentData::List { items, selected: 0 },
+            position: PopupPositionData::Centered,
+            width: 40,
+            max_height: 10,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // First scroll down to create some scroll offset
+    for _ in 0..5 {
+        let scroll_down = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 40,
+            row: 12,
+            modifiers: KeyModifiers::empty(),
+        };
+        harness.send_mouse(scroll_down)?;
+    }
+    harness.render()?;
+
+    let offset_after_down = harness
+        .editor()
+        .active_state()
+        .popups
+        .top()
+        .map(|p| p.scroll_state().2)
+        .unwrap_or(0);
+
+    // Now scroll up
+    let scroll_up = MouseEvent {
+        kind: MouseEventKind::ScrollUp,
+        column: 40,
+        row: 12,
+        modifiers: KeyModifiers::empty(),
+    };
+    harness.send_mouse(scroll_up)?;
+    harness.render()?;
+
+    let offset_after_up = harness
+        .editor()
+        .active_state()
+        .popups
+        .top()
+        .map(|p| p.scroll_state().2)
+        .unwrap_or(0);
+
+    // Verify popup is still visible
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Popup should still be visible after scroll up"
+    );
+
+    // Verify scroll offset decreased
+    assert!(
+        offset_after_up < offset_after_down,
+        "Scroll offset should decrease after scroll up: {} -> {}",
+        offset_after_down,
+        offset_after_up
+    );
+
+    Ok(())
+}

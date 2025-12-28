@@ -234,14 +234,21 @@ impl Popup {
         }
     }
 
+    /// Get the actual visible content height (accounting for borders)
+    fn visible_height(&self) -> usize {
+        let border_offset = if self.bordered { 2 } else { 0 };
+        (self.max_height as usize).saturating_sub(border_offset)
+    }
+
     /// Move selection down (for list popups)
     pub fn select_next(&mut self) {
+        let visible = self.visible_height();
         if let PopupContent::List { items, selected } = &mut self.content {
             if *selected < items.len().saturating_sub(1) {
                 *selected += 1;
-                // Adjust scroll if needed
-                if *selected >= self.scroll_offset + self.max_height as usize {
-                    self.scroll_offset = (*selected + 1).saturating_sub(self.max_height as usize);
+                // Adjust scroll if needed (use visible_height to account for borders)
+                if *selected >= self.scroll_offset + visible {
+                    self.scroll_offset = (*selected + 1).saturating_sub(visible);
                 }
             }
         }
@@ -262,23 +269,23 @@ impl Popup {
 
     /// Scroll down by one page
     pub fn page_down(&mut self) {
+        let visible = self.visible_height();
         if let PopupContent::List { items, selected } = &mut self.content {
-            let page_size = self.max_height as usize;
-            *selected = (*selected + page_size).min(items.len().saturating_sub(1));
-            self.scroll_offset = (*selected + 1).saturating_sub(page_size);
+            *selected = (*selected + visible).min(items.len().saturating_sub(1));
+            self.scroll_offset = (*selected + 1).saturating_sub(visible);
         } else {
-            self.scroll_offset += self.max_height as usize;
+            self.scroll_offset += visible;
         }
     }
 
     /// Scroll up by one page
     pub fn page_up(&mut self) {
+        let visible = self.visible_height();
         if let PopupContent::List { items: _, selected } = &mut self.content {
-            let page_size = self.max_height as usize;
-            *selected = selected.saturating_sub(page_size);
+            *selected = selected.saturating_sub(visible);
             self.scroll_offset = *selected;
         } else {
-            self.scroll_offset = self.scroll_offset.saturating_sub(self.max_height as usize);
+            self.scroll_offset = self.scroll_offset.saturating_sub(visible);
         }
     }
 
@@ -294,19 +301,18 @@ impl Popup {
 
     /// Select the last item (for list popups)
     pub fn select_last(&mut self) {
+        let visible = self.visible_height();
         if let PopupContent::List { items, selected } = &mut self.content {
             *selected = items.len().saturating_sub(1);
             // Ensure the last item is visible
-            let page_size = self.max_height as usize;
-            if *selected >= page_size {
-                self.scroll_offset = (*selected + 1).saturating_sub(page_size);
+            if *selected >= visible {
+                self.scroll_offset = (*selected + 1).saturating_sub(visible);
             }
         } else {
             // For non-list content, scroll to the end
-            let content_height = self.content_height() as usize;
-            let page_size = self.max_height as usize;
-            if content_height > page_size {
-                self.scroll_offset = content_height.saturating_sub(page_size);
+            let content_height = self.item_count();
+            if content_height > visible {
+                self.scroll_offset = content_height.saturating_sub(visible);
             }
         }
     }
@@ -314,14 +320,9 @@ impl Popup {
     /// Scroll by a delta amount (positive = down, negative = up)
     /// Used for mouse wheel scrolling
     pub fn scroll_by(&mut self, delta: i32) {
-        let content_len = match &self.content {
-            PopupContent::Text(lines) => lines.len(),
-            PopupContent::Markdown(lines) => lines.len(),
-            PopupContent::List { items, .. } => items.len(),
-            PopupContent::Custom(lines) => lines.len(),
-        };
-
-        let max_scroll = content_len.saturating_sub(self.max_height as usize);
+        let content_len = self.item_count();
+        let visible = self.visible_height();
+        let max_scroll = content_len.saturating_sub(visible);
 
         if delta < 0 {
             // Scroll up
@@ -334,7 +335,7 @@ impl Popup {
         // For list popups, adjust selection to stay visible
         if let PopupContent::List { items, selected } = &mut self.content {
             let visible_start = self.scroll_offset;
-            let visible_end = (self.scroll_offset + self.max_height as usize).min(items.len());
+            let visible_end = (self.scroll_offset + visible).min(items.len());
 
             if *selected < visible_start {
                 *selected = visible_start;
@@ -352,6 +353,18 @@ impl Popup {
             PopupContent::List { items, .. } => items.len(),
             PopupContent::Custom(lines) => lines.len(),
         }
+    }
+
+    /// Check if the popup needs a scrollbar (content exceeds visible area)
+    pub fn needs_scrollbar(&self) -> bool {
+        self.item_count() > self.visible_height()
+    }
+
+    /// Get scroll state for scrollbar rendering
+    pub fn scroll_state(&self) -> (usize, usize, usize) {
+        let total = self.item_count();
+        let visible = self.visible_height();
+        (total, visible, self.scroll_offset)
     }
 
     /// Calculate the actual content height based on the popup content
