@@ -77,6 +77,23 @@ impl InputHandler for PopupManager {
                 InputResult::Consumed
             }
 
+            // Type-to-filter for completion popups
+            KeyCode::Char(c) if event.modifiers.is_empty() => {
+                // Check if this is a completion popup that supports type-to-filter
+                if self.is_completion_popup() {
+                    ctx.defer(DeferredAction::PopupTypeChar(c));
+                }
+                InputResult::Consumed
+            }
+
+            // Backspace for type-to-filter in completion popups
+            KeyCode::Backspace if event.modifiers.is_empty() => {
+                if self.is_completion_popup() {
+                    ctx.defer(DeferredAction::PopupBackspace);
+                }
+                InputResult::Consumed
+            }
+
             // Consume all other keys (modal behavior)
             _ => InputResult::Consumed,
         }

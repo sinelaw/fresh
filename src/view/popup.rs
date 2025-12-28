@@ -755,6 +755,14 @@ impl PopupManager {
         !self.popups.is_empty()
     }
 
+    /// Check if the topmost popup is a completion popup (supports type-to-filter)
+    pub fn is_completion_popup(&self) -> bool {
+        self.top()
+            .and_then(|p| p.title.as_ref())
+            .map(|title| title == "Completion")
+            .unwrap_or(false)
+    }
+
     /// Get all popups (for rendering)
     pub fn all(&self) -> &[Popup] {
         &self.popups

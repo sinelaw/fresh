@@ -122,5 +122,206 @@ impl Editor {
             self.set_status_message("LSP server startup cancelled".to_string());
         }
         self.hide_popup();
+        // Clear completion items when popup is closed
+        self.completion_items = None;
+    }
+
+    /// Handle typing a character while completion popup is open.
+    /// Inserts the character into the buffer and re-filters the completion list.
+    pub fn handle_popup_type_char(&mut self, c: char) {
+        // First, insert the character into the buffer
+        let (cursor_id, cursor_pos) = {
+            let state = self.active_state();
+            (state.cursors.primary_id(), state.cursors.primary().position)
+        };
+
+        let insert_event = Event::Insert {
+            position: cursor_pos,
+            text: c.to_string(),
+            cursor_id,
+        };
+
+        self.active_event_log_mut().append(insert_event.clone());
+        self.apply_event_to_active_buffer(&insert_event);
+
+        // Now re-filter the completion list
+        self.refilter_completion_popup();
+    }
+
+    /// Handle backspace while completion popup is open.
+    /// Deletes a character and re-filters the completion list.
+    pub fn handle_popup_backspace(&mut self) {
+        let (cursor_id, cursor_pos) = {
+            let state = self.active_state();
+            (state.cursors.primary_id(), state.cursors.primary().position)
+        };
+
+        // Don't do anything if at start of buffer
+        if cursor_pos == 0 {
+            return;
+        }
+
+        // Find the previous character boundary
+        let prev_pos = {
+            let state = self.active_state();
+            let text = match state.buffer.to_string() {
+                Some(t) => t,
+                None => return,
+            };
+            // Find the previous character
+            text[..cursor_pos]
+                .char_indices()
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0)
+        };
+
+        let deleted_text = self.active_state_mut().get_text_range(prev_pos, cursor_pos);
+
+        let delete_event = Event::Delete {
+            range: prev_pos..cursor_pos,
+            deleted_text,
+            cursor_id,
+        };
+
+        self.active_event_log_mut().append(delete_event.clone());
+        self.apply_event_to_active_buffer(&delete_event);
+
+        // Now re-filter the completion list
+        self.refilter_completion_popup();
+    }
+
+    /// Re-filter the completion popup based on current prefix.
+    /// If no items match, dismiss the popup.
+    fn refilter_completion_popup(&mut self) {
+        // Get stored completion items
+        let items = match &self.completion_items {
+            Some(items) if !items.is_empty() => items.clone(),
+            _ => {
+                self.hide_popup();
+                return;
+            }
+        };
+
+        // Get current prefix
+        let (word_start, cursor_pos) = {
+            let state = self.active_state();
+            let cursor_pos = state.cursors.primary().position;
+            let word_start = find_completion_word_start(&state.buffer, cursor_pos);
+            (word_start, cursor_pos)
+        };
+
+        let prefix = if word_start < cursor_pos {
+            self.active_state_mut()
+                .get_text_range(word_start, cursor_pos)
+                .to_lowercase()
+        } else {
+            String::new()
+        };
+
+        // Filter items
+        let filtered_items: Vec<&lsp_types::CompletionItem> = if prefix.is_empty() {
+            items.iter().collect()
+        } else {
+            items
+                .iter()
+                .filter(|item| {
+                    item.label.to_lowercase().starts_with(&prefix)
+                        || item
+                            .filter_text
+                            .as_ref()
+                            .map(|ft| ft.to_lowercase().starts_with(&prefix))
+                            .unwrap_or(false)
+                })
+                .collect()
+        };
+
+        // If no items match, dismiss popup
+        if filtered_items.is_empty() {
+            self.hide_popup();
+            self.completion_items = None;
+            return;
+        }
+
+        // Get current selection to try preserving it
+        let current_selection = self
+            .active_state()
+            .popups
+            .top()
+            .and_then(|p| p.selected_item())
+            .map(|item| item.text.clone());
+
+        // Convert to PopupListItem
+        use crate::view::popup::PopupListItem;
+
+        let popup_items: Vec<PopupListItem> = filtered_items
+            .iter()
+            .map(|item| {
+                let text = item.label.clone();
+                let detail = item.detail.clone();
+                let icon = match item.kind {
+                    Some(lsp_types::CompletionItemKind::FUNCTION)
+                    | Some(lsp_types::CompletionItemKind::METHOD) => Some("λ".to_string()),
+                    Some(lsp_types::CompletionItemKind::VARIABLE) => Some("v".to_string()),
+                    Some(lsp_types::CompletionItemKind::STRUCT)
+                    | Some(lsp_types::CompletionItemKind::CLASS) => Some("S".to_string()),
+                    Some(lsp_types::CompletionItemKind::CONSTANT) => Some("c".to_string()),
+                    Some(lsp_types::CompletionItemKind::KEYWORD) => Some("k".to_string()),
+                    _ => None,
+                };
+
+                let mut list_item = PopupListItem::new(text);
+                if let Some(detail) = detail {
+                    list_item = list_item.with_detail(detail);
+                }
+                if let Some(icon) = icon {
+                    list_item = list_item.with_icon(icon);
+                }
+                let data = item
+                    .insert_text
+                    .clone()
+                    .or_else(|| Some(item.label.clone()));
+                if let Some(data) = data {
+                    list_item = list_item.with_data(data);
+                }
+                list_item
+            })
+            .collect();
+
+        // Try to preserve selection
+        let selected = current_selection
+            .and_then(|sel| popup_items.iter().position(|item| item.text == sel))
+            .unwrap_or(0);
+
+        // Update the popup with filtered items
+        use crate::model::event::{
+            PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        };
+
+        let popup_data = PopupData {
+            title: Some("Completion".to_string()),
+            transient: false,
+            content: PopupContentData::List {
+                items: popup_items
+                    .into_iter()
+                    .map(|item| PopupListItemData {
+                        text: item.text,
+                        detail: item.detail,
+                        icon: item.icon,
+                        data: item.data,
+                    })
+                    .collect(),
+                selected,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 50,
+            max_height: 15,
+            bordered: true,
+        };
+
+        // Close old popup and show new one
+        self.hide_popup();
+        self.active_state_mut()
+            .apply(&crate::model::event::Event::ShowPopup { popup: popup_data });
     }
 }

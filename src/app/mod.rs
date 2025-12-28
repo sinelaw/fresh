@@ -262,6 +262,10 @@ pub struct Editor {
     /// Pending LSP completion request ID (if any)
     pending_completion_request: Option<u64>,
 
+    /// Original LSP completion items (for type-to-filter)
+    /// Stored when completion popup is shown, used for re-filtering as user types
+    completion_items: Option<Vec<lsp_types::CompletionItem>>,
+
     /// Pending LSP go-to-definition request ID (if any)
     pending_goto_definition_request: Option<u64>,
 
@@ -816,6 +820,7 @@ impl Editor {
             in_navigation: false,
             next_lsp_request_id: 0,
             pending_completion_request: None,
+            completion_items: None,
             pending_goto_definition_request: None,
             pending_hover_request: None,
             pending_references_request: None,
@@ -1437,6 +1442,11 @@ impl Editor {
     /// Get the currently active buffer state (mutable)
     pub fn active_state_mut(&mut self) -> &mut EditorState {
         self.buffers.get_mut(&self.active_buffer()).unwrap()
+    }
+
+    /// Set completion items for type-to-filter (for testing)
+    pub fn set_completion_items(&mut self, items: Vec<lsp_types::CompletionItem>) {
+        self.completion_items = Some(items);
     }
 
     /// Get the viewport for the active split

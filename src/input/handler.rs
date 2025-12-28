@@ -113,6 +113,10 @@ pub enum DeferredAction {
     // Popup actions
     ClosePopup,
     ConfirmPopup,
+    /// Type a character while completion popup is open (for type-to-filter)
+    PopupTypeChar(char),
+    /// Backspace while completion popup is open (for type-to-filter)
+    PopupBackspace,
 
     // File browser actions
     FileBrowserSelectPrev,

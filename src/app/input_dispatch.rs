@@ -205,6 +205,12 @@ impl Editor {
             DeferredAction::ConfirmPopup => {
                 self.handle_action(Action::PopupConfirm)?;
             }
+            DeferredAction::PopupTypeChar(c) => {
+                self.handle_popup_type_char(c);
+            }
+            DeferredAction::PopupBackspace => {
+                self.handle_popup_backspace();
+            }
 
             // Generic action execution
             DeferredAction::ExecuteAction(kb_action) => {

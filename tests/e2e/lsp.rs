@@ -4252,3 +4252,407 @@ fn test_popup_mouse_wheel_scroll_up() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test type-to-filter: typing a character filters the completion list
+#[test]
+fn test_completion_type_to_filter_basic() -> std::io::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type initial prefix
+    harness.type_text("te")?;
+    harness.render()?;
+
+    // Set up completion items (simulating LSP response)
+    let completion_items = vec![
+        lsp_types::CompletionItem {
+            label: "test_function".to_string(),
+            kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+            detail: Some("fn test_function()".to_string()),
+            insert_text: Some("test_function".to_string()),
+            ..Default::default()
+        },
+        lsp_types::CompletionItem {
+            label: "test_variable".to_string(),
+            kind: Some(lsp_types::CompletionItemKind::VARIABLE),
+            detail: Some("let test_variable".to_string()),
+            insert_text: Some("test_variable".to_string()),
+            ..Default::default()
+        },
+        lsp_types::CompletionItem {
+            label: "temp_file".to_string(),
+            kind: Some(lsp_types::CompletionItemKind::VARIABLE),
+            detail: Some("let temp_file".to_string()),
+            insert_text: Some("temp_file".to_string()),
+            ..Default::default()
+        },
+    ];
+
+    // Store completion items for re-filtering
+    harness.editor_mut().set_completion_items(completion_items);
+
+    // Show completion popup with all items
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            transient: false,
+            content: PopupContentData::List {
+                items: vec![
+                    PopupListItemData {
+                        text: "test_function".to_string(),
+                        detail: Some("fn test_function()".to_string()),
+                        icon: Some("λ".to_string()),
+                        data: Some("test_function".to_string()),
+                    },
+                    PopupListItemData {
+                        text: "test_variable".to_string(),
+                        detail: Some("let test_variable".to_string()),
+                        icon: Some("v".to_string()),
+                        data: Some("test_variable".to_string()),
+                    },
+                    PopupListItemData {
+                        text: "temp_file".to_string(),
+                        detail: Some("let temp_file".to_string()),
+                        icon: Some("v".to_string()),
+                        data: Some("temp_file".to_string()),
+                    },
+                ],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 50,
+            max_height: 15,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Verify all items are visible initially
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("test_function"),
+        "test_function should be visible initially"
+    );
+    assert!(
+        screen.contains("test_variable"),
+        "test_variable should be visible initially"
+    );
+    assert!(
+        screen.contains("temp_file"),
+        "temp_file should be visible initially"
+    );
+
+    // Type 's' to filter to "tes" - should filter out "temp_file"
+    harness.send_key(KeyCode::Char('s'), KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify filtering occurred
+    let buffer = harness.get_buffer_content().unwrap();
+    assert_eq!(buffer, "tes", "Buffer should contain 'tes'");
+
+    // Verify popup is still visible with filtered items
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Popup should still be visible after filtering"
+    );
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("test_function"),
+        "test_function should still be visible"
+    );
+    assert!(
+        screen.contains("test_variable"),
+        "test_variable should still be visible"
+    );
+    // temp_file should be filtered out
+    assert!(
+        !screen.contains("temp_file"),
+        "temp_file should be filtered out after typing 's'"
+    );
+
+    Ok(())
+}
+
+/// Test type-to-filter: popup closes when no items match
+#[test]
+fn test_completion_type_to_filter_closes_on_no_match() -> std::io::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type initial prefix
+    harness.type_text("te")?;
+    harness.render()?;
+
+    // Set up completion items
+    let completion_items = vec![lsp_types::CompletionItem {
+        label: "test_function".to_string(),
+        kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+        insert_text: Some("test_function".to_string()),
+        ..Default::default()
+    }];
+
+    harness.editor_mut().set_completion_items(completion_items);
+
+    // Show completion popup
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            transient: false,
+            content: PopupContentData::List {
+                items: vec![PopupListItemData {
+                    text: "test_function".to_string(),
+                    detail: None,
+                    icon: None,
+                    data: Some("test_function".to_string()),
+                }],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 50,
+            max_height: 15,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Verify popup is visible
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Popup should be visible initially"
+    );
+
+    // Type 'x' - no items start with "tex"
+    harness.send_key(KeyCode::Char('x'), KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify popup is closed (no matches)
+    assert!(
+        !harness.editor().active_state().popups.is_visible(),
+        "Popup should be closed when no items match"
+    );
+
+    // Verify the character was still inserted
+    let buffer = harness.get_buffer_content().unwrap();
+    assert_eq!(buffer, "tex", "Buffer should contain 'tex'");
+
+    Ok(())
+}
+
+/// Test type-to-filter: backspace in popup re-filters with shorter prefix
+#[test]
+fn test_completion_backspace_refilters() -> std::io::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type initial prefix
+    harness.type_text("tes")?;
+    harness.render()?;
+
+    // Set up completion items
+    let completion_items = vec![
+        lsp_types::CompletionItem {
+            label: "test_function".to_string(),
+            kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+            insert_text: Some("test_function".to_string()),
+            ..Default::default()
+        },
+        lsp_types::CompletionItem {
+            label: "temp_file".to_string(),
+            kind: Some(lsp_types::CompletionItemKind::VARIABLE),
+            insert_text: Some("temp_file".to_string()),
+            ..Default::default()
+        },
+    ];
+
+    harness.editor_mut().set_completion_items(completion_items);
+
+    // Show completion popup with filtered items (only test_function matches "tes")
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            transient: false,
+            content: PopupContentData::List {
+                items: vec![PopupListItemData {
+                    text: "test_function".to_string(),
+                    detail: None,
+                    icon: None,
+                    data: Some("test_function".to_string()),
+                }],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 50,
+            max_height: 15,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Verify only test_function is visible
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("test_function"),
+        "test_function should be visible"
+    );
+    assert!(
+        !screen.contains("temp_file"),
+        "temp_file should not be visible with 'tes' prefix"
+    );
+
+    // Press backspace to change prefix from "tes" to "te"
+    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify buffer has shorter prefix
+    let buffer = harness.get_buffer_content().unwrap();
+    assert_eq!(buffer, "te", "Buffer should contain 'te' after backspace");
+
+    // Verify popup is still visible
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Popup should still be visible after backspace"
+    );
+
+    // Both items should now be visible (both match "te")
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("test_function"),
+        "test_function should be visible"
+    );
+    assert!(
+        screen.contains("temp_file"),
+        "temp_file should be visible after backspace"
+    );
+
+    Ok(())
+}
+
+/// Test type-to-filter preserves selection when possible
+#[test]
+fn test_completion_type_to_filter_preserves_selection() -> std::io::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type initial prefix
+    harness.type_text("te")?;
+    harness.render()?;
+
+    // Set up completion items
+    let completion_items = vec![
+        lsp_types::CompletionItem {
+            label: "test_alpha".to_string(),
+            kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+            insert_text: Some("test_alpha".to_string()),
+            ..Default::default()
+        },
+        lsp_types::CompletionItem {
+            label: "test_beta".to_string(),
+            kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+            insert_text: Some("test_beta".to_string()),
+            ..Default::default()
+        },
+        lsp_types::CompletionItem {
+            label: "test_gamma".to_string(),
+            kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+            insert_text: Some("test_gamma".to_string()),
+            ..Default::default()
+        },
+    ];
+
+    harness.editor_mut().set_completion_items(completion_items);
+
+    // Show completion popup
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            transient: false,
+            content: PopupContentData::List {
+                items: vec![
+                    PopupListItemData {
+                        text: "test_alpha".to_string(),
+                        detail: None,
+                        icon: None,
+                        data: Some("test_alpha".to_string()),
+                    },
+                    PopupListItemData {
+                        text: "test_beta".to_string(),
+                        detail: None,
+                        icon: None,
+                        data: Some("test_beta".to_string()),
+                    },
+                    PopupListItemData {
+                        text: "test_gamma".to_string(),
+                        detail: None,
+                        icon: None,
+                        data: Some("test_gamma".to_string()),
+                    },
+                ],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 50,
+            max_height: 15,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Navigate to test_beta (second item)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify test_beta is selected
+    let selected = harness
+        .editor()
+        .active_state()
+        .popups
+        .top()
+        .and_then(|p| p.selected_item())
+        .map(|item| item.text.clone());
+    assert_eq!(
+        selected,
+        Some("test_beta".to_string()),
+        "test_beta should be selected"
+    );
+
+    // Type 's' to filter (all items still match "tes")
+    harness.send_key(KeyCode::Char('s'), KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify selection is preserved
+    let selected_after = harness
+        .editor()
+        .active_state()
+        .popups
+        .top()
+        .and_then(|p| p.selected_item())
+        .map(|item| item.text.clone());
+    assert_eq!(
+        selected_after,
+        Some("test_beta".to_string()),
+        "Selection should be preserved after filtering"
+    );
+
+    Ok(())
+}

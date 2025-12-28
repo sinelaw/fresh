@@ -147,10 +147,16 @@ impl Editor {
             bordered: true,
         };
 
+        // Store original items for type-to-filter
+        self.completion_items = Some(items);
+
         self.active_state_mut()
             .apply(&crate::model::event::Event::ShowPopup { popup: popup_data });
 
-        tracing::info!("Showing completion popup with {} items", items.len());
+        tracing::info!(
+            "Showing completion popup with {} items",
+            self.completion_items.as_ref().map_or(0, |i| i.len())
+        );
 
         Ok(())
     }
