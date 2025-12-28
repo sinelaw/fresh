@@ -1,5 +1,6 @@
 //! Text input rendering functions
 
+use crate::primitives::display_width::{char_width, str_width};
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -87,19 +88,41 @@ pub fn render_text_input_aligned(
     };
 
     let inner_width = actual_field_width.saturating_sub(2) as usize;
-    let scroll_offset = if state.cursor > inner_width {
-        state.cursor - inner_width
+
+    // Calculate visual width of text before cursor for proper scrolling
+    // state.cursor is a byte offset, we need the visual width
+    let text_before_cursor = &state.value[..state.cursor.min(state.value.len())];
+    let cursor_visual_pos = str_width(text_before_cursor);
+
+    // Calculate scroll offset based on visual width
+    let scroll_visual_offset = if cursor_visual_pos > inner_width {
+        cursor_visual_pos - inner_width
     } else {
         0
     };
 
-    let visible_text: String = display_text
-        .chars()
-        .skip(scroll_offset)
-        .take(inner_width)
-        .collect();
+    // Build visible text by iterating chars and tracking visual width
+    let mut visible_text = String::new();
+    let mut current_visual_pos = 0;
+    for ch in display_text.chars() {
+        let ch_width = char_width(ch);
+        // Skip characters before scroll offset
+        if current_visual_pos + ch_width <= scroll_visual_offset {
+            current_visual_pos += ch_width;
+            continue;
+        }
+        // Stop if we've filled the visible area
+        if current_visual_pos - scroll_visual_offset >= inner_width {
+            break;
+        }
+        visible_text.push(ch);
+        current_visual_pos += ch_width;
+    }
 
-    let padded = format!("{:width$}", visible_text, width = inner_width);
+    // Pad to fill the field width
+    let visible_width = str_width(&visible_text);
+    let padding = " ".repeat(inner_width.saturating_sub(visible_width));
+    let padded = format!("{}{}", visible_text, padding);
 
     let text_style = if is_placeholder {
         Style::default().fg(placeholder_color)
@@ -128,10 +151,19 @@ pub fn render_text_input_aligned(
     let input_area = Rect::new(input_start, area.y, actual_field_width + 2, 1);
 
     let cursor_pos = if state.focus == FocusState::Focused && !is_placeholder {
-        let cursor_x = input_start + 1 + (state.cursor - scroll_offset) as u16;
+        // Calculate cursor visual position within the visible area
+        let cursor_visual_in_field = cursor_visual_pos.saturating_sub(scroll_visual_offset);
+        let cursor_x = input_start + 1 + cursor_visual_in_field as u16;
         if cursor_x < input_start + actual_field_width + 1 {
             let cursor_area = Rect::new(cursor_x, area.y, 1, 1);
-            let cursor_char = state.value.chars().nth(state.cursor).unwrap_or(' ');
+            // Get the grapheme at cursor position for the highlight
+            let cursor_char = if state.cursor < state.value.len() {
+                crate::primitives::grapheme::grapheme_at(&state.value, state.cursor)
+                    .map(|(g, _, _)| g.chars().next().unwrap_or(' '))
+                    .unwrap_or(' ')
+            } else {
+                ' '
+            };
             let cursor_span = Span::styled(
                 cursor_char.to_string(),
                 Style::default()

@@ -368,3 +368,182 @@ fn test_backspace_utf8_file_save_roundtrip() {
         String::from_utf8_lossy(&saved2)
     );
 }
+
+/// Test that arrow keys move by grapheme clusters for Thai text
+///
+/// Thai "ที่" is 3 Unicode code points but 1 grapheme cluster:
+/// - ท (U+0E17) base consonant
+/// - ี (U+0E35) vowel mark
+/// - ่ (U+0E48) tone mark
+///
+/// Pressing Right arrow once should skip the entire cluster.
+/// Also verifies the screen cursor moves correctly (visual position).
+#[test]
+fn test_thai_grapheme_cluster_movement() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type Thai text: "aที่b" (a + Thai cluster + b)
+    // This gives us: 1 byte (a) + 9 bytes (Thai) + 1 byte (b) = 11 bytes
+    // Visual width: 1 (a) + 1 (Thai cluster) + 1 (b) = 3 columns
+    let text = "aที่b";
+    harness.type_text(text).unwrap();
+    harness.render().unwrap();
+
+    // Verify the text was typed correctly
+    harness.assert_buffer_content(text);
+
+    // Cursor should be at end (byte 11)
+    let pos_at_end = harness.cursor_position();
+    assert_eq!(pos_at_end, 11, "Cursor should be at byte 11 after typing text");
+
+    // Move to start
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.cursor_position(), 0, "Cursor should be at start after Home");
+
+    // Get initial screen cursor position (at start of text, after gutter)
+    let (initial_x, initial_y) = harness.screen_cursor_position();
+    println!("Initial screen cursor: ({}, {})", initial_x, initial_y);
+
+    // Press Right arrow - should move past 'a' (byte 0->1, visual 0->1)
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let pos1 = harness.cursor_position();
+    let (x1, y1) = harness.screen_cursor_position();
+    println!("After 1st Right: buffer pos={}, screen=({}, {})", pos1, x1, y1);
+    assert_eq!(pos1, 1, "After 1st Right, should be at byte 1 (after 'a')");
+    assert_eq!(x1, initial_x + 1, "Screen cursor should advance by 1 column (past 'a')");
+
+    // Press Right arrow - should skip entire Thai cluster (byte 1->10, visual 1->2)
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let pos2 = harness.cursor_position();
+    let (x2, y2) = harness.screen_cursor_position();
+    println!("After 2nd Right: buffer pos={}, screen=({}, {})", pos2, x2, y2);
+    assert_eq!(
+        pos2, 10,
+        "After 2nd Right, should be at byte 10 (after Thai cluster 'ที่'). Got {}",
+        pos2
+    );
+    assert_eq!(
+        x2, initial_x + 2,
+        "Screen cursor should advance by 1 column (Thai cluster has visual width 1). Got {}",
+        x2
+    );
+
+    // Press Right arrow - should move past 'b' (byte 10->11, visual 2->3)
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let pos3 = harness.cursor_position();
+    let (x3, y3) = harness.screen_cursor_position();
+    println!("After 3rd Right: buffer pos={}, screen=({}, {})", pos3, x3, y3);
+    assert_eq!(pos3, 11, "After 3rd Right, should be at byte 11 (after 'b')");
+    assert_eq!(x3, initial_x + 3, "Screen cursor should advance by 1 column (past 'b')");
+
+    // Now go back with Left arrows
+    // Press Left - should move before 'b' (byte 11->10, visual 3->2)
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let pos_l1 = harness.cursor_position();
+    let (xl1, _) = harness.screen_cursor_position();
+    println!("After 1st Left: buffer pos={}, screen x={}", pos_l1, xl1);
+    assert_eq!(pos_l1, 10, "After 1st Left, should be at byte 10");
+    assert_eq!(xl1, initial_x + 2, "Screen cursor should be at column 2");
+
+    // Press Left - should skip entire Thai cluster back (byte 10->1, visual 2->1)
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let pos_l2 = harness.cursor_position();
+    let (xl2, _) = harness.screen_cursor_position();
+    println!("After 2nd Left: buffer pos={}, screen x={}", pos_l2, xl2);
+    assert_eq!(
+        pos_l2, 1,
+        "After 2nd Left, should be at byte 1 (before Thai cluster). Got {}",
+        pos_l2
+    );
+    assert_eq!(
+        xl2, initial_x + 1,
+        "Screen cursor should be at column 1 (after 'a'). Got {}",
+        xl2
+    );
+
+    // Press Left - should move before 'a' (byte 1->0, visual 1->0)
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let pos_l3 = harness.cursor_position();
+    let (xl3, _) = harness.screen_cursor_position();
+    println!("After 3rd Left: buffer pos={}, screen x={}", pos_l3, xl3);
+    assert_eq!(pos_l3, 0, "After 3rd Left, should be at byte 0");
+    assert_eq!(xl3, initial_x, "Screen cursor should be back at initial column");
+}
+
+/// Test that backspace deletes Thai combining marks layer-by-layer
+///
+/// This is the "pro" behavior: backspace removes one code point at a time,
+/// allowing users to fix a typo in a tone mark without retyping the whole character.
+#[test]
+fn test_thai_backspace_layer_by_layer() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type Thai text: "ที่" (base + vowel + tone = 3 code points)
+    let thai = "ที่";
+    harness.type_text(thai).unwrap();
+    harness.render().unwrap();
+
+    // Cursor is at end (byte 9)
+    assert_eq!(harness.cursor_position(), 9);
+
+    // First backspace: should delete tone mark (่) only, leaving "ที"
+    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    let content1 = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content1, "ที",
+        "First backspace should delete only the tone mark. Got: {:?}",
+        content1
+    );
+
+    // Second backspace: should delete vowel mark (ี) only, leaving "ท"
+    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    let content2 = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content2, "ท",
+        "Second backspace should delete only the vowel mark. Got: {:?}",
+        content2
+    );
+
+    // Third backspace: should delete base consonant (ท), leaving empty
+    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    let content3 = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content3, "",
+        "Third backspace should delete the base consonant. Got: {:?}",
+        content3
+    );
+}
+
+/// Test that Delete key removes entire Thai grapheme cluster
+///
+/// Unlike backspace (layer-by-layer), Delete removes the whole cluster at once
+/// because if you delete the base consonant, the marks have nothing to sit on.
+#[test]
+fn test_thai_delete_entire_cluster() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type Thai text: "ที่นี่" (2 grapheme clusters)
+    let thai = "ที่นี่";
+    harness.type_text(thai).unwrap();
+    harness.render().unwrap();
+
+    // Move to start
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    assert_eq!(harness.cursor_position(), 0);
+
+    // Press Delete once - should remove entire first grapheme cluster "ที่"
+    harness.send_key(KeyCode::Delete, KeyModifiers::NONE).unwrap();
+    let content = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content, "นี่",
+        "Delete should remove entire grapheme cluster 'ที่', leaving 'นี่'. Got: {:?}",
+        content
+    );
+}

@@ -271,8 +271,12 @@ impl StatusBarRenderer {
         frame.render_widget(prompt_line, area);
 
         // Set cursor position in the prompt
-        // Cursor should be at: message.len() + cursor_pos
-        let cursor_x = (prompt.message.len() + prompt.cursor_pos) as u16;
+        // Use display width (not byte length) for proper handling of:
+        // - Double-width CJK characters
+        // - Zero-width combining characters (Thai diacritics, etc.)
+        let message_width = str_width(&prompt.message);
+        let input_width_before_cursor = str_width(&prompt.input[..prompt.cursor_pos]);
+        let cursor_x = (message_width + input_width_before_cursor) as u16;
         if cursor_x < area.width {
             frame.set_cursor_position((area.x + cursor_x, area.y));
         }
@@ -328,7 +332,7 @@ impl StatusBarRenderer {
         };
 
         // Build the directory display with separate spans for styling
-        let dir_display_len = if truncated.truncated {
+        if truncated.truncated {
             // Prefix (dimmed)
             spans.push(Span::styled(truncated.prefix.clone(), dir_style));
             // Ellipsis "/[...]" (highlighted)
@@ -339,9 +343,7 @@ impl StatusBarRenderer {
             } else {
                 format!("{}/", truncated.suffix)
             };
-            let len = truncated.prefix.len() + "/[...]".len() + suffix_with_slash.len();
             spans.push(Span::styled(suffix_with_slash, dir_style));
-            len
         } else {
             // No truncation - just show the path with trailing slash
             let path_display = if truncated.suffix.ends_with('/') {
@@ -349,10 +351,8 @@ impl StatusBarRenderer {
             } else {
                 format!("{}/", truncated.suffix)
             };
-            let len = path_display.len();
             spans.push(Span::styled(path_display, dir_style));
-            len
-        };
+        }
 
         // User input (the filename part) - normal color
         spans.push(Span::styled(prompt.input.clone(), base_style));
@@ -363,9 +363,22 @@ impl StatusBarRenderer {
         frame.render_widget(prompt_line, area);
 
         // Set cursor position in the prompt
-        // Cursor should be at: "Open: ".len() + dir_display.len() + cursor_pos
-        let cursor_offset = prefix_len + dir_display_len + prompt.cursor_pos;
-        let cursor_x = cursor_offset as u16;
+        // Use display width for proper handling of Unicode characters
+        // We need to calculate the visual width of: "Open: " + dir_display + input[..cursor_pos]
+        let prefix_width = str_width("Open: ");
+        let dir_display_width = if truncated.truncated {
+            let suffix_with_slash = if truncated.suffix.ends_with('/') {
+                &truncated.suffix
+            } else {
+                // We already added "/" in the suffix_with_slash above, so approximate
+                &truncated.suffix
+            };
+            str_width(&truncated.prefix) + str_width("/[...]") + str_width(suffix_with_slash) + 1
+        } else {
+            str_width(&truncated.suffix) + 1 // +1 for trailing slash
+        };
+        let input_width_before_cursor = str_width(&prompt.input[..prompt.cursor_pos]);
+        let cursor_x = (prefix_width + dir_display_width + input_width_before_cursor) as u16;
         if cursor_x < area.width {
             frame.set_cursor_position((area.x + cursor_x, area.y));
         }
