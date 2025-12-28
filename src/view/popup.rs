@@ -66,7 +66,9 @@ fn wrap_styled_lines(lines: &[StyledLine], max_width: usize) -> Vec<StyledLine> 
 
     for line in lines {
         // Calculate the total width of this line
-        let total_width: usize = line.spans.iter()
+        let total_width: usize = line
+            .spans
+            .iter()
             .map(|s| unicode_width::UnicodeWidthStr::width(s.text.as_str()))
             .sum();
 
@@ -788,20 +790,32 @@ impl Popup {
             PopupContent::Text(lines) => {
                 let wrapped = wrap_text_lines(lines, wrap_width);
                 let count = wrapped.len();
-                (count, count > visible_lines_count && inner_area.width > scrollbar_reserved_width)
+                (
+                    count,
+                    count > visible_lines_count && inner_area.width > scrollbar_reserved_width,
+                )
             }
             PopupContent::Markdown(styled_lines) => {
                 let wrapped = wrap_styled_lines(styled_lines, wrap_width);
                 let count = wrapped.len();
-                (count, count > visible_lines_count && inner_area.width > scrollbar_reserved_width)
+                (
+                    count,
+                    count > visible_lines_count && inner_area.width > scrollbar_reserved_width,
+                )
             }
             PopupContent::List { items, .. } => {
                 let count = items.len();
-                (count, count > visible_lines_count && inner_area.width > scrollbar_reserved_width)
+                (
+                    count,
+                    count > visible_lines_count && inner_area.width > scrollbar_reserved_width,
+                )
             }
             PopupContent::Custom(lines) => {
                 let count = lines.len();
-                (count, count > visible_lines_count && inner_area.width > scrollbar_reserved_width)
+                (
+                    count,
+                    count > visible_lines_count && inner_area.width > scrollbar_reserved_width,
+                )
             }
         };
 
@@ -923,11 +937,8 @@ impl Popup {
                 height: inner_area.height,
             };
 
-            let scrollbar_state = ScrollbarState::new(
-                wrapped_total_lines,
-                visible_lines_count,
-                self.scroll_offset,
-            );
+            let scrollbar_state =
+                ScrollbarState::new(wrapped_total_lines, visible_lines_count, self.scroll_offset);
             let scrollbar_colors = ScrollbarColors::from_theme(theme);
             render_scrollbar(frame, scrollbar_area, &scrollbar_state, &scrollbar_colors);
         }

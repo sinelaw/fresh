@@ -3738,9 +3738,7 @@ fn test_hover_popup_mouse_scroll() -> std::io::Result<()> {
 
     // Create content that exceeds the visible area (needs scrolling)
     // With max_height=12 and borders=2, we have 10 visible lines
-    let long_content: Vec<String> = (1..=20)
-        .map(|i| format!("Hover line {}", i))
-        .collect();
+    let long_content: Vec<String> = (1..=20).map(|i| format!("Hover line {}", i)).collect();
 
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
