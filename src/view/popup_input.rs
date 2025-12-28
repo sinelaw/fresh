@@ -50,6 +50,18 @@ impl InputHandler for PopupManager {
                 }
                 InputResult::Consumed
             }
+            KeyCode::Home => {
+                if let Some(popup) = self.top_mut() {
+                    popup.select_first();
+                }
+                InputResult::Consumed
+            }
+            KeyCode::End => {
+                if let Some(popup) = self.top_mut() {
+                    popup.select_last();
+                }
+                InputResult::Consumed
+            }
 
             // Tab also navigates
             KeyCode::Tab if event.modifiers.is_empty() => {

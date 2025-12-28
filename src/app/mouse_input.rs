@@ -430,6 +430,36 @@ impl Editor {
         false
     }
 
+    /// Handle mouse wheel scroll over a popup
+    /// Returns true if the scroll was handled by a popup
+    fn handle_popup_scroll(&mut self, col: u16, row: u16, delta: i32) -> bool {
+        // Check if there's an active popup
+        if !self.active_state().popups.is_visible() {
+            return false;
+        }
+
+        // Check if mouse is over any popup area (in reverse order, top popup first)
+        for (_popup_idx, popup_rect, _inner_rect, _scroll_offset, num_items) in
+            self.cached_layout.popup_areas.iter().rev()
+        {
+            if col >= popup_rect.x
+                && col < popup_rect.x + popup_rect.width
+                && row >= popup_rect.y
+                && row < popup_rect.y + popup_rect.height
+                && *num_items > 0
+            {
+                // Scroll the popup
+                let state = self.active_state_mut();
+                if let Some(popup) = state.popups.top_mut() {
+                    popup.scroll_by(delta);
+                }
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Compute what hover target is at the given position
     fn compute_hover_target(&self, col: u16, row: u16) -> Option<HoverTarget> {
         // Check suggestions area first (command palette, autocomplete)

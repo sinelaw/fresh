@@ -282,6 +282,78 @@ impl Popup {
         }
     }
 
+    /// Select the first item (for list popups)
+    pub fn select_first(&mut self) {
+        if let PopupContent::List { items: _, selected } = &mut self.content {
+            *selected = 0;
+            self.scroll_offset = 0;
+        } else {
+            self.scroll_offset = 0;
+        }
+    }
+
+    /// Select the last item (for list popups)
+    pub fn select_last(&mut self) {
+        if let PopupContent::List { items, selected } = &mut self.content {
+            *selected = items.len().saturating_sub(1);
+            // Ensure the last item is visible
+            let page_size = self.max_height as usize;
+            if *selected >= page_size {
+                self.scroll_offset = (*selected + 1).saturating_sub(page_size);
+            }
+        } else {
+            // For non-list content, scroll to the end
+            let content_height = self.content_height() as usize;
+            let page_size = self.max_height as usize;
+            if content_height > page_size {
+                self.scroll_offset = content_height.saturating_sub(page_size);
+            }
+        }
+    }
+
+    /// Scroll by a delta amount (positive = down, negative = up)
+    /// Used for mouse wheel scrolling
+    pub fn scroll_by(&mut self, delta: i32) {
+        let content_len = match &self.content {
+            PopupContent::Text(lines) => lines.len(),
+            PopupContent::Markdown(lines) => lines.len(),
+            PopupContent::List { items, .. } => items.len(),
+            PopupContent::Custom(lines) => lines.len(),
+        };
+
+        let max_scroll = content_len.saturating_sub(self.max_height as usize);
+
+        if delta < 0 {
+            // Scroll up
+            self.scroll_offset = self.scroll_offset.saturating_sub((-delta) as usize);
+        } else {
+            // Scroll down
+            self.scroll_offset = (self.scroll_offset + delta as usize).min(max_scroll);
+        }
+
+        // For list popups, adjust selection to stay visible
+        if let PopupContent::List { items, selected } = &mut self.content {
+            let visible_start = self.scroll_offset;
+            let visible_end = (self.scroll_offset + self.max_height as usize).min(items.len());
+
+            if *selected < visible_start {
+                *selected = visible_start;
+            } else if *selected >= visible_end {
+                *selected = visible_end.saturating_sub(1);
+            }
+        }
+    }
+
+    /// Get the total number of items/lines in the popup
+    pub fn item_count(&self) -> usize {
+        match &self.content {
+            PopupContent::Text(lines) => lines.len(),
+            PopupContent::Markdown(lines) => lines.len(),
+            PopupContent::List { items, .. } => items.len(),
+            PopupContent::Custom(lines) => lines.len(),
+        }
+    }
+
     /// Calculate the actual content height based on the popup content
     fn content_height(&self) -> u16 {
         // Use the popup's configured width for wrapping calculation
