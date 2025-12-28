@@ -394,51 +394,85 @@ fn test_thai_grapheme_cluster_movement() {
 
     // Cursor should be at end (byte 11)
     let pos_at_end = harness.cursor_position();
-    assert_eq!(pos_at_end, 11, "Cursor should be at byte 11 after typing text");
+    assert_eq!(
+        pos_at_end, 11,
+        "Cursor should be at byte 11 after typing text"
+    );
 
     // Move to start
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    assert_eq!(harness.cursor_position(), 0, "Cursor should be at start after Home");
+    assert_eq!(
+        harness.cursor_position(),
+        0,
+        "Cursor should be at start after Home"
+    );
 
     // Get initial screen cursor position (at start of text, after gutter)
     let (initial_x, initial_y) = harness.screen_cursor_position();
     println!("Initial screen cursor: ({}, {})", initial_x, initial_y);
 
     // Press Right arrow - should move past 'a' (byte 0->1, visual 0->1)
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     let pos1 = harness.cursor_position();
     let (x1, y1) = harness.screen_cursor_position();
-    println!("After 1st Right: buffer pos={}, screen=({}, {})", pos1, x1, y1);
+    println!(
+        "After 1st Right: buffer pos={}, screen=({}, {})",
+        pos1, x1, y1
+    );
     assert_eq!(pos1, 1, "After 1st Right, should be at byte 1 (after 'a')");
-    assert_eq!(x1, initial_x + 1, "Screen cursor should advance by 1 column (past 'a')");
+    assert_eq!(
+        x1,
+        initial_x + 1,
+        "Screen cursor should advance by 1 column (past 'a')"
+    );
 
     // Press Right arrow - should skip entire Thai cluster (byte 1->10, visual 1->2)
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     let pos2 = harness.cursor_position();
     let (x2, y2) = harness.screen_cursor_position();
-    println!("After 2nd Right: buffer pos={}, screen=({}, {})", pos2, x2, y2);
+    println!(
+        "After 2nd Right: buffer pos={}, screen=({}, {})",
+        pos2, x2, y2
+    );
     assert_eq!(
         pos2, 10,
         "After 2nd Right, should be at byte 10 (after Thai cluster 'ที่'). Got {}",
         pos2
     );
     assert_eq!(
-        x2, initial_x + 2,
+        x2,
+        initial_x + 2,
         "Screen cursor should advance by 1 column (Thai cluster has visual width 1). Got {}",
         x2
     );
 
     // Press Right arrow - should move past 'b' (byte 10->11, visual 2->3)
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     let pos3 = harness.cursor_position();
     let (x3, y3) = harness.screen_cursor_position();
-    println!("After 3rd Right: buffer pos={}, screen=({}, {})", pos3, x3, y3);
-    assert_eq!(pos3, 11, "After 3rd Right, should be at byte 11 (after 'b')");
-    assert_eq!(x3, initial_x + 3, "Screen cursor should advance by 1 column (past 'b')");
+    println!(
+        "After 3rd Right: buffer pos={}, screen=({}, {})",
+        pos3, x3, y3
+    );
+    assert_eq!(
+        pos3, 11,
+        "After 3rd Right, should be at byte 11 (after 'b')"
+    );
+    assert_eq!(
+        x3,
+        initial_x + 3,
+        "Screen cursor should advance by 1 column (past 'b')"
+    );
 
     // Now go back with Left arrows
     // Press Left - should move before 'b' (byte 11->10, visual 3->2)
@@ -462,7 +496,8 @@ fn test_thai_grapheme_cluster_movement() {
         pos_l2
     );
     assert_eq!(
-        xl2, initial_x + 1,
+        xl2,
+        initial_x + 1,
         "Screen cursor should be at column 1 (after 'a'). Got {}",
         xl2
     );
@@ -474,7 +509,10 @@ fn test_thai_grapheme_cluster_movement() {
     let (xl3, _) = harness.screen_cursor_position();
     println!("After 3rd Left: buffer pos={}, screen x={}", pos_l3, xl3);
     assert_eq!(pos_l3, 0, "After 3rd Left, should be at byte 0");
-    assert_eq!(xl3, initial_x, "Screen cursor should be back at initial column");
+    assert_eq!(
+        xl3, initial_x,
+        "Screen cursor should be back at initial column"
+    );
 }
 
 /// Test that backspace deletes Thai combining marks layer-by-layer
@@ -494,7 +532,9 @@ fn test_thai_backspace_layer_by_layer() {
     assert_eq!(harness.cursor_position(), 9);
 
     // First backspace: should delete tone mark (่) only, leaving "ที"
-    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
     let content1 = harness.get_buffer_content().unwrap();
     assert_eq!(
         content1, "ที",
@@ -503,7 +543,9 @@ fn test_thai_backspace_layer_by_layer() {
     );
 
     // Second backspace: should delete vowel mark (ี) only, leaving "ท"
-    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
     let content2 = harness.get_buffer_content().unwrap();
     assert_eq!(
         content2, "ท",
@@ -512,7 +554,9 @@ fn test_thai_backspace_layer_by_layer() {
     );
 
     // Third backspace: should delete base consonant (ท), leaving empty
-    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
     let content3 = harness.get_buffer_content().unwrap();
     assert_eq!(
         content3, "",
@@ -539,7 +583,9 @@ fn test_thai_delete_entire_cluster() {
     assert_eq!(harness.cursor_position(), 0);
 
     // Press Delete once - should remove entire first grapheme cluster "ที่"
-    harness.send_key(KeyCode::Delete, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
     let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "นี่",
@@ -589,7 +635,9 @@ fn test_thai_file_open_and_movement() {
 
     // Press Right arrow - should skip entire first grapheme cluster "ที่"
     // The first grapheme "ที่" is 9 bytes (3 code points × 3 bytes each)
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     let pos1 = harness.cursor_position();
@@ -613,7 +661,9 @@ fn test_thai_file_open_and_movement() {
     );
 
     // Press Right arrow again - should skip second grapheme cluster "นี่"
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     let pos2 = harness.cursor_position();
@@ -705,9 +755,7 @@ fn test_search_prompt_grapheme_movement() {
     println!("Cursor at end: ({}, {})", end_x, end_y);
 
     // Press Left once - should move back by 1 (past 'b')
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let (x1, _) = harness.screen_cursor_position();
     println!("After 1st Left: x={}", x1);
@@ -718,9 +766,7 @@ fn test_search_prompt_grapheme_movement() {
     );
 
     // Press Left again - should skip entire Thai cluster
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let (x2, _) = harness.screen_cursor_position();
     println!("After 2nd Left: x={}", x2);
@@ -731,9 +777,7 @@ fn test_search_prompt_grapheme_movement() {
     );
 
     // Press Left again - should move before 'a'
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let (x3, _) = harness.screen_cursor_position();
     println!("After 3rd Left: x={}", x3);
@@ -779,12 +823,8 @@ fn test_file_open_prompt_grapheme_movement() {
     harness.assert_screen_contains("Open:");
 
     // Clear any prefilled text by going to start and selecting all then deleting
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::End, KeyModifiers::SHIFT)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
     harness
         .send_key(KeyCode::Delete, KeyModifiers::NONE)
         .unwrap();
@@ -804,9 +844,7 @@ fn test_file_open_prompt_grapheme_movement() {
     println!("Cursor at end: ({}, {})", end_x, end_y);
 
     // Press Left once - should skip entire second Thai cluster "นี่"
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let (x1, _) = harness.screen_cursor_position();
     println!("After 1st Left: x={}", x1);
@@ -817,9 +855,7 @@ fn test_file_open_prompt_grapheme_movement() {
     );
 
     // Press Left again - should skip entire first Thai cluster "ที่"
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let (x2, _) = harness.screen_cursor_position();
     println!("After 2nd Left: x={}", x2);
@@ -892,9 +928,7 @@ fn test_settings_search_grapheme_movement() {
     println!("Cursor at end: ({}, {})", end_x, end_y);
 
     // Press Left once - should move back by 1 (past 'b')
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let (x1, _) = harness.screen_cursor_position();
     println!("After 1st Left: x={}", x1);
@@ -905,9 +939,7 @@ fn test_settings_search_grapheme_movement() {
     );
 
     // Press Left again - should skip entire Thai cluster
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let (x2, _) = harness.screen_cursor_position();
     println!("After 2nd Left: x={}", x2);
@@ -918,9 +950,7 @@ fn test_settings_search_grapheme_movement() {
     );
 
     // Press Left again - should move before 'a'
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let (x3, _) = harness.screen_cursor_position();
     println!("After 3rd Left: x={}", x3);
@@ -971,9 +1001,7 @@ fn test_main_editor_left_arrow_grapheme_movement() {
     );
 
     // Press Left arrow ONCE - should skip entire grapheme cluster back to position 0
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     let pos_after_left = harness.cursor_position();
@@ -1016,7 +1044,10 @@ fn test_left_arrow_at_long_position_file_loaded() {
 
     let pos_end = harness.cursor_position();
     println!("At end: cursor at byte {}", pos_end);
-    assert_eq!(pos_end, 69, "Cursor should be at byte 69 (end of Thai text)");
+    assert_eq!(
+        pos_end, 69,
+        "Cursor should be at byte 69 (end of Thai text)"
+    );
 
     // The last two characters are "บบ" (each is a single code point, 3 bytes)
     // Position 66-69: บ (U+0E1A)
@@ -1024,9 +1055,7 @@ fn test_left_arrow_at_long_position_file_loaded() {
     // So pressing Left from 69 should go to 66 (correct behavior)
 
     // Press Left - should move to position 66 (before last บ)
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let pos1 = harness.cursor_position();
     println!("After 1st Left: cursor at byte {}", pos1);
@@ -1036,9 +1065,7 @@ fn test_left_arrow_at_long_position_file_loaded() {
     );
 
     // Press Left again - should move to position 63
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let pos2 = harness.cursor_position();
     println!("After 2nd Left: cursor at byte {}", pos2);
@@ -1048,9 +1075,7 @@ fn test_left_arrow_at_long_position_file_loaded() {
     );
 
     // Press Left again - should move to position 60 (ะ is single code point)
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let pos3 = harness.cursor_position();
     println!("After 3rd Left: cursor at byte {}", pos3);
@@ -1065,9 +1090,7 @@ fn test_left_arrow_at_long_position_file_loaded() {
     // This is where the bug might trigger!
 
     // Press Left again from position 60
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let pos4 = harness.cursor_position();
     println!("After 4th Left: cursor at byte {}", pos4);
@@ -1078,18 +1101,14 @@ fn test_left_arrow_at_long_position_file_loaded() {
 
     // Keep pressing to test grapheme cluster movement
     // Position 54-57: ง (U+0E07, single code point)
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let pos5 = harness.cursor_position();
     println!("After 5th Left: cursor at byte {}", pos5);
     assert_eq!(pos5, 54, "After Left from 57, should be at 54 (skipped ง)");
 
     // Position 45-54: ตั้ is a grapheme cluster with base + vowel + tone = 3 code points = 9 bytes
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let pos6 = harness.cursor_position();
     println!("After 6th Left: cursor at byte {}", pos6);

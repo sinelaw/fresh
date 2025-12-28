@@ -5,13 +5,13 @@ use crate::model::piece_tree::{
     StringBuffer, TreeStats,
 };
 use crate::model::piece_tree_diff::PieceTreeDiff;
+use crate::primitives::grapheme;
 use anyhow::{Context, Result};
 use regex::bytes::Regex;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use crate::primitives::grapheme;
 
 // Large file support configuration
 /// Default threshold for considering a file "large" (100 MB)

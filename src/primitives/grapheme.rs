@@ -186,13 +186,13 @@ mod tests {
         assert_eq!(s.len(), 11);
         assert_eq!(grapheme_count(s), 3);
 
-        assert_eq!(next_grapheme_boundary(s, 0), 1);  // past 'a'
+        assert_eq!(next_grapheme_boundary(s, 0), 1); // past 'a'
         assert_eq!(next_grapheme_boundary(s, 1), 10); // past Thai
         assert_eq!(next_grapheme_boundary(s, 10), 11); // past 'b'
 
         assert_eq!(prev_grapheme_boundary(s, 11), 10); // before 'b'
-        assert_eq!(prev_grapheme_boundary(s, 10), 1);  // before Thai
-        assert_eq!(prev_grapheme_boundary(s, 1), 0);   // before 'a'
+        assert_eq!(prev_grapheme_boundary(s, 10), 1); // before Thai
+        assert_eq!(prev_grapheme_boundary(s, 1), 0); // before 'a'
     }
 
     #[test]
