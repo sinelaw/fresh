@@ -1279,9 +1279,10 @@ fn test_settings_percentage_value_saves_correctly() {
         .unwrap();
     harness.render().unwrap();
 
-    // Navigate to File Explorer category (down twice from General)
-    // Categories: General, Editor, File Explorer, Menu, Terminal
+    // Navigate to File Explorer category (down three times from General)
+    // Categories: General, Editor, File Browser, File Explorer, Menu, Terminal, Warnings
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Editor
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // File Browser
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // File Explorer
     harness.render().unwrap();
 
