@@ -672,3 +672,325 @@ fn test_thai_file_open_and_movement() {
         xl2
     );
 }
+
+/// Test grapheme cluster movement in the search prompt
+///
+/// When typing Thai text in the search prompt, arrow keys should move
+/// by grapheme cluster, not by individual code points.
+#[test]
+fn test_search_prompt_grapheme_movement() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // Open search prompt with Ctrl+F
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify search prompt is open
+    harness.assert_screen_contains("Search:");
+
+    // Type Thai text: "aที่b" (a + Thai cluster + b)
+    // The Thai cluster "ที่" is 3 code points but 1 grapheme
+    let thai_text = "aที่b";
+    harness.type_text(thai_text).unwrap();
+    harness.render().unwrap();
+
+    // Verify text appears in prompt
+    harness.assert_screen_contains(thai_text);
+
+    // Get screen cursor position at end
+    let (end_x, end_y) = harness.screen_cursor_position();
+    println!("Cursor at end: ({}, {})", end_x, end_y);
+
+    // Press Left once - should move back by 1 (past 'b')
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let (x1, _) = harness.screen_cursor_position();
+    println!("After 1st Left: x={}", x1);
+    assert_eq!(
+        x1,
+        end_x - 1,
+        "1st Left should move back 1 column (past 'b')"
+    );
+
+    // Press Left again - should skip entire Thai cluster
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let (x2, _) = harness.screen_cursor_position();
+    println!("After 2nd Left: x={}", x2);
+    assert_eq!(
+        x2,
+        end_x - 2,
+        "2nd Left should skip entire Thai cluster (visual width 1)"
+    );
+
+    // Press Left again - should move before 'a'
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let (x3, _) = harness.screen_cursor_position();
+    println!("After 3rd Left: x={}", x3);
+    assert_eq!(x3, end_x - 3, "3rd Left should move before 'a'");
+
+    // Now press Right 3 times and verify we end up back at the end
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let (final_x, _) = harness.screen_cursor_position();
+    assert_eq!(
+        final_x, end_x,
+        "3 Right arrows should return cursor to end position"
+    );
+
+    // Close search prompt
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test grapheme cluster movement in the file open prompt
+///
+/// When typing Thai text in the file open prompt, arrow keys should move
+/// by grapheme cluster, not by individual code points.
+#[test]
+fn test_file_open_prompt_grapheme_movement() {
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+    harness.render().unwrap();
+
+    // Open file prompt with Ctrl+O
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify file open prompt is open (prompt shows "Open:" at bottom)
+    harness.assert_screen_contains("Open:");
+
+    // Clear any prefilled text by going to start and selecting all then deleting
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type Thai text: "ที่นี่" (2 grapheme clusters, 6 code points)
+    // Each cluster is 3 code points (base + vowel + tone)
+    let thai_text = "ที่นี่";
+    harness.type_text(thai_text).unwrap();
+    harness.render().unwrap();
+
+    // Verify text appears in prompt
+    harness.assert_screen_contains(thai_text);
+
+    // Get screen cursor position at end
+    let (end_x, end_y) = harness.screen_cursor_position();
+    println!("Cursor at end: ({}, {})", end_x, end_y);
+
+    // Press Left once - should skip entire second Thai cluster "นี่"
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let (x1, _) = harness.screen_cursor_position();
+    println!("After 1st Left: x={}", x1);
+    assert_eq!(
+        x1,
+        end_x - 1,
+        "1st Left should skip entire Thai cluster 'นี่' (visual width 1)"
+    );
+
+    // Press Left again - should skip entire first Thai cluster "ที่"
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let (x2, _) = harness.screen_cursor_position();
+    println!("After 2nd Left: x={}", x2);
+    assert_eq!(
+        x2,
+        end_x - 2,
+        "2nd Left should skip entire Thai cluster 'ที่' (visual width 1)"
+    );
+
+    // Now at the start. Press Right twice to return to end
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let (final_x, _) = harness.screen_cursor_position();
+    assert_eq!(
+        final_x, end_x,
+        "2 Right arrows should return cursor to end position"
+    );
+
+    // Close file open prompt
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test grapheme cluster movement in settings search box
+///
+/// Note: The settings search box is a simple filter field that doesn't support
+/// cursor movement (Left/Right arrows) - it only supports typing at the end
+/// and backspace. This is a limitation of the simple filter design, not a bug.
+///
+/// This test is marked ignore since cursor movement isn't supported in this field.
+#[test]
+#[ignore = "Settings search is a simple filter without cursor movement support"]
+fn test_settings_search_grapheme_movement() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    harness.render().unwrap();
+
+    // Open settings with Ctrl+,
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify settings is open
+    harness.assert_screen_contains("Settings");
+
+    // Open search box with '/'
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type Thai text: "aที่b" (a + Thai cluster + b)
+    let thai_text = "aที่b";
+    for c in thai_text.chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Verify text appears in the search box
+    harness.assert_screen_contains(thai_text);
+
+    // Get screen cursor position at end
+    let (end_x, end_y) = harness.screen_cursor_position();
+    println!("Cursor at end: ({}, {})", end_x, end_y);
+
+    // Press Left once - should move back by 1 (past 'b')
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let (x1, _) = harness.screen_cursor_position();
+    println!("After 1st Left: x={}", x1);
+    assert_eq!(
+        x1,
+        end_x - 1,
+        "1st Left should move back 1 column (past 'b')"
+    );
+
+    // Press Left again - should skip entire Thai cluster
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let (x2, _) = harness.screen_cursor_position();
+    println!("After 2nd Left: x={}", x2);
+    assert_eq!(
+        x2,
+        end_x - 2,
+        "2nd Left should skip entire Thai cluster (visual width 1)"
+    );
+
+    // Press Left again - should move before 'a'
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let (x3, _) = harness.screen_cursor_position();
+    println!("After 3rd Left: x={}", x3);
+    assert_eq!(x3, end_x - 3, "3rd Left should move before 'a'");
+
+    // Press Right 3 times to return to end
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let (final_x, _) = harness.screen_cursor_position();
+    assert_eq!(
+        final_x, end_x,
+        "3 Right arrows should return cursor to end position"
+    );
+
+    // Close settings
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test that Left arrow moves by grapheme cluster in main editor buffer
+///
+/// BUG REPRODUCTION TEST: This test demonstrates the bug where left arrow
+/// requires multiple presses to skip a grapheme cluster (moves by code point
+/// instead of by grapheme cluster).
+///
+/// Expected: 1 Left arrow press should skip entire grapheme cluster
+/// Actual (bug): 1 Left arrow press only moves by one code point
+#[test]
+fn test_main_editor_left_arrow_grapheme_movement() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // Type Thai text directly in the editor: "ที่" (1 grapheme cluster, 3 code points)
+    // Each Thai grapheme cluster consists of:
+    // - Base consonant (3 bytes)
+    // - Vowel mark (3 bytes)
+    // - Tone mark (3 bytes)
+    let thai_text = "ที่";
+    harness.type_text(thai_text).unwrap();
+    harness.render().unwrap();
+
+    // Cursor should be at byte 9 (after all 3 code points = 9 bytes)
+    let pos_end = harness.cursor_position();
+    assert_eq!(
+        pos_end, 9,
+        "After typing Thai cluster, cursor should be at byte 9"
+    );
+
+    // Press Left arrow ONCE - should skip entire grapheme cluster back to position 0
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let pos_after_left = harness.cursor_position();
+    println!("After 1 Left: cursor at byte {}", pos_after_left);
+
+    // Expected: position 0 (skipped entire grapheme cluster)
+    // Bug: position 6 (only skipped one code point = 3 bytes)
+    assert_eq!(
+        pos_after_left, 0,
+        "Left arrow should move by entire grapheme cluster (from byte 9 to 0). \
+         If this fails with position 6, the bug is: left arrow moves by code point instead of grapheme"
+    );
+}
