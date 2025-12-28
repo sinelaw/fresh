@@ -94,7 +94,7 @@ schema-only = []
 # Always required (for schema generation and runtime)
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-schemars = { version = "1.1", features = ["preserve_order"] }  # JSON Schema generation for config editor
+schemars = { version = "1.2", features = ["preserve_order"] }  # JSON Schema generation for config editor
 
 # Runtime dependencies (optional, enabled by "runtime" feature)
 crossterm = { version = "0.29.0", features = ["osc52"], optional = true }
@@ -134,16 +134,16 @@ tree-sitter-java = { version = "0.23.5", optional = true }
 tree-sitter-c-sharp = { version = "0.23.1", optional = true }
 tree-sitter-php = { version = "0.24.2", optional = true }
 tree-sitter-ruby = { version = "0.23.1", optional = true }
-tree-sitter-bash = { version = "0.25.0", optional = true }
+tree-sitter-bash = { version = "0.25.1", optional = true }
 tree-sitter-lua = { version = "0.2.0", optional = true }
-tree-sitter-pascal = { version = "0.10.0", optional = true }
+tree-sitter-pascal = { version = "0.10.2", optional = true }
 anyhow = { version = "1.0.100", default-features = false, optional = true }
 dirs = { version = "6.0", optional = true }
 pulldown-cmark = { version = "0.13", default-features = false, optional = true }
 sha2 = { version = "0.10", optional = true }
-arboard = { version = "3.6", default-features = false, optional = true }
-syntect = { version = "5.2", optional = true }
-ureq = { version = "2.10", default-features = false, features = ["tls"], optional = true }
+arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"], optional = true }
+syntect = { version = "5.3", optional = true }
+ureq = { version = "2.12", default-features = false, features = ["tls"], optional = true }
 unicode-width = { version = "0.2", optional = true }
 unicode-segmentation = { version = "1.12", optional = true }
 
@@ -153,15 +153,15 @@ portable-pty = { version = "0.9", optional = true }
 
 # Embedded plugins support (optional)
 include_dir = { version = "0.7", optional = true }
-tempfile = { version = "3.23", optional = true }
+tempfile = { version = "3.24", optional = true }
 trash = { version = "5.2.5", optional = true }
 
 [dev-dependencies]
 proptest = "1.9"
-tempfile = "3.23.0"
+tempfile = "3.24.0"
 insta = { version = "1.45", features = ["yaml"] }
 vt100 = "0.15"  # Virtual terminal emulator for testing real ANSI output
-ctor = "0.6.1"
+ctor = "0.6.3"
 tiny_http = "0.12"  # Lightweight HTTP server for testing release checker
 unicode-segmentation = "1.12"  # For grapheme cluster testing
 
