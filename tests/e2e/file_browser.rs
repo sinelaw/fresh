@@ -901,3 +901,103 @@ fn test_file_browser_prompt_shows_buffer_directory() {
         "Should show the current file in the list"
     );
 }
+
+/// Test that Ctrl+H toggles hidden files visibility in the file browser
+#[test]
+fn test_file_browser_toggle_hidden_ctrl_h() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_root = temp_dir.path().to_path_buf();
+
+    // Create visible and hidden files
+    fs::write(project_root.join("visible.txt"), "visible content").unwrap();
+    fs::write(project_root.join(".hidden_file"), "hidden content").unwrap();
+    fs::write(project_root.join(".another_hidden"), "another hidden").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+
+    // Open file browser with Ctrl+O
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Wait for visible file to appear
+    harness
+        .wait_until(|h| h.screen_to_string().contains("visible.txt"))
+        .expect("Visible file should appear");
+
+    // Initially, hidden files should NOT be shown
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("visible.txt"),
+        "Visible file should be shown"
+    );
+    assert!(
+        !screen.contains(".hidden_file"),
+        "Hidden files should NOT be shown by default"
+    );
+    assert!(
+        !screen.contains(".another_hidden"),
+        "Hidden files should NOT be shown by default"
+    );
+
+    // Press Ctrl+H to toggle hidden files
+    harness
+        .send_key(KeyCode::Char('h'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Wait for hidden files to appear
+    harness
+        .wait_until(|h| h.screen_to_string().contains(".hidden_file"))
+        .expect("Hidden files should appear after Ctrl+H");
+
+    let screen_after_toggle = harness.screen_to_string();
+
+    // Now hidden files should be visible
+    assert!(
+        screen_after_toggle.contains("visible.txt"),
+        "Visible file should still be shown"
+    );
+    assert!(
+        screen_after_toggle.contains(".hidden_file"),
+        "Hidden files should be shown after toggle"
+    );
+    assert!(
+        screen_after_toggle.contains(".another_hidden"),
+        "All hidden files should be shown after toggle"
+    );
+
+    // Status bar should show toggle message
+    assert!(
+        screen_after_toggle.contains("hidden") || screen_after_toggle.contains("Hidden"),
+        "Status bar should show hidden files toggle message. Screen:\n{}",
+        screen_after_toggle
+    );
+
+    // Press Ctrl+H again to hide hidden files
+    harness
+        .send_key(KeyCode::Char('h'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Wait for hidden files to disappear
+    harness
+        .wait_until(|h| !h.screen_to_string().contains(".hidden_file"))
+        .expect("Hidden files should be hidden again after second toggle");
+
+    let screen_after_second_toggle = harness.screen_to_string();
+
+    // Hidden files should be hidden again
+    assert!(
+        screen_after_second_toggle.contains("visible.txt"),
+        "Visible file should still be shown"
+    );
+    assert!(
+        !screen_after_second_toggle.contains(".hidden_file"),
+        "Hidden files should be hidden after second toggle"
+    );
+}

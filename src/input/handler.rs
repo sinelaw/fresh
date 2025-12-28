@@ -127,6 +127,7 @@ pub enum DeferredAction {
     FileBrowserAcceptSuggestion,
     FileBrowserGoParent,
     FileBrowserUpdateFilter,
+    FileBrowserToggleHidden,
 
     // Interactive replace actions
     InteractiveReplaceKey(char),

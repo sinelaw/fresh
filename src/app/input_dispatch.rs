@@ -268,6 +268,9 @@ impl Editor {
             DeferredAction::FileBrowserUpdateFilter => {
                 self.update_file_open_filter();
             }
+            DeferredAction::FileBrowserToggleHidden => {
+                self.file_open_toggle_hidden();
+            }
 
             // Interactive replace actions
             DeferredAction::InteractiveReplaceKey(c) => {

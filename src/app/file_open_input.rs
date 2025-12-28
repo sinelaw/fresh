@@ -366,10 +366,19 @@ impl Editor {
         if let Some(state) = &mut self.file_open_state {
             let show_hidden = state.show_hidden;
             state.show_hidden = !show_hidden;
+            let new_state = state.show_hidden;
 
             // Reload directory to apply change
             let current_dir = state.current_dir.clone();
             self.load_file_open_directory(current_dir);
+
+            // Show status message
+            let msg = if new_state {
+                "Showing hidden files"
+            } else {
+                "Hiding hidden files"
+            };
+            self.set_status_message(msg.to_string());
         }
     }
 
