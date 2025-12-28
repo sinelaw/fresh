@@ -948,14 +948,7 @@ fn test_settings_search_grapheme_movement() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
-/// Test that Left arrow moves by grapheme cluster in main editor buffer
-///
-/// BUG REPRODUCTION TEST: This test demonstrates the bug where left arrow
-/// requires multiple presses to skip a grapheme cluster (moves by code point
-/// instead of by grapheme cluster).
-///
-/// Expected: 1 Left arrow press should skip entire grapheme cluster
-/// Actual (bug): 1 Left arrow press only moves by one code point
+/// Test that Left arrow moves by grapheme cluster in main editor buffer (typed content)
 #[test]
 fn test_main_editor_left_arrow_grapheme_movement() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
@@ -992,5 +985,120 @@ fn test_main_editor_left_arrow_grapheme_movement() {
         pos_after_left, 0,
         "Left arrow should move by entire grapheme cluster (from byte 9 to 0). \
          If this fails with position 6, the bug is: left arrow moves by code point instead of grapheme"
+    );
+}
+
+/// BUG REPRODUCTION: Left arrow at position >32 bytes falls back to code point movement
+///
+/// When cursor is at position > 32 bytes, prev_grapheme_boundary calculates
+/// start = pos - 32, which may land in the middle of a UTF-8 character.
+/// This causes from_utf8 to fail and the code falls back to prev_char_boundary
+/// which only moves by one code point instead of a full grapheme cluster.
+///
+/// This test uses the exact Thai file that triggers the bug.
+#[test]
+fn test_left_arrow_at_long_position_file_loaded() {
+    let temp_dir = TempDir::new().unwrap();
+    let thai_path = temp_dir.path().join("thai_long.txt");
+
+    // Use the same Thai text from /tmp/thai.txt: "ที่นี่คือที่ติดตั้งระบบ"
+    // This is 69 bytes total, 23 code points, ~13 grapheme clusters
+    let thai_content = "ที่นี่คือที่ติดตั้งระบบ";
+    std::fs::write(&thai_path, thai_content).unwrap();
+
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+    harness.open_file(&thai_path).unwrap();
+    harness.render().unwrap();
+
+    // Move to end of line (position 69)
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let pos_end = harness.cursor_position();
+    println!("At end: cursor at byte {}", pos_end);
+    assert_eq!(pos_end, 69, "Cursor should be at byte 69 (end of Thai text)");
+
+    // The last two characters are "บบ" (each is a single code point, 3 bytes)
+    // Position 66-69: บ (U+0E1A)
+    // Position 63-66: บ (U+0E1A)
+    // So pressing Left from 69 should go to 66 (correct behavior)
+
+    // Press Left - should move to position 66 (before last บ)
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let pos1 = harness.cursor_position();
+    println!("After 1st Left: cursor at byte {}", pos1);
+    assert_eq!(
+        pos1, 66,
+        "After Left from 69, should be at 66 (skipped บ which is 3 bytes)"
+    );
+
+    // Press Left again - should move to position 63
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let pos2 = harness.cursor_position();
+    println!("After 2nd Left: cursor at byte {}", pos2);
+    assert_eq!(
+        pos2, 63,
+        "After Left from 66, should be at 63 (skipped บ which is 3 bytes)"
+    );
+
+    // Press Left again - should move to position 60 (ะ is single code point)
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let pos3 = harness.cursor_position();
+    println!("After 3rd Left: cursor at byte {}", pos3);
+    assert_eq!(
+        pos3, 60,
+        "After Left from 63, should be at 60 (skipped ะ which is 3 bytes)"
+    );
+
+    // Continue pressing Left to navigate through the text
+    // At this point we're at position 60, so start = 60 - 32 = 28
+    // Position 28 is in the middle of code point at 27-30
+    // This is where the bug might trigger!
+
+    // Press Left again from position 60
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let pos4 = harness.cursor_position();
+    println!("After 4th Left: cursor at byte {}", pos4);
+    assert_eq!(
+        pos4, 57,
+        "After Left from 60, should be at 57 (skipped ร which is 3 bytes)"
+    );
+
+    // Keep pressing to test grapheme cluster movement
+    // Position 54-57: ง (U+0E07, single code point)
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let pos5 = harness.cursor_position();
+    println!("After 5th Left: cursor at byte {}", pos5);
+    assert_eq!(pos5, 54, "After Left from 57, should be at 54 (skipped ง)");
+
+    // Position 45-54: ตั้ is a grapheme cluster with base + vowel + tone = 3 code points = 9 bytes
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let pos6 = harness.cursor_position();
+    println!("After 6th Left: cursor at byte {}", pos6);
+
+    // BUG CHECK: If this fails with position 51 instead of 45, the bug is present
+    // (cursor moved by 1 code point instead of full grapheme cluster)
+    assert_eq!(
+        pos6, 45,
+        "After Left from 54, should be at 45 (skipped grapheme cluster ตั้ which is 9 bytes). \
+         If this is 51, the bug is present: left arrow fell back to code point movement."
     );
 }

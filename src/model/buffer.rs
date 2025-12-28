@@ -1993,7 +1993,16 @@ impl TextBuffer {
 
         // Get enough context before pos to find grapheme boundaries
         // Thai combining characters can have multiple marks, so get up to 32 bytes
-        let start = pos.saturating_sub(32);
+        // IMPORTANT: Align start to a valid character boundary to avoid invalid UTF-8
+        // when get_text_range starts mid-character
+        let raw_start = pos.saturating_sub(32);
+        let start = if raw_start == 0 {
+            0
+        } else {
+            // Find the character boundary at or before raw_start
+            self.prev_char_boundary(raw_start + 1)
+        };
+
         let Some(bytes) = self.get_text_range(start, pos - start) else {
             // Data unloaded, fall back to char boundary
             return self.prev_char_boundary(pos);
@@ -2001,7 +2010,15 @@ impl TextBuffer {
 
         let text = match std::str::from_utf8(&bytes) {
             Ok(s) => s,
-            Err(_) => return self.prev_char_boundary(pos),
+            Err(e) => {
+                // Still got invalid UTF-8 (shouldn't happen after alignment)
+                // Try using just the valid portion
+                let valid_bytes = &bytes[..e.valid_up_to()];
+                match std::str::from_utf8(valid_bytes) {
+                    Ok(s) if !s.is_empty() => s,
+                    _ => return self.prev_char_boundary(pos),
+                }
+            }
         };
 
         // Use shared grapheme utility with relative position

@@ -95,6 +95,64 @@ fn dim_color_for_tilde(color: Color) -> Color {
     }
 }
 
+/// Accumulator for building spans - collects characters with the same style
+/// into a single span, flushing when style changes. This is important for
+/// proper rendering of combining characters (like Thai diacritics) which
+/// must be in the same string as their base character.
+struct SpanAccumulator {
+    text: String,
+    style: Style,
+    first_source: Option<usize>,
+}
+
+impl SpanAccumulator {
+    fn new() -> Self {
+        Self {
+            text: String::new(),
+            style: Style::default(),
+            first_source: None,
+        }
+    }
+
+    /// Add a character to the accumulator. If the style matches, append to current span.
+    /// If style differs, flush the current span first and start a new one.
+    fn push(
+        &mut self,
+        ch: char,
+        style: Style,
+        source: Option<usize>,
+        spans: &mut Vec<Span<'static>>,
+        map: &mut Vec<Option<usize>>,
+    ) {
+        // If we have accumulated text and the style changed, flush first
+        if !self.text.is_empty() && style != self.style {
+            self.flush(spans, map);
+        }
+
+        // Start new accumulation if empty
+        if self.text.is_empty() {
+            self.style = style;
+            self.first_source = source;
+        }
+
+        self.text.push(ch);
+
+        // Update map for this character's visual width
+        let width = char_width(ch);
+        for _ in 0..width {
+            map.push(source);
+        }
+    }
+
+    /// Flush accumulated text as a span
+    fn flush(&mut self, spans: &mut Vec<Span<'static>>, _map: &mut Vec<Option<usize>>) {
+        if !self.text.is_empty() {
+            spans.push(Span::styled(std::mem::take(&mut self.text), self.style));
+            self.first_source = None;
+        }
+    }
+}
+
 /// Push a debug tag span (no map entries since these aren't real content)
 fn push_debug_tag(spans: &mut Vec<Span<'static>>, map: &mut Vec<Option<usize>>, text: String) {
     if text.is_empty() {
@@ -2138,6 +2196,10 @@ impl SplitRenderer {
             let mut last_seg_y: Option<u16> = None;
             let mut _last_seg_width: usize = 0;
 
+            // Accumulator for merging consecutive characters with the same style
+            // This is critical for proper rendering of combining characters (Thai, etc.)
+            let mut span_acc = SpanAccumulator::new();
+
             // Render left margin (indicators + line numbers + separator)
             render_left_margin(
                 &LeftMarginContext {
@@ -2332,6 +2394,8 @@ impl SplitRenderer {
                                 .iter()
                                 .filter(|v| v.position == VirtualTextPosition::BeforeChar)
                             {
+                                // Flush accumulated text before inserting virtual text
+                                span_acc.flush(&mut line_spans, &mut line_view_map);
                                 let text_with_space = format!("{} ", vtext.text);
                                 push_span_with_map(
                                     &mut line_spans,
@@ -2347,6 +2411,8 @@ impl SplitRenderer {
                     if !display_char.is_empty() {
                         // Debug mode: insert opening tags for spans starting at this position
                         if let Some(ref mut tracker) = debug_tracker {
+                            // Flush before debug tags
+                            span_acc.flush(&mut line_spans, &mut line_view_map);
                             let opening_tags = tracker.get_opening_tags(
                                 byte_pos,
                                 highlight_spans,
@@ -2368,17 +2434,17 @@ impl SplitRenderer {
                             }
                         }
 
-                        push_span_with_map(
-                            &mut line_spans,
-                            &mut line_view_map,
-                            display_char.to_string(),
-                            style,
-                            byte_pos,
-                        );
+                        // Use accumulator to merge consecutive chars with same style
+                        // This is critical for combining characters (Thai diacritics, etc.)
+                        for c in display_char.chars() {
+                            span_acc.push(c, style, byte_pos, &mut line_spans, &mut line_view_map);
+                        }
 
                         // Debug mode: insert closing tags for spans ending at this position
                         // Check using the NEXT byte position to see if we're leaving a span
                         if let Some(ref mut tracker) = debug_tracker {
+                            // Flush before debug tags
+                            span_acc.flush(&mut line_spans, &mut line_view_map);
                             // Look ahead to next byte position to determine closing tags
                             let next_byte_pos = byte_pos.map(|bp| bp + ch.len_utf8());
                             let closing_tags = tracker.get_closing_tags(next_byte_pos);
@@ -2451,6 +2517,9 @@ impl SplitRenderer {
                 col_offset += ch_width;
                 visible_char_count += ch_width;
             }
+
+            // Flush any remaining accumulated text at end of line
+            span_acc.flush(&mut line_spans, &mut line_view_map);
 
             // Set last_seg_y early so cursor detection works for both empty and non-empty lines
             // For lines without wrapping, this will be the final y position
