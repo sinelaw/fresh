@@ -257,14 +257,14 @@ impl FileBrowserRenderer {
         } else {
             Style::default().fg(theme.help_key_fg).bg(theme.popup_bg)
         };
-        // Shortcut hint uses dimmer style (matching Find popup pattern)
+        // Shortcut hint uses dimmer style from theme
         let shortcut_style = if is_checkbox_hovered {
             Style::default()
                 .fg(theme.menu_hover_fg)
                 .bg(theme.menu_hover_bg)
         } else {
             Style::default()
-                .fg(ratatui::style::Color::Rgb(140, 140, 140))
+                .fg(theme.help_separator_fg)
                 .bg(theme.popup_bg)
         };
         spans.push(Span::styled(format!(" {}", checkbox_label), checkbox_style));
