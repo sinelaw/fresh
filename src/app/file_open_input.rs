@@ -464,6 +464,12 @@ impl Editor {
             return true;
         }
 
+        // Check if click is on "Show Hidden" checkbox (in navigation area, right side)
+        if layout.is_on_show_hidden_checkbox(x, y) {
+            self.file_open_toggle_hidden();
+            return true;
+        }
+
         // Check if click is in navigation area
         if layout.is_in_nav(x, y) {
             // Get shortcut labels for hit testing
@@ -553,6 +559,11 @@ impl Editor {
         use super::types::HoverTarget;
 
         let layout = self.file_browser_layout.as_ref()?;
+
+        // Check "Show Hidden" checkbox first (priority over navigation shortcuts)
+        if layout.is_on_show_hidden_checkbox(x, y) {
+            return Some(HoverTarget::FileBrowserShowHiddenCheckbox);
+        }
 
         // Check navigation shortcuts
         if layout.is_in_nav(x, y) {

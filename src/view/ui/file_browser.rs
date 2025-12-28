@@ -148,10 +148,11 @@ impl FileBrowserRenderer {
             thumb_start,
             thumb_end,
             visible_rows,
+            content_width,
         })
     }
 
-    /// Render navigation shortcuts section
+    /// Render navigation shortcuts section with "Show Hidden" checkbox
     fn render_navigation(
         frame: &mut Frame,
         area: Rect,
@@ -201,14 +202,47 @@ impl FileBrowserRenderer {
             }
         }
 
-        // Fill remaining width
-        let current_width: usize = spans.iter().map(|s| s.content.len()).sum();
-        if current_width < area.width as usize {
+        // Calculate width for left side (navigation shortcuts)
+        let left_width: usize = spans.iter().map(|s| str_width(&s.content)).sum();
+
+        // "Show Hidden" checkbox on the right side
+        // Format: "☐ Hidden" or "☑ Hidden"
+        let checkbox_text = if state.show_hidden {
+            "☑ Hidden"
+        } else {
+            "☐ Hidden"
+        };
+        let checkbox_width = str_width(checkbox_text) + 2; // +2 for padding
+
+        // Calculate gap between navigation and checkbox
+        let total_width = area.width as usize;
+        let gap = total_width.saturating_sub(left_width + checkbox_width);
+
+        // Add gap
+        if gap > 0 {
             spans.push(Span::styled(
-                " ".repeat(area.width as usize - current_width),
+                " ".repeat(gap),
                 Style::default().bg(theme.popup_bg),
             ));
         }
+
+        // Add checkbox with hover/click styling
+        let is_checkbox_hovered =
+            matches!(hover_target, Some(HoverTarget::FileBrowserShowHiddenCheckbox));
+        let checkbox_style = if is_checkbox_hovered {
+            Style::default()
+                .fg(theme.menu_hover_fg)
+                .bg(theme.menu_hover_bg)
+        } else if state.show_hidden {
+            Style::default()
+                .fg(theme.menu_highlight_fg)
+                .bg(theme.popup_bg)
+        } else {
+            Style::default()
+                .fg(theme.help_key_fg)
+                .bg(theme.popup_bg)
+        };
+        spans.push(Span::styled(format!(" {} ", checkbox_text), checkbox_style));
 
         let line = Line::from(spans);
         let paragraph = Paragraph::new(vec![line]);
@@ -522,6 +556,8 @@ pub struct FileBrowserLayout {
     pub thumb_end: usize,
     /// Number of visible rows in the file list
     pub visible_rows: usize,
+    /// Width of the content area (for checkbox position calculation)
+    pub content_width: u16,
 }
 
 impl FileBrowserLayout {
@@ -618,5 +654,22 @@ impl FileBrowserLayout {
     pub fn is_in_thumb(&self, y: u16) -> bool {
         let rel_y = y.saturating_sub(self.scrollbar_area.y) as usize;
         rel_y >= self.thumb_start && rel_y < self.thumb_end
+    }
+
+    /// Check if a position is on the "Show Hidden" checkbox
+    /// The checkbox is positioned at the right side of the navigation area
+    /// Format: " ☐ Hidden " or " ☑ Hidden " (10 chars wide)
+    pub fn is_on_show_hidden_checkbox(&self, x: u16, y: u16) -> bool {
+        // Must be in navigation area row
+        if !self.is_in_nav(x, y) {
+            return false;
+        }
+
+        // Checkbox is at the right side
+        // " ☐ Hidden " or " ☑ Hidden " is approximately 10 characters
+        let checkbox_width = 10u16;
+        let checkbox_start = self.nav_area.x + self.content_width.saturating_sub(checkbox_width);
+
+        x >= checkbox_start && x < self.nav_area.x + self.content_width
     }
 }

@@ -139,11 +139,6 @@ impl<'a> InputHandler for FileBrowserInputHandler<'a> {
                         ));
                         InputResult::Consumed
                     }
-                    'h' => {
-                        // Toggle hidden files
-                        ctx.defer(DeferredAction::FileBrowserToggleHidden);
-                        InputResult::Consumed
-                    }
                     'x' => {
                         // Cut
                         ctx.defer(DeferredAction::ExecuteAction(
@@ -332,23 +327,5 @@ mod tests {
             .deferred_actions
             .iter()
             .any(|a| matches!(a, DeferredAction::ClosePrompt)));
-    }
-
-    #[test]
-    fn test_ctrl_h_toggles_hidden() {
-        let mut file_state = create_test_file_state();
-        let mut prompt = create_test_prompt();
-        let mut handler = FileBrowserInputHandler::new(&mut file_state, &mut prompt);
-        let mut ctx = InputContext::new();
-
-        // Ctrl+H should defer FileBrowserToggleHidden
-        let ctrl_h = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL);
-        let result = handler.handle_key_event(&ctrl_h, &mut ctx);
-
-        assert_eq!(result, InputResult::Consumed);
-        assert!(ctx
-            .deferred_actions
-            .iter()
-            .any(|a| matches!(a, DeferredAction::FileBrowserToggleHidden)));
     }
 }
