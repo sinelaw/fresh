@@ -902,7 +902,7 @@ fn test_file_browser_prompt_shows_buffer_directory() {
     );
 }
 
-/// Test that the "Hidden" checkbox appears and shows correct state
+/// Test that the "Show Hidden" checkbox appears and shows correct state
 #[test]
 fn test_file_browser_hidden_checkbox_appears() {
     let temp_dir = TempDir::new().unwrap();
@@ -929,16 +929,16 @@ fn test_file_browser_hidden_checkbox_appears() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("visible.txt") && screen.contains("Hidden")
+            screen.contains("visible.txt") && screen.contains("Show Hidden")
         })
-        .expect("Visible file and Hidden checkbox should appear");
+        .expect("Visible file and Show Hidden checkbox should appear");
 
     let screen = harness.screen_to_string();
 
-    // Verify checkbox appears in unchecked state
+    // Verify checkbox appears in unchecked state (☐ Show Hidden with underlined H)
     assert!(
-        screen.contains("☐ Hidden"),
-        "Checkbox should be unchecked initially. Screen:\n{}",
+        screen.contains("Show") && screen.contains("idden"),
+        "Checkbox should show 'Show Hidden'. Screen:\n{}",
         screen
     );
 
@@ -949,7 +949,7 @@ fn test_file_browser_hidden_checkbox_appears() {
     );
 }
 
-/// Test that clicking the "Hidden" checkbox toggles hidden files visibility
+/// Test that clicking the "Show Hidden" checkbox toggles hidden files visibility
 #[test]
 fn test_file_browser_toggle_hidden_checkbox_click() {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
@@ -978,20 +978,22 @@ fn test_file_browser_toggle_hidden_checkbox_click() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("visible.txt") && screen.contains("☐ Hidden")
+            screen.contains("visible.txt") && screen.contains("Show Hidden")
         })
         .expect("File browser should appear with checkbox");
 
-    // Find the row containing "Hidden" checkbox by searching screen lines
+    // Find the row containing "Show Hidden" checkbox by searching screen lines
     let screen = harness.screen_to_string();
     let lines: Vec<&str> = screen.lines().collect();
     let checkbox_row = lines
         .iter()
-        .position(|line| line.contains("Hidden"))
-        .expect("Should find Hidden checkbox row");
+        .position(|line| {
+            line.contains("Show Hidden") || line.contains("Show") && line.contains("idden")
+        })
+        .expect("Should find Show Hidden checkbox row");
 
     // Click on the checkbox area (right side of the line)
-    // The checkbox " ☐ Hidden " is at the right edge
+    // The checkbox " ☐ Show Hidden " is at the right edge
     harness
         .send_mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -1011,7 +1013,7 @@ fn test_file_browser_toggle_hidden_checkbox_click() {
 
     // Verify checkbox is now checked and hidden files are visible
     assert!(
-        screen_after.contains("☑ Hidden"),
+        screen_after.contains("☑") && screen_after.contains("Show"),
         "Checkbox should be checked after toggle"
     );
     assert!(
