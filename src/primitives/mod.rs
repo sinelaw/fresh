@@ -7,6 +7,7 @@ pub mod ansi;
 pub mod ansi_background;
 pub mod display_width;
 pub mod grammar_registry;
+pub mod grapheme;
 pub mod highlight_engine;
 pub mod highlighter;
 pub mod indent;

@@ -1,6 +1,7 @@
 //! Prompt/minibuffer system for user input
 
 use crate::input::commands::Suggestion;
+use crate::primitives::grapheme;
 use crate::primitives::word_navigation::{
     find_word_end_bytes, find_word_start_bytes, is_word_char,
 };
@@ -181,27 +182,23 @@ impl Prompt {
         }
     }
 
-    /// Move cursor left (to previous character boundary)
+    /// Move cursor left (to previous grapheme cluster boundary)
+    ///
+    /// Uses grapheme cluster boundaries for proper handling of combining characters
+    /// like Thai diacritics, emoji with modifiers, etc.
     pub fn cursor_left(&mut self) {
         if self.cursor_pos > 0 {
-            // Find the previous character boundary
-            self.cursor_pos = self.input[..self.cursor_pos]
-                .char_indices()
-                .next_back()
-                .map(|(i, _)| i)
-                .unwrap_or(0);
+            self.cursor_pos = grapheme::prev_grapheme_boundary(&self.input, self.cursor_pos);
         }
     }
 
-    /// Move cursor right (to next character boundary)
+    /// Move cursor right (to next grapheme cluster boundary)
+    ///
+    /// Uses grapheme cluster boundaries for proper handling of combining characters
+    /// like Thai diacritics, emoji with modifiers, etc.
     pub fn cursor_right(&mut self) {
         if self.cursor_pos < self.input.len() {
-            // Find the next character boundary
-            self.cursor_pos = self.input[self.cursor_pos..]
-                .char_indices()
-                .nth(1)
-                .map(|(i, _)| self.cursor_pos + i)
-                .unwrap_or(self.input.len());
+            self.cursor_pos = grapheme::next_grapheme_boundary(&self.input, self.cursor_pos);
         }
     }
 
@@ -211,24 +208,32 @@ impl Prompt {
         self.cursor_pos += ch.len_utf8();
     }
 
-    /// Delete character before cursor (backspace)
+    /// Delete one code point before cursor (backspace)
+    ///
+    /// Deletes one Unicode code point at a time, allowing layer-by-layer deletion
+    /// of combining characters. For Thai text, this means you can delete just the
+    /// tone mark without removing the base consonant.
     pub fn backspace(&mut self) {
         if self.cursor_pos > 0 {
-            // Find the previous character boundary
+            // Find the previous character (code point) boundary, not grapheme boundary
+            // This allows layer-by-layer deletion of combining marks
             let prev_boundary = self.input[..self.cursor_pos]
                 .char_indices()
                 .next_back()
                 .map(|(i, _)| i)
                 .unwrap_or(0);
-            self.input.remove(prev_boundary);
+            self.input.drain(prev_boundary..self.cursor_pos);
             self.cursor_pos = prev_boundary;
         }
     }
 
-    /// Delete character at cursor (delete key)
+    /// Delete grapheme cluster at cursor (delete key)
+    ///
+    /// Deletes the entire grapheme cluster, handling combining characters properly.
     pub fn delete(&mut self) {
         if self.cursor_pos < self.input.len() {
-            self.input.remove(self.cursor_pos);
+            let next_boundary = grapheme::next_grapheme_boundary(&self.input, self.cursor_pos);
+            self.input.drain(self.cursor_pos..next_boundary);
         }
     }
 
@@ -484,37 +489,29 @@ impl Prompt {
         self.selection_anchor = None;
     }
 
-    /// Move cursor left with selection
+    /// Move cursor left with selection (by grapheme cluster)
     pub fn move_left_selecting(&mut self) {
         // Set anchor if not already set
         if self.selection_anchor.is_none() {
             self.selection_anchor = Some(self.cursor_pos);
         }
 
-        // Move cursor left
+        // Move cursor left by grapheme cluster
         if self.cursor_pos > 0 {
-            let mut new_pos = self.cursor_pos - 1;
-            while new_pos > 0 && !self.input.is_char_boundary(new_pos) {
-                new_pos -= 1;
-            }
-            self.cursor_pos = new_pos;
+            self.cursor_pos = grapheme::prev_grapheme_boundary(&self.input, self.cursor_pos);
         }
     }
 
-    /// Move cursor right with selection
+    /// Move cursor right with selection (by grapheme cluster)
     pub fn move_right_selecting(&mut self) {
         // Set anchor if not already set
         if self.selection_anchor.is_none() {
             self.selection_anchor = Some(self.cursor_pos);
         }
 
-        // Move cursor right
+        // Move cursor right by grapheme cluster
         if self.cursor_pos < self.input.len() {
-            let mut new_pos = self.cursor_pos + 1;
-            while new_pos < self.input.len() && !self.input.is_char_boundary(new_pos) {
-                new_pos += 1;
-            }
-            self.cursor_pos = new_pos;
+            self.cursor_pos = grapheme::next_grapheme_boundary(&self.input, self.cursor_pos);
         }
     }
 

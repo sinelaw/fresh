@@ -11,6 +11,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use crate::primitives::grapheme;
 
 // Large file support configuration
 /// Default threshold for considering a file "large" (100 MB)
@@ -1978,6 +1979,71 @@ impl TextBuffer {
 
         // Not at a boundary, find the previous one
         self.prev_char_boundary(pos)
+    }
+
+    /// Find the previous grapheme cluster boundary (for proper cursor movement with combining characters)
+    ///
+    /// This handles complex scripts like Thai where multiple Unicode code points
+    /// form a single visual character (grapheme cluster). For example, Thai "ที่"
+    /// is 3 code points but 1 grapheme cluster.
+    pub fn prev_grapheme_boundary(&self, pos: usize) -> usize {
+        if pos == 0 {
+            return 0;
+        }
+
+        // Get enough context before pos to find grapheme boundaries
+        // Thai combining characters can have multiple marks, so get up to 32 bytes
+        let start = pos.saturating_sub(32);
+        let Some(bytes) = self.get_text_range(start, pos - start) else {
+            // Data unloaded, fall back to char boundary
+            return self.prev_char_boundary(pos);
+        };
+
+        let text = match std::str::from_utf8(&bytes) {
+            Ok(s) => s,
+            Err(_) => return self.prev_char_boundary(pos),
+        };
+
+        // Use shared grapheme utility with relative position
+        let rel_pos = pos - start;
+        let new_rel_pos = grapheme::prev_grapheme_boundary(text, rel_pos);
+
+        // If we landed at the start of this chunk and there's more before,
+        // we might need to look further back
+        if new_rel_pos == 0 && start > 0 {
+            return self.prev_grapheme_boundary(start);
+        }
+
+        start + new_rel_pos
+    }
+
+    /// Find the next grapheme cluster boundary (for proper cursor movement with combining characters)
+    ///
+    /// This handles complex scripts like Thai where multiple Unicode code points
+    /// form a single visual character (grapheme cluster). For example, Thai "ที่"
+    /// is 3 code points but 1 grapheme cluster.
+    pub fn next_grapheme_boundary(&self, pos: usize) -> usize {
+        let len = self.len();
+        if pos >= len {
+            return len;
+        }
+
+        // Get enough context after pos to find grapheme boundaries
+        // Thai combining characters can have multiple marks, so get up to 32 bytes
+        let end = (pos + 32).min(len);
+        let Some(bytes) = self.get_text_range(pos, end - pos) else {
+            // Data unloaded, fall back to char boundary
+            return self.next_char_boundary(pos);
+        };
+
+        let text = match std::str::from_utf8(&bytes) {
+            Ok(s) => s,
+            Err(_) => return self.next_char_boundary(pos),
+        };
+
+        // Use shared grapheme utility
+        let new_rel_pos = grapheme::next_grapheme_boundary(text, 0);
+        pos + new_rel_pos
     }
 
     /// Find the previous word boundary

@@ -82,6 +82,7 @@ runtime = [
     "dep:syntect",
     "dep:ureq",
     "dep:unicode-width",
+    "dep:unicode-segmentation",
     "dep:alacritty_terminal",
     "dep:portable-pty",
     "dep:trash",
@@ -144,6 +145,7 @@ arboard = { version = "3.6", default-features = false, optional = true }
 syntect = { version = "5.2", optional = true }
 ureq = { version = "2.10", default-features = false, features = ["tls"], optional = true }
 unicode-width = { version = "0.2", optional = true }
+unicode-segmentation = { version = "1.12", optional = true }
 
 # Terminal emulation (optional)
 alacritty_terminal = { version = "0.25", optional = true }

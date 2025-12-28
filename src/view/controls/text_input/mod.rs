@@ -11,6 +11,7 @@
 mod input;
 mod render;
 
+use crate::primitives::grapheme;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
@@ -112,35 +113,34 @@ impl TextInputState {
         self.cursor = prev_boundary;
     }
 
-    /// Delete the character at the cursor (delete)
+    /// Delete the grapheme cluster at the cursor (delete key)
+    ///
+    /// Deletes the entire grapheme cluster, handling combining characters properly.
     pub fn delete(&mut self) {
         if !self.is_enabled() || self.cursor >= self.value.len() {
             return;
         }
-        self.value.remove(self.cursor);
+        let next_boundary = grapheme::next_grapheme_boundary(&self.value, self.cursor);
+        self.value.drain(self.cursor..next_boundary);
     }
 
-    /// Move cursor left (to previous character boundary)
+    /// Move cursor left (to previous grapheme cluster boundary)
+    ///
+    /// Uses grapheme cluster boundaries for proper handling of combining characters
+    /// like Thai diacritics, emoji with modifiers, etc.
     pub fn move_left(&mut self) {
         if self.cursor > 0 {
-            // Find the previous character boundary
-            self.cursor = self.value[..self.cursor]
-                .char_indices()
-                .next_back()
-                .map(|(i, _)| i)
-                .unwrap_or(0);
+            self.cursor = grapheme::prev_grapheme_boundary(&self.value, self.cursor);
         }
     }
 
-    /// Move cursor right (to next character boundary)
+    /// Move cursor right (to next grapheme cluster boundary)
+    ///
+    /// Uses grapheme cluster boundaries for proper handling of combining characters
+    /// like Thai diacritics, emoji with modifiers, etc.
     pub fn move_right(&mut self) {
         if self.cursor < self.value.len() {
-            // Find the next character boundary
-            self.cursor = self.value[self.cursor..]
-                .char_indices()
-                .nth(1)
-                .map(|(i, _)| self.cursor + i)
-                .unwrap_or(self.value.len());
+            self.cursor = grapheme::next_grapheme_boundary(&self.value, self.cursor);
         }
     }
 

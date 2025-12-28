@@ -1216,6 +1216,7 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+ "unicode-segmentation",
  "unicode-width 0.2.0",
  "ureq",
  "url",

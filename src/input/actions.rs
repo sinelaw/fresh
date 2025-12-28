@@ -94,6 +94,7 @@ fn adjust_position_for_crlf_left(buffer: &Buffer, pos: usize) -> usize {
 
 /// Calculate next position when moving right, treating CRLF as a single unit.
 /// If cursor is on \r followed by \n, skip over both.
+/// Uses grapheme cluster boundaries for proper handling of combining characters.
 fn next_position_for_crlf(buffer: &Buffer, pos: usize, max_pos: usize) -> usize {
     if buffer.line_ending() == LineEnding::CRLF {
         let cur_byte = buffer.slice_bytes(pos..pos + 1);
@@ -102,7 +103,7 @@ fn next_position_for_crlf(buffer: &Buffer, pos: usize, max_pos: usize) -> usize 
             return (pos + 2).min(max_pos); // Skip both \r and \n
         }
     }
-    buffer.next_char_boundary(pos).min(max_pos)
+    buffer.next_grapheme_boundary(pos).min(max_pos)
 }
 
 /// Convert deletion ranges to Delete events
@@ -1003,9 +1004,10 @@ pub fn action_to_events(
         }
 
         // Basic movement - move each cursor
+        // Uses grapheme cluster boundaries for proper handling of combining characters
         Action::MoveLeft => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let new_pos = state.buffer.prev_char_boundary(cursor.position);
+                let new_pos = state.buffer.prev_grapheme_boundary(cursor.position);
                 let new_pos = adjust_position_for_crlf_left(&state.buffer, new_pos);
 
                 // Preserve anchor if deselect_on_move is false (Emacs mark mode)
@@ -1380,9 +1382,10 @@ pub fn action_to_events(
         }
 
         // Selection movement - same as regular movement but keeps anchor
+        // Uses grapheme cluster boundaries for proper handling of combining characters
         Action::SelectLeft => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let new_pos = state.buffer.prev_char_boundary(cursor.position);
+                let new_pos = state.buffer.prev_grapheme_boundary(cursor.position);
                 let new_pos = adjust_position_for_crlf_left(&state.buffer, new_pos);
 
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
