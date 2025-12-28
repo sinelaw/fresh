@@ -219,14 +219,15 @@ impl FileBrowserRenderer {
             .unwrap_or_default();
 
         // "Show Hidden" checkbox on the right side with keyboard shortcut
-        // Format: "☐ Show Hidden Alt+." or "☑ Show Hidden Alt+."
+        // Format: "☐ Show Hidden (Alt+.)" or "☑ Show Hidden" if no shortcut
         let checkbox_icon = if state.show_hidden { "☑" } else { "☐" };
-        let checkbox_text = if shortcut_hint.is_empty() {
-            format!("{} Show Hidden", checkbox_icon)
+        let checkbox_label = format!("{} Show Hidden", checkbox_icon);
+        let shortcut_text = if shortcut_hint.is_empty() {
+            String::new()
         } else {
-            format!("{} Show Hidden {}", checkbox_icon, shortcut_hint)
+            format!(" ({})", shortcut_hint)
         };
-        let checkbox_width = str_width(&checkbox_text) + 2; // +2 for padding
+        let checkbox_width = str_width(&checkbox_label) + str_width(&shortcut_text) + 2; // +2 for padding
 
         // Calculate gap between navigation and checkbox
         let total_width = area.width as usize;
@@ -256,7 +257,21 @@ impl FileBrowserRenderer {
         } else {
             Style::default().fg(theme.help_key_fg).bg(theme.popup_bg)
         };
-        spans.push(Span::styled(format!(" {} ", checkbox_text), checkbox_style));
+        // Shortcut hint uses dimmer style (matching Find popup pattern)
+        let shortcut_style = if is_checkbox_hovered {
+            Style::default()
+                .fg(theme.menu_hover_fg)
+                .bg(theme.menu_hover_bg)
+        } else {
+            Style::default()
+                .fg(ratatui::style::Color::Rgb(140, 140, 140))
+                .bg(theme.popup_bg)
+        };
+        spans.push(Span::styled(format!(" {}", checkbox_label), checkbox_style));
+        if !shortcut_text.is_empty() {
+            spans.push(Span::styled(shortcut_text, shortcut_style));
+        }
+        spans.push(Span::styled(" ", checkbox_style));
 
         let line = Line::from(spans);
         let paragraph = Paragraph::new(vec![line]);
