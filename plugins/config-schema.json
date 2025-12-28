@@ -58,6 +58,13 @@
         "width": 0.30000001192092896
       }
     },
+    "file_browser": {
+      "description": "File browser settings (Open File dialog)",
+      "$ref": "#/$defs/FileBrowserConfig",
+      "default": {
+        "show_hidden": false
+      }
+    },
     "terminal": {
       "description": "Terminal settings",
       "$ref": "#/$defs/TerminalConfig",
@@ -287,6 +294,17 @@
           "type": "number",
           "format": "float",
           "default": 0.30000001192092896
+        }
+      }
+    },
+    "FileBrowserConfig": {
+      "description": "File browser configuration (for Open File dialog)",
+      "type": "object",
+      "properties": {
+        "show_hidden": {
+          "description": "Whether to show hidden files (starting with .) by default in Open File dialog",
+          "type": "boolean",
+          "default": false
         }
       }
     },
