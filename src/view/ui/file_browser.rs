@@ -227,8 +227,10 @@ impl FileBrowserRenderer {
         }
 
         // Add checkbox with hover/click styling
-        let is_checkbox_hovered =
-            matches!(hover_target, Some(HoverTarget::FileBrowserShowHiddenCheckbox));
+        let is_checkbox_hovered = matches!(
+            hover_target,
+            Some(HoverTarget::FileBrowserShowHiddenCheckbox)
+        );
         let checkbox_style = if is_checkbox_hovered {
             Style::default()
                 .fg(theme.menu_hover_fg)
@@ -238,9 +240,7 @@ impl FileBrowserRenderer {
                 .fg(theme.menu_highlight_fg)
                 .bg(theme.popup_bg)
         } else {
-            Style::default()
-                .fg(theme.help_key_fg)
-                .bg(theme.popup_bg)
+            Style::default().fg(theme.help_key_fg).bg(theme.popup_bg)
         };
         spans.push(Span::styled(format!(" {} ", checkbox_text), checkbox_style));
 

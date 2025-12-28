@@ -2112,7 +2112,10 @@ impl Editor {
 
         // Create the file open state with config-based show_hidden setting
         let show_hidden = self.config.file_browser.show_hidden;
-        self.file_open_state = Some(file_open::FileOpenState::new(initial_dir.clone(), show_hidden));
+        self.file_open_state = Some(file_open::FileOpenState::new(
+            initial_dir.clone(),
+            show_hidden,
+        ));
 
         // Start async directory loading
         self.load_file_open_directory(initial_dir);
@@ -2128,7 +2131,10 @@ impl Editor {
 
         // Create the file open state with config-based show_hidden setting
         let show_hidden = self.config.file_browser.show_hidden;
-        self.file_open_state = Some(file_open::FileOpenState::new(initial_dir.clone(), show_hidden));
+        self.file_open_state = Some(file_open::FileOpenState::new(
+            initial_dir.clone(),
+            show_hidden,
+        ));
 
         // Start async directory loading
         self.load_file_open_directory(initial_dir);
