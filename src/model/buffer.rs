@@ -2036,9 +2036,19 @@ impl TextBuffer {
             return self.next_char_boundary(pos);
         };
 
+        // Convert to UTF-8 string, handling the case where we might have
+        // grabbed bytes that end mid-character (truncate to valid UTF-8)
         let text = match std::str::from_utf8(&bytes) {
             Ok(s) => s,
-            Err(_) => return self.next_char_boundary(pos),
+            Err(e) => {
+                // The bytes end in an incomplete UTF-8 sequence
+                // Use only the valid portion (which includes at least the first grapheme)
+                let valid_bytes = &bytes[..e.valid_up_to()];
+                match std::str::from_utf8(valid_bytes) {
+                    Ok(s) if !s.is_empty() => s,
+                    _ => return self.next_char_boundary(pos),
+                }
+            }
         };
 
         // Use shared grapheme utility

@@ -547,3 +547,128 @@ fn test_thai_delete_entire_cluster() {
         content
     );
 }
+
+/// Test Thai text loaded from file - movement and rendering
+///
+/// This tests the full flow: open file with Thai text, verify rendering,
+/// test cursor movement by grapheme clusters.
+#[test]
+fn test_thai_file_open_and_movement() {
+    // Create temp file with Thai text
+    let temp_dir = TempDir::new().unwrap();
+    let thai_path = temp_dir.path().join("thai.txt");
+
+    // Write Thai text: "ที่นี่คือที่ติดตั้งระบบ" (typical Thai sentence)
+    // This text has 13 grapheme clusters but 23 code points
+    let thai_content = "ที่นี่คือที่ติดตั้งระบบ\n";
+    std::fs::write(&thai_path, thai_content).unwrap();
+
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+    harness.open_file(&thai_path).unwrap();
+    harness.render().unwrap();
+
+    // Verify content was loaded
+    let loaded = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        loaded.trim(),
+        thai_content.trim(),
+        "Thai content should be loaded correctly"
+    );
+
+    // Move to start of file
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Get initial position
+    let initial_pos = harness.cursor_position();
+    let (initial_x, initial_y) = harness.screen_cursor_position();
+    println!(
+        "Initial: buffer pos={}, screen=({}, {})",
+        initial_pos, initial_x, initial_y
+    );
+
+    // Press Right arrow - should skip entire first grapheme cluster "ที่"
+    // The first grapheme "ที่" is 9 bytes (3 code points × 3 bytes each)
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let pos1 = harness.cursor_position();
+    let (x1, _) = harness.screen_cursor_position();
+    println!("After 1st Right: buffer pos={}, screen x={}", pos1, x1);
+
+    // The first grapheme cluster "ที่" should be skipped entirely
+    assert_eq!(
+        pos1, 9,
+        "After 1st Right, cursor should be at byte 9 (after first Thai cluster 'ที่'). Got {}",
+        pos1
+    );
+
+    // Screen cursor should advance by 1 column (Thai grapheme has visual width 1)
+    assert_eq!(
+        x1,
+        initial_x + 1,
+        "Screen cursor should advance by 1 column. Got {} (initial was {})",
+        x1,
+        initial_x
+    );
+
+    // Press Right arrow again - should skip second grapheme cluster "นี่"
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let pos2 = harness.cursor_position();
+    let (x2, _) = harness.screen_cursor_position();
+    println!("After 2nd Right: buffer pos={}, screen x={}", pos2, x2);
+
+    // Second cluster "นี่" is also 9 bytes
+    assert_eq!(
+        pos2, 18,
+        "After 2nd Right, cursor should be at byte 18. Got {}",
+        pos2
+    );
+    assert_eq!(
+        x2,
+        initial_x + 2,
+        "Screen cursor should be at initial+2. Got {}",
+        x2
+    );
+
+    // Now go back with Left arrow - should skip back over "นี่"
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let pos_l1 = harness.cursor_position();
+    let (xl1, _) = harness.screen_cursor_position();
+    println!("After 1st Left: buffer pos={}, screen x={}", pos_l1, xl1);
+
+    assert_eq!(
+        pos_l1, 9,
+        "After 1st Left, cursor should be at byte 9. Got {}",
+        pos_l1
+    );
+    assert_eq!(
+        xl1,
+        initial_x + 1,
+        "Screen cursor should be at initial+1. Got {}",
+        xl1
+    );
+
+    // Left again - should go back to start
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let pos_l2 = harness.cursor_position();
+    let (xl2, _) = harness.screen_cursor_position();
+    println!("After 2nd Left: buffer pos={}, screen x={}", pos_l2, xl2);
+
+    assert_eq!(
+        pos_l2, 0,
+        "After 2nd Left, cursor should be at byte 0. Got {}",
+        pos_l2
+    );
+    assert_eq!(
+        xl2, initial_x,
+        "Screen cursor should be back at initial. Got {}",
+        xl2
+    );
+}
