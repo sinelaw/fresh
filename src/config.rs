@@ -142,6 +142,10 @@ pub struct Config {
     #[serde(default)]
     pub file_explorer: FileExplorerConfig,
 
+    /// File browser settings (Open File dialog)
+    #[serde(default)]
+    pub file_browser: FileBrowserConfig,
+
     /// Terminal settings
     #[serde(default)]
     pub terminal: TerminalConfig,
@@ -456,6 +460,20 @@ impl Default for FileExplorerConfig {
     }
 }
 
+/// File browser configuration (for Open File dialog)
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FileBrowserConfig {
+    /// Whether to show hidden files (starting with .) by default in Open File dialog
+    #[serde(default = "default_false")]
+    pub show_hidden: bool,
+}
+
+impl Default for FileBrowserConfig {
+    fn default() -> Self {
+        Self { show_hidden: false }
+    }
+}
+
 /// A single key in a sequence
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct KeyPress {
@@ -751,6 +769,7 @@ impl Default for Config {
             check_for_updates: true,
             editor: EditorConfig::default(),
             file_explorer: FileExplorerConfig::default(),
+            file_browser: FileBrowserConfig::default(),
             terminal: TerminalConfig::default(),
             keybindings: vec![], // User customizations only; defaults come from active_keybinding_map
             keybinding_maps: HashMap::new(), // User-defined maps go here

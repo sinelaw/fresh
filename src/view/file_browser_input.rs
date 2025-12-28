@@ -210,7 +210,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn create_test_file_state() -> FileOpenState {
-        FileOpenState::new(PathBuf::from("/tmp"))
+        FileOpenState::new(PathBuf::from("/tmp"), false)
     }
 
     fn create_test_prompt() -> Prompt {

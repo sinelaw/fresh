@@ -97,7 +97,7 @@ pub struct FileOpenState {
 
 impl FileOpenState {
     /// Create a new file open state for the given directory
-    pub fn new(dir: PathBuf) -> Self {
+    pub fn new(dir: PathBuf, show_hidden: bool) -> Self {
         let shortcuts = Self::build_shortcuts(&dir);
         Self {
             current_dir: dir,
@@ -112,7 +112,7 @@ impl FileOpenState {
             filter: String::new(),
             shortcuts,
             selected_shortcut: 0,
-            show_hidden: false,
+            show_hidden,
         }
     }
 
@@ -677,7 +677,7 @@ mod tests {
     #[test]
     fn test_sort_by_name() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"));
+        let mut state = FileOpenState::new(PathBuf::from("/"), false);
         state.set_entries(vec![
             make_entry("zebra.txt", false),
             make_entry("alpha.txt", false),
@@ -692,7 +692,7 @@ mod tests {
     #[test]
     fn test_sort_by_size() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"));
+        let mut state = FileOpenState::new(PathBuf::from("/"), false);
         state.sort_mode = SortMode::Size;
         state.set_entries(vec![
             make_entry_with_size("big.txt", 1000),
@@ -708,7 +708,7 @@ mod tests {
     #[test]
     fn test_filter() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"));
+        let mut state = FileOpenState::new(PathBuf::from("/"), false);
         state.set_entries(vec![
             make_entry("foo.txt", false),
             make_entry("bar.txt", false),
@@ -735,7 +735,7 @@ mod tests {
     #[test]
     fn test_filter_case_insensitive() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"));
+        let mut state = FileOpenState::new(PathBuf::from("/"), false);
         state.set_entries(vec![
             make_entry("README.md", false),
             make_entry("readme.txt", false),
@@ -756,7 +756,7 @@ mod tests {
     #[test]
     fn test_hidden_files() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"));
+        let mut state = FileOpenState::new(PathBuf::from("/"), false);
         state.show_hidden = false;
         state.set_entries(vec![
             make_entry(".hidden", false),
@@ -780,7 +780,7 @@ mod tests {
     #[test]
     fn test_navigation() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"));
+        let mut state = FileOpenState::new(PathBuf::from("/"), false);
         state.set_entries(vec![
             make_entry("a.txt", false),
             make_entry("b.txt", false),
@@ -816,7 +816,7 @@ mod tests {
     #[test]
     fn test_fuzzy_filter() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"));
+        let mut state = FileOpenState::new(PathBuf::from("/"), false);
         state.set_entries(vec![
             make_entry("command_registry.rs", false),
             make_entry("commands.rs", false),
@@ -839,7 +839,7 @@ mod tests {
     #[test]
     fn test_fuzzy_filter_sparse_match() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"));
+        let mut state = FileOpenState::new(PathBuf::from("/"), false);
         state.set_entries(vec![
             make_entry("Save File", false),
             make_entry("Select All", false),
