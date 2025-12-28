@@ -1732,7 +1732,8 @@ pub fn action_to_events(
                     if let Some(range) = cursor.selection_range() {
                         Some((*cursor_id, range))
                     } else if cursor.position > 0 {
-                        // Use prev_char_boundary to properly handle multi-byte UTF-8 characters
+                        // Use prev_char_boundary to delete one code point at a time
+                        // This allows "layer-by-layer" deletion of Thai combining marks
                         // In CRLF files, this also ensures we delete \r\n as a unit
                         let delete_from = state.buffer.prev_char_boundary(cursor.position);
                         let delete_from = adjust_position_for_crlf_left(&state.buffer, delete_from);

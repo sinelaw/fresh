@@ -3,6 +3,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::primitives::display_width::char_width;
 use std::path::PathBuf;
 use tempfile::TempDir;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Test End key behavior with Chinese characters
 /// Bug: End doesn't go to the actual end of the line
@@ -1304,9 +1305,15 @@ fn test_all_operations_on_multibyte_fixture() {
         harness.assert_buffer_content(line);
 
         let line_len = line.len();
+        // Grapheme count for cursor movement (Left/Right navigate by grapheme)
+        let grapheme_count = line.graphemes(true).count();
+        // Char count for backspace/delete (these delete by code point, not grapheme)
         let char_count = line.chars().count();
 
-        println!("  Line length: {} bytes, {} chars", line_len, char_count);
+        println!(
+            "  Line length: {} bytes, {} graphemes, {} chars",
+            line_len, grapheme_count, char_count
+        );
 
         // --- Test 1: End key goes to actual end ---
         harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
@@ -1329,9 +1336,10 @@ fn test_all_operations_on_multibyte_fixture() {
             line_idx
         );
 
-        // Calculate expected visual width using char_width per character (same as production code)
-        // Note: This sums individual character widths, which differs from str_width() for ZWJ sequences
-        let expected_visual_width: usize = line.chars().map(|c| char_width(c)).sum();
+        // Calculate expected visual width by summing char_width per character
+        // This matches how the rendering code calculates width (char by char, not via str_width)
+        // Note: str_width may differ for ZWJ sequences due to unicode-width handling
+        let expected_visual_width: usize = line.chars().map(char_width).sum();
 
         // Screen X = gutter_width + visual_content_width
         // Get gutter width by checking cursor X at Home position
@@ -1365,15 +1373,20 @@ fn test_all_operations_on_multibyte_fixture() {
             line_idx, pos_after_home
         );
 
-        // --- Test 3: Right arrow traverses all characters, checking both byte AND screen position ---
+        // --- Test 3: Right arrow traverses all graphemes, checking both byte AND screen position ---
+        // Use grapheme boundaries, not code point boundaries
         let valid_boundaries: Vec<usize> = line
-            .char_indices()
+            .grapheme_indices(true)
             .map(|(i, _)| i)
             .chain(std::iter::once(line_len))
             .collect();
 
-        // Calculate visual width for each character using char_width (same as production code)
-        let char_widths: Vec<usize> = line.chars().map(|c| char_width(c)).collect();
+        // Calculate visual width for each grapheme cluster by summing char widths
+        // This matches how the rendering code calculates width
+        let grapheme_widths: Vec<usize> = line
+            .graphemes(true)
+            .map(|g| g.chars().map(char_width).sum())
+            .collect();
 
         let mut positions_visited = vec![0usize];
         let mut prev_pos = 0;
@@ -1388,7 +1401,7 @@ fn test_all_operations_on_multibyte_fixture() {
             line_idx, gutter_x, start_screen_x
         );
 
-        for move_count in 1..=char_count {
+        for move_count in 1..=grapheme_count {
             harness
                 .send_key(KeyCode::Right, KeyModifiers::NONE)
                 .unwrap();
@@ -1410,7 +1423,7 @@ fn test_all_operations_on_multibyte_fixture() {
             );
 
             // Check screen cursor position
-            cumulative_visual_width += char_widths[move_count - 1];
+            cumulative_visual_width += grapheme_widths[move_count - 1];
             let expected_screen_x = gutter_x as usize + cumulative_visual_width;
             let (actual_screen_x, _) = harness.screen_cursor_position();
 
@@ -1431,14 +1444,14 @@ fn test_all_operations_on_multibyte_fixture() {
             line_len,
             "Line {}: After {} Right moves, should be at end (byte {})",
             line_idx,
-            char_count,
+            grapheme_count,
             line_len
         );
 
         println!("  Right traversal: {:?}", positions_visited);
 
         // --- Test 4: Left arrow traverses back, landing on valid boundaries ---
-        for move_count in 1..=char_count {
+        for move_count in 1..=grapheme_count {
             harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
             let pos = harness.cursor_position();
 
@@ -1454,11 +1467,11 @@ fn test_all_operations_on_multibyte_fixture() {
             0,
             "Line {}: After {} Left moves, should be at start (byte 0)",
             line_idx,
-            char_count
+            grapheme_count
         );
 
-        // --- Test 5: Selection with Shift+Right selects whole characters ---
-        if char_count >= 2 {
+        // --- Test 5: Selection with Shift+Right selects whole graphemes ---
+        if grapheme_count >= 2 {
             harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
             harness
                 .send_key(KeyCode::Right, KeyModifiers::SHIFT)
@@ -1487,7 +1500,7 @@ fn test_all_operations_on_multibyte_fixture() {
             println!("  Selection replace: first char -> X, result starts with X: ✓");
         }
 
-        // --- Test 6: Backspace deletes whole characters ---
+        // --- Test 6: Backspace deletes code points (layer-by-layer for Thai) ---
         let mut harness2 = EditorTestHarness::new(120, 30).unwrap();
         harness2.type_text(line).unwrap();
 
@@ -1518,14 +1531,16 @@ fn test_all_operations_on_multibyte_fixture() {
         harness2.assert_buffer_content("");
         println!("  Backspace: deleted {} chars one by one: ✓", char_count);
 
-        // --- Test 7: Delete (forward) deletes whole characters ---
+        // --- Test 7: Delete (forward) deletes grapheme clusters ---
+        // Unlike backspace, Delete removes whole grapheme clusters because
+        // if you delete the base character, the combining marks have nothing to sit on
         let mut harness3 = EditorTestHarness::new(120, 30).unwrap();
         harness3.type_text(line).unwrap();
         harness3
             .send_key(KeyCode::Home, KeyModifiers::NONE)
             .unwrap();
 
-        for del_count in 1..=char_count {
+        for del_count in 1..=grapheme_count {
             let before_len = harness3.get_buffer_content().unwrap().len();
             harness3
                 .send_key(KeyCode::Delete, KeyModifiers::NONE)
@@ -1550,7 +1565,10 @@ fn test_all_operations_on_multibyte_fixture() {
         }
 
         harness3.assert_buffer_content("");
-        println!("  Delete: deleted {} chars one by one: ✓", char_count);
+        println!(
+            "  Delete: deleted {} graphemes one by one: ✓",
+            grapheme_count
+        );
 
         // --- Test 8: Screen cursor visibility after various operations ---
         let mut harness4 = EditorTestHarness::new(120, 30).unwrap();
@@ -1574,7 +1592,7 @@ fn test_all_operations_on_multibyte_fixture() {
         harness4
             .send_key(KeyCode::Home, KeyModifiers::NONE)
             .unwrap();
-        for _ in 0..(char_count / 2) {
+        for _ in 0..(grapheme_count / 2) {
             harness4
                 .send_key(KeyCode::Right, KeyModifiers::NONE)
                 .unwrap();
