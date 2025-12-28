@@ -16,7 +16,6 @@ use crossterm::event::{KeyCode, KeyModifiers};
 #[ignore = "Needs investigation: fake LSP and plugin loading issues"]
 #[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
 fn test_lsp_find_references() -> std::io::Result<()> {
-
     // Create a temporary project directory
     let temp_dir = tempfile::TempDir::new()?;
     let project_root = temp_dir.path().to_path_buf();
