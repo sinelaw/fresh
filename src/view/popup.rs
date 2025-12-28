@@ -401,21 +401,6 @@ impl Popup {
         content_lines + border_height
     }
 
-    /// Get the number of content lines (without borders)
-    pub fn content_line_count(&self) -> usize {
-        match &self.content {
-            PopupContent::Text(lines) => lines.len(),
-            PopupContent::Markdown(lines) => lines.len(),
-            PopupContent::List { items, .. } => items.len(),
-            PopupContent::Custom(lines) => lines.len(),
-        }
-    }
-
-    /// Check if content needs scrolling (has more lines than visible area)
-    pub fn needs_scrollbar(&self, visible_height: u16) -> bool {
-        self.content_line_count() > visible_height as usize
-    }
-
     /// Calculate the area where this popup should be rendered
     pub fn calculate_area(&self, terminal_area: Rect, cursor_pos: Option<(u16, u16)>) -> Rect {
         match self.position {

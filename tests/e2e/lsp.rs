@@ -4656,3 +4656,165 @@ fn test_completion_type_to_filter_preserves_selection() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test LSP snippet expansion: function with $0 places cursor inside parens
+#[test]
+fn test_completion_snippet_cursor_position() -> std::io::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type partial function name
+    harness.type_text("print")?;
+    harness.render()?;
+
+    // Show completion popup with snippet
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            transient: false,
+            content: PopupContentData::List {
+                items: vec![PopupListItemData {
+                    text: "println!".to_string(),
+                    detail: Some("macro".to_string()),
+                    icon: Some("m".to_string()),
+                    // Snippet with $0 inside parens
+                    data: Some("println!($0)".to_string()),
+                }],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 50,
+            max_height: 15,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Confirm selection
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify the snippet was expanded correctly
+    let buffer = harness.get_buffer_content().unwrap();
+    assert_eq!(buffer, "println!()", "Snippet should expand without $0");
+
+    // Verify cursor is positioned inside the parens (at position 9)
+    let cursor_pos = harness.editor().active_state().cursors.primary().position;
+    assert_eq!(cursor_pos, 9, "Cursor should be inside the parentheses");
+
+    Ok(())
+}
+
+/// Test LSP snippet expansion: tabstop with default text
+#[test]
+fn test_completion_snippet_with_default() -> std::io::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type partial name
+    harness.type_text("fn")?;
+    harness.render()?;
+
+    // Show completion popup with snippet containing default text
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            transient: false,
+            content: PopupContentData::List {
+                items: vec![PopupListItemData {
+                    text: "fn".to_string(),
+                    detail: Some("keyword".to_string()),
+                    icon: Some("k".to_string()),
+                    // Snippet with default text
+                    data: Some("fn ${1:name}($2) {\n    $0\n}".to_string()),
+                }],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 50,
+            max_height: 15,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Confirm selection
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify the snippet was expanded with default text
+    let buffer = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        buffer, "fn name() {\n    \n}",
+        "Snippet should expand with default text"
+    );
+
+    // Verify cursor is at $0 position (after the 4 spaces on line 2)
+    let cursor_pos = harness.editor().active_state().cursors.primary().position;
+    assert_eq!(cursor_pos, 16, "Cursor should be at $0 position");
+
+    Ok(())
+}
+
+/// Test LSP snippet expansion: plain text (non-snippet) still works
+#[test]
+fn test_completion_plain_text_no_snippet() -> std::io::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type partial name
+    harness.type_text("my_var")?;
+    harness.render()?;
+
+    // Show completion popup with plain text (no snippet syntax)
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            transient: false,
+            content: PopupContentData::List {
+                items: vec![PopupListItemData {
+                    text: "my_variable".to_string(),
+                    detail: Some("let my_variable".to_string()),
+                    icon: Some("v".to_string()),
+                    // Plain text, no snippet syntax
+                    data: Some("my_variable".to_string()),
+                }],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 50,
+            max_height: 15,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Confirm selection
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify plain text was inserted
+    let buffer = harness.get_buffer_content().unwrap();
+    assert_eq!(buffer, "my_variable", "Plain text should be inserted as-is");
+
+    // Cursor should be at end of inserted text
+    let cursor_pos = harness.editor().active_state().cursors.primary().position;
+    assert_eq!(cursor_pos, 11, "Cursor should be at end of text");
+
+    Ok(())
+}

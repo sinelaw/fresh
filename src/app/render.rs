@@ -915,28 +915,16 @@ impl Editor {
         }
     }
 
-    /// Scroll transient popup content by delta lines
+    /// Scroll any popup content by delta lines
     /// Positive delta scrolls down, negative scrolls up
-    pub(super) fn scroll_transient_popup(&mut self, delta: i32) {
+    pub(super) fn scroll_popup(&mut self, delta: i32) {
         if let Some(popup) = self.active_state_mut().popups.top_mut() {
-            if popup.transient {
-                let content_len = popup.content_line_count();
-                if delta > 0 {
-                    // Scroll down
-                    popup.scroll_offset = popup
-                        .scroll_offset
-                        .saturating_add(delta as usize)
-                        .min(content_len.saturating_sub(1));
-                } else {
-                    // Scroll up
-                    popup.scroll_offset = popup.scroll_offset.saturating_sub((-delta) as usize);
-                }
-                tracing::debug!(
-                    "Scrolled transient popup by {}, new offset: {}",
-                    delta,
-                    popup.scroll_offset
-                );
-            }
+            popup.scroll_by(delta);
+            tracing::debug!(
+                "Scrolled popup by {}, new offset: {}",
+                delta,
+                popup.scroll_offset
+            );
         }
     }
 

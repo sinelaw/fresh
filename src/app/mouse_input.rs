@@ -164,9 +164,9 @@ impl Editor {
                 // Check if file browser is active and should handle scroll
                 if self.is_file_open_active() && self.handle_file_open_scroll(-3) {
                     needs_render = true;
-                } else if self.is_mouse_over_transient_popup(col, row) {
-                    // Scroll the popup content instead of dismissing it
-                    self.scroll_transient_popup(-3);
+                } else if self.is_mouse_over_any_popup(col, row) {
+                    // Scroll the popup content (works for all popups including completion)
+                    self.scroll_popup(-3);
                     needs_render = true;
                 } else {
                     // Dismiss hover/signature help popups on scroll
@@ -181,9 +181,9 @@ impl Editor {
                 // Check if file browser is active and should handle scroll
                 if self.is_file_open_active() && self.handle_file_open_scroll(3) {
                     needs_render = true;
-                } else if self.is_mouse_over_transient_popup(col, row) {
-                    // Scroll the popup content instead of dismissing it
-                    self.scroll_transient_popup(3);
+                } else if self.is_mouse_over_any_popup(col, row) {
+                    // Scroll the popup content (works for all popups including completion)
+                    self.scroll_popup(3);
                     needs_render = true;
                 } else {
                     // Dismiss hover/signature help popups on scroll
@@ -414,6 +414,16 @@ impl Editor {
             return false;
         }
 
+        self.is_mouse_over_any_popup(col, row)
+    }
+
+    /// Check if mouse position is over any popup (including non-transient ones like completion)
+    fn is_mouse_over_any_popup(&self, col: u16, row: u16) -> bool {
+        // Check if there's any popup showing
+        if !self.active_state().popups.is_visible() {
+            return false;
+        }
+
         // Check if mouse is over any popup area
         for (_popup_idx, popup_rect, _inner_rect, _scroll_offset, _num_items) in
             self.cached_layout.popup_areas.iter()
@@ -423,36 +433,6 @@ impl Editor {
                 && row >= popup_rect.y
                 && row < popup_rect.y + popup_rect.height
             {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Handle mouse wheel scroll over a popup
-    /// Returns true if the scroll was handled by a popup
-    fn handle_popup_scroll(&mut self, col: u16, row: u16, delta: i32) -> bool {
-        // Check if there's an active popup
-        if !self.active_state().popups.is_visible() {
-            return false;
-        }
-
-        // Check if mouse is over any popup area (in reverse order, top popup first)
-        for (_popup_idx, popup_rect, _inner_rect, _scroll_offset, num_items) in
-            self.cached_layout.popup_areas.iter().rev()
-        {
-            if col >= popup_rect.x
-                && col < popup_rect.x + popup_rect.width
-                && row >= popup_rect.y
-                && row < popup_rect.y + popup_rect.height
-                && *num_items > 0
-            {
-                // Scroll the popup
-                let state = self.active_state_mut();
-                if let Some(popup) = state.popups.top_mut() {
-                    popup.scroll_by(delta);
-                }
                 return true;
             }
         }

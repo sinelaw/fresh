@@ -4,6 +4,7 @@
 
 use super::Editor;
 use crate::model::event::Event;
+use crate::primitives::snippet::{expand_snippet, is_snippet};
 use crate::primitives::word_navigation::find_completion_word_start;
 
 /// Result of handling a popup confirmation.
@@ -66,7 +67,16 @@ impl Editor {
     }
 
     /// Insert completion text, replacing the word prefix at cursor.
+    /// If the text contains LSP snippet syntax, it will be expanded.
     fn insert_completion_text(&mut self, text: String) {
+        // Check if this is a snippet and expand it
+        let (insert_text, cursor_offset) = if is_snippet(&text) {
+            let expanded = expand_snippet(&text);
+            (expanded.text, Some(expanded.cursor_offset))
+        } else {
+            (text, None)
+        };
+
         let (cursor_id, cursor_pos, word_start) = {
             let state = self.active_state();
             let cursor_id = state.cursors.primary_id();
@@ -82,7 +92,7 @@ impl Editor {
             String::new()
         };
 
-        if word_start < cursor_pos {
+        let insert_pos = if word_start < cursor_pos {
             let delete_event = Event::Delete {
                 range: word_start..cursor_pos,
                 deleted_text,
@@ -93,25 +103,37 @@ impl Editor {
             self.apply_event_to_active_buffer(&delete_event);
 
             let buffer_len = self.active_state().buffer.len();
-            let insert_pos = word_start.min(buffer_len);
-
-            let insert_event = Event::Insert {
-                position: insert_pos,
-                text,
-                cursor_id,
-            };
-
-            self.active_event_log_mut().append(insert_event.clone());
-            self.apply_event_to_active_buffer(&insert_event);
+            word_start.min(buffer_len)
         } else {
-            let insert_event = Event::Insert {
-                position: cursor_pos,
-                text,
-                cursor_id,
-            };
+            cursor_pos
+        };
 
-            self.active_event_log_mut().append(insert_event.clone());
-            self.apply_event_to_active_buffer(&insert_event);
+        let insert_event = Event::Insert {
+            position: insert_pos,
+            text: insert_text.clone(),
+            cursor_id,
+        };
+
+        self.active_event_log_mut().append(insert_event.clone());
+        self.apply_event_to_active_buffer(&insert_event);
+
+        // If this was a snippet, position cursor at the snippet's $0 location
+        if let Some(offset) = cursor_offset {
+            let new_cursor_pos = insert_pos + offset;
+            // Get current cursor position after the insert
+            let current_pos = self.active_state().cursors.primary().position;
+            if current_pos != new_cursor_pos {
+                let move_event = Event::MoveCursor {
+                    cursor_id,
+                    old_position: current_pos,
+                    new_position: new_cursor_pos,
+                    old_anchor: None,
+                    new_anchor: None,
+                    old_sticky_column: 0,
+                    new_sticky_column: 0,
+                };
+                self.active_state_mut().apply(&move_event);
+            }
         }
     }
 
