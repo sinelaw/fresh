@@ -378,6 +378,7 @@ impl Editor {
                         file_open_state,
                         &self.theme,
                         &self.mouse_state.hover_target,
+                        Some(&self.keybindings),
                     );
                 }
             } else if !prompt.suggestions.is_empty() {

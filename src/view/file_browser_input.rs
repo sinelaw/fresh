@@ -28,13 +28,8 @@ impl<'a> InputHandler for FileBrowserInputHandler<'a> {
         let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
         let alt = event.modifiers.contains(KeyModifiers::ALT);
 
-        // Alt+. toggles hidden files (mnemonic: dotfiles start with '.')
+        // Alt+key combinations pass through to keybindings (including Alt+. for toggle hidden)
         if alt {
-            if let KeyCode::Char('.') = event.code {
-                ctx.defer(DeferredAction::FileBrowserToggleHidden);
-                return InputResult::Consumed;
-            }
-            // Other Alt+key combinations pass through to keybindings
             if let KeyCode::Char(_) = event.code {
                 return InputResult::Ignored;
             }

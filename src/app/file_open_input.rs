@@ -134,6 +134,12 @@ impl Editor {
                 true
             }
 
+            // Toggle hidden files visibility
+            Action::FileBrowserToggleHidden => {
+                self.file_open_toggle_hidden();
+                true
+            }
+
             // Text input is handled by normal prompt, but we need to update filter
             _ => false,
         }

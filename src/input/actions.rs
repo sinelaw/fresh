@@ -2098,6 +2098,7 @@ pub fn action_to_events(
         | Action::PromptSelectWordLeft
         | Action::PromptSelectWordRight
         | Action::PromptSelectAll
+        | Action::FileBrowserToggleHidden
         | Action::PopupSelectNext
         | Action::PopupSelectPrev
         | Action::PopupPageUp

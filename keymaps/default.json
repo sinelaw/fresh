@@ -1319,6 +1319,14 @@
       "when": "prompt"
     },
     {
+      "comment": "File browser - toggle hidden files (mnemonic: dotfiles start with '.')",
+      "key": ".",
+      "modifiers": ["alt"],
+      "action": "file_browser_toggle_hidden",
+      "args": {},
+      "when": "prompt"
+    },
+    {
       "comment": "Popup context - Navigation",
       "key": "Up",
       "modifiers": [],

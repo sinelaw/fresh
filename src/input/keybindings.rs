@@ -403,6 +403,9 @@ pub enum Action {
     PromptSelectWordRight,
     PromptSelectAll,
 
+    // File browser actions
+    FileBrowserToggleHidden,
+
     // Popup mode actions
     PopupSelectNext,
     PopupSelectPrev,
@@ -722,6 +725,7 @@ impl Action {
             "prompt_select_word_left" => Some(Action::PromptSelectWordLeft),
             "prompt_select_word_right" => Some(Action::PromptSelectWordRight),
             "prompt_select_all" => Some(Action::PromptSelectAll),
+            "file_browser_toggle_hidden" => Some(Action::FileBrowserToggleHidden),
             "prompt_move_word_left" => Some(Action::PromptMoveWordLeft),
             "prompt_move_word_right" => Some(Action::PromptMoveWordRight),
             "prompt_delete" => Some(Action::PromptDelete),
@@ -1674,6 +1678,7 @@ impl KeybindingResolver {
             Action::PromptSelectWordLeft => "Prompt select word left".to_string(),
             Action::PromptSelectWordRight => "Prompt select word right".to_string(),
             Action::PromptSelectAll => "Prompt select all".to_string(),
+            Action::FileBrowserToggleHidden => "Toggle hidden files visibility".to_string(),
             Action::PopupSelectNext => "Popup select next".to_string(),
             Action::PopupSelectPrev => "Popup select previous".to_string(),
             Action::PopupPageUp => "Popup page up".to_string(),

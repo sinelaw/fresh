@@ -734,6 +734,10 @@ impl Editor {
                 };
                 self.set_status_message(format!("Confirm each replacement {}", state));
             }
+            Action::FileBrowserToggleHidden => {
+                // Toggle hidden files in file browser (handled via file_open_toggle_hidden)
+                self.file_open_toggle_hidden();
+            }
             Action::StartMacroRecording => {
                 // This is a no-op; use ToggleMacroRecording instead
                 self.set_status_message(
