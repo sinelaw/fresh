@@ -404,6 +404,9 @@ fn respond_to_pending(
             request_id, ..
         } => *request_id,
         crate::services::plugins::api::PluginResponse::LspRequest { request_id, .. } => *request_id,
+        crate::services::plugins::api::PluginResponse::HighlightsComputed {
+            request_id, ..
+        } => *request_id,
     };
 
     let sender = {

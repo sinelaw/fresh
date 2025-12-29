@@ -29,6 +29,11 @@ pub enum PluginResponse {
         request_id: u64,
         result: Result<Value, String>,
     },
+    /// Response to RequestHighlights
+    HighlightsComputed {
+        request_id: u64,
+        spans: Vec<crate::services::plugins::runtime::TsHighlightSpan>,
+    },
 }
 
 /// Information about a cursor in the editor
@@ -240,6 +245,7 @@ pub enum PluginCommand {
         namespace: Option<OverlayNamespace>,
         range: Range<usize>,
         color: (u8, u8, u8),
+        bg_color: Option<(u8, u8, u8)>,
         underline: bool,
         bold: bool,
         italic: bool,
@@ -573,6 +579,16 @@ pub enum PluginCommand {
         buffer_id: BufferId,
     },
 
+    /// Set the scroll position of a specific split
+    SetSplitScroll { split_id: SplitId, top_byte: usize },
+
+    /// Request syntax highlights for a buffer range
+    RequestHighlights {
+        buffer_id: BufferId,
+        range: Range<usize>,
+        request_id: u64,
+    },
+
     /// Close a split (if not the last one)
     CloseSplit { split_id: SplitId },
 
@@ -620,6 +636,30 @@ pub enum PluginCommand {
         /// Whether the context is active
         active: bool,
     },
+
+    /// Set the hunks for the Review Diff tool
+    SetReviewDiffHunks { hunks: Vec<ReviewHunk> },
+}
+
+/// Hunk status for Review Diff
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum HunkStatus {
+    Pending,
+    Staged,
+    Discarded,
+}
+
+/// A high-level hunk directive for the Review Diff tool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewHunk {
+    pub id: String,
+    pub file: String,
+    pub context_header: String,
+    pub status: HunkStatus,
+    /// 0-indexed line range in the base (HEAD) version
+    pub base_range: Option<(usize, usize)>,
+    /// 0-indexed line range in the modified (Working) version
+    pub modified_range: Option<(usize, usize)>,
 }
 
 /// Plugin API context - provides safe access to editor functionality
@@ -711,6 +751,7 @@ impl PluginApi {
         namespace: Option<String>,
         range: Range<usize>,
         color: (u8, u8, u8),
+        bg_color: Option<(u8, u8, u8)>,
         underline: bool,
         bold: bool,
         italic: bool,
@@ -720,6 +761,7 @@ impl PluginApi {
             namespace: namespace.map(crate::view::overlay::OverlayNamespace::from_string),
             range,
             color,
+            bg_color,
             underline,
             bold,
             italic,
@@ -928,6 +970,28 @@ impl PluginApi {
         self.send_command(PluginCommand::ShowBuffer { buffer_id })
     }
 
+    /// Set the scroll position of a specific split
+    pub fn set_split_scroll(&self, split_id: usize, top_byte: usize) -> Result<(), String> {
+        self.send_command(PluginCommand::SetSplitScroll {
+            split_id: SplitId(split_id),
+            top_byte,
+        })
+    }
+
+    /// Request syntax highlights for a buffer range
+    pub fn get_highlights(
+        &self,
+        buffer_id: BufferId,
+        range: Range<usize>,
+        request_id: u64,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::RequestHighlights {
+            buffer_id,
+            range,
+            request_id,
+        })
+    }
+
     // === Query Methods ===
 
     /// Get the currently active buffer ID
@@ -1065,6 +1129,7 @@ mod tests {
             Some("test-overlay".to_string()),
             0..10,
             (255, 0, 0),
+            None,
             true,
             false,
             false,
@@ -1078,6 +1143,7 @@ mod tests {
                 namespace,
                 range,
                 color,
+                bg_color,
                 underline,
                 bold,
                 italic,
@@ -1086,6 +1152,7 @@ mod tests {
                 assert_eq!(namespace.as_ref().map(|n| n.as_str()), Some("test-overlay"));
                 assert_eq!(range, 0..10);
                 assert_eq!(color, (255, 0, 0));
+                assert_eq!(bg_color, None);
                 assert!(underline);
                 assert!(!bold);
                 assert!(!italic);

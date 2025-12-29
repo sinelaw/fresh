@@ -628,12 +628,16 @@ fn convert_event_face_to_overlay_face(event_face: &EventOverlayFace) -> OverlayF
         },
         EventOverlayFace::Style {
             color,
+            bg_color,
             bold,
             italic,
             underline,
         } => {
             use ratatui::style::Modifier;
             let mut style = Style::default().fg(Color::Rgb(color.0, color.1, color.2));
+            if let Some(bg) = bg_color {
+                style = style.bg(Color::Rgb(bg.0, bg.1, bg.2));
+            }
             let mut modifiers = Modifier::empty();
             if *bold {
                 modifiers |= Modifier::BOLD;

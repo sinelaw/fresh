@@ -448,6 +448,7 @@ fn op_fresh_delete_range(state: &mut OpState, buffer_id: u32, start: u32, end: u
 /// @param italic - Use italic text
 /// @returns true if overlay was added
 #[op2(fast)]
+#[allow(clippy::too_many_arguments)]
 fn op_fresh_add_overlay(
     state: &mut OpState,
     buffer_id: u32,
@@ -457,6 +458,9 @@ fn op_fresh_add_overlay(
     r: u8,
     g: u8,
     b: u8,
+    bg_r: i16,
+    bg_g: i16,
+    bg_b: i16,
     underline: bool,
     bold: bool,
     italic: bool,
@@ -470,6 +474,13 @@ fn op_fresh_add_overlay(
                 namespace,
             ))
         };
+
+        let bg_color = if bg_r >= 0 && bg_g >= 0 && bg_b >= 0 {
+            Some((bg_r as u8, bg_g as u8, bg_b as u8))
+        } else {
+            None
+        };
+
         let result = runtime_state
             .command_sender
             .send(PluginCommand::AddOverlay {
@@ -477,6 +488,7 @@ fn op_fresh_add_overlay(
                 namespace: ns,
                 range: (start as usize)..(end as usize),
                 color: (r, g, b),
+                bg_color,
                 underline,
                 bold,
                 italic,
@@ -1690,6 +1702,118 @@ struct TsBufferSavedDiff {
     line_ranges: Option<Vec<(u32, u32)>>,
 }
 
+/// Line diff result for plugins
+#[derive(serde::Serialize)]
+struct TsLineDiff {
+    equal: bool,
+    changed_lines: Vec<(u32, u32)>,
+}
+
+/// Syntax highlighting span for plugins
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TsHighlightSpan {
+    pub start: u32,
+    pub end: u32,
+    pub color: (u8, u8, u8),
+    pub bold: bool,
+    pub italic: bool,
+}
+
+/// Compute syntax highlighting for a buffer range
+#[op2(async)]
+#[serde]
+async fn op_fresh_get_highlights(
+    state: Rc<RefCell<OpState>>,
+    buffer_id: u32,
+    start: u32,
+    end: u32,
+) -> Result<Vec<TsHighlightSpan>, JsErrorBox> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let request_id = {
+        let op_state = state.borrow();
+        let runtime_state = op_state.borrow::<Rc<RefCell<TsRuntimeState>>>().borrow();
+        let mut id_ref = runtime_state.next_request_id.borrow_mut();
+        let id = *id_ref;
+        *id_ref += 1;
+
+        runtime_state
+            .pending_responses
+            .lock()
+            .unwrap()
+            .insert(id, tx);
+
+        let _ = runtime_state
+            .command_sender
+            .send(PluginCommand::RequestHighlights {
+                buffer_id: BufferId(buffer_id as usize),
+                range: (start as usize)..(end as usize),
+                request_id: id,
+            });
+        id
+    };
+
+    match rx.await {
+        Ok(crate::services::plugins::api::PluginResponse::HighlightsComputed { spans, .. }) => {
+            Ok(spans)
+        }
+        _ => Err(JsErrorBox::generic(format!(
+            "Failed to get highlights for request {}",
+            request_id
+        ))),
+    }
+}
+
+/// Get the byte offset of a line in a buffer
+#[op2(fast)]
+fn op_fresh_get_line_byte_offset(state: &mut OpState, buffer_id: u32, line: u32) -> u32 {
+    let runtime_state = state.borrow::<Rc<RefCell<TsRuntimeState>>>().borrow();
+    if let Ok(snapshot) = runtime_state.state_snapshot.read() {
+        if let Some(state) = snapshot
+            .buffer_cursor_positions
+            .get(&BufferId(buffer_id as usize))
+        {
+            // We don't have direct access to the LineCache here in the snapshot.
+            // But wait, the snapshot has buffer_cursor_positions which is just a single position.
+        }
+    }
+
+    // Fallback: we need to access the actual buffer.
+    // Let's implement this as a command or find a way to access the editor state.
+    0
+}
+
+/// Find a buffer ID by its file path
+#[op2(fast)]
+fn op_fresh_find_buffer_by_path(state: &mut OpState, #[string] path: String) -> u32 {
+    let runtime_state = state.borrow::<Rc<RefCell<TsRuntimeState>>>().borrow();
+    if let Ok(snapshot) = runtime_state.state_snapshot.read() {
+        let target_path = std::path::PathBuf::from(path);
+        for (id, info) in &snapshot.buffers {
+            if let Some(ref buffer_path) = info.path {
+                if *buffer_path == target_path {
+                    return id.0 as u32;
+                }
+            }
+        }
+    }
+    0
+}
+
+/// Compute line diff between two strings
+#[op2]
+#[serde]
+fn op_fresh_diff_lines(#[string] original: String, #[string] modified: String) -> TsLineDiff {
+    let diff = crate::model::line_diff::diff_lines(original.as_bytes(), modified.as_bytes());
+    TsLineDiff {
+        equal: diff.equal,
+        changed_lines: diff
+            .changed_lines
+            .iter()
+            .map(|r| (r.start as u32, r.end as u32))
+            .collect(),
+    }
+}
+
 /// Selection range
 #[derive(serde::Serialize)]
 struct TsSelectionRange {
@@ -2811,6 +2935,25 @@ fn op_fresh_set_split_buffer(state: &mut OpState, split_id: u32, buffer_id: u32)
     false
 }
 
+/// Set the scroll position of a specific split
+/// @param split_id - The split ID
+/// @param top_byte - The byte offset of the top visible line
+/// @returns true if successful
+#[op2(fast)]
+fn op_fresh_set_split_scroll(state: &mut OpState, split_id: u32, top_byte: u32) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::SetSplitScroll {
+                split_id: crate::model::event::SplitId(split_id as usize),
+                top_byte: top_byte as usize,
+            });
+        return result.is_ok();
+    }
+    false
+}
+
 /// Close a split (if not the last one)
 /// @param split_id - ID of the split to close
 /// @returns true if the split was closed successfully
@@ -2974,6 +3117,8 @@ extension!(
         op_fresh_get_buffer_path,
         op_fresh_get_buffer_length,
         op_fresh_get_buffer_saved_diff,
+        op_fresh_get_highlights,
+        op_fresh_find_buffer_by_path,
         op_fresh_is_buffer_modified,
         op_fresh_insert_text,
         op_fresh_delete_range,
@@ -3041,9 +3186,10 @@ extension!(
         op_fresh_define_mode,
         op_fresh_show_buffer,
         op_fresh_close_buffer,
-        op_fresh_focus_split,
         op_fresh_set_split_buffer,
+        op_fresh_set_split_scroll,
         op_fresh_close_split,
+        op_fresh_focus_split,
         op_fresh_set_split_ratio,
         op_fresh_distribute_splits_evenly,
         op_fresh_set_buffer_cursor,
@@ -3197,8 +3343,9 @@ impl TypeScriptRuntime {
                     // Overlays
                     // namespace: group overlays together for efficient batch removal
                     // Use empty string for no namespace
-                    addOverlay(bufferId, namespace, start, end, r, g, b, underline, bold = false, italic = false) {
-                        return core.ops.op_fresh_add_overlay(bufferId, namespace, start, end, r, g, b, underline, bold, italic);
+                    // bg_r, bg_g, bg_b: background color (-1 for no background)
+                    addOverlay(bufferId, namespace, start, end, r, g, b, underline, bold = false, italic = false, bg_r = -1, bg_g = -1, bg_b = -1) {
+                        return core.ops.op_fresh_add_overlay(bufferId, namespace, start, end, r, g, b, bg_r, bg_g, bg_b, underline, bold, italic);
                     },
                     removeOverlay(bufferId, handle) {
                         return core.ops.op_fresh_remove_overlay(bufferId, handle);
@@ -3335,7 +3482,9 @@ impl TypeScriptRuntime {
 
                     // Async operations
                     spawnProcess(command, args = [], cwd = null) {
-                        const processId = core.ops.op_fresh_spawn_process_start(command, args, cwd);
+                        // Use editor's working directory if cwd not specified
+                        const effectiveCwd = cwd ?? core.ops.op_fresh_get_cwd();
+                        const processId = core.ops.op_fresh_spawn_process_start(command, args, effectiveCwd);
                         const resultPromise = processId.then(id => core.ops.op_fresh_spawn_process_wait(id));
                         return {
                             get processId() { return processId; },
@@ -3357,7 +3506,9 @@ impl TypeScriptRuntime {
                         return core.ops.op_fresh_delay(ms);
                     },
                     spawnBackgroundProcess(command, args = [], cwd = null) {
-                        return core.ops.op_fresh_spawn_background_process(command, args, cwd);
+                        // Use editor's working directory if cwd not specified
+                        const effectiveCwd = cwd ?? core.ops.op_fresh_get_cwd();
+                        return core.ops.op_fresh_spawn_background_process(command, args, effectiveCwd);
                     },
                     killProcess(processId) {
                         return core.ops.op_fresh_kill_process(processId);
@@ -3453,6 +3604,9 @@ impl TypeScriptRuntime {
                     setSplitRatio(splitId, ratio) {
                         return core.ops.op_fresh_set_split_ratio(splitId, ratio);
                     },
+                    setSplitScroll(splitId, topByte) {
+                        return core.ops.op_fresh_set_split_scroll(splitId, topByte);
+                    },
                     distributeSplitsEvenly() {
                         return core.ops.op_fresh_distribute_splits_evenly();
                     },
@@ -3512,6 +3666,10 @@ impl TypeScriptRuntime {
             crate::services::plugins::api::PluginResponse::LspRequest { request_id, .. } => {
                 *request_id
             }
+            crate::services::plugins::api::PluginResponse::HighlightsComputed {
+                request_id,
+                ..
+            } => *request_id,
         };
 
         let sender = {
@@ -4270,6 +4428,7 @@ mod tests {
                 namespace,
                 range,
                 color,
+                bg_color,
                 underline,
                 bold,
                 italic,
@@ -4279,6 +4438,7 @@ mod tests {
                 assert_eq!(range.start, 0);
                 assert_eq!(range.end, 50);
                 assert_eq!(*color, (255, 0, 0));
+                assert_eq!(*bg_color, None);
                 assert!(*underline);
                 assert!(!*bold);
                 assert!(!*italic);

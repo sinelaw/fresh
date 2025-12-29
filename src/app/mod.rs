@@ -497,6 +497,9 @@ pub struct Editor {
     /// Terminal color capability (true color, 256, or 16 colors)
     color_capability: crate::view::color_support::ColorCapability,
 
+    /// Hunks for the Review Diff tool
+    review_hunks: Vec<crate::services::plugins::api::ReviewHunk>,
+
     /// Stdin streaming state (if reading from stdin)
     stdin_streaming: Option<StdinStreamingState>,
 }
@@ -923,6 +926,7 @@ impl Editor {
             settings_state: None,
             color_capability,
             stdin_streaming: None,
+            review_hunks: Vec::new(),
         })
     }
 
@@ -1730,90 +1734,142 @@ impl Editor {
         use crate::view::ui::view_pipeline::ViewLineIterator;
 
         let active_split = self.split_manager.active_split();
-        let buffer_id = self.active_buffer();
-        let tab_size = self.config.editor.tab_size;
 
-        // Get view_transform tokens from SplitViewState (if any)
-        let view_transform_tokens = self
+        // Find other splits in the same sync group if any
+        let sync_group = self
             .split_view_states
             .get(&active_split)
-            .and_then(|vs| vs.view_transform.as_ref())
-            .map(|vt| vt.tokens.clone());
+            .and_then(|vs| vs.sync_group);
+        let splits_to_scroll = if let Some(group_id) = sync_group {
+            self.split_manager
+                .get_splits_in_group(group_id, &self.split_view_states)
+        } else {
+            vec![active_split]
+        };
 
-        // Get mutable references to both buffer and view state
-        let buffer = &mut self.buffers.get_mut(&buffer_id).unwrap().buffer;
-        let view_state = self.split_view_states.get_mut(&active_split);
-
-        if let Some(view_state) = view_state {
-            if let Some(tokens) = view_transform_tokens {
-                // Use view-aware scrolling with the transform's tokens
-                let view_lines: Vec<_> =
-                    ViewLineIterator::new(&tokens, false, false, tab_size).collect();
-                view_state
-                    .viewport
-                    .scroll_view_lines(&view_lines, line_offset);
+        for split_id in splits_to_scroll {
+            let buffer_id = if let Some(id) = self.split_manager.buffer_for_split(split_id) {
+                id
             } else {
-                // No view transform - use traditional buffer-based scrolling
-                // Still use SplitViewState's viewport (not EditorState's)
-                if line_offset > 0 {
-                    view_state
-                        .viewport
-                        .scroll_down(buffer, line_offset as usize);
-                } else {
-                    view_state
-                        .viewport
-                        .scroll_up(buffer, line_offset.unsigned_abs());
+                continue;
+            };
+            let tab_size = self.config.editor.tab_size;
+
+            // Get view_transform tokens from SplitViewState (if any)
+            let view_transform_tokens = self
+                .split_view_states
+                .get(&split_id)
+                .and_then(|vs| vs.view_transform.as_ref())
+                .map(|vt| vt.tokens.clone());
+
+            // Get mutable references to both buffer and view state
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                let buffer = &mut state.buffer;
+                if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                    if let Some(tokens) = view_transform_tokens {
+                        // Use view-aware scrolling with the transform's tokens
+                        let view_lines: Vec<_> =
+                            ViewLineIterator::new(&tokens, false, false, tab_size).collect();
+                        view_state
+                            .viewport
+                            .scroll_view_lines(&view_lines, line_offset);
+                    } else {
+                        // No view transform - use traditional buffer-based scrolling
+                        if line_offset > 0 {
+                            view_state
+                                .viewport
+                                .scroll_down(buffer, line_offset as usize);
+                        } else {
+                            view_state
+                                .viewport
+                                .scroll_up(buffer, line_offset.unsigned_abs());
+                        }
+                    }
+                    // Mark to skip ensure_visible on next render so the scroll isn't undone
+                    view_state.viewport.set_skip_ensure_visible();
                 }
             }
-            // Mark to skip ensure_visible on next render so the scroll isn't undone
-            view_state.viewport.set_skip_ensure_visible();
         }
-        // Note: SplitViewState is now authoritative for viewport, no sync needed
     }
 
     /// Handle SetViewport event using SplitViewState's viewport
     fn handle_set_viewport_event(&mut self, top_line: usize) {
         let active_split = self.split_manager.active_split();
-        let buffer_id = self.active_buffer();
 
-        // Get mutable references to both buffer and view state
-        let buffer = self.buffers.get_mut(&buffer_id).map(|s| &mut s.buffer);
-        let view_state = self.split_view_states.get_mut(&active_split);
+        // Find other splits in the same sync group if any
+        let sync_group = self
+            .split_view_states
+            .get(&active_split)
+            .and_then(|vs| vs.sync_group);
+        let splits_to_scroll = if let Some(group_id) = sync_group {
+            self.split_manager
+                .get_splits_in_group(group_id, &self.split_view_states)
+        } else {
+            vec![active_split]
+        };
 
-        if let (Some(buffer), Some(view_state)) = (buffer, view_state) {
-            view_state.viewport.scroll_to(buffer, top_line);
-            // Skip ensure_visible so the explicit scroll position isn't undone during render
-            view_state.viewport.set_skip_ensure_visible();
+        for split_id in splits_to_scroll {
+            let buffer_id = if let Some(id) = self.split_manager.buffer_for_split(split_id) {
+                id
+            } else {
+                continue;
+            };
+
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                let buffer = &mut state.buffer;
+                if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                    view_state.viewport.scroll_to(buffer, top_line);
+                    // Mark to skip ensure_visible on next render so the scroll isn't undone
+                    view_state.viewport.set_skip_ensure_visible();
+                }
+            }
         }
     }
 
-    /// Handle Recenter event using SplitViewState's viewport and cursors
+    /// Handle Recenter event using SplitViewState's viewport
     fn handle_recenter_event(&mut self) {
         let active_split = self.split_manager.active_split();
-        let buffer_id = self.active_buffer();
 
-        // Get cursor position from SplitViewState's cursors
-        let cursor_position = self
+        // Find other splits in the same sync group if any
+        let sync_group = self
             .split_view_states
             .get(&active_split)
-            .and_then(|vs| vs.cursors.iter().next())
-            .map(|(_, c)| c.position);
+            .and_then(|vs| vs.sync_group);
+        let splits_to_recenter = if let Some(group_id) = sync_group {
+            self.split_manager
+                .get_splits_in_group(group_id, &self.split_view_states)
+        } else {
+            vec![active_split]
+        };
 
-        if let Some(cursor_pos) = cursor_position {
-            // Get buffer to calculate line
-            if let Some(state) = self.buffers.get(&buffer_id) {
-                let cursor_line = state.buffer.position_to_line_col(cursor_pos).0;
-                let half_height = self
-                    .split_view_states
-                    .get(&active_split)
-                    .map(|vs| (vs.viewport.height / 2) as usize)
-                    .unwrap_or(12);
-                let new_top = cursor_line.saturating_sub(half_height);
+        for split_id in splits_to_recenter {
+            let buffer_id = if let Some(id) = self.split_manager.buffer_for_split(split_id) {
+                id
+            } else {
+                continue;
+            };
 
-                // Now scroll the viewport
-                let buffer = &mut self.buffers.get_mut(&buffer_id).unwrap().buffer;
-                if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-                    view_state.viewport.scroll_to(buffer, new_top);
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                let buffer = &mut state.buffer;
+                let view_state = self.split_view_states.get_mut(&split_id);
+
+                if let Some(view_state) = view_state {
+                    // Recenter viewport on cursor
+                    let cursor = view_state.cursors.primary().clone();
+                    let viewport_height = view_state.viewport.visible_line_count();
+                    let target_rows_from_top = viewport_height / 2;
+
+                    // Move backwards from cursor position target_rows_from_top lines
+                    let mut iter = buffer.line_iterator(cursor.position, 80);
+                    for _ in 0..target_rows_from_top {
+                        if iter.prev().is_none() {
+                            break;
+                        }
+                    }
+                    let new_top_byte = iter.current_position();
+                    view_state.viewport.top_byte = new_top_byte;
+                    // Mark to skip ensure_visible on next render so the scroll isn't undone
+                    view_state.viewport.set_skip_ensure_visible();
                 }
             }
         }
@@ -2982,12 +3038,13 @@ impl Editor {
                 namespace,
                 range,
                 color,
+                bg_color,
                 underline,
                 bold,
                 italic,
             } => {
                 self.handle_add_overlay(
-                    buffer_id, namespace, range, color, underline, bold, italic,
+                    buffer_id, namespace, range, color, bg_color, underline, bold, italic,
                 );
             }
             PluginCommand::RemoveOverlay { buffer_id, handle } => {
@@ -3093,6 +3150,16 @@ impl Editor {
                 buffer_id,
             } => {
                 self.handle_set_split_buffer(split_id, buffer_id);
+            }
+            PluginCommand::SetSplitScroll { split_id, top_byte } => {
+                self.handle_set_split_scroll(split_id, top_byte);
+            }
+            PluginCommand::RequestHighlights {
+                buffer_id,
+                range,
+                request_id,
+            } => {
+                self.handle_request_highlights(buffer_id, range, request_id);
             }
             PluginCommand::CloseSplit { split_id } => {
                 self.handle_close_split(split_id);
@@ -3568,6 +3635,12 @@ impl Editor {
                     self.active_custom_contexts.remove(&name);
                     tracing::debug!("Unset custom context: {}", name);
                 }
+            }
+
+            // ==================== Review Diff Commands ====================
+            PluginCommand::SetReviewDiffHunks { hunks } => {
+                self.review_hunks = hunks;
+                tracing::debug!("Set {} review hunks", self.review_hunks.len());
             }
         }
         Ok(())

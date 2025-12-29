@@ -142,8 +142,17 @@ impl Editor {
             self.split_manager.prev_split();
         }
         self.restore_current_split_view_state();
+
+        let buffer_id = self.active_buffer();
+
+        // Emit buffer_activated hook for plugins
+        self.plugin_manager.run_hook(
+            "buffer_activated",
+            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
+        );
+
         // Enter terminal mode if switching to a terminal split
-        if self.is_terminal_buffer(self.active_buffer()) {
+        if self.is_terminal_buffer(buffer_id) {
             self.terminal_mode = true;
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
         }

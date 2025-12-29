@@ -105,6 +105,10 @@ pub struct SplitViewState {
 
     /// Previously active buffer in this split (for "Switch to Previous Tab" command)
     pub previous_buffer: Option<BufferId>,
+
+    /// Sync group ID for synchronized scrolling
+    /// Splits with the same sync_group will scroll together
+    pub sync_group: Option<u32>,
 }
 
 impl SplitViewState {
@@ -123,6 +127,7 @@ impl SplitViewState {
             layout: None,
             layout_dirty: true, // Start dirty so first operation builds layout
             previous_buffer: None,
+            sync_group: None,
         }
     }
 
@@ -141,6 +146,7 @@ impl SplitViewState {
             layout: None,
             layout_dirty: true, // Start dirty so first operation builds layout
             previous_buffer: None,
+            sync_group: None,
         }
     }
 
@@ -872,7 +878,7 @@ impl SplitManager {
 
     /// Toggle maximize state for the active split
     /// If maximized, unmaximize. If not maximized, maximize.
-    /// Returns true if maximized, false if unmaximized.
+    /// Returns true if maximized, false if ununmaximized.
     pub fn toggle_maximize(&mut self) -> Result<bool, String> {
         if self.is_maximized() {
             self.unmaximize_split()?;
@@ -881,6 +887,24 @@ impl SplitManager {
             self.maximize_split()?;
             Ok(true)
         }
+    }
+
+    /// Get all leaf split IDs that belong to a specific sync group
+    pub fn get_splits_in_group(
+        &self,
+        group_id: u32,
+        view_states: &std::collections::HashMap<SplitId, SplitViewState>,
+    ) -> Vec<SplitId> {
+        self.root
+            .leaf_split_ids()
+            .into_iter()
+            .filter(|id| {
+                view_states
+                    .get(id)
+                    .and_then(|vs| vs.sync_group)
+                    .map_or(false, |g| g == group_id)
+            })
+            .collect()
     }
 }
 

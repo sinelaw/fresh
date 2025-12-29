@@ -227,6 +227,15 @@ pub enum HookArgs {
         /// The request parameters as a JSON string (may be null)
         params: Option<String>,
     },
+
+    /// Viewport changed (scrolled or resized)
+    ViewportChanged {
+        split_id: SplitId,
+        buffer_id: BufferId,
+        top_byte: usize,
+        width: u16,
+        height: u16,
+    },
 }
 
 /// Information about a single line for the LinesChanged hook
@@ -642,6 +651,21 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<String> {
                 "method": method,
                 "server_command": server_command,
                 "params": params,
+            })
+        }
+        HookArgs::ViewportChanged {
+            split_id,
+            buffer_id,
+            top_byte,
+            width,
+            height,
+        } => {
+            serde_json::json!({
+                "split_id": split_id.0,
+                "buffer_id": buffer_id.0,
+                "top_byte": top_byte,
+                "width": width,
+                "height": height,
             })
         }
     };

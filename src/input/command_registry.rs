@@ -117,6 +117,11 @@ impl CommandRegistry {
 
         // Helper function to check if command is available in current context
         let is_available = |cmd: &Command| -> bool {
+            // Global commands are always available
+            if cmd.contexts.contains(&KeyContext::Global) {
+                return true;
+            }
+
             // Check built-in contexts
             let builtin_ok = cmd.contexts.is_empty() || cmd.contexts.contains(&current_context);
 

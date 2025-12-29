@@ -312,6 +312,18 @@ impl Editor {
 
         let is_maximized = self.split_manager.is_maximized();
 
+        // Record initial viewport states to detect changes
+        let initial_viewports: HashMap<SplitId, (usize, u16, u16)> = self
+            .split_view_states
+            .iter()
+            .map(|(id, vs)| {
+                (
+                    *id,
+                    (vs.viewport.top_byte, vs.viewport.width, vs.viewport.height),
+                )
+            })
+            .collect();
+
         let (split_areas, tab_areas, close_split_areas, maximize_split_areas, view_line_mappings) =
             SplitRenderer::render_content(
                 frame,
@@ -336,6 +348,33 @@ impl Editor {
                 is_maximized,
                 self.config.editor.relative_line_numbers,
             );
+
+        // Detect viewport changes and fire hooks
+        if self.plugin_manager.is_active() {
+            for (split_id, view_state) in &self.split_view_states {
+                let current = (
+                    view_state.viewport.top_byte,
+                    view_state.viewport.width,
+                    view_state.viewport.height,
+                );
+                if let Some(initial) = initial_viewports.get(split_id) {
+                    if *initial != current {
+                        if let Some(buffer_id) = self.split_manager.get_buffer_id(*split_id) {
+                            self.plugin_manager.run_hook(
+                                "viewport_changed",
+                                crate::services::plugins::hooks::HookArgs::ViewportChanged {
+                                    split_id: *split_id,
+                                    buffer_id,
+                                    top_byte: view_state.viewport.top_byte,
+                                    width: view_state.viewport.width,
+                                    height: view_state.viewport.height,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        }
 
         // Render terminal content on top of split content for terminal buffers
         self.render_terminal_splits(frame, &split_areas);
