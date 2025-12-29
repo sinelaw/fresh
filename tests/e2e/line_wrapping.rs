@@ -1086,3 +1086,108 @@ fn test_wrapped_line_cursor_no_empty_space() {
         );
     }
 }
+
+/// Test that every character of a wrapped line is visible in the viewport
+/// This ensures no characters are lost or hidden at wrap boundaries
+#[test]
+fn test_wrapped_line_all_characters_visible() {
+    let mut harness = EditorTestHarness::new(60, 24).unwrap();
+
+    // Use unique words (numbers) so we can verify each one appears in the output
+    // This text will wrap multiple times in a 60-column terminal (with ~8 col gutter = ~52 usable)
+    let words: Vec<String> = (10000..10025).map(|n| n.to_string()).collect();
+    let text = words.join(" ");
+    harness.type_text(&text).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // Verify every unique word appears in the screen
+    for word in &words {
+        assert!(
+            screen.contains(word),
+            "Word '{}' is missing from screen output.\nText: {}\nScreen:\n{}",
+            word,
+            text,
+            screen
+        );
+    }
+}
+
+/// Test that wrapped lines with leading tabs have all characters visible
+/// Tabs at the beginning take up visual space but shouldn't hide content
+#[test]
+fn test_wrapped_line_with_tabs_all_characters_visible() {
+    let mut harness = EditorTestHarness::new(60, 24).unwrap();
+
+    // Use unique words (numbers) with leading tabs
+    // Tabs reduce available space for content, causing more wrapping
+    let words: Vec<String> = (20000..20020).map(|n| n.to_string()).collect();
+    let text = format!("\t\t{}", words.join(" "));
+    harness.type_text(&text).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // Verify every unique word appears in the screen
+    for word in &words {
+        assert!(
+            screen.contains(word),
+            "Word '{}' is missing from screen output.\nText: {}\nScreen:\n{}",
+            word,
+            text,
+            screen
+        );
+    }
+}
+
+/// Test that wrapped lines with Unicode grapheme clusters are handled correctly
+/// Grapheme clusters (like emoji with modifiers or combining characters) should not be split
+#[test]
+fn test_wrapped_line_with_grapheme_clusters_visible() {
+    let mut harness = EditorTestHarness::new(60, 24).unwrap();
+
+    // Use unique words mixed with grapheme clusters
+    // Include: emoji with skin tone modifier, combining diacritics, ZWJ sequences
+    let words = vec![
+        "30000",
+        "👨🏽", // Man with medium skin tone (2 code points, 1 grapheme)
+        "30001",
+        "café", // With composed é
+        "30002",
+        "e\u{0301}", // e + combining acute accent (2 code points, 1 grapheme: é)
+        "30003",
+        "🇺🇸", // Flag (2 regional indicators, 1 grapheme)
+        "30004",
+        "30005",
+        "30006",
+        "30007",
+        "30008",
+        "30009",
+    ];
+    let text = words.join(" ");
+    harness.type_text(&text).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // Verify all number words appear (graphemes might render differently across terminals)
+    for word in [
+        "30000", "30001", "30002", "30003", "30004", "30005", "30006", "30007", "30008", "30009",
+    ] {
+        assert!(
+            screen.contains(word),
+            "Word '{}' is missing from screen output.\nText: {}\nScreen:\n{}",
+            word,
+            text,
+            screen
+        );
+    }
+
+    // Verify the composed café appears
+    assert!(
+        screen.contains("café") || screen.contains("cafe"),
+        "Word 'café' is missing from screen output.\nScreen:\n{}",
+        screen
+    );
+}

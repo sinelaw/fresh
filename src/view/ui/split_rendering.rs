@@ -1695,7 +1695,7 @@ impl SplitRenderer {
         content_width: usize,
         gutter_width: usize,
     ) -> Vec<crate::services::plugins::api::ViewTokenWire> {
-        use crate::primitives::ansi::visible_char_count;
+        use crate::primitives::visual_layout::visual_width;
         use crate::services::plugins::api::{ViewTokenWire, ViewTokenWireKind};
 
         let mut wrapped = Vec::new();
@@ -1712,12 +1712,13 @@ impl SplitRenderer {
                     current_line_width = 0;
                 }
                 ViewTokenWireKind::Text(text) => {
-                    // Use visible character count (excludes ANSI escape sequences)
-                    // so line width calculation is based on actual visual width
-                    let text_len = visible_char_count(text);
+                    // Use visual_width which properly handles tabs and ANSI codes
+                    let text_visual_width = visual_width(text, current_line_width);
 
                     // If this token would exceed line width, insert Break before it
-                    if current_line_width > 0 && current_line_width + text_len > available_width {
+                    if current_line_width > 0
+                        && current_line_width + text_visual_width > available_width
+                    {
                         wrapped.push(ViewTokenWire {
                             source_offset: None,
                             kind: ViewTokenWireKind::Break,
@@ -1726,21 +1727,28 @@ impl SplitRenderer {
                         current_line_width = 0;
                     }
 
+                    // Recalculate visual width after potential line break (tabs depend on column)
+                    let text_visual_width = visual_width(text, current_line_width);
+
                     // If visible text is longer than line width, we need to split
                     // However, we don't split tokens containing ANSI codes to avoid
                     // breaking escape sequences. ANSI-heavy content may exceed line width.
-                    if text_len > available_width
+                    if text_visual_width > available_width
                         && !crate::primitives::ansi::contains_ansi_codes(text)
                     {
-                        let chars: Vec<char> = text.chars().collect();
-                        let mut char_idx = 0;
+                        use unicode_segmentation::UnicodeSegmentation;
+
+                        // Collect graphemes with their byte offsets for proper Unicode handling
+                        let graphemes: Vec<(usize, &str)> = text.grapheme_indices(true).collect();
+                        let mut grapheme_idx = 0;
                         let source_base = token.source_offset;
 
-                        while char_idx < chars.len() {
-                            let remaining = chars.len() - char_idx;
-                            let chunk_size = remaining.min(available_width - current_line_width);
-
-                            if chunk_size == 0 {
+                        while grapheme_idx < graphemes.len() {
+                            // Calculate how many graphemes fit in remaining space
+                            // by summing visual widths until we exceed available width
+                            let remaining_width =
+                                available_width.saturating_sub(current_line_width);
+                            if remaining_width == 0 {
                                 // Need to break to next line
                                 wrapped.push(ViewTokenWire {
                                     source_offset: None,
@@ -1751,9 +1759,51 @@ impl SplitRenderer {
                                 continue;
                             }
 
-                            let chunk: String =
-                                chars[char_idx..char_idx + chunk_size].iter().collect();
-                            let chunk_source = source_base.map(|b| b + char_idx);
+                            let mut chunk_visual_width = 0;
+                            let mut chunk_grapheme_count = 0;
+                            let mut col = current_line_width;
+
+                            for &(_byte_offset, grapheme) in &graphemes[grapheme_idx..] {
+                                let g_width = if grapheme == "\t" {
+                                    crate::primitives::visual_layout::tab_expansion_width(col)
+                                } else {
+                                    crate::primitives::display_width::str_width(grapheme)
+                                };
+
+                                if chunk_visual_width + g_width > remaining_width
+                                    && chunk_grapheme_count > 0
+                                {
+                                    break;
+                                }
+
+                                chunk_visual_width += g_width;
+                                chunk_grapheme_count += 1;
+                                col += g_width;
+                            }
+
+                            if chunk_grapheme_count == 0 {
+                                // Single grapheme is wider than available width, force it
+                                chunk_grapheme_count = 1;
+                                let grapheme = graphemes[grapheme_idx].1;
+                                chunk_visual_width = if grapheme == "\t" {
+                                    crate::primitives::visual_layout::tab_expansion_width(
+                                        current_line_width,
+                                    )
+                                } else {
+                                    crate::primitives::display_width::str_width(grapheme)
+                                };
+                            }
+
+                            // Build chunk from graphemes and calculate source offset
+                            let chunk_start_byte = graphemes[grapheme_idx].0;
+                            let chunk_end_byte =
+                                if grapheme_idx + chunk_grapheme_count < graphemes.len() {
+                                    graphemes[grapheme_idx + chunk_grapheme_count].0
+                                } else {
+                                    text.len()
+                                };
+                            let chunk = text[chunk_start_byte..chunk_end_byte].to_string();
+                            let chunk_source = source_base.map(|b| b + chunk_start_byte);
 
                             wrapped.push(ViewTokenWire {
                                 source_offset: chunk_source,
@@ -1761,8 +1811,8 @@ impl SplitRenderer {
                                 style: token.style.clone(),
                             });
 
-                            current_line_width += chunk_size;
-                            char_idx += chunk_size;
+                            current_line_width += chunk_visual_width;
+                            grapheme_idx += chunk_grapheme_count;
 
                             // If we filled the line, break
                             if current_line_width >= available_width {
@@ -1776,7 +1826,7 @@ impl SplitRenderer {
                         }
                     } else {
                         wrapped.push(token);
-                        current_line_width += text_len;
+                        current_line_width += text_visual_width;
                     }
                 }
                 ViewTokenWireKind::Space => {
