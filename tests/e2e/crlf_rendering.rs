@@ -650,48 +650,44 @@ fn test_set_line_ending_converts_on_save_lf_to_crlf() {
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
-    // Use command palette to change line ending format to CRLF
-    // First open command palette with Ctrl+P
+    // Verify initial line ending is LF in status bar
+    harness.assert_screen_contains("LF");
+
+    // Open command palette with Ctrl+P
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.render().unwrap();
 
     // Type "set line" to filter to "Set Line Ending" command
     harness.type_text("set line").unwrap();
     harness.render().unwrap();
 
-    // Select the command with Enter (this opens the Set Line Ending prompt)
+    // Select the command with Enter - this opens the Set Line Ending prompt
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    // Wait for the new prompt to open
-    harness.wait_for_screen_contains("Line ending:").unwrap();
-    harness.render().unwrap();
+    // Wait for the SetLineEnding prompt to open
+    harness.wait_for_prompt().unwrap();
 
-    // The line ending prompt opens with suggestions:
-    // - LF (Unix/Linux/Mac) <- current selection (since file has LF)
-    // - CRLF (Windows)
-    // - CR (Classic Mac)
-    // Use Down arrow to move to CRLF, then Enter to select
+    // Use Down arrow to move from LF to CRLF, then Enter to select
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Select CRLF with Enter
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    // Wait for prompt to close
     harness.wait_for_prompt_closed().unwrap();
-    harness.render().unwrap();
+
+    // Verify status bar now shows CRLF
+    harness.assert_screen_contains("CRLF");
 
     // Save the file
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.wait_for_screen_contains("Saved").unwrap();
-    harness.render().unwrap();
+    // Wait for save to complete by checking buffer is no longer modified
+    harness
+        .wait_until(|h| !h.editor().active_state().buffer.is_modified())
+        .unwrap();
 
     // Read the file back and verify CRLF line endings
     let saved_bytes = std::fs::read(&file_path).unwrap();
@@ -724,44 +720,44 @@ fn test_set_line_ending_converts_on_save_crlf_to_lf() {
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
-    // Use command palette to change line ending format to LF
+    // Verify initial line ending is CRLF in status bar
+    harness.assert_screen_contains("CRLF");
+
+    // Open command palette with Ctrl+P
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.render().unwrap();
 
+    // Type "set line" to filter to "Set Line Ending" command
     harness.type_text("set line").unwrap();
     harness.render().unwrap();
 
+    // Select the command with Enter - this opens the Set Line Ending prompt
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    // Wait for the new prompt to open
-    harness.wait_for_screen_contains("Line ending:").unwrap();
-    harness.render().unwrap();
+    // Wait for the SetLineEnding prompt to open
+    harness.wait_for_prompt().unwrap();
 
-    // The line ending prompt opens with suggestions:
-    // - LF (Unix/Linux/Mac)
-    // - CRLF (Windows) <- current selection (since file has CRLF)
-    // - CR (Classic Mac)
-    // Use Up arrow to move to LF, then Enter to select
+    // Use Up arrow to move from CRLF to LF, then Enter to select
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    // Wait for prompt to close
     harness.wait_for_prompt_closed().unwrap();
-    harness.render().unwrap();
+
+    // Verify status bar now shows LF
+    harness.assert_screen_contains("LF");
 
     // Save the file
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.wait_for_screen_contains("Saved").unwrap();
-    harness.render().unwrap();
+    // Wait for save to complete by checking buffer is no longer modified
+    harness
+        .wait_until(|h| !h.editor().active_state().buffer.is_modified())
+        .unwrap();
 
     // Read the file back and verify LF line endings
     let saved_bytes = std::fs::read(&file_path).unwrap();
