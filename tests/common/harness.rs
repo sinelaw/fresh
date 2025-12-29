@@ -1466,6 +1466,13 @@ impl EditorTestHarness {
         self.wait_until(move |h| h.screen_to_string().contains(&text))
     }
 
+    /// Wait for buffer content to match expected value
+    /// Useful for async plugin operations that modify the buffer
+    pub fn wait_for_buffer_content(&mut self, expected: &str) -> io::Result<()> {
+        let expected = expected.to_string();
+        self.wait_until(move |h| h.get_buffer_content() == Some(expected.clone()))
+    }
+
     /// Capture a visual step for regression testing
     /// This takes both a text snapshot (for testing) and generates an SVG (for visualization)
     pub fn capture_visual_step(

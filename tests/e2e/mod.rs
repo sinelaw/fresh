@@ -67,6 +67,8 @@ pub mod undo_redo;
 pub mod unicode_cursor;
 pub mod unicode_prompt_bugs;
 pub mod update_notification;
+#[cfg(feature = "plugins")]
+pub mod vi_mode;
 pub mod virtual_lines;
 pub mod visual_regression;
 pub mod warning_indicators;
