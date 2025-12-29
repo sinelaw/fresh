@@ -657,6 +657,7 @@ fn test_todo_highlighter_updates_on_delete() {
 #[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
 fn test_diagnostics_panel_plugin_loads() {
     use crate::common::fake_lsp::FakeLspServer;
+    init_tracing_from_env();
 
     // Create a fake LSP server that sends diagnostics
     let _fake_server = FakeLspServer::spawn_many_diagnostics(3).unwrap();
@@ -708,8 +709,17 @@ fn test_diagnostics_panel_plugin_loads() {
     harness.assert_screen_contains("fn main()");
 
     // Wait for LSP to send diagnostics (the fake server sends them on didOpen/didChange)
+    // We wait for diagnostic overlays to appear since the status bar E: count may be
+    // truncated on narrow terminals (the test uses 80 columns)
     harness
-        .wait_until(|h| h.screen_to_string().contains("E:"))
+        .wait_until(|h| {
+            // Check if diagnostic overlays have been applied
+            let overlays = h.editor().active_state().overlays.all();
+            let diagnostic_ns = fresh::services::lsp::diagnostics::lsp_diagnostic_namespace();
+            overlays
+                .iter()
+                .any(|o| o.namespace.as_ref() == Some(&diagnostic_ns))
+        })
         .unwrap();
 
     // The plugin should have loaded successfully without Lua errors
