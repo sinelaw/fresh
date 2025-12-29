@@ -651,39 +651,46 @@ fn test_set_line_ending_converts_on_save_lf_to_crlf() {
     harness.render().unwrap();
 
     // Use command palette to change line ending format to CRLF
-    // First open command palette with Ctrl+Shift+P
+    // First open command palette with Ctrl+P
     harness
-        .send_key(
-            KeyCode::Char('P'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.wait_for_prompt().unwrap();
     harness.render().unwrap();
 
     // Type "set line" to filter to "Set Line Ending" command
     harness.type_text("set line").unwrap();
     harness.render().unwrap();
 
-    // Select the command with Enter
+    // Select the command with Enter (this opens the Set Line Ending prompt)
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    // Wait for the new prompt to open
+    harness.wait_for_screen_contains("Line ending:").unwrap();
     harness.render().unwrap();
 
-    // Type "crlf" to filter to CRLF option
-    harness.type_text("crlf").unwrap();
+    // The line ending prompt opens with suggestions:
+    // - LF (Unix/Linux/Mac) <- current selection (since file has LF)
+    // - CRLF (Windows)
+    // - CR (Classic Mac)
+    // Use Down arrow to move to CRLF, then Enter to select
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Select CRLF with Enter
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    // Wait for prompt to close
+    harness.wait_for_prompt_closed().unwrap();
     harness.render().unwrap();
 
     // Save the file
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.wait_for_screen_contains("Saved").unwrap();
     harness.render().unwrap();
 
     // Read the file back and verify CRLF line endings
@@ -719,11 +726,9 @@ fn test_set_line_ending_converts_on_save_crlf_to_lf() {
 
     // Use command palette to change line ending format to LF
     harness
-        .send_key(
-            KeyCode::Char('P'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.wait_for_prompt().unwrap();
     harness.render().unwrap();
 
     harness.type_text("set line").unwrap();
@@ -732,21 +737,30 @@ fn test_set_line_ending_converts_on_save_crlf_to_lf() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    // Wait for the new prompt to open
+    harness.wait_for_screen_contains("Line ending:").unwrap();
     harness.render().unwrap();
 
-    // Type "lf" to filter to LF option
-    harness.type_text("lf").unwrap();
+    // The line ending prompt opens with suggestions:
+    // - LF (Unix/Linux/Mac)
+    // - CRLF (Windows) <- current selection (since file has CRLF)
+    // - CR (Classic Mac)
+    // Use Up arrow to move to LF, then Enter to select
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    // Wait for prompt to close
+    harness.wait_for_prompt_closed().unwrap();
     harness.render().unwrap();
 
     // Save the file
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.wait_for_screen_contains("Saved").unwrap();
     harness.render().unwrap();
 
     // Read the file back and verify LF line endings

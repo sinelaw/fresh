@@ -3806,6 +3806,64 @@ mod tests {
             assert!(!buffer.is_modified());
             assert_eq!(buffer.line_ending(), LineEnding::CRLF);
         }
+
+        #[test]
+        fn test_save_to_file_converts_lf_to_crlf() {
+            use tempfile::TempDir;
+
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("test_lf_to_crlf.txt");
+
+            // Create a file with LF line endings
+            let original_content = b"Line 1\nLine 2\nLine 3\n";
+            std::fs::write(&file_path, original_content).unwrap();
+
+            // Load the file
+            let mut buffer =
+                TextBuffer::load_from_file(&file_path, DEFAULT_LARGE_FILE_THRESHOLD).unwrap();
+            assert_eq!(buffer.line_ending(), LineEnding::LF);
+
+            // Change line ending to CRLF
+            buffer.set_line_ending(LineEnding::CRLF);
+            assert_eq!(buffer.line_ending(), LineEnding::CRLF);
+            assert!(buffer.is_modified());
+
+            // Save the file
+            buffer.save_to_file(&file_path).unwrap();
+
+            // Read back and verify CRLF
+            let saved_bytes = std::fs::read(&file_path).unwrap();
+            assert_eq!(&saved_bytes, b"Line 1\r\nLine 2\r\nLine 3\r\n");
+        }
+
+        #[test]
+        fn test_save_to_file_converts_crlf_to_lf() {
+            use tempfile::TempDir;
+
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("test_crlf_to_lf.txt");
+
+            // Create a file with CRLF line endings
+            let original_content = b"Line 1\r\nLine 2\r\nLine 3\r\n";
+            std::fs::write(&file_path, original_content).unwrap();
+
+            // Load the file
+            let mut buffer =
+                TextBuffer::load_from_file(&file_path, DEFAULT_LARGE_FILE_THRESHOLD).unwrap();
+            assert_eq!(buffer.line_ending(), LineEnding::CRLF);
+
+            // Change line ending to LF
+            buffer.set_line_ending(LineEnding::LF);
+            assert_eq!(buffer.line_ending(), LineEnding::LF);
+            assert!(buffer.is_modified());
+
+            // Save the file
+            buffer.save_to_file(&file_path).unwrap();
+
+            // Read back and verify LF (no CRLF)
+            let saved_bytes = std::fs::read(&file_path).unwrap();
+            assert_eq!(&saved_bytes, b"Line 1\nLine 2\nLine 3\n");
+        }
     }
 }
 
