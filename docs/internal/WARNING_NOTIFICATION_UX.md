@@ -474,12 +474,12 @@ Popup closes, user continues editing
 4. **Hover styling** - Lighter colors and underline on hover to indicate clickability
 5. **Warning log deduplication** - Tracks seen warnings to avoid repetitive log entries
 6. **Commands** - `ShowWarnings`, `ShowLspStatus`, `ClearWarnings` via command palette
-7. **Mouse click handlers** - Clicking LSP indicator or warning badge opens warning log
+7. **Mouse click handlers** - Clicking LSP indicator or warning badge triggers appropriate action
 8. **Settings** - `warnings.show_status_indicator` config option
 9. **No auto-open** - Removed intrusive auto-opening of warning log tab
 10. **E2E tests** - Tests for command existence and basic execution
 
-### Implemented (Plugin API)
+### Plugin API ✓
 
 **New Hooks (Core → Plugin):**
 1. `LspServerError` - Emitted when LSP fails to start (language, server_command, error_type, message) ✓
@@ -487,24 +487,13 @@ Popup closes, user continues editing
 3. `ActionPopupResult` - Emitted when user selects action or dismisses popup (popup_id, action_id) ✓
 
 **New API functions (Plugin → Core):**
-1. `editor.showActionPopup(options)` - Show popup with action buttons ✓
+1. `editor.showActionPopup(options)` - Show popup with selectable action list ✓
 2. `editor.disableLspForLanguage(language)` - Disable LSP and persist to config ✓
 
 **Bundled plugins:**
-1. `plugins/python-lsp.ts` - Python LSP helper ✓
-2. `plugins/rust-lsp.ts` - Rust LSP helper ✓
-3. `plugins/typescript-lsp.ts` - TypeScript/JavaScript LSP helper ✓
-
-### Not Implemented
-
-**Popup UI rendering:**
-- The `showActionPopup` API is implemented but currently fires a "dismissed" hook immediately
-- Full popup UI with clickable buttons needs to be implemented
-- This requires UI changes to render modal popups over the editor
-
-**LSP disable persistence:**
-- The `disableLspForLanguage` API is implemented but doesn't persist to config yet
-- Needs integration with config system to update and save LSP settings
+1. `plugins/python-lsp.ts` - Python LSP helper (pip, pipx install commands) ✓
+2. `plugins/rust-lsp.ts` - Rust LSP helper (rustup, brew, cargo install commands) ✓
+3. `plugins/typescript-lsp.ts` - TypeScript/JavaScript LSP helper (npm, yarn, pnpm install commands) ✓
 
 ### Dropped
 
