@@ -41,6 +41,8 @@ Let's start by creating a simple "Hello, World!" plugin.
 4.  **Open the command palette:** Press `Ctrl+P` and search for "my_plugin_say_hello".
 5.  **Run the command:** You should see the text "Hello from my new plugin!" inserted into the buffer.
 
+⚠️ **Security Notice:** Sensitive API calls (like `insertAtCursor()`, file operations, and `spawnProcess()`) require explicit user permission. The plugin system must enforce authorization checks and capability restrictions. Users should be prompted to approve plugins before granting access to privileged operations.
+
 ## Core Concepts
 
 ### Plugin Lifecycle
@@ -184,6 +186,12 @@ Use `spawnProcess` to run shell commands:
 globalThis.run_tests = async function(): Promise<void> {
   editor.setStatus("Running tests...");
 
+  // SECURITY REQUIREMENTS:
+  // 1. spawnProcess() requires explicit user permission before execution
+  // 2. Arguments MUST NOT be processed through shell (use direct process execution)
+  // 3. Shell metacharacters in arguments must be escaped or validated
+  // 4. Command names must be whitelisted or validated to prevent arbitrary execution
+  // 5. Unsanitized user input must never be passed as command arguments
   const result = await editor.spawnProcess("cargo", ["test"], null);
 
   if (result.exit_code === 0) {
@@ -220,6 +228,11 @@ Read and write files, check paths:
 globalThis.process_file = async function(): Promise<void> {
   const path = editor.getBufferPath(editor.getActiveBufferId());
 
+  // SECURITY REQUIREMENTS:
+  // 1. readFile() and writeFile() require explicit user permission
+  // 2. File paths MUST be canonicalized and validated to prevent directory traversal
+  // 3. Write operations MUST enforce sandbox restrictions (no absolute paths, no ../)
+  // 4. Plugins can only access files within their sandbox directory
   if (editor.fileExists(path)) {
     const content = await editor.readFile(path);
     const modified = content.replace(/TODO/g, "DONE");
@@ -333,6 +346,60 @@ import type { RGB, Location, PanelOptions, NavigationOptions } from "@plugins/li
 ```
 
 See the source files in `plugins/lib/` for full API details.
+
+## Security Considerations
+
+**CRITICAL SECURITY LIMITATION**: Fresh plugins have unrestricted access to powerful APIs that can modify files, execute arbitrary commands, and inject content into the editor. Currently, there are no authorization controls, permission checks, or capability restrictions on any plugin API.
+
+### Current State (No Authorization Controls)
+
+⚠️ **WARNING**: The plugin system does NOT currently implement:
+- Permission requests or user consent dialogs for sensitive operations
+- Authorization checks before API access
+- Capability restrictions or sandboxing of plugin capabilities  
+- Plugin signature verification or source validation
+- Path validation or directory traversal prevention for file operations
+- Input sanitization or validation for buffer modifications
+- Command argument validation or injection prevention for process execution
+- Unsigned/untrusted plugins cannot be distinguished from trusted ones
+
+### Privileged Operations with No Access Control
+
+The following operations can be called by ANY plugin without any authorization:
+
+- `editor.insertAtCursor()` - Arbitrary buffer content injection
+- `editor.readFile()` / `editor.writeFile()` - Unrestricted file system access
+- `editor.spawnProcess()` - Arbitrary command execution with user privileges
+- `editor.openFile()` - Arbitrary file opening
+- All LSP requests via `editor.sendLspRequest()`
+
+### Recommended Security Architecture
+
+To address this critical vulnerability, Fresh should implement:
+
+1. **Plugin Manifest & Permissions**: Each plugin should declare required permissions in a manifest file (e.g., `manifest.json`). Users must review and approve permissions before installation.
+
+2. **Runtime Permission Enforcement**: The plugin system must enforce permission checks before allowing any privileged API call. Unauthorized calls should raise exceptions.
+
+3. **Input Validation & Sanitization**:
+   - `insertAtCursor()` must sanitize input to prevent control character and ANSI escape sequence injection
+   - `writeFile()` must canonicalize paths and prevent directory traversal (../, absolute paths)
+   - `spawnProcess()` must validate arguments and use direct process execution (no shell interpretation)
+
+4. **Plugin Source Verification**: Implement cryptographic signing for plugins and verify signatures at load time.
+
+5. **Capability Restrictions**: Limit each plugin's file system access to its own sandbox directory.
+
+6. **Process Isolation**: Consider sandboxing plugins at the OS level in addition to Deno restrictions.
+
+### For Plugin Developers
+
+Until proper authorization is implemented, be aware that:
+
+- Your plugin has unrestricted access to all APIs
+- Users must trust your plugin completely before installation
+- You should minimize use of dangerous APIs (spawnProcess, writeFile)
+- Document what your plugin can access
 
 ## Tips
 
