@@ -406,8 +406,8 @@ fn test_click_tab_close_modified_discard() {
                 .unwrap();
             harness.render().unwrap();
 
-            // Should show discarded message
-            harness.assert_screen_contains("discarded");
+            // Should show discarded message (use shorter match due to status bar truncation)
+            harness.assert_screen_contains("discar");
         } else {
             panic!("Could not find × close button after * in tab bar");
         }

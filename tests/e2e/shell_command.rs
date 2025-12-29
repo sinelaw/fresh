@@ -48,8 +48,8 @@ fn test_shell_command_to_new_buffer() {
     // A new buffer should be created with sorted output
     harness.assert_buffer_content("apple\nbanana\ncherry\n");
 
-    // Status should indicate shell output buffer
-    harness.assert_screen_contains("Shell: sort");
+    // Status should indicate shell output buffer (use partial match due to status bar truncation)
+    harness.assert_screen_contains("Shell output");
 }
 
 /// Test running a shell command with replace mode

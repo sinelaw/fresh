@@ -30,4 +30,4 @@ expression: "&screen_text"
 │                            │   24 │                                                              █
 │                            │~                                                                    █
 └────────────────────────────┘~                                                                    █
-src/main.rs | Ln 6, Col 12 | E:1 | 3 cursors | Added cursor at match (3)            Palette: Ctrl+P
+src/main.rs | Ln 6, Col 12 | E:1 | 3 cursors | Added cursor at match (3)        LF  Palette: Ctrl+P
