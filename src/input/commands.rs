@@ -751,6 +751,22 @@ pub fn get_all_commands() -> Vec<Command> {
             source: CommandSource::Builtin,
         },
         Command {
+            name: "Find Selection Next".to_string(),
+            description: "Find next occurrence of selection or word under cursor".to_string(),
+            action: Action::FindSelectionNext,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
+            name: "Find Selection Previous".to_string(),
+            description: "Find previous occurrence of selection or word under cursor".to_string(),
+            action: Action::FindSelectionPrevious,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
             name: "Replace".to_string(),
             description: "Replace text in the current buffer".to_string(),
             action: Action::Replace,
