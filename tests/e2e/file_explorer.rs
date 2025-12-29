@@ -926,13 +926,13 @@ fn test_scroll_allows_cursor_to_top() {
         .unwrap();
     }
 
-    // Open file explorer
+    // Open file explorer and wait for it to be ready with files loaded
     harness.editor_mut().focus_file_explorer();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
+    harness.wait_for_file_explorer().unwrap();
+    // Wait for files to be loaded (file00.txt should appear)
+    harness
+        .wait_until(|h| h.screen_to_string().contains("file00.txt"))
+        .unwrap();
 
     let initial_screen = harness.screen_to_string();
     println!("Initial screen:\n{}", initial_screen);
