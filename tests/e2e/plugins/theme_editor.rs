@@ -962,6 +962,7 @@ fn test_theme_applied_immediately_after_save() {
     harness
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
+    harness.render().unwrap();
 
     // Wait for the prompt to appear
     harness
@@ -986,12 +987,11 @@ fn test_theme_applied_immediately_after_save() {
         })
         .unwrap();
 
-    let _screen = harness.screen_to_string();
-
     // Close the theme editor
     harness
         .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
         .unwrap();
+    harness.process_async_and_render().unwrap();
 
     harness
         .wait_until(|h| !h.screen_to_string().contains("Theme Editor:"))
