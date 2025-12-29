@@ -16,7 +16,10 @@ pub struct FileExplorerRenderer;
 
 impl FileExplorerRenderer {
     /// Check if a directory contains any modified files
-    fn folder_has_modified_files(folder_path: &PathBuf, files_with_unsaved_changes: &HashSet<PathBuf>) -> bool {
+    fn folder_has_modified_files(
+        folder_path: &PathBuf,
+        files_with_unsaved_changes: &HashSet<PathBuf>,
+    ) -> bool {
         for modified_file in files_with_unsaved_changes {
             if modified_file.starts_with(folder_path) {
                 return true;
@@ -194,7 +197,8 @@ impl FileExplorerRenderer {
         // Tree expansion indicator (only for directories)
         if node.is_dir() {
             // Check if this directory contains any modified files
-            let has_modified = Self::folder_has_modified_files(&node.entry.path, files_with_unsaved_changes);
+            let has_modified =
+                Self::folder_has_modified_files(&node.entry.path, files_with_unsaved_changes);
 
             let indicator = if node.is_expanded() {
                 "▼"

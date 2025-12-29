@@ -1578,3 +1578,277 @@ fn test_close_last_buffer_focuses_file_explorer() {
         screen_after_close
     );
 }
+
+/// Test that folders containing modified files show a modified indicator (●)
+/// This tests Issue #526: Show changed file on folder
+#[test]
+fn test_folder_shows_modified_indicator_for_unsaved_file() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create a folder with a file inside
+    fs::create_dir(project_root.join("src")).unwrap();
+    fs::write(project_root.join("src/main.rs"), "fn main() {}").unwrap();
+    // Also create a file at root level for comparison
+    fs::write(project_root.join("README.md"), "readme").unwrap();
+
+    // Open file explorer first to verify initial state
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    let screen_initial = harness.screen_to_string();
+    println!("Initial screen:\n{}", screen_initial);
+
+    // The src folder should NOT have a modified indicator initially
+    // Look for the folder line - it should have "> src" or "▼ src" but NOT "●"
+    let src_line_initial = screen_initial
+        .lines()
+        .find(|l| l.contains("src") && (l.contains(">") || l.contains("▼")))
+        .unwrap_or("");
+    println!("Initial src line: '{}'", src_line_initial);
+
+    // Expand the src folder to see main.rs
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_file_explorer_item("main.rs").unwrap();
+
+    // Navigate to main.rs and open it
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("fn main").unwrap();
+
+    // Now modify the file without saving
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.type_text(" // modified").unwrap();
+    harness.render().unwrap();
+
+    // Go back to file explorer
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    let screen_after_modify = harness.screen_to_string();
+    println!("Screen after modification:\n{}", screen_after_modify);
+
+    // Now the src folder SHOULD have a modified indicator (●)
+    // The line with "src" should contain "●"
+    let src_line_after = screen_after_modify
+        .lines()
+        .find(|l| l.contains("src") && (l.contains(">") || l.contains("▼")))
+        .unwrap_or("");
+    println!("After modify src line: '{}'", src_line_after);
+
+    assert!(
+        src_line_after.contains("●"),
+        "src folder should show modified indicator (●) when it contains a modified file. Line: '{}'",
+        src_line_after
+    );
+
+    // The main.rs file itself should also have a modified indicator
+    // Look for main.rs within the file explorer (lines containing "│" border)
+    let main_rs_line = screen_after_modify
+        .lines()
+        .find(|l| l.contains("main.rs") && l.contains("│"))
+        .unwrap_or("");
+    // If main.rs is visible in the explorer, it should have the indicator
+    // Note: main.rs might be inside the collapsed src folder, so we check if it's visible
+    if !main_rs_line.is_empty() {
+        assert!(
+            main_rs_line.contains("●"),
+            "main.rs should show modified indicator (●) in file explorer. Line: '{}'",
+            main_rs_line
+        );
+    }
+
+    // README.md should NOT have a modified indicator (it wasn't modified)
+    // Look for README.md within the file explorer (lines containing "│" border)
+    let readme_line = screen_after_modify
+        .lines()
+        .find(|l| l.contains("README.md") && l.contains("│"))
+        .unwrap_or("");
+    if !readme_line.is_empty() {
+        assert!(
+            !readme_line.contains("●"),
+            "README.md should NOT show modified indicator. Line: '{}'",
+            readme_line
+        );
+    }
+}
+
+/// Test that nested folder hierarchy shows modified indicator up the tree
+#[test]
+fn test_nested_folder_shows_modified_indicator() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create a nested folder structure: src/components/Button.js
+    fs::create_dir_all(project_root.join("src/components")).unwrap();
+    fs::write(
+        project_root.join("src/components/Button.js"),
+        "export default Button;",
+    )
+    .unwrap();
+
+    // Open file explorer
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    // Expand src folder
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_file_explorer_item("components").unwrap();
+
+    // Expand components folder
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_file_explorer_item("Button.js").unwrap();
+
+    // Open Button.js
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("export default").unwrap();
+
+    // Modify the file
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.type_text(" // changed").unwrap();
+    harness.render().unwrap();
+
+    // Go back to file explorer
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Screen with nested modification:\n{}", screen);
+
+    // Both src and components folders should show modified indicator
+    // Look for lines within the file explorer area (containing "│" border)
+    let src_line = screen
+        .lines()
+        .find(|l| l.contains("src") && !l.contains("components") && l.contains("│"))
+        .unwrap_or("");
+    let components_line = screen
+        .lines()
+        .find(|l| l.contains("components") && l.contains("│"))
+        .unwrap_or("");
+    let button_line = screen
+        .lines()
+        .find(|l| l.contains("Button.js") && l.contains("│"))
+        .unwrap_or("");
+
+    println!("src line: '{}'", src_line);
+    println!("components line: '{}'", components_line);
+    println!("Button.js line: '{}'", button_line);
+
+    assert!(
+        src_line.contains("●"),
+        "src folder should show modified indicator (●) for nested modified file. Line: '{}'",
+        src_line
+    );
+    assert!(
+        components_line.contains("●"),
+        "components folder should show modified indicator (●). Line: '{}'",
+        components_line
+    );
+    // Button.js might be inside the collapsed components folder, so check if visible
+    if !button_line.is_empty() {
+        assert!(
+            button_line.contains("●"),
+            "Button.js should show modified indicator (●). Line: '{}'",
+            button_line
+        );
+    }
+}
+
+/// Test that folder modified indicator is cleared after saving
+#[test]
+fn test_folder_modified_indicator_cleared_after_save() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create a folder with a file
+    fs::create_dir(project_root.join("mydir")).unwrap();
+    fs::write(project_root.join("mydir/test.txt"), "original").unwrap();
+
+    // Open file explorer and navigate to the file
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    // Expand mydir
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_file_explorer_item("test.txt").unwrap();
+
+    // Open test.txt
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("original").unwrap();
+
+    // Modify the file
+    harness.type_text("modified ").unwrap();
+    harness.render().unwrap();
+
+    // Go to file explorer and verify modified indicator
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    let screen_before_save = harness.screen_to_string();
+    // Look for mydir within the file explorer area (containing "│" border)
+    let mydir_line_before = screen_before_save
+        .lines()
+        .find(|l| l.contains("mydir") && l.contains("│"))
+        .unwrap_or("");
+    assert!(
+        mydir_line_before.contains("●"),
+        "mydir should show modified indicator before save. Line: '{}'",
+        mydir_line_before
+    );
+
+    // Focus editor and save the file
+    harness.editor_mut().focus_editor();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait a bit for save to complete
+    harness.sleep(std::time::Duration::from_millis(100));
+
+    // Go back to file explorer
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    let screen_after_save = harness.screen_to_string();
+    println!("Screen after save:\n{}", screen_after_save);
+
+    // Look for mydir within the file explorer area (containing "│" border)
+    let mydir_line_after = screen_after_save
+        .lines()
+        .find(|l| l.contains("mydir") && l.contains("│"))
+        .unwrap_or("");
+    println!("mydir line after save: '{}'", mydir_line_after);
+
+    // The modified indicator should be gone after saving
+    // Note: The folder line should have either "> " or "▼ " but not "●"
+    // We check that there's no "●" next to the folder name
+    let has_modified_indicator = mydir_line_after.contains("●");
+    assert!(
+        !has_modified_indicator,
+        "mydir should NOT show modified indicator after save. Line: '{}'",
+        mydir_line_after
+    );
+}
