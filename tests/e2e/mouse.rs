@@ -431,6 +431,35 @@ fn test_mouse_click_in_gutter() {
     );
 }
 
+/// Test clicking past end of line positions cursor at end of that line
+#[test]
+fn test_mouse_click_past_end_of_line() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type a short line
+    harness.type_text("hello\n").unwrap();
+    harness.type_text("world\n").unwrap();
+
+    harness.render().unwrap();
+
+    // Cursor is at the end of buffer (after "world\n")
+    let buffer_len = harness.buffer_len();
+    assert_eq!(harness.cursor_position(), buffer_len);
+
+    // Click way past the end of "hello" on the first content line (row 2)
+    // Line numbers take about 6 columns, so click at column 50 (well past "hello" which ends around column 11)
+    harness.mouse_click(50, 2).unwrap();
+    harness.render().unwrap();
+
+    // Cursor should be at position 5, which is the newline after "hello"
+    // "hello\n" = positions 0-5, where 5 is the newline
+    let new_pos = harness.cursor_position();
+    assert_eq!(
+        new_pos, 5,
+        "Clicking past end of line should position cursor at end of that line (expected 5, got {new_pos})"
+    );
+}
+
 /// Test dragging scrollbar to top
 #[test]
 fn test_scrollbar_drag_to_top() {

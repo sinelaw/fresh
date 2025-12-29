@@ -3074,21 +3074,14 @@ impl SplitRenderer {
         view_lines
             .iter()
             .map(|vl| {
-                // line_end_byte should be the position AFTER the last character
-                // char_source_bytes stores START positions of characters, so we need to
-                // add the byte length of the last character
-                let line_end_byte = if let Some(&Some(last_byte_start)) =
-                    vl.char_source_bytes.iter().rev().find(|m| m.is_some())
-                {
-                    // Get the last char from text to find its byte length
-                    if let Some(last_char) = vl.text.chars().last() {
-                        last_byte_start + last_char.len_utf8()
-                    } else {
-                        last_byte_start
-                    }
-                } else {
-                    0
-                };
+                // line_end_byte should be the position OF the last character (e.g., the newline)
+                // Clicking past end of line positions cursor here (on the newline)
+                let line_end_byte = vl
+                    .char_source_bytes
+                    .iter()
+                    .rev()
+                    .find_map(|m| *m)
+                    .unwrap_or(0);
 
                 ViewLineMapping {
                     char_source_bytes: vl.char_source_bytes.clone(),
