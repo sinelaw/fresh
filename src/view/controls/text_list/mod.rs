@@ -166,6 +166,44 @@ impl TextListState {
         }
     }
 
+    /// Move cursor to beginning of current field
+    pub fn move_home(&mut self) {
+        self.cursor = 0;
+    }
+
+    /// Move cursor to end of current field
+    pub fn move_end(&mut self) {
+        self.cursor = match self.focused_item {
+            Some(idx) if idx < self.items.len() => self.items[idx].len(),
+            None => self.new_item_text.len(),
+            _ => 0,
+        };
+    }
+
+    /// Delete character at cursor (forward delete)
+    pub fn delete(&mut self) {
+        if !self.is_enabled() {
+            return;
+        }
+        let max = match self.focused_item {
+            Some(idx) if idx < self.items.len() => self.items[idx].len(),
+            None => self.new_item_text.len(),
+            _ => return,
+        };
+        if self.cursor >= max {
+            return;
+        }
+        match self.focused_item {
+            Some(idx) if idx < self.items.len() => {
+                self.items[idx].remove(self.cursor);
+            }
+            None => {
+                self.new_item_text.remove(self.cursor);
+            }
+            _ => {}
+        }
+    }
+
     /// Move focus to previous item
     pub fn focus_prev(&mut self) {
         match self.focused_item {

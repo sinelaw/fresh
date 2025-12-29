@@ -136,13 +136,35 @@ impl SettingsState {
                 }
             }
             KeyCode::Char(c) => {
-                dialog.insert_char(c);
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    match c {
+                        'a' | 'A' => {
+                            // Select all
+                            dialog.select_all();
+                        }
+                        _ => {}
+                    }
+                } else {
+                    dialog.insert_char(c);
+                }
             }
             KeyCode::Backspace => {
                 dialog.backspace();
             }
             KeyCode::Delete => {
-                dialog.delete_list_item();
+                if is_editing_json {
+                    // Delete character at cursor in JSON editor
+                    dialog.delete();
+                } else {
+                    // Delete item in TextList
+                    dialog.delete_list_item();
+                }
+            }
+            KeyCode::Home => {
+                dialog.cursor_home();
+            }
+            KeyCode::End => {
+                dialog.cursor_end();
             }
             KeyCode::Left => {
                 if is_editing_json && event.modifiers.contains(KeyModifiers::SHIFT) {

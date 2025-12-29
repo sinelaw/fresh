@@ -888,6 +888,82 @@ impl EntryDialogState {
         }
     }
 
+    /// Delete character at cursor (forward delete)
+    pub fn delete(&mut self) {
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            match &mut item.control {
+                SettingControl::Text(state) => {
+                    state.delete();
+                }
+                SettingControl::TextList(state) => {
+                    state.delete();
+                }
+                SettingControl::Json(state) => {
+                    state.delete();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Move cursor to beginning of line
+    pub fn cursor_home(&mut self) {
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            match &mut item.control {
+                SettingControl::Text(state) => {
+                    state.move_home();
+                }
+                SettingControl::TextList(state) => {
+                    state.move_home();
+                }
+                SettingControl::Json(state) => {
+                    state.move_home();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Move cursor to end of line
+    pub fn cursor_end(&mut self) {
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            match &mut item.control {
+                SettingControl::Text(state) => {
+                    state.move_end();
+                }
+                SettingControl::TextList(state) => {
+                    state.move_end();
+                }
+                SettingControl::Json(state) => {
+                    state.move_end();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Select all text in current control
+    pub fn select_all(&mut self) {
+        if !self.editing_text {
+            return;
+        }
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.select_all();
+            }
+            // Note: Text and TextList don't have select_all implemented
+        }
+    }
+
     /// Check if any field is currently in edit mode
     pub fn is_editing(&self) -> bool {
         self.editing_text
