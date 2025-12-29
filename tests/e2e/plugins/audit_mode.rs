@@ -108,8 +108,15 @@ fn start_server(config: Config) {
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
-    // Process async operations to let the plugin run
-    harness.process_async_and_render().unwrap();
+    // Wait for the Review Diff async operation to complete
+    // The status bar changes from "Generating Review Diff Stream..." to showing hunk count
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Wait until we're no longer generating the diff stream
+            !screen.contains("Generating Review Diff Stream")
+        })
+        .unwrap();
 
     let screen = harness.screen_to_string();
     println!("Review Diff screen:\n{}", screen);
@@ -199,8 +206,13 @@ fn start_server(config: Config) {
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
-    // Process async operations to let plugin execute
-    harness.process_async_and_render().unwrap();
+    // Wait for the Review Diff async operation to complete
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            !screen.contains("Generating Review Diff Stream")
+        })
+        .unwrap();
 
     let screen = harness.screen_to_string();
     println!("Hunks screen:\n{}", screen);
@@ -275,8 +287,17 @@ fn start_server(config: Config) {
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
-    // Process async operations to let plugin execute
-    harness.process_async_and_render().unwrap();
+    // Wait for the Review Diff async operation to complete and hunks to be displayed
+    // The status bar shows hunk count when done: "Review Diff: N hunks"
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            !screen.contains("Generating Review Diff Stream") && screen.contains("hunks")
+        })
+        .unwrap();
+
+    let screen_before_drill = harness.screen_to_string();
+    println!("Before drill-down:\n{}", screen_before_drill);
 
     // Now drill down into a hunk to open the side-by-side view
     // Press Enter to drill down
@@ -284,8 +305,16 @@ fn start_server(config: Config) {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Process async operations for the side-by-side view to open
-    harness.process_async_and_render().unwrap();
+    // Wait for side-by-side view to open
+    // The drill-down creates a split with "[OLD ◀]" in the tab name
+    // Or if the operation is async, wait a bit for it to complete
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Either we see the OLD marker from the split, or the file was opened
+            screen.contains("[OLD") || screen.contains("main.rs ×")
+        })
+        .unwrap();
 
     let screen = harness.screen_to_string();
     println!("Side-by-side screen:\n{}", screen);
@@ -299,14 +328,6 @@ fn start_server(config: Config) {
     assert!(
         !screen.contains("TypeError"),
         "Should not show any TypeError. Screen:\n{}",
-        screen
-    );
-
-    // Should show either the side-by-side view with OLD label or the original diff
-    // (The side-by-side view shows "[OLD" prefix in the tab)
-    assert!(
-        screen.contains("OLD") || screen.contains("main.rs") || screen.contains("Review"),
-        "Should show diff content. Screen:\n{}",
         screen
     );
 }

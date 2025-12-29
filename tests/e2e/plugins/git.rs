@@ -24,12 +24,15 @@ fn trigger_git_find_file(harness: &mut EditorTestHarness) {
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
+    harness.wait_for_prompt().unwrap();
     harness.type_text("Git Find File").unwrap();
+    // Wait for the command to appear in the palette
+    harness.wait_for_screen_contains("Git Find File").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    // Wait for the find file prompt to appear
+    harness.wait_for_screen_contains("Find file:").unwrap();
 }
 
 /// Test git grep basic functionality - visibility of results
