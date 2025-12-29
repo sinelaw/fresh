@@ -44,7 +44,8 @@
         "mouse_hover_delay_ms": 500,
         "double_click_time_ms": 500,
         "auto_revert_poll_interval_ms": 2000,
-        "file_tree_poll_interval_ms": 3000
+        "file_tree_poll_interval_ms": 3000,
+        "default_line_ending": "lf"
       }
     },
     "file_explorer": {
@@ -259,8 +260,23 @@
           "format": "uint64",
           "minimum": 0,
           "default": 3000
+        },
+        "default_line_ending": {
+          "description": "Default line ending format for new files.\nFiles loaded from disk will use their detected line ending format.\nOptions: \"lf\" (Unix/Linux/macOS), \"crlf\" (Windows), \"cr\" (Classic Mac)\nDefault: \"lf\"",
+          "$ref": "#/$defs/LineEndingOption",
+          "default": "lf"
         }
       }
+    },
+    "LineEndingOption": {
+      "description": "Default line ending format for new files",
+      "type": "string",
+      "enum": [
+        "lf",
+        "crlf",
+        "cr"
+      ],
+      "default": "lf"
     },
     "FileExplorerConfig": {
       "description": "File explorer configuration",
