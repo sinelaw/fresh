@@ -563,6 +563,22 @@
       "when": "normal"
     },
     {
+      "comment": "Alternative for Ctrl+F3 (works in more terminals) - find next occurrence of selection",
+      "key": "n",
+      "modifiers": ["alt"],
+      "action": "find_selection_next",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Alternative for Ctrl+Shift+F3 (works in more terminals) - find previous occurrence of selection",
+      "key": "p",
+      "modifiers": ["alt"],
+      "action": "find_selection_previous",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Normal context - Error navigation",
       "key": "F8",
       "modifiers": [],
