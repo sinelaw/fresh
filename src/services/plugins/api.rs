@@ -34,6 +34,11 @@ pub enum PluginResponse {
         request_id: u64,
         spans: Vec<crate::services::plugins::runtime::TsHighlightSpan>,
     },
+    /// Response to GetBufferText with the text content
+    BufferText {
+        request_id: u64,
+        text: Result<String, String>,
+    },
 }
 
 /// Information about a cursor in the editor
@@ -43,6 +48,15 @@ pub struct CursorInfo {
     pub position: usize,
     /// Selection range (if any)
     pub selection: Option<Range<usize>>,
+}
+
+/// Specification for an action to execute, with optional repeat count
+#[derive(Debug, Clone)]
+pub struct ActionSpec {
+    /// Action name (e.g., "move_word_right", "delete_line")
+    pub action: String,
+    /// Number of times to repeat the action (default 1)
+    pub count: u32,
 }
 
 /// Information about a buffer
@@ -186,6 +200,9 @@ pub struct EditorStateSnapshot {
     /// User config as serde_json::Value (only what's in the user's config file)
     /// Fields not present here are using default values
     pub user_config: serde_json::Value,
+    /// Global editor mode for modal editing (e.g., "vi-normal", "vi-insert")
+    /// When set, this mode's keybindings take precedence over normal key handling
+    pub editor_mode: Option<String>,
 }
 
 impl EditorStateSnapshot {
@@ -206,6 +223,7 @@ impl EditorStateSnapshot {
             diagnostics: HashMap::new(),
             config: serde_json::Value::Null,
             user_config: serde_json::Value::Null,
+            editor_mode: None,
         }
     }
 }
@@ -639,6 +657,40 @@ pub enum PluginCommand {
 
     /// Set the hunks for the Review Diff tool
     SetReviewDiffHunks { hunks: Vec<ReviewHunk> },
+
+    /// Execute an editor action by name (e.g., "move_word_right", "delete_line")
+    /// Used by vi mode plugin to run motions and calculate cursor ranges
+    ExecuteAction {
+        /// Action name (e.g., "move_word_right", "move_line_end")
+        action_name: String,
+    },
+
+    /// Execute multiple actions in sequence, each with an optional repeat count
+    /// Used by vi mode for count prefix (e.g., "3dw" = delete 3 words)
+    /// All actions execute atomically with no plugin roundtrips between them
+    ExecuteActions {
+        /// List of actions to execute in sequence
+        actions: Vec<ActionSpec>,
+    },
+
+    /// Get text from a buffer range (for yank operations)
+    GetBufferText {
+        /// Buffer ID
+        buffer_id: BufferId,
+        /// Start byte offset
+        start: usize,
+        /// End byte offset
+        end: usize,
+        /// Request ID for async response
+        request_id: u64,
+    },
+
+    /// Set the global editor mode (for modal editing like vi mode)
+    /// When set, the mode's keybindings take precedence over normal editing
+    SetEditorMode {
+        /// Mode name (e.g., "vi-normal", "vi-insert") or None to clear
+        mode: Option<String>,
+    },
 }
 
 /// Hunk status for Review Diff

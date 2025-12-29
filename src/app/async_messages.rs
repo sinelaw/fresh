@@ -442,6 +442,15 @@ impl Editor {
             result,
         });
     }
+
+    /// Handle generic plugin response (e.g., GetBufferText result)
+    pub(super) fn handle_plugin_response(
+        &mut self,
+        response: crate::services::plugins::api::PluginResponse,
+    ) {
+        tracing::debug!("Received plugin response: {:?}", response);
+        self.send_plugin_response(response);
+    }
 }
 
 // =============================================================================

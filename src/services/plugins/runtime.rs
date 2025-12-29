@@ -43,7 +43,7 @@ use crate::input::commands::Suggestion;
 use crate::model::event::BufferId;
 use crate::model::event::SplitId;
 use crate::services::plugins::api::{
-    EditorStateSnapshot, LayoutHints, PluginCommand, ViewTokenWire,
+    ActionSpec, EditorStateSnapshot, LayoutHints, PluginCommand, ViewTokenWire,
 };
 use anyhow::{anyhow, Result};
 use deno_core::{
@@ -2846,12 +2846,18 @@ async fn op_fresh_send_lsp_request(
 fn op_fresh_define_mode(
     state: &mut OpState,
     #[string] name: String,
-    #[string] parent: Option<String>,
+    #[string] parent: String,
     #[serde] bindings: Vec<(String, String)>,
     read_only: bool,
 ) -> bool {
     if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
         let runtime_state = runtime_state.borrow();
+        // Convert empty string to None for parent
+        let parent = if parent.is_empty() {
+            None
+        } else {
+            Some(parent)
+        };
         let result = runtime_state
             .command_sender
             .send(PluginCommand::DefineMode {
@@ -3101,6 +3107,165 @@ fn op_fresh_set_virtual_buffer_content(
     false
 }
 
+/// Execute a built-in editor action by name
+///
+/// This is used by vi mode plugin to run motions and then check cursor position.
+/// For example, to implement "dw" (delete word), the plugin:
+/// 1. Saves current cursor position
+/// 2. Calls executeAction("move_word_right") - cursor moves
+/// 3. Gets new cursor position
+/// 4. Deletes from old to new position
+///
+/// @param action_name - Action name (e.g., "move_word_right", "move_line_end")
+/// @returns true if action was sent successfully
+#[op2(fast)]
+fn op_fresh_execute_action(state: &mut OpState, #[string] action_name: String) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::ExecuteAction { action_name });
+        return result.is_ok();
+    }
+    false
+}
+
+/// Execute multiple actions in sequence, each with an optional repeat count
+///
+/// Used by vi mode for count prefix (e.g., "3dw" = delete 3 words).
+/// All actions execute atomically with no plugin roundtrips between them.
+///
+/// @param actions - Array of {action: string, count?: number} objects
+/// @returns true if actions were sent successfully
+#[op2]
+fn op_fresh_execute_actions(state: &mut OpState, #[serde] actions: Vec<ActionSpecJs>) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let action_specs: Vec<ActionSpec> = actions
+            .into_iter()
+            .map(|a| ActionSpec {
+                action: a.action,
+                count: a.count.unwrap_or(1),
+            })
+            .collect();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::ExecuteActions {
+                actions: action_specs,
+            });
+        return result.is_ok();
+    }
+    false
+}
+
+/// JavaScript representation of ActionSpec (with optional count)
+#[derive(Debug, serde::Deserialize)]
+struct ActionSpecJs {
+    action: String,
+    #[serde(default)]
+    count: Option<u32>,
+}
+
+/// Get text from a buffer range
+///
+/// Used by vi mode plugin for yank operations - reads text without deleting.
+/// @param buffer_id - Buffer ID
+/// @param start - Start byte offset
+/// @param end - End byte offset
+/// @returns Text content of the range, or empty string on error
+#[op2(async)]
+#[string]
+async fn op_fresh_get_buffer_text(
+    state: Rc<RefCell<OpState>>,
+    buffer_id: u32,
+    start: u32,
+    end: u32,
+) -> Result<String, JsErrorBox> {
+    let receiver = {
+        let state = state.borrow();
+        let runtime_state = state
+            .try_borrow::<Rc<RefCell<TsRuntimeState>>>()
+            .ok_or_else(|| JsErrorBox::generic("Failed to get runtime state"))?;
+        let runtime_state = runtime_state.borrow();
+
+        // Allocate request ID
+        let request_id = {
+            let mut id = runtime_state.next_request_id.borrow_mut();
+            let current = *id;
+            *id += 1;
+            current
+        };
+
+        // Create oneshot channel for response
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        // Store the sender
+        {
+            let mut pending = runtime_state.pending_responses.lock().unwrap();
+            pending.insert(request_id, tx);
+        }
+
+        // Send command
+        runtime_state
+            .command_sender
+            .send(PluginCommand::GetBufferText {
+                buffer_id: BufferId(buffer_id as usize),
+                start: start as usize,
+                end: end as usize,
+                request_id,
+            })
+            .map_err(|_| JsErrorBox::generic("Failed to send GetBufferText command"))?;
+
+        rx
+    };
+
+    // Wait for response
+    let response = receiver
+        .await
+        .map_err(|_| JsErrorBox::generic("Response channel closed"))?;
+
+    match response {
+        crate::services::plugins::api::PluginResponse::BufferText { text, .. } => {
+            text.map_err(|e| JsErrorBox::generic(e))
+        }
+        _ => Err(JsErrorBox::generic("Unexpected response type")),
+    }
+}
+
+/// Set the global editor mode (for modal editing like vi mode)
+///
+/// When a mode is set, its keybindings take precedence over normal key handling.
+/// Pass null/undefined to clear the mode and return to normal editing.
+///
+/// @param mode - Mode name (e.g., "vi-normal") or null to clear
+/// @returns true if command was sent successfully
+#[op2]
+fn op_fresh_set_editor_mode(state: &mut OpState, #[string] mode: Option<String>) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::SetEditorMode { mode });
+        return result.is_ok();
+    }
+    false
+}
+
+/// Get the current global editor mode
+///
+/// @returns Current mode name or null if no mode is active
+#[op2]
+#[string]
+fn op_fresh_get_editor_mode(state: &mut OpState) -> Option<String> {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        if let Ok(snapshot) = runtime_state.state_snapshot.read() {
+            return snapshot.editor_mode.clone();
+        };
+    }
+    None
+}
+
 // Define the extension with our ops
 extension!(
     fresh_runtime,
@@ -3195,6 +3360,12 @@ extension!(
         op_fresh_set_buffer_cursor,
         op_fresh_get_text_properties_at_cursor,
         op_fresh_set_virtual_buffer_content,
+        // Vi mode support operations
+        op_fresh_execute_action,
+        op_fresh_execute_actions,
+        op_fresh_get_buffer_text,
+        op_fresh_set_editor_mode,
+        op_fresh_get_editor_mode,
     ],
 );
 
@@ -3584,7 +3755,9 @@ impl TypeScriptRuntime {
                         return core.ops.op_fresh_create_virtual_buffer(options);
                     },
                     defineMode(name, parent, bindings, readOnly = false) {
-                        return core.ops.op_fresh_define_mode(name, parent, bindings, readOnly);
+                        // Convert null/undefined to empty string for Rust Option<String> handling
+                        const parentStr = parent != null ? parent : "";
+                        return core.ops.op_fresh_define_mode(name, parentStr, bindings, readOnly);
                     },
                     showBuffer(bufferId) {
                         return core.ops.op_fresh_show_buffer(bufferId);
@@ -3618,6 +3791,23 @@ impl TypeScriptRuntime {
                     },
                     setVirtualBufferContent(bufferId, entries) {
                         return core.ops.op_fresh_set_virtual_buffer_content(bufferId, entries);
+                    },
+
+                    // Vi mode support
+                    executeAction(actionName) {
+                        return core.ops.op_fresh_execute_action(actionName);
+                    },
+                    executeActions(actions) {
+                        return core.ops.op_fresh_execute_actions(actions);
+                    },
+                    getBufferText(bufferId, start, end) {
+                        return core.ops.op_fresh_get_buffer_text(bufferId, start, end);
+                    },
+                    setEditorMode(mode) {
+                        return core.ops.op_fresh_set_editor_mode(mode);
+                    },
+                    getEditorMode() {
+                        return core.ops.op_fresh_get_editor_mode();
                     },
                 };
 
@@ -3670,6 +3860,9 @@ impl TypeScriptRuntime {
                 request_id,
                 ..
             } => *request_id,
+            crate::services::plugins::api::PluginResponse::BufferText { request_id, .. } => {
+                *request_id
+            }
         };
 
         let sender = {
@@ -6013,6 +6206,47 @@ mod tests {
             }
             Err(e) => {
                 eprintln!("Git log plugin failed with error: {}", e);
+            }
+        }
+
+        // Shutdown
+        handle.shutdown();
+    }
+
+    #[test]
+    fn test_plugin_thread_load_vi_mode_plugin() {
+        use crate::services::plugins::thread::PluginThreadHandle;
+
+        // Initialize tracing subscriber for detailed logging
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_test_writer()
+            .try_init();
+
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        // Spawn the plugin thread
+        let mut handle = PluginThreadHandle::spawn(commands).unwrap();
+
+        // Load the vi_mode.ts plugin
+        let plugins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins");
+        let plugin_path = plugins_dir.join("vi_mode.ts");
+
+        // Load the plugin through the plugin thread
+        let result = handle.load_plugin(&plugin_path);
+
+        // Check result
+        match result {
+            Ok(()) => {
+                eprintln!("Vi mode plugin loaded successfully");
+                // Check that the plugin was loaded and registered commands
+                let cmds = handle.process_commands();
+                eprintln!("Commands after load: {:?}", cmds.len());
+                // The vi mode plugin should register the "Toggle Vi mode" command
+                assert!(cmds.len() > 0, "Vi mode plugin should register commands");
+            }
+            Err(e) => {
+                panic!("Vi mode plugin failed to load: {}", e);
             }
         }
 

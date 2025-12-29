@@ -9,6 +9,7 @@ use crate::input::multi_cursor::{
     add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult,
 };
 use crate::model::event::{CursorId, Event};
+use crate::primitives::word_navigation::{find_word_start_left, find_word_start_right};
 
 use super::Editor;
 
@@ -573,6 +574,186 @@ impl Editor {
             AddCursorResult::Failed { message } => {
                 self.status_message = Some(message);
             }
+        }
+    }
+
+    // =========================================================================
+    // Vi-style yank operations (copy range without requiring selection)
+    // =========================================================================
+
+    /// Yank (copy) from cursor to next word start
+    pub fn yank_word_forward(&mut self) {
+        let ranges: Vec<_> = {
+            let state = self.active_state();
+            state
+                .cursors
+                .iter()
+                .filter_map(|(_, cursor)| {
+                    let start = cursor.position;
+                    let end = find_word_start_right(&state.buffer, start);
+                    if end > start {
+                        Some(start..end)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        if ranges.is_empty() {
+            return;
+        }
+
+        // Copy text from all ranges
+        let mut text = String::new();
+        let state = self.active_state_mut();
+        for range in ranges {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            let range_text = state.get_text_range(range.start, range.end);
+            text.push_str(&range_text);
+        }
+
+        if !text.is_empty() {
+            let len = text.len();
+            self.clipboard.copy(text);
+            self.status_message = Some(format!("Yanked {} chars", len));
+        }
+    }
+
+    /// Yank (copy) from previous word start to cursor
+    pub fn yank_word_backward(&mut self) {
+        let ranges: Vec<_> = {
+            let state = self.active_state();
+            state
+                .cursors
+                .iter()
+                .filter_map(|(_, cursor)| {
+                    let end = cursor.position;
+                    let start = find_word_start_left(&state.buffer, end);
+                    if start < end {
+                        Some(start..end)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        if ranges.is_empty() {
+            return;
+        }
+
+        let mut text = String::new();
+        let state = self.active_state_mut();
+        for range in ranges {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            let range_text = state.get_text_range(range.start, range.end);
+            text.push_str(&range_text);
+        }
+
+        if !text.is_empty() {
+            let len = text.len();
+            self.clipboard.copy(text);
+            self.status_message = Some(format!("Yanked {} chars", len));
+        }
+    }
+
+    /// Yank (copy) from cursor to end of line
+    pub fn yank_to_line_end(&mut self) {
+        let estimated_line_length = 80;
+
+        // First collect cursor positions with immutable borrow
+        let cursor_positions: Vec<_> = {
+            let state = self.active_state();
+            state
+                .cursors
+                .iter()
+                .map(|(_, cursor)| cursor.position)
+                .collect()
+        };
+
+        // Now compute ranges with mutable borrow (line_iterator needs &mut self)
+        let state = self.active_state_mut();
+        let mut ranges = Vec::new();
+        for pos in cursor_positions {
+            let mut iter = state.buffer.line_iterator(pos, estimated_line_length);
+            let line_start = iter.current_position();
+            if let Some((_start, content)) = iter.next() {
+                // Don't include the line ending in yank
+                let content_len = content.trim_end_matches(&['\n', '\r'][..]).len();
+                let line_end = line_start + content_len;
+                if pos < line_end {
+                    ranges.push(pos..line_end);
+                }
+            }
+        }
+
+        if ranges.is_empty() {
+            return;
+        }
+
+        let mut text = String::new();
+        for range in ranges {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            let range_text = state.get_text_range(range.start, range.end);
+            text.push_str(&range_text);
+        }
+
+        if !text.is_empty() {
+            let len = text.len();
+            self.clipboard.copy(text);
+            self.status_message = Some(format!("Yanked {} chars", len));
+        }
+    }
+
+    /// Yank (copy) from start of line to cursor
+    pub fn yank_to_line_start(&mut self) {
+        let estimated_line_length = 80;
+
+        // First collect cursor positions with immutable borrow
+        let cursor_positions: Vec<_> = {
+            let state = self.active_state();
+            state
+                .cursors
+                .iter()
+                .map(|(_, cursor)| cursor.position)
+                .collect()
+        };
+
+        // Now compute ranges with mutable borrow (line_iterator needs &mut self)
+        let state = self.active_state_mut();
+        let mut ranges = Vec::new();
+        for pos in cursor_positions {
+            let iter = state.buffer.line_iterator(pos, estimated_line_length);
+            let line_start = iter.current_position();
+            if pos > line_start {
+                ranges.push(line_start..pos);
+            }
+        }
+
+        if ranges.is_empty() {
+            return;
+        }
+
+        let mut text = String::new();
+        for range in ranges {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            let range_text = state.get_text_range(range.start, range.end);
+            text.push_str(&range_text);
+        }
+
+        if !text.is_empty() {
+            let len = text.len();
+            self.clipboard.copy(text);
+            self.status_message = Some(format!("Yanked {} chars", len));
         }
     }
 }

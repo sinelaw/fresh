@@ -1041,11 +1041,36 @@ impl Editor {
         }
 
         // Parse key bindings from strings
+        // Key strings can be single keys ("g", "C-f") or chord sequences ("g g", "z z")
         for (key_str, command) in bindings {
-            if let Some((code, modifiers)) = parse_key_string(&key_str) {
-                mode = mode.with_binding(code, modifiers, command);
+            let parts: Vec<&str> = key_str.split_whitespace().collect();
+
+            if parts.len() == 1 {
+                // Single key binding
+                if let Some((code, modifiers)) = parse_key_string(&key_str) {
+                    mode = mode.with_binding(code, modifiers, command);
+                } else {
+                    tracing::warn!("Failed to parse key binding: {}", key_str);
+                }
             } else {
-                tracing::warn!("Failed to parse key binding: {}", key_str);
+                // Chord sequence (multiple keys separated by space)
+                let mut sequence = Vec::new();
+                let mut parse_failed = false;
+
+                for part in &parts {
+                    if let Some((code, modifiers)) = parse_key_string(part) {
+                        sequence.push((code, modifiers));
+                    } else {
+                        tracing::warn!("Failed to parse key in chord: {} (in {})", part, key_str);
+                        parse_failed = true;
+                        break;
+                    }
+                }
+
+                if !parse_failed && !sequence.is_empty() {
+                    tracing::debug!("Adding chord binding: {:?} -> {}", sequence, command);
+                    mode = mode.with_chord_binding(sequence, command);
+                }
             }
         }
 

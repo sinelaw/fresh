@@ -189,6 +189,9 @@ pub enum AsyncMessage {
         result: Result<Value, String>,
     },
 
+    /// Generic plugin response (e.g., GetBufferText result)
+    PluginResponse(crate::services::plugins::api::PluginResponse),
+
     /// File open dialog: directory listing completed
     FileOpenDirectoryLoaded(std::io::Result<Vec<crate::services::fs::FsEntry>>),
 

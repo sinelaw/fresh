@@ -19,6 +19,9 @@ pub struct BufferMode {
     /// Keybindings specific to this mode (key → command name)
     pub keybindings: HashMap<(KeyCode, KeyModifiers), String>,
 
+    /// Chord keybindings (multi-key sequences like "g g" → command name)
+    pub chord_keybindings: HashMap<Vec<(KeyCode, KeyModifiers)>, String>,
+
     /// Whether buffers with this mode are read-only by default
     pub read_only: bool,
 }
@@ -30,6 +33,7 @@ impl BufferMode {
             name: name.into(),
             parent: None,
             keybindings: HashMap::new(),
+            chord_keybindings: HashMap::new(),
             read_only: false,
         }
     }
@@ -48,6 +52,16 @@ impl BufferMode {
         command: impl Into<String>,
     ) -> Self {
         self.keybindings.insert((code, modifiers), command.into());
+        self
+    }
+
+    /// Add a chord keybinding (multi-key sequence) to this mode
+    pub fn with_chord_binding(
+        mut self,
+        sequence: Vec<(KeyCode, KeyModifiers)>,
+        command: impl Into<String>,
+    ) -> Self {
+        self.chord_keybindings.insert(sequence, command.into());
         self
     }
 
@@ -105,6 +119,26 @@ impl ModeRegistry {
         self.modes.get(name)
     }
 
+    /// Normalize a key for lookup: ensures consistent representation of shifted letters
+    /// This ensures that pressing 'G' (Shift+g) matches bindings defined as 'G'
+    ///
+    /// Normalization rules:
+    /// - Uppercase char (with or without SHIFT) -> lowercase char with SHIFT
+    /// - Lowercase char with SHIFT -> keep as is (already normalized form)
+    fn normalize_key(code: KeyCode, modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
+        if let KeyCode::Char(c) = code {
+            if c.is_ascii_uppercase() {
+                // Uppercase char -> always normalize to lowercase with SHIFT
+                return (
+                    KeyCode::Char(c.to_ascii_lowercase()),
+                    modifiers | KeyModifiers::SHIFT,
+                );
+            }
+            // Lowercase chars: keep as-is (SHIFT modifier preserved if present)
+        }
+        (code, modifiers)
+    }
+
     /// Resolve a keybinding for a mode, following inheritance chain
     ///
     /// Returns the command name if a binding is found in this mode or any parent.
@@ -115,6 +149,9 @@ impl ModeRegistry {
         modifiers: KeyModifiers,
     ) -> Option<String> {
         let mut current_mode_name = Some(mode_name);
+
+        // Normalize the key for consistent lookup
+        let (code, modifiers) = Self::normalize_key(code, modifiers);
 
         // Walk up the inheritance chain
         while let Some(name) = current_mode_name {
@@ -152,6 +189,95 @@ impl ModeRegistry {
         }
 
         false
+    }
+
+    /// Check if a key sequence could be the start of a chord in this mode
+    ///
+    /// This is used to determine if we should wait for more keys before
+    /// deciding what action to take.
+    pub fn is_chord_prefix(
+        &self,
+        mode_name: &str,
+        chord_state: &[(KeyCode, KeyModifiers)],
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> bool {
+        // Normalize the key
+        let (code, modifiers) = Self::normalize_key(code, modifiers);
+
+        // Build the sequence we're checking
+        let mut sequence: Vec<(KeyCode, KeyModifiers)> = chord_state
+            .iter()
+            .map(|(c, m)| Self::normalize_key(*c, *m))
+            .collect();
+        sequence.push((code, modifiers));
+
+        let mut current_mode_name = Some(mode_name);
+
+        // Walk up the inheritance chain
+        while let Some(name) = current_mode_name {
+            if let Some(mode) = self.modes.get(name) {
+                // Check if our sequence is a prefix of any chord binding
+                for chord_seq in mode.chord_keybindings.keys() {
+                    if chord_seq.len() > sequence.len()
+                        && chord_seq[..sequence.len()] == sequence[..]
+                    {
+                        return true;
+                    }
+                }
+                current_mode_name = mode.parent.as_deref();
+            } else {
+                break;
+            }
+        }
+
+        false
+    }
+
+    /// Resolve a chord keybinding (multi-key sequence) for a mode
+    ///
+    /// Returns the command name if the full sequence matches a chord binding.
+    pub fn resolve_chord_keybinding(
+        &self,
+        mode_name: &str,
+        chord_state: &[(KeyCode, KeyModifiers)],
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Option<String> {
+        // Normalize the key
+        let (code, modifiers) = Self::normalize_key(code, modifiers);
+
+        // Build the full sequence
+        let mut sequence: Vec<(KeyCode, KeyModifiers)> = chord_state
+            .iter()
+            .map(|(c, m)| Self::normalize_key(*c, *m))
+            .collect();
+        sequence.push((code, modifiers));
+
+        tracing::trace!(
+            "resolve_chord_keybinding: mode={}, sequence={:?}",
+            mode_name,
+            sequence
+        );
+
+        let mut current_mode_name = Some(mode_name);
+
+        // Walk up the inheritance chain
+        while let Some(name) = current_mode_name {
+            if let Some(mode) = self.modes.get(name) {
+                // Check for exact match
+                if let Some(command) = mode.chord_keybindings.get(&sequence) {
+                    tracing::trace!("  -> found chord binding: {}", command);
+                    return Some(command.clone());
+                }
+                current_mode_name = mode.parent.as_deref();
+            } else {
+                break;
+            }
+        }
+
+        tracing::trace!("  -> no chord binding found");
+        None
     }
 
     /// List all registered mode names

@@ -1909,6 +1909,27 @@ pub fn action_to_events(
             apply_deletions(state, deletions, &mut events);
         }
 
+        Action::DeleteToLineStart => {
+            // Delete from start of line to cursor (like Ctrl+U in bash)
+            let deletions: Vec<_> = state
+                .cursors
+                .iter()
+                .filter_map(|(cursor_id, cursor)| {
+                    let iter = state
+                        .buffer
+                        .line_iterator(cursor.position, estimated_line_length);
+                    let line_start = iter.current_position();
+                    if cursor.position > line_start {
+                        Some((cursor_id, line_start..cursor.position))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            apply_deletions(state, deletions, &mut events);
+        }
+
         Action::TransposeChars => {
             // Transpose the character before the cursor with the one at the cursor
             // Collect cursor positions first to avoid borrow issues
@@ -2029,6 +2050,10 @@ pub fn action_to_events(
         | Action::CopyWithTheme(_)
         | Action::Cut
         | Action::Paste
+        | Action::YankWordForward
+        | Action::YankWordBackward
+        | Action::YankToLineEnd
+        | Action::YankToLineStart
         | Action::AddCursorNextMatch
         | Action::AddCursorAbove
         | Action::AddCursorBelow

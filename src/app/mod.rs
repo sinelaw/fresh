@@ -449,6 +449,10 @@ pub struct Editor {
     /// Plugin-defined contexts like "config-editor" that control command availability
     active_custom_contexts: HashSet<String>,
 
+    /// Global editor mode for modal editing (e.g., "vi-normal", "vi-insert")
+    /// When set, this mode's keybindings take precedence over normal key handling
+    editor_mode: Option<String>,
+
     /// Warning log receiver and path (for tracking warnings)
     warning_log: Option<(std::sync::mpsc::Receiver<()>, PathBuf)>,
 
@@ -911,6 +915,7 @@ impl Editor {
             time_source: time_source.clone(),
             last_auto_save: time_source.now(),
             active_custom_contexts: HashSet::new(),
+            editor_mode: None,
             warning_log: None,
             warning_domains: WarningDomainRegistry::new(),
             update_checker,
@@ -1013,15 +1018,28 @@ impl Editor {
         self.active_state().editing_disabled
     }
 
-    /// Resolve a keybinding for the active buffer's mode
+    /// Resolve a keybinding for the current mode
     ///
-    /// If the active buffer has a mode (virtual buffer), check if that mode
-    /// has a keybinding for the given key. Returns the command name if found.
+    /// First checks the global editor mode (for vi mode and other modal editing).
+    /// If no global mode is set or no binding is found, falls back to the
+    /// active buffer's mode (for virtual buffers with custom modes).
+    /// Returns the command name if found.
     pub fn resolve_mode_keybinding(
         &self,
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> Option<String> {
+        // First check global editor mode (e.g., "vi-normal", "vi-operator-pending")
+        if let Some(ref global_mode) = self.editor_mode {
+            if let Some(binding) =
+                self.mode_registry
+                    .resolve_keybinding(global_mode, code, modifiers)
+            {
+                return Some(binding);
+            }
+        }
+
+        // Fall back to buffer-local mode (for virtual buffers)
         let mode_name = self.active_buffer_mode()?;
         self.mode_registry
             .resolve_keybinding(mode_name, code, modifiers)
@@ -2401,6 +2419,17 @@ impl Editor {
         self.prompt.is_some()
     }
 
+    /// Get the current global editor mode (e.g., "vi-normal", "vi-insert")
+    /// Returns None if no special mode is active
+    pub fn editor_mode(&self) -> Option<String> {
+        self.editor_mode.clone()
+    }
+
+    /// Get access to the command registry
+    pub fn command_registry(&self) -> &Arc<RwLock<CommandRegistry>> {
+        &self.command_registry
+    }
+
     /// Check if file explorer has focus
     pub fn file_explorer_is_focused(&self) -> bool {
         self.key_context == KeyContext::FileExplorer
@@ -2717,6 +2746,9 @@ impl Editor {
                 } => {
                     self.handle_plugin_lsp_response(request_id, result);
                 }
+                AsyncMessage::PluginResponse(response) => {
+                    self.handle_plugin_response(response);
+                }
                 AsyncMessage::LspProgress {
                     language,
                     token,
@@ -3008,6 +3040,9 @@ impl Editor {
             // Update user config (raw file contents, not merged with defaults)
             // This allows plugins to distinguish between user-set and default values
             snapshot.user_config = Config::read_user_config_raw(&self.working_dir);
+
+            // Update editor mode (for vi mode and other modal editing)
+            snapshot.editor_mode = self.editor_mode.clone();
         }
     }
 
@@ -3642,8 +3677,108 @@ impl Editor {
                 self.review_hunks = hunks;
                 tracing::debug!("Set {} review hunks", self.review_hunks.len());
             }
+
+            // ==================== Vi Mode Commands ====================
+            PluginCommand::ExecuteAction { action_name } => {
+                self.handle_execute_action(action_name);
+            }
+            PluginCommand::ExecuteActions { actions } => {
+                self.handle_execute_actions(actions);
+            }
+            PluginCommand::GetBufferText {
+                buffer_id,
+                start,
+                end,
+                request_id,
+            } => {
+                self.handle_get_buffer_text(buffer_id, start, end, request_id);
+            }
+            PluginCommand::SetEditorMode { mode } => {
+                self.handle_set_editor_mode(mode);
+            }
         }
         Ok(())
+    }
+
+    /// Execute an editor action by name (for vi mode plugin)
+    fn handle_execute_action(&mut self, action_name: String) {
+        use crate::input::keybindings::Action;
+        use std::collections::HashMap;
+
+        // Parse the action name into an Action enum
+        if let Some(action) = Action::from_str(&action_name, &HashMap::new()) {
+            // Execute the action
+            if let Err(e) = self.handle_action(action) {
+                tracing::warn!("Failed to execute action '{}': {}", action_name, e);
+            } else {
+                tracing::debug!("Executed action: {}", action_name);
+            }
+        } else {
+            tracing::warn!("Unknown action: {}", action_name);
+        }
+    }
+
+    /// Execute multiple actions in sequence, each with an optional repeat count
+    /// Used by vi mode for count prefix (e.g., "3dw" = delete 3 words)
+    fn handle_execute_actions(&mut self, actions: Vec<crate::services::plugins::api::ActionSpec>) {
+        use crate::input::keybindings::Action;
+        use std::collections::HashMap;
+
+        for action_spec in actions {
+            if let Some(action) = Action::from_str(&action_spec.action, &HashMap::new()) {
+                // Execute the action `count` times
+                for _ in 0..action_spec.count {
+                    if let Err(e) = self.handle_action(action.clone()) {
+                        tracing::warn!("Failed to execute action '{}': {}", action_spec.action, e);
+                        return; // Stop on first error
+                    }
+                }
+                tracing::debug!(
+                    "Executed action '{}' {} time(s)",
+                    action_spec.action,
+                    action_spec.count
+                );
+            } else {
+                tracing::warn!("Unknown action: {}", action_spec.action);
+                return; // Stop on unknown action
+            }
+        }
+    }
+
+    /// Get text from a buffer range (for vi mode yank operations)
+    fn handle_get_buffer_text(
+        &mut self,
+        buffer_id: BufferId,
+        start: usize,
+        end: usize,
+        request_id: u64,
+    ) {
+        let result = if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            // Get text from the buffer using the mutable get_text_range method
+            let len = state.buffer.len();
+            if start <= end && end <= len {
+                Ok(state.get_text_range(start, end))
+            } else {
+                Err(format!(
+                    "Invalid range {}..{} for buffer of length {}",
+                    start, end, len
+                ))
+            }
+        } else {
+            Err(format!("Buffer {:?} not found", buffer_id))
+        };
+
+        // Send response via plugin manager
+        self.send_plugin_response(crate::services::plugins::api::PluginResponse::BufferText {
+            request_id,
+            text: result,
+        });
+    }
+
+    /// Set the global editor mode (for vi mode)
+    fn handle_set_editor_mode(&mut self, mode: Option<String>) {
+        self.editor_mode = mode.clone();
+        tracing::debug!("Set editor mode: {:?}", mode);
     }
 }
 
@@ -3678,7 +3813,9 @@ fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
     }
 
     // Parse the key
-    let code = match remaining.to_uppercase().as_str() {
+    // Use uppercase for matching special keys, but preserve original for single chars
+    let upper = remaining.to_uppercase();
+    let code = match upper.as_str() {
         "RET" | "RETURN" | "ENTER" => KeyCode::Enter,
         "TAB" => KeyCode::Tab,
         "ESC" | "ESCAPE" => KeyCode::Esc,
@@ -3701,9 +3838,13 @@ fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
                 return None;
             }
         }
-        s if s.len() == 1 => {
-            // Single character
-            let c = s.chars().next()?;
+        _ if remaining.len() == 1 => {
+            // Single character - use ORIGINAL remaining, not uppercased
+            // For uppercase letters, add SHIFT modifier so 'J' != 'j'
+            let c = remaining.chars().next()?;
+            if c.is_ascii_uppercase() {
+                modifiers |= KeyModifiers::SHIFT;
+            }
             KeyCode::Char(c.to_ascii_lowercase())
         }
         _ => return None,

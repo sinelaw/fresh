@@ -87,13 +87,69 @@ impl Editor {
         );
 
         if should_check_mode_bindings {
+            // If we're in a global editor mode, handle chords and keybindings
+            if let Some(ref mode_name) = self.editor_mode {
+                // First, try to resolve as a chord (multi-key sequence like "gg")
+                if let Some(action_name) = self.mode_registry.resolve_chord_keybinding(
+                    mode_name,
+                    &self.chord_state,
+                    code,
+                    modifiers,
+                ) {
+                    tracing::debug!("Mode chord resolved to action: {}", action_name);
+                    self.chord_state.clear();
+                    let action = Action::from_str(&action_name, &std::collections::HashMap::new())
+                        .unwrap_or_else(|| Action::PluginAction(action_name));
+                    return self.handle_action(action);
+                }
+
+                // Check if this could be the start of a chord sequence
+                let is_potential_chord = self.mode_registry.is_chord_prefix(
+                    mode_name,
+                    &self.chord_state,
+                    code,
+                    modifiers,
+                );
+
+                if is_potential_chord {
+                    // This could be the start of a chord - add to state and wait
+                    tracing::debug!("Potential chord prefix in editor mode");
+                    self.chord_state.push((code, modifiers));
+                    return Ok(());
+                }
+
+                // Not a chord - clear any pending chord state
+                if !self.chord_state.is_empty() {
+                    tracing::debug!("Chord sequence abandoned in mode, clearing state");
+                    self.chord_state.clear();
+                }
+            }
+
             // Check buffer mode keybindings (for virtual buffers with custom modes)
             // Mode keybindings resolve to Action names (see Action::from_str)
             if let Some(action_name) = self.resolve_mode_keybinding(code, modifiers) {
-                tracing::debug!("Mode keybinding resolved to action: {}", action_name);
                 let action = Action::from_str(&action_name, &std::collections::HashMap::new())
-                    .unwrap_or_else(|| Action::PluginAction(action_name));
+                    .unwrap_or_else(|| Action::PluginAction(action_name.clone()));
                 return self.handle_action(action);
+            }
+
+            // If we're in a global editor mode, check if we should block unbound keys
+            if let Some(ref mode_name) = self.editor_mode {
+                // Check if this mode is read-only
+                // read_only=true (like vi-normal): unbound keys should be ignored
+                // read_only=false (like vi-insert): unbound keys should insert characters
+                if self.mode_registry.is_read_only(mode_name) {
+                    tracing::debug!(
+                        "Ignoring unbound key in read-only mode {:?}",
+                        self.editor_mode
+                    );
+                    return Ok(());
+                }
+                // Mode is not read-only, fall through to normal key handling
+                tracing::debug!(
+                    "Mode {:?} is not read-only, allowing key through",
+                    self.editor_mode
+                );
             }
         }
 
@@ -268,6 +324,10 @@ impl Editor {
                 }
                 self.paste()
             }
+            Action::YankWordForward => self.yank_word_forward(),
+            Action::YankWordBackward => self.yank_word_backward(),
+            Action::YankToLineEnd => self.yank_to_line_end(),
+            Action::YankToLineStart => self.yank_to_line_start(),
             Action::Undo => {
                 self.handle_undo();
             }

@@ -407,6 +407,7 @@ fn respond_to_pending(
         crate::services::plugins::api::PluginResponse::HighlightsComputed {
             request_id, ..
         } => *request_id,
+        crate::services::plugins::api::PluginResponse::BufferText { request_id, .. } => *request_id,
     };
 
     let sender = {

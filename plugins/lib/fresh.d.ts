@@ -300,6 +300,12 @@ interface CreateVirtualBufferInCurrentSplitOptions {
   editing_disabled?: boolean | null;
 }
 
+/** JavaScript representation of ActionSpec (with optional count) */
+interface ActionSpecJs {
+  action: string;
+  count?: number | null;
+}
+
 /**
  * Main editor API interface
  */
@@ -419,6 +425,22 @@ interface EditorAPI {
    * @returns Array of Diagnostic objects with file URI, severity, message, and range
    */
   getAllDiagnostics(): TsDiagnostic[];
+  /**
+   * Get text from a buffer range
+   *
+   * Used by vi mode plugin for yank operations - reads text without deleting.
+   * @param buffer_id - Buffer ID
+   * @param start - Start byte offset
+   * @param end - End byte offset
+   * @returns Text content of the range, or empty string on error
+   */
+  getBufferText(buffer_id: number, start: number, end: number): Promise<string>;
+  /**
+   * Get the current global editor mode
+   *
+   * @returns Current mode name or null if no mode is active
+   */
+  getEditorMode(): string;
 
   // === Buffer Info Queries ===
   /**
@@ -718,6 +740,40 @@ interface EditorAPI {
    * @returns true if the command was sent successfully
    */
   setBufferCursor(buffer_id: number, position: number): boolean;
+  /**
+   * Execute a built-in editor action by name
+   *
+   * This is used by vi mode plugin to run motions and then check cursor position.
+   * For example, to implement "dw" (delete word), the plugin:
+   * 1. Saves current cursor position
+   * 2. Calls executeAction("move_word_right") - cursor moves
+   * 3. Gets new cursor position
+   * 4. Deletes from old to new position
+   *
+   * @param action_name - Action name (e.g., "move_word_right", "move_line_end")
+   * @returns true if action was sent successfully
+   */
+  executeAction(action_name: string): boolean;
+  /**
+   * Execute multiple actions in sequence, each with an optional repeat count
+   *
+   * Used by vi mode for count prefix (e.g., "3dw" = delete 3 words).
+   * All actions execute atomically with no plugin roundtrips between them.
+   *
+   * @param actions - Array of {action: string, count?: number} objects
+   * @returns true if actions were sent successfully
+   */
+  executeActions(actions: ActionSpecJs[]): boolean;
+  /**
+   * Set the global editor mode (for modal editing like vi mode)
+   *
+   * When a mode is set, its keybindings take precedence over normal key handling.
+   * Pass null/undefined to clear the mode and return to normal editing.
+   *
+   * @param mode - Mode name (e.g., "vi-normal") or null to clear
+   * @returns true if command was sent successfully
+   */
+  setEditorMode(mode?: string | null): boolean;
 
   /**
    * Spawn an external process and return a cancellable handle
@@ -1032,7 +1088,7 @@ interface EditorAPI {
    * ["q", "close_buffer"]
    * ], true);
    */
-  defineMode(name: string, parent?: string | null, bindings: Vec<(String, String): boolean;
+  defineMode(name: string, parent: string, bindings: Vec<(String, String): boolean;
   /**
    * Switch the current split to display a buffer
    * @param buffer_id - ID of the buffer to show
