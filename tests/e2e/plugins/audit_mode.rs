@@ -100,16 +100,16 @@ fn start_server(config: Config) {
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
+    harness.wait_for_prompt().unwrap();
     harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
 
     // Process async operations to let the plugin run
-    for _ in 0..10 {
-        harness.process_async_and_render().unwrap();
-    }
+    harness.process_async_and_render().unwrap();
 
     let screen = harness.screen_to_string();
     println!("Review Diff screen:\n{}", screen);
@@ -187,20 +187,20 @@ fn start_server(config: Config) {
         .wait_until(|h| h.screen_to_string().contains("CHANGED"))
         .unwrap();
 
-    // Trigger Review Diff
+    // Trigger Review Diff via command palette
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
+    harness.wait_for_prompt().unwrap();
     harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
 
-    // Process async operations
-    for _ in 0..10 {
-        harness.process_async_and_render().unwrap();
-    }
+    // Process async operations to let plugin execute
+    harness.process_async_and_render().unwrap();
 
     let screen = harness.screen_to_string();
     println!("Hunks screen:\n{}", screen);
@@ -263,20 +263,20 @@ fn start_server(config: Config) {
         .wait_until(|h| h.screen_to_string().contains("CHANGED"))
         .unwrap();
 
-    // Trigger Review Diff
+    // Trigger Review Diff via command palette
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
+    harness.wait_for_prompt().unwrap();
     harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
 
-    // Process async operations
-    for _ in 0..10 {
-        harness.process_async_and_render().unwrap();
-    }
+    // Process async operations to let plugin execute
+    harness.process_async_and_render().unwrap();
 
     // Now drill down into a hunk to open the side-by-side view
     // Press Enter to drill down
@@ -285,9 +285,7 @@ fn start_server(config: Config) {
         .unwrap();
 
     // Process async operations for the side-by-side view to open
-    for _ in 0..10 {
-        harness.process_async_and_render().unwrap();
-    }
+    harness.process_async_and_render().unwrap();
 
     let screen = harness.screen_to_string();
     println!("Side-by-side screen:\n{}", screen);

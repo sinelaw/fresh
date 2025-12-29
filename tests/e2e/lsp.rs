@@ -3245,47 +3245,40 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> std::io::Result<()> {
     harness.open_file(&test_file)?;
     harness.render()?;
 
-    // Wait for the LSP server to initialize
-    harness.sleep(std::time::Duration::from_millis(200));
-    harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
-    harness.render()?;
+    // Wait for the LSP server to initialize using semantic wait
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .running_lsp_servers()
+                .contains(&"rust".to_string())
+        })
+        .expect("LSP server for rust should start after file open");
 
-    // Verify LSP server is running
     let running_before = harness.editor().running_lsp_servers();
     eprintln!("Running LSP servers before stop: {:?}", running_before);
-    assert!(
-        running_before.contains(&"rust".to_string()),
-        "LSP server for rust should be running after file open. Running: {:?}",
-        running_before
-    );
 
     // Stop the LSP server (simulating user running "stop lsp" command)
     let stopped = harness.editor_mut().shutdown_lsp_server("rust");
     assert!(stopped, "shutdown_lsp_server should return true");
 
-    // Give the shutdown a moment to complete
-    harness.sleep(std::time::Duration::from_millis(50));
-    harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
-    harness.render()?;
+    // Wait for the LSP server to stop using semantic wait
+    harness
+        .wait_until(|h| {
+            !h.editor()
+                .running_lsp_servers()
+                .contains(&"rust".to_string())
+        })
+        .expect("LSP server for rust should stop after shutdown");
 
-    // Verify the LSP server is no longer running
     let running_after_stop = harness.editor().running_lsp_servers();
     eprintln!("Running LSP servers after stop: {:?}", running_after_stop);
-    assert!(
-        !running_after_stop.contains(&"rust".to_string()),
-        "LSP server for rust should NOT be running after stop. Running: {:?}",
-        running_after_stop
-    );
 
     // Now type some text - this triggers send_lsp_changes_for_buffer
     // which used to call get_or_spawn and restart the LSP
     harness.type_text("// This edit should NOT restart the LSP\n")?;
-    harness.render()?;
 
-    // Give some time for any potential LSP spawn
-    harness.sleep(std::time::Duration::from_millis(100));
-    harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
-    harness.render()?;
+    // Process async operations to allow any potential spawn to occur
+    harness.process_async_and_render()?;
 
     // Verify the LSP is STILL not running (the bug fix prevents auto-restart)
     let running_after_edit = harness.editor().running_lsp_servers();
@@ -3298,10 +3291,7 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> std::io::Result<()> {
 
     // Type more text to double-check
     harness.type_text("// Another edit\n")?;
-    harness.render()?;
-    harness.sleep(std::time::Duration::from_millis(50));
-    harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
-    harness.render()?;
+    harness.process_async_and_render()?;
 
     let running_final = harness.editor().running_lsp_servers();
     eprintln!("Running LSP servers after second edit: {:?}", running_final);
