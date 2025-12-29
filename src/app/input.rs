@@ -446,6 +446,12 @@ impl Editor {
             Action::FindPrevious => {
                 self.find_previous();
             }
+            Action::FindSelectionNext => {
+                self.find_selection_next();
+            }
+            Action::FindSelectionPrevious => {
+                self.find_selection_previous();
+            }
             Action::AddCursorNextMatch => self.add_cursor_at_next_match(),
             Action::AddCursorAbove => self.add_cursor_above(),
             Action::AddCursorBelow => self.add_cursor_below(),

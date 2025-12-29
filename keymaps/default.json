@@ -547,6 +547,22 @@
       "when": "normal"
     },
     {
+      "comment": "Quick find - search for next occurrence of selection",
+      "key": "F3",
+      "modifiers": ["ctrl"],
+      "action": "find_selection_next",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Quick find - search for previous occurrence of selection",
+      "key": "F3",
+      "modifiers": ["ctrl", "shift"],
+      "action": "find_selection_previous",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Normal context - Error navigation",
       "key": "F8",
       "modifiers": [],

@@ -1907,6 +1907,93 @@ impl Editor {
         }
     }
 
+    /// Find the next occurrence of the current selection (or word under cursor).
+    /// This is a "quick find" that doesn't require opening the search panel.
+    /// The search term is stored so subsequent F3/Shift+F3 navigation works.
+    pub(super) fn find_selection_next(&mut self) {
+        // Get search text from selection or word under cursor
+        let search_text = self.get_selection_or_word_for_search();
+
+        match search_text {
+            Some(text) if !text.is_empty() => {
+                // Perform the search to set up search state
+                self.perform_search(&text);
+
+                // If we found matches and cursor is already at a match (the selection),
+                // move to the next one
+                if let Some(ref search_state) = self.search_state {
+                    if search_state.matches.len() > 1 {
+                        // Only call find_next if there are multiple matches
+                        // (otherwise we're already at the only match)
+                        self.find_next();
+                    }
+                }
+            }
+            _ => {
+                self.set_status_message("No text to search".to_string());
+            }
+        }
+    }
+
+    /// Find the previous occurrence of the current selection (or word under cursor).
+    /// This is a "quick find" that doesn't require opening the search panel.
+    pub(super) fn find_selection_previous(&mut self) {
+        // Get search text from selection or word under cursor
+        let search_text = self.get_selection_or_word_for_search();
+
+        match search_text {
+            Some(text) if !text.is_empty() => {
+                // Perform the search to set up search state
+                self.perform_search(&text);
+
+                // If we found matches, navigate to previous
+                if self.search_state.is_some() {
+                    self.find_previous();
+                }
+            }
+            _ => {
+                self.set_status_message("No text to search".to_string());
+            }
+        }
+    }
+
+    /// Get the current selection text, or if no selection, expand to word under cursor.
+    /// Returns None if there's no valid text to search for.
+    fn get_selection_or_word_for_search(&mut self) -> Option<String> {
+        use crate::primitives::word_navigation::{find_word_end, find_word_start};
+
+        // First get selection range and cursor position with immutable borrow
+        let (selection_range, cursor_pos) = {
+            let state = self.active_state();
+            let primary = state.cursors.primary();
+            (primary.selection_range(), primary.position)
+        };
+
+        // Check if there's a selection
+        if let Some(range) = selection_range {
+            let state = self.active_state_mut();
+            let text = state.get_text_range(range.start, range.end);
+            if !text.is_empty() {
+                return Some(text);
+            }
+        }
+
+        // No selection - try to get word under cursor
+        let (word_start, word_end) = {
+            let state = self.active_state();
+            let word_start = find_word_start(&state.buffer, cursor_pos);
+            let word_end = find_word_end(&state.buffer, cursor_pos);
+            (word_start, word_end)
+        };
+
+        if word_start < word_end {
+            let state = self.active_state_mut();
+            Some(state.get_text_range(word_start, word_end))
+        } else {
+            None
+        }
+    }
+
     /// Perform a replace-all operation
     /// Replaces all occurrences of the search query with the replacement text
     pub(super) fn perform_replace(&mut self, search: &str, replacement: &str) {

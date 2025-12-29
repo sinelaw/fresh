@@ -470,6 +470,8 @@ pub enum Action {
     FindInSelection,
     FindNext,
     FindPrevious,
+    FindSelectionNext,     // Quick find next occurrence of selection (Ctrl+F3)
+    FindSelectionPrevious, // Quick find previous occurrence of selection (Ctrl+Shift+F3)
     Replace,
     QueryReplace, // Interactive replace (y/n/!/q for each match)
 
@@ -789,6 +791,8 @@ impl Action {
             "find_in_selection" => Some(Action::FindInSelection),
             "find_next" => Some(Action::FindNext),
             "find_previous" => Some(Action::FindPrevious),
+            "find_selection_next" => Some(Action::FindSelectionNext),
+            "find_selection_previous" => Some(Action::FindSelectionPrevious),
             "replace" => Some(Action::Replace),
             "query_replace" => Some(Action::QueryReplace),
 
@@ -1733,6 +1737,8 @@ impl KeybindingResolver {
             Action::FindInSelection => "Search within selection".to_string(),
             Action::FindNext => "Find next search match".to_string(),
             Action::FindPrevious => "Find previous search match".to_string(),
+            Action::FindSelectionNext => "Find next occurrence of selection".to_string(),
+            Action::FindSelectionPrevious => "Find previous occurrence of selection".to_string(),
             Action::Replace => "Replace text in buffer".to_string(),
             Action::QueryReplace => "Interactive replace (y/n/!/q for each match)".to_string(),
             Action::MenuActivate => "Activate menu bar".to_string(),
