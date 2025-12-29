@@ -66,13 +66,6 @@
       "when": "global"
     },
     {
-      "key": "l",
-      "modifiers": ["alt"],
-      "action": "menu_open",
-      "args": {"name": "LSP"},
-      "when": "global"
-    },
-    {
       "key": ",",
       "modifiers": ["ctrl"],
       "action": "open_settings",
@@ -437,9 +430,9 @@
       "when": "normal"
     },
     {
-      "comment": "Transform to lowercase (Alt+Shift+U - Shift reverses direction)",
-      "key": "u",
-      "modifiers": ["alt", "shift"],
+      "comment": "Transform to lowercase (Alt+L - Emacs M-l style)",
+      "key": "l",
+      "modifiers": ["alt"],
       "action": "to_lower_case",
       "args": {},
       "when": "normal"

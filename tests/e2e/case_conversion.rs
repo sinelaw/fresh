@@ -38,7 +38,7 @@ fn test_to_uppercase() {
     );
 }
 
-/// Test converting selected text to lowercase with Alt+Shift+U
+/// Test converting selected text to lowercase with Alt+L
 #[test]
 fn test_to_lowercase() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
@@ -61,9 +61,9 @@ fn test_to_lowercase() {
     let selected = harness.get_selected_text();
     assert_eq!(selected, "HELLO", "Should have 'HELLO' selected");
 
-    // Convert to lowercase with Alt+Shift+U
+    // Convert to lowercase with Alt+L
     harness
-        .send_key(KeyCode::Char('u'), KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .send_key(KeyCode::Char('l'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
 
@@ -174,9 +174,9 @@ fn test_to_lowercase_mixed_case() {
         .unwrap();
     harness.render().unwrap();
 
-    // Convert to lowercase with Alt+Shift+U
+    // Convert to lowercase with Alt+L
     harness
-        .send_key(KeyCode::Char('u'), KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .send_key(KeyCode::Char('l'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
 
