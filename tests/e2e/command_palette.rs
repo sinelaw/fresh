@@ -877,3 +877,50 @@ fn test_show_keyboard_shortcuts_open_close_reopen() {
         screen
     );
 }
+
+/// Test that cursor style can be changed via command palette
+#[test]
+fn test_command_palette_select_cursor_style() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Trigger the command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    // Type to filter for cursor style command
+    harness.type_text("cursor style").unwrap();
+    harness
+        .wait_for_screen_contains("Select Cursor Style")
+        .unwrap();
+
+    // Execute the command
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Should now show cursor style selection prompt
+    harness
+        .wait_for_screen_contains("Select cursor style:")
+        .unwrap();
+
+    // Should show cursor style options
+    harness.assert_screen_contains("Terminal default");
+    harness.assert_screen_contains("Blinking block");
+
+    // Navigate down to select a different style (e.g., steady block)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+
+    // Press Enter to select
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Should show confirmation message
+    harness
+        .wait_for_screen_contains("Cursor style changed")
+        .unwrap();
+}

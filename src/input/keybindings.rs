@@ -353,6 +353,7 @@ pub enum Action {
     SetComposeWidth,
     SelectTheme,
     SelectKeybindingMap,
+    SelectCursorStyle,
 
     // Buffer/tab navigation
     NextBuffer,
@@ -1782,6 +1783,7 @@ impl KeybindingResolver {
             Action::ScrollTabsRight => "Scroll tabs right".to_string(),
             Action::SelectTheme => "Select theme".to_string(),
             Action::SelectKeybindingMap => "Select keybinding map".to_string(),
+            Action::SelectCursorStyle => "Select cursor style".to_string(),
             Action::SwitchToPreviousTab => "Switch to previous tab".to_string(),
             Action::SwitchToTabByName => "Switch to tab by name".to_string(),
             Action::OpenTerminal => "Open terminal".to_string(),

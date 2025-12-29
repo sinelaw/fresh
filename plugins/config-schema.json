@@ -45,7 +45,8 @@
         "double_click_time_ms": 500,
         "auto_revert_poll_interval_ms": 2000,
         "file_tree_poll_interval_ms": 3000,
-        "default_line_ending": "lf"
+        "default_line_ending": "lf",
+        "cursor_style": "default"
       }
     },
     "file_explorer": {
@@ -265,6 +266,11 @@
           "description": "Default line ending format for new files.\nFiles loaded from disk will use their detected line ending format.\nOptions: \"lf\" (Unix/Linux/macOS), \"crlf\" (Windows), \"cr\" (Classic Mac)\nDefault: \"lf\"",
           "$ref": "#/$defs/LineEndingOption",
           "default": "lf"
+        },
+        "cursor_style": {
+          "description": "Cursor style for the terminal cursor.\nOptions: blinking_block, steady_block, blinking_bar, steady_bar, blinking_underline, steady_underline\nDefault: blinking_block",
+          "$ref": "#/$defs/CursorStyle",
+          "default": "default"
         }
       }
     },
@@ -277,6 +283,19 @@
         "cr"
       ],
       "default": "lf"
+    },
+    "CursorStyle": {
+      "description": "Terminal cursor style",
+      "type": "string",
+      "enum": [
+        "default",
+        "blinking_block",
+        "steady_block",
+        "blinking_bar",
+        "steady_bar",
+        "blinking_underline",
+        "steady_underline"
+      ]
     },
     "FileExplorerConfig": {
       "description": "File explorer configuration",

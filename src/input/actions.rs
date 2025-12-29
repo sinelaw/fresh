@@ -2255,6 +2255,7 @@ pub fn action_to_events(
         | Action::ScrollTabsRight
         | Action::SelectTheme
         | Action::SelectKeybindingMap
+        | Action::SelectCursorStyle
         | Action::Revert
         | Action::ToggleAutoRevert
         | Action::FormatBuffer

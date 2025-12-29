@@ -1096,6 +1096,15 @@ pub fn get_all_commands() -> Vec<Command> {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
         },
+        // Cursor style selection
+        Command {
+            name: "Select Cursor Style".to_string(),
+            description: "Choose a cursor style (block, bar, underline)".to_string(),
+            action: Action::SelectCursorStyle,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
         // Settings
         Command {
             name: "Open Settings".to_string(),

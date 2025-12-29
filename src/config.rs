@@ -63,6 +63,106 @@ impl JsonSchema for ThemeName {
     }
 }
 
+/// Cursor style options for the terminal cursor
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorStyle {
+    /// Use the terminal's default cursor style
+    #[default]
+    Default,
+    /// Blinking block cursor (█)
+    BlinkingBlock,
+    /// Solid block cursor (█)
+    SteadyBlock,
+    /// Blinking vertical bar cursor (│)
+    BlinkingBar,
+    /// Solid vertical bar cursor (│)
+    SteadyBar,
+    /// Blinking underline cursor (_)
+    BlinkingUnderline,
+    /// Solid underline cursor (_)
+    SteadyUnderline,
+}
+
+impl CursorStyle {
+    /// All available cursor style options
+    pub const OPTIONS: &'static [&'static str] = &[
+        "default",
+        "blinking_block",
+        "steady_block",
+        "blinking_bar",
+        "steady_bar",
+        "blinking_underline",
+        "steady_underline",
+    ];
+
+    /// Human-readable descriptions for each cursor style
+    pub const DESCRIPTIONS: &'static [&'static str] = &[
+        "Terminal default",
+        "█ Blinking block",
+        "█ Solid block",
+        "│ Blinking bar",
+        "│ Solid bar",
+        "_ Blinking underline",
+        "_ Solid underline",
+    ];
+
+    /// Convert to crossterm cursor style
+    pub fn to_crossterm_style(self) -> crossterm::cursor::SetCursorStyle {
+        use crossterm::cursor::SetCursorStyle;
+        match self {
+            CursorStyle::Default => SetCursorStyle::DefaultUserShape,
+            CursorStyle::BlinkingBlock => SetCursorStyle::BlinkingBlock,
+            CursorStyle::SteadyBlock => SetCursorStyle::SteadyBlock,
+            CursorStyle::BlinkingBar => SetCursorStyle::BlinkingBar,
+            CursorStyle::SteadyBar => SetCursorStyle::SteadyBar,
+            CursorStyle::BlinkingUnderline => SetCursorStyle::BlinkingUnderScore,
+            CursorStyle::SteadyUnderline => SetCursorStyle::SteadyUnderScore,
+        }
+    }
+
+    /// Parse from string (for command palette)
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "default" => Some(CursorStyle::Default),
+            "blinking_block" => Some(CursorStyle::BlinkingBlock),
+            "steady_block" => Some(CursorStyle::SteadyBlock),
+            "blinking_bar" => Some(CursorStyle::BlinkingBar),
+            "steady_bar" => Some(CursorStyle::SteadyBar),
+            "blinking_underline" => Some(CursorStyle::BlinkingUnderline),
+            "steady_underline" => Some(CursorStyle::SteadyUnderline),
+            _ => None,
+        }
+    }
+
+    /// Convert to string representation
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CursorStyle::Default => "default",
+            CursorStyle::BlinkingBlock => "blinking_block",
+            CursorStyle::SteadyBlock => "steady_block",
+            CursorStyle::BlinkingBar => "blinking_bar",
+            CursorStyle::SteadyBar => "steady_bar",
+            CursorStyle::BlinkingUnderline => "blinking_underline",
+            CursorStyle::SteadyUnderline => "steady_underline",
+        }
+    }
+}
+
+impl JsonSchema for CursorStyle {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("CursorStyle")
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "Terminal cursor style",
+            "type": "string",
+            "enum": Self::OPTIONS
+        })
+    }
+}
+
 /// Newtype for keybinding map name that generates proper JSON Schema with enum options
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -347,6 +447,12 @@ pub struct EditorConfig {
     /// Default: "lf"
     #[serde(default)]
     pub default_line_ending: LineEndingOption,
+
+    /// Cursor style for the terminal cursor.
+    /// Options: blinking_block, steady_block, blinking_bar, steady_bar, blinking_underline, steady_underline
+    /// Default: blinking_block
+    #[serde(default)]
+    pub cursor_style: CursorStyle,
 }
 
 fn default_tab_size() -> usize {
@@ -434,6 +540,7 @@ impl Default for EditorConfig {
             auto_revert_poll_interval_ms: default_auto_revert_poll_interval(),
             file_tree_poll_interval_ms: default_file_tree_poll_interval(),
             default_line_ending: LineEndingOption::default(),
+            cursor_style: CursorStyle::default(),
         }
     }
 }

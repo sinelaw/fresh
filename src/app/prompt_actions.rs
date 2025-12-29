@@ -248,6 +248,9 @@ impl Editor {
             PromptType::SelectKeybindingMap => {
                 self.apply_keybinding_map(input.trim());
             }
+            PromptType::SelectCursorStyle => {
+                self.apply_cursor_style(input.trim());
+            }
             PromptType::CopyWithFormattingTheme => {
                 self.copy_selection_with_theme(input.trim());
             }
