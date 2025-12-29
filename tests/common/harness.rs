@@ -1279,6 +1279,11 @@ impl EditorTestHarness {
         self.editor.active_viewport().top_byte
     }
 
+    /// Get the top view line offset (number of view lines to skip)
+    pub fn top_view_line_offset(&self) -> usize {
+        self.editor.active_viewport().top_view_line_offset
+    }
+
     /// Get the viewport height (number of content lines that can be displayed)
     pub fn viewport_height(&self) -> usize {
         self.editor.active_viewport().height as usize

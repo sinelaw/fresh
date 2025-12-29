@@ -1141,6 +1141,409 @@ fn test_wrapped_line_with_tabs_all_characters_visible() {
     }
 }
 
+/// Test that line numbers in the gutter match the correct line content when scrolling with wrapped lines
+/// Reproduces issue #552: line numbers get out of sync when scrolling through CSV files with long lines
+/// https://github.com/sinelaw/fresh/issues/552
+#[test]
+fn test_line_numbers_correct_with_wrapping_and_scrolling() {
+    use std::io::Write;
+
+    // Use dimensions similar to the bug report - narrower terminal causes more wrapping
+    const TERMINAL_WIDTH: u16 = 82;
+    const TERMINAL_HEIGHT: u16 = 20;
+
+    // Create CSV-like data similar to issue #552
+    // Each line starts with its row number, making it easy to verify line numbers match content
+    let csv_content = "\
+1,Wii Sports,Wii,2006,Sports,Nintendo,41.49,29.02,3.77,8.46,82.74
+2,Super Mario Bros.,NES,1985,Platform,Nintendo,29.08,3.58,6.81,0.77,40.24
+3,Mario Kart Wii,Wii,2008,Racing,Nintendo,15.85,12.88,3.79,3.31,35.82
+4,Wii Sports Resort,Wii,2009,Sports,Nintendo,15.75,11.01,3.28,2.96,33
+5,Pokemon Red/Pokemon Blue,GB,1996,Role-Playing,Nintendo,11.27,8.89,10.22,1,31.37
+6,Tetris,GB,1989,Puzzle,Nintendo,23.2,2.26,4.22,0.58,30.26
+7,New Super Mario Bros.,DS,2006,Platform,Nintendo,11.38,9.23,6.5,2.9,30.01
+8,Wii Play,Wii,2006,Misc,Nintendo,14.03,9.2,2.93,2.85,29.02
+9,New Super Mario Bros. Wii,Wii,2009,Platform,Nintendo,14.59,7.06,4.7,2.26,28.62
+10,Duck Hunt,NES,1984,Shooter,Nintendo,26.93,0.63,0.28,0.47,28.31
+11,Nintendogs,DS,2005,Simulation,Nintendo,9.07,11,1.93,2.75,24.76
+12,Mario Kart DS,DS,2005,Racing,Nintendo,9.81,7.57,4.13,1.92,23.42
+13,Pokemon Gold/Pokemon Silver,GB,1999,Role-Playing,Nintendo,9,6.18,7.2,0.71,23.1
+14,Wii Fit,Wii,2007,Sports,Nintendo,8.94,8.03,3.6,2.15,22.72
+15,Wii Fit Plus,Wii,2009,Sports,Nintendo,9.09,8.59,2.53,1.79,22
+16,Kinect Adventures!,X360,2010,Misc,Microsoft Game Studios,14.97,4.94,0.24,1.67,21.82
+17,Grand Theft Auto V,PS3,2013,Action,Take-Two Interactive,7.01,9.27,0.97,4.14,21.4
+18,Grand Theft Auto: San Andreas,PS2,2004,Action,Take-Two Interactive,9.43,0.4,0.41,10.57,20.81
+19,Super Mario World,SNES,1990,Platform,Nintendo,12.78,3.75,3.54,0.55,20.61
+20,Brain Age: Train Your Brain in Minutes a Day,DS,2005,Misc,Nintendo,4.75,9.26,4.16,2.05,20.22
+";
+
+    // Write to temp file and load it (to match issue #552 reproduction)
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let csv_path = temp_dir.path().join("vgsales.csv");
+    let mut file = std::fs::File::create(&csv_path).unwrap();
+    file.write_all(csv_content.as_bytes()).unwrap();
+
+    let mut harness = EditorTestHarness::new(TERMINAL_WIDTH, TERMINAL_HEIGHT).unwrap();
+
+    // Open the file (like the user in issue #552)
+    harness.open_file(&csv_path).unwrap();
+
+    // Helper function to verify line numbers match content
+    // For CSV data, each line starts with its row number (1,... 2,... etc.)
+    // The gutter line number should match the row number at the start of content
+    fn verify_line_numbers_match_content(screen: &str, context: &str) {
+        for screen_line in screen.lines() {
+            // Skip non-content lines (menu bar, status bar, empty lines)
+            if !screen_line.contains("│") {
+                continue;
+            }
+
+            if let Some(bar_pos) = screen_line.find('│') {
+                let gutter = &screen_line[..bar_pos];
+                let content = &screen_line[bar_pos + "│".len()..]; // Skip the bar character
+
+                // Extract the line number from gutter
+                let gutter_line_num: Option<u32> = gutter.trim().parse().ok();
+
+                if let Some(gutter_num) = gutter_line_num {
+                    // This row has a line number in the gutter
+                    // The content should start with that same number followed by comma
+                    let content_trimmed = content.trim_start();
+
+                    // Extract the first number from content (CSV row number)
+                    let content_num: Option<u32> = content_trimmed
+                        .split(',')
+                        .next()
+                        .and_then(|s| s.trim().parse().ok());
+
+                    if let Some(csv_num) = content_num {
+                        assert_eq!(
+                            gutter_num, csv_num,
+                            "{}: Gutter shows line {} but content starts with row {}\nRow: '{}'\nFull screen:\n{}",
+                            context,
+                            gutter_num,
+                            csv_num,
+                            screen_line,
+                            screen
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Move to beginning of document
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_at_top = harness.screen_to_string();
+    eprintln!("=== Screen at top ===\n{}", screen_at_top);
+
+    // Verify line numbers match content at top
+    verify_line_numbers_match_content(&screen_at_top, "At top of document");
+
+    // Test 1: Scroll down one line at a time and verify
+    for i in 1..=15 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        eprintln!("=== After {} down presses ===\n{}", i, screen);
+        verify_line_numbers_match_content(&screen, &format!("After {} down presses", i));
+    }
+
+    // Test 2: Scroll back up and verify - this is key to reproducing #552
+    for i in 1..=15 {
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        eprintln!("=== After {} up presses ===\n{}", i, screen);
+        verify_line_numbers_match_content(&screen, &format!("After {} up presses", i));
+    }
+
+    // Test 3: Use PageDown multiple times to scroll more aggressively
+    // This is the key reproduction for issue #552
+    for i in 1..=5 {
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        eprintln!("=== After PageDown {} ===\n{}", i, screen);
+        verify_line_numbers_match_content(&screen, &format!("After PageDown {}", i));
+    }
+
+    // Test 4: Use PageUp multiple times
+    for i in 1..=5 {
+        harness
+            .send_key(KeyCode::PageUp, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        eprintln!("=== After PageUp {} ===\n{}", i, screen);
+        verify_line_numbers_match_content(&screen, &format!("After PageUp {}", i));
+    }
+
+    // Test 5: Go to end of file and then scroll up
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    eprintln!("=== After Ctrl+End ===\n{}", screen);
+    verify_line_numbers_match_content(&screen, "After Ctrl+End");
+
+    // Scroll up from end
+    for i in 1..=10 {
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        eprintln!("=== From end: after {} up presses ===\n{}", i, screen);
+        verify_line_numbers_match_content(&screen, &format!("From end: {} up presses", i));
+    }
+
+    // Test 6: Go to start and scroll down again
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    eprintln!("=== After Ctrl+Home ===\n{}", screen);
+    verify_line_numbers_match_content(&screen, "After Ctrl+Home");
+
+    // Final scroll down cycle
+    for i in 1..=10 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        eprintln!("=== Final cycle: after {} down presses ===\n{}", i, screen);
+        verify_line_numbers_match_content(&screen, &format!("Final down cycle {}", i));
+    }
+}
+
+/// Test that line numbers remain correct when using PageDown to scroll through wrapped lines
+/// Reproduces issue #552: line numbers desync when using PageDown in CSV files
+#[test]
+fn test_line_numbers_with_pagedown_scrolling() {
+    use std::io::Write;
+
+    const TERMINAL_WIDTH: u16 = 82;
+    const TERMINAL_HEIGHT: u16 = 20;
+
+    // Create CSV data where each line starts with its row number
+    let csv_content = "\
+1,Wii Sports,Wii,2006,Sports,Nintendo,41.49,29.02,3.77,8.46,82.74
+2,Super Mario Bros.,NES,1985,Platform,Nintendo,29.08,3.58,6.81,0.77,40.24
+3,Mario Kart Wii,Wii,2008,Racing,Nintendo,15.85,12.88,3.79,3.31,35.82
+4,Wii Sports Resort,Wii,2009,Sports,Nintendo,15.75,11.01,3.28,2.96,33
+5,Pokemon Red/Pokemon Blue,GB,1996,Role-Playing,Nintendo,11.27,8.89,10.22,1,31.37
+6,Tetris,GB,1989,Puzzle,Nintendo,23.2,2.26,4.22,0.58,30.26
+7,New Super Mario Bros.,DS,2006,Platform,Nintendo,11.38,9.23,6.5,2.9,30.01
+8,Wii Play,Wii,2006,Misc,Nintendo,14.03,9.2,2.93,2.85,29.02
+9,New Super Mario Bros. Wii,Wii,2009,Platform,Nintendo,14.59,7.06,4.7,2.26,28.62
+10,Duck Hunt,NES,1984,Shooter,Nintendo,26.93,0.63,0.28,0.47,28.31
+11,Nintendogs,DS,2005,Simulation,Nintendo,9.07,11,1.93,2.75,24.76
+12,Mario Kart DS,DS,2005,Racing,Nintendo,9.81,7.57,4.13,1.92,23.42
+13,Pokemon Gold/Pokemon Silver,GB,1999,Role-Playing,Nintendo,9,6.18,7.2,0.71,23.1
+14,Wii Fit,Wii,2007,Sports,Nintendo,8.94,8.03,3.6,2.15,22.72
+15,Wii Fit Plus,Wii,2009,Sports,Nintendo,9.09,8.59,2.53,1.79,22
+16,Kinect Adventures!,X360,2010,Misc,Microsoft Game Studios,14.97,4.94,0.24,1.67,21.82
+17,Grand Theft Auto V,PS3,2013,Action,Take-Two Interactive,7.01,9.27,0.97,4.14,21.4
+18,Grand Theft Auto: San Andreas,PS2,2004,Action,Take-Two Interactive,9.43,0.4,0.41,10.57,20.81
+19,Super Mario World,SNES,1990,Platform,Nintendo,12.78,3.75,3.54,0.55,20.61
+20,Brain Age: Train Your Brain in Minutes a Day,DS,2005,Misc,Nintendo,4.75,9.26,4.16,2.05,20.22
+21,Pokemon Diamond/Pokemon Pearl,DS,2006,Role-Playing,Nintendo,6.42,4.52,6.04,1.37,18.36
+22,Super Mario Land,GB,1989,Platform,Nintendo,10.83,2.71,4.18,0.42,18.14
+23,Super Mario Bros. 3,NES,1988,Platform,Nintendo,9.54,3.44,3.84,0.46,17.28
+24,Grand Theft Auto V,X360,2013,Action,Take-Two Interactive,9.63,5.31,0.06,1.38,16.38
+25,Grand Theft Auto: Vice City,PS2,2002,Action,Take-Two Interactive,8.41,5.49,0.47,1.78,16.15
+";
+
+    // Write to temp file
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let csv_path = temp_dir.path().join("vgsales.csv");
+    let mut file = std::fs::File::create(&csv_path).unwrap();
+    file.write_all(csv_content.as_bytes()).unwrap();
+
+    let mut harness = EditorTestHarness::new(TERMINAL_WIDTH, TERMINAL_HEIGHT).unwrap();
+    harness.open_file(&csv_path).unwrap();
+
+    // Helper function to verify line numbers match content
+    fn verify_line_numbers_match_content(screen: &str, context: &str) {
+        for screen_line in screen.lines() {
+            if !screen_line.contains("│") {
+                continue;
+            }
+
+            if let Some(bar_pos) = screen_line.find('│') {
+                let gutter = &screen_line[..bar_pos];
+                let content = &screen_line[bar_pos + "│".len()..];
+                let gutter_line_num: Option<u32> = gutter.trim().parse().ok();
+
+                if let Some(gutter_num) = gutter_line_num {
+                    let content_trimmed = content.trim_start();
+                    let content_num: Option<u32> = content_trimmed
+                        .split(',')
+                        .next()
+                        .and_then(|s| s.trim().parse().ok());
+
+                    if let Some(csv_num) = content_num {
+                        assert_eq!(
+                            gutter_num, csv_num,
+                            "{}: Gutter shows line {} but content starts with row {}\nRow: '{}'\nFull screen:\n{}",
+                            context, gutter_num, csv_num, screen_line, screen
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    eprintln!("=== Initial screen ===\n{}", screen);
+    verify_line_numbers_match_content(&screen, "Initial");
+
+    // Press PageDown multiple times - this is the key reproduction for issue #552
+    for i in 1..=5 {
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        eprintln!("=== After PageDown {} ===\n{}", i, screen);
+        verify_line_numbers_match_content(&screen, &format!("After PageDown {}", i));
+    }
+
+    // Press PageUp to go back
+    for i in 1..=5 {
+        harness
+            .send_key(KeyCode::PageUp, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        eprintln!("=== After PageUp {} ===\n{}", i, screen);
+        verify_line_numbers_match_content(&screen, &format!("After PageUp {}", i));
+    }
+}
+
+/// Test that line numbers remain correct with a single PageDown in a narrow terminal
+/// Reproduces issue #552: the root cause is top_view_line_offset becoming stale when top_byte is updated
+/// The bug manifests when scrolling causes the viewport to jump too far due to stale offset
+#[test]
+fn test_line_numbers_single_pagedown_narrow_terminal() {
+    use std::io::Write;
+
+    // Use a very narrow terminal to force aggressive line wrapping
+    const TERMINAL_WIDTH: u16 = 50;
+    const TERMINAL_HEIGHT: u16 = 18;
+
+    // Create CSV data where each line starts with its row number
+    // Lines are designed to wrap at 50 chars
+    let csv_content = "\
+1,Wii Sports,Wii,2006,Sports,Nintendo,41.49,29.02,3.77,8.46,82.74
+2,Super Mario Bros.,NES,1985,Platform,Nintendo,29.08,3.58,6.81,0.77,40.24
+3,Mario Kart Wii,Wii,2008,Racing,Nintendo,15.85,12.88,3.79,3.31,35.82
+4,Wii Sports Resort,Wii,2009,Sports,Nintendo,15.75,11.01,3.28,2.96,33
+5,Pokemon Red/Pokemon Blue,GB,1996,Role-Playing,Nintendo,11.27,8.89,10.22,1,31.37
+6,Tetris,GB,1989,Puzzle,Nintendo,23.2,2.26,4.22,0.58,30.26
+7,New Super Mario Bros.,DS,2006,Platform,Nintendo,11.38,9.23,6.5,2.9,30.01
+8,Wii Play,Wii,2006,Misc,Nintendo,14.03,9.2,2.93,2.85,29.02
+9,New Super Mario Bros. Wii,Wii,2009,Platform,Nintendo,14.59,7.06,4.7,2.26,28.62
+10,Duck Hunt,NES,1984,Shooter,Nintendo,26.93,0.63,0.28,0.47,28.31
+11,Nintendogs,DS,2005,Simulation,Nintendo,9.07,11,1.93,2.75,24.76
+12,Mario Kart DS,DS,2005,Racing,Nintendo,9.81,7.57,4.13,1.92,23.42
+13,Pokemon Gold/Pokemon Silver,GB,1999,Role-Playing,Nintendo,9,6.18,7.2,0.71,23.1
+14,Wii Fit,Wii,2007,Sports,Nintendo,8.94,8.03,3.6,2.15,22.72
+15,Wii Fit Plus,Wii,2009,Sports,Nintendo,9.09,8.59,2.53,1.79,22
+16,Kinect Adventures!,X360,2010,Misc,Microsoft Game Studios,14.97,4.94,0.24,1.67,21.82
+17,Grand Theft Auto V,PS3,2013,Action,Take-Two Interactive,7.01,9.27,0.97,4.14,21.4
+18,Grand Theft Auto: San Andreas,PS2,2004,Action,Take-Two Interactive,9.43,0.4,0.41,10.57,20.81
+19,Super Mario World,SNES,1990,Platform,Nintendo,12.78,3.75,3.54,0.55,20.61
+20,Brain Age: Train Your Brain in Minutes a Day,DS,2005,Misc,Nintendo,4.75,9.26,4.16,2.05,20.22
+";
+
+    // Write to temp file
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let csv_path = temp_dir.path().join("test.csv");
+    let mut file = std::fs::File::create(&csv_path).unwrap();
+    file.write_all(csv_content.as_bytes()).unwrap();
+
+    let mut harness = EditorTestHarness::new(TERMINAL_WIDTH, TERMINAL_HEIGHT).unwrap();
+    harness.open_file(&csv_path).unwrap();
+
+    // Helper function to verify line numbers match content
+    fn verify_line_numbers_match_content(screen: &str, context: &str) {
+        for screen_line in screen.lines() {
+            if !screen_line.contains("│") {
+                continue;
+            }
+
+            if let Some(bar_pos) = screen_line.find('│') {
+                let gutter = &screen_line[..bar_pos];
+                let content = &screen_line[bar_pos + "│".len()..];
+                let gutter_line_num: Option<u32> = gutter.trim().parse().ok();
+
+                if let Some(gutter_num) = gutter_line_num {
+                    let content_trimmed = content.trim_start();
+                    let content_num: Option<u32> = content_trimmed
+                        .split(',')
+                        .next()
+                        .and_then(|s| s.trim().parse().ok());
+
+                    if let Some(csv_num) = content_num {
+                        assert_eq!(
+                            gutter_num, csv_num,
+                            "{}: Gutter shows line {} but content starts with row {}\nRow: '{}'\nFull screen:\n{}",
+                            context, gutter_num, csv_num, screen_line, screen
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    verify_line_numbers_match_content(&screen, "Initial");
+
+    // A SINGLE PageDown should not cause line number desync
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    verify_line_numbers_match_content(&screen, "After single PageDown");
+
+    // Multiple PageDown presses should also keep line numbers correct
+    for i in 2..=5 {
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        verify_line_numbers_match_content(&screen, &format!("After PageDown #{}", i));
+    }
+
+    // And PageUp should also work correctly
+    for i in 1..=5 {
+        harness
+            .send_key(KeyCode::PageUp, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        verify_line_numbers_match_content(&screen, &format!("After PageUp #{}", i));
+    }
+}
+
 /// Test that wrapped lines with Unicode grapheme clusters are handled correctly
 /// Grapheme clusters (like emoji with modifiers or combining characters) should not be split
 #[test]

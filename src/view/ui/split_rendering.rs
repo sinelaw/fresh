@@ -2984,25 +2984,53 @@ impl SplitRenderer {
             highlight_context_bytes,
         );
 
-        // Apply top_view_line_offset to skip virtual lines when scrolling through them
-        let view_line_offset = viewport.top_view_line_offset;
-        let view_lines_to_render =
-            if view_line_offset > 0 && view_line_offset < view_data.lines.len() {
-                &view_data.lines[view_line_offset..]
+        // Use top_view_line_offset to handle scrolling through virtual lines.
+        // The viewport code (ensure_visible_in_layout) updates this when scrolling
+        // to keep the cursor visible, including special handling for virtual lines.
+        //
+        // We recalculate starting_line_num below to ensure line numbers stay in sync
+        // even if view_data was rebuilt from a different starting position.
+        let calculated_offset = viewport.top_view_line_offset;
+
+        tracing::trace!(
+            top_byte = viewport.top_byte,
+            top_view_line_offset = viewport.top_view_line_offset,
+            calculated_offset,
+            view_data_lines = view_data.lines.len(),
+            "view line offset calculation"
+        );
+        let (view_lines_to_render, adjusted_starting_line_num, adjusted_view_anchor) =
+            if calculated_offset > 0 && calculated_offset < view_data.lines.len() {
+                let sliced = &view_data.lines[calculated_offset..];
+
+                // Count how many source lines were in the skipped portion
+                // A view line is a "source line" if it shows a line number (not a continuation)
+                let skipped_lines = &view_data.lines[..calculated_offset];
+                let skipped_source_lines = skipped_lines
+                    .iter()
+                    .filter(|vl| should_show_line_number(vl))
+                    .count();
+
+                let adjusted_line_num = starting_line_num + skipped_source_lines;
+
+                // Recalculate view_anchor on the sliced array
+                let adjusted_anchor = Self::calculate_view_anchor(sliced, viewport.top_byte);
+
+                (sliced, adjusted_line_num, adjusted_anchor)
             } else {
-                &view_data.lines
+                (&view_data.lines[..], starting_line_num, view_anchor)
             };
 
         let render_output = Self::render_view_lines(LineRenderInput {
             state,
             theme,
             view_lines: view_lines_to_render,
-            view_anchor,
+            view_anchor: adjusted_view_anchor,
             render_area,
             gutter_width,
             selection: &selection,
             decorations: &decorations,
-            starting_line_num,
+            starting_line_num: adjusted_starting_line_num,
             visible_line_count: visible_count,
             lsp_waiting,
             is_active,
@@ -3124,14 +3152,39 @@ impl SplitRenderer {
         view_lines
             .iter()
             .map(|vl| {
-                // line_end_byte should be the position OF the last character (e.g., the newline)
-                // Clicking past end of line positions cursor here (on the newline)
-                let line_end_byte = vl
-                    .char_source_bytes
-                    .iter()
-                    .rev()
-                    .find_map(|m| *m)
-                    .unwrap_or(0);
+                // Calculate line_end_byte: where the cursor should go when clicking past end of line
+                //
+                // For lines ending with newline: position ON the newline (so clicking past
+                // "hello\n" positions at byte 5, not byte 6 which would be next line)
+                //
+                // For lines NOT ending with newline (e.g., last line of file, or wrapped segments):
+                // position AFTER the last character (so clicking past "你好" positions at byte 6)
+                let line_end_byte = if vl.ends_with_newline {
+                    // Position ON the newline - find the last source byte (the newline's position)
+                    vl.char_source_bytes
+                        .iter()
+                        .rev()
+                        .find_map(|m| *m)
+                        .unwrap_or(0)
+                } else {
+                    // Position AFTER the last character - find last source byte and add char length
+                    if let Some((char_idx, &Some(last_byte_start))) = vl
+                        .char_source_bytes
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find(|(_, m)| m.is_some())
+                    {
+                        // Get the character at this index to find its UTF-8 byte length
+                        if let Some(last_char) = vl.text.chars().nth(char_idx) {
+                            last_byte_start + last_char.len_utf8()
+                        } else {
+                            last_byte_start
+                        }
+                    } else {
+                        0
+                    }
+                };
 
                 ViewLineMapping {
                     char_source_bytes: vl.char_source_bytes.clone(),
