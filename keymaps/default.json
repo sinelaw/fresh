@@ -429,17 +429,17 @@
       "when": "normal"
     },
     {
-      "comment": "Transform to uppercase (Ctrl+Shift+U)",
+      "comment": "Transform to uppercase (Alt+U)",
       "key": "u",
-      "modifiers": ["ctrl", "shift"],
+      "modifiers": ["alt"],
       "action": "to_upper_case",
       "args": {},
       "when": "normal"
     },
     {
-      "comment": "Transform to lowercase (Ctrl+Shift+L)",
-      "key": "l",
-      "modifiers": ["ctrl", "shift"],
+      "comment": "Transform to lowercase (Alt+Shift+U - Shift reverses direction)",
+      "key": "u",
+      "modifiers": ["alt", "shift"],
       "action": "to_lower_case",
       "args": {},
       "when": "normal"

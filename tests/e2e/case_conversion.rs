@@ -1,7 +1,7 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 
-/// Test converting selected text to uppercase with Ctrl+Shift+U
+/// Test converting selected text to uppercase with Alt+U
 #[test]
 fn test_to_uppercase() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
@@ -24,12 +24,9 @@ fn test_to_uppercase() {
     let selected = harness.get_selected_text();
     assert_eq!(selected, "hello", "Should have 'hello' selected");
 
-    // Convert to uppercase with Ctrl+Shift+U
+    // Convert to uppercase with Alt+U
     harness
-        .send_key(
-            KeyCode::Char('u'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('u'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
 
@@ -41,7 +38,7 @@ fn test_to_uppercase() {
     );
 }
 
-/// Test converting selected text to lowercase with Ctrl+Shift+L
+/// Test converting selected text to lowercase with Alt+Shift+U
 #[test]
 fn test_to_lowercase() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
@@ -64,12 +61,9 @@ fn test_to_lowercase() {
     let selected = harness.get_selected_text();
     assert_eq!(selected, "HELLO", "Should have 'HELLO' selected");
 
-    // Convert to lowercase with Ctrl+Shift+L
+    // Convert to lowercase with Alt+Shift+U
     harness
-        .send_key(
-            KeyCode::Char('l'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('u'), KeyModifiers::ALT | KeyModifiers::SHIFT)
         .unwrap();
     harness.render().unwrap();
 
@@ -98,10 +92,7 @@ fn test_case_conversion_no_selection() {
 
     // Try to convert to uppercase (should do nothing)
     harness
-        .send_key(
-            KeyCode::Char('u'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('u'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
 
@@ -127,12 +118,9 @@ fn test_to_uppercase_entire_line() {
         .unwrap();
     harness.render().unwrap();
 
-    // Convert to uppercase
+    // Convert to uppercase with Alt+U
     harness
-        .send_key(
-            KeyCode::Char('u'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('u'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
 
@@ -158,12 +146,9 @@ fn test_to_uppercase_mixed_case() {
         .unwrap();
     harness.render().unwrap();
 
-    // Convert to uppercase
+    // Convert to uppercase with Alt+U
     harness
-        .send_key(
-            KeyCode::Char('u'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('u'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
 
@@ -189,12 +174,9 @@ fn test_to_lowercase_mixed_case() {
         .unwrap();
     harness.render().unwrap();
 
-    // Convert to lowercase
+    // Convert to lowercase with Alt+Shift+U
     harness
-        .send_key(
-            KeyCode::Char('l'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('u'), KeyModifiers::ALT | KeyModifiers::SHIFT)
         .unwrap();
     harness.render().unwrap();
 
@@ -220,12 +202,9 @@ fn test_case_conversion_with_special_chars() {
         .unwrap();
     harness.render().unwrap();
 
-    // Convert to uppercase
+    // Convert to uppercase with Alt+U
     harness
-        .send_key(
-            KeyCode::Char('u'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('u'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
 
@@ -251,12 +230,9 @@ fn test_case_conversion_unicode() {
         .unwrap();
     harness.render().unwrap();
 
-    // Convert to uppercase
+    // Convert to uppercase with Alt+U
     harness
-        .send_key(
-            KeyCode::Char('u'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('u'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
 
@@ -288,12 +264,9 @@ fn test_case_conversion_preserves_cursor() {
     // Get cursor position before conversion
     let cursor_before = harness.cursor_position();
 
-    // Convert to uppercase
+    // Convert to uppercase with Alt+U
     harness
-        .send_key(
-            KeyCode::Char('u'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('u'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
 
@@ -325,12 +298,9 @@ fn test_case_conversion_multiline() {
         .unwrap();
     harness.render().unwrap();
 
-    // Convert to uppercase
+    // Convert to uppercase with Alt+U
     harness
-        .send_key(
-            KeyCode::Char('u'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('u'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
 
@@ -356,12 +326,9 @@ fn test_case_conversion_undo() {
         .unwrap();
     harness.render().unwrap();
 
-    // Convert to uppercase
+    // Convert to uppercase with Alt+U
     harness
-        .send_key(
-            KeyCode::Char('u'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('u'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
 
