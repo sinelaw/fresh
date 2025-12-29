@@ -2342,20 +2342,27 @@ fn test_cursor_never_on_status_bar_when_scrolling() {
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
-    println!("\n=== Testing cursor never on status bar (small terminal {}x{}) ===",
-             terminal_width, terminal_height);
+    println!(
+        "\n=== Testing cursor never on status bar (small terminal {}x{}) ===",
+        terminal_width, terminal_height
+    );
 
     // Calculate the status bar row
     let status_bar_row = crate::common::harness::layout::status_bar_row(terminal_height as usize);
     let (content_first_row, content_last_row) = harness.content_area_rows();
 
-    println!("Content area: rows {} to {}", content_first_row, content_last_row);
+    println!(
+        "Content area: rows {} to {}",
+        content_first_row, content_last_row
+    );
     println!("Status bar: row {}", status_bar_row);
 
     // Test 1: Press PageDown repeatedly to scroll to end
     println!("\nTest 1: PageDown to end of file");
     for i in 1..=20 {
-        harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
         harness.render().unwrap();
 
         let (cursor_x, cursor_y) = harness.screen_cursor_position();
@@ -2372,16 +2379,23 @@ fn test_cursor_never_on_status_bar_when_scrolling() {
         assert!(
             (cursor_y as usize) >= content_first_row && (cursor_y as usize) <= content_last_row,
             "BUG: After PageDown #{}, cursor Y ({}) is outside content area (rows {}-{})",
-            i, cursor_y, content_first_row, content_last_row
+            i,
+            cursor_y,
+            content_first_row,
+            content_last_row
         );
     }
     println!("✓ PageDown scrolling: cursor always in content area");
 
     // Test 2: Jump directly to end with Ctrl+End
     println!("\nTest 2: Ctrl+End to jump to EOF");
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     let (cursor_x, cursor_y) = harness.screen_cursor_position();
@@ -2391,7 +2405,10 @@ fn test_cursor_never_on_status_bar_when_scrolling() {
          Cursor position: ({}, {}). This violates the invariant that cursor must stay in content area.",
         cursor_y, status_bar_row, cursor_x, cursor_y
     );
-    println!("✓ Ctrl+End: cursor at ({}, {}), in content area", cursor_x, cursor_y);
+    println!(
+        "✓ Ctrl+End: cursor at ({}, {}), in content area",
+        cursor_x, cursor_y
+    );
 
     // Test 3: Navigate down line by line near the end
     println!("\nTest 3: Navigate down line by line from near end");
@@ -2404,7 +2421,10 @@ fn test_cursor_never_on_status_bar_when_scrolling() {
             (cursor_y as usize) < status_bar_row,
             "BUG: After Down key, cursor Y ({}) is at or beyond status bar row ({}). \
              Cursor position: ({}, {})",
-            cursor_y, status_bar_row, cursor_x, cursor_y
+            cursor_y,
+            status_bar_row,
+            cursor_x,
+            cursor_y
         );
     }
     println!("✓ Down key navigation: cursor always in content area");
