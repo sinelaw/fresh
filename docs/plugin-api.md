@@ -116,6 +116,17 @@ interface TsBufferSavedDiff {
 }
 ```
 
+### TsLineDiff
+
+Line diff result for plugins
+
+```typescript
+interface TsLineDiff {
+  equal: boolean;
+  changed_lines: [number, number][];
+}
+```
+
 ### SelectionRange
 
 Selection range
@@ -537,6 +548,37 @@ isProcessRunning(#[bigint] process_id: number): boolean
 | Name | Type | Description |
 |------|------|-------------|
 | `#[bigint] process_id` | `number` | - |
+
+#### `getHighlights`
+
+Compute syntax highlighting for a buffer range
+
+```typescript
+getHighlights(buffer_id: number, start: number, end: number): Promise<TsHighlightSpan[]>
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `buffer_id` | `number` | - |
+| `start` | `number` | - |
+| `end` | `number` | - |
+
+#### `getLineByteOffset`
+
+Get the byte offset of a line in a buffer
+
+```typescript
+getLineByteOffset(buffer_id: number, line: number): number
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `buffer_id` | `number` | - |
+| `line` | `number` | - |
 
 #### `getBufferSavedDiff`
 
@@ -1027,6 +1069,35 @@ delay(#[bigint] ms: number): Promise<[]>
 await editor.delay(100);  // Wait 100ms
 ```
 
+#### `findBufferByPath`
+
+Find a buffer ID by its file path
+
+```typescript
+findBufferByPath(path: string): number
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `path` | `string` | - |
+
+#### `diffLines`
+
+Compute line diff between two strings
+
+```typescript
+diffLines(original: string, modified: string): TsLineDiff
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `original` | `string` | - |
+| `modified` | `string` | - |
+
 #### `startPromptWithInitial`
 
 Start a prompt with pre-filled initial value
@@ -1058,6 +1129,21 @@ sendLspRequest(language: string, method: string, params?: unknown | null): Promi
 | `language` | `string` | Language ID (e.g., "cpp") |
 | `method` | `string` | Full LSP method (e.g., "textDocument/switchSourceHeader") |
 | `params` | `unknown | null` (optional) | Optional request payload |
+
+#### `setSplitScroll`
+
+Set the scroll position of a specific split
+
+```typescript
+setSplitScroll(split_id: number, top_byte: number): boolean
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `split_id` | `number` | The split ID |
+| `top_byte` | `number` | The byte offset of the top visible line |
 
 #### `setSplitRatio`
 
@@ -1109,7 +1195,7 @@ Use namespaces for easy batch removal (e.g., "spell", "todo").
 Multiple overlays can apply to the same range; colors blend.
 
 ```typescript
-addOverlay(buffer_id: number, namespace: string, start: number, end: number, r: number, g: number, b: number, underline: boolean, bold: boolean, italic: boolean): boolean
+addOverlay(buffer_id: number, namespace: string, start: number, end: number, r: number, g: number, b: number, bg_r: i16, bg_g: i16, bg_b: i16, underline: boolean, bold: boolean, italic: boolean): boolean
 ```
 
 **Parameters:**
@@ -1123,6 +1209,9 @@ addOverlay(buffer_id: number, namespace: string, start: number, end: number, r: 
 | `r` | `number` | Red (0-255) |
 | `g` | `number` | Green (0-255) |
 | `b` | `number` | uffer_id - Target buffer ID |
+| `bg_r` | `i16` | - |
+| `bg_g` | `i16` | - |
+| `bg_b` | `i16` | - |
 | `underline` | `boolean` | Add underline decoration |
 | `bold` | `boolean` | Use bold text |
 | `italic` | `boolean` | Use italic text |
