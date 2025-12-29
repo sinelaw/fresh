@@ -20,6 +20,32 @@ impl Editor {
     ///
     /// Returns `PopupConfirmResult` indicating what the caller should do next.
     pub fn handle_popup_confirm(&mut self) -> PopupConfirmResult {
+        // Check if this is an action popup (from plugin showActionPopup)
+        if let Some((popup_id, _actions)) = &self.active_action_popup {
+            let popup_id = popup_id.clone();
+            let action_id = self
+                .active_state()
+                .popups
+                .top()
+                .and_then(|p| p.selected_item())
+                .and_then(|item| item.data.clone())
+                .unwrap_or_else(|| "dismissed".to_string());
+
+            self.hide_popup();
+            self.active_action_popup = None;
+
+            // Fire the ActionPopupResult hook
+            self.plugin_manager.run_hook(
+                "action_popup_result",
+                crate::services::plugins::hooks::HookArgs::ActionPopupResult {
+                    popup_id,
+                    action_id,
+                },
+            );
+
+            return PopupConfirmResult::EarlyReturn;
+        }
+
         // Check if this is an LSP confirmation popup
         let lsp_confirmation_action = if let Some(popup) = self.active_state().popups.top() {
             if let Some(title) = &popup.title {
@@ -139,6 +165,21 @@ impl Editor {
 
     /// Handle PopupCancel action.
     pub fn handle_popup_cancel(&mut self) {
+        // Check if this is an action popup (from plugin showActionPopup)
+        if let Some((popup_id, _actions)) = self.active_action_popup.take() {
+            self.hide_popup();
+
+            // Fire the ActionPopupResult hook with "dismissed"
+            self.plugin_manager.run_hook(
+                "action_popup_result",
+                crate::services::plugins::hooks::HookArgs::ActionPopupResult {
+                    popup_id,
+                    action_id: "dismissed".to_string(),
+                },
+            );
+            return;
+        }
+
         if self.pending_lsp_confirmation.is_some() {
             self.pending_lsp_confirmation = None;
             self.set_status_message("LSP server startup cancelled".to_string());

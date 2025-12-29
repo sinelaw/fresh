@@ -504,6 +504,10 @@ pub struct Editor {
     /// Hunks for the Review Diff tool
     review_hunks: Vec<crate::services::plugins::api::ReviewHunk>,
 
+    /// Active action popup (for plugin showActionPopup API)
+    /// Stores (popup_id, Vec<(action_id, action_label)>)
+    active_action_popup: Option<(String, Vec<(String, String)>)>,
+
     /// Stdin streaming state (if reading from stdin)
     stdin_streaming: Option<StdinStreamingState>,
 }
@@ -932,6 +936,7 @@ impl Editor {
             color_capability,
             stdin_streaming: None,
             review_hunks: Vec::new(),
+            active_action_popup: None,
         })
     }
 
@@ -2604,6 +2609,37 @@ impl Editor {
                     tracing::error!("LSP error for {}: {}", language, error);
                     self.status_message = Some(format!("LSP error ({}): {}", language, error));
 
+                    // Get server command from config for the hook
+                    let server_command = self
+                        .config
+                        .lsp
+                        .get(&language)
+                        .map(|c| c.command.clone())
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    // Determine error type from error message
+                    let error_type = if error.contains("not found") || error.contains("NotFound") {
+                        "not_found"
+                    } else if error.contains("permission") || error.contains("PermissionDenied") {
+                        "spawn_failed"
+                    } else if error.contains("timeout") {
+                        "timeout"
+                    } else {
+                        "spawn_failed"
+                    }
+                    .to_string();
+
+                    // Fire the LspServerError hook for plugins
+                    self.plugin_manager.run_hook(
+                        "lsp_server_error",
+                        crate::services::plugins::hooks::HookArgs::LspServerError {
+                            language: language.clone(),
+                            server_command,
+                            error_type,
+                            message: error.clone(),
+                        },
+                    );
+
                     // Open stderr log as read-only buffer if it exists and has content
                     // Opens in background (new tab) without stealing focus
                     if let Some(log_path) = stderr_log_path {
@@ -3704,36 +3740,73 @@ impl Editor {
                 message,
                 actions,
             } => {
-                // TODO: Implement actual popup UI
-                // For now, log the popup request and immediately fire the dismissed hook
                 tracing::info!(
                     "Action popup requested: id={}, title={}, actions={}",
                     popup_id,
                     title,
                     actions.len()
                 );
-                tracing::debug!("Popup message: {}", message);
 
-                // Fire the hook to indicate popup was dismissed (until UI is implemented)
-                self.plugin_manager.run_hook(
-                    "action_popup_result",
-                    crate::services::plugins::hooks::HookArgs::ActionPopupResult {
-                        popup_id,
-                        action_id: "dismissed".to_string(),
-                    },
-                );
+                // Build popup list items from actions
+                let items: Vec<crate::model::event::PopupListItemData> = actions
+                    .iter()
+                    .map(|action| crate::model::event::PopupListItemData {
+                        text: action.label.clone(),
+                        detail: None,
+                        icon: None,
+                        data: Some(action.id.clone()),
+                    })
+                    .collect();
+
+                // Store action info for when popup is confirmed/cancelled
+                let action_ids: Vec<(String, String)> =
+                    actions.into_iter().map(|a| (a.id, a.label)).collect();
+                self.active_action_popup = Some((popup_id.clone(), action_ids));
+
+                // Create popup with message + action list
+                let popup = crate::model::event::PopupData {
+                    title: Some(title),
+                    transient: false,
+                    content: crate::model::event::PopupContentData::List { items, selected: 0 },
+                    position: crate::model::event::PopupPositionData::Centered,
+                    width: 60,
+                    max_height: 15,
+                    bordered: true,
+                };
+
+                self.show_popup(popup);
+                self.status_message = Some(message);
             }
 
             PluginCommand::DisableLspForLanguage { language } => {
                 tracing::info!("Disabling LSP for language: {}", language);
-                // TODO: Implement LSP disable functionality
-                // This should:
-                // 1. Stop the LSP server for this language if running
-                // 2. Update the config to disable auto_start for this language
-                // 3. Persist the config change
 
-                // For now, just log the request
-                self.status_message = Some(format!("LSP disabled for {}", language));
+                // 1. Stop the LSP server for this language if running
+                if let Some(ref mut lsp) = self.lsp {
+                    lsp.shutdown_server(&language);
+                    tracing::info!("Stopped LSP server for {}", language);
+                }
+
+                // 2. Update the config to disable the language
+                if let Some(lsp_config) = self.config.lsp.get_mut(&language) {
+                    lsp_config.enabled = false;
+                    lsp_config.auto_start = false;
+                    tracing::info!("Disabled LSP config for {}", language);
+                }
+
+                // 3. Persist the config change
+                if let Err(e) = self.save_config() {
+                    tracing::error!("Failed to save config: {}", e);
+                    self.status_message = Some(format!(
+                        "LSP disabled for {} (config save failed)",
+                        language
+                    ));
+                } else {
+                    self.status_message = Some(format!("LSP disabled for {}", language));
+                }
+
+                // 4. Clear any LSP-related warnings for this language
+                self.warning_domains.lsp.clear();
             }
         }
         Ok(())
