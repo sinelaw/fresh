@@ -140,6 +140,12 @@ interface TsBufferSavedDiff {
   line_ranges?: [number, number][] | null;
 }
 
+/** Line diff result for plugins */
+interface TsLineDiff {
+  equal: boolean;
+  changed_lines: [number, number][];
+}
+
 /** Selection range */
 interface SelectionRange {
   /** Start byte position */
@@ -402,6 +408,10 @@ interface EditorAPI {
    * @returns true if process is running, false if not found or exited
    */
   isProcessRunning(#[bigint] process_id: number): boolean;
+  /** Compute syntax highlighting for a buffer range */
+  getHighlights(buffer_id: number, start: number, end: number): Promise<TsHighlightSpan[]>;
+  /** Get the byte offset of a line in a buffer */
+  getLineByteOffset(buffer_id: number, line: number): number;
   /** Get diff vs last saved snapshot for a buffer */
   getBufferSavedDiff(buffer_id: number): TsBufferSavedDiff | null;
   /**
@@ -661,6 +671,10 @@ interface EditorAPI {
    * await editor.delay(100);  // Wait 100ms
    */
   delay(#[bigint] ms: number): Promise<[]>;
+  /** Find a buffer ID by its file path */
+  findBufferByPath(path: string): number;
+  /** Compute line diff between two strings */
+  diffLines(original: string, modified: string): TsLineDiff;
   /**
    * Start a prompt with pre-filled initial value
    * @param label - Label to display (e.g., "Git grep: ")
@@ -677,6 +691,13 @@ interface EditorAPI {
    * @returns Promise resolving to the JSON response value
    */
   sendLspRequest(language: string, method: string, params?: unknown | null): Promise<unknown>;
+  /**
+   * Set the scroll position of a specific split
+   * @param split_id - The split ID
+   * @param top_byte - The byte offset of the top visible line
+   * @returns true if successful
+   */
+  setSplitScroll(split_id: number, top_byte: number): boolean;
   /**
    * Set the ratio of a split container
    * @param split_id - ID of the split
@@ -736,7 +757,7 @@ interface EditorAPI {
    * @param italic - Use italic text
    * @returns true if overlay was added
    */
-  addOverlay(buffer_id: number, namespace: string, start: number, end: number, r: number, g: number, b: number, underline: boolean, bold: boolean, italic: boolean): boolean;
+  addOverlay(buffer_id: number, namespace: string, start: number, end: number, r: number, g: number, b: number, bg_r: i16, bg_g: i16, bg_b: i16, underline: boolean, bold: boolean, italic: boolean): boolean;
   /**
    * Remove a specific overlay by its handle
    * @param buffer_id - The buffer ID
