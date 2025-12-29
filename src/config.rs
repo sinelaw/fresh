@@ -1959,7 +1959,7 @@ impl Config {
                         action: "toggle_inlay_hints".to_string(),
                         args: HashMap::new(),
                         when: Some(context_keys::LSP_AVAILABLE.to_string()),
-                        checkbox: None,
+                        checkbox: Some(context_keys::INLAY_HINTS.to_string()),
                     },
                     MenuItem::Action {
                         label: "Toggle Mouse Hover".to_string(),

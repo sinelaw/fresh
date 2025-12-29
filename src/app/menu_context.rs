@@ -21,6 +21,7 @@ impl Editor {
         let file_explorer_focused = self.is_file_explorer_focused();
         let mouse_capture = self.mouse_enabled;
         let mouse_hover = self.config.editor.mouse_hover_enabled;
+        let inlay_hints = self.config.editor.enable_inlay_hints;
         let has_selection = self.has_active_selection();
         let menu_bar = self.menu_bar_visible;
 
@@ -42,6 +43,7 @@ impl Editor {
             .set(context_keys::FILE_EXPLORER_FOCUSED, file_explorer_focused)
             .set(context_keys::MOUSE_CAPTURE, mouse_capture)
             .set(context_keys::MOUSE_HOVER, mouse_hover)
+            .set(context_keys::INLAY_HINTS, inlay_hints)
             .set(context_keys::LSP_AVAILABLE, lsp_available)
             .set(context_keys::FILE_EXPLORER_SHOW_HIDDEN, show_hidden)
             .set(context_keys::FILE_EXPLORER_SHOW_GITIGNORED, show_gitignored)

@@ -22,6 +22,7 @@ pub mod context_keys {
     pub const FILE_EXPLORER_SHOW_GITIGNORED: &str = "file_explorer_show_gitignored";
     pub const HAS_SELECTION: &str = "has_selection";
     pub const FORMATTER_AVAILABLE: &str = "formatter_available";
+    pub const INLAY_HINTS: &str = "inlay_hints";
 }
 
 /// Configuration for process resource limits
