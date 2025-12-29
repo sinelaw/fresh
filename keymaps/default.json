@@ -429,6 +429,22 @@
       "when": "normal"
     },
     {
+      "comment": "Transform to uppercase (Ctrl+Shift+U)",
+      "key": "u",
+      "modifiers": ["ctrl", "shift"],
+      "action": "to_upper_case",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Transform to lowercase (Ctrl+Shift+L)",
+      "key": "l",
+      "modifiers": ["ctrl", "shift"],
+      "action": "to_lower_case",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "key": "Right",
       "modifiers": ["ctrl", "shift"],
       "action": "expand_selection",

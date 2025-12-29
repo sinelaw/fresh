@@ -522,6 +522,10 @@ pub enum Action {
     ShellCommand,        // Run shell command on buffer/selection, output to new buffer
     ShellCommandReplace, // Run shell command on buffer/selection, replace content
 
+    // Case conversion
+    ToUpperCase, // Convert selection to uppercase
+    ToLowerCase, // Convert selection to lowercase
+
     // No-op
     None,
 }
@@ -838,6 +842,10 @@ impl Action {
             // Shell command actions
             "shell_command" => Some(Action::ShellCommand),
             "shell_command_replace" => Some(Action::ShellCommandReplace),
+
+            // Case conversion
+            "to_upper_case" => Some(Action::ToUpperCase),
+            "to_lower_case" => Some(Action::ToLowerCase),
 
             // Settings actions
             "open_settings" => Some(Action::OpenSettings),
@@ -1794,6 +1802,8 @@ impl KeybindingResolver {
             Action::SettingsDecrement => "Decrement value".to_string(),
             Action::ShellCommand => "Run shell command on buffer/selection".to_string(),
             Action::ShellCommandReplace => "Run shell command and replace".to_string(),
+            Action::ToUpperCase => "Convert to uppercase".to_string(),
+            Action::ToLowerCase => "Convert to lowercase".to_string(),
             Action::None => "No action".to_string(),
         }
     }

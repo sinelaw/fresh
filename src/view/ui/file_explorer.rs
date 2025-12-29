@@ -15,6 +15,16 @@ use std::path::PathBuf;
 pub struct FileExplorerRenderer;
 
 impl FileExplorerRenderer {
+    /// Check if a directory contains any modified files
+    fn folder_has_modified_files(folder_path: &PathBuf, files_with_unsaved_changes: &HashSet<PathBuf>) -> bool {
+        for modified_file in files_with_unsaved_changes {
+            if modified_file.starts_with(folder_path) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Render the file explorer in the given frame area
     pub fn render(
         view: &mut FileTreeView,
@@ -183,19 +193,32 @@ impl FileExplorerRenderer {
 
         // Tree expansion indicator (only for directories)
         if node.is_dir() {
+            // Check if this directory contains any modified files
+            let has_modified = Self::folder_has_modified_files(&node.entry.path, files_with_unsaved_changes);
+
             let indicator = if node.is_expanded() {
-                "▼ "
+                "▼"
             } else if node.is_collapsed() {
-                "> "
+                ">"
             } else if node.is_loading() {
-                "⟳ "
+                "⟳"
             } else {
-                "! "
+                "!"
             };
             spans.push(Span::styled(
                 indicator,
                 Style::default().fg(theme.diagnostic_warning_fg),
             ));
+
+            // Show modified indicator (small dot) if folder contains modified files
+            if has_modified {
+                spans.push(Span::styled(
+                    "●",
+                    Style::default().fg(theme.diagnostic_warning_fg),
+                ));
+            } else {
+                spans.push(Span::raw(" "));
+            }
         } else {
             // For files, show unsaved change indicator if applicable
             if files_with_unsaved_changes.contains(&node.entry.path) {

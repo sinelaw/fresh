@@ -305,6 +305,22 @@ pub fn get_all_commands() -> Vec<Command> {
             source: CommandSource::Builtin,
         },
         Command {
+            name: "Transform to Uppercase".to_string(),
+            description: "Convert selected text to uppercase".to_string(),
+            action: Action::ToUpperCase,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
+            name: "Transform to Lowercase".to_string(),
+            description: "Convert selected text to lowercase".to_string(),
+            action: Action::ToLowerCase,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
             name: "Open Line".to_string(),
             description: "Insert newline at cursor without moving cursor".to_string(),
             action: Action::OpenLine,

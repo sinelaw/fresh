@@ -1963,6 +1963,74 @@ pub fn action_to_events(
             }
         }
 
+        Action::ToUpperCase => {
+            // Convert selected text to uppercase
+            // Process cursors in reverse order to avoid position shifts
+            let mut selections: Vec<_> = state
+                .cursors
+                .iter()
+                .filter_map(|(cursor_id, cursor)| {
+                    cursor
+                        .selection_range()
+                        .map(|range| (cursor_id, range.start, range.end))
+                })
+                .collect();
+            selections.sort_by_key(|(_, start, _)| std::cmp::Reverse(*start));
+
+            for (cursor_id, start, end) in selections {
+                let text = state.get_text_range(start, end);
+                let upper = text.to_uppercase();
+                if upper != text {
+                    // Delete the original text
+                    events.push(Event::Delete {
+                        range: start..end,
+                        deleted_text: text,
+                        cursor_id,
+                    });
+                    // Insert the uppercase text
+                    events.push(Event::Insert {
+                        position: start,
+                        text: upper,
+                        cursor_id,
+                    });
+                }
+            }
+        }
+
+        Action::ToLowerCase => {
+            // Convert selected text to lowercase
+            // Process cursors in reverse order to avoid position shifts
+            let mut selections: Vec<_> = state
+                .cursors
+                .iter()
+                .filter_map(|(cursor_id, cursor)| {
+                    cursor
+                        .selection_range()
+                        .map(|range| (cursor_id, range.start, range.end))
+                })
+                .collect();
+            selections.sort_by_key(|(_, start, _)| std::cmp::Reverse(*start));
+
+            for (cursor_id, start, end) in selections {
+                let text = state.get_text_range(start, end);
+                let lower = text.to_lowercase();
+                if lower != text {
+                    // Delete the original text
+                    events.push(Event::Delete {
+                        range: start..end,
+                        deleted_text: text,
+                        cursor_id,
+                    });
+                    // Insert the lowercase text
+                    events.push(Event::Insert {
+                        position: start,
+                        text: lower,
+                        cursor_id,
+                    });
+                }
+            }
+        }
+
         Action::OpenLine => {
             // Insert a newline at cursor position but don't move cursor
             // (like pressing Enter but staying on current line)
