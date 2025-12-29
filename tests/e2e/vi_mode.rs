@@ -374,7 +374,11 @@ fn test_vi_delete_line() {
     harness
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    // Wait for operator-pending mode before sending second key
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+
     harness
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
@@ -400,7 +404,11 @@ fn test_vi_delete_word() {
     harness
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    // Wait for operator-pending mode before sending motion
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+
     harness
         .send_key(KeyCode::Char('w'), KeyModifiers::NONE)
         .unwrap();
@@ -507,11 +515,18 @@ fn test_vi_paste_before_line() {
     harness
         .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    // Wait for operator-pending mode before sending second key
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+
     harness
         .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    // Wait for mode to return to normal after yy completes
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
 
     // Paste above with 'P'
     harness
@@ -694,11 +709,19 @@ fn test_vi_delete_inner_word() {
     harness
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    // Wait for operator-pending mode
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+
     harness
         .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    // Wait for text-object mode
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-text-object".to_string()))
+        .unwrap();
+
     harness
         .send_key(KeyCode::Char('w'), KeyModifiers::NONE)
         .unwrap();
@@ -725,12 +748,14 @@ fn test_vi_change_inner_quotes() {
     harness
         .send_key(KeyCode::Char('f'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    // Wait for find-char mode
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
+
     harness
         .send_key(KeyCode::Char('h'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
-
     // Wait for async find-char to complete (cursor should move to 'h' at position 5)
     harness.wait_until(|h| h.cursor_position() == 5).unwrap();
 
@@ -738,11 +763,19 @@ fn test_vi_change_inner_quotes() {
     harness
         .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    // Wait for operator-pending mode
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+
     harness
         .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    // Wait for text-object mode
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-text-object".to_string()))
+        .unwrap();
+
     harness
         .send_key(KeyCode::Char('"'), KeyModifiers::NONE)
         .unwrap();

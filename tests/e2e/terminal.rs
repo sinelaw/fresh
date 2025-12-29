@@ -1731,17 +1731,14 @@ fn test_terminal_mode_preserved_when_switching_tabs() {
         .editor_mut()
         .handle_terminal_key(KeyCode::Enter, KeyModifiers::NONE);
 
-    // Wait a bit for command to execute and render
-    harness.sleep(std::time::Duration::from_millis(100));
-    harness.render().unwrap();
-
+    // Wait for command to execute - use semantic waiting instead of fixed timer
     // The terminal should show "HI" in the output (from echo HI)
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("HI") || screen.contains("echo"),
-        "Terminal should show command output or the typed command. Screen:\n{}",
-        screen
-    );
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("HI") || screen.contains("echo")
+        })
+        .expect("Terminal should show command output or the typed command");
 
     // Test the full cycle again: switch away and back multiple times
     // Switch to file
@@ -1833,16 +1830,14 @@ fn test_terminal_mode_preserved_when_switching_tabs() {
         .editor_mut()
         .handle_terminal_key(KeyCode::Enter, KeyModifiers::NONE);
 
-    harness.sleep(std::time::Duration::from_millis(100));
-    harness.render().unwrap();
-
+    // Wait for pwd command to execute - use semantic waiting instead of fixed timer
     // The terminal should show pwd command was executed (shows path or "pwd")
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("pwd") || screen.contains("/"),
-        "Terminal should show pwd command or path output after click switch. Screen:\n{}",
-        screen
-    );
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("pwd") || screen.contains("/")
+        })
+        .expect("Terminal should show pwd command or path output after click switch");
 }
 
 /// Test that closing terminal tab via mouse click (while in terminal mode) transfers focus

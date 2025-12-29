@@ -215,10 +215,29 @@ impl Clone for LocalFsBackend {
 
 /// Check if a file is hidden (starts with . on Unix, or has hidden attribute on Windows)
 fn is_hidden_file(path: &Path) -> bool {
-    path.file_name()
+    // Check for dot-prefix (works on all platforms)
+    let is_dot_hidden = path
+        .file_name()
         .and_then(|name| name.to_str())
         .map(|name| name.starts_with('.'))
-        .unwrap_or(false)
+        .unwrap_or(false);
+
+    if is_dot_hidden {
+        return true;
+    }
+
+    // On Windows, also check the hidden attribute
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+
+        if let Ok(metadata) = std::fs::metadata(path) {
+            return metadata.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0;
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
