@@ -146,6 +146,15 @@ interface TsLineDiff {
   changed_lines: [number, number][];
 }
 
+/** Syntax highlighting span for plugins */
+interface TsHighlightSpan {
+  start: number;
+  end: number;
+  color: [number, number, number];
+  bold: boolean;
+  italic: boolean;
+}
+
 /** Selection range */
 interface SelectionRange {
   /** Start byte position */
@@ -298,6 +307,20 @@ interface CreateVirtualBufferInCurrentSplitOptions {
   show_cursors?: boolean | null;
   /** Whether editing is disabled for this buffer (default false) */
   editing_disabled?: boolean | null;
+}
+
+/** TypeScript struct for action popup action */
+interface TsActionPopupAction {
+  id: string;
+  label: string;
+}
+
+/** TypeScript struct for action popup options */
+interface TsActionPopupOptions {
+  id: string;
+  title: string;
+  message: string;
+  actions: TsActionPopupAction[];
 }
 
 /**

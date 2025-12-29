@@ -441,7 +441,7 @@ fn extract_structs(rust_source: &str) -> Vec<StructInfo> {
             let mut struct_line_idx = i + 1;
             while struct_line_idx < lines.len() {
                 let next_line = lines[struct_line_idx].trim();
-                if next_line.starts_with("struct ") {
+                if next_line.starts_with("struct ") || next_line.starts_with("pub struct ") {
                     break;
                 } else if next_line.starts_with("#[") || next_line.is_empty() {
                     struct_line_idx += 1;
@@ -450,8 +450,8 @@ fn extract_structs(rust_source: &str) -> Vec<StructInfo> {
                 }
             }
 
-            if struct_line_idx < lines.len() && lines[struct_line_idx].trim().starts_with("struct ")
-            {
+            let struct_line = lines.get(struct_line_idx).map(|l| l.trim()).unwrap_or("");
+            if struct_line.starts_with("struct ") || struct_line.starts_with("pub struct ") {
                 let doc_comment = extract_doc_comments(&lines, i);
 
                 if let Some(mut struct_info) = parse_struct(&lines, struct_line_idx) {
@@ -470,8 +470,12 @@ fn extract_structs(rust_source: &str) -> Vec<StructInfo> {
 fn parse_struct(lines: &[&str], struct_line_idx: usize) -> Option<StructInfo> {
     let struct_line = lines[struct_line_idx].trim();
 
-    // Extract struct name
-    let name_start = struct_line.find("struct ")? + 7;
+    // Extract struct name (handle both "struct" and "pub struct")
+    let name_start = if struct_line.starts_with("pub struct ") {
+        struct_line.find("pub struct ")? + 11
+    } else {
+        struct_line.find("struct ")? + 7
+    };
     let name_end = struct_line[name_start..]
         .find([' ', '{'])
         .map(|p| name_start + p)
@@ -549,7 +553,12 @@ fn parse_struct_field(line: &str, doc_comment: &str) -> Option<FieldInfo> {
         return None;
     }
 
-    let name = parts[0].trim().to_string();
+    // Strip "pub " prefix from field name if present
+    let raw_name = parts[0].trim();
+    let name = raw_name
+        .strip_prefix("pub ")
+        .unwrap_or(raw_name)
+        .to_string();
     let rust_type = parts[1].trim();
 
     let is_optional = rust_type.starts_with("Option<");

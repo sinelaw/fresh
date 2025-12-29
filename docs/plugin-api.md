@@ -127,6 +127,20 @@ interface TsLineDiff {
 }
 ```
 
+### TsHighlightSpan
+
+Syntax highlighting span for plugins
+
+```typescript
+interface TsHighlightSpan {
+  start: number;
+  end: number;
+  color: [number, number, number];
+  bold: boolean;
+  italic: boolean;
+}
+```
+
 ### SelectionRange
 
 Selection range
@@ -375,6 +389,30 @@ interface CreateVirtualBufferInCurrentSplitOptions {
 | `show_line_numbers` | Whether to show line numbers in the buffer (default false for help/docs) |
 | `show_cursors` | Whether to show cursors in the buffer (default true) |
 | `editing_disabled` | Whether editing is disabled for this buffer (default false) |
+
+### TsActionPopupAction
+
+TypeScript struct for action popup action
+
+```typescript
+interface TsActionPopupAction {
+  id: string;
+  label: string;
+}
+```
+
+### TsActionPopupOptions
+
+TypeScript struct for action popup options
+
+```typescript
+interface TsActionPopupOptions {
+  id: string;
+  title: string;
+  message: string;
+  actions: TsActionPopupAction[];
+}
+```
 
 ## API Reference
 
