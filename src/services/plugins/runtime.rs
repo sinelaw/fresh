@@ -3549,6 +3549,9 @@ impl TypeScriptRuntime {
                     copyToClipboard(text) {
                         core.ops.op_fresh_set_clipboard(text);
                     },
+                    setClipboard(text) {
+                        core.ops.op_fresh_set_clipboard(text);
+                    },
 
                     // Buffer queries
                     getActiveBufferId() {
