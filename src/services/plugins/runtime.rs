@@ -43,7 +43,7 @@ use crate::input::commands::Suggestion;
 use crate::model::event::BufferId;
 use crate::model::event::SplitId;
 use crate::services::plugins::api::{
-    ActionSpec, EditorStateSnapshot, LayoutHints, PluginCommand, ViewTokenWire,
+    ActionPopupAction, ActionSpec, EditorStateSnapshot, LayoutHints, PluginCommand, ViewTokenWire,
 };
 use anyhow::{anyhow, Result};
 use deno_core::{
@@ -3266,6 +3266,70 @@ fn op_fresh_get_editor_mode(state: &mut OpState) -> Option<String> {
     None
 }
 
+/// TypeScript struct for action popup action
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TsActionPopupAction {
+    pub id: String,
+    pub label: String,
+}
+
+/// TypeScript struct for action popup options
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TsActionPopupOptions {
+    pub id: String,
+    pub title: String,
+    pub message: String,
+    pub actions: Vec<TsActionPopupAction>,
+}
+
+/// Show an action popup with buttons for user interaction
+///
+/// When the user selects an action, the ActionPopupResult hook is fired.
+/// @param options - Popup configuration with id, title, message, and actions
+#[op2]
+fn op_fresh_show_action_popup(state: &mut OpState, #[serde] options: TsActionPopupOptions) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+
+        let actions: Vec<ActionPopupAction> = options
+            .actions
+            .into_iter()
+            .map(|a| ActionPopupAction {
+                id: a.id,
+                label: a.label,
+            })
+            .collect();
+
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::ShowActionPopup {
+                popup_id: options.id,
+                title: options.title,
+                message: options.message,
+                actions,
+            });
+        return result.is_ok();
+    }
+    false
+}
+
+/// Disable LSP for a specific language and persist to config
+///
+/// This is used by LSP helper plugins to let users disable LSP for languages
+/// where the server is not available or not working.
+/// @param language - The language to disable LSP for (e.g., "python", "rust")
+#[op2(fast)]
+fn op_fresh_disable_lsp_for_language(state: &mut OpState, #[string] language: String) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::DisableLspForLanguage { language });
+        return result.is_ok();
+    }
+    false
+}
+
 // Define the extension with our ops
 extension!(
     fresh_runtime,
@@ -3366,6 +3430,9 @@ extension!(
         op_fresh_get_buffer_text,
         op_fresh_set_editor_mode,
         op_fresh_get_editor_mode,
+        // LSP helper operations
+        op_fresh_show_action_popup,
+        op_fresh_disable_lsp_for_language,
     ],
 );
 
@@ -3808,6 +3875,14 @@ impl TypeScriptRuntime {
                     },
                     getEditorMode() {
                         return core.ops.op_fresh_get_editor_mode();
+                    },
+
+                    // LSP helper functions
+                    showActionPopup(options) {
+                        return core.ops.op_fresh_show_action_popup(options);
+                    },
+                    disableLspForLanguage(language) {
+                        return core.ops.op_fresh_disable_lsp_for_language(language);
                     },
                 };
 

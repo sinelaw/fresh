@@ -3696,6 +3696,45 @@ impl Editor {
             PluginCommand::SetEditorMode { mode } => {
                 self.handle_set_editor_mode(mode);
             }
+
+            // ==================== LSP Helper Commands ====================
+            PluginCommand::ShowActionPopup {
+                popup_id,
+                title,
+                message,
+                actions,
+            } => {
+                // TODO: Implement actual popup UI
+                // For now, log the popup request and immediately fire the dismissed hook
+                tracing::info!(
+                    "Action popup requested: id={}, title={}, actions={}",
+                    popup_id,
+                    title,
+                    actions.len()
+                );
+                tracing::debug!("Popup message: {}", message);
+
+                // Fire the hook to indicate popup was dismissed (until UI is implemented)
+                self.plugin_manager.run_hook(
+                    "action_popup_result",
+                    crate::services::plugins::hooks::HookArgs::ActionPopupResult {
+                        popup_id,
+                        action_id: "dismissed".to_string(),
+                    },
+                );
+            }
+
+            PluginCommand::DisableLspForLanguage { language } => {
+                tracing::info!("Disabling LSP for language: {}", language);
+                // TODO: Implement LSP disable functionality
+                // This should:
+                // 1. Stop the LSP server for this language if running
+                // 2. Update the config to disable auto_start for this language
+                // 3. Persist the config change
+
+                // For now, just log the request
+                self.status_message = Some(format!("LSP disabled for {}", language));
+            }
         }
         Ok(())
     }

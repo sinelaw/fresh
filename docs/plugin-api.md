@@ -376,17 +376,6 @@ interface CreateVirtualBufferInCurrentSplitOptions {
 | `show_cursors` | Whether to show cursors in the buffer (default true) |
 | `editing_disabled` | Whether editing is disabled for this buffer (default false) |
 
-### ActionSpecJs
-
-JavaScript representation of ActionSpec (with optional count)
-
-```typescript
-interface ActionSpecJs {
-  action: string;
-  count?: number | null;
-}
-```
-
 ## API Reference
 
 ### Status and Logging
@@ -611,31 +600,6 @@ Get all LSP diagnostics across all files
 
 ```typescript
 getAllDiagnostics(): TsDiagnostic[]
-```
-
-#### `getBufferText`
-
-Get text from a buffer range
-Used by vi mode plugin for yank operations - reads text without deleting.
-
-```typescript
-getBufferText(buffer_id: number, start: number, end: number): Promise<string>
-```
-
-**Parameters:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| `buffer_id` | `number` | Buffer ID |
-| `start` | `number` | Start byte offset |
-| `end` | `number` | End byte offset |
-
-#### `getEditorMode`
-
-Get the current global editor mode
-
-```typescript
-getEditorMode(): string
 ```
 
 ### Buffer Info Queries
@@ -1220,57 +1184,36 @@ setBufferCursor(buffer_id: number, position: number): boolean
 | `buffer_id` | `number` | ID of the buffer |
 | `position` | `number` | Byte offset position for the cursor |
 
-#### `executeAction`
+#### `showActionPopup`
 
-Execute a built-in editor action by name
-This is used by vi mode plugin to run motions and then check cursor position.
-For example, to implement "dw" (delete word), the plugin:
-1. Saves current cursor position
-2. Calls executeAction("move_word_right") - cursor moves
-3. Gets new cursor position
-4. Deletes from old to new position
+Show an action popup with buttons for user interaction
+When the user selects an action, the ActionPopupResult hook is fired.
 
 ```typescript
-executeAction(action_name: string): boolean
+showActionPopup(options: TsActionPopupOptions): boolean
 ```
 
 **Parameters:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `action_name` | `string` | Action name (e.g., "move_word_right", "move_line_end") |
+| `options` | `TsActionPopupOptions` | Popup configuration with id, title, message, and actions |
 
-#### `executeActions`
+#### `disableLspForLanguage`
 
-Execute multiple actions in sequence, each with an optional repeat count
-Used by vi mode for count prefix (e.g., "3dw" = delete 3 words).
-All actions execute atomically with no plugin roundtrips between them.
+Disable LSP for a specific language and persist to config
+This is used by LSP helper plugins to let users disable LSP for languages
+where the server is not available or not working.
 
 ```typescript
-executeActions(actions: ActionSpecJs[]): boolean
+disableLspForLanguage(language: string): boolean
 ```
 
 **Parameters:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `actions` | `ActionSpecJs[]` | Array of {action: string, count?: number} objects |
-
-#### `setEditorMode`
-
-Set the global editor mode (for modal editing like vi mode)
-When a mode is set, its keybindings take precedence over normal key handling.
-Pass null/undefined to clear the mode and return to normal editing.
-
-```typescript
-setEditorMode(mode?: string | null): boolean
-```
-
-**Parameters:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| `mode` | `string | null` (optional) | Mode name (e.g., "vi-normal") or null to clear |
+| `language` | `string` | The language to disable LSP for (e.g., "python", "rust") |
 
 ### Overlay Operations
 
@@ -1846,7 +1789,7 @@ editor.defineMode("diagnostics-list", "special", [
 ], true);
 
 ```typescript
-defineMode(name: string, parent: string, bindings: Vec<(String, String): boolean
+defineMode(name: string, parent?: string | null, bindings: Vec<(String, String): boolean
 ```
 
 **Parameters:**
@@ -1854,7 +1797,7 @@ defineMode(name: string, parent: string, bindings: Vec<(String, String): boolean
 | Name | Type | Description |
 |------|------|-------------|
 | `name` | `string` | Mode name (e.g., "diagnostics-list") |
-| `parent` | `string` | Parent mode name for inheritance (e.g., "special"), or null |
+| `parent` | `string | null` (optional) | Parent mode name for inheritance (e.g., "special"), or null |
 | `bindings` | `Vec<(String, String` | Array of [key_string, command_name] pairs |
 
 **Example:**

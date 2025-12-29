@@ -691,6 +691,25 @@ pub enum PluginCommand {
         /// Mode name (e.g., "vi-normal", "vi-insert") or None to clear
         mode: Option<String>,
     },
+
+    /// Show an action popup with buttons for user interaction
+    /// When the user selects an action, the ActionPopupResult hook is fired
+    ShowActionPopup {
+        /// Unique identifier for the popup (used in ActionPopupResult)
+        popup_id: String,
+        /// Title text for the popup
+        title: String,
+        /// Body message (supports basic formatting)
+        message: String,
+        /// Action buttons to display
+        actions: Vec<ActionPopupAction>,
+    },
+
+    /// Disable LSP for a specific language and persist to config
+    DisableLspForLanguage {
+        /// The language to disable LSP for (e.g., "python", "rust")
+        language: String,
+    },
 }
 
 /// Hunk status for Review Diff
@@ -712,6 +731,15 @@ pub struct ReviewHunk {
     pub base_range: Option<(usize, usize)>,
     /// 0-indexed line range in the modified (Working) version
     pub modified_range: Option<(usize, usize)>,
+}
+
+/// Action button for action popups
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionPopupAction {
+    /// Unique action identifier (returned in ActionPopupResult)
+    pub id: String,
+    /// Display text for the button (can include command hints)
+    pub label: String,
 }
 
 /// Plugin API context - provides safe access to editor functionality

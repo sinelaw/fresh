@@ -479,21 +479,32 @@ Popup closes, user continues editing
 9. **No auto-open** - Removed intrusive auto-opening of warning log tab
 10. **E2E tests** - Tests for command existence and basic execution
 
-### Not Implemented (Plugin API)
+### Implemented (Plugin API)
 
-**New Hooks needed:**
-1. `LspServerError` - Emitted when LSP fails to start (language, server_command, error_type, message)
-2. `LspStatusClicked` - Emitted when user clicks LSP indicator (language, has_error)
-3. `ActionPopupResult` - Emitted when user selects action or dismisses popup (popup_id, action_id)
+**New Hooks (Core → Plugin):**
+1. `LspServerError` - Emitted when LSP fails to start (language, server_command, error_type, message) ✓
+2. `LspStatusClicked` - Emitted when user clicks LSP indicator (language, has_error) ✓
+3. `ActionPopupResult` - Emitted when user selects action or dismisses popup (popup_id, action_id) ✓
 
-**New API functions needed:**
-1. `fresh.ui.showActionPopup(options)` - Show popup with action buttons
-2. `fresh.lsp.disableForLanguage(language)` - Disable LSP and persist to config
+**New API functions (Plugin → Core):**
+1. `editor.showActionPopup(options)` - Show popup with action buttons ✓
+2. `editor.disableLspForLanguage(language)` - Disable LSP and persist to config ✓
 
-**Bundled plugins to create:**
-1. `plugins/python-lsp.ts` - Python LSP helper
-2. `plugins/rust-lsp.ts` - Rust LSP helper
-3. `plugins/typescript-lsp.ts` - TypeScript/JavaScript LSP helper
+**Bundled plugins:**
+1. `plugins/python-lsp.ts` - Python LSP helper ✓
+2. `plugins/rust-lsp.ts` - Rust LSP helper ✓
+3. `plugins/typescript-lsp.ts` - TypeScript/JavaScript LSP helper ✓
+
+### Not Implemented
+
+**Popup UI rendering:**
+- The `showActionPopup` API is implemented but currently fires a "dismissed" hook immediately
+- Full popup UI with clickable buttons needs to be implemented
+- This requires UI changes to render modal popups over the editor
+
+**LSP disable persistence:**
+- The `disableLspForLanguage` API is implemented but doesn't persist to config yet
+- Needs integration with config system to update and save LSP settings
 
 ### Dropped
 
