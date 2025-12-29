@@ -41,6 +41,8 @@ pub struct EntryDialogState {
     pub hover_item: Option<usize>,
     /// Hovered button index (for mouse hover feedback)
     pub hover_button: Option<usize>,
+    /// Original value when dialog was opened (for Cancel to restore)
+    pub original_value: Value,
 }
 
 impl EntryDialogState {
@@ -101,6 +103,7 @@ impl EntryDialogState {
             viewport_height: 20, // Default, updated during render
             hover_item: None,
             hover_button: None,
+            original_value: value.clone(),
         }
     }
 
@@ -148,6 +151,7 @@ impl EntryDialogState {
             viewport_height: 20,
             hover_item: None,
             hover_button: None,
+            original_value: value.clone(),
         }
     }
 
