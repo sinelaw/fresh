@@ -651,9 +651,18 @@ impl Editor {
             }
         }
 
-        // Check status bar warning indicators
+        // Check status bar indicators
         if let Some((status_row, _status_x, _status_width)) = self.cached_layout.status_bar_area {
             if row == status_row {
+                // Check line ending indicator area
+                if let Some((le_row, le_start, le_end)) =
+                    self.cached_layout.status_bar_line_ending_area
+                {
+                    if row == le_row && col >= le_start && col < le_end {
+                        return Some(HoverTarget::StatusBarLineEndingIndicator);
+                    }
+                }
+
                 // Check LSP indicator area
                 if let Some((lsp_row, lsp_start, lsp_end)) = self.cached_layout.status_bar_lsp_area
                 {
@@ -958,9 +967,18 @@ impl Editor {
             return Ok(());
         }
 
-        // Check if click is on status bar warning indicators
+        // Check if click is on status bar indicators
         if let Some((status_row, _status_x, _status_width)) = self.cached_layout.status_bar_area {
             if row == status_row {
+                // Check line ending indicator - click opens line ending selector
+                if let Some((le_row, le_start, le_end)) =
+                    self.cached_layout.status_bar_line_ending_area
+                {
+                    if row == le_row && col >= le_start && col < le_end {
+                        return self.handle_action(Action::SetLineEnding);
+                    }
+                }
+
                 // Check LSP indicator - click opens LSP status popup
                 if let Some((lsp_row, lsp_start, lsp_end)) = self.cached_layout.status_bar_lsp_area
                 {

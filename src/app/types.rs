@@ -331,6 +331,8 @@ pub enum HoverTarget {
     StatusBarLspIndicator,
     /// Hovering over the status bar warning badge
     StatusBarWarningBadge,
+    /// Hovering over the status bar line ending indicator
+    StatusBarLineEndingIndicator,
     /// Hovering over the search options "Case Sensitive" checkbox
     SearchOptionCaseSensitive,
     /// Hovering over the search options "Whole Word" checkbox
@@ -442,6 +444,8 @@ pub(crate) struct CachedLayout {
     pub status_bar_lsp_area: Option<(u16, u16, u16)>,
     /// Status bar warning badge area (row, start_col, end_col)
     pub status_bar_warning_area: Option<(u16, u16, u16)>,
+    /// Status bar line ending indicator area (row, start_col, end_col)
+    pub status_bar_line_ending_area: Option<(u16, u16, u16)>,
     /// Search options layout for checkbox hit testing
     pub search_options_layout: Option<crate::view::ui::status_bar::SearchOptionsLayout>,
 }

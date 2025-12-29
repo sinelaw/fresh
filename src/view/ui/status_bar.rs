@@ -19,6 +19,8 @@ pub struct StatusBarLayout {
     pub lsp_indicator: Option<(u16, u16, u16)>,
     /// Warning badge area (row, start_col, end_col) - None if no warnings
     pub warning_badge: Option<(u16, u16, u16)>,
+    /// Line ending indicator area (row, start_col, end_col)
+    pub line_ending_indicator: Option<(u16, u16, u16)>,
 }
 
 /// Status bar hover state for styling clickable indicators
@@ -30,6 +32,8 @@ pub enum StatusBarHover {
     LspIndicator,
     /// Mouse is over the warning badge
     WarningBadge,
+    /// Mouse is over the line ending indicator
+    LineEndingIndicator,
 }
 
 /// Which search option checkbox is being hovered
@@ -577,7 +581,11 @@ impl StatusBarRenderer {
         let left_status = format!("{base_status}{chord_display}{message_suffix}");
 
         // Build right-side indicators (these stay fixed on the right)
-        // Order: [LSP indicator] [warning badge] [update] [Palette]
+        // Order: [Line ending] [LSP indicator] [warning badge] [update] [Palette]
+
+        // Line ending indicator (clickable to change format)
+        let line_ending_text = format!(" {} ", state.buffer.line_ending().display_name());
+        let line_ending_width = str_width(&line_ending_text);
 
         // LSP indicator (right-aligned, with colored background if warning/error)
         let lsp_indicator = if !lsp_status.is_empty() {
@@ -611,11 +619,14 @@ impl StatusBarRenderer {
         let padded_cmd_palette = format!(" {} ", cmd_palette_indicator);
 
         // Calculate available width and right side width
-        // Right side: [LSP indicator] [warning badge] [update] [Palette]
+        // Right side: [Line ending] [LSP indicator] [warning badge] [update] [Palette]
         let available_width = area.width as usize;
         let cmd_palette_width = str_width(&padded_cmd_palette);
-        let right_side_width =
-            lsp_indicator_width + warning_badge_width + update_width + cmd_palette_width;
+        let right_side_width = line_ending_width
+            + lsp_indicator_width
+            + warning_badge_width
+            + update_width
+            + cmd_palette_width;
 
         // Only show command palette indicator if there's enough space (at least 15 chars for minimal display)
         let spans = if available_width >= 15 {
@@ -687,6 +698,25 @@ impl StatusBarRenderer {
             let mut current_col = area.x + displayed_left_len as u16;
             if displayed_left_len + right_side_width < available_width {
                 current_col = area.x + (available_width - right_side_width) as u16;
+            }
+
+            // Add line ending indicator (clickable to change format)
+            {
+                let is_hovering = hover == StatusBarHover::LineEndingIndicator;
+                // Record position for click detection
+                layout.line_ending_indicator =
+                    Some((area.y, current_col, current_col + line_ending_width as u16));
+                let (fg, bg) = if is_hovering {
+                    (theme.menu_hover_fg, theme.menu_hover_bg)
+                } else {
+                    (theme.status_bar_fg, theme.status_bar_bg)
+                };
+                let mut style = Style::default().fg(fg).bg(bg);
+                if is_hovering {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                spans.push(Span::styled(line_ending_text.clone(), style));
+                current_col += line_ending_width as u16;
             }
 
             // Add LSP indicator with colored background if warning/error

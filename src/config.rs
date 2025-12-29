@@ -98,6 +98,50 @@ impl PartialEq<str> for KeybindingMapName {
     }
 }
 
+/// Line ending format for new files
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LineEndingOption {
+    /// Unix/Linux/macOS format (LF)
+    Lf,
+    /// Windows format (CRLF)
+    Crlf,
+    /// Classic Mac format (CR) - rare
+    Cr,
+}
+
+impl Default for LineEndingOption {
+    fn default() -> Self {
+        LineEndingOption::Lf
+    }
+}
+
+impl LineEndingOption {
+    /// Convert to the buffer's LineEnding type
+    pub fn to_line_ending(&self) -> crate::model::buffer::LineEnding {
+        match self {
+            LineEndingOption::Lf => crate::model::buffer::LineEnding::LF,
+            LineEndingOption::Crlf => crate::model::buffer::LineEnding::CRLF,
+            LineEndingOption::Cr => crate::model::buffer::LineEnding::CR,
+        }
+    }
+}
+
+impl JsonSchema for LineEndingOption {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("LineEndingOption")
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "Default line ending format for new files",
+            "type": "string",
+            "enum": ["lf", "crlf", "cr"],
+            "default": "lf"
+        })
+    }
+}
+
 impl PartialEq<KeybindingMapName> for str {
     fn eq(&self, other: &KeybindingMapName) -> bool {
         self == other.0
@@ -296,6 +340,13 @@ pub struct EditorConfig {
     /// Default: 3000ms (3 seconds)
     #[serde(default = "default_file_tree_poll_interval")]
     pub file_tree_poll_interval_ms: u64,
+
+    /// Default line ending format for new files.
+    /// Files loaded from disk will use their detected line ending format.
+    /// Options: "lf" (Unix/Linux/macOS), "crlf" (Windows), "cr" (Classic Mac)
+    /// Default: "lf"
+    #[serde(default)]
+    pub default_line_ending: LineEndingOption,
 }
 
 fn default_tab_size() -> usize {
@@ -382,6 +433,7 @@ impl Default for EditorConfig {
             double_click_time_ms: default_double_click_time(),
             auto_revert_poll_interval_ms: default_auto_revert_poll_interval(),
             file_tree_poll_interval_ms: default_file_tree_poll_interval(),
+            default_line_ending: LineEndingOption::default(),
         }
     }
 }

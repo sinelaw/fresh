@@ -140,6 +140,11 @@ pub struct TextBuffer {
     /// Line ending format detected from the file (or default for new files)
     line_ending: LineEnding,
 
+    /// Original line ending format when file was loaded (used for conversion on save)
+    /// This tracks what the file had when loaded, so we can detect if the user
+    /// changed the line ending format and needs conversion on save.
+    original_line_ending: LineEnding,
+
     /// The file size on disk after the last save.
     /// Used for chunked recovery to know the original file size for reconstruction.
     /// Updated when loading from file or after saving.
@@ -151,6 +156,7 @@ impl TextBuffer {
     /// Note: large_file_threshold is ignored in the new implementation
     pub fn new(_large_file_threshold: usize) -> Self {
         let piece_tree = PieceTree::empty();
+        let line_ending = LineEnding::default();
         TextBuffer {
             saved_root: piece_tree.root(),
             piece_tree,
@@ -161,7 +167,8 @@ impl TextBuffer {
             recovery_pending: false,
             large_file: false,
             is_binary: false,
-            line_ending: LineEnding::default(),
+            line_ending,
+            original_line_ending: line_ending,
             saved_file_size: None,
         }
     }
@@ -187,6 +194,7 @@ impl TextBuffer {
 
         TextBuffer {
             line_ending,
+            original_line_ending: line_ending,
             piece_tree,
             saved_root,
             buffers: vec![buffer],
@@ -209,6 +217,7 @@ impl TextBuffer {
     pub fn empty() -> Self {
         let piece_tree = PieceTree::empty();
         let saved_root = piece_tree.root();
+        let line_ending = LineEnding::default();
         TextBuffer {
             piece_tree,
             saved_root,
@@ -219,7 +228,8 @@ impl TextBuffer {
             recovery_pending: false,
             large_file: false,
             is_binary: false,
-            line_ending: LineEnding::default(),
+            line_ending,
+            original_line_ending: line_ending,
             saved_file_size: None,
         }
     }
@@ -270,6 +280,7 @@ impl TextBuffer {
         buffer.large_file = false;
         buffer.is_binary = is_binary;
         buffer.line_ending = line_ending;
+        buffer.original_line_ending = line_ending;
         Ok(buffer)
     }
 
@@ -327,6 +338,7 @@ impl TextBuffer {
             large_file: true,
             is_binary,
             line_ending,
+            original_line_ending: line_ending,
             saved_file_size: Some(file_size),
         })
     }
@@ -348,6 +360,9 @@ impl TextBuffer {
     /// This uses incremental saving for large files: instead of loading the entire
     /// file into memory, it streams unmodified regions directly from the source file
     /// and only keeps edited regions in memory.
+    ///
+    /// If the line ending format has been changed (via set_line_ending), all content
+    /// will be converted to the new format during save.
     pub fn save_to_file<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
         let dest_path = path.as_ref();
         let total = self.total_bytes();
@@ -355,6 +370,10 @@ impl TextBuffer {
         // Get original file metadata (permissions, owner, etc.) before writing
         // so we can preserve it after creating/renaming the temp file
         let original_metadata = std::fs::metadata(dest_path).ok();
+
+        // Check if we need to convert line endings
+        let needs_conversion = self.line_ending != self.original_line_ending;
+        let target_ending = self.line_ending;
 
         if total == 0 {
             // Empty file - just create it
@@ -365,6 +384,8 @@ impl TextBuffer {
             self.file_path = Some(dest_path.to_path_buf());
             self.mark_saved_snapshot();
             self.saved_file_size = Some(0);
+            // Update original_line_ending to match the new format
+            self.original_line_ending = self.line_ending;
             return Ok(());
         }
 
@@ -387,20 +408,25 @@ impl TextBuffer {
 
             match &buffer.data {
                 BufferData::Loaded { data, .. } => {
-                    // Write from memory (line endings are already correct in buffer)
                     let start = piece_view.buffer_offset;
                     let end = start + piece_view.bytes;
                     let chunk = &data[start..end];
-                    out_file.write_all(chunk)?;
+
+                    if needs_conversion {
+                        // Convert line endings before writing
+                        let converted = Self::convert_line_endings_to(chunk, target_ending);
+                        out_file.write_all(&converted)?;
+                    } else {
+                        // Write directly without conversion
+                        out_file.write_all(chunk)?;
+                    }
                 }
                 BufferData::Unloaded {
                     file_path,
                     file_offset,
                     ..
                 } => {
-                    // Stream from source file without loading into memory
-                    // NOTE: Unloaded regions come directly from the original file and already
-                    // have the correct line endings, so we don't need to convert them
+                    // Stream from source file
                     let source_file = match &mut source_file_cache {
                         Some((cached_path, file)) if cached_path == file_path => file,
                         _ => {
@@ -414,7 +440,7 @@ impl TextBuffer {
                     let read_offset = *file_offset + piece_view.buffer_offset;
                     source_file.seek(SeekFrom::Start(read_offset as u64))?;
 
-                    // Stream in chunks to avoid large memory allocation
+                    // Stream in chunks
                     const STREAM_CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
                     let mut remaining = piece_view.bytes;
                     let mut chunk_buf = vec![0u8; STREAM_CHUNK_SIZE.min(remaining)];
@@ -422,7 +448,16 @@ impl TextBuffer {
                     while remaining > 0 {
                         let to_read = remaining.min(chunk_buf.len());
                         source_file.read_exact(&mut chunk_buf[..to_read])?;
-                        out_file.write_all(&chunk_buf[..to_read])?;
+
+                        if needs_conversion {
+                            // Convert line endings before writing
+                            let converted =
+                                Self::convert_line_endings_to(&chunk_buf[..to_read], target_ending);
+                            out_file.write_all(&converted)?;
+                        } else {
+                            // Write directly without conversion
+                            out_file.write_all(&chunk_buf[..to_read])?;
+                        }
                         remaining -= to_read;
                     }
                 }
@@ -452,6 +487,11 @@ impl TextBuffer {
 
         self.file_path = Some(dest_path.to_path_buf());
         self.mark_saved_snapshot();
+
+        // Update original_line_ending to match what we just saved
+        // This prevents repeated conversions on subsequent saves
+        self.original_line_ending = self.line_ending;
+
         Ok(())
     }
 
@@ -1324,11 +1364,23 @@ impl TextBuffer {
     }
 
     /// Set the line ending format for this buffer
+    ///
+    /// This marks the buffer as modified since the line ending format has changed.
+    /// On save, the buffer content will be converted to the new format.
     pub fn set_line_ending(&mut self, line_ending: LineEnding) {
         self.line_ending = line_ending;
         // Changing line endings marks buffer as modified and needing recovery
         self.modified = true;
         self.recovery_pending = true;
+    }
+
+    /// Set the default line ending format for a new/empty buffer
+    ///
+    /// Unlike `set_line_ending`, this does NOT mark the buffer as modified.
+    /// This should be used when initializing a new buffer with a configured default.
+    pub fn set_default_line_ending(&mut self, line_ending: LineEnding) {
+        self.line_ending = line_ending;
+        self.original_line_ending = line_ending;
     }
 
     /// Detect if the given bytes contain binary content.
@@ -1473,22 +1525,43 @@ impl TextBuffer {
         normalized
     }
 
-    /// Convert LF line endings back to the specified format
+    /// Convert line endings from any source format to any target format
     ///
-    /// Used when saving files to restore the original line ending format.
-    #[allow(dead_code)] // No longer used - line endings are preserved as-is
-    fn convert_line_endings(bytes: &[u8], target_ending: LineEnding) -> Vec<u8> {
-        if target_ending == LineEnding::LF {
-            // No conversion needed
-            return bytes.to_vec();
+    /// This first normalizes all line endings to LF, then converts to the target format.
+    /// Used when saving files after the user has changed the line ending format.
+    fn convert_line_endings_to(bytes: &[u8], target_ending: LineEnding) -> Vec<u8> {
+        // First pass: normalize everything to LF
+        let mut normalized = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'\r' {
+                // Check if this is CRLF
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+                    // CRLF -> LF
+                    normalized.push(b'\n');
+                    i += 2;
+                    continue;
+                } else {
+                    // CR only -> LF
+                    normalized.push(b'\n');
+                }
+            } else {
+                normalized.push(bytes[i]);
+            }
+            i += 1;
         }
 
-        let replacement = target_ending.as_str().as_bytes();
-        let mut result = Vec::with_capacity(bytes.len());
+        // If target is LF, we're done
+        if target_ending == LineEnding::LF {
+            return normalized;
+        }
 
-        for &byte in bytes {
+        // Second pass: convert LF to target format
+        let replacement = target_ending.as_str().as_bytes();
+        let mut result = Vec::with_capacity(normalized.len() + normalized.len() / 10);
+
+        for byte in normalized {
             if byte == b'\n' {
-                // Replace LF with target line ending
                 result.extend_from_slice(replacement);
             } else {
                 result.push(byte);
@@ -3658,6 +3731,81 @@ mod tests {
             String::from_utf8_lossy(&content_lazy).starts_with("EDITED: "),
             "Content should start with our edit"
         );
+    }
+
+    // ===== Line Ending Conversion Tests =====
+
+    mod line_ending_conversion {
+        use super::*;
+
+        #[test]
+        fn test_convert_lf_to_crlf() {
+            let input = b"Line 1\nLine 2\nLine 3\n";
+            let result = TextBuffer::convert_line_endings_to(input, LineEnding::CRLF);
+            assert_eq!(result, b"Line 1\r\nLine 2\r\nLine 3\r\n");
+        }
+
+        #[test]
+        fn test_convert_crlf_to_lf() {
+            let input = b"Line 1\r\nLine 2\r\nLine 3\r\n";
+            let result = TextBuffer::convert_line_endings_to(input, LineEnding::LF);
+            assert_eq!(result, b"Line 1\nLine 2\nLine 3\n");
+        }
+
+        #[test]
+        fn test_convert_cr_to_lf() {
+            let input = b"Line 1\rLine 2\rLine 3\r";
+            let result = TextBuffer::convert_line_endings_to(input, LineEnding::LF);
+            assert_eq!(result, b"Line 1\nLine 2\nLine 3\n");
+        }
+
+        #[test]
+        fn test_convert_mixed_to_crlf() {
+            // Mixed line endings: LF, CRLF, CR
+            let input = b"Line 1\nLine 2\r\nLine 3\r";
+            let result = TextBuffer::convert_line_endings_to(input, LineEnding::CRLF);
+            assert_eq!(result, b"Line 1\r\nLine 2\r\nLine 3\r\n");
+        }
+
+        #[test]
+        fn test_convert_lf_to_lf_is_noop() {
+            let input = b"Line 1\nLine 2\nLine 3\n";
+            let result = TextBuffer::convert_line_endings_to(input, LineEnding::LF);
+            assert_eq!(result, input.to_vec());
+        }
+
+        #[test]
+        fn test_convert_empty_content() {
+            let input = b"";
+            let result = TextBuffer::convert_line_endings_to(input, LineEnding::CRLF);
+            assert_eq!(result, b"".to_vec());
+        }
+
+        #[test]
+        fn test_convert_no_line_endings() {
+            let input = b"No line endings here";
+            let result = TextBuffer::convert_line_endings_to(input, LineEnding::CRLF);
+            assert_eq!(result, b"No line endings here".to_vec());
+        }
+
+        #[test]
+        fn test_set_line_ending_marks_modified() {
+            let mut buffer = TextBuffer::from_bytes(b"Hello\nWorld\n".to_vec());
+            assert!(!buffer.is_modified());
+
+            buffer.set_line_ending(LineEnding::CRLF);
+            assert!(buffer.is_modified());
+        }
+
+        #[test]
+        fn test_set_default_line_ending_does_not_mark_modified() {
+            let mut buffer = TextBuffer::empty();
+            assert!(!buffer.is_modified());
+
+            buffer.set_default_line_ending(LineEnding::CRLF);
+            assert!(!buffer.is_modified());
+            assert_eq!(buffer.line_ending(), LineEnding::CRLF);
+        }
     }
 }
 

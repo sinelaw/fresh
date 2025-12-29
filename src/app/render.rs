@@ -483,6 +483,9 @@ impl Editor {
             let status_bar_hover = match &self.mouse_state.hover_target {
                 Some(HoverTarget::StatusBarLspIndicator) => StatusBarHover::LspIndicator,
                 Some(HoverTarget::StatusBarWarningBadge) => StatusBarHover::WarningBadge,
+                Some(HoverTarget::StatusBarLineEndingIndicator) => {
+                    StatusBarHover::LineEndingIndicator
+                }
                 _ => StatusBarHover::None,
             };
 
@@ -509,6 +512,8 @@ impl Editor {
                 Some((status_bar_area.y, status_bar_area.x, status_bar_area.width));
             self.cached_layout.status_bar_lsp_area = status_bar_layout.lsp_indicator;
             self.cached_layout.status_bar_warning_area = status_bar_layout.warning_badge;
+            self.cached_layout.status_bar_line_ending_area =
+                status_bar_layout.line_ending_indicator;
         }
 
         // Render search options bar when in search prompt
