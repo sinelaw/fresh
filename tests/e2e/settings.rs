@@ -2367,3 +2367,213 @@ fn test_line_wrap_config_applied_to_new_buffers() {
         screen
     );
 }
+
+// =============================================================================
+// JSON EDITOR TESTS - Testing the JSON text box in entry dialogs
+// =============================================================================
+
+/// Helper function to navigate to the LSP Initialization Options JSON editor
+/// Opens settings, searches for "lsp", opens the first LSP entry, and navigates to Initialization Options
+fn navigate_to_lsp_json_editor(harness: &mut EditorTestHarness) {
+    // Open settings via Ctrl+,
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Use search to find "lsp" section
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("lsp").unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to jump to the first result (the Lsp map)
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify we're in the LSP section
+    harness.assert_screen_contains("Lsp");
+
+    // Press Enter to open the first LSP entry dialog (e.g., clangd for c)
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify we're in an Edit dialog
+    harness.assert_screen_contains("Edit Value");
+
+    // Navigate down to "Initialization Options" field
+    // Fields in entry dialog: Key, Args, Auto Start, Command, Enabled, Initialization Options
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // Verify we're on Initialization Options
+    harness.assert_screen_contains("Initialization Options");
+}
+
+/// Test that Delete key works in JSON editor (deletes character at cursor)
+///
+/// BUG: Delete key in JSON editor calls delete_list_item() instead of
+/// deleting the character at the cursor position.
+///
+/// Expected: Delete key removes character after cursor
+/// Actual: Delete key does nothing (or removes TextList item if in TextList mode)
+#[test]
+fn test_json_editor_delete_key_works() {
+    let mut harness = EditorTestHarness::new(120, 50).unwrap();
+    harness.render().unwrap();
+
+    navigate_to_lsp_json_editor(&mut harness);
+
+    // Press Enter to start editing the JSON field
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The help line should change to indicate JSON editing mode
+    harness.assert_screen_contains("Enter:Newline");
+
+    // When entering edit mode, cursor is at position 0
+    // Type "ABC" which will be inserted at the start, resulting in "ABCnull"
+    harness.type_text("ABC").unwrap();
+    harness.render().unwrap();
+
+    // Should see "ABCnull" (typed at cursor position 0)
+    harness.assert_screen_contains("ABCnull");
+
+    // Cursor is now after 'C'. Move left 3 times to position before 'A'
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // Press Delete key - should delete 'A'
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // After deleting 'A', should show "BCnull"
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("BCnull") && !screen.contains("ABCnull"),
+        "Delete key should remove character at cursor. Expected 'BCnull', got:\n{}",
+        screen
+    );
+
+    // Close dialogs
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test that Home and End keys work in JSON editor
+///
+/// BUG: Home and End keys are not handled in JSON editor.
+#[test]
+fn test_json_editor_home_end_keys_work() {
+    let mut harness = EditorTestHarness::new(120, 50).unwrap();
+    harness.render().unwrap();
+
+    navigate_to_lsp_json_editor(&mut harness);
+
+    // Press Enter to start editing the JSON field
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // When entering edit mode, cursor is at position 0
+    // Type "XYZ" which results in "XYZnull"
+    harness.type_text("XYZ").unwrap();
+    harness.render().unwrap();
+
+    // Should see "XYZnull" (typed at cursor position 0)
+    harness.assert_screen_contains("XYZnull");
+
+    // Cursor is now after 'Z'. Press End - should go to the end of text
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Type 'B' - should appear at the end
+    harness
+        .send_key(KeyCode::Char('B'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should now show "XYZnullB" (B appended at end)
+    harness.assert_screen_contains("XYZnullB");
+
+    // Press Home - cursor should go to beginning
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Type 'A' - should appear at the beginning
+    harness
+        .send_key(KeyCode::Char('A'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should now show "AXYZnullB" (A inserted at beginning)
+    harness.assert_screen_contains("AXYZnullB");
+
+    // Close dialogs
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test that Ctrl+A selects all text in JSON editor
+///
+/// BUG: Ctrl+A is not handled in JSON editor.
+#[test]
+fn test_json_editor_ctrl_a_selects_all() {
+    let mut harness = EditorTestHarness::new(120, 50).unwrap();
+    harness.render().unwrap();
+
+    navigate_to_lsp_json_editor(&mut harness);
+
+    // Press Enter to start editing the JSON field
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // When entering edit mode, cursor is at position 0
+    // Type "OLD" which results in "OLDnull"
+    harness.type_text("OLD").unwrap();
+    harness.render().unwrap();
+
+    // Should see "OLDnull"
+    harness.assert_screen_contains("OLDnull");
+
+    // Press Ctrl+A to select all
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type new text - should replace all selected text
+    harness.type_text("NEW").unwrap();
+    harness.render().unwrap();
+
+    // Should now show "NEW" only (replaced "OLDnull")
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("NEW") && !screen.contains("OLDnull") && !screen.contains("OLD"),
+        "Ctrl+A should select all, then typing should replace. Expected only 'NEW', got:\n{}",
+        screen
+    );
+
+    // Close dialogs
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
