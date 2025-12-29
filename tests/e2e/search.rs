@@ -1637,3 +1637,83 @@ fn test_f3_continues_after_find_selection() {
         "F3 should continue to third 'hello' after Ctrl+F3"
     );
 }
+
+/// Test that repeated Ctrl+F3 keeps the same search term even when landing on a longer word
+/// e.g., searching for "bla" should keep searching for "bla" even when landing on "blafoo"
+#[test]
+fn test_find_selection_keeps_search_term() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Create a test file where "test" appears as standalone and as part of "testing"
+    // test -> testing -> test -> tester
+    std::fs::write(
+        &file_path,
+        "test word\ntesting here\ntest again\ntester end",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Cursor starts at "test" on line 1
+    assert_eq!(
+        harness.cursor_position(),
+        0,
+        "Cursor should start at position 0"
+    );
+
+    // Press Ctrl+F3 to find next occurrence of "test"
+    harness
+        .send_key(KeyCode::F(3), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Should move to "testing" (position 10) - this contains "test"
+    let testing_pos = "test word\n".len();
+    assert_eq!(
+        harness.cursor_position(),
+        testing_pos,
+        "First Ctrl+F3 should move to 'testing' which contains 'test'"
+    );
+
+    // Press Ctrl+F3 again - should continue searching for "test", NOT "testing"
+    harness
+        .send_key(KeyCode::F(3), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Should move to standalone "test" on line 3
+    let test_again_pos = "test word\ntesting here\n".len();
+    assert_eq!(
+        harness.cursor_position(),
+        test_again_pos,
+        "Second Ctrl+F3 should continue searching for 'test', not 'testing'"
+    );
+
+    // Press Ctrl+F3 again - should find "tester" which also contains "test"
+    harness
+        .send_key(KeyCode::F(3), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    let tester_pos = "test word\ntesting here\ntest again\n".len();
+    assert_eq!(
+        harness.cursor_position(),
+        tester_pos,
+        "Third Ctrl+F3 should find 'tester' which contains 'test'"
+    );
+
+    // Press Ctrl+F3 again - should wrap around to first "test"
+    harness
+        .send_key(KeyCode::F(3), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    assert_eq!(
+        harness.cursor_position(),
+        0,
+        "Fourth Ctrl+F3 should wrap around to first 'test'"
+    );
+}

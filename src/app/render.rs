@@ -1909,9 +1909,18 @@ impl Editor {
 
     /// Find the next occurrence of the current selection (or word under cursor).
     /// This is a "quick find" that doesn't require opening the search panel.
-    /// The search term is stored so subsequent F3/Shift+F3 navigation works.
+    /// The search term is stored so subsequent Alt+N/Alt+P/F3 navigation works.
+    ///
+    /// If there's already an active search, this continues with the same search term.
+    /// Otherwise, it starts a new search with the current selection or word under cursor.
     pub(super) fn find_selection_next(&mut self) {
-        // Get search text and start position from selection or word under cursor
+        // If there's already a search active, just continue to next match
+        if self.search_state.is_some() {
+            self.find_next();
+            return;
+        }
+
+        // No active search - start a new one with selection or word under cursor
         let (search_text, selection_start) = self.get_selection_or_word_for_search_with_pos();
 
         match search_text {
@@ -1955,8 +1964,17 @@ impl Editor {
 
     /// Find the previous occurrence of the current selection (or word under cursor).
     /// This is a "quick find" that doesn't require opening the search panel.
+    ///
+    /// If there's already an active search, this continues with the same search term.
+    /// Otherwise, it starts a new search with the current selection or word under cursor.
     pub(super) fn find_selection_previous(&mut self) {
-        // Get search text and start position from selection or word under cursor
+        // If there's already a search active, just continue to previous match
+        if self.search_state.is_some() {
+            self.find_previous();
+            return;
+        }
+
+        // No active search - start a new one with selection or word under cursor
         let (search_text, selection_start) = self.get_selection_or_word_for_search_with_pos();
 
         match search_text {
