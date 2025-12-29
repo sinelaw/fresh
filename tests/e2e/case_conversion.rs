@@ -397,15 +397,13 @@ fn test_case_conversion_from_command_palette() {
         .unwrap();
     harness.render().unwrap();
 
-    // Open command palette with Ctrl+Shift+P
+    // Open command palette with Ctrl+P
     harness
-        .send_key(
-            KeyCode::Char('p'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    // Wait for command palette to appear (shows "Command:" prompt at bottom)
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command Palette"))
+        .wait_until(|h| h.screen_to_string().contains("Command:"))
         .unwrap();
 
     // Type to search for uppercase command
