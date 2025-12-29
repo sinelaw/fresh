@@ -1911,21 +1911,39 @@ impl Editor {
     /// This is a "quick find" that doesn't require opening the search panel.
     /// The search term is stored so subsequent F3/Shift+F3 navigation works.
     pub(super) fn find_selection_next(&mut self) {
-        // Get search text from selection or word under cursor
-        let search_text = self.get_selection_or_word_for_search();
+        // Get search text and start position from selection or word under cursor
+        let (search_text, selection_start) = self.get_selection_or_word_for_search_with_pos();
 
         match search_text {
             Some(text) if !text.is_empty() => {
+                // Record cursor position before search
+                let cursor_before = self.active_state().cursors.primary().position;
+
                 // Perform the search to set up search state
                 self.perform_search(&text);
 
-                // If we found matches and cursor is already at a match (the selection),
-                // move to the next one
+                // Check if we need to move to next match
                 if let Some(ref search_state) = self.search_state {
-                    if search_state.matches.len() > 1 {
-                        // Only call find_next if there are multiple matches
-                        // (otherwise we're already at the only match)
-                        self.find_next();
+                    let cursor_after = self.active_state().cursors.primary().position;
+
+                    // If we started at a match (selection_start matches a search result),
+                    // and perform_search didn't move us (or moved us to the same match),
+                    // then we need to find_next
+                    let started_at_match = selection_start
+                        .map(|start| search_state.matches.contains(&start))
+                        .unwrap_or(false);
+
+                    let landed_at_start = selection_start
+                        .map(|start| cursor_after == start)
+                        .unwrap_or(false);
+
+                    // Only call find_next if:
+                    // 1. We started at a match AND landed back at it, OR
+                    // 2. We didn't move at all
+                    if (started_at_match && landed_at_start) || cursor_before == cursor_after {
+                        if search_state.matches.len() > 1 {
+                            self.find_next();
+                        }
                     }
                 }
             }
@@ -1938,17 +1956,45 @@ impl Editor {
     /// Find the previous occurrence of the current selection (or word under cursor).
     /// This is a "quick find" that doesn't require opening the search panel.
     pub(super) fn find_selection_previous(&mut self) {
-        // Get search text from selection or word under cursor
-        let search_text = self.get_selection_or_word_for_search();
+        // Get search text and start position from selection or word under cursor
+        let (search_text, selection_start) = self.get_selection_or_word_for_search_with_pos();
 
         match search_text {
             Some(text) if !text.is_empty() => {
+                // Record cursor position before search
+                let cursor_before = self.active_state().cursors.primary().position;
+
                 // Perform the search to set up search state
                 self.perform_search(&text);
 
                 // If we found matches, navigate to previous
-                if self.search_state.is_some() {
-                    self.find_previous();
+                if let Some(ref search_state) = self.search_state {
+                    let cursor_after = self.active_state().cursors.primary().position;
+
+                    // Check if we started at a match
+                    let started_at_match = selection_start
+                        .map(|start| search_state.matches.contains(&start))
+                        .unwrap_or(false);
+
+                    let landed_at_start = selection_start
+                        .map(|start| cursor_after == start)
+                        .unwrap_or(false);
+
+                    // For find previous, we always need to call find_previous at least once.
+                    // If we landed at our starting match, we need to go back once to get previous.
+                    // If we landed at a different match (because cursor was past start of selection),
+                    // we still want to find_previous to get to where we should be.
+                    if started_at_match && landed_at_start {
+                        // We're at the same match we started at, go to previous
+                        self.find_previous();
+                    } else if cursor_before != cursor_after {
+                        // perform_search moved us, now go back to find the actual previous
+                        // from our original position (which is before where we landed)
+                        self.find_previous();
+                    } else {
+                        // Cursor didn't move, just find previous
+                        self.find_previous();
+                    }
                 }
             }
             _ => {
@@ -1957,9 +2003,9 @@ impl Editor {
         }
     }
 
-    /// Get the current selection text, or if no selection, expand to word under cursor.
-    /// Returns None if there's no valid text to search for.
-    fn get_selection_or_word_for_search(&mut self) -> Option<String> {
+    /// Get the text to search for from selection or word under cursor,
+    /// along with the start position of that text (for determining if we're at a match).
+    fn get_selection_or_word_for_search_with_pos(&mut self) -> (Option<String>, Option<usize>) {
         use crate::primitives::word_navigation::{find_word_end, find_word_start};
 
         // First get selection range and cursor position with immutable borrow
@@ -1974,7 +2020,7 @@ impl Editor {
             let state = self.active_state_mut();
             let text = state.get_text_range(range.start, range.end);
             if !text.is_empty() {
-                return Some(text);
+                return (Some(text), Some(range.start));
             }
         }
 
@@ -1988,9 +2034,9 @@ impl Editor {
 
         if word_start < word_end {
             let state = self.active_state_mut();
-            Some(state.get_text_range(word_start, word_end))
+            (Some(state.get_text_range(word_start, word_end)), Some(word_start))
         } else {
-            None
+            (None, None)
         }
     }
 
