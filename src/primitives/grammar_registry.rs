@@ -22,6 +22,8 @@ pub struct GrammarRegistry {
     syntax_set: Arc<SyntaxSet>,
     /// Extension -> scope name mapping for user grammars (takes priority)
     user_extensions: HashMap<String, String>,
+    /// Filename -> scope name mapping for dotfiles and special files
+    filename_scopes: HashMap<String, String>,
 }
 
 impl GrammarRegistry {
@@ -51,15 +53,21 @@ impl GrammarRegistry {
 
         let syntax_set = builder.build();
 
+        // Build filename -> scope mappings for dotfiles and special files
+        // These are files that syntect may not recognize by default
+        let filename_scopes = Self::build_filename_scopes();
+
         tracing::info!(
-            "Loaded {} syntaxes, {} user extension mappings",
+            "Loaded {} syntaxes, {} user extension mappings, {} filename mappings",
             syntax_set.syntaxes().len(),
-            user_extensions.len()
+            user_extensions.len(),
+            filename_scopes.len()
         );
 
         Self {
             syntax_set: Arc::new(syntax_set),
             user_extensions,
+            filename_scopes,
         }
     }
 
@@ -70,6 +78,7 @@ impl GrammarRegistry {
         Arc::new(Self {
             syntax_set: Arc::new(builder.build()),
             user_extensions: HashMap::new(),
+            filename_scopes: HashMap::new(),
         })
     }
 
@@ -90,6 +99,28 @@ impl GrammarRegistry {
                 tracing::warn!("Failed to load embedded TOML grammar: {}", e);
             }
         }
+    }
+
+    /// Build filename -> scope mappings for dotfiles and special files
+    /// that syntect may not recognize by default
+    fn build_filename_scopes() -> HashMap<String, String> {
+        let mut map = HashMap::new();
+
+        // Shell configuration files -> Bash/Shell script scope
+        let shell_scope = "source.shell.bash".to_string();
+        for filename in [
+            ".zshrc",
+            ".zprofile",
+            ".zshenv",
+            ".zlogin",
+            ".zlogout",
+            ".bash_aliases",
+            // .bashrc and .bash_profile are already recognized by syntect
+        ] {
+            map.insert(filename.to_string(), shell_scope.clone());
+        }
+
+        map
     }
 
     /// Load user grammars into builder
@@ -225,7 +256,8 @@ impl GrammarRegistry {
     /// Checks in order:
     /// 1. User-configured grammar extensions (by scope)
     /// 2. By extension (includes built-in + embedded grammars)
-    /// 3. By filename (handles Makefile, .bashrc, etc.)
+    /// 3. By filename (custom dotfile mappings like .zshrc)
+    /// 4. By filename via syntect (handles Makefile, .bashrc, etc.)
     pub fn find_syntax_for_file(&self, path: &Path) -> Option<&SyntaxReference> {
         // Try extension-based lookup first
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
@@ -242,6 +274,18 @@ impl GrammarRegistry {
             // Try extension lookup (includes embedded grammars like TOML)
             if let Some(syntax) = self.syntax_set.find_syntax_by_extension(ext) {
                 return Some(syntax);
+            }
+        }
+
+        // Try filename-based lookup for dotfiles and special files
+        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+            if let Some(scope) = self.filename_scopes.get(filename) {
+                if let Some(syntax) = syntect::parsing::Scope::new(scope)
+                    .ok()
+                    .and_then(|s| self.syntax_set.find_syntax_by_scope(s))
+                {
+                    return Some(syntax);
+                }
             }
         }
 
@@ -391,6 +435,33 @@ mod tests {
         let arc2 = registry.syntax_set_arc();
         // Both should point to the same data
         assert!(Arc::ptr_eq(&arc1, &arc2));
+    }
+
+    #[test]
+    fn test_shell_dotfiles_detection() {
+        let registry = GrammarRegistry::load();
+
+        // All these should be detected as shell scripts
+        let shell_files = [".zshrc", ".zprofile", ".zshenv", ".bash_aliases"];
+
+        for filename in shell_files {
+            let path = Path::new(filename);
+            let result = registry.find_syntax_for_file(path);
+            assert!(
+                result.is_some(),
+                "{} should be detected as a syntax",
+                filename
+            );
+            let syntax = result.unwrap();
+            // Should be detected as Bash/Shell
+            assert!(
+                syntax.name.to_lowercase().contains("bash")
+                    || syntax.name.to_lowercase().contains("shell"),
+                "{} should be detected as shell/bash, got: {}",
+                filename,
+                syntax.name
+            );
+        }
     }
 
     #[test]
