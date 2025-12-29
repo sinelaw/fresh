@@ -2998,7 +2998,14 @@ impl SplitRenderer {
             if let Some((cursor_screen_x, cursor_screen_y)) = cursor {
                 // cursor_screen_x already includes gutter width from line_view_map
                 let screen_x = render_area.x.saturating_add(cursor_screen_x);
-                let screen_y = render_area.y.saturating_add(cursor_screen_y);
+
+                // Clamp cursor_screen_y to stay within the render area bounds.
+                // This prevents the cursor from jumping to the status bar when
+                // the cursor is at EOF and the buffer ends with a newline.
+                // Issue #468: "Cursor is jumping on statusbar"
+                let max_y = render_area.height.saturating_sub(1);
+                let clamped_cursor_y = cursor_screen_y.min(max_y);
+                let screen_y = render_area.y.saturating_add(clamped_cursor_y);
 
                 frame.set_cursor_position((screen_x, screen_y));
 

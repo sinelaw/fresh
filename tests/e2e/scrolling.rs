@@ -2315,3 +2315,99 @@ fn test_enter_at_bottom_scrolls_immediately() {
     );
     println!("✓ Cursor always stayed in content area (never moved to status bar)");
 }
+
+/// Test that cursor never jumps to status bar when scrolling to end of file
+/// This reproduces the bug from issue #468: "Cursor is jumping on statusbar"
+/// When using PgDown to scroll to the end of a file, especially in a small terminal
+/// where line wrapping occurs, the cursor should never be positioned on the status bar row.
+#[test]
+fn test_cursor_never_on_status_bar_when_scrolling() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use tempfile::TempDir;
+
+    // Use a small terminal to trigger line wrapping (which is key to reproducing the bug)
+    let terminal_width = 30u16;
+    let terminal_height = 10u16;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Create a file with 50 lines that will wrap in the narrow terminal
+    let content: String = (1..=50)
+        .map(|i| format!("This is line number {i} with extra text\n"))
+        .collect();
+    std::fs::write(&file_path, content).unwrap();
+
+    let mut harness = EditorTestHarness::new(terminal_width, terminal_height).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    println!("\n=== Testing cursor never on status bar (small terminal {}x{}) ===",
+             terminal_width, terminal_height);
+
+    // Calculate the status bar row
+    let status_bar_row = crate::common::harness::layout::status_bar_row(terminal_height as usize);
+    let (content_first_row, content_last_row) = harness.content_area_rows();
+
+    println!("Content area: rows {} to {}", content_first_row, content_last_row);
+    println!("Status bar: row {}", status_bar_row);
+
+    // Test 1: Press PageDown repeatedly to scroll to end
+    println!("\nTest 1: PageDown to end of file");
+    for i in 1..=20 {
+        harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        let (cursor_x, cursor_y) = harness.screen_cursor_position();
+
+        // The cursor should NEVER be on the status bar row
+        assert!(
+            (cursor_y as usize) < status_bar_row,
+            "BUG: After PageDown #{}, cursor Y ({}) is at or beyond status bar row ({}). \
+             Cursor position: ({}, {}). This violates the invariant that cursor must stay in content area.",
+            i, cursor_y, status_bar_row, cursor_x, cursor_y
+        );
+
+        // Also verify cursor is in the valid content area
+        assert!(
+            (cursor_y as usize) >= content_first_row && (cursor_y as usize) <= content_last_row,
+            "BUG: After PageDown #{}, cursor Y ({}) is outside content area (rows {}-{})",
+            i, cursor_y, content_first_row, content_last_row
+        );
+    }
+    println!("✓ PageDown scrolling: cursor always in content area");
+
+    // Test 2: Jump directly to end with Ctrl+End
+    println!("\nTest 2: Ctrl+End to jump to EOF");
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    let (cursor_x, cursor_y) = harness.screen_cursor_position();
+    assert!(
+        (cursor_y as usize) < status_bar_row,
+        "BUG: After Ctrl+End, cursor Y ({}) is at or beyond status bar row ({}). \
+         Cursor position: ({}, {}). This violates the invariant that cursor must stay in content area.",
+        cursor_y, status_bar_row, cursor_x, cursor_y
+    );
+    println!("✓ Ctrl+End: cursor at ({}, {}), in content area", cursor_x, cursor_y);
+
+    // Test 3: Navigate down line by line near the end
+    println!("\nTest 3: Navigate down line by line from near end");
+    for _ in 0..10 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        let (cursor_x, cursor_y) = harness.screen_cursor_position();
+        assert!(
+            (cursor_y as usize) < status_bar_row,
+            "BUG: After Down key, cursor Y ({}) is at or beyond status bar row ({}). \
+             Cursor position: ({}, {})",
+            cursor_y, status_bar_row, cursor_x, cursor_y
+        );
+    }
+    println!("✓ Down key navigation: cursor always in content area");
+
+    println!("\n✓ All tests passed: cursor never jumped to status bar");
+}
