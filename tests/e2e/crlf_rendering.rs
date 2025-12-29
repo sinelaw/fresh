@@ -638,7 +638,6 @@ fn test_crlf_cursor_visibility() {
 /// When a file with LF endings has its format changed to CRLF via command palette,
 /// saving should convert all line endings to CRLF
 #[test]
-#[cfg_attr(windows, ignore)] // Command palette waits timeout on Windows CI
 fn test_set_line_ending_converts_on_save_lf_to_crlf() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("lf_to_crlf.txt");
@@ -713,7 +712,6 @@ fn test_set_line_ending_converts_on_save_lf_to_crlf() {
 /// When a file with CRLF endings has its format changed to LF via command palette,
 /// saving should convert all line endings to LF
 #[test]
-#[cfg_attr(windows, ignore)] // Command palette waits timeout on Windows CI
 fn test_set_line_ending_converts_on_save_crlf_to_lf() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("crlf_to_lf.txt");
