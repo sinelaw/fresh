@@ -195,7 +195,7 @@ nix run github:sinelaw/fresh
 
 Or install to your profile:
 ```bash
-nix profile install github:sinelaw/fresh
+nix profile add github:sinelaw/fresh
 ```
 
 ### From crates.io
