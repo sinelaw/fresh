@@ -2034,7 +2034,10 @@ impl Editor {
 
         if word_start < word_end {
             let state = self.active_state_mut();
-            (Some(state.get_text_range(word_start, word_end)), Some(word_start))
+            (
+                Some(state.get_text_range(word_start, word_end)),
+                Some(word_start),
+            )
         } else {
             (None, None)
         }

@@ -1443,7 +1443,11 @@ fn test_find_selection_next_from_word_under_cursor() {
     harness.render().unwrap();
 
     // Cursor is at the start, on "hello"
-    assert_eq!(harness.cursor_position(), 0, "Cursor should start at position 0");
+    assert_eq!(
+        harness.cursor_position(),
+        0,
+        "Cursor should start at position 0"
+    );
 
     // Press Ctrl+F3 to find next occurrence of word under cursor
     harness
@@ -1601,7 +1605,11 @@ fn test_f3_continues_after_find_selection() {
     harness.render().unwrap();
 
     // Cursor is at the start, on "hello"
-    assert_eq!(harness.cursor_position(), 0, "Cursor should start at position 0");
+    assert_eq!(
+        harness.cursor_position(),
+        0,
+        "Cursor should start at position 0"
+    );
 
     // Press Ctrl+F3 to find next occurrence
     harness
