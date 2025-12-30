@@ -2213,6 +2213,10 @@ impl Config {
             Menu {
                 label: "Help".to_string(),
                 items: vec![
+                    MenuItem::Label {
+                        info: format!("Fresh v{}", env!("CARGO_PKG_VERSION")),
+                    },
+                    MenuItem::Separator { separator: true },
                     MenuItem::Action {
                         label: "Show Fresh Manual".to_string(),
                         action: "show_help".to_string(),
