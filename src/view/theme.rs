@@ -163,6 +163,10 @@ struct UiColors {
     status_error_indicator_hover_bg: ColorDef,
     #[serde(default = "default_status_error_indicator_hover_fg")]
     status_error_indicator_hover_fg: ColorDef,
+    #[serde(default = "default_tab_drop_zone_bg")]
+    tab_drop_zone_bg: ColorDef,
+    #[serde(default = "default_tab_drop_zone_border")]
+    tab_drop_zone_border: ColorDef,
 }
 
 // Default tab close hover color (for backward compatibility with existing themes)
@@ -269,6 +273,12 @@ fn default_status_error_indicator_hover_bg() -> ColorDef {
 }
 fn default_status_error_indicator_hover_fg() -> ColorDef {
     ColorDef::Rgb(255, 255, 255) // White text on hover
+}
+fn default_tab_drop_zone_bg() -> ColorDef {
+    ColorDef::Rgb(70, 130, 180) // Steel blue with transparency effect
+}
+fn default_tab_drop_zone_border() -> ColorDef {
+    ColorDef::Rgb(100, 149, 237) // Cornflower blue for border
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -398,6 +408,10 @@ pub struct Theme {
     pub status_error_indicator_hover_bg: Color,
     pub status_error_indicator_hover_fg: Color,
 
+    // Tab drag-and-drop colors
+    pub tab_drop_zone_bg: Color,
+    pub tab_drop_zone_border: Color,
+
     // Search colors
     pub search_match_bg: Color,
     pub search_match_fg: Color,
@@ -493,6 +507,8 @@ impl From<ThemeFile> for Theme {
             status_warning_indicator_hover_fg: file.ui.status_warning_indicator_hover_fg.into(),
             status_error_indicator_hover_bg: file.ui.status_error_indicator_hover_bg.into(),
             status_error_indicator_hover_fg: file.ui.status_error_indicator_hover_fg.into(),
+            tab_drop_zone_bg: file.ui.tab_drop_zone_bg.into(),
+            tab_drop_zone_border: file.ui.tab_drop_zone_border.into(),
             search_match_bg: file.search.match_bg.into(),
             search_match_fg: file.search.match_fg.into(),
             diagnostic_error_fg: file.diagnostic.error_fg.into(),
@@ -647,6 +663,10 @@ impl Theme {
             status_error_indicator_hover_bg: Color::Rgb(250, 80, 77), // Lighter red
             status_error_indicator_hover_fg: Color::Rgb(255, 255, 255),
 
+            // Tab drag-and-drop colors
+            tab_drop_zone_bg: Color::Rgb(70, 130, 180), // Steel blue
+            tab_drop_zone_border: Color::Rgb(100, 149, 237), // Cornflower blue
+
             // Search colors
             search_match_bg: Color::Rgb(100, 100, 20), // Yellow-brown highlight
             search_match_fg: Color::Rgb(255, 255, 255),
@@ -767,6 +787,10 @@ impl Theme {
             status_error_indicator_hover_bg: Color::Rgb(230, 70, 70), // Lighter red
             status_error_indicator_hover_fg: Color::Rgb(255, 255, 255),
 
+            // Tab drag-and-drop colors (lighter for light theme)
+            tab_drop_zone_bg: Color::Rgb(173, 214, 255), // Light blue
+            tab_drop_zone_border: Color::Rgb(70, 130, 180), // Steel blue
+
             // Search colors
             search_match_bg: Color::Rgb(255, 255, 150), // Light yellow highlight
             search_match_fg: Color::Rgb(0, 0, 0),
@@ -886,6 +910,10 @@ impl Theme {
             status_warning_indicator_hover_fg: Color::Black,
             status_error_indicator_hover_bg: Color::LightRed, // Lighter red
             status_error_indicator_hover_fg: Color::White,
+
+            // Tab drag-and-drop colors (high visibility)
+            tab_drop_zone_bg: Color::Rgb(0, 100, 200), // Bright blue
+            tab_drop_zone_border: Color::Yellow,       // Yellow border for visibility
 
             // Search colors
             search_match_bg: Color::Yellow,
@@ -1056,6 +1084,10 @@ impl Theme {
             status_warning_indicator_hover_fg: Color::Rgb(255, 255, 255),
             status_error_indicator_hover_bg: Color::Rgb(200, 30, 30), // Lighter red
             status_error_indicator_hover_fg: Color::Rgb(255, 255, 255),
+
+            // Tab drag-and-drop colors (DOS style)
+            tab_drop_zone_bg: Color::Rgb(0, 170, 170), // Cyan (DOS style)
+            tab_drop_zone_border: Color::Rgb(255, 255, 255), // White border
 
             // Search colors
             search_match_bg: Color::Rgb(170, 85, 0), // Orange/brown

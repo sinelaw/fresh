@@ -732,6 +732,13 @@ impl Editor {
             self.render_tab_context_menu(frame, menu);
         }
 
+        // Render tab drag drop zone overlay if dragging a tab
+        if let Some(ref drag_state) = self.mouse_state.dragging_tab {
+            if drag_state.is_dragging() {
+                self.render_tab_drop_zone(frame, drag_state);
+            }
+        }
+
         // Render software mouse cursor when GPM is active
         // GPM can't draw its cursor on the alternate screen buffer used by TUI apps,
         // so we draw our own cursor at the tracked mouse position.
@@ -960,6 +967,157 @@ impl Editor {
 
         let paragraph = Paragraph::new(lines).block(block);
         frame.render_widget(paragraph, area);
+    }
+
+    /// Render the tab drag drop zone overlay
+    fn render_tab_drop_zone(&self, frame: &mut Frame, drag_state: &super::types::TabDragState) {
+        use ratatui::style::Modifier;
+
+        let Some(ref drop_zone) = drag_state.drop_zone else {
+            return;
+        };
+
+        let split_id = drop_zone.split_id();
+
+        // Find the content area for the target split
+        let split_area = self
+            .cached_layout
+            .split_areas
+            .iter()
+            .find(|(sid, _, _, _, _, _)| *sid == split_id)
+            .map(|(_, _, content_rect, _, _, _)| *content_rect);
+
+        let Some(content_rect) = split_area else {
+            return;
+        };
+
+        // Determine the highlight area based on drop zone type
+        use super::types::TabDropZone;
+
+        let highlight_area = match drop_zone {
+            TabDropZone::TabBar(_, _) => {
+                // For tab bar drops, highlight the entire tab row area
+                // The tab row is typically at content_rect.y - 1
+                let tab_row = content_rect.y.saturating_sub(1);
+                ratatui::layout::Rect::new(content_rect.x, tab_row, content_rect.width, 1)
+            }
+            TabDropZone::SplitLeft(_) => {
+                // Left 25% of the split
+                let width = (content_rect.width as f32 * 0.25).max(3.0) as u16;
+                ratatui::layout::Rect::new(
+                    content_rect.x,
+                    content_rect.y,
+                    width,
+                    content_rect.height,
+                )
+            }
+            TabDropZone::SplitRight(_) => {
+                // Right 25% of the split
+                let width = (content_rect.width as f32 * 0.25).max(3.0) as u16;
+                let x = content_rect.x + content_rect.width - width;
+                ratatui::layout::Rect::new(x, content_rect.y, width, content_rect.height)
+            }
+            TabDropZone::SplitTop(_) => {
+                // Top 25% of the split
+                let height = (content_rect.height as f32 * 0.25).max(2.0) as u16;
+                ratatui::layout::Rect::new(
+                    content_rect.x,
+                    content_rect.y,
+                    content_rect.width,
+                    height,
+                )
+            }
+            TabDropZone::SplitBottom(_) => {
+                // Bottom 25% of the split
+                let height = (content_rect.height as f32 * 0.25).max(2.0) as u16;
+                let y = content_rect.y + content_rect.height - height;
+                ratatui::layout::Rect::new(content_rect.x, y, content_rect.width, height)
+            }
+            TabDropZone::SplitCenter(_) => {
+                // Center 50% of the split
+                let margin_x = (content_rect.width as f32 * 0.25).max(2.0) as u16;
+                let margin_y = (content_rect.height as f32 * 0.25).max(1.0) as u16;
+                ratatui::layout::Rect::new(
+                    content_rect.x + margin_x,
+                    content_rect.y + margin_y,
+                    content_rect.width.saturating_sub(margin_x * 2).max(1),
+                    content_rect.height.saturating_sub(margin_y * 2).max(1),
+                )
+            }
+        };
+
+        // Draw the overlay with the drop zone color
+        // We apply a semi-transparent effect by modifying existing cells
+        let buf = frame.buffer_mut();
+        let drop_zone_bg = self.theme.tab_drop_zone_bg;
+        let drop_zone_border = self.theme.tab_drop_zone_border;
+
+        // Fill the highlight area with a semi-transparent overlay
+        for y in highlight_area.y..highlight_area.y + highlight_area.height {
+            for x in highlight_area.x..highlight_area.x + highlight_area.width {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    // Blend the drop zone color with the existing background
+                    // For a simple effect, we just set the background
+                    cell.set_bg(drop_zone_bg);
+
+                    // Draw border on edges
+                    let is_border = x == highlight_area.x
+                        || x == highlight_area.x + highlight_area.width - 1
+                        || y == highlight_area.y
+                        || y == highlight_area.y + highlight_area.height - 1;
+
+                    if is_border {
+                        cell.set_fg(drop_zone_border);
+                        cell.set_style(cell.style().add_modifier(Modifier::BOLD));
+                    }
+                }
+            }
+        }
+
+        // Draw a border indicator based on the zone type
+        match drop_zone {
+            TabDropZone::SplitLeft(_) => {
+                // Draw vertical indicator on left edge
+                for y in highlight_area.y..highlight_area.y + highlight_area.height {
+                    if let Some(cell) = buf.cell_mut((highlight_area.x, y)) {
+                        cell.set_symbol("▌");
+                        cell.set_fg(drop_zone_border);
+                    }
+                }
+            }
+            TabDropZone::SplitRight(_) => {
+                // Draw vertical indicator on right edge
+                let x = highlight_area.x + highlight_area.width - 1;
+                for y in highlight_area.y..highlight_area.y + highlight_area.height {
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_symbol("▐");
+                        cell.set_fg(drop_zone_border);
+                    }
+                }
+            }
+            TabDropZone::SplitTop(_) => {
+                // Draw horizontal indicator on top edge
+                for x in highlight_area.x..highlight_area.x + highlight_area.width {
+                    if let Some(cell) = buf.cell_mut((x, highlight_area.y)) {
+                        cell.set_symbol("▀");
+                        cell.set_fg(drop_zone_border);
+                    }
+                }
+            }
+            TabDropZone::SplitBottom(_) => {
+                // Draw horizontal indicator on bottom edge
+                let y = highlight_area.y + highlight_area.height - 1;
+                for x in highlight_area.x..highlight_area.x + highlight_area.width {
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_symbol("▄");
+                        cell.set_fg(drop_zone_border);
+                    }
+                }
+            }
+            TabDropZone::SplitCenter(_) | TabDropZone::TabBar(_, _) => {
+                // For center and tab bar, the filled background is sufficient
+            }
+        }
     }
 
     // === Overlay Management (Event-Driven) ===
