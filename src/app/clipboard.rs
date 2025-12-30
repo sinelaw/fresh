@@ -456,9 +456,7 @@ impl Editor {
         // Apply events with atomic undo using bulk edit for O(n) performance
         if events.len() > 1 {
             // Use optimized bulk edit for multi-cursor paste
-            if let Some(bulk_edit) =
-                self.apply_events_as_bulk_edit(events, "Paste".to_string())
-            {
+            if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, "Paste".to_string()) {
                 self.active_event_log_mut().append(bulk_edit);
             }
         } else if let Some(event) = events.into_iter().next() {
