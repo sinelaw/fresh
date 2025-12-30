@@ -1687,16 +1687,26 @@ impl Editor {
         // Calculate new cursor positions based on events
         // Process cursor movements from the original events
         let mut new_cursors: Vec<(CursorId, usize, Option<usize>)> = old_cursors.clone();
-        let mut position_deltas: Vec<(usize, isize)> = Vec::new(); // (position, delta)
 
-        // Calculate position adjustments from edits
+        // Calculate position adjustments from edits (sorted ascending by position)
+        // Each entry is (edit_position, delta) where delta = insert_len - delete_len
+        let mut position_deltas: Vec<(usize, isize)> = Vec::new();
         for (pos, del_len, text) in &edits {
             let delta = text.len() as isize - *del_len as isize;
             position_deltas.push((*pos, delta));
         }
-
-        // Sort position deltas by position ascending for adjustment
         position_deltas.sort_by_key(|(pos, _)| *pos);
+
+        // Helper: calculate cumulative shift for a position based on edits at lower positions
+        let calc_shift = |original_pos: usize| -> isize {
+            let mut shift: isize = 0;
+            for (edit_pos, delta) in &position_deltas {
+                if *edit_pos < original_pos {
+                    shift += delta;
+                }
+            }
+            shift
+        };
 
         // Apply adjustments to cursor positions
         // First check for explicit MoveCursor events (e.g., from indent operations)
@@ -1731,7 +1741,10 @@ impl Editor {
                             cursor_id: event_cursor,
                         } if event_cursor == cursor_id => {
                             // For insert, cursor moves to end of inserted text
-                            *pos = position + text.len();
+                            // Account for shifts from edits at lower positions
+                            let shift = calc_shift(*position);
+                            let adjusted_pos = (*position as isize + shift) as usize;
+                            *pos = adjusted_pos + text.len();
                             *anchor = None;
                         }
                         Event::Delete {
@@ -1740,7 +1753,9 @@ impl Editor {
                             ..
                         } if event_cursor == cursor_id => {
                             // For delete, cursor moves to start of deleted range
-                            *pos = range.start;
+                            // Account for shifts from edits at lower positions
+                            let shift = calc_shift(range.start);
+                            *pos = (range.start as isize + shift) as usize;
                             *anchor = None;
                         }
                         _ => {}

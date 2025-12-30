@@ -273,18 +273,11 @@ fn test_multi_cursor_typing() {
     let cursor_count = harness.editor().active_state().cursors.iter().count();
     assert_eq!(cursor_count, 3, "Should have 3 cursors");
 
-    // Type "X" with all three cursors
-    harness.type_text("X").unwrap();
+    // Type "xyz" with all three cursors
+    harness.type_text("xyz").unwrap();
 
-    // Each cursor should insert X at its position
-    let result = harness.get_buffer_content().unwrap();
-
-    // Count how many X's were inserted
-    let x_count = result.matches('X').count();
-    assert_eq!(
-        x_count, 3,
-        "Should have inserted exactly 3 X's, one per cursor"
-    );
+    // Verify the complete buffer content
+    harness.assert_buffer_content("xyzaaa\nxyzbbb\nxyzccc\nddd");
 }
 
 /// Test removing secondary cursors with Esc
@@ -338,47 +331,33 @@ fn test_multi_cursor_undo_atomic() {
     let cursor_count = harness.editor().active_state().cursors.iter().count();
     assert_eq!(cursor_count, 3, "Should have 3 cursors");
 
-    // Type "X" with all three cursors - this should create a batch event
-    harness.type_text("X").unwrap();
+    // Type "xyz" with all three cursors - this should create a batch event
+    harness.type_text("xyz").unwrap();
 
-    // Each cursor should insert X at its position
-    let result = harness.get_buffer_content().unwrap();
+    // Verify the complete buffer content after typing
+    harness.assert_buffer_content("xyzaaa\nxyzbbb\nxyzccc\nddd");
 
-    // Count how many X's were inserted
-    let x_count = result.matches('X').count();
-    assert_eq!(
-        x_count, 3,
-        "Should have inserted exactly 3 X's, one per cursor. Buffer: {result}"
-    );
+    // Undo 3 times (one for each character typed) - each undo removes one char from all cursors
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+    }
 
-    // Undo once - this should undo ALL three insertions atomically
-    harness
-        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    // All X's should be gone after a single undo
-    let result_after_undo = harness.get_buffer_content().unwrap();
-    let x_count_after_undo = result_after_undo.matches('X').count();
-    assert_eq!(
-        x_count_after_undo, 0,
-        "Should have removed all X's with single undo. Buffer: {result_after_undo}"
-    );
+    // All "xyz" should be gone after undoing all 3 character insertions
     harness.assert_buffer_content("aaa\nbbb\nccc\nddd");
 
-    // Redo once - this should redo ALL three insertions atomically
-    harness
-        .send_key(KeyCode::Char('y'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    // Redo 3 times - this should restore all characters
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Char('y'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+    }
 
-    // All X's should be back after a single redo
-    let result_after_redo = harness.get_buffer_content().unwrap();
-    let x_count_after_redo = result_after_redo.matches('X').count();
-    assert_eq!(
-        x_count_after_redo, 3,
-        "Should have restored all 3 X's with single redo. Buffer: {result_after_redo}"
-    );
+    // All "xyz" should be back after redoing all 3
+    harness.assert_buffer_content("xyzaaa\nxyzbbb\nxyzccc\nddd");
 }
 
 /// Test multi-cursor delete undo atomicity
@@ -553,24 +532,22 @@ fn test_undo_beyond_cursor_add() {
     // Should now have 2 cursors
     assert_eq!(harness.editor().active_state().cursors.count(), 2);
 
-    // Type "X" with both cursors
-    harness.type_text("X").unwrap();
+    // Type "xyz" with both cursors
+    harness.type_text("xyz").unwrap();
 
-    // Should have X inserted at both positions
-    let result = harness.get_buffer_content().unwrap();
-    let x_count = result.matches('X').count();
-    assert_eq!(x_count, 2, "Should have 2 X's. Buffer: {result}");
+    // Verify the complete buffer content after typing
+    harness.assert_buffer_content("xyzaaa\nxyzbbb\nccc");
 
-    // Undo - should undo the batch insertion
-    harness
-        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    // Undo 3 times (one for each character typed) - each undo removes one char from all cursors
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+    }
 
-    // X's should be gone, but we should still have 2 cursors
-    let result = harness.get_buffer_content().unwrap();
-    let x_count = result.matches('X').count();
-    assert_eq!(x_count, 0, "Should have 0 X's. Buffer: {result}");
+    // "xyz" should be gone, but we should still have 2 cursors
+    harness.assert_buffer_content("aaa\nbbb\nccc");
     assert_eq!(harness.editor().active_state().cursors.count(), 2);
 
     // Undo again - should remove the second cursor
@@ -591,16 +568,16 @@ fn test_undo_beyond_cursor_add() {
     // Should have 2 cursors again
     assert_eq!(harness.editor().active_state().cursors.count(), 2);
 
-    // Redo again - should redo the batch insertion
-    harness
-        .send_key(KeyCode::Char('y'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    // Redo 3 times - should redo all 3 character insertions
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Char('y'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+    }
 
-    // X's should be back
-    let result = harness.get_buffer_content().unwrap();
-    let x_count = result.matches('X').count();
-    assert_eq!(x_count, 2, "Should have 2 X's back. Buffer: {result}");
+    // "xyz" should be back
+    harness.assert_buffer_content("xyzaaa\nxyzbbb\nccc");
 }
 
 /// Test that status bar shows cursor count when multiple cursors exist
@@ -744,31 +721,22 @@ fn test_multi_cursor_comprehensive_abc_editing() {
     let cursor_count = harness.editor().active_state().cursors.iter().count();
     assert_eq!(cursor_count, 4, "Should have 4 cursors");
 
-    // Test 1: Type "X" with all four cursors
-    harness.type_text("X").unwrap();
+    // Test 1: Type "xyz" with all four cursors
+    harness.type_text("xyz").unwrap();
 
-    // Each cursor should insert X at its position
-    let result = harness.get_buffer_content().unwrap();
+    // Verify the complete buffer content after typing
+    harness.assert_buffer_content("xyzabc1\nxyzabc2\nxyzabc3\nxyzabc4");
 
-    // Count how many X's were inserted
-    let x_count = result.matches('X').count();
-    assert_eq!(
-        x_count, 4,
-        "Should have inserted exactly 4 X's, one per cursor. Buffer: {result}"
-    );
+    // Test 2: Undo 3 times (one per character) should remove all "xyz"
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+    }
 
-    // Test 2: Undo should remove all X's atomically
-    harness
-        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    let result_after_undo = harness.get_buffer_content().unwrap();
-    let x_count_after_undo = result_after_undo.matches('X').count();
-    assert_eq!(
-        x_count_after_undo, 0,
-        "Should have removed all X's with single undo. Buffer: {result_after_undo}"
-    );
+    // Verify content is restored after undo
+    harness.assert_buffer_content("abc1\nabc2\nabc3\nabc4");
 
     // Verify we still have 4 cursors after undo
     assert_eq!(harness.editor().active_state().cursors.iter().count(), 4);
@@ -1262,21 +1230,13 @@ fn test_identical_lines_cursor_positions() {
 
     let cursor_count = harness.editor().active_state().cursors.iter().count();
     println!("Total cursors: {cursor_count}");
+    assert_eq!(cursor_count, 4, "Should have 4 cursors");
 
-    // Type X
-    harness.type_text("X").unwrap();
+    // Type "xyz"
+    harness.type_text("xyz").unwrap();
 
-    let result = harness.get_buffer_content().unwrap();
-    println!("Buffer after typing X:\n{result}");
-
-    let x_count = result.matches('X').count();
-    println!("X count: {x_count}");
-
-    // This should pass if cursors are positioned correctly
-    assert_eq!(
-        x_count, 4,
-        "Should have 4 X's, one per cursor. Buffer:\n{result}"
-    );
+    // Verify the complete buffer content
+    harness.assert_buffer_content("xyzabc\nxyzabc\nxyzabc\nxyzabc");
 }
 
 /// Test that pressing Esc returns to original cursor position, not last added cursor
