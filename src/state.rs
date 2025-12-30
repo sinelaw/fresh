@@ -685,6 +685,7 @@ fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
 
     let popup = Popup {
         title: data.title.clone(),
+        description: data.description.clone(),
         transient: data.transient,
         content,
         position,

@@ -32,6 +32,8 @@ interface ActionPopupResultData {
 }
 
 // Install commands for TypeScript LSP server
+// Both typescript-language-server AND typescript packages are required
+// See: https://github.com/typescript-language-server/typescript-language-server
 const INSTALL_COMMANDS = {
   npm: "npm install -g typescript-language-server typescript",
   yarn: "yarn global add typescript-language-server typescript",
@@ -95,14 +97,14 @@ globalThis.on_typescript_lsp_status_clicked = function (
   // Show action popup with install options
   editor.showActionPopup({
     id: "typescript-lsp-help",
-    title: "TypeScript LSP Error",
-    message: `Server '${tsLspError.serverCommand}' not found.\n\nInstall with one of these commands:`,
+    title: "TypeScript Language Server Not Found",
+    message: `"${tsLspError.serverCommand}" provides code completion, diagnostics, and navigation for TypeScript/JavaScript files. Copy a command below to install it, or search online for your platform.`,
     actions: [
       { id: "copy_npm", label: `Copy: ${INSTALL_COMMANDS.npm}` },
       { id: "copy_yarn", label: `Copy: ${INSTALL_COMMANDS.yarn}` },
       { id: "copy_pnpm", label: `Copy: ${INSTALL_COMMANDS.pnpm}` },
       { id: "disable", label: "Disable TypeScript LSP" },
-      { id: "dismiss", label: "Dismiss" },
+      { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
 };

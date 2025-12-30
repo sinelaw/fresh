@@ -300,6 +300,12 @@ impl LspWarningDomain {
             "bash-language-server" => {
                 "Install with: npm install -g bash-language-server".to_string()
             }
+            "vscode-html-language-server"
+            | "vscode-css-language-server"
+            | "vscode-json-language-server" => {
+                "Install with: npm install -g vscode-langservers-extracted".to_string()
+            }
+            "csharp-ls" => "Install with: dotnet tool install --global csharp-ls".to_string(),
             _ => format!("Please install '{}' and ensure it's in your PATH.", cmd),
         }
     }
@@ -316,6 +322,13 @@ impl LspWarningDomain {
             }
             "gopls" => Some("go install golang.org/x/tools/gopls@latest".to_string()),
             "bash-language-server" => Some("npm install -g bash-language-server".to_string()),
+            "clangd" => Some("sudo apt install clangd".to_string()),
+            "vscode-html-language-server"
+            | "vscode-css-language-server"
+            | "vscode-json-language-server" => {
+                Some("npm install -g vscode-langservers-extracted".to_string())
+            }
+            "csharp-ls" => Some("dotnet tool install --global csharp-ls".to_string()),
             _ => None,
         }
     }

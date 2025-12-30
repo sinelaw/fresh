@@ -632,15 +632,22 @@ impl Editor {
                         let popup_area = popup.calculate_area(size, Some(cursor_screen_pos));
 
                         // Track popup area for mouse hit testing
+                        // Account for description height when calculating the list item area
+                        let desc_height = popup.description_height();
                         let inner_area = if popup.bordered {
                             ratatui::layout::Rect {
                                 x: popup_area.x + 1,
-                                y: popup_area.y + 1,
+                                y: popup_area.y + 1 + desc_height,
                                 width: popup_area.width.saturating_sub(2),
-                                height: popup_area.height.saturating_sub(2),
+                                height: popup_area.height.saturating_sub(2 + desc_height),
                             }
                         } else {
-                            popup_area
+                            ratatui::layout::Rect {
+                                x: popup_area.x,
+                                y: popup_area.y + desc_height,
+                                width: popup_area.width,
+                                height: popup_area.height.saturating_sub(desc_height),
+                            }
                         };
 
                         let num_items = match &popup.content {
@@ -1045,6 +1052,7 @@ impl Editor {
 
         let popup = PopupData {
             title: Some(format!("Start LSP Server: {}?", server_info)),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![

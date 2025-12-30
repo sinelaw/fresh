@@ -1497,11 +1497,11 @@ impl Config {
         lsp.insert("javascript".to_string(), ts_lsp.clone());
         lsp.insert("typescript".to_string(), ts_lsp);
 
-        // vscode-html-languageserver-bin (installed via npm)
+        // vscode-html-language-server (installed via npm install -g vscode-langservers-extracted)
         lsp.insert(
             "html".to_string(),
             LspServerConfig {
-                command: "vscode-html-languageserver-bin".to_string(),
+                command: "vscode-html-language-server".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
                 auto_start: false,
@@ -1510,11 +1510,11 @@ impl Config {
             },
         );
 
-        // vscode-css-languageserver-bin (installed via npm)
+        // vscode-css-language-server (installed via npm install -g vscode-langservers-extracted)
         lsp.insert(
             "css".to_string(),
             LspServerConfig {
-                command: "vscode-css-languageserver-bin".to_string(),
+                command: "vscode-css-language-server".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
                 auto_start: false,
@@ -1560,11 +1560,11 @@ impl Config {
             },
         );
 
-        // vscode-json-languageserver (installed via npm)
+        // vscode-json-language-server (installed via npm install -g vscode-langservers-extracted)
         lsp.insert(
             "json".to_string(),
             LspServerConfig {
-                command: "vscode-json-languageserver".to_string(),
+                command: "vscode-json-language-server".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
                 auto_start: false,

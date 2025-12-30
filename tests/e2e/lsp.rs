@@ -17,6 +17,7 @@ fn test_lsp_completion_popup_text_not_mangled() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![
@@ -101,6 +102,7 @@ fn test_lsp_completion_replaces_word() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
@@ -189,6 +191,7 @@ fn test_lsp_completion_popup() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![
@@ -352,6 +355,7 @@ fn test_lsp_completion_navigation() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![
@@ -422,6 +426,7 @@ fn test_lsp_completion_cancel() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
@@ -477,6 +482,7 @@ fn test_lsp_completion_after_dot() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![
@@ -540,6 +546,7 @@ fn test_lsp_completion_after_dot_with_partial() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
@@ -593,6 +600,7 @@ fn test_lsp_completion_filtering() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![
@@ -685,6 +693,7 @@ fn test_lsp_completion_popup_size() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![
@@ -850,6 +859,7 @@ fn test_lsp_completion_popup_hides_background() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![
@@ -3343,6 +3353,7 @@ fn test_hover_popup_at_right_edge_does_not_panic() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Hover".to_string()),
+            description: None,
             transient: true,
             content: PopupContentData::Text(vec![
                 "fn example() -> i32".to_string(),
@@ -3389,6 +3400,7 @@ fn test_hover_popup_dismissed_on_focus_change() -> std::io::Result<()> {
         state.apply(&Event::ShowPopup {
             popup: PopupData {
                 title: Some("Hover".to_string()),
+                description: None,
                 transient: true,
                 content: PopupContentData::Text(vec![
                     "fn example() -> i32".to_string(),
@@ -3626,6 +3638,7 @@ fn test_hover_popup_shows_scrollbar_for_long_content() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Hover".to_string()),
+            description: None,
             transient: true,
             content: PopupContentData::Text(long_content),
             position: PopupPositionData::Centered,
@@ -3689,6 +3702,7 @@ fn test_hover_popup_dynamic_height() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Hover".to_string()),
+            description: None,
             transient: true,
             content: PopupContentData::Text(content),
             position: PopupPositionData::Centered,
@@ -3734,6 +3748,7 @@ fn test_hover_popup_mouse_scroll() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Hover".to_string()),
+            description: None,
             transient: true,
             content: PopupContentData::Text(long_content),
             position: PopupPositionData::Centered,
@@ -3814,6 +3829,7 @@ fn test_hover_popup_height_accounts_for_wrapped_lines() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Hover".to_string()),
+            description: None,
             transient: true,
             content: PopupContentData::Text(content),
             position: PopupPositionData::Centered,
@@ -3872,6 +3888,7 @@ fn test_popup_home_key_selects_first_item() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List { items, selected: 0 },
             position: PopupPositionData::Centered,
@@ -3930,6 +3947,7 @@ fn test_popup_end_key_selects_last_item() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List { items, selected: 0 },
             position: PopupPositionData::Centered,
@@ -3983,6 +4001,7 @@ fn test_popup_mouse_wheel_scrolls() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List { items, selected: 0 },
             position: PopupPositionData::Centered,
@@ -4067,6 +4086,7 @@ fn test_popup_scrollbar_visible_for_long_list() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List { items, selected: 0 },
             position: PopupPositionData::Centered,
@@ -4125,6 +4145,7 @@ fn test_popup_no_scrollbar_for_short_list() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List { items, selected: 0 },
             position: PopupPositionData::Centered,
@@ -4177,6 +4198,7 @@ fn test_popup_mouse_wheel_scroll_up() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List { items, selected: 0 },
             position: PopupPositionData::Centered,
@@ -4289,6 +4311,7 @@ fn test_completion_type_to_filter_basic() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![
@@ -4397,6 +4420,7 @@ fn test_completion_type_to_filter_closes_on_no_match() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
@@ -4475,6 +4499,7 @@ fn test_completion_backspace_refilters() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
@@ -4575,6 +4600,7 @@ fn test_completion_type_to_filter_preserves_selection() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![
@@ -4665,6 +4691,7 @@ fn test_completion_snippet_cursor_position() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
@@ -4718,6 +4745,7 @@ fn test_completion_snippet_with_default() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {
@@ -4774,6 +4802,7 @@ fn test_completion_plain_text_no_snippet() -> std::io::Result<()> {
     state.apply(&Event::ShowPopup {
         popup: PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: vec![PopupListItemData {

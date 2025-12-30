@@ -3766,6 +3766,7 @@ impl Editor {
                 // Create popup with message + action list
                 let popup = crate::model::event::PopupData {
                     title: Some(title),
+                    description: Some(message),
                     transient: false,
                     content: crate::model::event::PopupContentData::List { items, selected: 0 },
                     position: crate::model::event::PopupPositionData::BottomRight,
@@ -3775,7 +3776,6 @@ impl Editor {
                 };
 
                 self.show_popup(popup);
-                self.status_message = Some(message);
                 tracing::info!(
                     "Action popup shown: id={}, active_action_popup={:?}",
                     popup_id,

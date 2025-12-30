@@ -31,10 +31,13 @@ interface ActionPopupResultData {
   action_id: string;
 }
 
-// Install commands for Python LSP server
+// Install commands for Python LSP server (python-lsp-server / pylsp)
+// pipx provides isolated installation (recommended)
+// pip_all includes all optional dependencies (rope, pyflakes, etc.)
+// See: https://github.com/python-lsp/python-lsp-server
 const INSTALL_COMMANDS = {
-  pip: "pip install python-lsp-server",
   pipx: "pipx install python-lsp-server",
+  pip: "pip install python-lsp-server",
   pip_all: "pip install 'python-lsp-server[all]'",
 };
 
@@ -91,14 +94,14 @@ globalThis.on_python_lsp_status_clicked = function (
   // Show action popup with install options
   editor.showActionPopup({
     id: "python-lsp-help",
-    title: "Python LSP Error",
-    message: `Server '${pythonLspError.serverCommand}' not found.\n\nInstall with one of these commands:`,
+    title: "Python Language Server Not Found",
+    message: `"${pythonLspError.serverCommand}" provides code completion, diagnostics, and navigation for Python files. Copy a command below to install it, or search online for your platform.`,
     actions: [
-      { id: "copy_pip", label: `Copy: ${INSTALL_COMMANDS.pip}` },
       { id: "copy_pipx", label: `Copy: ${INSTALL_COMMANDS.pipx}` },
+      { id: "copy_pip", label: `Copy: ${INSTALL_COMMANDS.pip}` },
       { id: "copy_pip_all", label: `Copy: ${INSTALL_COMMANDS.pip_all}` },
       { id: "disable", label: "Disable Python LSP" },
-      { id: "dismiss", label: "Dismiss" },
+      { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
 };
@@ -120,14 +123,14 @@ globalThis.on_python_lsp_action_result = function (
   editor.debug(`python-lsp: Action selected - ${data.action_id}`);
 
   switch (data.action_id) {
-    case "copy_pip":
-      editor.setClipboard(INSTALL_COMMANDS.pip);
-      editor.setStatus("Copied: " + INSTALL_COMMANDS.pip);
-      break;
-
     case "copy_pipx":
       editor.setClipboard(INSTALL_COMMANDS.pipx);
       editor.setStatus("Copied: " + INSTALL_COMMANDS.pipx);
+      break;
+
+    case "copy_pip":
+      editor.setClipboard(INSTALL_COMMANDS.pip);
+      editor.setStatus("Copied: " + INSTALL_COMMANDS.pip);
       break;
 
     case "copy_pip_all":

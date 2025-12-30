@@ -128,6 +128,7 @@ impl Editor {
         };
         let popup_data = PopupData {
             title: Some("Completion".to_string()),
+            description: None,
             transient: false,
             content: PopupContentData::List {
                 items: popup_items

@@ -32,10 +32,12 @@ interface ActionPopupResultData {
 }
 
 // Install commands for Rust LSP server
+// rustup is the official recommended method
+// brew is a good alternative for macOS users
+// See: https://rust-analyzer.github.io/book/installation.html
 const INSTALL_COMMANDS = {
   rustup: "rustup component add rust-analyzer",
   brew: "brew install rust-analyzer",
-  cargo: "cargo install rust-analyzer",
 };
 
 // Track error state for Rust LSP
@@ -96,12 +98,11 @@ globalThis.on_rust_lsp_status_clicked = function (
   // Show action popup with install options
   const result = editor.showActionPopup({
     id: "rust-lsp-help",
-    title: "Rust LSP Error",
-    message: `Server '${rustLspError.serverCommand}' not found.\n\nInstall with one of these commands:`,
+    title: "Rust Language Server Not Found",
+    message: `"${rustLspError.serverCommand}" provides code completion, diagnostics, and navigation for Rust files. Copy a command below to install it, or search online for your platform.`,
     actions: [
       { id: "copy_rustup", label: `Copy: ${INSTALL_COMMANDS.rustup}` },
       { id: "copy_brew", label: `Copy: ${INSTALL_COMMANDS.brew}` },
-      { id: "copy_cargo", label: `Copy: ${INSTALL_COMMANDS.cargo}` },
       { id: "disable", label: "Disable Rust LSP" },
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
@@ -139,11 +140,6 @@ globalThis.on_rust_lsp_action_result = function (
     case "copy_brew":
       editor.setClipboard(INSTALL_COMMANDS.brew);
       editor.setStatus("Copied: " + INSTALL_COMMANDS.brew);
-      break;
-
-    case "copy_cargo":
-      editor.setClipboard(INSTALL_COMMANDS.cargo);
-      editor.setStatus("Copied: " + INSTALL_COMMANDS.cargo);
       break;
 
     case "disable":

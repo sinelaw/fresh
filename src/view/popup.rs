@@ -114,6 +114,9 @@ pub struct Popup {
     /// Title of the popup (optional)
     pub title: Option<String>,
 
+    /// Description text shown below title, above content (optional)
+    pub description: Option<String>,
+
     /// Whether this popup is transient (dismissed on focus loss, e.g. hover, signature help)
     pub transient: bool,
 
@@ -147,6 +150,7 @@ impl Popup {
     pub fn text(content: Vec<String>, theme: &crate::view::theme::Theme) -> Self {
         Self {
             title: None,
+            description: None,
             transient: false,
             content: PopupContent::Text(content),
             position: PopupPosition::AtCursor,
@@ -164,6 +168,7 @@ impl Popup {
         let styled_lines = parse_markdown(markdown_text, theme);
         Self {
             title: None,
+            description: None,
             transient: false,
             content: PopupContent::Markdown(styled_lines),
             position: PopupPosition::AtCursor,
@@ -180,6 +185,7 @@ impl Popup {
     pub fn list(items: Vec<PopupListItem>, theme: &crate::view::theme::Theme) -> Self {
         Self {
             title: None,
+            description: None,
             transient: false,
             content: PopupContent::List { items, selected: 0 },
             position: PopupPosition::AtCursor,
@@ -369,6 +375,24 @@ impl Popup {
         (total, visible, self.scroll_offset)
     }
 
+    /// Get the height of the description area (including blank line separator)
+    /// Returns 0 if there is no description.
+    pub fn description_height(&self) -> u16 {
+        if let Some(desc) = &self.description {
+            let border_width = if self.bordered { 2 } else { 0 };
+            let scrollbar_reserved = 2;
+            let content_width = self
+                .width
+                .saturating_sub(border_width)
+                .saturating_sub(scrollbar_reserved) as usize;
+            let desc_vec = vec![desc.clone()];
+            let wrapped = wrap_text_lines(&desc_vec, content_width.saturating_sub(2));
+            wrapped.len() as u16 + 1 // +1 for blank line after description
+        } else {
+            0
+        }
+    }
+
     /// Calculate the actual content height based on the popup content
     fn content_height(&self) -> u16 {
         // Use the popup's configured width for wrapping calculation
@@ -383,6 +407,15 @@ impl Popup {
         let content_width = popup_width
             .saturating_sub(border_width)
             .saturating_sub(scrollbar_reserved) as usize;
+
+        // Calculate description height if present
+        let description_lines = if let Some(desc) = &self.description {
+            let desc_vec = vec![desc.clone()];
+            let wrapped = wrap_text_lines(&desc_vec, content_width.saturating_sub(2));
+            wrapped.len() as u16 + 1 // +1 for blank line after description
+        } else {
+            0
+        };
 
         let content_lines = match &self.content {
             PopupContent::Text(lines) => {
@@ -400,7 +433,7 @@ impl Popup {
         // Add border lines if bordered
         let border_height = if self.bordered { 2 } else { 0 };
 
-        content_lines + border_height
+        description_lines + content_lines + border_height
     }
 
     /// Calculate the area where this popup should be rendered
@@ -553,6 +586,46 @@ impl Popup {
         let inner_area = block.inner(area);
         frame.render_widget(block, area);
 
+        // Render description if present, and adjust content area
+        let content_start_y;
+        if let Some(desc) = &self.description {
+            // Word-wrap description to fit inner width
+            let desc_wrap_width = inner_area.width.saturating_sub(2) as usize; // Leave some padding
+            let desc_vec = vec![desc.clone()];
+            let wrapped_desc = wrap_text_lines(&desc_vec, desc_wrap_width);
+            let desc_lines: usize = wrapped_desc.len();
+
+            // Render each description line
+            for (i, line) in wrapped_desc.iter().enumerate() {
+                if i >= inner_area.height as usize {
+                    break;
+                }
+                let line_area = Rect {
+                    x: inner_area.x,
+                    y: inner_area.y + i as u16,
+                    width: inner_area.width,
+                    height: 1,
+                };
+                let desc_style = Style::default().fg(theme.help_separator_fg);
+                frame.render_widget(Paragraph::new(line.as_str()).style(desc_style), line_area);
+            }
+
+            // Add blank line after description
+            content_start_y = inner_area.y + (desc_lines as u16).min(inner_area.height) + 1;
+        } else {
+            content_start_y = inner_area.y;
+        }
+
+        // Adjust inner_area to start after description
+        let inner_area = Rect {
+            x: inner_area.x,
+            y: content_start_y,
+            width: inner_area.width,
+            height: inner_area
+                .height
+                .saturating_sub(content_start_y - area.y - if self.bordered { 1 } else { 0 }),
+        };
+
         // For text and markdown content, we need to wrap first to determine if scrollbar is needed.
         // We wrap to the width that would be available if scrollbar is shown (conservative approach).
         let scrollbar_reserved_width = 2; // 1 for scrollbar + 1 for spacing
@@ -646,6 +719,13 @@ impl Popup {
                     .skip(self.scroll_offset)
                     .take(content_area.height as usize)
                     .map(|(idx, item)| {
+                        // Check if this item is hovered or selected
+                        let is_hovered = matches!(
+                            hover_target,
+                            Some(crate::app::HoverTarget::PopupListItem(_, hovered_idx)) if *hovered_idx == idx
+                        );
+                        let is_selected = idx == *selected;
+
                         let mut spans = Vec::new();
 
                         // Add icon if present
@@ -653,8 +733,13 @@ impl Popup {
                             spans.push(Span::raw(format!("{} ", icon)));
                         }
 
-                        // Add main text
-                        spans.push(Span::raw(&item.text));
+                        // Add main text with underline for clickable items
+                        let text_style = if is_selected {
+                            Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                        } else {
+                            Style::default().add_modifier(Modifier::UNDERLINED)
+                        };
+                        spans.push(Span::styled(&item.text, text_style));
 
                         // Add detail if present
                         if let Some(detail) = &item.detail {
@@ -664,16 +749,9 @@ impl Popup {
                             ));
                         }
 
-                        // Check if this item is hovered
-                        let is_hovered = matches!(
-                            hover_target,
-                            Some(crate::app::HoverTarget::PopupListItem(_, hovered_idx)) if *hovered_idx == idx
-                        );
-
-                        let style = if idx == *selected {
-                            Style::default()
-                                .bg(theme.popup_selection_bg)
-                                .add_modifier(Modifier::BOLD)
+                        // Row style (background only, no underline)
+                        let row_style = if is_selected {
+                            Style::default().bg(theme.popup_selection_bg)
                         } else if is_hovered {
                             Style::default()
                                 .bg(theme.menu_hover_bg)
@@ -682,7 +760,7 @@ impl Popup {
                             Style::default()
                         };
 
-                        ListItem::new(Line::from(spans)).style(style)
+                        ListItem::new(Line::from(spans)).style(row_style)
                     })
                     .collect();
 
