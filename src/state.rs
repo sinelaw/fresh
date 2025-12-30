@@ -680,6 +680,7 @@ fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
         PopupPositionData::AboveCursor => PopupPosition::AboveCursor,
         PopupPositionData::Fixed { x, y } => PopupPosition::Fixed { x, y },
         PopupPositionData::Centered => PopupPosition::Centered,
+        PopupPositionData::BottomRight => PopupPosition::BottomRight,
     };
 
     let popup = Popup {

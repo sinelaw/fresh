@@ -165,8 +165,17 @@ impl Editor {
 
     /// Handle PopupCancel action.
     pub fn handle_popup_cancel(&mut self) {
+        tracing::info!(
+            "handle_popup_cancel: active_action_popup={:?}",
+            self.active_action_popup.as_ref().map(|(id, _)| id)
+        );
+
         // Check if this is an action popup (from plugin showActionPopup)
         if let Some((popup_id, _actions)) = self.active_action_popup.take() {
+            tracing::info!(
+                "handle_popup_cancel: dismissing action popup id={}",
+                popup_id
+            );
             self.hide_popup();
 
             // Fire the ActionPopupResult hook with "dismissed"
@@ -177,6 +186,7 @@ impl Editor {
                     action_id: "dismissed".to_string(),
                 },
             );
+            tracing::info!("handle_popup_cancel: action_popup_result hook fired");
             return;
         }
 

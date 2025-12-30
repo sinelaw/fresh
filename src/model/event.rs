@@ -288,6 +288,7 @@ pub enum PopupPositionData {
     AboveCursor,
     Fixed { x: u16, y: u16 },
     Centered,
+    BottomRight,
 }
 
 /// Margin position for events

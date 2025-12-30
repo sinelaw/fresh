@@ -42,6 +42,8 @@ pub enum PopupPosition {
     Fixed { x: u16, y: u16 },
     /// Centered on screen
     Centered,
+    /// Bottom right corner (above status bar)
+    BottomRight,
 }
 
 /// Content of a popup window
@@ -479,6 +481,25 @@ impl Popup {
                     .min(terminal_area.height);
                 let x = (terminal_area.width.saturating_sub(width)) / 2;
                 let y = (terminal_area.height.saturating_sub(height)) / 2;
+                Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                }
+            }
+            PopupPosition::BottomRight => {
+                let width = self.width.min(terminal_area.width);
+                let height = self
+                    .content_height()
+                    .min(self.max_height)
+                    .min(terminal_area.height);
+                // Position in bottom right, leaving 2 rows for status bar
+                let x = terminal_area.width.saturating_sub(width);
+                let y = terminal_area
+                    .height
+                    .saturating_sub(height)
+                    .saturating_sub(2);
                 Rect {
                     x,
                     y,

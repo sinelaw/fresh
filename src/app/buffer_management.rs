@@ -890,15 +890,29 @@ impl Editor {
     /// Show LSP status - opens the warning log file if there are LSP warnings,
     /// otherwise shows a brief status message.
     pub fn show_lsp_status_popup(&mut self) {
-        // Get the current buffer's language for the hook
-        let language = self
-            .buffer_metadata
-            .get(&self.active_buffer())
-            .and_then(|m| m.file_path())
-            .and_then(|path| detect_language(path, &self.config.languages))
-            .unwrap_or_else(|| "unknown".to_string());
-
         let has_error = self.warning_domains.lsp.level() == crate::app::WarningLevel::Error;
+
+        // Use the language from the LSP error state if available, otherwise detect from buffer.
+        // This ensures clicking the status indicator works regardless of which buffer is focused.
+        let language = self
+            .warning_domains
+            .lsp
+            .language
+            .clone()
+            .unwrap_or_else(|| {
+                self.buffer_metadata
+                    .get(&self.active_buffer())
+                    .and_then(|m| m.file_path())
+                    .and_then(|path| detect_language(path, &self.config.languages))
+                    .unwrap_or_else(|| "unknown".to_string())
+            });
+
+        tracing::info!(
+            "show_lsp_status_popup: language={}, has_error={}, has_warnings={}",
+            language,
+            has_error,
+            self.warning_domains.lsp.has_warnings()
+        );
 
         // Fire the LspStatusClicked hook for plugins
         self.plugin_manager.run_hook(
@@ -908,6 +922,7 @@ impl Editor {
                 has_error,
             },
         );
+        tracing::info!("show_lsp_status_popup: hook fired");
 
         if !self.warning_domains.lsp.has_warnings() {
             if self.lsp_status.is_empty() {
@@ -915,6 +930,16 @@ impl Editor {
             } else {
                 self.status_message = Some(format!("LSP: {}", self.lsp_status));
             }
+            return;
+        }
+
+        // If there's an LSP error AND a plugin is handling the status click, don't open the
+        // warning log which would switch focus and break language detection for subsequent clicks.
+        // Only suppress if a plugin has registered to handle the hook.
+        if has_error && self.plugin_manager.has_hook_handlers("lsp_status_clicked") {
+            tracing::info!(
+                "show_lsp_status_popup: has_error=true and plugin registered, skipping warning log"
+            );
             return;
         }
 

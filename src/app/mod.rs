@@ -3768,7 +3768,7 @@ impl Editor {
                     title: Some(title),
                     transient: false,
                     content: crate::model::event::PopupContentData::List { items, selected: 0 },
-                    position: crate::model::event::PopupPositionData::Centered,
+                    position: crate::model::event::PopupPositionData::BottomRight,
                     width: 60,
                     max_height: 15,
                     bordered: true,
@@ -3776,6 +3776,11 @@ impl Editor {
 
                 self.show_popup(popup);
                 self.status_message = Some(message);
+                tracing::info!(
+                    "Action popup shown: id={}, active_action_popup={:?}",
+                    popup_id,
+                    self.active_action_popup.as_ref().map(|(id, _)| id)
+                );
             }
 
             PluginCommand::DisableLspForLanguage { language } => {
