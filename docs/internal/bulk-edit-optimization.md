@@ -29,6 +29,7 @@ For 500 cursors: ~500x improvement.
 | Toggle Comment | ✅ Done | `src/app/render.rs` |
 | Indent/Dedent | ✅ Done | `src/app/mod.rs` |
 | LSP Rename | ✅ Done | `src/app/lsp_requests.rs` |
+| Multi-cursor Paste | ✅ Done | `src/app/clipboard.rs` |
 
 ## Key Functions
 

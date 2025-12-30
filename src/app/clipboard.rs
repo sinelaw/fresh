@@ -453,14 +453,14 @@ impl Editor {
             });
         }
 
-        // Apply events with atomic undo
+        // Apply events with atomic undo using bulk edit for O(n) performance
         if events.len() > 1 {
-            let batch = Event::Batch {
-                events: events.clone(),
-                description: "Paste".to_string(),
-            };
-            self.active_event_log_mut().append(batch.clone());
-            self.apply_event_to_active_buffer(&batch);
+            // Use optimized bulk edit for multi-cursor paste
+            if let Some(bulk_edit) =
+                self.apply_events_as_bulk_edit(events, "Paste".to_string())
+            {
+                self.active_event_log_mut().append(bulk_edit);
+            }
         } else if let Some(event) = events.into_iter().next() {
             self.active_event_log_mut().append(event.clone());
             self.apply_event_to_active_buffer(&event);
