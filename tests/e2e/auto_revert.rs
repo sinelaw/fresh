@@ -344,6 +344,81 @@ fn test_auto_revert_not_disabled_by_external_save() {
     harness.assert_buffer_content("Second external change");
 }
 
+/// Test that auto-reverting a background file does NOT affect the viewport
+/// of the currently active buffer.
+///
+/// This is a regression test for a bug where:
+/// 1. User scrolls down in main file (large viewport position)
+/// 2. A background file (not currently visible) changes externally
+/// 3. Auto-revert triggers for the background file
+/// 4. BUG: The active file's viewport gets reset to 0 because revert_file()
+///    was modifying the wrong split's viewport
+#[test]
+fn test_auto_revert_background_file_does_not_affect_active_viewport() {
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    // Create main file with many lines (so we can scroll)
+    let main_content: String = (1..=200)
+        .map(|i| format!("Main file line number {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let main_file = project_dir.join("main.txt");
+    write_and_sync(&main_file, &main_content);
+
+    // Create a small background file
+    let bg_file = project_dir.join("background.txt");
+    write_and_sync(&bg_file, "Background file v1");
+
+    // Open both files (main file opened last, so it's active)
+    harness.open_file(&bg_file).unwrap();
+    harness.open_file(&main_file).unwrap();
+
+    // Verify main file is active
+    harness.assert_buffer_content(&main_content);
+
+    // Scroll down significantly in main file using mouse scroll
+    for _ in 0..20 {
+        harness.mouse_scroll_down(40, 12).unwrap();
+    }
+    harness.render().unwrap();
+
+    // Record the viewport position - should be scrolled down
+    let top_byte_before = harness.top_byte();
+    assert!(
+        top_byte_before > 500,
+        "Should have scrolled down significantly, got top_byte={}",
+        top_byte_before
+    );
+
+    // Now modify the background file externally
+    harness.sleep(FILE_CHANGE_DELAY);
+    write_and_sync(&bg_file, "Background file v2 - changed externally");
+
+    // Wait for auto-revert to process the background file
+    // We can't directly check the background buffer's content without switching to it,
+    // so we just process events and wait a bit
+    for _ in 0..20 {
+        harness.process_async_and_render().unwrap();
+        harness.sleep(Duration::from_millis(50));
+    }
+
+    // The main file should still be active
+    harness.assert_buffer_content(&main_content);
+
+    // CRITICAL: The viewport position should NOT have changed!
+    let top_byte_after = harness.top_byte();
+    assert_eq!(
+        top_byte_before,
+        top_byte_after,
+        "Active viewport should not be affected by background file auto-revert! \
+         Before: {}, After: {} (jumped back by {} bytes)",
+        top_byte_before,
+        top_byte_after,
+        top_byte_before.saturating_sub(top_byte_after)
+    );
+}
+
 /// Test auto-revert with temp+rename save pattern (like vim, vscode, etc.)
 /// This specifically tests the inode change scenario on Linux where inotify
 /// watches inodes rather than paths. When a file is saved via temp+rename,

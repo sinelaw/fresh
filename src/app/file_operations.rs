@@ -553,6 +553,65 @@ impl Editor {
         }
     }
 
+    /// Revert a specific buffer by ID without affecting the active viewport.
+    ///
+    /// This is used for auto-reverting background buffers that aren't currently
+    /// visible in the active split. It reloads the buffer content and updates
+    /// cursors (clamped to valid positions), but does NOT touch any viewport state.
+    fn revert_buffer_by_id(&mut self, buffer_id: BufferId, path: &Path) -> io::Result<()> {
+        // Load the file content fresh from disk
+        let new_state = EditorState::from_file(
+            path,
+            self.terminal_width,
+            self.terminal_height,
+            self.config.editor.large_file_threshold_bytes as usize,
+            &self.grammar_registry,
+        )?;
+
+        // Get the new file size for clamping
+        let new_file_size = new_state.buffer.len();
+
+        // Get old cursors before replacing the buffer
+        let old_cursors = self
+            .buffers
+            .get(&buffer_id)
+            .map(|s| s.cursors.clone())
+            .unwrap_or_default();
+
+        // Replace the buffer content
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            *state = new_state;
+
+            // Restore cursor positions (clamped to valid range for new file size)
+            let mut restored_cursors = old_cursors;
+            restored_cursors.map(|cursor| {
+                cursor.position = cursor.position.min(new_file_size);
+                cursor.clear_selection();
+            });
+            state.cursors = restored_cursors;
+        }
+
+        // Clear the undo/redo history for this buffer
+        if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+            *event_log = EventLog::new();
+        }
+
+        // Clear seen_byte_ranges so plugins get notified of all visible lines
+        self.seen_byte_ranges.remove(&buffer_id);
+
+        // Update the file modification time
+        if let Ok(metadata) = std::fs::metadata(path) {
+            if let Ok(mtime) = metadata.modified() {
+                self.file_mod_times.insert(path.to_path_buf(), mtime);
+            }
+        }
+
+        // Notify LSP that the file was changed
+        self.notify_lsp_file_changed(path);
+
+        Ok(())
+    }
+
     /// Handle a file change notification (from file watcher)
     pub fn handle_file_changed(&mut self, changed_path: &str) {
         let path = PathBuf::from(changed_path);
@@ -617,19 +676,25 @@ impl Editor {
                     continue;
                 }
 
-                // Temporarily switch to this buffer to revert it
-                let current_active = self.active_buffer();
-                // Temporarily switch buffer for revert (no side effects needed)
-                self.split_manager.set_active_buffer_id(buffer_id);
+                // Check if this buffer is currently displayed in the active split
+                let is_active_buffer = buffer_id == self.active_buffer();
 
-                if let Err(e) = self.revert_file() {
-                    tracing::error!("Failed to auto-revert file {:?}: {}", path, e);
+                if is_active_buffer {
+                    // Use revert_file() which preserves viewport for active buffer
+                    if let Err(e) = self.revert_file() {
+                        tracing::error!("Failed to auto-revert file {:?}: {}", path, e);
+                    } else {
+                        tracing::info!("Auto-reverted file: {:?}", path);
+                    }
                 } else {
-                    tracing::info!("Auto-reverted file: {:?}", path);
+                    // Use revert_buffer_by_id() which doesn't touch any viewport
+                    // This prevents corrupting the active split's viewport state
+                    if let Err(e) = self.revert_buffer_by_id(buffer_id, &path) {
+                        tracing::error!("Failed to auto-revert background file {:?}: {}", path, e);
+                    } else {
+                        tracing::info!("Auto-reverted file: {:?}", path);
+                    }
                 }
-
-                // Switch back to original buffer
-                self.split_manager.set_active_buffer_id(current_active);
 
                 // Update the modification time tracking for this file
                 self.watch_file(&path);
