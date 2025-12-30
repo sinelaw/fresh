@@ -1594,3 +1594,83 @@ fn test_wrapped_line_with_grapheme_clusters_visible() {
         screen
     );
 }
+
+/// Test mouse click on wrapped lines containing Thai grapheme clusters
+/// Thai graphemes are multi-code-point but single visual units
+#[test]
+fn test_mouse_click_wrapped_thai_grapheme_clusters() {
+    const TERMINAL_WIDTH: u16 = 40; // Narrow to force wrapping
+    const TERMINAL_HEIGHT: u16 = 24;
+
+    let mut harness = EditorTestHarness::new(TERMINAL_WIDTH, TERMINAL_HEIGHT).unwrap();
+
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+
+    // Create a line with Thai text that will wrap
+    // Each Thai grapheme cluster "ที่" is 9 bytes, 3 code points, ~1 visual column
+    // We'll create enough content to force wrapping
+    // "Hello ที่นี่ World ที่นี่ End" with padding
+    let thai_text = "Hello ที่นี่ World ที่นี่ and more text to force wrapping here";
+
+    // Verify our assumptions about the Thai text
+    assert!(
+        thai_text.contains("ที่"),
+        "Text should contain Thai graphemes"
+    );
+
+    harness.type_text(thai_text).unwrap();
+    harness.render().unwrap();
+
+    let (content_start, _) = harness.content_area_rows();
+    let row = content_start as u16;
+
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let (gutter_x, _) = harness.screen_cursor_position();
+
+    // Valid byte boundaries for the text
+    let valid_boundaries: Vec<usize> = thai_text
+        .char_indices()
+        .map(|(i, _)| i)
+        .chain(std::iter::once(thai_text.len()))
+        .collect();
+
+    // Click on various positions and verify we land on valid boundaries
+    for col_offset in [0, 5, 10, 15, 20] {
+        harness.sleep(double_click_delay);
+        harness.mouse_click(gutter_x + col_offset, row).unwrap();
+        harness.render().unwrap();
+
+        let pos = harness.cursor_position();
+        assert!(
+            valid_boundaries.contains(&pos),
+            "Click at col {} should land on valid boundary, got {}. Valid: {:?}",
+            col_offset,
+            pos,
+            &valid_boundaries[..valid_boundaries.len().min(20)]
+        );
+    }
+
+    // Click past the end of the first visual row - should position correctly
+    harness.sleep(double_click_delay);
+    harness.mouse_click(gutter_x + 50, row).unwrap();
+    harness.render().unwrap();
+    let pos = harness.cursor_position();
+    assert!(
+        valid_boundaries.contains(&pos),
+        "Click past end should land on valid boundary, got {}",
+        pos
+    );
+
+    // If content wraps to second row, test clicking there too
+    harness.sleep(double_click_delay);
+    harness.mouse_click(gutter_x + 5, row + 1).unwrap();
+    harness.render().unwrap();
+    let pos = harness.cursor_position();
+    assert!(
+        valid_boundaries.contains(&pos),
+        "Click on wrapped row should land on valid boundary, got {}",
+        pos
+    );
+}

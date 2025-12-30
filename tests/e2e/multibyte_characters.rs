@@ -1999,6 +1999,127 @@ fn test_mouse_select_never_creates_invalid_utf8() {
     println!("All selection combinations produce valid UTF-8 boundaries");
 }
 
+/// Test mouse click with Thai text (multi-code-point grapheme clusters)
+/// Thai "ที่" is 1 grapheme, 3 code points, 9 bytes
+#[test]
+fn test_mouse_click_thai_grapheme_clusters() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+
+    // Thai "ที่X" = ท (3 bytes) + ี (3 bytes) + ่ (3 bytes) + X (1 byte) = 10 bytes
+    // Visually: 1 Thai grapheme (1 column) + 1 ASCII char (1 column) = 2 columns
+    let text = "ที่X";
+    assert_eq!(text.len(), 10, "Thai text should be 10 bytes");
+    assert_eq!(text.chars().count(), 4, "Thai text should be 4 code points");
+
+    harness.type_text(text).unwrap();
+    harness.render().unwrap();
+
+    let (content_start, _) = harness.content_area_rows();
+    let row = content_start as u16;
+
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let (gutter_x, _) = harness.screen_cursor_position();
+
+    // Valid byte boundaries: 0, 3, 6, 9, 10 (one per code point + end)
+    let valid_boundaries: Vec<usize> = text
+        .char_indices()
+        .map(|(i, _)| i)
+        .chain(std::iter::once(text.len()))
+        .collect();
+    assert_eq!(valid_boundaries, vec![0, 3, 6, 9, 10]);
+
+    // Click on Thai grapheme (col 0) - should land on valid boundary
+    harness.mouse_click(gutter_x, row).unwrap();
+    harness.render().unwrap();
+    let pos = harness.cursor_position();
+    assert!(
+        valid_boundaries.contains(&pos),
+        "Click on Thai grapheme should land on valid boundary, got {}",
+        pos
+    );
+
+    harness.sleep(double_click_delay);
+
+    // Click on X (col 1) - should land on byte 9 or 10
+    harness.mouse_click(gutter_x + 1, row).unwrap();
+    harness.render().unwrap();
+    let pos = harness.cursor_position();
+    assert!(
+        pos == 9 || pos == 10,
+        "Click on X should position at byte 9 or 10, got {}",
+        pos
+    );
+
+    harness.sleep(double_click_delay);
+
+    // Click past end (col 2+) - should position at byte 10 (after all content)
+    harness.mouse_click(gutter_x + 5, row).unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.cursor_position(),
+        10,
+        "Click past end of Thai text should position at byte 10"
+    );
+}
+
+/// Test mouse click with ZWJ emoji (multi-code-point single grapheme)
+/// Family emoji 👨‍👩‍👧 is 1 grapheme but multiple code points
+#[test]
+fn test_mouse_click_zwj_emoji() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+
+    // ZWJ family emoji + ASCII
+    // 👨‍👩‍👧 = 👨 (4) + ZWJ (3) + 👩 (4) + ZWJ (3) + 👧 (4) = 18 bytes, displayed as ~2 columns
+    let text = "👨\u{200D}👩\u{200D}👧X";
+
+    harness.type_text(text).unwrap();
+    harness.render().unwrap();
+
+    let (content_start, _) = harness.content_area_rows();
+    let row = content_start as u16;
+
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let (gutter_x, _) = harness.screen_cursor_position();
+
+    // Valid byte boundaries are at each code point start
+    let valid_boundaries: Vec<usize> = text
+        .char_indices()
+        .map(|(i, _)| i)
+        .chain(std::iter::once(text.len()))
+        .collect();
+
+    // Click on ZWJ emoji region - should land on valid boundary (never mid-codepoint)
+    harness.mouse_click(gutter_x, row).unwrap();
+    harness.render().unwrap();
+    let pos = harness.cursor_position();
+    assert!(
+        valid_boundaries.contains(&pos),
+        "Click on ZWJ emoji should land on valid boundary, got {}. Valid: {:?}",
+        pos,
+        valid_boundaries
+    );
+
+    harness.sleep(double_click_delay);
+
+    // Click past end should position after all content
+    harness.mouse_click(gutter_x + 10, row).unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.cursor_position(),
+        text.len(),
+        "Click past end of ZWJ emoji text should position at byte {}",
+        text.len()
+    );
+}
+
 /// Test multi-line mouse selection with multi-byte characters
 #[test]
 fn test_mouse_select_multiline_multibyte() {
