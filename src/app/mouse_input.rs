@@ -1806,6 +1806,13 @@ impl Editor {
         target_split_id: SplitId,
         insert_idx: Option<usize>,
     ) {
+        // Check if source split will be empty after removing this buffer
+        let source_becomes_empty = self
+            .split_view_states
+            .get(&source_split_id)
+            .map(|vs| vs.open_buffers.len() == 1 && vs.open_buffers.contains(&buffer_id))
+            .unwrap_or(false);
+
         // Remove from source split's tab bar
         if let Some(source_view_state) = self.split_view_states.get_mut(&source_split_id) {
             source_view_state.open_buffers.retain(|&id| id != buffer_id);
@@ -1837,7 +1844,14 @@ impl Editor {
         self.split_manager.set_active_split(target_split_id);
         self.set_active_buffer(buffer_id);
 
-        self.set_status_message(format!("Moved tab to split"));
+        // If source split is now empty, close it
+        if source_becomes_empty {
+            self.split_view_states.remove(&source_split_id);
+            let _ = self.split_manager.close_split(source_split_id);
+            self.set_status_message("Moved tab to split (source split closed)".to_string());
+        } else {
+            self.set_status_message("Moved tab to split".to_string());
+        }
     }
 
     /// Create a new split from a dropped tab
@@ -1849,6 +1863,13 @@ impl Editor {
         direction: crate::model::event::SplitDirection,
         new_split_first: bool, // If true, new split is placed first (left/top)
     ) {
+        // Check if source split will be empty after removing this buffer
+        let source_becomes_empty = self
+            .split_view_states
+            .get(&source_split_id)
+            .map(|vs| vs.open_buffers.len() == 1 && vs.open_buffers.contains(&buffer_id))
+            .unwrap_or(false);
+
         // Remove from source split's tab bar
         let source_had_buffer =
             if let Some(source_view_state) = self.split_view_states.get_mut(&source_split_id) {
@@ -1900,11 +1921,17 @@ impl Editor {
                 // For now, we accept the default behavior (new split is second)
                 // TODO: Implement swap_split_children for new_split_first=true
 
+                // If source split is now empty, close it
+                if source_becomes_empty {
+                    self.split_view_states.remove(&source_split_id);
+                    let _ = self.split_manager.close_split(source_split_id);
+                }
+
                 // Focus the new split
                 self.split_manager.set_active_split(new_split_id);
                 self.set_active_buffer(buffer_id);
 
-                self.set_status_message(format!("Created new split"));
+                self.set_status_message("Created new split".to_string());
             }
             Err(e) => {
                 // Restore active split on error

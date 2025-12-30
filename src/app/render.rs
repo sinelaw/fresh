@@ -995,15 +995,14 @@ impl Editor {
         use super::types::TabDropZone;
 
         let highlight_area = match drop_zone {
-            TabDropZone::TabBar(_, _) => {
-                // For tab bar drops, highlight the entire tab row area
-                // The tab row is typically at content_rect.y - 1
-                let tab_row = content_rect.y.saturating_sub(1);
-                ratatui::layout::Rect::new(content_rect.x, tab_row, content_rect.width, 1)
+            TabDropZone::TabBar(_, _) | TabDropZone::SplitCenter(_) => {
+                // For tab bar and center drops, highlight the entire split area
+                // This indicates the tab will be added to this split's tab bar
+                content_rect
             }
             TabDropZone::SplitLeft(_) => {
-                // Left 25% of the split
-                let width = (content_rect.width as f32 * 0.25).max(3.0) as u16;
+                // Left 50% of the split (matches the actual split size created)
+                let width = (content_rect.width / 2).max(3);
                 ratatui::layout::Rect::new(
                     content_rect.x,
                     content_rect.y,
@@ -1012,14 +1011,14 @@ impl Editor {
                 )
             }
             TabDropZone::SplitRight(_) => {
-                // Right 25% of the split
-                let width = (content_rect.width as f32 * 0.25).max(3.0) as u16;
+                // Right 50% of the split (matches the actual split size created)
+                let width = (content_rect.width / 2).max(3);
                 let x = content_rect.x + content_rect.width - width;
                 ratatui::layout::Rect::new(x, content_rect.y, width, content_rect.height)
             }
             TabDropZone::SplitTop(_) => {
-                // Top 25% of the split
-                let height = (content_rect.height as f32 * 0.25).max(2.0) as u16;
+                // Top 50% of the split (matches the actual split size created)
+                let height = (content_rect.height / 2).max(2);
                 ratatui::layout::Rect::new(
                     content_rect.x,
                     content_rect.y,
@@ -1028,21 +1027,10 @@ impl Editor {
                 )
             }
             TabDropZone::SplitBottom(_) => {
-                // Bottom 25% of the split
-                let height = (content_rect.height as f32 * 0.25).max(2.0) as u16;
+                // Bottom 50% of the split (matches the actual split size created)
+                let height = (content_rect.height / 2).max(2);
                 let y = content_rect.y + content_rect.height - height;
                 ratatui::layout::Rect::new(content_rect.x, y, content_rect.width, height)
-            }
-            TabDropZone::SplitCenter(_) => {
-                // Center 50% of the split
-                let margin_x = (content_rect.width as f32 * 0.25).max(2.0) as u16;
-                let margin_y = (content_rect.height as f32 * 0.25).max(1.0) as u16;
-                ratatui::layout::Rect::new(
-                    content_rect.x + margin_x,
-                    content_rect.y + margin_y,
-                    content_rect.width.saturating_sub(margin_x * 2).max(1),
-                    content_rect.height.saturating_sub(margin_y * 2).max(1),
-                )
             }
         };
 
