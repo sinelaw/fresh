@@ -247,9 +247,7 @@ fn test_replace_all_overlapping_pattern() {
         }
 
         if start.elapsed() > timeout {
-            panic!(
-                "Replace all with overlapping pattern timed out. Possible infinite loop."
-            );
+            panic!("Replace all with overlapping pattern timed out. Possible infinite loop.");
         }
     }
 

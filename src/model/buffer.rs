@@ -921,6 +921,42 @@ impl TextBuffer {
         self.recovery_pending = true;
     }
 
+    /// Replace the entire buffer content with new content
+    /// This is an O(n) operation that rebuilds the piece tree in a single pass,
+    /// avoiding the O(n²) complexity of applying individual edits.
+    ///
+    /// This is used for bulk operations like "replace all" where applying
+    /// individual edits would be prohibitively slow.
+    pub fn replace_content(&mut self, new_content: &str) {
+        let bytes = new_content.len();
+        let content_bytes = new_content.as_bytes().to_vec();
+
+        // Count line feeds in the new content
+        let line_feed_cnt = content_bytes.iter().filter(|&&b| b == b'\n').count();
+
+        // Create a new StringBuffer for the new content
+        let buffer_id = self.next_buffer_id;
+        self.next_buffer_id += 1;
+        let buffer = StringBuffer::new(buffer_id, content_bytes);
+        self.buffers.push(buffer);
+
+        // Rebuild the piece tree with a single piece containing all the new content
+        if bytes > 0 {
+            self.piece_tree = PieceTree::new(
+                BufferLocation::Added(buffer_id),
+                0,
+                bytes,
+                Some(line_feed_cnt),
+            );
+        } else {
+            self.piece_tree = PieceTree::empty();
+        }
+
+        // Mark as modified and needing recovery
+        self.modified = true;
+        self.recovery_pending = true;
+    }
+
     /// Get text from a byte offset range
     /// This now uses the optimized piece_tree.iter_pieces_in_range() for a single traversal
     /// Get text from a byte offset range (read-only)

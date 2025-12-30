@@ -1390,6 +1390,19 @@ impl Editor {
                 }
                 all_changes
             }
+            Event::ReplaceAll { new_content, .. } => {
+                // For ReplaceAll, send a full document sync (no range = full content)
+                // This is much more efficient than sending thousands of incremental changes
+                tracing::trace!(
+                    "collect_lsp_changes: processing ReplaceAll with {} bytes",
+                    new_content.len()
+                );
+                vec![TextDocumentContentChangeEvent {
+                    range: None, // Full document sync
+                    range_length: None,
+                    text: new_content.clone(),
+                }]
+            }
             _ => Vec::new(), // Ignore cursor movements and other events
         }
     }
@@ -1471,6 +1484,23 @@ impl Editor {
                     start_line: min_line,
                     end_line: max_line,
                     line_delta: total_delta,
+                }
+            }
+            Event::ReplaceAll {
+                old_content,
+                new_content,
+                ..
+            } => {
+                // ReplaceAll affects the entire buffer
+                // Count lines in old and new content
+                let old_lines = old_content.matches('\n').count();
+                let new_lines = new_content.matches('\n').count();
+                let line_delta = new_lines as i32 - old_lines as i32;
+
+                super::types::EventLineInfo {
+                    start_line: 0,
+                    end_line: old_lines,
+                    line_delta,
                 }
             }
             _ => super::types::EventLineInfo::default(),
@@ -2281,21 +2311,26 @@ impl Editor {
             'a' | 'A' | '!' => {
                 // Replace all remaining matches with SINGLE confirmation
                 // Undo behavior: ONE undo step undoes ALL remaining replacements
-                // Uses streaming search (doesn't materialize file), but collects positions for batch
+                //
+                // OPTIMIZATION: Uses O(n) string replacement instead of O(n²) individual edits
+                // This avoids the performance issue where each edit triggers tree operations
 
-                // First replace the current match
-                self.replace_current_match(&ir_state)?;
-                ir_state.replacements_made += 1;
+                // Get the old buffer content and cursor position BEFORE any modifications
+                let old_content = self.active_state().buffer.to_string().unwrap_or_default();
+                let old_cursor_position = self.active_state().cursors.primary().position;
 
-                // Find all remaining matches using streaming search
-                // Collecting positions (Vec<usize>) is low memory cost even for huge files
-                let search_pos = ir_state.current_match_pos + ir_state.replacement.len();
-                let remaining_matches = {
+                // Collect ALL match positions including the current match
+                // Start from the current match position
+                let all_matches = {
                     let mut matches = Vec::new();
-                    let mut current_pos = search_pos;
                     let mut temp_state = ir_state.clone();
+                    temp_state.has_wrapped = false; // Reset wrap state to find current match
 
-                    // Find matches lazily one at a time, collect positions
+                    // First, include the current match
+                    matches.push(ir_state.current_match_pos);
+                    let mut current_pos = ir_state.current_match_pos + ir_state.search.len();
+
+                    // Find all remaining matches
                     loop {
                         if let Some((next_match, wrapped)) =
                             self.find_next_match_for_replace(&temp_state, current_pos)
@@ -2312,63 +2347,41 @@ impl Editor {
                     matches
                 };
 
-                let remaining_count = remaining_matches.len();
+                let total_count = all_matches.len();
 
-                if remaining_count > 0 {
-                    // Capture current cursor state for undo
-                    let cursor_id = self.active_state().cursors.primary_id();
-                    let cursor = self.active_state().cursors.get(cursor_id).unwrap().clone();
-                    let old_position = cursor.position;
-                    let old_anchor = cursor.anchor;
-                    let old_sticky_column = cursor.sticky_column;
-
-                    // Create events for all remaining replacements (reverse order preserves positions)
-                    let mut events = Vec::new();
-
-                    // Add MoveCursor at the beginning to save cursor position for undo
-                    events.push(Event::MoveCursor {
-                        cursor_id,
-                        old_position,
-                        new_position: old_position, // Keep cursor where it is
-                        old_anchor,
-                        new_anchor: old_anchor,
-                        old_sticky_column,
-                        new_sticky_column: old_sticky_column,
-                    });
-
-                    for match_pos in remaining_matches.into_iter().rev() {
+                if total_count > 0 {
+                    // Apply all replacements directly on the string content
+                    // Process in reverse order to preserve positions
+                    let mut new_content = old_content.clone();
+                    for &match_pos in all_matches.iter().rev() {
                         let end = match_pos + ir_state.search.len();
-                        let range = match_pos..end;
-                        let deleted_text = self
-                            .active_state_mut()
-                            .get_text_range(range.start, range.end);
-
-                        events.push(Event::Delete {
-                            range: range.clone(),
-                            deleted_text,
-                            cursor_id,
-                        });
-
-                        events.push(Event::Insert {
-                            position: match_pos,
-                            text: ir_state.replacement.clone(),
-                            cursor_id,
-                        });
+                        if end <= new_content.len() {
+                            new_content.replace_range(match_pos..end, &ir_state.replacement);
+                        }
                     }
 
-                    // Single Batch = single undo step for all remaining replacements
-                    let batch = Event::Batch {
-                        events,
+                    // Calculate new cursor position (at end of last replacement, i.e., first match)
+                    let new_cursor_position =
+                        ir_state.current_match_pos + ir_state.replacement.len();
+
+                    // Create the ReplaceAll event - O(1) event count instead of O(n)
+                    let replace_all_event = Event::ReplaceAll {
+                        old_content,
+                        new_content,
+                        old_cursor_position,
+                        new_cursor_position,
+                        replacement_count: total_count,
                         description: format!(
-                            "Query replace remaining '{}' with '{}'",
-                            ir_state.search, ir_state.replacement
+                            "Replace all {} occurrences of '{}' with '{}'",
+                            total_count, ir_state.search, ir_state.replacement
                         ),
                     };
 
-                    self.active_event_log_mut().append(batch.clone());
-                    self.apply_event_to_active_buffer(&batch);
+                    self.active_event_log_mut()
+                        .append(replace_all_event.clone());
+                    self.apply_event_to_active_buffer(&replace_all_event);
 
-                    ir_state.replacements_made += remaining_count;
+                    ir_state.replacements_made += total_count;
                 }
 
                 self.finish_interactive_replace(ir_state.replacements_made);

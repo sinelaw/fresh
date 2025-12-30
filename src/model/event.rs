@@ -214,6 +214,24 @@ pub enum Event {
         events: Vec<Event>,
         description: String,
     },
+
+    /// Replace all occurrences in a single efficient operation
+    /// This avoids O(n²) complexity by replacing the entire buffer content at once
+    /// Used for query-replace-all operations on large files
+    ReplaceAll {
+        /// The original buffer content before replacement (for undo)
+        old_content: String,
+        /// The new buffer content after replacement
+        new_content: String,
+        /// Cursor position before the operation (for undo)
+        old_cursor_position: usize,
+        /// Cursor position after the operation
+        new_cursor_position: usize,
+        /// Number of replacements made
+        replacement_count: usize,
+        /// Description of the operation
+        description: String,
+    },
 }
 
 /// Overlay face data for events (must be serializable)
@@ -414,6 +432,24 @@ impl Event {
                 // Can't invert without knowing old mode
                 None
             }
+            Event::ReplaceAll {
+                old_content,
+                new_content,
+                old_cursor_position,
+                new_cursor_position,
+                replacement_count,
+                description,
+            } => {
+                // Inverse swaps old and new content
+                Some(Event::ReplaceAll {
+                    old_content: new_content.clone(),
+                    new_content: old_content.clone(),
+                    old_cursor_position: *new_cursor_position,
+                    new_cursor_position: *old_cursor_position,
+                    replacement_count: *replacement_count,
+                    description: format!("Undo: {}", description),
+                })
+            }
             // Other events (popups, margins, splits, etc.) are not automatically invertible
             _ => None,
         }
@@ -422,7 +458,7 @@ impl Event {
     /// Returns true if this event modifies the buffer content
     pub fn modifies_buffer(&self) -> bool {
         match self {
-            Event::Insert { .. } | Event::Delete { .. } => true,
+            Event::Insert { .. } | Event::Delete { .. } | Event::ReplaceAll { .. } => true,
             Event::Batch { events, .. } => events.iter().any(|e| e.modifies_buffer()),
             _ => false,
         }
@@ -443,7 +479,7 @@ impl Event {
     pub fn is_write_action(&self) -> bool {
         match self {
             // Buffer modifications are write actions
-            Event::Insert { .. } | Event::Delete { .. } => true,
+            Event::Insert { .. } | Event::Delete { .. } | Event::ReplaceAll { .. } => true,
 
             // Adding/removing cursors are write actions (structural changes)
             Event::AddCursor { .. } | Event::RemoveCursor { .. } => true,

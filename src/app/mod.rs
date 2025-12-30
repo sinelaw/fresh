@@ -1557,7 +1557,7 @@ impl Editor {
         // 1c. Invalidate layouts for all views of this buffer after content changes
         // Note: recovery_pending is set automatically by the buffer on edits
         match event {
-            Event::Insert { .. } | Event::Delete { .. } => {
+            Event::Insert { .. } | Event::Delete { .. } | Event::ReplaceAll { .. } => {
                 self.invalidate_layouts_for_buffer(self.active_buffer());
             }
             Event::Batch { events, .. } => {
@@ -1581,7 +1581,7 @@ impl Editor {
 
         if !in_interactive_replace {
             match event {
-                Event::Insert { .. } | Event::Delete { .. } => {
+                Event::Insert { .. } | Event::Delete { .. } | Event::ReplaceAll { .. } => {
                     self.clear_search_highlights();
                 }
                 Event::Batch { events, .. } => {
