@@ -2104,64 +2104,16 @@ impl Editor {
         }
     }
 
-    /// Create a ReplaceAll event from match positions
-    ///
-    /// This is a helper function that creates an efficient O(n) replacement event
-    /// from a list of match positions. Used by both `perform_replace` and the
-    /// interactive replace "replace all" command.
-    ///
-    /// # Arguments
-    /// * `old_content` - The original buffer content
-    /// * `old_cursor_position` - Cursor position before replacement
-    /// * `matches` - List of match positions (byte offsets)
-    /// * `search` - The search string
-    /// * `replacement` - The replacement string
-    /// * `new_cursor_position` - Cursor position after replacement
-    /// * `description` - Description for the event
-    fn create_replace_all_event(
-        old_content: String,
-        old_cursor_position: usize,
-        matches: &[usize],
-        search: &str,
-        replacement: &str,
-        new_cursor_position: usize,
-        description: String,
-    ) -> Event {
-        // Apply all replacements directly on the string content
-        // Process in reverse order to preserve positions
-        let mut new_content = old_content.clone();
-        for &match_pos in matches.iter().rev() {
-            let end = match_pos + search.len();
-            if end <= new_content.len() {
-                new_content.replace_range(match_pos..end, replacement);
-            }
-        }
-
-        // Create the ReplaceAll event - O(1) event count instead of O(n)
-        Event::ReplaceAll {
-            old_content,
-            new_content,
-            old_cursor_position,
-            new_cursor_position,
-            replacement_count: matches.len(),
-            description,
-        }
-    }
-
     /// Perform a replace-all operation
     /// Replaces all occurrences of the search query with the replacement text
     ///
-    /// OPTIMIZATION: Uses O(n) string replacement instead of O(n²) individual edits
-    /// This avoids the performance issue where each edit triggers tree operations
+    /// OPTIMIZATION: Uses BulkEdit for O(n) tree operations instead of O(n²)
+    /// This directly edits the piece tree without loading the entire buffer into memory
     pub(super) fn perform_replace(&mut self, search: &str, replacement: &str) {
         if search.is_empty() {
             self.set_status_message("Replace: empty search query.".to_string());
             return;
         }
-
-        // Get the old buffer content and cursor position BEFORE any modifications
-        let old_content = self.active_state().buffer.to_string().unwrap_or_default();
-        let old_cursor_position = self.active_state().cursors.primary().position;
 
         // Find all matches first (before making any modifications)
         let matches = {
@@ -2192,27 +2144,32 @@ impl Editor {
             return;
         }
 
-        // Calculate new cursor position - keep it at the same position if possible,
-        // but clamp to new buffer length (estimate based on size change)
-        let size_change = (replacement.len() as isize - search.len() as isize) * count as isize;
-        let estimated_new_len = (old_content.len() as isize + size_change) as usize;
-        let new_cursor_position = old_cursor_position.min(estimated_new_len);
+        // Get cursor info for the event
+        let cursor_id = self.active_state().cursors.primary_id();
 
-        // Create and apply the ReplaceAll event
-        let replace_all_event = Self::create_replace_all_event(
-            old_content,
-            old_cursor_position,
-            &matches,
-            search,
-            replacement,
-            new_cursor_position,
-            format!("Replace all '{}' with '{}'", search, replacement),
-        );
+        // Create Delete+Insert events for each match
+        // Events will be processed in reverse order by apply_events_as_bulk_edit
+        let mut events = Vec::with_capacity(count * 2);
+        for &match_pos in &matches {
+            // Delete the matched text
+            events.push(Event::Delete {
+                range: match_pos..match_pos + search.len(),
+                deleted_text: search.to_string(), // We know what text is being deleted
+                cursor_id,
+            });
+            // Insert the replacement
+            events.push(Event::Insert {
+                position: match_pos,
+                text: replacement.to_string(),
+                cursor_id,
+            });
+        }
 
-        // Apply through event log for proper undo support
-        self.active_event_log_mut()
-            .append(replace_all_event.clone());
-        self.apply_event_to_active_buffer(&replace_all_event);
+        // Apply all replacements using BulkEdit for O(n) performance
+        let description = format!("Replace all '{}' with '{}'", search, replacement);
+        if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description) {
+            self.active_event_log_mut().append(bulk_edit);
+        }
 
         // Clear search state since positions are now invalid
         self.search_state = None;
@@ -2330,12 +2287,8 @@ impl Editor {
                 // Replace all remaining matches with SINGLE confirmation
                 // Undo behavior: ONE undo step undoes ALL remaining replacements
                 //
-                // OPTIMIZATION: Uses O(n) string replacement instead of O(n²) individual edits
-                // This avoids the performance issue where each edit triggers tree operations
-
-                // Get the old buffer content and cursor position BEFORE any modifications
-                let old_content = self.active_state().buffer.to_string().unwrap_or_default();
-                let old_cursor_position = self.active_state().cursors.primary().position;
+                // OPTIMIZATION: Uses BulkEdit for O(n) tree operations instead of O(n²)
+                // This directly edits the piece tree without loading the entire buffer
 
                 // Collect ALL match positions including the current match
                 // Start from the current match position
@@ -2368,27 +2321,32 @@ impl Editor {
                 let total_count = all_matches.len();
 
                 if total_count > 0 {
-                    // Calculate new cursor position (at end of first match's replacement)
-                    let new_cursor_position =
-                        ir_state.current_match_pos + ir_state.replacement.len();
+                    // Get cursor info for the event
+                    let cursor_id = self.active_state().cursors.primary_id();
 
-                    // Create and apply the ReplaceAll event using the shared helper
-                    let replace_all_event = Self::create_replace_all_event(
-                        old_content,
-                        old_cursor_position,
-                        &all_matches,
-                        &ir_state.search,
-                        &ir_state.replacement,
-                        new_cursor_position,
-                        format!(
-                            "Replace all {} occurrences of '{}' with '{}'",
-                            total_count, ir_state.search, ir_state.replacement
-                        ),
+                    // Create Delete+Insert events for each match
+                    let mut events = Vec::with_capacity(total_count * 2);
+                    for &match_pos in &all_matches {
+                        events.push(Event::Delete {
+                            range: match_pos..match_pos + ir_state.search.len(),
+                            deleted_text: ir_state.search.clone(),
+                            cursor_id,
+                        });
+                        events.push(Event::Insert {
+                            position: match_pos,
+                            text: ir_state.replacement.clone(),
+                            cursor_id,
+                        });
+                    }
+
+                    // Apply all replacements using BulkEdit for O(n) performance
+                    let description = format!(
+                        "Replace all {} occurrences of '{}' with '{}'",
+                        total_count, ir_state.search, ir_state.replacement
                     );
-
-                    self.active_event_log_mut()
-                        .append(replace_all_event.clone());
-                    self.apply_event_to_active_buffer(&replace_all_event);
+                    if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description) {
+                        self.active_event_log_mut().append(bulk_edit);
+                    }
 
                     ir_state.replacements_made += total_count;
                 }
