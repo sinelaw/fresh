@@ -150,6 +150,11 @@ impl IndentCalculator {
                 tree_sitter_pascal::LANGUAGE.into(),
                 include_str!("../../queries/pascal/indents.scm"),
             ),
+            Language::Odin => (
+                "odin",
+                tree_sitter_odin::LANGUAGE.into(),
+                include_str!("../../queries/odin/indents.scm"),
+            ),
         };
 
         // Check if we already have this config

@@ -144,6 +144,7 @@ pub enum Language {
     Bash,
     Lua,
     Pascal,
+    Odin,
     // Markdown,  // Disabled due to tree-sitter version conflict
 }
 
@@ -168,6 +169,7 @@ impl Language {
             "sh" | "bash" => Some(Language::Bash),
             "lua" => Some(Language::Lua),
             "pas" | "p" => Some(Language::Pascal),
+            "odin" => Some(Language::Odin),
             // "md" => Some(Language::Markdown),  // Disabled
             _ => None,
         }
@@ -636,6 +638,32 @@ impl Language {
                 .map_err(|e| format!("Failed to create Pascal highlight config: {e}"))?;
 
                 // Configure highlight names (even though we don't use highlights query)
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
+            Language::Odin => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_odin::LANGUAGE.into(),
+                    "odin",
+                    tree_sitter_odin::HIGHLIGHTS_QUERY,
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create Odin highlight config: {e}"))?;
+
                 config.configure(&[
                     "attribute",
                     "comment",
