@@ -1681,6 +1681,9 @@ impl Editor {
         // Apply bulk edits
         let _delta = state.buffer.apply_bulk_edits(&edit_refs);
 
+        // Snapshot the tree after edits (for redo) - O(1) Arc clone
+        let new_tree = state.buffer.snapshot_piece_tree();
+
         // Calculate new cursor positions based on events
         // Process cursor movements from the original events
         let mut new_cursors: Vec<(CursorId, usize, Option<usize>)> = old_cursors.clone();
@@ -1696,29 +1699,52 @@ impl Editor {
         position_deltas.sort_by_key(|(pos, _)| *pos);
 
         // Apply adjustments to cursor positions
+        // First check for explicit MoveCursor events (e.g., from indent operations)
+        // These take precedence over implicit cursor updates from Insert/Delete
         for (cursor_id, ref mut pos, ref mut anchor) in &mut new_cursors {
-            // Find corresponding event to get the intended new position
+            let mut found_move_cursor = false;
+
+            // First pass: look for explicit MoveCursor events for this cursor
             for event in &events {
-                match event {
-                    Event::Insert {
-                        position,
-                        text,
-                        cursor_id: event_cursor,
-                    } if event_cursor == cursor_id => {
-                        // For insert, cursor moves to end of inserted text
-                        *pos = position + text.len();
-                        *anchor = None;
+                if let Event::MoveCursor {
+                    cursor_id: event_cursor,
+                    new_position,
+                    new_anchor,
+                    ..
+                } = event
+                {
+                    if event_cursor == cursor_id {
+                        *pos = *new_position;
+                        *anchor = *new_anchor;
+                        found_move_cursor = true;
                     }
-                    Event::Delete {
-                        range,
-                        cursor_id: event_cursor,
-                        ..
-                    } if event_cursor == cursor_id => {
-                        // For delete, cursor moves to start of deleted range
-                        *pos = range.start;
-                        *anchor = None;
+                }
+            }
+
+            // If no explicit MoveCursor, derive position from Insert/Delete
+            if !found_move_cursor {
+                for event in &events {
+                    match event {
+                        Event::Insert {
+                            position,
+                            text,
+                            cursor_id: event_cursor,
+                        } if event_cursor == cursor_id => {
+                            // For insert, cursor moves to end of inserted text
+                            *pos = position + text.len();
+                            *anchor = None;
+                        }
+                        Event::Delete {
+                            range,
+                            cursor_id: event_cursor,
+                            ..
+                        } if event_cursor == cursor_id => {
+                            // For delete, cursor moves to start of deleted range
+                            *pos = range.start;
+                            *anchor = None;
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
         }
@@ -1734,9 +1760,10 @@ impl Editor {
         // Invalidate highlighter
         state.highlighter.invalidate_all();
 
-        // Create BulkEdit event
+        // Create BulkEdit event with both tree snapshots
         let bulk_edit = Event::BulkEdit {
             old_tree: Some(old_tree),
+            new_tree: Some(new_tree),
             old_cursors,
             new_cursors,
             description,

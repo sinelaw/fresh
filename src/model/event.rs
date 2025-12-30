@@ -235,19 +235,22 @@ pub enum Event {
         description: String,
     },
 
-    /// Efficient bulk edit that stores tree snapshot for O(1) undo
+    /// Efficient bulk edit that stores tree snapshots for O(1) undo/redo
     /// Used for multi-cursor operations, toggle comment, indent/dedent, etc.
     /// This avoids O(n²) complexity by applying all edits in a single tree pass.
     ///
     /// Key insight: PieceTree uses Arc<PieceTreeNode> (persistent data structure),
-    /// so storing old_tree for undo is O(1) (Arc clone), not O(n) (content copy).
+    /// so storing trees for undo/redo is O(1) (Arc clone), not O(n) (content copy).
     BulkEdit {
-        /// Previous tree state for undo (Arc clone = O(1))
+        /// Tree state before the edit (for undo)
         #[serde(skip)]
         old_tree: Option<Arc<PieceTree>>,
-        /// Previous cursor states: (cursor_id, position, anchor)
+        /// Tree state after the edit (for redo)
+        #[serde(skip)]
+        new_tree: Option<Arc<PieceTree>>,
+        /// Cursor states before the edit
         old_cursors: Vec<(CursorId, usize, Option<usize>)>,
-        /// New cursor states after edit
+        /// Cursor states after the edit
         new_cursors: Vec<(CursorId, usize, Option<usize>)>,
         /// Human-readable description
         description: String,
@@ -472,14 +475,16 @@ impl Event {
             }
             Event::BulkEdit {
                 old_tree,
+                new_tree,
                 old_cursors,
                 new_cursors,
                 description,
             } => {
-                // Inverse swaps old and new cursor states
-                // old_tree will be set by the undo handler before applying
+                // Inverse swaps both trees and cursor states
+                // For undo: old becomes new, new becomes old
                 Some(Event::BulkEdit {
-                    old_tree: old_tree.clone(),
+                    old_tree: new_tree.clone(),
+                    new_tree: old_tree.clone(),
                     old_cursors: new_cursors.clone(),
                     new_cursors: old_cursors.clone(),
                     description: format!("Undo: {}", description),

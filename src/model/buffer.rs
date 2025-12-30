@@ -974,10 +974,11 @@ impl TextBuffer {
     /// Apply bulk edits efficiently in a single pass
     /// Returns the net change in bytes
     pub fn apply_bulk_edits(&mut self, edits: &[(usize, usize, &str)]) -> isize {
-        // Pre-allocate buffers for all insert texts
+        // Pre-allocate buffers for all insert texts (only non-empty texts)
         // This avoids the borrow conflict in the closure
-        let mut buffer_info: Vec<(BufferLocation, usize, usize, Option<usize>)> =
-            Vec::with_capacity(edits.len());
+        // IMPORTANT: Only add entries for non-empty texts because the closure
+        // is only called for edits with non-empty insert text
+        let mut buffer_info: Vec<(BufferLocation, usize, usize, Option<usize>)> = Vec::new();
 
         for (_, _, text) in edits {
             if !text.is_empty() {
@@ -989,10 +990,8 @@ impl TextBuffer {
                 let buffer = StringBuffer::new(buffer_id, content);
                 self.buffers.push(buffer);
                 buffer_info.push((BufferLocation::Added(buffer_id), 0, bytes, Some(lf_cnt)));
-            } else {
-                // Placeholder for edits with no insert text
-                buffer_info.push((BufferLocation::Added(0), 0, 0, Some(0)));
             }
+            // No placeholder for empty texts - the closure is only called for non-empty texts
         }
 
         // Now call apply_bulk_edits with a simple index-based closure

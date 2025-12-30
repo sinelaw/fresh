@@ -1834,64 +1834,72 @@ impl PieceTree {
         }
 
         // 4. Apply edits to leaves
-        // Process from the end of document to start (edits are sorted descending)
+        // Edits are sorted descending by position, so:
+        //   edit_ranges[len-1] has smallest position, edit_ranges[0] has largest
+        // We iterate leaves ascending, and for each leaf we:
+        //   1. First add any inserts that belong BEFORE this leaf
+        //   2. Then add the leaf (if not deleted)
         let mut new_leaves: Vec<LeafData> = Vec::with_capacity(leaves.len() + edits.len());
         let mut current_offset = 0;
-        let mut edit_idx = edit_ranges.len(); // Start from end (highest position)
+        let mut edit_idx = edit_ranges.len(); // Points past the end; we access [edit_idx-1]
 
         for leaf in leaves {
             let leaf_start = current_offset;
             let leaf_end = current_offset + leaf.bytes;
 
-            // Check if this leaf overlaps with any pending edit (working backwards)
+            // First, add any inserts whose position is <= leaf_start
+            // These inserts should appear BEFORE this leaf's content
+            while edit_idx > 0 {
+                let (edit_start, _edit_end, ref insert_leaf) = edit_ranges[edit_idx - 1];
+
+                // If this edit's position is after where we are, stop
+                if edit_start > leaf_start {
+                    break;
+                }
+
+                // Insert belongs at or before leaf_start
+                if let Some(insert) = insert_leaf {
+                    new_leaves.push(insert.clone());
+                }
+                edit_idx -= 1;
+            }
+
+            // Check if this leaf overlaps with ANY edit's delete range
+            // We check ALL edits, not just remaining ones, because edits
+            // processed in the insert loop above may still have deletions
             let mut keep_leaf = true;
-            let mut leaf_consumed = false;
 
-            // Check all edits that might affect this leaf
-            for i in (0..edit_idx).rev() {
-                let (edit_start, edit_end, _) = &edit_ranges[i];
-
-                // If edit is entirely before this leaf, we're past it
-                if *edit_end <= leaf_start {
+            for (edit_start, edit_end, _) in &edit_ranges {
+                // If edit's delete range is entirely after this leaf, skip
+                if *edit_start >= leaf_end {
                     continue;
                 }
 
-                // If edit is entirely after this leaf, check next edit
-                if *edit_start >= leaf_end {
+                // If edit has no deletion (edit_start == edit_end), skip
+                if *edit_start == *edit_end {
+                    continue;
+                }
+
+                // If edit's delete range is entirely before this leaf, skip
+                if *edit_end <= leaf_start {
                     continue;
                 }
 
                 // Leaf overlaps with this edit's delete range - filter it out
                 if leaf_start >= *edit_start && leaf_end <= *edit_end {
                     keep_leaf = false;
-                    leaf_consumed = true;
                     break;
                 }
             }
 
-            if keep_leaf && !leaf_consumed {
+            if keep_leaf {
                 new_leaves.push(leaf.clone());
-            }
-
-            // Check if we need to insert at this position
-            while edit_idx > 0 {
-                let (edit_start, edit_end, ref insert_leaf) = edit_ranges[edit_idx - 1];
-
-                // Insert when we've just passed the edit's delete end position
-                if leaf_end >= edit_end && edit_start <= leaf_end {
-                    if let Some(insert) = insert_leaf {
-                        new_leaves.push(insert.clone());
-                    }
-                    edit_idx -= 1;
-                } else {
-                    break;
-                }
             }
 
             current_offset = leaf_end;
         }
 
-        // Handle any remaining inserts at the end
+        // Handle any remaining inserts at the end of document
         while edit_idx > 0 {
             if let Some(insert) = &edit_ranges[edit_idx - 1].2 {
                 new_leaves.push(insert.clone());

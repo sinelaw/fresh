@@ -604,16 +604,17 @@ impl EditorState {
             }
 
             Event::BulkEdit {
-                old_tree,
+                new_tree,
                 new_cursors,
                 ..
             } => {
-                // For undo: restore the old tree if present
-                if let Some(tree) = old_tree {
+                // Restore the new_tree (target tree state for this event)
+                // - For original application: this is set after apply_events_as_bulk_edit
+                // - For undo: trees are swapped, so new_tree is the original state
+                // - For redo: new_tree is the state after edits
+                if let Some(tree) = new_tree {
                     self.buffer.restore_piece_tree(tree);
                 }
-                // Note: For forward application, the tree is already modified
-                // by apply_bulk_edits before the event is created
 
                 // Update cursor positions
                 for (cursor_id, position, anchor) in new_cursors {
