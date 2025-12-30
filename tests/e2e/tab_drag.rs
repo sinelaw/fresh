@@ -55,9 +55,10 @@ fn test_drag_tab_to_right_creates_vertical_split() {
 
     // Verify that dragging to this position would create SplitRight drop zone
     harness.render().unwrap();
-    let drop_zone = harness
-        .editor()
-        .compute_drop_zone(right_edge_col, content_center_row, source_split_id);
+    let drop_zone =
+        harness
+            .editor()
+            .compute_drop_zone(right_edge_col, content_center_row, source_split_id);
     assert!(
         matches!(drop_zone, Some(TabDropZone::SplitRight(_))),
         "Expected SplitRight drop zone, got {:?}",
@@ -107,9 +108,10 @@ fn test_drag_tab_to_left_creates_vertical_split() {
 
     // Verify drop zone
     harness.render().unwrap();
-    let drop_zone = harness
-        .editor()
-        .compute_drop_zone(left_edge_col, content_center_row, source_split_id);
+    let drop_zone =
+        harness
+            .editor()
+            .compute_drop_zone(left_edge_col, content_center_row, source_split_id);
     assert!(
         matches!(drop_zone, Some(TabDropZone::SplitLeft(_))),
         "Expected SplitLeft drop zone, got {:?}",
@@ -150,9 +152,10 @@ fn test_drag_tab_to_top_creates_horizontal_split() {
 
     // Verify drop zone
     harness.render().unwrap();
-    let drop_zone = harness
-        .editor()
-        .compute_drop_zone(content_center_col, top_edge_row, source_split_id);
+    let drop_zone =
+        harness
+            .editor()
+            .compute_drop_zone(content_center_col, top_edge_row, source_split_id);
     assert!(
         matches!(drop_zone, Some(TabDropZone::SplitTop(_))),
         "Expected SplitTop drop zone, got {:?}",
@@ -193,9 +196,10 @@ fn test_drag_tab_to_bottom_creates_horizontal_split() {
 
     // Verify drop zone
     harness.render().unwrap();
-    let drop_zone = harness
-        .editor()
-        .compute_drop_zone(content_center_col, bottom_edge_row, source_split_id);
+    let drop_zone =
+        harness
+            .editor()
+            .compute_drop_zone(content_center_col, bottom_edge_row, source_split_id);
     assert!(
         matches!(drop_zone, Some(TabDropZone::SplitBottom(_))),
         "Expected SplitBottom drop zone, got {:?}",
@@ -226,7 +230,9 @@ fn test_drag_tab_to_another_split_center() {
         .unwrap();
     harness.render().unwrap();
     harness.type_text("split vert").unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     assert_eq!(harness.editor().get_split_count(), 2);
@@ -259,9 +265,11 @@ fn test_drag_tab_to_another_split_center() {
 
             // Verify drop zone is SplitCenter for the target split
             harness.render().unwrap();
-            let drop_zone = harness
-                .editor()
-                .compute_drop_zone(target_center_col, target_center_row, *source_split_id);
+            let drop_zone = harness.editor().compute_drop_zone(
+                target_center_col,
+                target_center_row,
+                *source_split_id,
+            );
             assert!(
                 matches!(drop_zone, Some(TabDropZone::SplitCenter(id)) if id == *target_split_id),
                 "Expected SplitCenter for target split, got {:?}",
@@ -270,7 +278,12 @@ fn test_drag_tab_to_another_split_center() {
 
             // Drag tab to center of second split
             harness
-                .mouse_drag(tab_center_col, *tab_row, target_center_col, target_center_row)
+                .mouse_drag(
+                    tab_center_col,
+                    *tab_row,
+                    target_center_col,
+                    target_center_row,
+                )
                 .unwrap();
 
             // Verify the buffer is now in the target split's tabs
@@ -325,7 +338,11 @@ fn test_drag_tab_reorder_within_split() {
 
         // Verify tab order changed
         let final_tabs = harness.editor().get_split_tabs(initial_split);
-        assert_eq!(final_tabs.len(), initial_tabs.len(), "Tab count should stay same");
+        assert_eq!(
+            final_tabs.len(),
+            initial_tabs.len(),
+            "Tab count should stay same"
+        );
 
         // The first buffer should now be after where we dropped it
         let first_buffer_new_idx = final_tabs.iter().position(|&b| b == first_buffer);
@@ -355,7 +372,9 @@ fn test_drag_last_tab_closes_split() {
         .unwrap();
     harness.render().unwrap();
     harness.type_text("split vert").unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Open second file in the new split
@@ -520,7 +539,9 @@ fn test_drag_tab_to_tab_bar() {
         .unwrap();
     harness.render().unwrap();
     harness.type_text("split vert").unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     assert_eq!(harness.editor().get_split_count(), 2);
@@ -546,8 +567,7 @@ fn test_drag_tab_to_tab_bar() {
             .filter(|(sid, _, _, _, _, _)| *sid == second_split_id)
             .collect();
 
-        if let Some((_, _, target_tab_row, target_start, target_end, _)) =
-            second_split_tabs.first()
+        if let Some((_, _, target_tab_row, target_start, target_end, _)) = second_split_tabs.first()
         {
             let target_center = (target_start + target_end) / 2;
 
@@ -556,9 +576,11 @@ fn test_drag_tab_to_tab_bar() {
 
             // Verify this would be a TabBar drop zone
             harness.render().unwrap();
-            let drop_zone = harness
-                .editor()
-                .compute_drop_zone(target_center, *target_tab_row, *source_split_id);
+            let drop_zone = harness.editor().compute_drop_zone(
+                target_center,
+                *target_tab_row,
+                *source_split_id,
+            );
             assert!(
                 matches!(drop_zone, Some(TabDropZone::TabBar(_, _))),
                 "Expected TabBar drop zone, got {:?}",
@@ -614,4 +636,97 @@ fn test_small_drag_does_not_move_tab() {
         1,
         "Small drag should not create new split"
     );
+}
+
+/// Test that dragging from right split to left border of left split switches order
+#[test]
+fn test_drag_right_split_to_left_border_switches_order() {
+    let (mut harness, _temp_dir, _files) = setup_multi_file_harness();
+
+    // First create a second split (vertical split creates left|right layout)
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(harness.editor().get_split_count(), 2);
+
+    let split_areas = harness.editor().get_split_areas().to_vec();
+
+    // Find the left-most and right-most splits by comparing x positions
+    let (left_split, right_split) = if split_areas[0].2.x < split_areas[1].2.x {
+        (&split_areas[0], &split_areas[1])
+    } else {
+        (&split_areas[1], &split_areas[0])
+    };
+
+    let (_left_split_id, _, left_content_rect, _, _, _) = left_split;
+    let (right_split_id, _right_buffer_id, _right_content_rect, _, _, _) = right_split;
+
+    // Get the tab from the right split
+    let tab_areas = harness.editor().get_tab_areas().to_vec();
+    let right_tab = tab_areas
+        .iter()
+        .find(|(sid, _, _, _, _, _)| sid == right_split_id);
+
+    if let Some((_, buffer_id, tab_row, start_col, end_col, _)) = right_tab {
+        let tab_center_col = (start_col + end_col) / 2;
+
+        // Calculate the left edge of the left split (this is where we drag to)
+        let left_edge_col = left_content_rect.x + 2; // Near left edge
+        let left_center_row = left_content_rect.y + left_content_rect.height / 2;
+
+        // Verify this gives us a SplitLeft drop zone
+        harness.render().unwrap();
+        let drop_zone =
+            harness
+                .editor()
+                .compute_drop_zone(left_edge_col, left_center_row, *right_split_id);
+        assert!(
+            matches!(drop_zone, Some(TabDropZone::SplitLeft(_))),
+            "Expected SplitLeft drop zone at left edge of left split, got {:?}",
+            drop_zone
+        );
+
+        // Remember the buffer we're dragging
+        let dragged_buffer = *buffer_id;
+
+        // Drag the right split's tab to the left edge of the left split
+        harness
+            .mouse_drag(tab_center_col, *tab_row, left_edge_col, left_center_row)
+            .unwrap();
+
+        // Now we should have 2 splits (the right split may have closed if it was the last tab)
+        // and the dragged tab should be in the leftmost position
+        let new_split_areas = harness.editor().get_split_areas().to_vec();
+
+        // Find the new leftmost split
+        let new_leftmost = new_split_areas
+            .iter()
+            .min_by_key(|(_, _, rect, _, _, _)| rect.x)
+            .unwrap();
+
+        let (new_leftmost_id, _, _, _, _, _) = new_leftmost;
+
+        // The dragged buffer should be in the leftmost split now
+        let leftmost_tabs = harness.editor().get_split_tabs(*new_leftmost_id);
+        assert!(
+            leftmost_tabs.contains(&dragged_buffer),
+            "Dragged buffer should be in the leftmost split after dragging to left edge. \
+             Leftmost split tabs: {:?}, dragged buffer: {:?}",
+            leftmost_tabs,
+            dragged_buffer
+        );
+
+        // The new leftmost split should be to the left of where the original left split was
+        assert!(
+            new_leftmost.2.x <= left_content_rect.x,
+            "New leftmost split should be at or to the left of original left split"
+        );
+    }
 }
