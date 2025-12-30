@@ -1208,17 +1208,22 @@ impl Editor {
             .copied()
             .collect();
 
-        let count = tabs_to_close.len();
+        let mut closed = 0;
+        let mut skipped_modified = 0;
         for buffer_id in tabs_to_close {
-            self.close_tab_in_split_silent(buffer_id, split_id);
+            if self.close_tab_in_split_silent(buffer_id, split_id) {
+                closed += 1;
+            } else {
+                skipped_modified += 1;
+            }
         }
 
         // Make sure the kept buffer is active
-        let _ = self.split_manager.set_split_buffer(split_id, keep_buffer_id);
+        let _ = self
+            .split_manager
+            .set_split_buffer(split_id, keep_buffer_id);
 
-        if count > 0 {
-            self.set_status_message(format!("Closed {} other tab(s)", count));
-        }
+        self.set_batch_close_status_message(closed, skipped_modified);
     }
 
     /// Close tabs to the right of the specified buffer in a split
@@ -1236,20 +1241,19 @@ impl Editor {
         };
 
         // Close all tabs after the target
-        let tabs_to_close: Vec<_> = split_tabs
-            .iter()
-            .skip(target_idx + 1)
-            .copied()
-            .collect();
+        let tabs_to_close: Vec<_> = split_tabs.iter().skip(target_idx + 1).copied().collect();
 
-        let count = tabs_to_close.len();
+        let mut closed = 0;
+        let mut skipped_modified = 0;
         for buf_id in tabs_to_close {
-            self.close_tab_in_split_silent(buf_id, split_id);
+            if self.close_tab_in_split_silent(buf_id, split_id) {
+                closed += 1;
+            } else {
+                skipped_modified += 1;
+            }
         }
 
-        if count > 0 {
-            self.set_status_message(format!("Closed {} tab(s) to the right", count));
-        }
+        self.set_batch_close_status_message(closed, skipped_modified);
     }
 
     /// Close tabs to the left of the specified buffer in a split
@@ -1267,20 +1271,19 @@ impl Editor {
         };
 
         // Close all tabs before the target
-        let tabs_to_close: Vec<_> = split_tabs
-            .iter()
-            .take(target_idx)
-            .copied()
-            .collect();
+        let tabs_to_close: Vec<_> = split_tabs.iter().take(target_idx).copied().collect();
 
-        let count = tabs_to_close.len();
+        let mut closed = 0;
+        let mut skipped_modified = 0;
         for buf_id in tabs_to_close {
-            self.close_tab_in_split_silent(buf_id, split_id);
+            if self.close_tab_in_split_silent(buf_id, split_id) {
+                closed += 1;
+            } else {
+                skipped_modified += 1;
+            }
         }
 
-        if count > 0 {
-            self.set_status_message(format!("Closed {} tab(s) to the left", count));
-        }
+        self.set_batch_close_status_message(closed, skipped_modified);
     }
 
     /// Close all tabs in a split
@@ -1292,21 +1295,36 @@ impl Editor {
             .map(|vs| vs.open_buffers.clone())
             .unwrap_or_default();
 
-        let count = split_tabs.len();
+        let mut closed = 0;
+        let mut skipped_modified = 0;
 
         // Close all tabs (this will eventually close the split when empty)
         for buffer_id in split_tabs {
-            self.close_tab_in_split_silent(buffer_id, split_id);
+            if self.close_tab_in_split_silent(buffer_id, split_id) {
+                closed += 1;
+            } else {
+                skipped_modified += 1;
+            }
         }
 
-        if count > 0 {
-            self.set_status_message(format!("Closed {} tab(s)", count));
-        }
+        self.set_batch_close_status_message(closed, skipped_modified);
+    }
+
+    /// Set status message for batch close operations
+    fn set_batch_close_status_message(&mut self, closed: usize, skipped_modified: usize) {
+        let message = match (closed, skipped_modified) {
+            (0, 0) => "No tabs to close".to_string(),
+            (0, n) => format!("Skipped {} modified tab(s)", n),
+            (n, 0) => format!("Closed {} tab(s)", n),
+            (c, s) => format!("Closed {} tab(s), skipped {} modified", c, s),
+        };
+        self.set_status_message(message);
     }
 
     /// Close a tab silently (without setting status message)
     /// Used internally by batch close operations
-    fn close_tab_in_split_silent(&mut self, buffer_id: BufferId, split_id: SplitId) {
+    /// Returns true if the tab was closed, false if it was skipped (e.g., modified buffer)
+    fn close_tab_in_split_silent(&mut self, buffer_id: BufferId, split_id: SplitId) -> bool {
         // If closing a terminal buffer while in terminal mode, exit terminal mode
         if self.terminal_mode && self.is_terminal_buffer(buffer_id) {
             self.terminal_mode = false;
@@ -1335,16 +1353,17 @@ impl Editor {
             if let Some(state) = self.buffers.get(&buffer_id) {
                 if state.buffer.is_modified() {
                     // Skip modified buffers - don't close them
-                    return;
+                    return false;
                 }
             }
             let _ = self.close_buffer(buffer_id);
+            true
         } else {
             // There are other viewports of this buffer - just remove from this split's tabs
             if split_tabs.len() <= 1 {
                 // This is the only tab in this split - close the split
                 self.handle_close_split(split_id);
-                return;
+                return true;
             }
 
             // Find replacement buffer for this split
@@ -1364,6 +1383,7 @@ impl Editor {
             if let Some(replacement) = replacement_buffer {
                 let _ = self.split_manager.set_split_buffer(split_id, replacement);
             }
+            true
         }
     }
 
