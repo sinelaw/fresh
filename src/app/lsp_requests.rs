@@ -1214,13 +1214,13 @@ impl Editor {
             changes += 1;
         }
 
-        // Create a batch event for all rename changes
+        // Apply all rename changes using bulk edit for O(n) performance
         if !batch_events.is_empty() {
-            let batch = Event::Batch {
-                events: batch_events,
-                description: "LSP Rename".to_string(),
-            };
-            self.apply_rename_batch_to_buffer(buffer_id, batch)?;
+            self.apply_events_to_buffer_as_bulk_edit(
+                buffer_id,
+                batch_events,
+                "LSP Rename".to_string(),
+            )?;
         }
 
         Ok(changes)
@@ -1344,87 +1344,135 @@ impl Editor {
         Ok(())
     }
 
-    /// Helper to apply a batch of rename events to a specific buffer and notify LSP
-    pub(crate) fn apply_rename_batch_to_buffer(
+    /// Apply events to a specific buffer using bulk edit optimization (O(n) vs O(n²))
+    ///
+    /// This is similar to `apply_events_as_bulk_edit` but works on a specific buffer
+    /// (which may not be the active buffer) and handles LSP notifications correctly.
+    pub(crate) fn apply_events_to_buffer_as_bulk_edit(
         &mut self,
         buffer_id: BufferId,
-        batch: Event,
+        events: Vec<Event>,
+        description: String,
     ) -> io::Result<()> {
-        // Add to event log
-        if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
-            event_log.append(batch.clone());
+        use crate::model::event::CursorId;
+
+        if events.is_empty() {
+            return Ok(());
         }
+
+        // Create a temporary batch for collecting LSP changes (before applying)
+        let batch_for_lsp = Event::Batch {
+            events: events.clone(),
+            description: description.clone(),
+        };
 
         // IMPORTANT: Calculate LSP changes BEFORE applying to buffer!
-        // The byte positions in the events are relative to the ORIGINAL buffer,
-        // so we must convert them to LSP positions before modifying the buffer.
-        // Otherwise, the LSP server will receive incorrect position information.
+        // The byte positions in the events are relative to the ORIGINAL buffer.
         let original_active = self.active_buffer();
-        // Temporarily switch buffer for LSP change collection (no side effects needed)
         self.split_manager.set_active_buffer_id(buffer_id);
-        let lsp_changes = self.collect_lsp_changes(&batch);
+        let lsp_changes = self.collect_lsp_changes(&batch_for_lsp);
         self.split_manager.set_active_buffer_id(original_active);
 
-        // Save cursor position before applying batch
-        // The batch will move the cursor to each edit location, but we want to
-        // preserve the cursor position (adjusted for edits before it)
-        let state = self
-            .buffers
-            .get(&buffer_id)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Buffer not found"))?;
-        let original_cursor_pos = state.cursors.primary().position;
-        let original_cursor_anchor = state.cursors.primary().anchor;
-
-        // Calculate cursor position adjustment based on edits
-        // Edits are applied in reverse order (end of file to start), but we need
-        // to calculate the cumulative delta for all edits before the cursor
-        let mut cursor_delta: isize = 0;
-        if let Event::Batch { events, .. } = &batch {
-            for event in events {
-                match event {
-                    Event::Delete { range, .. } => {
-                        if range.end <= original_cursor_pos {
-                            // Delete entirely before cursor - cursor moves back
-                            cursor_delta -= range.len() as isize;
-                        } else if range.start < original_cursor_pos {
-                            // Delete crosses cursor - cursor moves to start of delete
-                            cursor_delta = range.start as isize - original_cursor_pos as isize;
-                        }
-                        // Delete entirely after cursor - no effect
-                    }
-                    Event::Insert { position, text, .. } => {
-                        // Only move cursor if insert is STRICTLY BEFORE cursor position
-                        // If insert is AT cursor, cursor should stay at start of new text
-                        let adjusted_cursor =
-                            (original_cursor_pos as isize + cursor_delta) as usize;
-                        if *position < adjusted_cursor {
-                            // Insert before cursor - cursor moves forward
-                            cursor_delta += text.len() as isize;
-                        }
-                        // Insert at or after cursor - no effect on cursor position
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // Apply to buffer state
         let state = self
             .buffers
             .get_mut(&buffer_id)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Buffer not found"))?;
-        state.apply(&batch);
 
-        // Restore cursor to adjusted position
+        // Capture old cursor states
+        let old_cursors: Vec<(CursorId, usize, Option<usize>)> = state
+            .cursors
+            .iter()
+            .map(|(id, c)| (id, c.position, c.anchor))
+            .collect();
+
+        // Snapshot the tree for undo (O(1) - Arc clone)
+        let old_tree = state.buffer.snapshot_piece_tree();
+
+        // Convert events to edit tuples: (position, delete_len, insert_text)
+        let mut edits: Vec<(usize, usize, String)> = Vec::new();
+        for event in &events {
+            match event {
+                Event::Insert { position, text, .. } => {
+                    edits.push((*position, 0, text.clone()));
+                }
+                Event::Delete { range, .. } => {
+                    edits.push((range.start, range.len(), String::new()));
+                }
+                _ => {}
+            }
+        }
+
+        // Sort edits by position descending (required by apply_bulk_edits)
+        edits.sort_by(|a, b| b.0.cmp(&a.0));
+
+        // Convert to references for apply_bulk_edits
+        let edit_refs: Vec<(usize, usize, &str)> = edits
+            .iter()
+            .map(|(pos, del, text)| (*pos, *del, text.as_str()))
+            .collect();
+
+        // Apply bulk edits - O(n) instead of O(n²)
+        let _delta = state.buffer.apply_bulk_edits(&edit_refs);
+
+        // Calculate new cursor positions based on edits
+        let mut position_deltas: Vec<(usize, isize)> = Vec::new();
+        for (pos, del_len, text) in &edits {
+            let delta = text.len() as isize - *del_len as isize;
+            position_deltas.push((*pos, delta));
+        }
+        position_deltas.sort_by_key(|(pos, _)| *pos);
+
+        let calc_shift = |original_pos: usize| -> isize {
+            let mut shift: isize = 0;
+            for (edit_pos, delta) in &position_deltas {
+                if *edit_pos < original_pos {
+                    shift += delta;
+                }
+            }
+            shift
+        };
+
+        // Calculate new cursor positions
         let buffer_len = state.buffer.len();
-        let new_cursor_pos =
-            ((original_cursor_pos as isize + cursor_delta).max(0) as usize).min(buffer_len);
-        state.cursors.primary_mut().position = new_cursor_pos;
+        let new_cursors: Vec<(CursorId, usize, Option<usize>)> = old_cursors
+            .iter()
+            .map(|(id, pos, anchor)| {
+                let shift = calc_shift(*pos);
+                let new_pos = ((*pos as isize + shift).max(0) as usize).min(buffer_len);
+                let new_anchor = anchor.map(|a| {
+                    let anchor_shift = calc_shift(a);
+                    ((a as isize + anchor_shift).max(0) as usize).min(buffer_len)
+                });
+                (*id, new_pos, new_anchor)
+            })
+            .collect();
 
-        // Adjust anchor if there was a selection
-        if let Some(anchor) = original_cursor_anchor {
-            let new_anchor = ((anchor as isize + cursor_delta).max(0) as usize).min(buffer_len);
-            state.cursors.primary_mut().anchor = Some(new_anchor);
+        // Apply new cursor positions
+        for (cursor_id, new_pos, new_anchor) in &new_cursors {
+            if let Some(cursor) = state.cursors.get_mut(*cursor_id) {
+                cursor.position = *new_pos;
+                cursor.anchor = *new_anchor;
+            }
+        }
+
+        // Snapshot the tree after edits (for redo) - O(1) Arc clone
+        let new_tree = state.buffer.snapshot_piece_tree();
+
+        // Invalidate syntax highlighting
+        state.highlighter.invalidate_all();
+
+        // Create BulkEdit event for undo log
+        let bulk_edit = Event::BulkEdit {
+            old_tree: Some(old_tree),
+            new_tree: Some(new_tree),
+            old_cursors,
+            new_cursors,
+            description,
+        };
+
+        // Add to event log
+        if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+            event_log.append(bulk_edit);
         }
 
         // Notify LSP about the changes using pre-calculated positions

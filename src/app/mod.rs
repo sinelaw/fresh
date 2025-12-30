@@ -5310,7 +5310,7 @@ mod tests {
     /// incorrect positions because they're calculated from the already-modified buffer.
     ///
     /// When applying LSP rename edits:
-    /// 1. apply_rename_batch_to_buffer() applies the batch to the buffer
+    /// 1. apply_events_to_buffer_as_bulk_edit() applies the edits to the buffer
     /// 2. Then calls notify_lsp_change() which calls collect_lsp_changes()
     /// 3. collect_lsp_changes() converts byte positions to LSP positions using
     ///    the CURRENT buffer state
@@ -5375,7 +5375,7 @@ mod tests {
         // CORRECT: Calculate LSP positions BEFORE applying batch
         let lsp_changes_before = editor.collect_lsp_changes(&batch);
 
-        // Now apply the batch (this is what apply_rename_batch_to_buffer does)
+        // Now apply the batch (this is what apply_events_to_buffer_as_bulk_edit does)
         editor.active_state_mut().apply(&batch);
 
         // BUG DEMONSTRATION: Calculate LSP positions AFTER applying batch
@@ -5499,37 +5499,34 @@ mod tests {
         let cursor_id = editor.active_state().cursors.primary_id();
         let buffer_id = editor.active_buffer();
 
-        let batch = Event::Batch {
-            events: vec![
-                // Second occurrence first (at position 23, line 1)
-                Event::Delete {
-                    range: 23..26, // "val" on line 1
-                    deleted_text: "val".to_string(),
-                    cursor_id,
-                },
-                Event::Insert {
-                    position: 23,
-                    text: "value".to_string(),
-                    cursor_id,
-                },
-                // First occurrence second (at position 7, line 0)
-                Event::Delete {
-                    range: 7..10, // "val" on line 0
-                    deleted_text: "val".to_string(),
-                    cursor_id,
-                },
-                Event::Insert {
-                    position: 7,
-                    text: "value".to_string(),
-                    cursor_id,
-                },
-            ],
-            description: "LSP Rename".to_string(),
-        };
+        let events = vec![
+            // Second occurrence first (at position 23, line 1)
+            Event::Delete {
+                range: 23..26, // "val" on line 1
+                deleted_text: "val".to_string(),
+                cursor_id,
+            },
+            Event::Insert {
+                position: 23,
+                text: "value".to_string(),
+                cursor_id,
+            },
+            // First occurrence second (at position 7, line 0)
+            Event::Delete {
+                range: 7..10, // "val" on line 0
+                deleted_text: "val".to_string(),
+                cursor_id,
+            },
+            Event::Insert {
+                position: 7,
+                text: "value".to_string(),
+                cursor_id,
+            },
+        ];
 
-        // Apply the rename batch (this should preserve cursor position)
+        // Apply the rename using bulk edit (this should preserve cursor position)
         editor
-            .apply_rename_batch_to_buffer(buffer_id, batch)
+            .apply_events_to_buffer_as_bulk_edit(buffer_id, events, "LSP Rename".to_string())
             .unwrap();
 
         // Verify buffer was correctly modified
@@ -5589,32 +5586,35 @@ mod tests {
         let buffer_id = editor.active_buffer();
 
         // === FIRST RENAME: "val" -> "value" ===
-        // Create batch for first rename (applied in reverse order)
+        // Create events for first rename (applied in reverse order)
+        let events1 = vec![
+            // Second occurrence first (at position 23, line 1, char 4)
+            Event::Delete {
+                range: 23..26,
+                deleted_text: "val".to_string(),
+                cursor_id,
+            },
+            Event::Insert {
+                position: 23,
+                text: "value".to_string(),
+                cursor_id,
+            },
+            // First occurrence (at position 7, line 0, char 7)
+            Event::Delete {
+                range: 7..10,
+                deleted_text: "val".to_string(),
+                cursor_id,
+            },
+            Event::Insert {
+                position: 7,
+                text: "value".to_string(),
+                cursor_id,
+            },
+        ];
+
+        // Create batch for LSP change verification
         let batch1 = Event::Batch {
-            events: vec![
-                // Second occurrence first (at position 23, line 1, char 4)
-                Event::Delete {
-                    range: 23..26,
-                    deleted_text: "val".to_string(),
-                    cursor_id,
-                },
-                Event::Insert {
-                    position: 23,
-                    text: "value".to_string(),
-                    cursor_id,
-                },
-                // First occurrence (at position 7, line 0, char 7)
-                Event::Delete {
-                    range: 7..10,
-                    deleted_text: "val".to_string(),
-                    cursor_id,
-                },
-                Event::Insert {
-                    position: 7,
-                    text: "value".to_string(),
-                    cursor_id,
-                },
-            ],
+            events: events1.clone(),
             description: "LSP Rename 1".to_string(),
         };
 
@@ -5638,9 +5638,9 @@ mod tests {
         );
         assert_eq!(first_del_range.end.character, 7, "First delete end char");
 
-        // Apply first rename
+        // Apply first rename using bulk edit
         editor
-            .apply_rename_batch_to_buffer(buffer_id, batch1)
+            .apply_events_to_buffer_as_bulk_edit(buffer_id, events1, "LSP Rename 1".to_string())
             .unwrap();
 
         // Verify buffer after first rename
@@ -5658,32 +5658,35 @@ mod tests {
         // Buffer: "fn foo(value: i32) {\n    value + 1\n}\n"
         //          0123456789...
 
-        // Create batch for second rename
+        // Create events for second rename
+        let events2 = vec![
+            // Second occurrence first (at position 25, line 1, char 4)
+            Event::Delete {
+                range: 25..30,
+                deleted_text: "value".to_string(),
+                cursor_id,
+            },
+            Event::Insert {
+                position: 25,
+                text: "x".to_string(),
+                cursor_id,
+            },
+            // First occurrence (at position 7, line 0, char 7)
+            Event::Delete {
+                range: 7..12,
+                deleted_text: "value".to_string(),
+                cursor_id,
+            },
+            Event::Insert {
+                position: 7,
+                text: "x".to_string(),
+                cursor_id,
+            },
+        ];
+
+        // Create batch for LSP change verification
         let batch2 = Event::Batch {
-            events: vec![
-                // Second occurrence first (at position 25, line 1, char 4)
-                Event::Delete {
-                    range: 25..30,
-                    deleted_text: "value".to_string(),
-                    cursor_id,
-                },
-                Event::Insert {
-                    position: 25,
-                    text: "x".to_string(),
-                    cursor_id,
-                },
-                // First occurrence (at position 7, line 0, char 7)
-                Event::Delete {
-                    range: 7..12,
-                    deleted_text: "value".to_string(),
-                    cursor_id,
-                },
-                Event::Insert {
-                    position: 7,
-                    text: "x".to_string(),
-                    cursor_id,
-                },
-            ],
+            events: events2.clone(),
             description: "LSP Rename 2".to_string(),
         };
 
@@ -5731,9 +5734,9 @@ mod tests {
             "Second rename third delete end should be at char 12 (7 + 5 for 'value')"
         );
 
-        // Apply second rename
+        // Apply second rename using bulk edit
         editor
-            .apply_rename_batch_to_buffer(buffer_id, batch2)
+            .apply_events_to_buffer_as_bulk_edit(buffer_id, events2, "LSP Rename 2".to_string())
             .unwrap();
 
         // Verify buffer after second rename
