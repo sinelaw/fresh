@@ -2744,13 +2744,13 @@ impl Editor {
         } else {
             "Comment"
         };
-        let batch = Event::Batch {
-            events,
-            description: format!("{} lines", action_desc),
-        };
 
-        self.active_event_log_mut().append(batch.clone());
-        self.apply_event_to_active_buffer(&batch);
+        // Use optimized bulk edit for multi-line comment toggle
+        let description = format!("{} lines", action_desc);
+        if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description) {
+            self.active_event_log_mut().append(bulk_edit);
+        }
+
         self.set_status_message(format!("{}ed {} line(s)", action_desc, line_starts.len()));
     }
 

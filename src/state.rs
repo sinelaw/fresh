@@ -628,11 +628,11 @@ impl EditorState {
 
                 // Update primary cursor line number
                 let primary_pos = self.cursors.primary().position;
-                self.primary_cursor_line_number =
-                    match self.buffer.offset_to_position(primary_pos) {
-                        Some(pos) => crate::model::buffer::LineNumber::Absolute(pos.line),
-                        None => crate::model::buffer::LineNumber::Absolute(0),
-                    };
+                self.primary_cursor_line_number = match self.buffer.offset_to_position(primary_pos)
+                {
+                    Some(pos) => crate::model::buffer::LineNumber::Absolute(pos.line),
+                    None => crate::model::buffer::LineNumber::Absolute(0),
+                };
             }
         }
     }

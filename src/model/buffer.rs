@@ -997,11 +997,13 @@ impl TextBuffer {
 
         // Now call apply_bulk_edits with a simple index-based closure
         let mut idx = 0;
-        let delta = self.piece_tree.apply_bulk_edits(edits, &self.buffers, |_text| {
-            let info = buffer_info[idx].clone();
-            idx += 1;
-            info
-        });
+        let delta = self
+            .piece_tree
+            .apply_bulk_edits(edits, &self.buffers, |_text| {
+                let info = buffer_info[idx].clone();
+                idx += 1;
+                info
+            });
 
         self.modified = true;
         self.recovery_pending = true;

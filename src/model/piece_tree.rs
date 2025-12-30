@@ -1810,11 +1810,18 @@ impl PieceTree {
 
         // 2. Collect all leaves, splitting at all required points
         let mut leaves = Vec::new();
-        self.collect_leaves_with_multi_split(&self.root.clone(), 0, &split_points, &mut leaves, buffers);
+        self.collect_leaves_with_multi_split(
+            &self.root.clone(),
+            0,
+            &split_points,
+            &mut leaves,
+            buffers,
+        );
 
         // 3. Build edit ranges for quick lookup (sorted descending by position)
         // Each edit: (start, end, insert_leaf)
-        let mut edit_ranges: Vec<(usize, usize, Option<LeafData>)> = Vec::with_capacity(edits.len());
+        let mut edit_ranges: Vec<(usize, usize, Option<LeafData>)> =
+            Vec::with_capacity(edits.len());
         for (pos, del_len, text) in edits {
             let del_end = pos.saturating_add(*del_len).min(self.total_bytes);
             let insert_leaf = if !text.is_empty() {
@@ -1997,7 +2004,12 @@ impl PieceTree {
                             offset + prev_offset,
                             remaining,
                         );
-                        leaves.push(LeafData::new(*location, offset + prev_offset, remaining, lf_cnt));
+                        leaves.push(LeafData::new(
+                            *location,
+                            offset + prev_offset,
+                            remaining,
+                            lf_cnt,
+                        ));
                     }
                 }
             }
