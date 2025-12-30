@@ -1,5 +1,53 @@
 # Release Notes
 
+## 0.1.66
+
+### Features
+
+* **Find Selection Next/Previous**: Search for word under cursor without opening find panel. Ctrl+F3/Ctrl+Shift+F3 or Alt+N/Alt+P (#489).
+
+* **Cursor Style Configuration**: Configure terminal cursor style (block/bar/underline, blinking/steady) via command palette (#341).
+
+* **Case Conversion**: Transform selected text to uppercase (Alt+U) or lowercase (Alt+L) (#522).
+
+* **Folder Modified Indicators**: Parent folders show dot indicator when containing unsaved files (#526).
+
+* **Line Ending Indicator**: Status bar shows LF/CRLF/CR, clickable to change. Conversion on save, configurable default (#487).
+
+### Experimental
+
+*These features are work-in-progress. Expect rough edges and breaking changes.*
+
+* **LSP Helper Plugins**: Popup with install commands when LSP server not found for Python, Rust, TypeScript (#502).
+
+* **Vi Mode Plugin**: Full vi-style modal editing with normal/insert/visual modes, operators (d/c/y), motions (hjkl, w/b/e, gg/G), text objects (iw, i", i(), etc.), counts, and find character (f/t).
+
+* **Review Diff Plugin**: Code review for AI-generated changes or git diffs. Side-by-side view with synchronized scrolling, line comments, approve/reject/stage actions, export to Markdown/JSON.
+
+### Bug Fixes
+
+* **Line Numbers with Wrapped Lines**: Fixed line numbers desyncing when scrolling through wrapped lines (#552).
+
+* **Click Past End of Line**: Now positions cursor at line end instead of next line start (#547).
+
+* **Line Wrapping**: Fixed characters being clipped at wrap boundaries with tabs and grapheme clusters (#550).
+
+* **Zsh Dotfiles**: .zshrc, .zprofile, .zshenv now highlighted as shell scripts (#537).
+
+* **Cursor on Status Bar**: Fixed cursor jumping to status bar when scrolling to end of file (#468).
+
+* **Large Single-Line Files**: Fixed memory exhaustion and 100% CPU on files like minified JSON (#481).
+
+* **Config Editor Keys**: Fixed Delete, Home/End, Ctrl+A in JSON text box.
+
+* **Search Term Persistence**: Alt+N/Alt+P keeps original search term when landing on longer word.
+
+### Packaging
+
+* **AUR**: Use stable source tarball to fix sha256sum validation failures.
+
+---
+
 ## 0.1.65
 
 ### Features
