@@ -727,6 +727,11 @@ impl Editor {
             );
         }
 
+        // Render tab context menu if open
+        if let Some(ref menu) = self.tab_context_menu {
+            self.render_tab_context_menu(frame, menu);
+        }
+
         // Render software mouse cursor when GPM is active
         // GPM can't draw its cursor on the alternate screen buffer used by TUI apps,
         // so we draw our own cursor at the tracked mouse position.
@@ -892,6 +897,69 @@ impl Editor {
             // Menu hover is handled by MenuRenderer
             _ => {}
         }
+    }
+
+    /// Render the tab context menu
+    fn render_tab_context_menu(&self, frame: &mut Frame, menu: &TabContextMenu) {
+        use ratatui::style::Style;
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+
+        let items = super::types::TabContextMenuItem::all();
+        let menu_width = 22u16; // "Close to the Right" + padding
+        let menu_height = items.len() as u16 + 2; // items + borders
+
+        // Adjust position to stay within screen bounds
+        let screen_width = frame.area().width;
+        let screen_height = frame.area().height;
+
+        let menu_x = if menu.position.0 + menu_width > screen_width {
+            screen_width.saturating_sub(menu_width)
+        } else {
+            menu.position.0
+        };
+
+        let menu_y = if menu.position.1 + menu_height > screen_height {
+            screen_height.saturating_sub(menu_height)
+        } else {
+            menu.position.1
+        };
+
+        let area = ratatui::layout::Rect::new(menu_x, menu_y, menu_width, menu_height);
+
+        // Clear the area first
+        frame.render_widget(Clear, area);
+
+        // Build the menu lines
+        let mut lines = Vec::new();
+        for (idx, item) in items.iter().enumerate() {
+            let is_highlighted = idx == menu.highlighted;
+
+            let style = if is_highlighted {
+                Style::default()
+                    .fg(self.theme.menu_highlight_fg)
+                    .bg(self.theme.menu_highlight_bg)
+            } else {
+                Style::default()
+                    .fg(self.theme.menu_dropdown_fg)
+                    .bg(self.theme.menu_dropdown_bg)
+            };
+
+            // Pad the label to fill the menu width
+            let label = item.label();
+            let content_width = (menu_width as usize).saturating_sub(2); // -2 for borders
+            let padded_label = format!(" {:<width$}", label, width = content_width - 1);
+
+            lines.push(Line::from(vec![Span::styled(padded_label, style)]));
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.theme.menu_border_fg))
+            .style(Style::default().bg(self.theme.menu_dropdown_bg));
+
+        let paragraph = Paragraph::new(lines).block(block);
+        frame.render_widget(paragraph, area);
     }
 
     // === Overlay Management (Event-Driven) ===

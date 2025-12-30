@@ -1192,6 +1192,181 @@ impl Editor {
         true
     }
 
+    /// Close all other tabs in a split, keeping only the specified buffer
+    pub fn close_other_tabs_in_split(&mut self, keep_buffer_id: BufferId, split_id: SplitId) {
+        // Get the split's open buffers
+        let split_tabs = self
+            .split_view_states
+            .get(&split_id)
+            .map(|vs| vs.open_buffers.clone())
+            .unwrap_or_default();
+
+        // Close all tabs except the one we want to keep
+        let tabs_to_close: Vec<_> = split_tabs
+            .iter()
+            .filter(|&&id| id != keep_buffer_id)
+            .copied()
+            .collect();
+
+        let count = tabs_to_close.len();
+        for buffer_id in tabs_to_close {
+            self.close_tab_in_split_silent(buffer_id, split_id);
+        }
+
+        // Make sure the kept buffer is active
+        let _ = self.split_manager.set_split_buffer(split_id, keep_buffer_id);
+
+        if count > 0 {
+            self.set_status_message(format!("Closed {} other tab(s)", count));
+        }
+    }
+
+    /// Close tabs to the right of the specified buffer in a split
+    pub fn close_tabs_to_right_in_split(&mut self, buffer_id: BufferId, split_id: SplitId) {
+        // Get the split's open buffers
+        let split_tabs = self
+            .split_view_states
+            .get(&split_id)
+            .map(|vs| vs.open_buffers.clone())
+            .unwrap_or_default();
+
+        // Find the index of the target buffer
+        let Some(target_idx) = split_tabs.iter().position(|&id| id == buffer_id) else {
+            return;
+        };
+
+        // Close all tabs after the target
+        let tabs_to_close: Vec<_> = split_tabs
+            .iter()
+            .skip(target_idx + 1)
+            .copied()
+            .collect();
+
+        let count = tabs_to_close.len();
+        for buf_id in tabs_to_close {
+            self.close_tab_in_split_silent(buf_id, split_id);
+        }
+
+        if count > 0 {
+            self.set_status_message(format!("Closed {} tab(s) to the right", count));
+        }
+    }
+
+    /// Close tabs to the left of the specified buffer in a split
+    pub fn close_tabs_to_left_in_split(&mut self, buffer_id: BufferId, split_id: SplitId) {
+        // Get the split's open buffers
+        let split_tabs = self
+            .split_view_states
+            .get(&split_id)
+            .map(|vs| vs.open_buffers.clone())
+            .unwrap_or_default();
+
+        // Find the index of the target buffer
+        let Some(target_idx) = split_tabs.iter().position(|&id| id == buffer_id) else {
+            return;
+        };
+
+        // Close all tabs before the target
+        let tabs_to_close: Vec<_> = split_tabs
+            .iter()
+            .take(target_idx)
+            .copied()
+            .collect();
+
+        let count = tabs_to_close.len();
+        for buf_id in tabs_to_close {
+            self.close_tab_in_split_silent(buf_id, split_id);
+        }
+
+        if count > 0 {
+            self.set_status_message(format!("Closed {} tab(s) to the left", count));
+        }
+    }
+
+    /// Close all tabs in a split
+    pub fn close_all_tabs_in_split(&mut self, split_id: SplitId) {
+        // Get the split's open buffers
+        let split_tabs = self
+            .split_view_states
+            .get(&split_id)
+            .map(|vs| vs.open_buffers.clone())
+            .unwrap_or_default();
+
+        let count = split_tabs.len();
+
+        // Close all tabs (this will eventually close the split when empty)
+        for buffer_id in split_tabs {
+            self.close_tab_in_split_silent(buffer_id, split_id);
+        }
+
+        if count > 0 {
+            self.set_status_message(format!("Closed {} tab(s)", count));
+        }
+    }
+
+    /// Close a tab silently (without setting status message)
+    /// Used internally by batch close operations
+    fn close_tab_in_split_silent(&mut self, buffer_id: BufferId, split_id: SplitId) {
+        // If closing a terminal buffer while in terminal mode, exit terminal mode
+        if self.terminal_mode && self.is_terminal_buffer(buffer_id) {
+            self.terminal_mode = false;
+            self.key_context = crate::input::keybindings::KeyContext::Normal;
+        }
+
+        // Count how many splits have this buffer in their open_buffers
+        let buffer_in_other_splits = self
+            .split_view_states
+            .iter()
+            .filter(|(&sid, view_state)| sid != split_id && view_state.has_buffer(buffer_id))
+            .count();
+
+        // Get the split's open buffers
+        let split_tabs = self
+            .split_view_states
+            .get(&split_id)
+            .map(|vs| vs.open_buffers.clone())
+            .unwrap_or_default();
+
+        let is_last_viewport = buffer_in_other_splits == 0;
+
+        if is_last_viewport {
+            // Last viewport of this buffer - need to close buffer entirely
+            // Skip modified buffers to avoid prompting during batch operations
+            if let Some(state) = self.buffers.get(&buffer_id) {
+                if state.buffer.is_modified() {
+                    // Skip modified buffers - don't close them
+                    return;
+                }
+            }
+            let _ = self.close_buffer(buffer_id);
+        } else {
+            // There are other viewports of this buffer - just remove from this split's tabs
+            if split_tabs.len() <= 1 {
+                // This is the only tab in this split - close the split
+                self.handle_close_split(split_id);
+                return;
+            }
+
+            // Find replacement buffer for this split
+            let current_idx = split_tabs
+                .iter()
+                .position(|&id| id == buffer_id)
+                .unwrap_or(0);
+            let replacement_idx = if current_idx > 0 { current_idx - 1 } else { 1 };
+            let replacement_buffer = split_tabs.get(replacement_idx).copied();
+
+            // Remove buffer from this split's tabs
+            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                view_state.remove_buffer(buffer_id);
+            }
+
+            // Update the split to show the replacement buffer
+            if let Some(replacement) = replacement_buffer {
+                let _ = self.split_manager.set_split_buffer(split_id, replacement);
+            }
+        }
+    }
+
     /// Switch to next buffer in current split's tabs
     pub fn next_buffer(&mut self) {
         // Get the current split's open buffers

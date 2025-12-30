@@ -194,6 +194,11 @@ impl Editor {
                     needs_render = true;
                 }
             }
+            MouseEventKind::Down(MouseButton::Right) => {
+                // Handle right-click for context menus
+                self.handle_right_click(col, row)?;
+                needs_render = true;
+            }
             _ => {
                 // Ignore other mouse events for now
             }
@@ -344,6 +349,16 @@ impl Editor {
             }
         }
 
+        // Handle tab context menu hover - update highlighted item
+        if let Some(HoverTarget::TabContextMenuItem(item_idx)) = new_target {
+            if let Some(ref mut menu) = self.tab_context_menu {
+                if menu.highlighted != item_idx {
+                    menu.highlighted = item_idx;
+                    return true;
+                }
+            }
+        }
+
         changed
     }
 
@@ -485,6 +500,26 @@ impl Editor {
 
     /// Compute what hover target is at the given position
     fn compute_hover_target(&self, col: u16, row: u16) -> Option<HoverTarget> {
+        // Check tab context menu first (it's rendered on top)
+        if let Some(ref menu) = self.tab_context_menu {
+            let menu_x = menu.position.0;
+            let menu_y = menu.position.1;
+            let menu_width = 22u16;
+            let items = super::types::TabContextMenuItem::all();
+            let menu_height = items.len() as u16 + 2;
+
+            if col >= menu_x
+                && col < menu_x + menu_width
+                && row > menu_y
+                && row < menu_y + menu_height - 1
+            {
+                let item_idx = (row - menu_y - 1) as usize;
+                if item_idx < items.len() {
+                    return Some(HoverTarget::TabContextMenuItem(item_idx));
+                }
+            }
+        }
+
         // Check suggestions area first (command palette, autocomplete)
         if let Some((inner_rect, start_idx, _visible_count, total_count)) =
             &self.cached_layout.suggestions_area
@@ -807,6 +842,13 @@ impl Editor {
     }
     /// Handle mouse click (down event)
     pub(super) fn handle_mouse_click(&mut self, col: u16, row: u16) -> std::io::Result<()> {
+        // Check if click is on tab context menu first
+        if self.tab_context_menu.is_some() {
+            if let Some(result) = self.handle_tab_context_menu_click(col, row) {
+                return result;
+            }
+        }
+
         // Check if click is on suggestions (command palette, autocomplete)
         if let Some((inner_rect, start_idx, _visible_count, total_count)) =
             &self.cached_layout.suggestions_area.clone()
@@ -1372,6 +1414,122 @@ impl Editor {
 
             // Update the split ratio
             let _ = self.split_manager.set_ratio(split_id, new_ratio);
+        }
+
+        Ok(())
+    }
+
+    /// Handle right-click event
+    pub(super) fn handle_right_click(&mut self, col: u16, row: u16) -> std::io::Result<()> {
+        // First check if a tab context menu is open and the click is on a menu item
+        if let Some(ref menu) = self.tab_context_menu {
+            let menu_x = menu.position.0;
+            let menu_y = menu.position.1;
+            let menu_width = 22u16; // "Close to the Right" + padding
+            let menu_height = super::types::TabContextMenuItem::all().len() as u16 + 2; // items + borders
+
+            // Check if click is inside the menu
+            if col >= menu_x
+                && col < menu_x + menu_width
+                && row >= menu_y
+                && row < menu_y + menu_height
+            {
+                // Click inside menu - let left-click handler deal with it
+                return Ok(());
+            }
+        }
+
+        // Check if right-click is on a tab
+        let tab_click = self.cached_layout.tab_areas.iter().find_map(
+            |(split_id, buffer_id, tab_row, start_col, end_col, _close_start)| {
+                if row == *tab_row && col >= *start_col && col < *end_col {
+                    Some((*split_id, *buffer_id))
+                } else {
+                    None
+                }
+            },
+        );
+
+        if let Some((split_id, buffer_id)) = tab_click {
+            // Open tab context menu
+            self.tab_context_menu = Some(TabContextMenu::new(buffer_id, split_id, col, row + 1));
+        } else {
+            // Click outside tab - close context menu if open
+            self.tab_context_menu = None;
+        }
+
+        Ok(())
+    }
+
+    /// Handle left-click on tab context menu
+    pub(super) fn handle_tab_context_menu_click(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<std::io::Result<()>> {
+        let menu = self.tab_context_menu.as_ref()?;
+        let menu_x = menu.position.0;
+        let menu_y = menu.position.1;
+        let menu_width = 22u16;
+        let items = super::types::TabContextMenuItem::all();
+        let menu_height = items.len() as u16 + 2; // items + borders
+
+        // Check if click is inside the menu area
+        if col < menu_x || col >= menu_x + menu_width || row < menu_y || row >= menu_y + menu_height
+        {
+            // Click outside menu - close it
+            self.tab_context_menu = None;
+            return Some(Ok(()));
+        }
+
+        // Check if click is on the border (first or last row)
+        if row == menu_y || row == menu_y + menu_height - 1 {
+            return Some(Ok(()));
+        }
+
+        // Calculate which item was clicked (accounting for border)
+        let item_idx = (row - menu_y - 1) as usize;
+        if item_idx >= items.len() {
+            return Some(Ok(()));
+        }
+
+        // Get the menu state before closing it
+        let buffer_id = menu.buffer_id;
+        let split_id = menu.split_id;
+        let item = items[item_idx];
+
+        // Close the menu
+        self.tab_context_menu = None;
+
+        // Execute the action
+        Some(self.execute_tab_context_menu_action(item, buffer_id, split_id))
+    }
+
+    /// Execute a tab context menu action
+    fn execute_tab_context_menu_action(
+        &mut self,
+        item: super::types::TabContextMenuItem,
+        buffer_id: BufferId,
+        split_id: SplitId,
+    ) -> std::io::Result<()> {
+        use super::types::TabContextMenuItem;
+
+        match item {
+            TabContextMenuItem::Close => {
+                self.close_tab_in_split(buffer_id, split_id);
+            }
+            TabContextMenuItem::CloseOthers => {
+                self.close_other_tabs_in_split(buffer_id, split_id);
+            }
+            TabContextMenuItem::CloseToRight => {
+                self.close_tabs_to_right_in_split(buffer_id, split_id);
+            }
+            TabContextMenuItem::CloseToLeft => {
+                self.close_tabs_to_left_in_split(buffer_id, split_id);
+            }
+            TabContextMenuItem::CloseAll => {
+                self.close_all_tabs_in_split(split_id);
+            }
         }
 
         Ok(())

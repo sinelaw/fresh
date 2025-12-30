@@ -341,6 +341,93 @@ pub enum HoverTarget {
     SearchOptionRegex,
     /// Hovering over the search options "Confirm Each" checkbox
     SearchOptionConfirmEach,
+    /// Hovering over a tab context menu item (item_index)
+    TabContextMenuItem(usize),
+}
+
+/// Tab context menu items
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabContextMenuItem {
+    /// Close this tab
+    Close,
+    /// Close all other tabs
+    CloseOthers,
+    /// Close tabs to the right
+    CloseToRight,
+    /// Close tabs to the left
+    CloseToLeft,
+    /// Close all tabs
+    CloseAll,
+}
+
+impl TabContextMenuItem {
+    /// Get all menu items in order
+    pub fn all() -> &'static [TabContextMenuItem] {
+        &[
+            TabContextMenuItem::Close,
+            TabContextMenuItem::CloseOthers,
+            TabContextMenuItem::CloseToRight,
+            TabContextMenuItem::CloseToLeft,
+            TabContextMenuItem::CloseAll,
+        ]
+    }
+
+    /// Get the display label for this menu item
+    pub fn label(&self) -> &'static str {
+        match self {
+            TabContextMenuItem::Close => "Close",
+            TabContextMenuItem::CloseOthers => "Close Others",
+            TabContextMenuItem::CloseToRight => "Close to the Right",
+            TabContextMenuItem::CloseToLeft => "Close to the Left",
+            TabContextMenuItem::CloseAll => "Close All",
+        }
+    }
+}
+
+/// State for tab context menu (right-click popup on tabs)
+#[derive(Debug, Clone)]
+pub struct TabContextMenu {
+    /// The buffer ID this context menu is for
+    pub buffer_id: BufferId,
+    /// The split ID where the tab is located
+    pub split_id: SplitId,
+    /// Screen position where the menu should appear (x, y)
+    pub position: (u16, u16),
+    /// Currently highlighted menu item index
+    pub highlighted: usize,
+}
+
+impl TabContextMenu {
+    /// Create a new tab context menu
+    pub fn new(buffer_id: BufferId, split_id: SplitId, x: u16, y: u16) -> Self {
+        Self {
+            buffer_id,
+            split_id,
+            position: (x, y),
+            highlighted: 0,
+        }
+    }
+
+    /// Get the currently highlighted item
+    pub fn highlighted_item(&self) -> TabContextMenuItem {
+        TabContextMenuItem::all()[self.highlighted]
+    }
+
+    /// Move highlight down
+    pub fn next_item(&mut self) {
+        let items = TabContextMenuItem::all();
+        self.highlighted = (self.highlighted + 1) % items.len();
+    }
+
+    /// Move highlight up
+    pub fn prev_item(&mut self) {
+        let items = TabContextMenuItem::all();
+        self.highlighted = if self.highlighted == 0 {
+            items.len() - 1
+        } else {
+            self.highlighted - 1
+        };
+    }
 }
 
 /// Mouse state tracking

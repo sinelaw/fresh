@@ -67,7 +67,8 @@ pub(crate) fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
 
 use self::types::{
     Bookmark, CachedLayout, EventLineInfo, InteractiveReplaceState, LspMessageEntry,
-    LspProgressInfo, MacroRecordingState, MouseState, SearchState, DEFAULT_BACKGROUND_FILE,
+    LspProgressInfo, MacroRecordingState, MouseState, SearchState, TabContextMenu,
+    DEFAULT_BACKGROUND_FILE,
 };
 use crate::config::Config;
 use crate::config_io::DirectoryContext;
@@ -320,6 +321,9 @@ pub struct Editor {
 
     /// Mouse state for scrollbar dragging
     mouse_state: MouseState,
+
+    /// Tab context menu state (right-click on tabs)
+    tab_context_menu: Option<TabContextMenu>,
 
     /// Cached layout areas from last render (for mouse hit testing)
     pub(crate) cached_layout: CachedLayout,
@@ -855,6 +859,7 @@ impl Editor {
             interactive_replace_state: None,
             lsp_status: String::new(),
             mouse_state: MouseState::default(),
+            tab_context_menu: None,
             cached_layout: CachedLayout::default(),
             command_registry,
             plugin_manager,
