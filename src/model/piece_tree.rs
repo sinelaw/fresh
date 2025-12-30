@@ -622,6 +622,7 @@ impl PieceTreeNode {
 }
 
 /// The main piece table structure with integrated line tracking
+#[derive(Debug, Clone)]
 pub struct PieceTree {
     root: Arc<PieceTreeNode>,
     total_bytes: usize,
@@ -1766,6 +1767,241 @@ impl PieceTree {
     /// Does ONE O(log n) tree traversal, then iterates sequentially
     pub fn iter_pieces_in_range(&self, start: usize, end: usize) -> PieceRangeIter {
         PieceRangeIter::new(&self.root, start, end)
+    }
+
+    /// Apply multiple edits in a single tree traversal + rebuild
+    ///
+    /// # Arguments
+    /// * `edits` - Vec of (position, delete_len, insert_text), MUST be sorted descending by position
+    /// * `buffers` - Reference to string buffers (for line feed computation)
+    /// * `add_text_fn` - Function to add text to buffer, returns (BufferLocation, offset, bytes)
+    ///
+    /// # Complexity
+    /// O(pieces + edits) instead of O(pieces × edits)
+    ///
+    /// # Returns
+    /// The net change in total bytes
+    pub fn apply_bulk_edits<F>(
+        &mut self,
+        edits: &[(usize, usize, &str)],
+        buffers: &[StringBuffer],
+        mut add_text_fn: F,
+    ) -> isize
+    where
+        F: FnMut(&str) -> (BufferLocation, usize, usize, Option<usize>),
+    {
+        if edits.is_empty() {
+            return 0;
+        }
+
+        // 1. Collect all split points (both start and end of each edit range)
+        let mut split_points: Vec<usize> = Vec::with_capacity(edits.len() * 2);
+        for (pos, del_len, _) in edits {
+            split_points.push(*pos);
+            if *del_len > 0 {
+                let end = pos.saturating_add(*del_len).min(self.total_bytes);
+                if end > *pos {
+                    split_points.push(end);
+                }
+            }
+        }
+        split_points.sort_unstable();
+        split_points.dedup();
+
+        // 2. Collect all leaves, splitting at all required points
+        let mut leaves = Vec::new();
+        self.collect_leaves_with_multi_split(&self.root.clone(), 0, &split_points, &mut leaves, buffers);
+
+        // 3. Build edit ranges for quick lookup (sorted descending by position)
+        // Each edit: (start, end, insert_leaf)
+        let mut edit_ranges: Vec<(usize, usize, Option<LeafData>)> = Vec::with_capacity(edits.len());
+        for (pos, del_len, text) in edits {
+            let del_end = pos.saturating_add(*del_len).min(self.total_bytes);
+            let insert_leaf = if !text.is_empty() {
+                let (location, offset, bytes, lf_cnt) = add_text_fn(text);
+                Some(LeafData::new(location, offset, bytes, lf_cnt))
+            } else {
+                None
+            };
+            edit_ranges.push((*pos, del_end, insert_leaf));
+        }
+
+        // 4. Apply edits to leaves
+        // Process from the end of document to start (edits are sorted descending)
+        let mut new_leaves: Vec<LeafData> = Vec::with_capacity(leaves.len() + edits.len());
+        let mut current_offset = 0;
+        let mut edit_idx = edit_ranges.len(); // Start from end (highest position)
+
+        for leaf in leaves {
+            let leaf_start = current_offset;
+            let leaf_end = current_offset + leaf.bytes;
+
+            // Check if this leaf overlaps with any pending edit (working backwards)
+            let mut keep_leaf = true;
+            let mut leaf_consumed = false;
+
+            // Check all edits that might affect this leaf
+            for i in (0..edit_idx).rev() {
+                let (edit_start, edit_end, _) = &edit_ranges[i];
+
+                // If edit is entirely before this leaf, we're past it
+                if *edit_end <= leaf_start {
+                    continue;
+                }
+
+                // If edit is entirely after this leaf, check next edit
+                if *edit_start >= leaf_end {
+                    continue;
+                }
+
+                // Leaf overlaps with this edit's delete range - filter it out
+                if leaf_start >= *edit_start && leaf_end <= *edit_end {
+                    keep_leaf = false;
+                    leaf_consumed = true;
+                    break;
+                }
+            }
+
+            if keep_leaf && !leaf_consumed {
+                new_leaves.push(leaf.clone());
+            }
+
+            // Check if we need to insert at this position
+            while edit_idx > 0 {
+                let (edit_start, edit_end, ref insert_leaf) = edit_ranges[edit_idx - 1];
+
+                // Insert when we've just passed the edit's delete end position
+                if leaf_end >= edit_end && edit_start <= leaf_end {
+                    if let Some(insert) = insert_leaf {
+                        new_leaves.push(insert.clone());
+                    }
+                    edit_idx -= 1;
+                } else {
+                    break;
+                }
+            }
+
+            current_offset = leaf_end;
+        }
+
+        // Handle any remaining inserts at the end
+        while edit_idx > 0 {
+            if let Some(insert) = &edit_ranges[edit_idx - 1].2 {
+                new_leaves.push(insert.clone());
+            }
+            edit_idx -= 1;
+        }
+
+        // 5. Calculate byte delta
+        let old_bytes = self.total_bytes;
+        let mut new_bytes: usize = 0;
+        for leaf in &new_leaves {
+            new_bytes += leaf.bytes;
+        }
+        let delta = new_bytes as isize - old_bytes as isize;
+
+        // 6. Single balanced tree rebuild
+        self.root = Self::build_balanced(&new_leaves);
+        self.total_bytes = new_bytes;
+
+        delta
+    }
+
+    /// Collect leaves, splitting at multiple points in one traversal
+    fn collect_leaves_with_multi_split(
+        &self,
+        node: &Arc<PieceTreeNode>,
+        current_offset: usize,
+        split_points: &[usize],
+        leaves: &mut Vec<LeafData>,
+        buffers: &[StringBuffer],
+    ) {
+        match node.as_ref() {
+            PieceTreeNode::Internal {
+                left_bytes,
+                left,
+                right,
+                ..
+            } => {
+                // Recurse into both subtrees
+                self.collect_leaves_with_multi_split(
+                    left,
+                    current_offset,
+                    split_points,
+                    leaves,
+                    buffers,
+                );
+                self.collect_leaves_with_multi_split(
+                    right,
+                    current_offset + left_bytes,
+                    split_points,
+                    leaves,
+                    buffers,
+                );
+            }
+            PieceTreeNode::Leaf {
+                location,
+                offset,
+                bytes,
+                line_feed_cnt,
+            } => {
+                if *bytes == 0 {
+                    return;
+                }
+
+                let piece_start = current_offset;
+                let piece_end = current_offset + bytes;
+
+                // Find split points within this piece
+                let mut split_offsets: Vec<usize> = Vec::new();
+                for &sp in split_points {
+                    if sp > piece_start && sp < piece_end {
+                        split_offsets.push(sp - piece_start);
+                    }
+                }
+
+                if split_offsets.is_empty() {
+                    // No splits needed, add entire piece
+                    leaves.push(LeafData::new(*location, *offset, *bytes, *line_feed_cnt));
+                } else {
+                    // Split the piece at each point
+                    split_offsets.sort_unstable();
+                    split_offsets.dedup();
+
+                    let mut prev_offset = 0;
+                    for split_offset in split_offsets {
+                        if split_offset > prev_offset {
+                            let chunk_bytes = split_offset - prev_offset;
+                            let lf_cnt = Self::compute_line_feeds_static(
+                                buffers,
+                                *location,
+                                offset + prev_offset,
+                                chunk_bytes,
+                            );
+                            leaves.push(LeafData::new(
+                                *location,
+                                offset + prev_offset,
+                                chunk_bytes,
+                                lf_cnt,
+                            ));
+                        }
+                        prev_offset = split_offset;
+                    }
+
+                    // Add remaining part after last split
+                    if prev_offset < *bytes {
+                        let remaining = bytes - prev_offset;
+                        let lf_cnt = Self::compute_line_feeds_static(
+                            buffers,
+                            *location,
+                            offset + prev_offset,
+                            remaining,
+                        );
+                        leaves.push(LeafData::new(*location, offset + prev_offset, remaining, lf_cnt));
+                    }
+                }
+            }
+        }
     }
 }
 

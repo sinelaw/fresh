@@ -602,6 +602,38 @@ impl EditorState {
                         None => crate::model::buffer::LineNumber::Absolute(0),
                     };
             }
+
+            Event::BulkEdit {
+                old_tree,
+                new_cursors,
+                ..
+            } => {
+                // For undo: restore the old tree if present
+                if let Some(tree) = old_tree {
+                    self.buffer.restore_piece_tree(tree);
+                }
+                // Note: For forward application, the tree is already modified
+                // by apply_bulk_edits before the event is created
+
+                // Update cursor positions
+                for (cursor_id, position, anchor) in new_cursors {
+                    if let Some(cursor) = self.cursors.get_mut(*cursor_id) {
+                        cursor.position = *position;
+                        cursor.anchor = *anchor;
+                    }
+                }
+
+                // Invalidate highlight cache for entire buffer
+                self.highlighter.invalidate_all();
+
+                // Update primary cursor line number
+                let primary_pos = self.cursors.primary().position;
+                self.primary_cursor_line_number =
+                    match self.buffer.offset_to_position(primary_pos) {
+                        Some(pos) => crate::model::buffer::LineNumber::Absolute(pos.line),
+                        None => crate::model::buffer::LineNumber::Absolute(0),
+                    };
+            }
         }
     }
 

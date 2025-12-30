@@ -957,6 +957,57 @@ impl TextBuffer {
         self.recovery_pending = true;
     }
 
+    /// Restore a previously saved piece tree (for undo of BulkEdit)
+    /// This is O(1) because PieceTree uses Arc internally
+    pub fn restore_piece_tree(&mut self, tree: &Arc<PieceTree>) {
+        self.piece_tree = (**tree).clone();
+        self.modified = true;
+        self.recovery_pending = true;
+    }
+
+    /// Get the current piece tree as an Arc (for saving before BulkEdit)
+    /// This is O(1) - creates an Arc wrapper around a clone of the tree
+    pub fn snapshot_piece_tree(&self) -> Arc<PieceTree> {
+        Arc::new(self.piece_tree.clone())
+    }
+
+    /// Apply bulk edits efficiently in a single pass
+    /// Returns the net change in bytes
+    pub fn apply_bulk_edits(&mut self, edits: &[(usize, usize, &str)]) -> isize {
+        // Pre-allocate buffers for all insert texts
+        // This avoids the borrow conflict in the closure
+        let mut buffer_info: Vec<(BufferLocation, usize, usize, Option<usize>)> =
+            Vec::with_capacity(edits.len());
+
+        for (_, _, text) in edits {
+            if !text.is_empty() {
+                let buffer_id = self.next_buffer_id;
+                self.next_buffer_id += 1;
+                let content = text.as_bytes().to_vec();
+                let lf_cnt = content.iter().filter(|&&b| b == b'\n').count();
+                let bytes = content.len();
+                let buffer = StringBuffer::new(buffer_id, content);
+                self.buffers.push(buffer);
+                buffer_info.push((BufferLocation::Added(buffer_id), 0, bytes, Some(lf_cnt)));
+            } else {
+                // Placeholder for edits with no insert text
+                buffer_info.push((BufferLocation::Added(0), 0, 0, Some(0)));
+            }
+        }
+
+        // Now call apply_bulk_edits with a simple index-based closure
+        let mut idx = 0;
+        let delta = self.piece_tree.apply_bulk_edits(edits, &self.buffers, |_text| {
+            let info = buffer_info[idx].clone();
+            idx += 1;
+            info
+        });
+
+        self.modified = true;
+        self.recovery_pending = true;
+        delta
+    }
+
     /// Get text from a byte offset range
     /// This now uses the optimized piece_tree.iter_pieces_in_range() for a single traversal
     /// Get text from a byte offset range (read-only)

@@ -1557,7 +1557,10 @@ impl Editor {
         // 1c. Invalidate layouts for all views of this buffer after content changes
         // Note: recovery_pending is set automatically by the buffer on edits
         match event {
-            Event::Insert { .. } | Event::Delete { .. } | Event::ReplaceAll { .. } => {
+            Event::Insert { .. }
+            | Event::Delete { .. }
+            | Event::ReplaceAll { .. }
+            | Event::BulkEdit { .. } => {
                 self.invalidate_layouts_for_buffer(self.active_buffer());
             }
             Event::Batch { events, .. } => {
@@ -1581,7 +1584,10 @@ impl Editor {
 
         if !in_interactive_replace {
             match event {
-                Event::Insert { .. } | Event::Delete { .. } | Event::ReplaceAll { .. } => {
+                Event::Insert { .. }
+                | Event::Delete { .. }
+                | Event::ReplaceAll { .. }
+                | Event::BulkEdit { .. } => {
                     self.clear_search_highlights();
                 }
                 Event::Batch { events, .. } => {
@@ -1602,6 +1608,147 @@ impl Editor {
 
         // 4. Notify LSP of the change using pre-calculated positions
         self.send_lsp_changes_for_buffer(self.active_buffer(), lsp_changes);
+    }
+
+    /// Apply multiple Insert/Delete events efficiently using bulk edit optimization.
+    ///
+    /// This avoids O(n²) complexity by:
+    /// 1. Converting events to (position, delete_len, insert_text) tuples
+    /// 2. Applying all edits in a single tree pass via apply_bulk_edits
+    /// 3. Creating a BulkEdit event for undo (stores tree snapshot via Arc clone = O(1))
+    ///
+    /// # Arguments
+    /// * `events` - Vec of Insert/Delete events (sorted by position descending for correct application)
+    /// * `description` - Description for the undo log
+    ///
+    /// # Returns
+    /// The BulkEdit event that was applied, for tracking purposes
+    pub fn apply_events_as_bulk_edit(
+        &mut self,
+        events: Vec<Event>,
+        description: String,
+    ) -> Option<Event> {
+        use crate::model::event::CursorId;
+
+        // Check if any events modify the buffer
+        let has_buffer_mods = events
+            .iter()
+            .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
+
+        if !has_buffer_mods {
+            // No buffer modifications - use regular Batch
+            return None;
+        }
+
+        let state = self.active_state_mut();
+
+        // Capture old cursor states
+        let old_cursors: Vec<(CursorId, usize, Option<usize>)> = state
+            .cursors
+            .iter()
+            .map(|(id, c)| (id, c.position, c.anchor))
+            .collect();
+
+        // Snapshot the tree for undo (O(1) - Arc clone)
+        let old_tree = state.buffer.snapshot_piece_tree();
+
+        // Convert events to edit tuples: (position, delete_len, insert_text)
+        // Events must be sorted by position descending (later positions first)
+        // This ensures earlier edits don't shift positions of later edits
+        let mut edits: Vec<(usize, usize, String)> = Vec::new();
+
+        for event in &events {
+            match event {
+                Event::Insert { position, text, .. } => {
+                    edits.push((*position, 0, text.clone()));
+                }
+                Event::Delete { range, .. } => {
+                    edits.push((range.start, range.len(), String::new()));
+                }
+                _ => {}
+            }
+        }
+
+        // Sort edits by position descending (required by apply_bulk_edits)
+        edits.sort_by(|a, b| b.0.cmp(&a.0));
+
+        // Convert to references for apply_bulk_edits
+        let edit_refs: Vec<(usize, usize, &str)> = edits
+            .iter()
+            .map(|(pos, del, text)| (*pos, *del, text.as_str()))
+            .collect();
+
+        // Apply bulk edits
+        let _delta = state.buffer.apply_bulk_edits(&edit_refs);
+
+        // Calculate new cursor positions based on events
+        // Process cursor movements from the original events
+        let mut new_cursors: Vec<(CursorId, usize, Option<usize>)> = old_cursors.clone();
+        let mut position_deltas: Vec<(usize, isize)> = Vec::new(); // (position, delta)
+
+        // Calculate position adjustments from edits
+        for (pos, del_len, text) in &edits {
+            let delta = text.len() as isize - *del_len as isize;
+            position_deltas.push((*pos, delta));
+        }
+
+        // Sort position deltas by position ascending for adjustment
+        position_deltas.sort_by_key(|(pos, _)| *pos);
+
+        // Apply adjustments to cursor positions
+        for (cursor_id, ref mut pos, ref mut anchor) in &mut new_cursors {
+            // Find corresponding event to get the intended new position
+            for event in &events {
+                match event {
+                    Event::Insert {
+                        position,
+                        text,
+                        cursor_id: event_cursor,
+                    } if event_cursor == cursor_id => {
+                        // For insert, cursor moves to end of inserted text
+                        *pos = position + text.len();
+                        *anchor = None;
+                    }
+                    Event::Delete {
+                        range,
+                        cursor_id: event_cursor,
+                        ..
+                    } if event_cursor == cursor_id => {
+                        // For delete, cursor moves to start of deleted range
+                        *pos = range.start;
+                        *anchor = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Update cursors in state
+        for (cursor_id, position, anchor) in &new_cursors {
+            if let Some(cursor) = state.cursors.get_mut(*cursor_id) {
+                cursor.position = *position;
+                cursor.anchor = *anchor;
+            }
+        }
+
+        // Invalidate highlighter
+        state.highlighter.invalidate_all();
+
+        // Create BulkEdit event
+        let bulk_edit = Event::BulkEdit {
+            old_tree: Some(old_tree),
+            old_cursors,
+            new_cursors,
+            description,
+        };
+
+        // Post-processing (layout invalidation, split cursor sync, etc.)
+        self.sync_editor_state_to_split_view_state();
+        self.invalidate_layouts_for_buffer(self.active_buffer());
+        self.adjust_other_split_cursors_for_event(&bulk_edit);
+        self.clear_search_highlights();
+
+        Some(bulk_edit)
     }
 
     /// Trigger plugin hooks for an event (if any)

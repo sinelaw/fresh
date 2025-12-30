@@ -226,6 +226,40 @@ impl Editor {
             return;
         }
 
+        // Handle BulkEdit - cursors are managed by the event
+        if let Event::BulkEdit { new_cursors, .. } = event {
+            // Get the current buffer and split
+            let current_buffer_id = self.active_buffer();
+            let current_split_id = self.split_manager.active_split();
+
+            // Find all other splits that share the same buffer
+            let splits_for_buffer = self.split_manager.splits_for_buffer(current_buffer_id);
+
+            // Get buffer length to clamp cursor positions
+            let buffer_len = self
+                .buffers
+                .get(&current_buffer_id)
+                .map(|s| s.buffer.len())
+                .unwrap_or(0);
+
+            // Reset cursors in each other split to primary cursor position
+            for split_id in splits_for_buffer {
+                if split_id == current_split_id {
+                    continue;
+                }
+
+                if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                    // Use the primary cursor position from the event
+                    if let Some((_, pos, _)) = new_cursors.first() {
+                        let new_pos = (*pos).min(buffer_len);
+                        view_state.cursors.primary_mut().position = new_pos;
+                        view_state.cursors.primary_mut().anchor = None;
+                    }
+                }
+            }
+            return;
+        }
+
         // Find the edit parameters from the event
         let adjustments = match event {
             Event::Insert { position, text, .. } => {

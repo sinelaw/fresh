@@ -859,18 +859,17 @@ impl Editor {
                 // Normal backspace handling
                 if let Some(events) = self.action_to_events(Action::DeleteBackward) {
                     if events.len() > 1 {
-                        let batch = Event::Batch {
-                            events: events.clone(),
-                            description: "Delete backward".to_string(),
-                        };
-                        self.active_event_log_mut().append(batch.clone());
-                        self.apply_event_to_active_buffer(&batch);
-                        // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
+                        // Multi-cursor: use optimized bulk edit (O(n) instead of O(n²))
+                        let description = "Delete backward".to_string();
+                        if let Some(bulk_edit) =
+                            self.apply_events_as_bulk_edit(events, description)
+                        {
+                            self.active_event_log_mut().append(bulk_edit);
+                        }
                     } else {
                         for event in events {
                             self.active_event_log_mut().append(event.clone());
                             self.apply_event_to_active_buffer(&event);
-                            // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
                         }
                     }
                 }
@@ -2285,16 +2284,15 @@ impl Editor {
         self.cancel_pending_lsp_requests();
 
         if let Some(events) = self.action_to_events(Action::InsertChar(c)) {
-            // Wrap multiple events (multi-cursor) in a Batch for atomic undo
             if events.len() > 1 {
-                let batch = Event::Batch {
-                    events: events.clone(),
-                    description: format!("Insert '{}'", c),
-                };
-                self.active_event_log_mut().append(batch.clone());
-                self.apply_event_to_active_buffer(&batch);
+                // Multi-cursor: use optimized bulk edit (O(n) instead of O(n²))
+                let description = format!("Insert '{}'", c);
+                if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description.clone())
+                {
+                    self.active_event_log_mut().append(bulk_edit);
+                }
             } else {
-                // Single cursor - no need for batch
+                // Single cursor - apply normally
                 for event in events {
                     self.active_event_log_mut().append(event.clone());
                     self.apply_event_to_active_buffer(&event);
@@ -2338,21 +2336,35 @@ impl Editor {
         }
 
         if let Some(events) = self.action_to_events(action) {
-            // Wrap multiple events (multi-cursor) in a Batch for atomic undo
             if events.len() > 1 {
-                let batch = Event::Batch {
-                    events: events.clone(),
-                    description: action_description,
-                };
-                self.active_event_log_mut().append(batch.clone());
-                self.apply_event_to_active_buffer(&batch);
+                // Check if this batch contains buffer modifications
+                let has_buffer_mods = events
+                    .iter()
+                    .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
 
-                // Track position history for all events in the batch
+                if has_buffer_mods {
+                    // Multi-cursor buffer edit: use optimized bulk edit (O(n) instead of O(n²))
+                    if let Some(bulk_edit) =
+                        self.apply_events_as_bulk_edit(events.clone(), action_description)
+                    {
+                        self.active_event_log_mut().append(bulk_edit);
+                    }
+                } else {
+                    // Multi-cursor non-buffer operation: use Batch for atomic undo
+                    let batch = Event::Batch {
+                        events: events.clone(),
+                        description: action_description,
+                    };
+                    self.active_event_log_mut().append(batch.clone());
+                    self.apply_event_to_active_buffer(&batch);
+                }
+
+                // Track position history for all events
                 for event in &events {
                     self.track_cursor_movement(event);
                 }
             } else {
-                // Single cursor - no need for batch
+                // Single cursor - apply normally
                 for event in events {
                     self.active_event_log_mut().append(event.clone());
                     self.apply_event_to_active_buffer(&event);

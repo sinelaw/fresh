@@ -1,6 +1,8 @@
+use crate::model::piece_tree::PieceTree;
 use crate::view::overlay::{OverlayHandle, OverlayNamespace};
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
+use std::sync::Arc;
 
 /// Unique identifier for a cursor
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -232,6 +234,24 @@ pub enum Event {
         /// Description of the operation
         description: String,
     },
+
+    /// Efficient bulk edit that stores tree snapshot for O(1) undo
+    /// Used for multi-cursor operations, toggle comment, indent/dedent, etc.
+    /// This avoids O(n²) complexity by applying all edits in a single tree pass.
+    ///
+    /// Key insight: PieceTree uses Arc<PieceTreeNode> (persistent data structure),
+    /// so storing old_tree for undo is O(1) (Arc clone), not O(n) (content copy).
+    BulkEdit {
+        /// Previous tree state for undo (Arc clone = O(1))
+        #[serde(skip)]
+        old_tree: Option<Arc<PieceTree>>,
+        /// Previous cursor states: (cursor_id, position, anchor)
+        old_cursors: Vec<(CursorId, usize, Option<usize>)>,
+        /// New cursor states after edit
+        new_cursors: Vec<(CursorId, usize, Option<usize>)>,
+        /// Human-readable description
+        description: String,
+    },
 }
 
 /// Overlay face data for events (must be serializable)
@@ -450,6 +470,21 @@ impl Event {
                     description: format!("Undo: {}", description),
                 })
             }
+            Event::BulkEdit {
+                old_tree,
+                old_cursors,
+                new_cursors,
+                description,
+            } => {
+                // Inverse swaps old and new cursor states
+                // old_tree will be set by the undo handler before applying
+                Some(Event::BulkEdit {
+                    old_tree: old_tree.clone(),
+                    old_cursors: new_cursors.clone(),
+                    new_cursors: old_cursors.clone(),
+                    description: format!("Undo: {}", description),
+                })
+            }
             // Other events (popups, margins, splits, etc.) are not automatically invertible
             _ => None,
         }
@@ -458,7 +493,10 @@ impl Event {
     /// Returns true if this event modifies the buffer content
     pub fn modifies_buffer(&self) -> bool {
         match self {
-            Event::Insert { .. } | Event::Delete { .. } | Event::ReplaceAll { .. } => true,
+            Event::Insert { .. }
+            | Event::Delete { .. }
+            | Event::ReplaceAll { .. }
+            | Event::BulkEdit { .. } => true,
             Event::Batch { events, .. } => events.iter().any(|e| e.modifies_buffer()),
             _ => false,
         }
@@ -479,7 +517,10 @@ impl Event {
     pub fn is_write_action(&self) -> bool {
         match self {
             // Buffer modifications are write actions
-            Event::Insert { .. } | Event::Delete { .. } | Event::ReplaceAll { .. } => true,
+            Event::Insert { .. }
+            | Event::Delete { .. }
+            | Event::ReplaceAll { .. }
+            | Event::BulkEdit { .. } => true,
 
             // Adding/removing cursors are write actions (structural changes)
             Event::AddCursor { .. } | Event::RemoveCursor { .. } => true,
