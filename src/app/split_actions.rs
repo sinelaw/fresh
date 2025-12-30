@@ -7,7 +7,7 @@
 //! - Managing per-split view states (cursors, viewport)
 //! - Split size adjustment and maximize
 
-use crate::model::event::{Event, SplitDirection, SplitId};
+use crate::model::event::{BufferId, Event, SplitDirection, SplitId};
 use crate::view::split::SplitViewState;
 
 use super::Editor;
@@ -312,9 +312,63 @@ impl Editor {
         &self.cached_layout.separator_areas
     }
 
+    /// Get cached tab areas for testing
+    /// Returns (split_id, buffer_id, tab_row, start_col, end_col, close_start) tuples
+    pub fn get_tab_areas(&self) -> &[(SplitId, BufferId, u16, u16, u16, u16)] {
+        &self.cached_layout.tab_areas
+    }
+
+    /// Get cached split content areas for testing
+    /// Returns (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end) tuples
+    pub fn get_split_areas(
+        &self,
+    ) -> &[(
+        SplitId,
+        BufferId,
+        ratatui::layout::Rect,
+        ratatui::layout::Rect,
+        usize,
+        usize,
+    )] {
+        &self.cached_layout.split_areas
+    }
+
     /// Get the ratio of a specific split (for testing)
     pub fn get_split_ratio(&self, split_id: SplitId) -> Option<f32> {
         self.split_manager.get_ratio(split_id)
+    }
+
+    /// Get the active split ID (for testing)
+    pub fn get_active_split(&self) -> SplitId {
+        self.split_manager.active_split()
+    }
+
+    /// Get the buffer ID for a split (for testing)
+    pub fn get_split_buffer(&self, split_id: SplitId) -> Option<BufferId> {
+        self.split_manager.get_buffer_id(split_id)
+    }
+
+    /// Get the open buffers (tabs) in a split (for testing)
+    pub fn get_split_tabs(&self, split_id: SplitId) -> Vec<BufferId> {
+        self.split_view_states
+            .get(&split_id)
+            .map(|vs| vs.open_buffers.clone())
+            .unwrap_or_default()
+    }
+
+    /// Get the number of splits (for testing)
+    pub fn get_split_count(&self) -> usize {
+        self.split_manager.root().count_leaves()
+    }
+
+    /// Compute the drop zone for a tab drag at a given position (for testing)
+    pub fn compute_drop_zone(
+        &self,
+        col: u16,
+        row: u16,
+        source_split_id: SplitId,
+    ) -> Option<super::types::TabDropZone> {
+        self.compute_tab_drop_zone(col, row, source_split_id)
     }
 
     /// Sync EditorState's cursors back to SplitViewState

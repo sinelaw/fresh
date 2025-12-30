@@ -58,6 +58,7 @@ pub mod split_view;
 pub mod split_view_expectations;
 pub mod stdin_input;
 pub mod tab_config;
+pub mod tab_drag;
 pub mod tab_indent_selection;
 pub mod tab_scrolling;
 pub mod terminal;
