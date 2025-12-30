@@ -23,6 +23,7 @@ pub mod session;
 mod settings_actions;
 mod shell_command;
 mod split_actions;
+mod tab_drag;
 mod terminal;
 mod terminal_input;
 mod toggle_actions;
