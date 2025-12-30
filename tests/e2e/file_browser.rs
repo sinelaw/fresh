@@ -925,13 +925,15 @@ fn test_file_browser_hidden_checkbox_appears() {
         .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
         .unwrap();
 
-    // Wait for the dialog to appear with the checkbox
+    // Wait for the dialog to appear first (UI renders before files load)
     harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("visible.txt") && screen.contains("Show Hidden")
-        })
-        .expect("Visible file and Show Hidden checkbox should appear");
+        .wait_until(|h| h.screen_to_string().contains("Navigation:"))
+        .expect("File browser dialog should appear");
+
+    // Then wait for files to finish loading
+    harness
+        .wait_until(|h| h.screen_to_string().contains("visible.txt"))
+        .expect("Files should be loaded");
 
     let screen = harness.screen_to_string();
 
@@ -974,13 +976,15 @@ fn test_file_browser_toggle_hidden_checkbox_click() {
         .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
         .unwrap();
 
-    // Wait for the dialog to appear
+    // Wait for the dialog to appear first (UI renders before files load)
     harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("visible.txt") && screen.contains("Show Hidden")
-        })
-        .expect("File browser should appear with checkbox");
+        .wait_until(|h| h.screen_to_string().contains("Navigation:"))
+        .expect("File browser dialog should appear");
+
+    // Then wait for files to finish loading
+    harness
+        .wait_until(|h| h.screen_to_string().contains("visible.txt"))
+        .expect("Files should be loaded");
 
     // Find the row containing "Show Hidden" checkbox by searching screen lines
     let screen = harness.screen_to_string();
