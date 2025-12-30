@@ -1390,19 +1390,6 @@ impl Editor {
                 }
                 all_changes
             }
-            Event::ReplaceAll { new_content, .. } => {
-                // For ReplaceAll, send a full document sync (no range = full content)
-                // This is much more efficient than sending thousands of incremental changes
-                tracing::trace!(
-                    "collect_lsp_changes: processing ReplaceAll with {} bytes",
-                    new_content.len()
-                );
-                vec![TextDocumentContentChangeEvent {
-                    range: None, // Full document sync
-                    range_length: None,
-                    text: new_content.clone(),
-                }]
-            }
             _ => Vec::new(), // Ignore cursor movements and other events
         }
     }
@@ -1484,23 +1471,6 @@ impl Editor {
                     start_line: min_line,
                     end_line: max_line,
                     line_delta: total_delta,
-                }
-            }
-            Event::ReplaceAll {
-                old_content,
-                new_content,
-                ..
-            } => {
-                // ReplaceAll affects the entire buffer
-                // Count lines in old and new content
-                let old_lines = old_content.matches('\n').count();
-                let new_lines = new_content.matches('\n').count();
-                let line_delta = new_lines as i32 - old_lines as i32;
-
-                super::types::EventLineInfo {
-                    start_line: 0,
-                    end_line: old_lines,
-                    line_delta,
                 }
             }
             _ => super::types::EventLineInfo::default(),

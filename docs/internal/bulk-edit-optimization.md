@@ -225,12 +225,8 @@ fn collect_edits(operation: &Operation) -> Vec<(usize, usize, String)> {
                 .collect()
         }
 
-        // Replace all: same replacement at each match
-        ReplaceAll { matches, search_len, replacement } => {
-            matches.iter()
-                .map(|pos| (*pos, search_len, replacement.clone()))
-                .collect()
-        }
+        // Replace all now uses BulkEdit with Delete+Insert pairs
+        // (Event::ReplaceAll has been removed from the codebase)
     }
 }
 ```
@@ -277,7 +273,7 @@ if let Some(events) = self.action_to_events(action) {
 4. **LSP Rename** (`src/app/lsp_requests.rs:1170-1227`)
    - `apply_lsp_changes()`
 
-5. **Replace All** - Already fixed, could migrate to use `BulkEdit` for consistency
+5. **Replace All** - ✅ Migrated to `BulkEdit` (Event::ReplaceAll removed)
 
 ## Complexity Analysis
 
@@ -315,7 +311,7 @@ For 500 cursors on a 10,000 line file:
    - Toggle Comment
    - Indent/Dedent
    - LSP Rename
-   - Optionally migrate ReplaceAll
+   - ✅ ReplaceAll migrated and removed
 
 ## Testing Strategy
 

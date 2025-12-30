@@ -195,37 +195,6 @@ impl Editor {
 
     /// Adjust cursors in other splits that share the same buffer after an edit
     pub(crate) fn adjust_other_split_cursors_for_event(&mut self, event: &Event) {
-        // Handle ReplaceAll specially - it replaces the entire buffer
-        if let Event::ReplaceAll {
-            new_content,
-            new_cursor_position,
-            ..
-        } = event
-        {
-            // Get the current buffer and split
-            let current_buffer_id = self.active_buffer();
-            let current_split_id = self.split_manager.active_split();
-            let new_len = new_content.len();
-
-            // Find all other splits that share the same buffer
-            let splits_for_buffer = self.split_manager.splits_for_buffer(current_buffer_id);
-
-            // Reset cursors in each other split to a valid position
-            for split_id in splits_for_buffer {
-                if split_id == current_split_id {
-                    continue;
-                }
-
-                if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
-                    // Move cursor to beginning of buffer or clamp to new length
-                    let new_pos = (*new_cursor_position).min(new_len);
-                    view_state.cursors.primary_mut().position = new_pos;
-                    view_state.cursors.primary_mut().anchor = None;
-                }
-            }
-            return;
-        }
-
         // Handle BulkEdit - cursors are managed by the event
         if let Event::BulkEdit { new_cursors, .. } = event {
             // Get the current buffer and split

@@ -576,33 +576,6 @@ impl EditorState {
                 }
             }
 
-            Event::ReplaceAll {
-                new_content,
-                new_cursor_position,
-                ..
-            } => {
-                // Replace the entire buffer content in one efficient operation
-                // This avoids O(n²) complexity of applying individual edits
-                self.buffer.replace_content(new_content);
-
-                // Update cursor position
-                let cursor_id = self.cursors.primary_id();
-                if let Some(cursor) = self.cursors.get_mut(cursor_id) {
-                    cursor.position = *new_cursor_position;
-                    cursor.anchor = None;
-                }
-
-                // Invalidate highlight cache for entire buffer
-                self.highlighter.invalidate_all();
-
-                // Update primary cursor line number
-                self.primary_cursor_line_number =
-                    match self.buffer.offset_to_position(*new_cursor_position) {
-                        Some(pos) => crate::model::buffer::LineNumber::Absolute(pos.line),
-                        None => crate::model::buffer::LineNumber::Absolute(0),
-                    };
-            }
-
             Event::BulkEdit {
                 new_tree,
                 new_cursors,
