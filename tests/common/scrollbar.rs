@@ -21,7 +21,7 @@ pub fn is_scrollbar_thumb_style(style: Style) -> bool {
             | Some(Color::Rgb(170, 170, 170))  // Retro theme thumb
             | Some(Color::Rgb(255, 255, 255))  // Retro theme hover
             | Some(Color::Yellow)     // High contrast thumb
-            | Some(Color::Cyan)       // High contrast hover
+            | Some(Color::Cyan) // High contrast hover
     )
 }
 
@@ -38,7 +38,7 @@ pub fn is_scrollbar_track_style(style: Style) -> bool {
             | Some(Color::Rgb(220, 220, 220))  // Light theme track
             | Some(Color::Rgb(200, 200, 200))  // Light theme hover
             | Some(Color::Rgb(0, 0, 128))      // Retro theme track
-            | Some(Color::White)      // High contrast theme track
+            | Some(Color::White) // High contrast theme track
     )
 }
 

@@ -1388,7 +1388,8 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
         }
 
         step += 1;
-        let (start_row, size, _) = extract_scrollbar_info(&harness, terminal_width, terminal_height);
+        let (start_row, size, _) =
+            extract_scrollbar_info(&harness, terminal_width, terminal_height);
         scrollbar_sizes.push(size);
         positions.push((step, after_line));
 
@@ -1418,7 +1419,8 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
         }
 
         step += 1;
-        let (start_row, size, _) = extract_scrollbar_info(&harness, terminal_width, terminal_height);
+        let (start_row, size, _) =
+            extract_scrollbar_info(&harness, terminal_width, terminal_height);
         scrollbar_sizes.push(size);
         positions.push((step, after_line));
 
@@ -1574,7 +1576,8 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
         }
 
         scroll_steps += 1;
-        let (start_row, size, _) = extract_scrollbar_info(&harness, terminal_width, terminal_height);
+        let (start_row, size, _) =
+            extract_scrollbar_info(&harness, terminal_width, terminal_height);
         all_sizes.push(size);
 
         println!("After PageDown {scroll_steps}: top_line={after_line}, handle start_row={start_row}, size={size}");

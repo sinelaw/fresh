@@ -1264,6 +1264,9 @@ impl EditorTestHarness {
             .height
             .saturating_sub(layout::BOTTOM_RESERVED_ROWS as u16);
 
+        // Scrollbar is in the rightmost column - exclude from cursor detection
+        let scrollbar_col = buffer.area.width.saturating_sub(1);
+
         // Add primary cursor at hardware position
         if hw_y >= content_start && hw_y < content_end {
             if let Some(cell) = buffer.content.get(buffer.index_of(hw_x, hw_y)) {
@@ -1283,6 +1286,12 @@ impl EditorTestHarness {
             for x in 0..buffer.area.width {
                 // Skip if this is the hardware cursor position
                 if x == hw_x && y == hw_y {
+                    continue;
+                }
+
+                // Skip scrollbar column - scrollbar uses background colors that overlap
+                // with inactive cursor colors (DarkGray, Rgb(180,180,180))
+                if x == scrollbar_col {
                     continue;
                 }
 

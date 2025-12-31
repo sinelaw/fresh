@@ -3670,7 +3670,9 @@ fn test_hover_popup_shows_scrollbar_for_long_content() -> std::io::Result<()> {
     // Popup is 50 wide, centered in 100-width = starts around col 25, ends around col 74.
     let has_scrollbar = (2..28).any(|row| {
         // Check a few columns around where the popup scrollbar should be
-        (72..=74).any(|col| harness.is_scrollbar_thumb_at(col, row) || harness.is_scrollbar_track_at(col, row))
+        (72..=74).any(|col| {
+            harness.is_scrollbar_thumb_at(col, row) || harness.is_scrollbar_track_at(col, row)
+        })
     });
     assert!(
         has_scrollbar,
@@ -4123,7 +4125,9 @@ fn test_popup_scrollbar_visible_for_long_list() -> std::io::Result<()> {
     // Popup is 30 wide and centered in 80-width = starts around col 25, ends around col 54.
     // Scrollbar would be near the right edge of the popup.
     let has_scrollbar = (2..20).any(|row| {
-        (52..=54).any(|col| harness.is_scrollbar_thumb_at(col, row) || harness.is_scrollbar_track_at(col, row))
+        (52..=54).any(|col| {
+            harness.is_scrollbar_thumb_at(col, row) || harness.is_scrollbar_track_at(col, row)
+        })
     });
     assert!(
         has_scrollbar,

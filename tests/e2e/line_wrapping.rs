@@ -1023,7 +1023,9 @@ fn test_wrapped_line_cursor_no_empty_space() {
                 found_empty_space = true;
             }
             // Also check if cursor is on scrollbar (rendered with background colors)
-            if harness.is_scrollbar_thumb_at(cur_x, cur_y) || harness.is_scrollbar_track_at(cur_x, cur_y) {
+            if harness.is_scrollbar_thumb_at(cur_x, cur_y)
+                || harness.is_scrollbar_track_at(cur_x, cur_y)
+            {
                 // Hit scrollbar or UI element
                 eprintln!("  ⚠️  CURSOR ON UI ELEMENT (scrollbar?) at ({cur_x}, {cur_y})");
                 found_empty_space = true;
