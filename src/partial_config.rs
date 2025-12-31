@@ -1,0 +1,784 @@
+//! Partial configuration types for layered config merging.
+//!
+//! This module provides `Option`-wrapped versions of all config structs,
+//! enabling a 4-level overlay architecture (System → User → Project → Session).
+
+use crate::config::{
+    CursorStyle, FileBrowserConfig, FileExplorerConfig, FormatterConfig, HighlighterPreference,
+    Keybinding, KeybindingMapName, KeymapConfig, LanguageConfig, LineEndingOption, MenuConfig,
+    OnSaveAction, TerminalConfig, ThemeName, WarningsConfig,
+};
+use crate::types::LspServerConfig;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+/// Trait for merging configuration layers.
+/// Higher precedence values (self) override lower precedence (other).
+pub trait Merge {
+    /// Merge values from a lower-precedence layer into this layer.
+    /// Values already set in self take precedence over values in other.
+    fn merge_from(&mut self, other: &Self);
+}
+
+impl<T: Clone> Merge for Option<T> {
+    fn merge_from(&mut self, other: &Self) {
+        if self.is_none() {
+            *self = other.clone();
+        }
+    }
+}
+
+/// Merge two HashMaps where self's entries take precedence.
+/// Entries from other are added if not present in self.
+fn merge_hashmap<K: Clone + Eq + std::hash::Hash, V: Clone>(
+    target: &mut Option<HashMap<K, V>>,
+    other: &Option<HashMap<K, V>>,
+) {
+    match (target, other) {
+        (Some(t), Some(o)) => {
+            for (key, value) in o {
+                t.entry(key.clone()).or_insert_with(|| value.clone());
+            }
+        }
+        (t @ None, Some(o)) => {
+            *t = Some(o.clone());
+        }
+        _ => {}
+    }
+}
+
+/// Merge two HashMaps where values implement Merge (for recursive merging).
+fn merge_hashmap_recursive<K, V>(target: &mut Option<HashMap<K, V>>, other: &Option<HashMap<K, V>>)
+where
+    K: Clone + Eq + std::hash::Hash,
+    V: Clone + Merge + Default,
+{
+    match (target, other) {
+        (Some(t), Some(o)) => {
+            for (key, value) in o {
+                t.entry(key.clone())
+                    .and_modify(|existing| existing.merge_from(value))
+                    .or_insert_with(|| value.clone());
+            }
+        }
+        (t @ None, Some(o)) => {
+            *t = Some(o.clone());
+        }
+        _ => {}
+    }
+}
+
+/// Partial configuration where all fields are optional.
+/// Represents a single configuration layer (User, Project, or Session).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PartialConfig {
+    pub version: Option<u32>,
+    pub theme: Option<ThemeName>,
+    pub check_for_updates: Option<bool>,
+    pub editor: Option<PartialEditorConfig>,
+    pub file_explorer: Option<PartialFileExplorerConfig>,
+    pub file_browser: Option<PartialFileBrowserConfig>,
+    pub terminal: Option<PartialTerminalConfig>,
+    pub keybindings: Option<Vec<Keybinding>>,
+    pub keybinding_maps: Option<HashMap<String, KeymapConfig>>,
+    pub active_keybinding_map: Option<KeybindingMapName>,
+    pub languages: Option<HashMap<String, PartialLanguageConfig>>,
+    pub lsp: Option<HashMap<String, LspServerConfig>>,
+    pub menu: Option<MenuConfig>,
+    pub warnings: Option<PartialWarningsConfig>,
+}
+
+impl Merge for PartialConfig {
+    fn merge_from(&mut self, other: &Self) {
+        self.version.merge_from(&other.version);
+        self.theme.merge_from(&other.theme);
+        self.check_for_updates.merge_from(&other.check_for_updates);
+
+        // Nested structs: merge recursively
+        merge_partial(&mut self.editor, &other.editor);
+        merge_partial(&mut self.file_explorer, &other.file_explorer);
+        merge_partial(&mut self.file_browser, &other.file_browser);
+        merge_partial(&mut self.terminal, &other.terminal);
+        merge_partial(&mut self.warnings, &other.warnings);
+
+        // Lists: higher precedence replaces (per design doc)
+        self.keybindings.merge_from(&other.keybindings);
+
+        // HashMaps: merge entries, higher precedence wins on key collision
+        merge_hashmap(&mut self.keybinding_maps, &other.keybinding_maps);
+        merge_hashmap_recursive(&mut self.languages, &other.languages);
+        merge_hashmap(&mut self.lsp, &other.lsp);
+
+        self.active_keybinding_map
+            .merge_from(&other.active_keybinding_map);
+        self.menu.merge_from(&other.menu);
+    }
+}
+
+/// Helper to merge nested partial structs.
+fn merge_partial<T: Merge + Clone>(target: &mut Option<T>, other: &Option<T>) {
+    match (target, other) {
+        (Some(t), Some(o)) => t.merge_from(o),
+        (t @ None, Some(o)) => *t = Some(o.clone()),
+        _ => {}
+    }
+}
+
+/// Partial editor configuration.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PartialEditorConfig {
+    pub tab_size: Option<usize>,
+    pub auto_indent: Option<bool>,
+    pub line_numbers: Option<bool>,
+    pub relative_line_numbers: Option<bool>,
+    pub scroll_offset: Option<usize>,
+    pub syntax_highlighting: Option<bool>,
+    pub line_wrap: Option<bool>,
+    pub highlight_timeout_ms: Option<u64>,
+    pub snapshot_interval: Option<usize>,
+    pub large_file_threshold_bytes: Option<u64>,
+    pub estimated_line_length: Option<usize>,
+    pub enable_inlay_hints: Option<bool>,
+    pub recovery_enabled: Option<bool>,
+    pub auto_save_interval_secs: Option<u32>,
+    pub highlight_context_bytes: Option<usize>,
+    pub mouse_hover_enabled: Option<bool>,
+    pub mouse_hover_delay_ms: Option<u64>,
+    pub double_click_time_ms: Option<u64>,
+    pub auto_revert_poll_interval_ms: Option<u64>,
+    pub file_tree_poll_interval_ms: Option<u64>,
+    pub default_line_ending: Option<LineEndingOption>,
+    pub cursor_style: Option<CursorStyle>,
+}
+
+impl Merge for PartialEditorConfig {
+    fn merge_from(&mut self, other: &Self) {
+        self.tab_size.merge_from(&other.tab_size);
+        self.auto_indent.merge_from(&other.auto_indent);
+        self.line_numbers.merge_from(&other.line_numbers);
+        self.relative_line_numbers
+            .merge_from(&other.relative_line_numbers);
+        self.scroll_offset.merge_from(&other.scroll_offset);
+        self.syntax_highlighting
+            .merge_from(&other.syntax_highlighting);
+        self.line_wrap.merge_from(&other.line_wrap);
+        self.highlight_timeout_ms
+            .merge_from(&other.highlight_timeout_ms);
+        self.snapshot_interval.merge_from(&other.snapshot_interval);
+        self.large_file_threshold_bytes
+            .merge_from(&other.large_file_threshold_bytes);
+        self.estimated_line_length
+            .merge_from(&other.estimated_line_length);
+        self.enable_inlay_hints
+            .merge_from(&other.enable_inlay_hints);
+        self.recovery_enabled.merge_from(&other.recovery_enabled);
+        self.auto_save_interval_secs
+            .merge_from(&other.auto_save_interval_secs);
+        self.highlight_context_bytes
+            .merge_from(&other.highlight_context_bytes);
+        self.mouse_hover_enabled
+            .merge_from(&other.mouse_hover_enabled);
+        self.mouse_hover_delay_ms
+            .merge_from(&other.mouse_hover_delay_ms);
+        self.double_click_time_ms
+            .merge_from(&other.double_click_time_ms);
+        self.auto_revert_poll_interval_ms
+            .merge_from(&other.auto_revert_poll_interval_ms);
+        self.file_tree_poll_interval_ms
+            .merge_from(&other.file_tree_poll_interval_ms);
+        self.default_line_ending
+            .merge_from(&other.default_line_ending);
+        self.cursor_style.merge_from(&other.cursor_style);
+    }
+}
+
+/// Partial file explorer configuration.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PartialFileExplorerConfig {
+    pub respect_gitignore: Option<bool>,
+    pub show_hidden: Option<bool>,
+    pub show_gitignored: Option<bool>,
+    pub custom_ignore_patterns: Option<Vec<String>>,
+    pub width: Option<f32>,
+}
+
+impl Merge for PartialFileExplorerConfig {
+    fn merge_from(&mut self, other: &Self) {
+        self.respect_gitignore.merge_from(&other.respect_gitignore);
+        self.show_hidden.merge_from(&other.show_hidden);
+        self.show_gitignored.merge_from(&other.show_gitignored);
+        self.custom_ignore_patterns
+            .merge_from(&other.custom_ignore_patterns);
+        self.width.merge_from(&other.width);
+    }
+}
+
+/// Partial file browser configuration.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PartialFileBrowserConfig {
+    pub show_hidden: Option<bool>,
+}
+
+impl Merge for PartialFileBrowserConfig {
+    fn merge_from(&mut self, other: &Self) {
+        self.show_hidden.merge_from(&other.show_hidden);
+    }
+}
+
+/// Partial terminal configuration.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PartialTerminalConfig {
+    pub jump_to_end_on_output: Option<bool>,
+}
+
+impl Merge for PartialTerminalConfig {
+    fn merge_from(&mut self, other: &Self) {
+        self.jump_to_end_on_output
+            .merge_from(&other.jump_to_end_on_output);
+    }
+}
+
+/// Partial warnings configuration.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PartialWarningsConfig {
+    pub show_status_indicator: Option<bool>,
+}
+
+impl Merge for PartialWarningsConfig {
+    fn merge_from(&mut self, other: &Self) {
+        self.show_status_indicator
+            .merge_from(&other.show_status_indicator);
+    }
+}
+
+/// Partial language configuration.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PartialLanguageConfig {
+    pub extensions: Option<Vec<String>>,
+    pub filenames: Option<Vec<String>>,
+    pub grammar: Option<String>,
+    pub comment_prefix: Option<String>,
+    pub auto_indent: Option<bool>,
+    pub highlighter: Option<HighlighterPreference>,
+    pub textmate_grammar: Option<std::path::PathBuf>,
+    pub show_whitespace_tabs: Option<bool>,
+    pub use_tabs: Option<bool>,
+    pub tab_size: Option<usize>,
+    pub formatter: Option<FormatterConfig>,
+    pub format_on_save: Option<bool>,
+    pub on_save: Option<Vec<OnSaveAction>>,
+}
+
+impl Merge for PartialLanguageConfig {
+    fn merge_from(&mut self, other: &Self) {
+        self.extensions.merge_from(&other.extensions);
+        self.filenames.merge_from(&other.filenames);
+        self.grammar.merge_from(&other.grammar);
+        self.comment_prefix.merge_from(&other.comment_prefix);
+        self.auto_indent.merge_from(&other.auto_indent);
+        self.highlighter.merge_from(&other.highlighter);
+        self.textmate_grammar.merge_from(&other.textmate_grammar);
+        self.show_whitespace_tabs
+            .merge_from(&other.show_whitespace_tabs);
+        self.use_tabs.merge_from(&other.use_tabs);
+        self.tab_size.merge_from(&other.tab_size);
+        self.formatter.merge_from(&other.formatter);
+        self.format_on_save.merge_from(&other.format_on_save);
+        self.on_save.merge_from(&other.on_save);
+    }
+}
+
+// Conversion traits for resolving partial configs to concrete configs
+
+impl From<&crate::config::EditorConfig> for PartialEditorConfig {
+    fn from(cfg: &crate::config::EditorConfig) -> Self {
+        Self {
+            tab_size: Some(cfg.tab_size),
+            auto_indent: Some(cfg.auto_indent),
+            line_numbers: Some(cfg.line_numbers),
+            relative_line_numbers: Some(cfg.relative_line_numbers),
+            scroll_offset: Some(cfg.scroll_offset),
+            syntax_highlighting: Some(cfg.syntax_highlighting),
+            line_wrap: Some(cfg.line_wrap),
+            highlight_timeout_ms: Some(cfg.highlight_timeout_ms),
+            snapshot_interval: Some(cfg.snapshot_interval),
+            large_file_threshold_bytes: Some(cfg.large_file_threshold_bytes),
+            estimated_line_length: Some(cfg.estimated_line_length),
+            enable_inlay_hints: Some(cfg.enable_inlay_hints),
+            recovery_enabled: Some(cfg.recovery_enabled),
+            auto_save_interval_secs: Some(cfg.auto_save_interval_secs),
+            highlight_context_bytes: Some(cfg.highlight_context_bytes),
+            mouse_hover_enabled: Some(cfg.mouse_hover_enabled),
+            mouse_hover_delay_ms: Some(cfg.mouse_hover_delay_ms),
+            double_click_time_ms: Some(cfg.double_click_time_ms),
+            auto_revert_poll_interval_ms: Some(cfg.auto_revert_poll_interval_ms),
+            file_tree_poll_interval_ms: Some(cfg.file_tree_poll_interval_ms),
+            default_line_ending: Some(cfg.default_line_ending.clone()),
+            cursor_style: Some(cfg.cursor_style),
+        }
+    }
+}
+
+impl PartialEditorConfig {
+    /// Resolve this partial config to a concrete EditorConfig using defaults.
+    pub fn resolve(self, defaults: &crate::config::EditorConfig) -> crate::config::EditorConfig {
+        crate::config::EditorConfig {
+            tab_size: self.tab_size.unwrap_or(defaults.tab_size),
+            auto_indent: self.auto_indent.unwrap_or(defaults.auto_indent),
+            line_numbers: self.line_numbers.unwrap_or(defaults.line_numbers),
+            relative_line_numbers: self
+                .relative_line_numbers
+                .unwrap_or(defaults.relative_line_numbers),
+            scroll_offset: self.scroll_offset.unwrap_or(defaults.scroll_offset),
+            syntax_highlighting: self
+                .syntax_highlighting
+                .unwrap_or(defaults.syntax_highlighting),
+            line_wrap: self.line_wrap.unwrap_or(defaults.line_wrap),
+            highlight_timeout_ms: self
+                .highlight_timeout_ms
+                .unwrap_or(defaults.highlight_timeout_ms),
+            snapshot_interval: self.snapshot_interval.unwrap_or(defaults.snapshot_interval),
+            large_file_threshold_bytes: self
+                .large_file_threshold_bytes
+                .unwrap_or(defaults.large_file_threshold_bytes),
+            estimated_line_length: self
+                .estimated_line_length
+                .unwrap_or(defaults.estimated_line_length),
+            enable_inlay_hints: self
+                .enable_inlay_hints
+                .unwrap_or(defaults.enable_inlay_hints),
+            recovery_enabled: self.recovery_enabled.unwrap_or(defaults.recovery_enabled),
+            auto_save_interval_secs: self
+                .auto_save_interval_secs
+                .unwrap_or(defaults.auto_save_interval_secs),
+            highlight_context_bytes: self
+                .highlight_context_bytes
+                .unwrap_or(defaults.highlight_context_bytes),
+            mouse_hover_enabled: self
+                .mouse_hover_enabled
+                .unwrap_or(defaults.mouse_hover_enabled),
+            mouse_hover_delay_ms: self
+                .mouse_hover_delay_ms
+                .unwrap_or(defaults.mouse_hover_delay_ms),
+            double_click_time_ms: self
+                .double_click_time_ms
+                .unwrap_or(defaults.double_click_time_ms),
+            auto_revert_poll_interval_ms: self
+                .auto_revert_poll_interval_ms
+                .unwrap_or(defaults.auto_revert_poll_interval_ms),
+            file_tree_poll_interval_ms: self
+                .file_tree_poll_interval_ms
+                .unwrap_or(defaults.file_tree_poll_interval_ms),
+            default_line_ending: self
+                .default_line_ending
+                .unwrap_or(defaults.default_line_ending.clone()),
+            cursor_style: self.cursor_style.unwrap_or(defaults.cursor_style),
+        }
+    }
+}
+
+impl From<&FileExplorerConfig> for PartialFileExplorerConfig {
+    fn from(cfg: &FileExplorerConfig) -> Self {
+        Self {
+            respect_gitignore: Some(cfg.respect_gitignore),
+            show_hidden: Some(cfg.show_hidden),
+            show_gitignored: Some(cfg.show_gitignored),
+            custom_ignore_patterns: Some(cfg.custom_ignore_patterns.clone()),
+            width: Some(cfg.width),
+        }
+    }
+}
+
+impl PartialFileExplorerConfig {
+    pub fn resolve(self, defaults: &FileExplorerConfig) -> FileExplorerConfig {
+        FileExplorerConfig {
+            respect_gitignore: self.respect_gitignore.unwrap_or(defaults.respect_gitignore),
+            show_hidden: self.show_hidden.unwrap_or(defaults.show_hidden),
+            show_gitignored: self.show_gitignored.unwrap_or(defaults.show_gitignored),
+            custom_ignore_patterns: self
+                .custom_ignore_patterns
+                .unwrap_or_else(|| defaults.custom_ignore_patterns.clone()),
+            width: self.width.unwrap_or(defaults.width),
+        }
+    }
+}
+
+impl From<&FileBrowserConfig> for PartialFileBrowserConfig {
+    fn from(cfg: &FileBrowserConfig) -> Self {
+        Self {
+            show_hidden: Some(cfg.show_hidden),
+        }
+    }
+}
+
+impl PartialFileBrowserConfig {
+    pub fn resolve(self, defaults: &FileBrowserConfig) -> FileBrowserConfig {
+        FileBrowserConfig {
+            show_hidden: self.show_hidden.unwrap_or(defaults.show_hidden),
+        }
+    }
+}
+
+impl From<&TerminalConfig> for PartialTerminalConfig {
+    fn from(cfg: &TerminalConfig) -> Self {
+        Self {
+            jump_to_end_on_output: Some(cfg.jump_to_end_on_output),
+        }
+    }
+}
+
+impl PartialTerminalConfig {
+    pub fn resolve(self, defaults: &TerminalConfig) -> TerminalConfig {
+        TerminalConfig {
+            jump_to_end_on_output: self
+                .jump_to_end_on_output
+                .unwrap_or(defaults.jump_to_end_on_output),
+        }
+    }
+}
+
+impl From<&WarningsConfig> for PartialWarningsConfig {
+    fn from(cfg: &WarningsConfig) -> Self {
+        Self {
+            show_status_indicator: Some(cfg.show_status_indicator),
+        }
+    }
+}
+
+impl PartialWarningsConfig {
+    pub fn resolve(self, defaults: &WarningsConfig) -> WarningsConfig {
+        WarningsConfig {
+            show_status_indicator: self
+                .show_status_indicator
+                .unwrap_or(defaults.show_status_indicator),
+        }
+    }
+}
+
+impl From<&LanguageConfig> for PartialLanguageConfig {
+    fn from(cfg: &LanguageConfig) -> Self {
+        Self {
+            extensions: Some(cfg.extensions.clone()),
+            filenames: Some(cfg.filenames.clone()),
+            grammar: Some(cfg.grammar.clone()),
+            comment_prefix: cfg.comment_prefix.clone(),
+            auto_indent: Some(cfg.auto_indent),
+            highlighter: Some(cfg.highlighter),
+            textmate_grammar: cfg.textmate_grammar.clone(),
+            show_whitespace_tabs: Some(cfg.show_whitespace_tabs),
+            use_tabs: Some(cfg.use_tabs),
+            tab_size: cfg.tab_size,
+            formatter: cfg.formatter.clone(),
+            format_on_save: Some(cfg.format_on_save),
+            on_save: Some(cfg.on_save.clone()),
+        }
+    }
+}
+
+impl PartialLanguageConfig {
+    pub fn resolve(self, defaults: &LanguageConfig) -> LanguageConfig {
+        LanguageConfig {
+            extensions: self
+                .extensions
+                .unwrap_or_else(|| defaults.extensions.clone()),
+            filenames: self.filenames.unwrap_or_else(|| defaults.filenames.clone()),
+            grammar: self.grammar.unwrap_or_else(|| defaults.grammar.clone()),
+            comment_prefix: self
+                .comment_prefix
+                .or_else(|| defaults.comment_prefix.clone()),
+            auto_indent: self.auto_indent.unwrap_or(defaults.auto_indent),
+            highlighter: self.highlighter.unwrap_or(defaults.highlighter),
+            textmate_grammar: self
+                .textmate_grammar
+                .or_else(|| defaults.textmate_grammar.clone()),
+            show_whitespace_tabs: self
+                .show_whitespace_tabs
+                .unwrap_or(defaults.show_whitespace_tabs),
+            use_tabs: self.use_tabs.unwrap_or(defaults.use_tabs),
+            tab_size: self.tab_size.or(defaults.tab_size),
+            formatter: self.formatter.or_else(|| defaults.formatter.clone()),
+            format_on_save: self.format_on_save.unwrap_or(defaults.format_on_save),
+            on_save: self.on_save.unwrap_or_else(|| defaults.on_save.clone()),
+        }
+    }
+}
+
+impl From<&crate::config::Config> for PartialConfig {
+    fn from(cfg: &crate::config::Config) -> Self {
+        Self {
+            version: Some(cfg.version),
+            theme: Some(cfg.theme.clone()),
+            check_for_updates: Some(cfg.check_for_updates),
+            editor: Some(PartialEditorConfig::from(&cfg.editor)),
+            file_explorer: Some(PartialFileExplorerConfig::from(&cfg.file_explorer)),
+            file_browser: Some(PartialFileBrowserConfig::from(&cfg.file_browser)),
+            terminal: Some(PartialTerminalConfig::from(&cfg.terminal)),
+            keybindings: Some(cfg.keybindings.clone()),
+            keybinding_maps: Some(cfg.keybinding_maps.clone()),
+            active_keybinding_map: Some(cfg.active_keybinding_map.clone()),
+            languages: Some(
+                cfg.languages
+                    .iter()
+                    .map(|(k, v)| (k.clone(), PartialLanguageConfig::from(v)))
+                    .collect(),
+            ),
+            lsp: Some(cfg.lsp.clone()),
+            menu: Some(cfg.menu.clone()),
+            warnings: Some(PartialWarningsConfig::from(&cfg.warnings)),
+        }
+    }
+}
+
+impl PartialConfig {
+    /// Resolve this partial config to a concrete Config using system defaults.
+    pub fn resolve(self) -> crate::config::Config {
+        let defaults = crate::config::Config::default();
+        self.resolve_with_defaults(&defaults)
+    }
+
+    /// Resolve this partial config to a concrete Config using provided defaults.
+    pub fn resolve_with_defaults(self, defaults: &crate::config::Config) -> crate::config::Config {
+        // Resolve languages HashMap - merge with defaults
+        let languages = {
+            let mut result = defaults.languages.clone();
+            if let Some(partial_langs) = self.languages {
+                for (key, partial_lang) in partial_langs {
+                    let default_lang = result.get(&key).cloned().unwrap_or_default();
+                    result.insert(key, partial_lang.resolve(&default_lang));
+                }
+            }
+            result
+        };
+
+        // Resolve lsp HashMap - merge with defaults
+        let lsp = {
+            let mut result = defaults.lsp.clone();
+            if let Some(partial_lsp) = self.lsp {
+                for (key, config) in partial_lsp {
+                    result.insert(key, config);
+                }
+            }
+            result
+        };
+
+        // Resolve keybinding_maps HashMap - merge with defaults
+        let keybinding_maps = {
+            let mut result = defaults.keybinding_maps.clone();
+            if let Some(partial_maps) = self.keybinding_maps {
+                for (key, config) in partial_maps {
+                    result.insert(key, config);
+                }
+            }
+            result
+        };
+
+        crate::config::Config {
+            version: self.version.unwrap_or(defaults.version),
+            theme: self.theme.unwrap_or_else(|| defaults.theme.clone()),
+            check_for_updates: self.check_for_updates.unwrap_or(defaults.check_for_updates),
+            editor: self
+                .editor
+                .map(|e| e.resolve(&defaults.editor))
+                .unwrap_or_else(|| defaults.editor.clone()),
+            file_explorer: self
+                .file_explorer
+                .map(|e| e.resolve(&defaults.file_explorer))
+                .unwrap_or_else(|| defaults.file_explorer.clone()),
+            file_browser: self
+                .file_browser
+                .map(|e| e.resolve(&defaults.file_browser))
+                .unwrap_or_else(|| defaults.file_browser.clone()),
+            terminal: self
+                .terminal
+                .map(|e| e.resolve(&defaults.terminal))
+                .unwrap_or_else(|| defaults.terminal.clone()),
+            keybindings: self
+                .keybindings
+                .unwrap_or_else(|| defaults.keybindings.clone()),
+            keybinding_maps,
+            active_keybinding_map: self
+                .active_keybinding_map
+                .unwrap_or_else(|| defaults.active_keybinding_map.clone()),
+            languages,
+            lsp,
+            menu: self.menu.unwrap_or_else(|| defaults.menu.clone()),
+            warnings: self
+                .warnings
+                .map(|e| e.resolve(&defaults.warnings))
+                .unwrap_or_else(|| defaults.warnings.clone()),
+        }
+    }
+}
+
+// Default implementation for LanguageConfig to support merge_hashmap_recursive
+impl Default for LanguageConfig {
+    fn default() -> Self {
+        Self {
+            extensions: Vec::new(),
+            filenames: Vec::new(),
+            grammar: String::new(),
+            comment_prefix: None,
+            auto_indent: true,
+            highlighter: HighlighterPreference::default(),
+            textmate_grammar: None,
+            show_whitespace_tabs: true,
+            use_tabs: false,
+            tab_size: None,
+            formatter: None,
+            format_on_save: false,
+            on_save: Vec::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_option_higher_precedence_wins() {
+        let mut higher: Option<i32> = Some(10);
+        let lower: Option<i32> = Some(5);
+        higher.merge_from(&lower);
+        assert_eq!(higher, Some(10));
+    }
+
+    #[test]
+    fn merge_option_fills_from_lower_when_none() {
+        let mut higher: Option<i32> = None;
+        let lower: Option<i32> = Some(5);
+        higher.merge_from(&lower);
+        assert_eq!(higher, Some(5));
+    }
+
+    #[test]
+    fn merge_editor_config_recursive() {
+        let mut higher = PartialEditorConfig {
+            tab_size: Some(2),
+            ..Default::default()
+        };
+        let lower = PartialEditorConfig {
+            tab_size: Some(4),
+            line_numbers: Some(true),
+            ..Default::default()
+        };
+
+        higher.merge_from(&lower);
+
+        assert_eq!(higher.tab_size, Some(2)); // Higher wins
+        assert_eq!(higher.line_numbers, Some(true)); // Filled from lower
+    }
+
+    #[test]
+    fn merge_partial_config_combines_languages() {
+        let mut higher = PartialConfig {
+            languages: Some(HashMap::from([(
+                "rust".to_string(),
+                PartialLanguageConfig {
+                    tab_size: Some(4),
+                    ..Default::default()
+                },
+            )])),
+            ..Default::default()
+        };
+        let lower = PartialConfig {
+            languages: Some(HashMap::from([(
+                "python".to_string(),
+                PartialLanguageConfig {
+                    tab_size: Some(4),
+                    ..Default::default()
+                },
+            )])),
+            ..Default::default()
+        };
+
+        higher.merge_from(&lower);
+
+        let langs = higher.languages.unwrap();
+        assert!(langs.contains_key("rust"));
+        assert!(langs.contains_key("python"));
+    }
+
+    #[test]
+    fn merge_languages_same_key_higher_wins() {
+        let mut higher = PartialConfig {
+            languages: Some(HashMap::from([(
+                "rust".to_string(),
+                PartialLanguageConfig {
+                    tab_size: Some(2),
+                    use_tabs: Some(true),
+                    ..Default::default()
+                },
+            )])),
+            ..Default::default()
+        };
+        let lower = PartialConfig {
+            languages: Some(HashMap::from([(
+                "rust".to_string(),
+                PartialLanguageConfig {
+                    tab_size: Some(4),
+                    auto_indent: Some(false),
+                    ..Default::default()
+                },
+            )])),
+            ..Default::default()
+        };
+
+        higher.merge_from(&lower);
+
+        let langs = higher.languages.unwrap();
+        let rust = langs.get("rust").unwrap();
+        assert_eq!(rust.tab_size, Some(2)); // Higher wins
+        assert_eq!(rust.use_tabs, Some(true)); // From higher
+        assert_eq!(rust.auto_indent, Some(false)); // Filled from lower
+    }
+
+    #[test]
+    fn resolve_fills_defaults() {
+        let partial = PartialConfig {
+            theme: Some(ThemeName::from("dark")),
+            ..Default::default()
+        };
+
+        let resolved = partial.resolve();
+
+        assert_eq!(resolved.theme.0, "dark");
+        assert_eq!(resolved.editor.tab_size, 4); // Default
+        assert!(resolved.editor.line_numbers); // Default true
+    }
+
+    #[test]
+    fn resolve_preserves_set_values() {
+        let partial = PartialConfig {
+            editor: Some(PartialEditorConfig {
+                tab_size: Some(2),
+                line_numbers: Some(false),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let resolved = partial.resolve();
+
+        assert_eq!(resolved.editor.tab_size, 2);
+        assert!(!resolved.editor.line_numbers);
+    }
+
+    #[test]
+    fn roundtrip_config_to_partial_and_back() {
+        let original = crate::config::Config::default();
+        let partial = PartialConfig::from(&original);
+        let resolved = partial.resolve();
+
+        assert_eq!(original.theme, resolved.theme);
+        assert_eq!(original.editor.tab_size, resolved.editor.tab_size);
+        assert_eq!(original.check_for_updates, resolved.check_for_updates);
+    }
+}
