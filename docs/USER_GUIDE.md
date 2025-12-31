@@ -198,6 +198,88 @@ Settings are loaded from multiple layers, with higher layers overriding lower on
 - On Windows, User config is at `%APPDATA%\fresh\config.json`
 - Project config is found by searching up from the current directory for `.fresh/config.json`
 
+### How Layers Are Merged
+
+When Fresh loads configuration, it merges all layers together. The merge behavior depends on the type of setting:
+
+#### Simple Values (strings, numbers, booleans)
+
+Higher layers completely override lower layers. If a setting is not specified in a higher layer, it falls through to the next lower layer.
+
+```
+System: theme = "default"    ← Base default
+User:   theme = "dark"       ← Overrides system
+Project: (not set)           ← Falls through
+Session: theme = "light"     ← Final value: "light"
+```
+
+#### Nested Objects (editor, terminal, file_explorer)
+
+Nested objects are **deep-merged** field by field. Each field follows the same "higher wins" rule independently.
+
+**Example:** If User sets `editor.tab_size = 4` and Project sets `editor.line_wrap = true`:
+```json
+// User config
+{ "editor": { "tab_size": 4, "line_numbers": true } }
+
+// Project config
+{ "editor": { "line_wrap": true } }
+
+// Result: All fields merged
+{ "editor": { "tab_size": 4, "line_numbers": true, "line_wrap": true } }
+```
+
+#### Languages Map (deep merge)
+
+The `languages` map uses **deep merging with field-level override**:
+- Entries from all layers are combined (you can add new languages at any layer)
+- For the same language key, individual fields are merged (not replaced entirely)
+
+**Example:** Extending built-in Rust settings in your project:
+```json
+// System (built-in): rust has extensions, grammar, etc.
+// Project config - only need to specify what you're changing:
+{
+  "languages": {
+    "rust": {
+      "tab_size": 2,
+      "format_on_save": true
+    }
+  }
+}
+// Result: Rust keeps all system defaults, with tab_size and format_on_save overridden
+```
+
+#### LSP Map (shallow merge)
+
+The `lsp` map uses **shallow merging**:
+- Entries from all layers are combined
+- For the same language key, the **entire config is replaced** (not field-merged)
+
+**Example:** To override just one LSP setting, you must specify the complete config:
+```json
+{
+  "lsp": {
+    "rust": {
+      "command": "rust-analyzer",
+      "args": [],
+      "enabled": true,
+      "initialization_options": { "checkOnSave": { "command": "clippy" } }
+    }
+  }
+}
+```
+
+#### Lists (keybindings, on_save actions)
+
+Lists are **replaced entirely** by higher layers - they are not merged or appended.
+
+**Example:** If you define `keybindings` in your Project config, it completely replaces User keybindings (not extends them).
+
+#### Removing/Unsetting Values
+
+There is currently no explicit mechanism to "remove" or "unset" a value defined in a lower layer. You can only override values with different settings. For boolean settings, you can set them to `false` to disable a feature enabled in a lower layer.
+
 ### Using the Settings UI
 
 The easiest way to configure Fresh is through the Settings UI:
