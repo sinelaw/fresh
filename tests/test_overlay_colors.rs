@@ -30,6 +30,7 @@ fn test_overlay_background_color_direct() {
         },
         priority: 10,
         message: None,
+        extend_to_line_end: false,
     });
 
     // Check that overlay was created by checking all positions

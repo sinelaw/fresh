@@ -158,6 +158,7 @@ fn test_lsp_diagnostics_display() -> std::io::Result<()> {
         },
         priority: 100,
         message: Some("unused variable: `x`".to_string()),
+        extend_to_line_end: false,
     });
 
     harness.render()?;
@@ -268,6 +269,7 @@ fn test_lsp_diagnostics_status_bar() -> std::io::Result<()> {
         face: OverlayFace::Background { color: (40, 0, 0) },
         priority: 100, // Error priority
         message: Some("unused variable: `x`".to_string()),
+        extend_to_line_end: false,
     });
 
     // Add warning diagnostic
@@ -277,6 +279,7 @@ fn test_lsp_diagnostics_status_bar() -> std::io::Result<()> {
         face: OverlayFace::Background { color: (40, 40, 0) },
         priority: 50, // Warning priority
         message: Some("unused variable: `y`".to_string()),
+        extend_to_line_end: false,
     });
 
     harness.render()?;
@@ -315,6 +318,7 @@ fn test_lsp_clear_diagnostics() -> std::io::Result<()> {
         face: OverlayFace::Background { color: (40, 0, 0) },
         priority: 100,
         message: Some("test error".to_string()),
+        extend_to_line_end: false,
     });
 
     harness.render()?;

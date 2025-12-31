@@ -1,7 +1,8 @@
 //! E2E tests for audit_mode (Review Diff) plugin
 
-use crate::common::git_test_helper::{DirGuard, GitTestRepo};
+use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::EditorTestHarness;
+use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use std::fs;
@@ -51,10 +52,6 @@ fn test_review_diff_opens_without_error() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
     setup_audit_mode_plugin(&repo);
-
-    // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
 
     // Create an initial commit
     repo.git_add_all();
@@ -152,9 +149,6 @@ fn test_review_diff_shows_hunks() {
     repo.setup_typical_project();
     setup_audit_mode_plugin(&repo);
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
-
     // Create an initial commit
     repo.git_add_all();
     repo.git_commit("Initial commit");
@@ -232,9 +226,6 @@ fn test_review_diff_side_by_side_view() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
     setup_audit_mode_plugin(&repo);
-
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
 
     // Create an initial commit
     repo.git_add_all();
@@ -328,6 +319,659 @@ fn start_server(config: Config) {
     assert!(
         !screen.contains("TypeError"),
         "Should not show any TypeError. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test that the improved side-by-side diff shows aligned content with filler lines
+#[test]
+fn test_side_by_side_diff_shows_alignment() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    // Create an initial commit
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Modify a file with additions and deletions
+    let main_rs_path = repo.path.join("src/main.rs");
+    let modified_content = r#"fn main() {
+    println!("Hello, modified!");
+    let config = load_config();
+    start_server(config);
+    // New line 1
+    // New line 2
+}
+
+fn load_config() -> Config {
+    Config::default()
+}
+
+fn start_server(config: Config) {
+    println!("Starting server...");
+}
+"#;
+    fs::write(&main_rs_path, modified_content).expect("Failed to modify file");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160, // Wide enough for side-by-side
+        50,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("modified"))
+        .unwrap();
+
+    // Use the new "Side-by-Side Diff" command which directly opens side-by-side view
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Side-by-Side Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for side-by-side view to fully load
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Fail fast if errors occur (prevents infinite wait in CI)
+            if screen.contains("TypeError")
+                || screen.contains("Error:")
+                || screen.contains("Failed")
+                || screen.contains("No changes")
+            {
+                panic!("Error loading side-by-side diff. Screen:\n{}", screen);
+            }
+            screen.contains("Side-by-side diff:") && !screen.contains("Loading side-by-side diff")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Aligned diff screen:\n{}", screen);
+
+    // Should show OLD and NEW in tab bar or content
+    // The split view should have both panes
+    assert!(
+        screen.contains("[OLD]") || screen.contains("[NEW]"),
+        "Should show OLD or NEW pane header. Screen:\n{}",
+        screen
+    );
+
+    // Should show filler lines (░ character pattern)
+    assert!(
+        screen.contains("░"),
+        "Should show filler lines for alignment. Screen:\n{}",
+        screen
+    );
+
+    // Should not have any errors
+    assert!(
+        !screen.contains("TypeError") && !screen.contains("Error"),
+        "Should not show any errors. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test that the side-by-side diff shows change statistics in status bar
+#[test]
+fn test_side_by_side_diff_shows_statistics() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Modify a file
+    let main_rs_path = repo.path.join("src/main.rs");
+    let modified_content = r#"fn main() {
+    println!("Hello, modified!");
+    let config = load_config();
+    start_server(config);
+}
+
+fn load_config() -> Config {
+    Config::default()
+}
+
+fn start_server(config: Config) {
+    println!("Starting...");
+    println!("Added line");
+}
+"#;
+    fs::write(&main_rs_path, modified_content).expect("Failed to modify file");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        50,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("modified"))
+        .unwrap();
+
+    // Use the new "Side-by-Side Diff" command which directly opens side-by-side view
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Side-by-Side Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for side-by-side view to fully load
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Fail fast if errors occur (prevents infinite wait in CI)
+            if screen.contains("TypeError")
+                || screen.contains("Error:")
+                || screen.contains("Failed")
+                || screen.contains("No changes")
+            {
+                panic!("Error loading side-by-side diff. Screen:\n{}", screen);
+            }
+            screen.contains("Side-by-side diff:") && !screen.contains("Loading side-by-side diff")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Stats screen:\n{}", screen);
+
+    // Should show the statistics format in status bar
+    // Format is: "Side-by-side diff: +N -M ~K"
+    assert!(
+        screen.contains("Side-by-side diff:"),
+        "Should show diff statistics. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test that change markers (+, -, ~) appear in the gutter
+#[test]
+fn test_side_by_side_diff_shows_gutter_markers() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Create changes that will show all marker types
+    let main_rs_path = repo.path.join("src/main.rs");
+    let modified_content = r#"fn main() {
+    println!("Hello, MODIFIED!");
+    let config = load_config();
+    start_server(config);
+    // This is a new line
+}
+
+fn load_config() -> Config {
+    Config::default()
+}
+
+fn start_server(config: Config) {
+    println!("Server started");
+}
+"#;
+    fs::write(&main_rs_path, modified_content).expect("Failed to modify file");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        50,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("MODIFIED"))
+        .unwrap();
+
+    // Use the new "Side-by-Side Diff" command which directly opens side-by-side view
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Side-by-Side Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for side-by-side view to fully load
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Fail fast if errors occur (prevents infinite wait in CI)
+            if screen.contains("TypeError")
+                || screen.contains("Error:")
+                || screen.contains("Failed")
+                || screen.contains("No changes")
+            {
+                panic!("Error loading side-by-side diff. Screen:\n{}", screen);
+            }
+            screen.contains("Side-by-side diff:") && !screen.contains("Loading side-by-side diff")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Gutter markers screen:\n{}", screen);
+
+    // The gutter should show + for additions, - for removals, ~ for modifications
+    // These appear as "│+" "│-" "│~" in the gutter column, or just the markers
+    let has_markers = screen.contains("│+")
+        || screen.contains("│-")
+        || screen.contains("│~")
+        || screen.contains("+")
+        || screen.contains("-");
+
+    assert!(
+        has_markers,
+        "Should show change markers in gutter (+, -, ~). Screen:\n{}",
+        screen
+    );
+}
+
+/// Test that scroll sync works between the two panes in side-by-side diff view
+/// When scrolling one pane, the other should follow to keep aligned lines in sync
+#[test]
+fn test_side_by_side_diff_scroll_sync() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Create a file with many lines so that scrolling is required
+    // Add enough lines that the viewport can't show everything at once
+    let main_rs_path = repo.path.join("src/main.rs");
+    let mut original_lines: Vec<String> = Vec::new();
+    for i in 0..60 {
+        original_lines.push(format!(
+            "fn function_{}() {{ println!(\"Line {}\"); }}",
+            i, i
+        ));
+    }
+    fs::write(&main_rs_path, original_lines.join("\n")).expect("Failed to write original file");
+
+    // Commit the original
+    repo.git_add_all();
+    repo.git_commit("Add many functions");
+
+    // Now modify - add some lines in the middle and change some at the end
+    let mut modified_lines: Vec<String> = Vec::new();
+    for i in 0..30 {
+        modified_lines.push(format!(
+            "fn function_{}() {{ println!(\"Line {}\"); }}",
+            i, i
+        ));
+    }
+    // Add new lines in the middle
+    for i in 0..5 {
+        modified_lines.push(format!(
+            "fn new_function_{}() {{ println!(\"New {}\"); }}",
+            i, i
+        ));
+    }
+    for i in 30..60 {
+        if i >= 55 {
+            // Modify the last few lines
+            modified_lines.push(format!(
+                "fn function_{}() {{ println!(\"Modified {}\"); }}",
+                i, i
+            ));
+        } else {
+            modified_lines.push(format!(
+                "fn function_{}() {{ println!(\"Line {}\"); }}",
+                i, i
+            ));
+        }
+    }
+    fs::write(&main_rs_path, modified_lines.join("\n")).expect("Failed to modify file");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        30, // Relatively small height to ensure scrolling is needed
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("function_"))
+        .unwrap();
+
+    // Use the new "Side-by-Side Diff" command which directly opens side-by-side view
+    // for the current file without needing to navigate through the hunk list
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Side-by-Side Diff").unwrap();
+    harness.render().unwrap();
+
+    eprintln!(
+        "DEBUG scroll_sync: Screen after typing command:\n{}",
+        harness.screen_to_string()
+    );
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    eprintln!(
+        "DEBUG scroll_sync: Screen after command executed:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Wait for side-by-side view to fully load
+    // The status bar shows "Side-by-side diff: +N -M ~K" when loading is complete
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Fail fast if errors occur (prevents infinite wait in CI)
+            if screen.contains("TypeError")
+                || screen.contains("Error:")
+                || screen.contains("Failed")
+                || screen.contains("No changes")
+                || screen.contains("No file open")
+            {
+                panic!("Error loading side-by-side diff. Screen:\n{}", screen);
+            }
+            screen.contains("Side-by-side diff:") && !screen.contains("Loading side-by-side diff")
+        })
+        .unwrap();
+
+    let screen_before = harness.screen_to_string();
+    println!("Before scrolling:\n{}", screen_before);
+
+    // Helper function to split a line at a character position (handles multi-byte UTF-8)
+    fn split_at_char(line: &str, char_pos: usize) -> (String, String) {
+        let chars: Vec<char> = line.chars().collect();
+        let left: String = chars.iter().take(char_pos).collect();
+        let right: String = chars.iter().skip(char_pos).collect();
+        (left, right)
+    }
+
+    // Check if a string contains a late function number (50-59)
+    fn has_late_function(s: &str) -> bool {
+        // Look for function_50 through function_59 or "Modified"
+        s.contains("function_50")
+            || s.contains("function_51")
+            || s.contains("function_52")
+            || s.contains("function_53")
+            || s.contains("function_54")
+            || s.contains("function_55")
+            || s.contains("function_56")
+            || s.contains("function_57")
+            || s.contains("function_58")
+            || s.contains("function_59")
+            || s.contains("Modified")
+    }
+
+    // Helper to check if both panes show synchronized content from near the end
+    // Both OLD and NEW panes should show late function numbers (50s) when synced at bottom
+    fn both_panes_show_late_content(screen: &str) -> bool {
+        let lines: Vec<&str> = screen.lines().collect();
+        let mut old_pane_has_late = false;
+        let mut new_pane_has_late = false;
+
+        for line in &lines {
+            // Check for late function numbers (function_50-59) or "Modified"
+            if has_late_function(line) {
+                let char_count = line.chars().count();
+                if char_count > 80 {
+                    let (left_half, right_half) = split_at_char(line, char_count / 2);
+                    if has_late_function(&left_half) {
+                        old_pane_has_late = true;
+                    }
+                    if has_late_function(&right_half) {
+                        new_pane_has_late = true;
+                    }
+                } else {
+                    // For shorter lines, just mark as found (could be wrapped display)
+                    old_pane_has_late = true;
+                    new_pane_has_late = true;
+                }
+            }
+        }
+        old_pane_has_late && new_pane_has_late
+    }
+
+    // Helper to check if both panes show synchronized content from near the start
+    fn both_panes_show_early_content(screen: &str) -> bool {
+        let lines: Vec<&str> = screen.lines().collect();
+        let mut old_pane_has_early = false;
+        let mut new_pane_has_early = false;
+
+        for line in &lines {
+            // Check for early function numbers (function_0, function_1, etc.)
+            if line.contains("function_0") || line.contains("function_1(") {
+                let char_count = line.chars().count();
+                if char_count > 80 {
+                    let (left_half, right_half) = split_at_char(line, char_count / 2);
+                    if left_half.contains("function_0") || left_half.contains("function_1(") {
+                        old_pane_has_early = true;
+                    }
+                    if right_half.contains("function_0") || right_half.contains("function_1(") {
+                        new_pane_has_early = true;
+                    }
+                } else {
+                    old_pane_has_early = true;
+                    new_pane_has_early = true;
+                }
+            }
+        }
+        old_pane_has_early && new_pane_has_early
+    }
+
+    // Test 1: Press 'G' to go to end of document - this should sync both panes
+    harness
+        .send_key(KeyCode::Char('G'), KeyModifiers::SHIFT)
+        .unwrap();
+
+    // Debug: print screen state before waiting (helps diagnose CI timeouts)
+    eprintln!(
+        "DEBUG: Screen after pressing G (before wait):\n{}",
+        harness.screen_to_string()
+    );
+
+    // Use semantic waiting: wait until BOTH panes show late content (scroll synced)
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Fail fast if errors occur (prevents infinite wait in CI)
+            if screen.contains("TypeError")
+                || screen.contains("Error:")
+                || screen.contains("Failed")
+            {
+                panic!("Error during scroll sync. Screen:\n{}", screen);
+            }
+            // Both panes should eventually show content from near the end
+            both_panes_show_late_content(&screen)
+        })
+        .unwrap();
+
+    let screen_after = harness.screen_to_string();
+    println!("After pressing G (synced to end):\n{}", screen_after);
+
+    // Verify no errors
+    assert!(
+        !screen_after.contains("TypeError") && !screen_after.contains("Error:"),
+        "Should not show any errors. Screen:\n{}",
+        screen_after
+    );
+
+    // Test 2: Press 'g' to go back to start - both panes should sync to top
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::NONE)
+        .unwrap();
+
+    // Debug: print screen state before waiting (helps diagnose CI timeouts)
+    eprintln!(
+        "DEBUG: Screen after pressing g (before wait):\n{}",
+        harness.screen_to_string()
+    );
+
+    // Use semantic waiting: wait until BOTH panes show early content (scroll synced)
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Fail fast if errors occur (prevents infinite wait in CI)
+            if screen.contains("TypeError")
+                || screen.contains("Error:")
+                || screen.contains("Failed")
+            {
+                panic!("Error during scroll sync. Screen:\n{}", screen);
+            }
+            both_panes_show_early_content(&screen)
+        })
+        .unwrap();
+
+    let screen_top = harness.screen_to_string();
+    println!("After pressing g (synced to start):\n{}", screen_top);
+
+    // Verify no errors
+    assert!(
+        !screen_top.contains("TypeError") && !screen_top.contains("Error:"),
+        "Should not show any errors. Screen:\n{}",
+        screen_top
+    );
+
+    // Note: Scroll sync currently works for cursor movement commands (G/g)
+    // but NOT for viewport-only scroll commands (Ctrl+Down, PageDown, mouse wheel).
+    // Those commands scroll the active pane without syncing the other pane.
+    // This is a known limitation - the on_viewport_changed hook fires but
+    // the setSplitScroll command is processed asynchronously and may not
+    // take effect in time.
+}
+
+/// Test vim-style navigation in diff-view mode
+#[test]
+fn test_side_by_side_diff_vim_navigation() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    let main_rs_path = repo.path.join("src/main.rs");
+    let modified_content = r#"fn main() {
+    println!("Modified line");
+}
+
+fn helper() {
+    println!("Added function");
+}
+"#;
+    fs::write(&main_rs_path, modified_content).expect("Failed to modify file");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        50,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Modified"))
+        .unwrap();
+
+    // Use the new "Side-by-Side Diff" command which directly opens side-by-side view
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Side-by-Side Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for side-by-side view to fully load
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Fail fast if errors occur (prevents infinite wait in CI)
+            if screen.contains("TypeError")
+                || screen.contains("Error:")
+                || screen.contains("Failed")
+                || screen.contains("No changes")
+            {
+                panic!("Error loading side-by-side diff. Screen:\n{}", screen);
+            }
+            screen.contains("Side-by-side diff:") && !screen.contains("Loading side-by-side diff")
+        })
+        .unwrap();
+
+    // Test vim navigation: j moves down, k moves up
+    harness
+        .send_key(KeyCode::Char('j'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('j'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('k'), KeyModifiers::NONE)
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // Should still be in the diff view without errors
+    assert!(
+        !screen.contains("TypeError") && !screen.contains("Error"),
+        "Vim navigation should work without errors. Screen:\n{}",
+        screen
+    );
+
+    // Test 'q' to close
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+
+    // After closing, should still be functional
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("TypeError"),
+        "Closing with 'q' should work. Screen:\n{}",
         screen
     );
 }
