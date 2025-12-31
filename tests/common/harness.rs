@@ -99,6 +99,9 @@ pub struct HarnessOptions {
     pub dir_context: Option<DirectoryContext>,
     /// Slow filesystem configuration for performance testing.
     pub slow_fs_config: Option<SlowFsConfig>,
+    /// Preserve the keybinding map from the config (don't force "default").
+    /// Set this when testing a specific keymap like emacs.
+    pub preserve_keybinding_map: bool,
 }
 
 impl HarnessOptions {
@@ -113,6 +116,7 @@ impl HarnessOptions {
             create_empty_plugins_dir: true,
             dir_context: None,
             slow_fs_config: None,
+            preserve_keybinding_map: false,
         }
     }
 
@@ -163,6 +167,13 @@ impl HarnessOptions {
     /// Configure a slow filesystem backend for performance testing.
     pub fn with_slow_fs(mut self, config: SlowFsConfig) -> Self {
         self.slow_fs_config = Some(config);
+        self
+    }
+
+    /// Preserve the keybinding map from the config (don't force "default").
+    /// Use this when testing a specific keymap like emacs or vscode.
+    pub fn with_preserved_keybinding_map(mut self) -> Self {
+        self.preserve_keybinding_map = true;
         self
     }
 }
@@ -307,6 +318,12 @@ impl EditorTestHarness {
         // Only override auto_indent if no config was explicitly provided
         if !config_was_provided {
             config.editor.auto_indent = false; // Disable for simpler testing
+        }
+        // Force "default" keybinding map for consistent test behavior across platforms
+        // (Config::default() uses platform-specific keymaps which breaks test assumptions)
+        // Skip this if the test explicitly wants to preserve its keymap (e.g., testing emacs bindings)
+        if !options.preserve_keybinding_map {
+            config.active_keybinding_map = fresh::config::KeybindingMapName("default".to_string());
         }
         config.check_for_updates = false; // Disable update checking in tests
         config.editor.double_click_time_ms = 10; // Fast double-click for faster tests

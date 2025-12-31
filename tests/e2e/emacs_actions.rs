@@ -7,7 +7,7 @@
 //!
 //! These tests use the Emacs keybinding style which has these actions bound.
 
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 
@@ -15,7 +15,14 @@ use fresh::config::Config;
 fn emacs_harness(width: u16, height: u16) -> EditorTestHarness {
     let mut config = Config::default();
     config.active_keybinding_map = "emacs".into();
-    EditorTestHarness::with_config(width, height, config).unwrap()
+    EditorTestHarness::create(
+        width,
+        height,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_preserved_keybinding_map(),
+    )
+    .unwrap()
 }
 
 // =============================================================================
