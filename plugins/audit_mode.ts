@@ -1567,8 +1567,8 @@ globalThis.side_by_side_diff_current_file = async () => {
         }
     }
 
-    // Get hunks for this specific file (use -C to run in file's directory)
-    const result = await editor.spawnProcess("git", ["-C", fileDir, "diff", "HEAD", "--unified=3", "--", filePath]);
+    // Get hunks for this specific file (use -C gitRoot since filePath is relative to git root)
+    const result = await editor.spawnProcess("git", ["-C", gitRoot, "diff", "HEAD", "--unified=3", "--", filePath]);
     if (result.exit_code !== 0) {
         editor.setStatus("Failed to get git diff for file");
         return;
@@ -1611,8 +1611,8 @@ globalThis.side_by_side_diff_current_file = async () => {
         return;
     }
 
-    // Get old (HEAD) and new (working) file content (use -C to run in file's directory)
-    const gitShow = await editor.spawnProcess("git", ["-C", fileDir, "show", `HEAD:${filePath}`]);
+    // Get old (HEAD) and new (working) file content (use -C gitRoot since filePath is relative to git root)
+    const gitShow = await editor.spawnProcess("git", ["-C", gitRoot, "show", `HEAD:${filePath}`]);
     if (gitShow.exit_code !== 0) {
         editor.setStatus("Failed to load old file version (file may be new)");
         return;
