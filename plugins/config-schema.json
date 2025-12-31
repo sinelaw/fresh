@@ -142,7 +142,7 @@
           "description": "Number of spaces per tab character",
           "type": "integer",
           "format": "uint",
-          "minimum": 1,
+          "minimum": 0,
           "default": 4
         },
         "auto_indent": {
@@ -520,7 +520,7 @@
             "null"
           ],
           "format": "uint",
-          "minimum": 1,
+          "minimum": 0,
           "default": null
         },
         "formatter": {

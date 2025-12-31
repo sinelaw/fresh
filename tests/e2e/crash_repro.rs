@@ -464,9 +464,7 @@ fn test_issue_580_tab_size_zero_causes_panic() {
         EditorTestHarness::with_config(80, 24, config).expect("Should create harness");
 
     // Open the file
-    harness
-        .open_file(&file_path)
-        .expect("Should open cpp file");
+    harness.open_file(&file_path).expect("Should open cpp file");
 
     // This render should NOT panic even with tab_size = 0
     // If the bug exists, this will panic with:
