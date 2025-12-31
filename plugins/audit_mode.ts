@@ -1537,22 +1537,38 @@ globalThis.side_by_side_diff_current_file = async () => {
 
     editor.setStatus("Loading side-by-side diff...");
 
-    // Get the git root directory to compute relative path
-    const gitRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"]);
+    // Get the file's directory and name for running git commands
+    const fileDir = editor.pathDirname(absolutePath);
+    const fileName = editor.pathBasename(absolutePath);
+
+    // Run git commands from the file's directory to avoid path format issues on Windows
+    const gitRootResult = await editor.spawnProcess("git", ["-C", fileDir, "rev-parse", "--show-toplevel"]);
     if (gitRootResult.exit_code !== 0) {
         editor.setStatus("Not in a git repository");
         return;
     }
     const gitRoot = gitRootResult.stdout.trim();
 
-    // Compute relative path from git root
-    let filePath = absolutePath;
-    if (absolutePath.startsWith(gitRoot)) {
-        filePath = absolutePath.substring(gitRoot.length + 1); // +1 to skip the leading /
+    // Get relative path from git root using git itself (handles Windows paths correctly)
+    const relPathResult = await editor.spawnProcess("git", ["-C", fileDir, "ls-files", "--full-name", fileName]);
+    let filePath: string;
+    if (relPathResult.exit_code === 0 && relPathResult.stdout.trim()) {
+        filePath = relPathResult.stdout.trim();
+    } else {
+        // File might be untracked, compute relative path manually
+        // Normalize paths: replace backslashes with forward slashes for comparison
+        const normAbsPath = absolutePath.replace(/\\/g, '/');
+        const normGitRoot = gitRoot.replace(/\\/g, '/');
+        if (normAbsPath.toLowerCase().startsWith(normGitRoot.toLowerCase())) {
+            filePath = normAbsPath.substring(normGitRoot.length + 1);
+        } else {
+            // Fallback to just the filename
+            filePath = fileName;
+        }
     }
 
-    // Get hunks for this specific file
-    const result = await editor.spawnProcess("git", ["diff", "HEAD", "--unified=3", "--", filePath]);
+    // Get hunks for this specific file (use -C to run in file's directory)
+    const result = await editor.spawnProcess("git", ["-C", fileDir, "diff", "HEAD", "--unified=3", "--", filePath]);
     if (result.exit_code !== 0) {
         editor.setStatus("Failed to get git diff for file");
         return;
@@ -1595,8 +1611,8 @@ globalThis.side_by_side_diff_current_file = async () => {
         return;
     }
 
-    // Get old (HEAD) and new (working) file content
-    const gitShow = await editor.spawnProcess("git", ["show", `HEAD:${filePath}`]);
+    // Get old (HEAD) and new (working) file content (use -C to run in file's directory)
+    const gitShow = await editor.spawnProcess("git", ["-C", fileDir, "show", `HEAD:${filePath}`]);
     if (gitShow.exit_code !== 0) {
         editor.setStatus("Failed to load old file version (file may be new)");
         return;
