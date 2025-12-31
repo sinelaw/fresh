@@ -1020,6 +1020,15 @@ globalThis.review_drill_down = async () => {
         // Get all hunks for this file
         const fileHunks = state.hunks.filter(hunk => hunk.file === h.file);
 
+        // Get git root to construct absolute path
+        const gitRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"]);
+        if (gitRootResult.exit_code !== 0) {
+            editor.setStatus("Not in a git repository");
+            return;
+        }
+        const gitRoot = gitRootResult.stdout.trim();
+        const absoluteFilePath = editor.pathJoin(gitRoot, h.file);
+
         // Get old (HEAD) and new (working) file content
         const gitShow = await editor.spawnProcess("git", ["show", `HEAD:${h.file}`]);
         if (gitShow.exit_code !== 0) {
@@ -1028,10 +1037,10 @@ globalThis.review_drill_down = async () => {
         }
         const oldContent = gitShow.stdout;
 
-        // Read new file content
+        // Read new file content (use absolute path for readFile)
         let newContent: string;
         try {
-            newContent = await editor.readFile(h.file);
+            newContent = await editor.readFile(absoluteFilePath);
         } catch (e) {
             editor.setStatus("Failed to load new file version");
             return;
@@ -1594,10 +1603,10 @@ globalThis.side_by_side_diff_current_file = async () => {
     }
     const oldContent = gitShow.stdout;
 
-    // Read new file content
+    // Read new file content (use absolute path for readFile)
     let newContent: string;
     try {
-        newContent = await editor.readFile(filePath);
+        newContent = await editor.readFile(absolutePath);
     } catch (e) {
         editor.setStatus("Failed to load new file version");
         return;
