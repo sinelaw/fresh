@@ -2074,16 +2074,19 @@ impl SplitRenderer {
             highlight_context_bytes,
         );
 
-        // Update semantic highlighter color from theme
-        state.semantic_highlighter.highlight_color = theme.semantic_highlight_bg;
-
-        let semantic_spans = state.semantic_highlighter.highlight_occurrences(
-            &state.buffer,
-            primary_cursor_position,
-            viewport_start,
-            viewport_end,
-            highlight_context_bytes,
-        );
+        // Get semantic highlights through debounced cache
+        let semantic_spans = state
+            .semantic_highlight_cache
+            .get_highlights(
+                &mut state.semantic_highlighter,
+                &state.buffer,
+                primary_cursor_position,
+                viewport_start,
+                viewport_end,
+                highlight_context_bytes,
+                theme.semantic_highlight_bg,
+            )
+            .to_vec();
 
         let viewport_overlays = state
             .overlays

@@ -1306,6 +1306,22 @@ impl Editor {
         true
     }
 
+    /// Check if semantic highlight debounce timer has expired
+    ///
+    /// Returns true if a redraw is needed because the debounce period has elapsed
+    /// and semantic highlights need to be recomputed.
+    pub fn check_semantic_highlight_timer(&self) -> bool {
+        // Check all buffers for pending semantic highlight redraws
+        for state in self.buffers.values() {
+            if let Some(remaining) = state.semantic_highlight_cache.needs_redraw() {
+                if remaining.is_zero() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Load an ANSI background image from a user-provided path
     fn load_ansi_background(&mut self, input: &str) -> io::Result<()> {
         let trimmed = input.trim();

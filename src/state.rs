@@ -17,6 +17,7 @@ use crate::primitives::text_property::TextPropertyManager;
 use crate::view::margin::{MarginAnnotation, MarginContent, MarginManager, MarginPosition};
 use crate::view::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
 use crate::view::popup::{Popup, PopupContent, PopupListItem, PopupManager, PopupPosition};
+use crate::view::semantic_highlight_cache::SemanticHighlightCache;
 use crate::view::virtual_text::VirtualTextManager;
 use anyhow::Result;
 use ratatui::style::{Color, Style};
@@ -117,6 +118,9 @@ pub struct EditorState {
 
     /// Optional transformed view payload for current viewport (tokens + map)
     pub view_transform: Option<crate::services::plugins::api::ViewTransformPayload>,
+
+    /// Debounced semantic highlight cache
+    pub semantic_highlight_cache: SemanticHighlightCache,
 }
 
 impl EditorState {
@@ -150,6 +154,7 @@ impl EditorState {
             compose_prev_line_numbers: None,
             compose_column_guides: None,
             view_transform: None,
+            semantic_highlight_cache: SemanticHighlightCache::new(),
         }
     }
 
@@ -231,6 +236,7 @@ impl EditorState {
             compose_prev_line_numbers: None,
             compose_column_guides: None,
             view_transform: None,
+            semantic_highlight_cache: SemanticHighlightCache::new(),
         })
     }
 

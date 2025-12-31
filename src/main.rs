@@ -826,6 +826,11 @@ where
             needs_render = true;
         }
 
+        // Check semantic highlight debounce timer
+        if editor.check_semantic_highlight_timer() {
+            needs_render = true;
+        }
+
         // Check for warnings and open warning log if any occurred
         if editor.check_warning_log() {
             needs_render = true;
