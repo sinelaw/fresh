@@ -117,7 +117,18 @@ impl Editor {
 
     /// Open the config file for the specified layer in the editor.
     /// Creates the file with default template if it doesn't exist.
+    /// If there are pending changes in the Settings UI, warns the user and doesn't proceed.
     pub fn open_config_file(&mut self, layer: ConfigLayer) -> std::io::Result<()> {
+        // Check for pending changes before opening config file
+        if let Some(ref state) = self.settings_state {
+            if state.has_changes() {
+                self.set_status_message(
+                    "Save or discard pending changes before editing config file".to_string(),
+                );
+                return Ok(());
+            }
+        }
+
         let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
 
         let path = match layer {

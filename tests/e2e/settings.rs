@@ -2577,3 +2577,200 @@ fn test_json_editor_ctrl_a_selects_all() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
+
+// =============================================================================
+// EDIT CONFIG FILE BUTTON TESTS
+// =============================================================================
+
+/// Test that the Edit button is visible in the settings footer
+///
+/// The Edit button allows advanced users to directly edit the config file
+/// for the selected layer. It should be visible on the left side of the footer,
+/// separated from the main action buttons.
+#[test]
+fn test_settings_edit_button_visible() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Edit button should be visible in footer (on the left, dimmed style)
+    harness.assert_screen_contains("[ Edit ]");
+
+    // Close settings
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test that the Edit button can be navigated to via keyboard
+///
+/// Tab from the settings panel should eventually reach the Edit button.
+/// Button order in footer: Layer, Reset, Save, Cancel, Edit (on left for advanced users)
+#[test]
+fn test_settings_edit_button_keyboard_navigation() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Tab to settings panel
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Tab to footer (defaults to Save button)
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should show Save button focused
+    harness.assert_screen_contains(">[ Save ]");
+
+    // Navigate with Right arrow: Save -> Cancel -> Edit
+    // Footer order: 0=Layer, 1=Reset, 2=Save, 3=Cancel, 4=Edit
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains(">[ Cancel ]");
+
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Edit button should now be focused
+    harness.assert_screen_contains(">[ Edit ]");
+
+    // Close settings
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test that Edit button opens the config file for the selected layer
+///
+/// When the Edit button is activated, it should:
+/// 1. Close the settings modal
+/// 2. Open the config file for the current layer
+/// 3. Show a status message indicating which file was opened
+#[test]
+fn test_settings_edit_button_opens_config_file() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify settings is open
+    assert!(
+        harness.editor().is_settings_open(),
+        "Settings should be open"
+    );
+
+    // Navigate to Edit button: Tab -> Tab -> Right -> Right
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Settings
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Footer (Save)
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap(); // to Cancel
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap(); // to Edit
+    harness.render().unwrap();
+
+    // Verify Edit button is focused
+    harness.assert_screen_contains(">[ Edit ]");
+
+    // Press Enter to activate Edit button
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Settings should be closed
+    assert!(
+        !harness.editor().is_settings_open(),
+        "Settings should be closed after Edit"
+    );
+
+    // A config file should be open (User layer by default)
+    // The file path should contain "config.json"
+    harness.assert_screen_contains("config.json");
+
+    // Status message should indicate which layer was opened
+    harness.assert_screen_contains("Editing User config");
+}
+
+/// Test that Edit button is blocked when there are pending changes
+///
+/// If the user has made changes in the Settings UI that haven't been saved,
+/// the Edit button should not open the config file and should show a warning.
+#[test]
+fn test_settings_edit_button_blocked_with_pending_changes() {
+    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Make a change: toggle "Check For Updates"
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "check".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show modified indicator
+    harness.assert_screen_contains("modified");
+
+    // Navigate to Edit button
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Footer
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap(); // to Cancel
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap(); // to Edit
+    harness.render().unwrap();
+
+    // Press Enter to try to activate Edit button
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Settings should STILL be open (Edit was blocked)
+    assert!(
+        harness.editor().is_settings_open(),
+        "Settings should still be open when Edit is blocked due to pending changes"
+    );
+
+    // Should show warning message about pending changes
+    harness.assert_screen_contains("Save or discard pending changes");
+
+    // Discard changes and close
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+}
