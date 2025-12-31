@@ -181,27 +181,129 @@ Fresh ships `plugins/clangd_support.ts` with the source tree; see `plugins/clang
 
 ## Configuration
 
-Fresh is configured using a `config.json` file located in:
+Fresh uses a layered configuration system that allows you to customize settings at different levels of scope.
 
-* `~/.config/fresh/config.json` on Unix-like systems, like Linux and macOS.
-* `%APPDATA%\fresh\config.json` on Windows.
+### Configuration Layers
 
-### Example Configuration
+Settings are loaded from multiple layers, with higher layers overriding lower ones:
+
+| Layer | Location | Scope | Use Case |
+|-------|----------|-------|----------|
+| **System** | Built-in defaults | Global | Factory defaults (read-only) |
+| **User** | `~/.config/fresh/config.json` | All projects | Personal preferences |
+| **Project** | `.fresh/config.json` in project root | Single project | Project-specific settings |
+| **Session** | `.fresh/session.json` (temporary) | Current session | Temporary overrides |
+
+**Path Notes:**
+- On Windows, User config is at `%APPDATA%\fresh\config.json`
+- Project config is found by searching up from the current directory for `.fresh/config.json`
+
+### Using the Settings UI
+
+The easiest way to configure Fresh is through the Settings UI:
+
+1. **Open Settings**: Press `Ctrl+,` or use Command Palette → "Open Settings"
+2. **Browse Categories**: Use arrow keys or click to navigate
+3. **Change Values**: Toggle booleans, adjust numbers, select from dropdowns
+4. **Choose Target Layer**: Click the layer button (e.g., `[ User ]`) to switch between User/Project/Session
+5. **Save**: Press Enter on the Save button or use `Ctrl+S`
+
+**Advanced: Edit Config File Directly**
+
+For complex configurations (like LSP args or custom keybindings), click the `[ Edit ]` button in the Settings footer to open the raw JSON config file for the selected layer.
+
+### Example Configurations
+
+**User config** (`~/.config/fresh/config.json`) - your personal defaults:
+```json
+{
+  "version": 1,
+  "theme": "dark",
+  "editor": {
+    "tab_size": 4,
+    "line_numbers": true
+  }
+}
+```
+
+**Project config** (`.fresh/config.json`) - project-specific overrides:
+```json
+{
+  "version": 1,
+  "editor": {
+    "tab_size": 2
+  },
+  "languages": {
+    "javascript": {
+      "formatter": "prettier --write"
+    }
+  }
+}
+```
+
+### Common Configuration Tasks
+
+#### Add a Custom Language
+
+To add syntax highlighting and LSP support for a new language:
 
 ```json
 {
-  "theme": "dark",
-  "editor": {
-    "tab_size": 4
+  "languages": {
+    "mylang": {
+      "extensions": ["ml", "myl"],
+      "grammar": "mylang",
+      "comment_prefix": "#",
+      "auto_indent": true
+    }
   },
   "lsp": {
-    "rust": {
-      "command": "rust-analyzer",
+    "mylang": {
+      "command": "mylang-lsp",
+      "args": ["--stdio"],
       "enabled": true
     }
   }
 }
 ```
+
+#### Customize LSP Settings
+
+Configure initialization options for a language server:
+
+```json
+{
+  "lsp": {
+    "rust": {
+      "command": "rust-analyzer",
+      "enabled": true,
+      "initialization_options": {
+        "checkOnSave": { "command": "clippy" }
+      }
+    }
+  }
+}
+```
+
+#### Project-Specific Tab Size
+
+Create `.fresh/config.json` in your project:
+```json
+{
+  "version": 1,
+  "editor": {
+    "tab_size": 2
+  }
+}
+```
+
+### Layer Source Indicators
+
+In the Settings UI, each setting shows where its current value comes from:
+- **(user)** - Set in your User config
+- **(project)** - Set in the Project config
+- **(session)** - Temporary session override
+- *(no indicator)* - Using system default
 
 ### Process Resource Limits
 
