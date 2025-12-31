@@ -6,7 +6,54 @@
 
 use crate::config::{Config, ConfigError};
 use crate::partial_config::{Merge, PartialConfig};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
+
+// ============================================================================
+// Configuration Migration System
+// ============================================================================
+
+/// Current config schema version.
+/// Increment this when making breaking changes to config structure.
+pub const CURRENT_CONFIG_VERSION: u32 = 1;
+
+/// Apply all necessary migrations to bring a config JSON to the current version.
+pub fn migrate_config(mut value: Value) -> Result<Value, ConfigError> {
+    let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+    // Apply migrations sequentially
+    if version < 1 {
+        value = migrate_v0_to_v1(value)?;
+    }
+    // Future migrations:
+    // if version < 2 { value = migrate_v1_to_v2(value)?; }
+
+    Ok(value)
+}
+
+/// Migration from v0 (implicit/missing version) to v1.
+/// This is the initial migration that establishes the version field.
+fn migrate_v0_to_v1(mut value: Value) -> Result<Value, ConfigError> {
+    if let Value::Object(ref mut map) = value {
+        // Set version to 1
+        map.insert("version".to_string(), Value::Number(1.into()));
+
+        // Example: rename camelCase keys to snake_case if they exist
+        if let Some(editor) = map.get_mut("editor") {
+            if let Value::Object(ref mut editor_map) = editor {
+                // tabSize -> tab_size (hypothetical legacy format)
+                if let Some(val) = editor_map.remove("tabSize") {
+                    editor_map.entry("tab_size").or_insert(val);
+                }
+                // lineNumbers -> line_numbers
+                if let Some(val) = editor_map.remove("lineNumbers") {
+                    editor_map.entry("line_numbers").or_insert(val);
+                }
+            }
+        }
+    }
+    Ok(value)
+}
 
 /// Represents a configuration layer in the 4-level hierarchy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,7 +101,7 @@ impl ConfigResolver {
     /// Load all layers and merge them into a resolved Config.
     ///
     /// Layers are merged from highest to lowest precedence:
-    /// Session > Project > User > System
+    /// Session > Project > UserPlatform > User > System
     ///
     /// Each layer fills in values missing from higher precedence layers.
     pub fn resolve(&self) -> Result<Config, ConfigError> {
@@ -65,6 +112,12 @@ impl ConfigResolver {
         if let Some(project_partial) = self.load_project_layer()? {
             tracing::debug!("Loaded project config layer");
             merged.merge_from(&project_partial);
+        }
+
+        // Merge in User Platform layer (e.g., config_linux.json)
+        if let Some(platform_partial) = self.load_user_platform_layer()? {
+            tracing::debug!("Loaded user platform config layer");
+            merged.merge_from(&platform_partial);
         }
 
         // Merge in User layer (fills remaining missing values)
@@ -108,9 +161,36 @@ impl ConfigResolver {
         self.working_dir.join(".fresh").join("session.json")
     }
 
+    /// Get the platform-specific config filename.
+    fn platform_config_filename() -> Option<&'static str> {
+        if cfg!(target_os = "linux") {
+            Some("config_linux.json")
+        } else if cfg!(target_os = "macos") {
+            Some("config_macos.json")
+        } else if cfg!(target_os = "windows") {
+            Some("config_windows.json")
+        } else {
+            None
+        }
+    }
+
+    /// Get the path to platform-specific user config file.
+    pub fn user_platform_config_path(&self) -> Option<PathBuf> {
+        Self::platform_config_filename().map(|filename| self.dir_context.config_dir.join(filename))
+    }
+
     /// Load the user layer from disk.
     pub fn load_user_layer(&self) -> Result<Option<PartialConfig>, ConfigError> {
         self.load_layer_from_path(&self.user_config_path())
+    }
+
+    /// Load the platform-specific user layer from disk.
+    pub fn load_user_platform_layer(&self) -> Result<Option<PartialConfig>, ConfigError> {
+        if let Some(path) = self.user_platform_config_path() {
+            self.load_layer_from_path(&path)
+        } else {
+            Ok(None)
+        }
     }
 
     /// Load the project layer from disk.
@@ -123,7 +203,7 @@ impl ConfigResolver {
         self.load_layer_from_path(&self.session_config_path())
     }
 
-    /// Load a layer from a specific path.
+    /// Load a layer from a specific path, applying migrations if needed.
     fn load_layer_from_path(&self, path: &Path) -> Result<Option<PartialConfig>, ConfigError> {
         if !path.exists() {
             return Ok(None);
@@ -132,7 +212,15 @@ impl ConfigResolver {
         let content = std::fs::read_to_string(path)
             .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
 
-        let partial: PartialConfig = serde_json::from_str(&content)
+        // Parse as raw JSON first
+        let value: Value = serde_json::from_str(&content)
+            .map_err(|e| ConfigError::ParseError(format!("{}: {}", path.display(), e)))?;
+
+        // Apply migrations
+        let migrated = migrate_config(value)?;
+
+        // Now deserialize to PartialConfig
+        let partial: PartialConfig = serde_json::from_value(migrated)
             .map_err(|e| ConfigError::ParseError(format!("{}: {}", path.display(), e)))?;
 
         Ok(Some(partial))
@@ -184,22 +272,28 @@ impl ConfigResolver {
         let mut merged = PartialConfig::default();
 
         // Merge from highest precedence (just below target) to lowest
-        // Session layer: parent includes Project + User
-        // Project layer: parent includes User only
+        // Session layer: parent includes Project + UserPlatform + User
+        // Project layer: parent includes UserPlatform + User
         // User layer: parent is empty (system defaults applied during resolve)
 
         if layer == ConfigLayer::Session {
-            // Session's parent is Project + User
+            // Session's parent is Project + UserPlatform + User
             if let Some(project) = self.load_project_layer()? {
                 merged = project;
+            }
+            if let Some(platform) = self.load_user_platform_layer()? {
+                merged.merge_from(&platform);
             }
             if let Some(user) = self.load_user_layer()? {
                 merged.merge_from(&user);
             }
         } else if layer == ConfigLayer::Project {
-            // Project's parent is User only
+            // Project's parent is UserPlatform + User
+            if let Some(platform) = self.load_user_platform_layer()? {
+                merged = platform;
+            }
             if let Some(user) = self.load_user_layer()? {
-                merged = user;
+                merged.merge_from(&user);
             }
         }
         // User layer's parent is empty (defaults handled during resolve)
@@ -687,5 +781,109 @@ mod tests {
 
         let config = Config::load_with_layers(&dir_context, &working_dir);
         assert_eq!(config.editor.tab_size, 2);
+    }
+
+    #[test]
+    fn platform_config_overrides_user() {
+        let (temp, resolver) = create_test_resolver();
+
+        // Create user config with tab_size=2
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(&user_config_path, r#"{"editor": {"tab_size": 2}}"#).unwrap();
+
+        // Create platform config with tab_size=6
+        if let Some(platform_path) = resolver.user_platform_config_path() {
+            std::fs::write(&platform_path, r#"{"editor": {"tab_size": 6}}"#).unwrap();
+
+            let config = resolver.resolve().unwrap();
+            assert_eq!(config.editor.tab_size, 6); // Platform overrides user
+        }
+        drop(temp);
+    }
+
+    #[test]
+    fn project_overrides_platform() {
+        let (temp, resolver) = create_test_resolver();
+
+        // Create user config
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(&user_config_path, r#"{"editor": {"tab_size": 2}}"#).unwrap();
+
+        // Create platform config
+        if let Some(platform_path) = resolver.user_platform_config_path() {
+            std::fs::write(&platform_path, r#"{"editor": {"tab_size": 6}}"#).unwrap();
+        }
+
+        // Create project config with tab_size=10
+        let project_config_path = resolver.project_config_path();
+        std::fs::create_dir_all(project_config_path.parent().unwrap()).unwrap();
+        std::fs::write(&project_config_path, r#"{"editor": {"tab_size": 10}}"#).unwrap();
+
+        let config = resolver.resolve().unwrap();
+        assert_eq!(config.editor.tab_size, 10); // Project overrides platform
+        drop(temp);
+    }
+
+    #[test]
+    fn migration_adds_version() {
+        let input = serde_json::json!({
+            "editor": {"tab_size": 2}
+        });
+
+        let migrated = migrate_config(input).unwrap();
+
+        assert_eq!(migrated.get("version"), Some(&serde_json::json!(1)));
+    }
+
+    #[test]
+    fn migration_renames_camelcase_keys() {
+        let input = serde_json::json!({
+            "editor": {
+                "tabSize": 8,
+                "lineNumbers": false
+            }
+        });
+
+        let migrated = migrate_config(input).unwrap();
+
+        let editor = migrated.get("editor").unwrap();
+        assert_eq!(editor.get("tab_size"), Some(&serde_json::json!(8)));
+        assert_eq!(editor.get("line_numbers"), Some(&serde_json::json!(false)));
+        assert!(editor.get("tabSize").is_none());
+        assert!(editor.get("lineNumbers").is_none());
+    }
+
+    #[test]
+    fn migration_preserves_existing_snake_case() {
+        let input = serde_json::json!({
+            "version": 1,
+            "editor": {"tab_size": 4}
+        });
+
+        let migrated = migrate_config(input).unwrap();
+
+        let editor = migrated.get("editor").unwrap();
+        assert_eq!(editor.get("tab_size"), Some(&serde_json::json!(4)));
+    }
+
+    #[test]
+    fn resolver_loads_legacy_camelcase_config() {
+        let (temp, resolver) = create_test_resolver();
+
+        // Create config with legacy camelCase keys
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{"editor": {"tabSize": 3, "lineNumbers": false}}"#,
+        )
+        .unwrap();
+
+        let config = resolver.resolve().unwrap();
+        assert_eq!(config.editor.tab_size, 3);
+        assert!(!config.editor.line_numbers);
+        drop(temp);
     }
 }
