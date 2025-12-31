@@ -76,6 +76,7 @@ editor.executeActions([
 | Text objects | `iw` `aw` (word), `i"` `a"` `i'` `a'` (quotes), `i(` `a(` `i{` `a{` `i[` `a[` (brackets) |
 | Insert | `i` `a` `I` `A` `o` `O` |
 | Search | `/` `n` `N` |
+| Colon cmds | `:w` `:q` `:wq` `:q!` `:e` `:sp` `:vs` `:bn` `:bp` `:<line>` and more |
 | Other | `u` `Ctrl-r` (undo/redo), `p` `P` (paste), `%` (bracket match) |
 
 ### Not Implemented
@@ -84,9 +85,58 @@ editor.executeActions([
 |---------|----------|-------|
 | Visual block | Medium | `Ctrl-v` - column/block selection |
 | `.` repeat | Medium | Repeat last change - big productivity boost |
-| `:` command mode | Medium | `:w`, `:q` - Fresh has `Ctrl+S`, `Ctrl+Q` already |
 | Registers | Low | `"a`, `"b`, named registers |
 | Macros | Low | `q`, `@` |
+
+## Colon Command Mode
+
+Press `:` in normal mode to enter command mode. Type a command and press Enter to execute.
+
+### Supported Commands
+
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `:w` | `:write` | Save current file |
+| `:q` | `:quit` | Close buffer (fails if modified) |
+| `:q!` | | Force close buffer (discard changes) |
+| `:wq` | `:x` | Save and close buffer |
+| `:wa` | `:wall` | Save all buffers |
+| `:qa` | `:qall` | Close all buffers |
+| `:qa!` | | Force close all buffers |
+| `:wqa` | `:xa` | Save all and quit |
+| `:e` | `:edit` | Reload current file |
+| `:e <file>` | | Open file |
+| `:sp` | `:split` | Horizontal split |
+| `:vs` | `:vsplit` | Vertical split |
+| `:only` | | Close other splits |
+| `:new` | | New buffer in horizontal split |
+| `:vnew` | | New buffer in vertical split |
+| `:enew` | | New buffer in current split |
+| `:bn` | `:bnext` | Next buffer |
+| `:bp` | `:bprev` | Previous buffer |
+| `:bd` | `:bdelete` | Close buffer |
+| `:ls` | `:buffers`, `:files` | List buffers |
+| `:tabnew` | `:tabe` | New tab/buffer |
+| `:tabn` | `:tabnext` | Next tab |
+| `:tabp` | `:tabprev` | Previous tab |
+| `:cn` | `:cnext` | Next diagnostic |
+| `:cp` | `:cprev` | Previous diagnostic |
+| `:copen` | `:cope` | Open diagnostics panel |
+| `:<number>` | | Go to line number |
+| `:set nu` | `:set number` | Show line numbers |
+| `:set nonu` | `:set nonumber` | Hide line numbers |
+| `:noh` | `:nohlsearch` | Clear search highlight |
+| `:pwd` | | Print working directory |
+| `:f` | `:file` | Show file info |
+| `:version` | | Show version |
+| `:help` | `:h` | Show help |
+
+### Not Supported
+
+- `:!command` - Shell commands (use terminal)
+- `:s/old/new/` - Substitute (use Ctrl+H for search/replace)
+- `:g/pattern/` - Global command
+- Range prefixes (e.g., `:%`, `:1,10`)
 
 ## Files
 

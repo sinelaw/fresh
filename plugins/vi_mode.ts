@@ -1275,6 +1275,9 @@ editor.defineMode("vi-normal", null, [
 
   // Other
   ["J", "vi_join"],
+
+  // Command mode
+  [":", "vi_command_mode"],
 ], true); // read_only = true to prevent character insertion
 
 // Define vi-insert mode - only Escape is special, other keys insert text
@@ -1595,6 +1598,803 @@ const opCommands = [
 for (const [name, desc] of opCommands) {
   editor.registerCommand(name, `Vi: ${desc}`, name, "vi-normal");
 }
+
+// ============================================================================
+// Colon Command Mode (:w, :q, :wq, :q!, :e, etc.)
+// ============================================================================
+
+// Start command mode - shows ":" prompt at the bottom
+globalThis.vi_command_mode = function (): void {
+  editor.startPrompt(":", "vi-command");
+};
+
+// Handle command execution when user presses Enter
+globalThis.vi_command_handler = async function (args: { prompt_type: string; input: string }): Promise<boolean> {
+  if (args.prompt_type !== "vi-command") {
+    return false; // Not our prompt, let other handlers process it
+  }
+
+  const input = args.input.trim();
+  if (!input) {
+    return true; // Empty command, just dismiss
+  }
+
+  // Parse the command
+  const result = await executeViCommand(input);
+
+  if (result.error) {
+    editor.setStatus(`E: ${result.error}`);
+  } else if (result.message) {
+    editor.setStatus(result.message);
+  }
+
+  return true; // We handled it
+};
+
+interface CommandResult {
+  error?: string;
+  message?: string;
+}
+
+// Command definition for the command table
+interface CommandDef {
+  name: string;           // Full command name
+  minAbbrev: number;      // Minimum abbreviation length (e.g., 1 for "w" -> "write")
+  allowBang: boolean;     // Whether command accepts ! suffix
+  hasArgs: boolean;       // Whether command accepts arguments
+}
+
+// Command table - defines all supported commands with their abbreviations
+// Vim allows any unambiguous prefix of a command name
+const commandTable: CommandDef[] = [
+  // File operations
+  { name: "write", minAbbrev: 1, allowBang: true, hasArgs: true },     // :w, :wri, :write
+  { name: "quit", minAbbrev: 1, allowBang: true, hasArgs: false },     // :q, :qu, :quit
+  { name: "wq", minAbbrev: 2, allowBang: true, hasArgs: false },       // :wq
+  { name: "wall", minAbbrev: 2, allowBang: false, hasArgs: false },    // :wa, :wall
+  { name: "qall", minAbbrev: 2, allowBang: true, hasArgs: false },     // :qa, :qall
+  { name: "wqall", minAbbrev: 3, allowBang: false, hasArgs: false },   // :wqa, :wqall
+  { name: "xit", minAbbrev: 1, allowBang: false, hasArgs: false },     // :x, :xit (same as :wq)
+  { name: "exit", minAbbrev: 3, allowBang: false, hasArgs: false },    // :exi, :exit
+  { name: "edit", minAbbrev: 1, allowBang: true, hasArgs: true },      // :e, :ed, :edit
+  { name: "enew", minAbbrev: 3, allowBang: true, hasArgs: false },     // :ene, :enew
+  { name: "saveas", minAbbrev: 3, allowBang: false, hasArgs: true },   // :sav, :saveas
+
+  // Buffer navigation
+  { name: "next", minAbbrev: 1, allowBang: true, hasArgs: false },     // :n, :next
+  { name: "previous", minAbbrev: 4, allowBang: true, hasArgs: false }, // :prev, :previous
+  { name: "bnext", minAbbrev: 2, allowBang: false, hasArgs: false },   // :bn, :bnext
+  { name: "bprevious", minAbbrev: 2, allowBang: false, hasArgs: false },// :bp, :bprev, :bprevious
+  { name: "bdelete", minAbbrev: 2, allowBang: true, hasArgs: false },  // :bd, :bdelete
+  { name: "buffer", minAbbrev: 1, allowBang: false, hasArgs: true },   // :b, :buffer
+  { name: "buffers", minAbbrev: 2, allowBang: false, hasArgs: false }, // :bu, :buffers (same as :ls)
+  { name: "ls", minAbbrev: 2, allowBang: false, hasArgs: false },      // :ls
+  { name: "files", minAbbrev: 3, allowBang: false, hasArgs: false },   // :fil, :files
+
+  // Splits
+  { name: "split", minAbbrev: 2, allowBang: false, hasArgs: true },    // :sp, :split
+  { name: "vsplit", minAbbrev: 2, allowBang: false, hasArgs: true },   // :vs, :vsplit
+  { name: "new", minAbbrev: 3, allowBang: false, hasArgs: true },      // :new
+  { name: "vnew", minAbbrev: 3, allowBang: false, hasArgs: true },     // :vne, :vnew
+  { name: "only", minAbbrev: 2, allowBang: true, hasArgs: false },     // :on, :only
+  { name: "close", minAbbrev: 3, allowBang: true, hasArgs: false },    // :clo, :close
+
+  // Tabs (mapped to buffers in Fresh)
+  { name: "tabnew", minAbbrev: 4, allowBang: false, hasArgs: true },   // :tabn, :tabnew
+  { name: "tabedit", minAbbrev: 4, allowBang: false, hasArgs: true },  // :tabe, :tabedit
+  { name: "tabclose", minAbbrev: 4, allowBang: true, hasArgs: false }, // :tabc, :tabclose
+  { name: "tabnext", minAbbrev: 5, allowBang: false, hasArgs: false }, // :tabne, :tabnext (note: different from :tabn)
+  { name: "tabprevious", minAbbrev: 4, allowBang: false, hasArgs: false }, // :tabp, :tabprevious
+
+  // Quickfix (mapped to diagnostics in Fresh)
+  { name: "copen", minAbbrev: 3, allowBang: false, hasArgs: false },   // :cop, :copen
+  { name: "cclose", minAbbrev: 3, allowBang: false, hasArgs: false },  // :ccl, :cclose
+  { name: "cnext", minAbbrev: 2, allowBang: true, hasArgs: false },    // :cn, :cnext
+  { name: "cprevious", minAbbrev: 2, allowBang: true, hasArgs: false },// :cp, :cprev, :cprevious
+  { name: "cfirst", minAbbrev: 3, allowBang: true, hasArgs: false },   // :cfir, :cfirst
+  { name: "clast", minAbbrev: 3, allowBang: true, hasArgs: false },    // :cla, :clast
+
+  // Search and replace
+  { name: "nohlsearch", minAbbrev: 3, allowBang: false, hasArgs: false }, // :noh, :nohlsearch
+  { name: "substitute", minAbbrev: 1, allowBang: false, hasArgs: true },  // :s, :substitute
+  { name: "global", minAbbrev: 1, allowBang: false, hasArgs: true },      // :g, :global
+  { name: "vglobal", minAbbrev: 2, allowBang: false, hasArgs: true },     // :vg, :vglobal
+
+  // Undo/redo
+  { name: "undo", minAbbrev: 1, allowBang: true, hasArgs: false },     // :u, :undo
+  { name: "redo", minAbbrev: 3, allowBang: false, hasArgs: false },    // :red, :redo
+
+  // Settings
+  { name: "set", minAbbrev: 2, allowBang: false, hasArgs: true },      // :se, :set
+
+  // Info commands
+  { name: "pwd", minAbbrev: 2, allowBang: false, hasArgs: false },     // :pw, :pwd
+  { name: "cd", minAbbrev: 2, allowBang: false, hasArgs: true },       // :cd
+  { name: "file", minAbbrev: 1, allowBang: false, hasArgs: true },     // :f, :file
+  { name: "help", minAbbrev: 1, allowBang: false, hasArgs: true },     // :h, :help
+  { name: "version", minAbbrev: 3, allowBang: false, hasArgs: false }, // :ver, :version
+
+  // Other
+  { name: "marks", minAbbrev: 4, allowBang: false, hasArgs: false },   // :mark, :marks
+  { name: "registers", minAbbrev: 3, allowBang: false, hasArgs: false },// :reg, :registers
+  { name: "jumps", minAbbrev: 2, allowBang: false, hasArgs: false },   // :ju, :jumps
+  { name: "syntax", minAbbrev: 2, allowBang: false, hasArgs: true },   // :sy, :syntax
+  { name: "read", minAbbrev: 1, allowBang: false, hasArgs: true },     // :r, :read
+  { name: "grep", minAbbrev: 2, allowBang: false, hasArgs: true },     // :gr, :grep
+  { name: "vimgrep", minAbbrev: 3, allowBang: false, hasArgs: true },  // :vim, :vimgrep
+  { name: "make", minAbbrev: 3, allowBang: true, hasArgs: true },      // :mak, :make
+  { name: "ascii", minAbbrev: 2, allowBang: false, hasArgs: false },   // :as, :ascii
+  { name: "revert", minAbbrev: 3, allowBang: false, hasArgs: false },  // :rev, :revert (Fresh-specific)
+];
+
+// Find a command by name or abbreviation
+function findCommand(input: string): CommandDef | null {
+  // Exact match first
+  for (const cmd of commandTable) {
+    if (cmd.name === input) {
+      return cmd;
+    }
+  }
+
+  // Then try abbreviation matching
+  const matches: CommandDef[] = [];
+  for (const cmd of commandTable) {
+    // Input must be at least minAbbrev chars and be a prefix of the command name
+    if (input.length >= cmd.minAbbrev && cmd.name.startsWith(input)) {
+      matches.push(cmd);
+    }
+  }
+
+  // Return only if unambiguous
+  if (matches.length === 1) {
+    return matches[0];
+  }
+
+  // Handle special short aliases that vim supports even if ambiguous
+  // These are the classic vim abbreviations that always work
+  const shortAliases: Record<string, string> = {
+    "w": "write",
+    "q": "quit",
+    "e": "edit",
+    "n": "next",
+    "N": "previous",
+    "b": "buffer",
+    "f": "file",
+    "h": "help",
+    "u": "undo",
+    "r": "read",
+    "s": "substitute",
+    "g": "global",
+    "x": "xit",
+  };
+
+  if (shortAliases[input]) {
+    return commandTable.find(c => c.name === shortAliases[input]) || null;
+  }
+
+  return null;
+}
+
+// Execute a vi command and return result
+async function executeViCommand(cmd: string): Promise<CommandResult> {
+  // Handle pure line numbers first (e.g., :42)
+  const lineNumMatch = cmd.match(/^(\d+)$/);
+  if (lineNumMatch) {
+    const lineNum = parseInt(lineNumMatch[1], 10);
+    return gotoLine(lineNum);
+  }
+
+  // Handle range prefix with command (e.g., :1,10d or :%d)
+  // Supported range formats: %, ., $, 'a, line numbers, and combinations with ,
+  let processedCmd = cmd;
+  let range: string | null = null;
+
+  const rangePattern = /^([%.$]|\d+|'[a-z])?(?:,([%.$]|\d+|'[a-z]))?\s*(.*)$/;
+  const rangeMatch = cmd.match(rangePattern);
+  if (rangeMatch && rangeMatch[3]) {
+    // There's a command after the range
+    range = (rangeMatch[1] || "") + (rangeMatch[2] ? "," + rangeMatch[2] : "");
+    processedCmd = rangeMatch[3];
+  }
+
+  // Handle special commands that start with symbols
+  if (processedCmd.startsWith("!")) {
+    // Shell command - not implemented
+    return { error: "Shell commands not supported (use terminal)" };
+  }
+
+  // Handle +cmd syntax for :e +10 file (open file at line 10)
+  let plusCmd: string | null = null;
+  if (processedCmd.startsWith("+")) {
+    const plusMatch = processedCmd.match(/^\+(\S*)\s*(.*)/);
+    if (plusMatch) {
+      plusCmd = plusMatch[1] || "$"; // + alone means go to end
+      processedCmd = plusMatch[2];
+    }
+  }
+
+  // Split command into command name and arguments
+  // Supports: cmd, cmd!, cmd args, cmd! args
+  const match = processedCmd.match(/^([a-zA-Z]\w*)(!)?(?:\s+(.*))?$/);
+  if (!match) {
+    // Maybe it's just a command name without arguments
+    if (processedCmd.match(/^[a-zA-Z]+$/)) {
+      const cmdDef = findCommand(processedCmd);
+      if (cmdDef) {
+        return executeCommand(cmdDef.name, false, null, range);
+      }
+    }
+    return { error: `Not a valid command: ${cmd}` };
+  }
+
+  const [, commandInput, bang, args] = match;
+  const force = bang === "!";
+
+  // Look up the command
+  const cmdDef = findCommand(commandInput);
+  if (!cmdDef) {
+    return { error: `Unknown command: ${commandInput}` };
+  }
+
+  // Validate bang usage
+  if (force && !cmdDef.allowBang) {
+    return { error: `Command does not accept !: ${cmdDef.name}` };
+  }
+
+  // Execute the command
+  return executeCommand(cmdDef.name, force, args || null, range);
+}
+
+// Execute a resolved command
+async function executeCommand(
+  command: string,
+  force: boolean,
+  args: string | null,
+  _range: string | null  // Range support is limited for now
+): Promise<CommandResult> {
+
+  switch (command) {
+    case "write": {
+      // :w - save current file
+      // :w filename - save as filename (not implemented yet)
+      if (args) {
+        return { error: "Save as not implemented. Use :w to save current file." };
+      }
+      editor.executeAction("save");
+      return { message: "File saved" };
+    }
+
+    case "quit": {
+      // :q - quit (close buffer)
+      // :q! - force quit (discard changes)
+      const bufferId = editor.getActiveBufferId();
+      if (!force && editor.isBufferModified(bufferId)) {
+        return { error: "No write since last change (use :q! to override)" };
+      }
+      editor.executeAction("close_buffer");
+      return {};
+    }
+
+    case "wq":
+    case "xit":
+    case "exit": {
+      // :wq or :x - save and quit
+      editor.executeAction("save");
+      editor.executeAction("close_buffer");
+      return {};
+    }
+
+    case "wall": {
+      // :wa - save all buffers
+      editor.executeAction("save_all");
+      return { message: "All files saved" };
+    }
+
+    case "qall": {
+      // :qa - quit all
+      // :qa! - force quit all
+      if (force) {
+        editor.executeAction("quit_all");
+      } else {
+        // Check if any buffer is modified
+        const buffers = editor.listBuffers();
+        for (const buf of buffers) {
+          if (buf.modified) {
+            return { error: "No write since last change (use :qa! to override)" };
+          }
+        }
+        editor.executeAction("quit_all");
+      }
+      return {};
+    }
+
+    case "wqall": {
+      // :wqa or :xa - save all and quit
+      editor.executeAction("save_all");
+      editor.executeAction("quit_all");
+      return {};
+    }
+
+    case "edit": {
+      // :e - reload current file
+      // :e filename - open file
+      // :e! - force reload (discard changes)
+      if (!args) {
+        if (force) {
+          editor.executeAction("revert");
+          return { message: "File reverted (changes discarded)" };
+        }
+        const bufferId = editor.getActiveBufferId();
+        if (editor.isBufferModified(bufferId)) {
+          return { error: "No write since last change (use :e! to override)" };
+        }
+        editor.executeAction("revert");
+        return { message: "File reverted" };
+      }
+      // Open the specified file
+      const path = args.trim();
+      editor.openFile(path, 0, 0);
+      return {};
+    }
+
+    case "enew": {
+      // :enew - create new buffer in current split
+      if (!force) {
+        const bufferId = editor.getActiveBufferId();
+        if (editor.isBufferModified(bufferId)) {
+          return { error: "No write since last change (use :enew! to override)" };
+        }
+      }
+      editor.executeAction("new_buffer");
+      return {};
+    }
+
+    case "revert": {
+      // :revert - Fresh-specific command to reload file
+      editor.executeAction("revert");
+      return { message: "File reverted" };
+    }
+
+    case "next": {
+      // :n - next buffer
+      editor.executeAction("next_buffer");
+      return {};
+    }
+
+    case "previous": {
+      // :prev - previous buffer
+      editor.executeAction("prev_buffer");
+      return {};
+    }
+
+    case "bnext": {
+      // :bn - next buffer
+      editor.executeAction("next_buffer");
+      return {};
+    }
+
+    case "bprevious": {
+      // :bp - previous buffer
+      editor.executeAction("prev_buffer");
+      return {};
+    }
+
+    case "bdelete": {
+      // :bd - delete buffer (close)
+      // :bd! - force close even if modified
+      const bufferId = editor.getActiveBufferId();
+      if (!force && editor.isBufferModified(bufferId)) {
+        return { error: "No write since last change (use :bd! to override)" };
+      }
+      editor.executeAction("close_buffer");
+      return {};
+    }
+
+    case "buffer": {
+      // :b [N] - go to buffer N
+      // :b name - go to buffer matching name
+      if (!args) {
+        // Show current buffer info
+        const bufferId = editor.getActiveBufferId();
+        const info = editor.getBufferInfo(bufferId);
+        if (info) {
+          const name = info.path ? editor.pathBasename(info.path) : "[No Name]";
+          return { message: `Buffer ${info.id}: ${name}` };
+        }
+        return {};
+      }
+      // Try to parse as buffer number
+      const bufNum = parseInt(args.trim(), 10);
+      if (!isNaN(bufNum)) {
+        const buffers = editor.listBuffers();
+        const target = buffers.find(b => b.id === bufNum);
+        if (target) {
+          editor.showBuffer(target.id);
+          return {};
+        }
+        return { error: `Buffer ${bufNum} not found` };
+      }
+      // Try to match buffer by name
+      const buffers = editor.listBuffers();
+      const pattern = args.trim().toLowerCase();
+      const matches = buffers.filter(b => {
+        const name = b.path ? editor.pathBasename(b.path).toLowerCase() : "";
+        return name.includes(pattern);
+      });
+      if (matches.length === 1) {
+        editor.showBuffer(matches[0].id);
+        return {};
+      } else if (matches.length > 1) {
+        return { error: `Multiple buffers match "${args}". Be more specific.` };
+      }
+      return { error: `No buffer matching "${args}"` };
+    }
+
+    case "buffers":
+    case "ls":
+    case "files": {
+      // :ls - list buffers
+      const buffers = editor.listBuffers();
+      const lines = buffers.map(buf => {
+        const modified = buf.modified ? " [+]" : "";
+        const current = buf.id === editor.getActiveBufferId() ? "%" : " ";
+        const name = buf.path ? editor.pathBasename(buf.path) : "[No Name]";
+        return `${current}${buf.id}: ${name}${modified}`;
+      });
+      return { message: lines.join(" | ") || "No buffers" };
+    }
+
+    case "split": {
+      // :sp - horizontal split
+      editor.executeAction("split_horizontal");
+      if (args) {
+        // Open file in new split
+        const path = args.trim();
+        editor.openFile(path, 0, 0);
+      }
+      return {};
+    }
+
+    case "vsplit": {
+      // :vs - vertical split
+      editor.executeAction("split_vertical");
+      if (args) {
+        // Open file in new split
+        const path = args.trim();
+        editor.openFile(path, 0, 0);
+      }
+      return {};
+    }
+
+    case "new": {
+      // :new - create new buffer in horizontal split
+      editor.executeAction("split_horizontal");
+      editor.executeAction("new_buffer");
+      if (args) {
+        const path = args.trim();
+        editor.openFile(path, 0, 0);
+      }
+      return {};
+    }
+
+    case "vnew": {
+      // :vnew - create new buffer in vertical split
+      editor.executeAction("split_vertical");
+      editor.executeAction("new_buffer");
+      if (args) {
+        const path = args.trim();
+        editor.openFile(path, 0, 0);
+      }
+      return {};
+    }
+
+    case "only": {
+      // :only - close all other splits
+      editor.executeAction("close_other_splits");
+      return {};
+    }
+
+    case "close": {
+      // :close - close current split (same as :q for Fresh)
+      const bufferId = editor.getActiveBufferId();
+      if (!force && editor.isBufferModified(bufferId)) {
+        return { error: "No write since last change (use :close! to override)" };
+      }
+      editor.executeAction("close_buffer");
+      return {};
+    }
+
+    case "tabnew":
+    case "tabedit": {
+      // :tabnew - new tab (creates new buffer in Fresh)
+      editor.executeAction("new_buffer");
+      if (args) {
+        const path = args.trim();
+        editor.openFile(path, 0, 0);
+      }
+      return {};
+    }
+
+    case "tabclose": {
+      // :tabclose - close current tab/buffer
+      const bufferId = editor.getActiveBufferId();
+      if (!force && editor.isBufferModified(bufferId)) {
+        return { error: "No write since last change (use :tabclose! to override)" };
+      }
+      editor.executeAction("close_buffer");
+      return {};
+    }
+
+    case "tabnext": {
+      // :tabnext - next tab/buffer
+      editor.executeAction("next_buffer");
+      return {};
+    }
+
+    case "tabprevious": {
+      // :tabprev - previous tab/buffer
+      editor.executeAction("prev_buffer");
+      return {};
+    }
+
+    case "copen": {
+      // :copen - open diagnostics panel (Fresh equivalent)
+      editor.executeAction("show_diagnostics");
+      return {};
+    }
+
+    case "cclose": {
+      // :cclose - close diagnostics panel
+      return { message: "Use :bd to close diagnostics panel" };
+    }
+
+    case "cnext": {
+      // :cnext - next diagnostic
+      editor.executeAction("goto_next_diagnostic");
+      return {};
+    }
+
+    case "cprevious": {
+      // :cprev - previous diagnostic
+      editor.executeAction("goto_prev_diagnostic");
+      return {};
+    }
+
+    case "cfirst": {
+      // :cfirst - first diagnostic
+      editor.executeAction("goto_first_diagnostic");
+      return {};
+    }
+
+    case "clast": {
+      // :clast - last diagnostic
+      editor.executeAction("goto_last_diagnostic");
+      return {};
+    }
+
+    case "nohlsearch": {
+      // :noh - clear search highlighting
+      editor.executeAction("clear_search");
+      return {};
+    }
+
+    case "substitute": {
+      // :s - substitute (not implemented)
+      // This would require parsing /pattern/replacement/flags
+      return { error: "Substitute not implemented. Use Ctrl+H for search/replace." };
+    }
+
+    case "global":
+    case "vglobal": {
+      // :g - global command (not implemented)
+      return { error: "Global command not implemented" };
+    }
+
+    case "undo": {
+      // :undo - undo
+      editor.executeAction("undo");
+      return {};
+    }
+
+    case "redo": {
+      // :redo - redo
+      editor.executeAction("redo");
+      return {};
+    }
+
+    case "set": {
+      // :set - set options (limited implementation)
+      if (!args) {
+        return { error: "Usage: :set option or :set option=value" };
+      }
+      return handleSetCommand(args);
+    }
+
+    case "pwd": {
+      // :pwd - print working directory
+      const cwd = editor.getCwd();
+      return { message: cwd };
+    }
+
+    case "cd": {
+      // :cd - change directory (info only, can't actually change)
+      if (!args) {
+        return { message: editor.getCwd() };
+      }
+      return { error: "Cannot change directory (editor cwd is fixed)" };
+    }
+
+    case "file": {
+      // :f - show current file info
+      // :f name - rename current buffer (not implemented)
+      if (args) {
+        return { error: "Renaming buffer not implemented" };
+      }
+      const bufferId = editor.getActiveBufferId();
+      const info = editor.getBufferInfo(bufferId);
+      if (info) {
+        const modified = info.modified ? " [Modified]" : "";
+        const path = info.path || "[No Name]";
+        const line = editor.getCursorLine();
+        return { message: `"${path}"${modified} line ${line}, ${info.length} bytes` };
+      }
+      return { error: "No buffer" };
+    }
+
+    case "help": {
+      // :help - show help
+      if (args) {
+        return { message: `Help for "${args}" not available. Try :help for command list.` };
+      }
+      return {
+        message: "Commands: :w :q :wq :q! :e :sp :vs :bn :bp :bd :b :ls :set :noh :123 :help"
+      };
+    }
+
+    case "version": {
+      // :version - show version
+      return { message: "Fresh Editor with Vi mode plugin" };
+    }
+
+    case "marks": {
+      // :marks - show marks (not implemented)
+      return { error: "Marks not implemented" };
+    }
+
+    case "registers": {
+      // :registers - show registers (not implemented)
+      return { error: "Registers not implemented (Fresh uses system clipboard)" };
+    }
+
+    case "jumps": {
+      // :jumps - show jump list (not implemented)
+      return { error: "Jump list not implemented" };
+    }
+
+    case "syntax": {
+      // :syntax - syntax info
+      if (args === "off") {
+        return { error: "Syntax highlighting cannot be disabled" };
+      }
+      return { message: "Syntax highlighting is always on" };
+    }
+
+    case "read": {
+      // :r - read file into buffer (not implemented)
+      return { error: "Read file into buffer not implemented. Use :e to open files." };
+    }
+
+    case "saveas": {
+      // :saveas - save as (not implemented)
+      return { error: "Save as not implemented. Use Ctrl+Shift+S or menu." };
+    }
+
+    case "grep":
+    case "vimgrep": {
+      // :grep - search (use Fresh's grep)
+      if (args) {
+        // Could potentially pass args to search, but for now just open search
+        editor.executeAction("search");
+        return { message: `Use the search dialog to search for: ${args}` };
+      }
+      editor.executeAction("search");
+      return {};
+    }
+
+    case "make": {
+      // :make - run build command (not implemented)
+      return { error: "Use terminal for build commands" };
+    }
+
+    case "ascii": {
+      // :ascii - show ASCII value of char under cursor
+      return { message: "Use the status bar for character info" };
+    }
+
+    default: {
+      return { error: `Unknown command: ${command}` };
+    }
+  }
+}
+
+// Go to a specific line number
+async function gotoLine(lineNum: number): Promise<CommandResult> {
+  if (lineNum < 1) {
+    return { error: "Line number must be positive" };
+  }
+
+  const bufferId = editor.getActiveBufferId();
+  const bufferLength = editor.getBufferLength(bufferId);
+
+  // Get the text to find the line offset
+  const text = await editor.getBufferText(bufferId, 0, bufferLength);
+  if (!text) {
+    return { error: "Cannot read buffer" };
+  }
+
+  let lineStart = 0;
+  let currentLine = 1;
+
+  for (let i = 0; i < text.length && currentLine < lineNum; i++) {
+    if (text[i] === '\n') {
+      currentLine++;
+      lineStart = i + 1;
+    }
+  }
+
+  if (currentLine >= lineNum || lineStart < text.length) {
+    editor.setBufferCursor(bufferId, lineStart);
+    return {};
+  }
+
+  // If requested line is beyond file, go to last line
+  editor.executeAction("move_document_end");
+  return { message: `Line ${lineNum} beyond end of file, moved to end` };
+}
+
+// Handle :set command options
+function handleSetCommand(args: string): CommandResult {
+  const parts = args.split("=");
+  const option = parts[0].trim();
+  const value = parts.length > 1 ? parts[1].trim() : null;
+
+  switch (option) {
+    case "number":
+    case "nu": {
+      // :set number - show line numbers
+      const bufferId = editor.getActiveBufferId();
+      editor.setLineNumbers(bufferId, true);
+      return { message: "Line numbers on" };
+    }
+
+    case "nonumber":
+    case "nonu": {
+      // :set nonumber - hide line numbers
+      const bufferId = editor.getActiveBufferId();
+      editor.setLineNumbers(bufferId, false);
+      return { message: "Line numbers off" };
+    }
+
+    case "wrap": {
+      // :set wrap - enable line wrap
+      editor.executeAction("toggle_wrap");
+      return { message: "Line wrap toggled" };
+    }
+
+    case "nowrap": {
+      // :set nowrap - disable line wrap
+      editor.executeAction("toggle_wrap");
+      return { message: "Line wrap toggled" };
+    }
+
+    default: {
+      return { error: `Unknown option: ${option}` };
+    }
+  }
+}
+
+// Register event handler for prompt confirmation
+editor.on("prompt_confirmed", "vi_command_handler");
 
 // ============================================================================
 // Toggle Command

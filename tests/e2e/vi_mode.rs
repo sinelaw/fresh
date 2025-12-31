@@ -802,3 +802,345 @@ fn test_vi_change_inner_quotes() {
         .wait_for_buffer_content("say \"Hi\" here\n")
         .unwrap();
 }
+
+// =============================================================================
+// Colon Command Tests
+// =============================================================================
+
+/// Test ':w' saves the file
+#[test]
+fn test_vi_colon_write() {
+    init_tracing_from_env();
+    let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
+
+    let fixture = TestFixture::new("test.txt", "hello\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    enable_vi_mode(&mut harness);
+
+    // Enter insert mode and make a change
+    harness
+        .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .unwrap();
+
+    harness.type_text("X").unwrap();
+    harness.render().unwrap();
+
+    // Return to normal mode
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
+
+    // Verify file is modified
+    assert!(
+        harness.editor().active_state().buffer.is_modified(),
+        "Buffer should be modified"
+    );
+
+    // Press ':' to enter command mode
+    harness
+        .send_key(KeyCode::Char(':'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for prompt to appear (semantic waiting)
+    harness.wait_for_screen_contains(":").unwrap();
+
+    // Type 'w' and press Enter
+    harness.type_text("w").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for file to be saved (buffer no longer modified) - semantic waiting
+    harness
+        .wait_until(|h| !h.editor().active_state().buffer.is_modified())
+        .unwrap();
+}
+
+/// Test ':q' closes buffer (via status message confirmation)
+#[test]
+fn test_vi_colon_quit() {
+    init_tracing_from_env();
+    let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
+
+    // Open two files so we can close one and stay in editor
+    let fixture1 = TestFixture::new("test1.txt", "file1\n").unwrap();
+    let fixture2 = TestFixture::new("test2.txt", "file2\n").unwrap();
+    harness.open_file(&fixture1.path).unwrap();
+    harness.open_file(&fixture2.path).unwrap();
+    harness.render().unwrap();
+
+    enable_vi_mode(&mut harness);
+
+    // Verify we're on test2.txt
+    harness.wait_for_screen_contains("test2.txt").unwrap();
+
+    // Press ':' to enter command mode
+    harness
+        .send_key(KeyCode::Char(':'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for prompt to appear (semantic waiting)
+    harness.wait_for_screen_contains(":").unwrap();
+
+    // Type 'q' and press Enter
+    harness.type_text("q").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for buffer to close - we should now see test1.txt
+    harness.wait_for_screen_contains("test1.txt").unwrap();
+}
+
+/// Test ':q!' force quits even with unsaved changes
+#[test]
+fn test_vi_colon_force_quit() {
+    init_tracing_from_env();
+    let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
+
+    // Open two files so we can close one and stay in editor
+    let fixture1 = TestFixture::new("test1.txt", "file1\n").unwrap();
+    let fixture2 = TestFixture::new("test2.txt", "file2\n").unwrap();
+    harness.open_file(&fixture1.path).unwrap();
+    harness.open_file(&fixture2.path).unwrap();
+    harness.render().unwrap();
+
+    enable_vi_mode(&mut harness);
+
+    // Make a change to create unsaved modifications
+    harness
+        .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .unwrap();
+
+    harness.type_text("X").unwrap();
+    harness.render().unwrap();
+
+    // Return to normal mode
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
+
+    // Verify we're on test2.txt
+    harness.wait_for_screen_contains("test2.txt").unwrap();
+
+    // Press ':' to enter command mode
+    harness
+        .send_key(KeyCode::Char(':'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for prompt to appear
+    harness.wait_for_screen_contains(":").unwrap();
+
+    // Type 'q!' and press Enter (force quit)
+    harness.type_text("q!").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for buffer to close - we should now see test1.txt
+    harness.wait_for_screen_contains("test1.txt").unwrap();
+}
+
+/// Test ':wq' saves and quits
+#[test]
+fn test_vi_colon_write_quit() {
+    init_tracing_from_env();
+    let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
+
+    // Open two files so we can close one and stay in editor
+    let fixture1 = TestFixture::new("test1.txt", "file1\n").unwrap();
+    let fixture2 = TestFixture::new("test2.txt", "file2\n").unwrap();
+    harness.open_file(&fixture1.path).unwrap();
+    harness.open_file(&fixture2.path).unwrap();
+    harness.render().unwrap();
+
+    enable_vi_mode(&mut harness);
+
+    // Make a change
+    harness
+        .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .unwrap();
+
+    harness.type_text("X").unwrap();
+    harness.render().unwrap();
+
+    // Return to normal mode
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
+
+    // Verify we're on test2.txt
+    harness.wait_for_screen_contains("test2.txt").unwrap();
+
+    // Press ':' to enter command mode
+    harness
+        .send_key(KeyCode::Char(':'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for prompt to appear
+    harness.wait_for_screen_contains(":").unwrap();
+
+    // Type 'wq' and press Enter
+    harness.type_text("wq").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for buffer to close - we should now see test1.txt
+    harness.wait_for_screen_contains("test1.txt").unwrap();
+
+    // Verify file was saved (read it back and check content)
+    let saved_content = fs::read_to_string(&fixture2.path).unwrap();
+    assert!(
+        saved_content.contains("X"),
+        "Saved file should contain the change"
+    );
+}
+
+/// Test ':123' goes to line 123
+#[test]
+fn test_vi_colon_goto_line() {
+    init_tracing_from_env();
+    let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
+
+    // Create a file with multiple lines
+    let content = (1..=20).map(|i| format!("line{}\n", i)).collect::<String>();
+    let fixture = TestFixture::new("test.txt", &content).unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    enable_vi_mode(&mut harness);
+
+    // Press ':' to enter command mode
+    harness
+        .send_key(KeyCode::Char(':'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for prompt to appear
+    harness.wait_for_screen_contains(":").unwrap();
+
+    // Type '10' and press Enter to go to line 10
+    harness.type_text("10").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for cursor to be on line 10 (semantic waiting)
+    harness
+        .wait_until(|h| {
+            // Line 10 starts at a specific offset
+            // Each line is "lineN\n" where N is 1-2 digits
+            // Lines 1-9: 6 chars each (line + digit + newline) = 54 bytes
+            // Line 10 starts at byte 54
+            let pos = h.cursor_position();
+            pos >= 54 && pos < 62 // line10 is at 54-60
+        })
+        .unwrap();
+}
+
+/// Test ':bn' goes to next buffer
+#[test]
+fn test_vi_colon_buffer_next() {
+    init_tracing_from_env();
+    let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
+
+    // Open two files
+    let fixture1 = TestFixture::new("test1.txt", "file1\n").unwrap();
+    let fixture2 = TestFixture::new("test2.txt", "file2\n").unwrap();
+    harness.open_file(&fixture1.path).unwrap();
+    harness.open_file(&fixture2.path).unwrap();
+    harness.render().unwrap();
+
+    enable_vi_mode(&mut harness);
+
+    // Wait to see test2.txt is the active buffer
+    harness.wait_for_screen_contains("test2.txt").unwrap();
+
+    // Press ':' to enter command mode
+    harness
+        .send_key(KeyCode::Char(':'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for prompt to appear
+    harness.wait_for_screen_contains(":").unwrap();
+
+    // Type 'bn' and press Enter
+    harness.type_text("bn").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for buffer to change to test1.txt
+    harness.wait_for_screen_contains("test1.txt").unwrap();
+}
+
+/// Test ':sp' creates horizontal split
+#[test]
+fn test_vi_colon_split() {
+    init_tracing_from_env();
+    let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
+
+    let fixture = TestFixture::new("test.txt", "hello\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    enable_vi_mode(&mut harness);
+
+    // Press ':' to enter command mode
+    harness
+        .send_key(KeyCode::Char(':'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for prompt to appear
+    harness.wait_for_screen_contains(":").unwrap();
+
+    // Type 'sp' and press Enter
+    harness.type_text("sp").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Wait for split to be created - we should see "hello" twice (semantic waiting)
+    // Split creates a divider, so content should appear in both panes
+    harness
+        .wait_until(|h| {
+            // Count occurrences of "hello" across all screen rows
+            let mut count = 0;
+            for row in 0..h.terminal_height() {
+                let line = h.get_screen_row(row);
+                if line.contains("hello") {
+                    count += 1;
+                }
+            }
+            count >= 2
+        })
+        .unwrap();
+}
