@@ -756,10 +756,15 @@ fn test_vi_change_inner_quotes() {
 
     enable_vi_mode(&mut harness);
 
+    // Store initial position
+    let initial_pos = harness.cursor_position();
+
     // Move into the quoted string with fh (find 'h')
     harness
         .send_key(KeyCode::Char('f'), KeyModifiers::NONE)
         .unwrap();
+    harness.render().unwrap();
+
     // Wait for find-char mode
     harness
         .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
@@ -768,13 +773,19 @@ fn test_vi_change_inner_quotes() {
     harness
         .send_key(KeyCode::Char('h'), KeyModifiers::NONE)
         .unwrap();
-    // Wait for async find-char to complete (cursor should move to 'h' at position 5)
-    harness.wait_until(|h| h.cursor_position() == 5).unwrap();
+    harness.render().unwrap();
+
+    // Wait for cursor to move from initial position (semantic waiting)
+    harness
+        .wait_until(|h| h.cursor_position() > initial_pos)
+        .unwrap();
 
     // ci" = change inner quotes
     harness
         .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
         .unwrap();
+    harness.render().unwrap();
+
     // Wait for operator-pending mode
     harness
         .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
@@ -783,6 +794,8 @@ fn test_vi_change_inner_quotes() {
     harness
         .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
         .unwrap();
+    harness.render().unwrap();
+
     // Wait for text-object mode
     harness
         .wait_until(|h| h.editor().editor_mode() == Some("vi-text-object".to_string()))
@@ -793,21 +806,20 @@ fn test_vi_change_inner_quotes() {
         .unwrap();
     harness.render().unwrap();
 
-    // Wait for async text object operation to complete
-    harness.wait_for_buffer_content("say \"\" here\n").unwrap();
+    // Wait for insert mode (ci" deletes content and enters insert)
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .unwrap();
 
     // Now in insert mode, type replacement
-    harness
-        .send_key(KeyCode::Char('H'), KeyModifiers::SHIFT)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
-        .unwrap();
+    harness.type_text("Hi").unwrap();
     harness.render().unwrap();
 
     // Escape back to normal mode
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
 
     // Content inside quotes replaced with "Hi" (semantic waiting)
     harness
