@@ -301,10 +301,11 @@ fn render_separator(frame: &mut Frame, area: Rect, theme: &Theme) {
 }
 
 /// Context for rendering a setting item (extracted to avoid borrow issues)
-struct RenderContext {
+struct RenderContext<'a> {
     selected_item: usize,
     settings_focused: bool,
     hover_hit: Option<SettingsHit>,
+    layer_sources: &'a std::collections::HashMap<String, crate::config_io::ConfigLayer>,
 }
 
 /// Render the settings panel for the current category
@@ -362,6 +363,7 @@ fn render_settings_panel(
         selected_item: state.selected_item,
         settings_focused: state.focus_panel == FocusPanel::Settings,
         hover_hit: state.hover_hit.clone(),
+        layer_sources: &state.layer_sources,
     };
 
     // Area for items (below header)
@@ -479,7 +481,7 @@ fn render_setting_item_pure(
     item: &super::items::SettingItem,
     idx: usize,
     skip_top: u16,
-    ctx: &RenderContext,
+    ctx: &RenderContext<'_>,
     theme: &Theme,
     label_width: Option<u16>,
 ) -> ControlLayoutInfo {
@@ -560,9 +562,22 @@ fn render_setting_item_pure(
 
     // Render description below the control (if visible and exists)
     // Description is also offset by focus_indicator_width to align with control
+    let desc_start_row = control_height.saturating_sub(skip_top);
+
+    // Get layer source for this item (only show if not default)
+    let layer_source = ctx
+        .layer_sources
+        .get(&item.path)
+        .copied()
+        .unwrap_or(crate::config_io::ConfigLayer::System);
+    let layer_label = match layer_source {
+        crate::config_io::ConfigLayer::System => None, // Don't show for defaults
+        crate::config_io::ConfigLayer::User => Some("user"),
+        crate::config_io::ConfigLayer::Project => Some("project"),
+        crate::config_io::ConfigLayer::Session => Some("session"),
+    };
+
     if let Some(ref description) = item.description {
-        // Description starts after the control
-        let desc_start_row = control_height.saturating_sub(skip_top);
         if desc_start_row < area.height {
             let desc_x = area.x + focus_indicator_width;
             let desc_y = area.y + desc_start_row;
@@ -582,17 +597,36 @@ fn render_setting_item_pure(
                     );
                 }
             } else {
-                // Single line - truncate if too long
-                let display_desc = if description.len() > max_width {
-                    format!("{}...", &description[..max_width.saturating_sub(3)])
+                // Single line with optional layer indicator
+                let mut display_desc = if description.len() > max_width.saturating_sub(12) {
+                    format!(
+                        "{}...",
+                        &description[..max_width.saturating_sub(15).max(10)]
+                    )
                 } else {
                     description.clone()
                 };
+                // Add layer indicator if not default
+                if let Some(layer) = layer_label {
+                    display_desc.push_str(&format!(" ({})", layer));
+                }
                 frame.render_widget(
                     Paragraph::new(display_desc).style(desc_style),
                     Rect::new(desc_x, desc_y, desc_width, 1),
                 );
             }
+        }
+    } else if let Some(layer) = layer_label {
+        // No description, but show layer indicator for non-default values
+        if desc_start_row < area.height && is_focused_or_hovered {
+            let desc_x = area.x + focus_indicator_width;
+            let desc_y = area.y + desc_start_row;
+            let desc_width = area.width.saturating_sub(focus_indicator_width);
+            let layer_style = Style::default().fg(theme.line_number_fg);
+            frame.render_widget(
+                Paragraph::new(format!("({})", layer)).style(layer_style),
+                Rect::new(desc_x, desc_y, desc_width, 1),
+            );
         }
     }
 

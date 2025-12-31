@@ -338,6 +338,69 @@ impl ConfigResolver {
 
         Ok(merged)
     }
+
+    /// Determine which layer each setting value comes from.
+    /// Returns a map of JSON pointer paths to their source layer.
+    pub fn get_layer_sources(
+        &self,
+    ) -> Result<std::collections::HashMap<String, ConfigLayer>, ConfigError> {
+        use std::collections::HashMap;
+
+        let mut sources: HashMap<String, ConfigLayer> = HashMap::new();
+
+        // Load each layer and mark which paths come from it
+        // Check layers in precedence order (highest first)
+        // Session layer takes priority, then Project, then User, then System defaults
+
+        if let Some(session) = self.load_session_layer()? {
+            let json = serde_json::to_value(&session).unwrap_or_default();
+            collect_paths(&json, "", &mut |path| {
+                sources.insert(path, ConfigLayer::Session);
+            });
+        }
+
+        if let Some(project) = self.load_project_layer()? {
+            let json = serde_json::to_value(&project).unwrap_or_default();
+            collect_paths(&json, "", &mut |path| {
+                sources.entry(path).or_insert(ConfigLayer::Project);
+            });
+        }
+
+        if let Some(user) = self.load_user_layer()? {
+            let json = serde_json::to_value(&user).unwrap_or_default();
+            collect_paths(&json, "", &mut |path| {
+                sources.entry(path).or_insert(ConfigLayer::User);
+            });
+        }
+
+        // Any path not in the map comes from System defaults (implicitly)
+
+        Ok(sources)
+    }
+}
+
+/// Recursively collect all non-null leaf paths in a JSON value.
+fn collect_paths<F>(value: &Value, prefix: &str, collector: &mut F)
+where
+    F: FnMut(String),
+{
+    match value {
+        Value::Object(map) => {
+            for (key, val) in map {
+                let path = if prefix.is_empty() {
+                    format!("/{}", key)
+                } else {
+                    format!("{}/{}", prefix, key)
+                };
+                collect_paths(val, &path, collector);
+            }
+        }
+        Value::Null => {} // Skip nulls (unset in partial config)
+        _ => {
+            // Leaf value - collect this path
+            collector(prefix.to_string());
+        }
+    }
 }
 
 /// Calculate the delta between a partial config and its parent.

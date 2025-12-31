@@ -96,6 +96,10 @@ pub struct SettingsState {
     /// User layer is the default (global settings).
     /// Project layer saves to the current project's .fresh/config.json.
     pub target_layer: ConfigLayer,
+    /// Source layer for each setting path (where the value came from).
+    /// Maps JSON pointer paths (e.g., "/editor/tab_size") to their source layer.
+    /// Values not in this map come from system defaults.
+    pub layer_sources: HashMap<String, ConfigLayer>,
 }
 
 impl SettingsState {
@@ -129,6 +133,7 @@ impl SettingsState {
             hover_hit: None,
             entry_dialog_stack: Vec::new(),
             target_layer: ConfigLayer::User, // Default to user-global settings
+            layer_sources: HashMap::new(),   // Populated via set_layer_sources()
         })
     }
 
@@ -407,6 +412,30 @@ impl SettingsState {
             ConfigLayer::User => "User",
             ConfigLayer::Project => "Project",
             ConfigLayer::Session => "Session",
+        }
+    }
+
+    /// Set the layer sources map (called by Editor when opening settings).
+    pub fn set_layer_sources(&mut self, sources: HashMap<String, ConfigLayer>) {
+        self.layer_sources = sources;
+    }
+
+    /// Get the source layer for a setting path.
+    /// Returns the layer where this value was defined, or System if it's the default.
+    pub fn get_layer_source(&self, path: &str) -> ConfigLayer {
+        self.layer_sources
+            .get(path)
+            .copied()
+            .unwrap_or(ConfigLayer::System)
+    }
+
+    /// Get a short label for a layer source (for UI display).
+    pub fn layer_source_label(layer: ConfigLayer) -> &'static str {
+        match layer {
+            ConfigLayer::System => "default",
+            ConfigLayer::User => "user",
+            ConfigLayer::Project => "project",
+            ConfigLayer::Session => "session",
         }
     }
 

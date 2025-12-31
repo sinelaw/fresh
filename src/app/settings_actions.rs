@@ -22,6 +22,12 @@ impl Editor {
         if self.settings_state.is_none() {
             match crate::view::settings::SettingsState::new(SCHEMA_JSON, &self.config) {
                 Ok(mut state) => {
+                    // Load layer sources to show where each setting value comes from
+                    let resolver =
+                        ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+                    if let Ok(sources) = resolver.get_layer_sources() {
+                        state.set_layer_sources(sources);
+                    }
                     state.show();
                     self.settings_state = Some(state);
                 }
