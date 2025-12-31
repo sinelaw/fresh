@@ -136,7 +136,9 @@ impl Editor {
             ConfigLayer::Project => resolver.project_config_write_path(),
             ConfigLayer::Session => resolver.session_config_path(),
             ConfigLayer::System => {
-                self.set_status_message("Cannot edit System layer (read-only defaults)".to_string());
+                self.set_status_message(
+                    "Cannot edit System layer (read-only defaults)".to_string(),
+                );
                 return Ok(());
             }
         };
