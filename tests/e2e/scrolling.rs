@@ -486,14 +486,11 @@ fn test_cursor_disappears_beyond_long_line_end() {
             let gutter_end = line.find('│').map(|pos| pos + 2).unwrap_or(8); // +2 to skip "│ "
 
             // Find where content ends: last non-space character before the scrollbar
-            // Work backwards from the end to find the last actual content char
+            // Work backwards from the end to find the last actual content char.
+            // The scrollbar is rendered as a space with background color, so it will
+            // be trimmed along with other trailing spaces.
             let chars: Vec<char> = line.chars().collect();
             let mut content_end = chars.len();
-
-            // Skip scrollbar at end
-            if chars.last() == Some(&'█') {
-                content_end = chars.len() - 1;
-            }
 
             // Find last non-space content character
             while content_end > gutter_end && chars.get(content_end - 1) == Some(&' ') {
@@ -1286,38 +1283,28 @@ fn test_line_numbers_absolute_after_jump_to_beginning() {
     println!("\n✓ Navigation and line iteration working correctly");
 }
 
-/// Helper function to extract scrollbar thumb size from screen
+/// Helper function to extract scrollbar thumb size from harness.
+/// Scrollbars are rendered with background colors, not characters.
 /// Returns (thumb_start_row, thumb_size, scrollbar_col)
 fn extract_scrollbar_info(
-    screen: &str,
+    harness: &EditorTestHarness,
     terminal_width: u16,
-    terminal_height: u16,
+    _terminal_height: u16,
 ) -> (usize, usize, u16) {
-    let lines: Vec<&str> = screen.lines().collect();
     let scrollbar_col = terminal_width - 1; // Rightmost column
+    let (content_first_row, content_last_row) = harness.content_area_rows();
 
     let mut thumb_start = None;
     let mut thumb_end = None;
 
-    // Skip first line (tab bar) and last line (status bar)
-    // Content area is from row 1 to terminal_height - 2
-    for (row_idx, line) in lines
-        .iter()
-        .enumerate()
-        .skip(1)
-        .take((terminal_height - 2) as usize)
-    {
-        // Get character at scrollbar column
-        let chars: Vec<char> = line.chars().collect();
-        if (scrollbar_col as usize) < chars.len() {
-            let ch = chars[scrollbar_col as usize];
-            if ch == '█' {
-                // Found thumb character
-                if thumb_start.is_none() {
-                    thumb_start = Some(row_idx);
-                }
-                thumb_end = Some(row_idx);
+    // Scan the content area for scrollbar thumb cells
+    for row in content_first_row..=content_last_row {
+        if harness.is_scrollbar_thumb_at(scrollbar_col, row as u16) {
+            // Found thumb cell
+            if thumb_start.is_none() {
+                thumb_start = Some(row);
             }
+            thumb_end = Some(row);
         }
     }
 
@@ -1365,7 +1352,7 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
 
     // Initial state
     let screen = harness.screen_to_string();
-    let (start_row, size, _) = extract_scrollbar_info(&screen, terminal_width, terminal_height);
+    let (start_row, size, _) = extract_scrollbar_info(&harness, terminal_width, terminal_height);
     scrollbar_sizes.push(size);
     positions.push((0, harness.top_line_number()));
 
@@ -1401,8 +1388,7 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
         }
 
         step += 1;
-        let screen = harness.screen_to_string();
-        let (start_row, size, _) = extract_scrollbar_info(&screen, terminal_width, terminal_height);
+        let (start_row, size, _) = extract_scrollbar_info(&harness, terminal_width, terminal_height);
         scrollbar_sizes.push(size);
         positions.push((step, after_line));
 
@@ -1432,8 +1418,7 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
         }
 
         step += 1;
-        let screen = harness.screen_to_string();
-        let (start_row, size, _) = extract_scrollbar_info(&screen, terminal_width, terminal_height);
+        let (start_row, size, _) = extract_scrollbar_info(&harness, terminal_width, terminal_height);
         scrollbar_sizes.push(size);
         positions.push((step, after_line));
 
@@ -1557,9 +1542,8 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
     harness.render().unwrap();
 
     // INVARIANT 1: At first line, handle top should be at scrollbar top (content_first_row, after menu bar and tab bar)
-    let screen = harness.screen_to_string();
     let (start_row, initial_size, _) =
-        extract_scrollbar_info(&screen, terminal_width, terminal_height);
+        extract_scrollbar_info(&harness, terminal_width, terminal_height);
 
     println!("At first line: handle start_row={start_row}, size={initial_size}");
     assert_eq!(
@@ -1590,8 +1574,7 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
         }
 
         scroll_steps += 1;
-        let screen = harness.screen_to_string();
-        let (start_row, size, _) = extract_scrollbar_info(&screen, terminal_width, terminal_height);
+        let (start_row, size, _) = extract_scrollbar_info(&harness, terminal_width, terminal_height);
         all_sizes.push(size);
 
         println!("After PageDown {scroll_steps}: top_line={after_line}, handle start_row={start_row}, size={size}");
@@ -1617,9 +1600,8 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
             break;
         }
 
-        let screen = harness.screen_to_string();
         let (_start_row, size, _) =
-            extract_scrollbar_info(&screen, terminal_width, terminal_height);
+            extract_scrollbar_info(&harness, terminal_width, terminal_height);
         all_sizes.push(size);
     }
 
@@ -1641,8 +1623,7 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
     );
 
     // INVARIANT 3: At last line, handle bottom should be at scrollbar bottom
-    let screen = harness.screen_to_string();
-    let (start_row, size, _) = extract_scrollbar_info(&screen, terminal_width, terminal_height);
+    let (start_row, size, _) = extract_scrollbar_info(&harness, terminal_width, terminal_height);
     let end_row = start_row + size;
 
     println!("\nAt last line: handle start_row={start_row}, size={size}, end_row={end_row}");
@@ -1666,9 +1647,8 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
     harness.render().unwrap();
 
     // Verify INVARIANT 1 again
-    let screen = harness.screen_to_string();
     let (start_row_final, size_final, _) =
-        extract_scrollbar_info(&screen, terminal_width, terminal_height);
+        extract_scrollbar_info(&harness, terminal_width, terminal_height);
 
     println!("\nBack at first line: handle start_row={start_row_final}, size={size_final}");
 

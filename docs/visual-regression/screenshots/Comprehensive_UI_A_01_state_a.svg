@@ -67,7 +67,7 @@
   <rect x="333" y="0" width="9" height="18" fill="#323237"/>
   <rect x="342" y="0" width="9" height="18" fill="#323237"/>
   <rect x="351" y="0" width="9" height="18" fill="#323237"/>
-  <text x="352" y="14" fill="#ffffff" class="terminal" style="text-decoration:underline;">L</text>
+  <text x="352" y="14" fill="#ffffff" class="terminal" style="">L</text>
   <rect x="360" y="0" width="9" height="18" fill="#323237"/>
   <text x="361" y="14" fill="#ffffff" class="terminal" style="">S</text>
   <rect x="369" y="0" width="9" height="18" fill="#323237"/>
@@ -285,7 +285,7 @@
   <text x="487" y="50" fill="#6272a4" class="terminal" style="">i</text>
   <text x="496" y="50" fill="#6272a4" class="terminal" style="">n</text>
   <text x="505" y="50" fill="#6272a4" class="terminal" style="">t</text>
-  <text x="892" y="50" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="36" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="68" fill="#8c8c8c" class="terminal" style="">│</text>
   <rect x="9" y="54" width="9" height="18" fill="#141414"/>
   <rect x="18" y="54" width="9" height="18" fill="#141414"/>
@@ -336,7 +336,7 @@
   <text x="406" y="68" fill="#ffffff" class="terminal" style="">(</text>
   <text x="415" y="68" fill="#ffffff" class="terminal" style="">)</text>
   <text x="433" y="68" fill="#ffffff" class="terminal" style="">{</text>
-  <text x="892" y="68" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="54" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="86" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="64" y="86" fill="#ffffff" class="terminal" style="">m</text>
   <text x="73" y="86" fill="#ffffff" class="terminal" style="">a</text>
@@ -370,7 +370,7 @@
   <text x="532" y="86" fill="#50fa7b" class="terminal" style="">d</text>
   <text x="541" y="86" fill="#50fa7b" class="terminal" style="">&quot;</text>
   <text x="550" y="86" fill="#ffffff" class="terminal" style="">;</text>
-  <text x="892" y="86" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="72" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="104" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="46" y="104" fill="#ffffff" class="terminal" style="">C</text>
   <text x="55" y="104" fill="#ffffff" class="terminal" style="">a</text>
@@ -407,7 +407,7 @@
   <text x="532" y="104" fill="#50fa7b" class="terminal" style="">n</text>
   <text x="541" y="104" fill="#50fa7b" class="terminal" style="">&quot;</text>
   <text x="550" y="104" fill="#ffffff" class="terminal" style="">;</text>
-  <text x="892" y="104" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="90" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="122" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="46" y="122" fill="#ffffff" class="terminal" style="">R</text>
   <text x="55" y="122" fill="#ffffff" class="terminal" style="">E</text>
@@ -446,7 +446,7 @@
   <text x="568" y="122" fill="#50fa7b" class="terminal" style="">e</text>
   <text x="577" y="122" fill="#50fa7b" class="terminal" style="">&quot;</text>
   <text x="586" y="122" fill="#ffffff" class="terminal" style="">;</text>
-  <text x="892" y="122" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="108" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="140" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="140" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="307" y="140" fill="#8c8c8c" class="terminal" style="">6</text>
@@ -483,18 +483,18 @@
   <text x="550" y="140" fill="#ffffff" class="terminal" style="">o</text>
   <text x="559" y="140" fill="#ffffff" class="terminal" style="">)</text>
   <text x="568" y="140" fill="#ffffff" class="terminal" style="">;</text>
-  <text x="892" y="140" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="126" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="158" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="158" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="307" y="158" fill="#8c8c8c" class="terminal" style="">7</text>
   <text x="325" y="158" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="343" y="158" fill="#ffffff" class="terminal" style="">}</text>
-  <text x="892" y="158" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="144" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="176" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="176" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="307" y="176" fill="#8c8c8c" class="terminal" style="">8</text>
   <text x="325" y="176" fill="#8c8c8c" class="terminal" style="">│</text>
-  <text x="892" y="176" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="162" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="194" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="194" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="307" y="194" fill="#8c8c8c" class="terminal" style="">9</text>
@@ -515,7 +515,7 @@
   <text x="478" y="194" fill="#6272a4" class="terminal" style="">i</text>
   <text x="487" y="194" fill="#6272a4" class="terminal" style="">o</text>
   <text x="496" y="194" fill="#6272a4" class="terminal" style="">n</text>
-  <text x="892" y="194" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="180" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="212" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="212" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="298" y="212" fill="#8c8c8c" class="terminal" style="">1</text>
@@ -542,7 +542,7 @@
   <text x="541" y="212" fill="#ff79c6" class="terminal" style="">3</text>
   <text x="550" y="212" fill="#ff79c6" class="terminal" style="">2</text>
   <text x="568" y="212" fill="#ffffff" class="terminal" style="">{</text>
-  <text x="892" y="212" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="198" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="230" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="230" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="298" y="230" fill="#8c8c8c" class="terminal" style="">1</text>
@@ -564,7 +564,7 @@
   <text x="514" y="230" fill="#ffffff" class="terminal" style="">=</text>
   <text x="532" y="230" fill="#d6acff" class="terminal" style="">5</text>
   <text x="541" y="230" fill="#ffffff" class="terminal" style="">;</text>
-  <text x="892" y="230" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="216" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="248" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="248" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="271" y="248" fill="#ff5555" class="terminal" style="">●</text>
@@ -601,7 +601,7 @@
   <text x="577" y="248" fill="#d6acff" class="terminal" style="">0</text>
   <rect x="585" y="234" width="9" height="18" fill="#3c1414"/>
   <text x="586" y="248" fill="#ffffff" class="terminal" style="">;</text>
-  <text x="892" y="248" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="234" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="266" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="266" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="298" y="266" fill="#8c8c8c" class="terminal" style="">1</text>
@@ -610,20 +610,20 @@
   <text x="379" y="266" fill="#ffffff" class="terminal" style="">x</text>
   <text x="397" y="266" fill="#ffffff" class="terminal" style="">*</text>
   <text x="415" y="266" fill="#d6acff" class="terminal" style="">2</text>
-  <text x="892" y="266" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="252" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="284" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="284" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="298" y="284" fill="#8c8c8c" class="terminal" style="">1</text>
   <text x="307" y="284" fill="#8c8c8c" class="terminal" style="">4</text>
   <text x="325" y="284" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="343" y="284" fill="#ffffff" class="terminal" style="">}</text>
-  <text x="892" y="284" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="270" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="302" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="302" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="298" y="302" fill="#8c8c8c" class="terminal" style="">1</text>
   <text x="307" y="302" fill="#8c8c8c" class="terminal" style="">5</text>
   <text x="325" y="302" fill="#8c8c8c" class="terminal" style="">│</text>
-  <text x="892" y="302" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="288" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="320" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="320" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="298" y="320" fill="#8c8c8c" class="terminal" style="">1</text>
@@ -656,7 +656,7 @@
   <text x="604" y="320" fill="#6272a4" class="terminal" style="">i</text>
   <text x="613" y="320" fill="#6272a4" class="terminal" style="">n</text>
   <text x="622" y="320" fill="#6272a4" class="terminal" style="">g</text>
-  <text x="892" y="320" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="306" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="338" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="338" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="298" y="338" fill="#8c8c8c" class="terminal" style="">1</text>
@@ -680,7 +680,7 @@
   <text x="487" y="338" fill="#ffffff" class="terminal" style="">(</text>
   <text x="496" y="338" fill="#ffffff" class="terminal" style="">)</text>
   <text x="514" y="338" fill="#ffffff" class="terminal" style="">{</text>
-  <text x="892" y="338" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="324" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="356" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="356" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="298" y="356" fill="#8c8c8c" class="terminal" style="">1</text>
@@ -715,7 +715,7 @@
   <text x="523" y="356" fill="#50fa7b" class="terminal" style="">&quot;</text>
   <text x="532" y="356" fill="#ffffff" class="terminal" style="">)</text>
   <text x="541" y="356" fill="#ffffff" class="terminal" style="">;</text>
-  <text x="892" y="356" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="342" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="374" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="374" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="298" y="374" fill="#8c8c8c" class="terminal" style="">1</text>
@@ -750,7 +750,7 @@
   <text x="523" y="374" fill="#50fa7b" class="terminal" style="">&quot;</text>
   <text x="532" y="374" fill="#ffffff" class="terminal" style="">)</text>
   <text x="541" y="374" fill="#ffffff" class="terminal" style="">;</text>
-  <text x="892" y="374" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="360" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="392" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="392" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="298" y="392" fill="#8c8c8c" class="terminal" style="">2</text>
@@ -781,7 +781,7 @@
   <text x="523" y="392" fill="#50fa7b" class="terminal" style="">&quot;</text>
   <text x="532" y="392" fill="#ffffff" class="terminal" style="">)</text>
   <text x="541" y="392" fill="#ffffff" class="terminal" style="">;</text>
-  <text x="892" y="392" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="378" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="410" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="410" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="298" y="410" fill="#8c8c8c" class="terminal" style="">2</text>
@@ -812,7 +812,7 @@
   <text x="523" y="410" fill="#50fa7b" class="terminal" style="">&quot;</text>
   <text x="532" y="410" fill="#ffffff" class="terminal" style="">)</text>
   <text x="541" y="410" fill="#ffffff" class="terminal" style="">;</text>
-  <text x="892" y="410" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="396" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="428" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="428" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="298" y="428" fill="#8c8c8c" class="terminal" style="">2</text>
@@ -843,24 +843,24 @@
   <text x="523" y="428" fill="#50fa7b" class="terminal" style="">&quot;</text>
   <text x="532" y="428" fill="#ffffff" class="terminal" style="">)</text>
   <text x="541" y="428" fill="#ffffff" class="terminal" style="">;</text>
-  <text x="892" y="428" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="414" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="446" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="446" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="298" y="446" fill="#8c8c8c" class="terminal" style="">2</text>
   <text x="307" y="446" fill="#8c8c8c" class="terminal" style="">3</text>
   <text x="325" y="446" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="343" y="446" fill="#ffffff" class="terminal" style="">}</text>
-  <text x="892" y="446" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="432" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="464" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="464" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="298" y="464" fill="#8c8c8c" class="terminal" style="">2</text>
   <text x="307" y="464" fill="#8c8c8c" class="terminal" style="">4</text>
   <text x="325" y="464" fill="#8c8c8c" class="terminal" style="">│</text>
-  <text x="892" y="464" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="450" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="482" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="262" y="482" fill="#8c8c8c" class="terminal" style="">│</text>
   <text x="271" y="482" fill="#464646" class="terminal" style="">~</text>
-  <text x="892" y="482" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="468" width="9" height="18" fill="#6272a4"/>
   <text x="1" y="500" fill="#8c8c8c" class="terminal" style="">└</text>
   <text x="10" y="500" fill="#8c8c8c" class="terminal" style="">─</text>
   <text x="19" y="500" fill="#8c8c8c" class="terminal" style="">─</text>
@@ -892,7 +892,7 @@
   <text x="253" y="500" fill="#8c8c8c" class="terminal" style="">─</text>
   <text x="262" y="500" fill="#8c8c8c" class="terminal" style="">┘</text>
   <text x="271" y="500" fill="#464646" class="terminal" style="">~</text>
-  <text x="892" y="500" fill="#6272a4" class="terminal" style="">█</text>
+  <rect x="891" y="486" width="9" height="18" fill="#6272a4"/>
   <rect x="0" y="504" width="9" height="18" fill="#141414"/>
   <text x="1" y="518" fill="#ffffff" class="terminal" style="">s</text>
   <rect x="9" y="504" width="9" height="18" fill="#141414"/>

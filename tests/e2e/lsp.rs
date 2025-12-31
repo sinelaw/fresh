@@ -3664,10 +3664,17 @@ fn test_hover_popup_shows_scrollbar_for_long_content() -> std::io::Result<()> {
         "First line of documentation should be visible"
     );
 
-    // Verify scrollbar is rendered (█ character for thumb, │ for track)
+    // Verify scrollbar is rendered - popup scrollbar uses background colors.
+    // The popup is centered (around columns 25-75 in 100-width terminal).
+    // Check for any scrollbar cells in the popup's right edge area.
+    // Popup is 50 wide, centered in 100-width = starts around col 25, ends around col 74.
+    let has_scrollbar = (2..28).any(|row| {
+        // Check a few columns around where the popup scrollbar should be
+        (72..=74).any(|col| harness.is_scrollbar_thumb_at(col, row) || harness.is_scrollbar_track_at(col, row))
+    });
     assert!(
-        screen.contains("█") || screen.contains("│"),
-        "Scrollbar should be visible when content exceeds visible area"
+        has_scrollbar,
+        "Scrollbar should be visible when content exceeds visible area (checked cols 72-74)"
     );
 
     // Verify that later lines are NOT visible (they're scrolled off)
@@ -4112,11 +4119,15 @@ fn test_popup_scrollbar_visible_for_long_list() -> std::io::Result<()> {
         "Popup with 50 items should need scrollbar when max_height is 10"
     );
 
-    // Check that the screen contains the scrollbar character
-    let screen = harness.screen_to_string();
+    // Check that the screen contains a scrollbar (rendered with background colors).
+    // Popup is 30 wide and centered in 80-width = starts around col 25, ends around col 54.
+    // Scrollbar would be near the right edge of the popup.
+    let has_scrollbar = (2..20).any(|row| {
+        (52..=54).any(|col| harness.is_scrollbar_thumb_at(col, row) || harness.is_scrollbar_track_at(col, row))
+    });
     assert!(
-        screen.contains("█") || screen.contains("│"),
-        "Screen should contain scrollbar characters (█ or │)"
+        has_scrollbar,
+        "Screen should contain scrollbar (checked cols 52-54)"
     );
 
     Ok(())

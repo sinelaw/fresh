@@ -25,15 +25,11 @@ fn test_scrollbar_renders() {
 
     harness.render().unwrap();
 
-    // Check that scrollbar characters (│ or █) exist in the rendered output
-    let screen = harness.screen_to_string();
-
-    let has_track = screen.contains('│');
-    let has_thumb = screen.contains('█');
-
+    // Check that scrollbar is visible (rendered with background colors in rightmost column)
+    // For 80-width terminal, scrollbar is at column 79
     assert!(
-        has_track || has_thumb,
-        "Scrollbar should be visible (looking for │ or █ characters)"
+        harness.has_scrollbar_at_column(79),
+        "Scrollbar should be visible in rightmost column"
     );
 }
 
@@ -61,14 +57,12 @@ fn test_scrollbar_in_multiple_splits() {
 
     harness.render().unwrap();
 
-    let screen = harness.screen_to_string();
-
     // Both splits should have scrollbars
     // With vertical split, each pane gets about half the width
-    // Both should have scrollbars on their right edge
+    // The rightmost split's scrollbar is at column 79
     assert!(
-        screen.contains('│') || screen.contains('█'),
-        "Scrollbars should be visible in split views"
+        harness.has_scrollbar_at_column(79),
+        "Scrollbar should be visible in rightmost split"
     );
 }
 
@@ -307,13 +301,9 @@ fn test_scrollbar_with_small_buffer() {
     harness.render().unwrap();
 
     // Scrollbar should still be rendered even with small content
-    let screen = harness.screen_to_string();
-
-    let has_track = screen.contains('│');
-    let has_thumb = screen.contains('█');
-
+    // Check for scrollbar at rightmost column (79 for 80-width terminal)
     assert!(
-        has_track || has_thumb,
+        harness.has_scrollbar_at_column(79),
         "Scrollbar should be visible even with small buffers"
     );
 }
@@ -364,14 +354,10 @@ fn test_scrollbar_horizontal_split() {
 
     harness.render().unwrap();
 
-    let screen = harness.screen_to_string();
-
-    // Both splits should have scrollbars on their right edge
-    // Check that scrollbar characters exist
-    let scrollbar_chars = screen.matches('│').count() + screen.matches('█').count();
+    // Both splits should have scrollbars on their right edge (column 79)
     assert!(
-        scrollbar_chars > 10,
-        "Should have scrollbar characters in horizontal splits"
+        harness.has_scrollbar_at_column(79),
+        "Should have scrollbar in horizontal splits"
     );
 }
 
@@ -590,36 +576,27 @@ fn test_mouse_focus_after_file_explorer() {
     );
 }
 
-/// Helper function to extract scrollbar thumb info from screen
+/// Helper function to extract scrollbar thumb info from harness.
+/// Scrollbars are rendered with background colors, not characters.
 /// Returns (thumb_start_row, thumb_end_row, thumb_size)
 fn extract_scrollbar_thumb_info(
-    screen: &str,
+    harness: &EditorTestHarness,
     terminal_width: u16,
-    terminal_height: u16,
+    _terminal_height: u16,
 ) -> (usize, usize, usize) {
-    let lines: Vec<&str> = screen.lines().collect();
     let scrollbar_col = terminal_width - 1; // Rightmost column
+    let (content_first_row, content_last_row) = harness.content_area_rows();
 
     let mut thumb_start = None;
     let mut thumb_end = None;
 
-    // Skip first line (tab bar) and last line (status bar)
-    // Content area is from row 1 to terminal_height - 2
-    for (row_idx, line) in lines
-        .iter()
-        .enumerate()
-        .skip(1)
-        .take((terminal_height - 2) as usize)
-    {
-        let chars: Vec<char> = line.chars().collect();
-        if (scrollbar_col as usize) < chars.len() {
-            let ch = chars[scrollbar_col as usize];
-            if ch == '█' {
-                if thumb_start.is_none() {
-                    thumb_start = Some(row_idx);
-                }
-                thumb_end = Some(row_idx);
+    // Scan the content area for scrollbar thumb cells
+    for row in content_first_row..=content_last_row {
+        if harness.is_scrollbar_thumb_at(scrollbar_col, row as u16) {
+            if thumb_start.is_none() {
+                thumb_start = Some(row);
             }
+            thumb_end = Some(row);
         }
     }
 
@@ -759,10 +736,8 @@ fn test_scrollbar_drag_to_absolute_bottom() {
         .unwrap();
     harness.render().unwrap();
 
-    let screen = harness.screen_to_string();
-
-    // Extract scrollbar thumb information
-    let (thumb_start, thumb_end, thumb_size) = extract_scrollbar_thumb_info(&screen, 80, 24);
+    // Extract scrollbar thumb information (using background color detection)
+    let (thumb_start, thumb_end, thumb_size) = extract_scrollbar_thumb_info(&harness, 80, 24);
     let top_line_after_drag = harness.top_line_number();
 
     println!("\nAfter drag to bottom:");

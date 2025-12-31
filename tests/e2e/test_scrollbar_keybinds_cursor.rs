@@ -21,17 +21,16 @@ fn test_scrollbar_fills_height_when_no_scrolling_needed() {
     // the entire scrollbar height
     let scrollbar_col = 79;
 
-    // Check that every row in the scrollbar column shows the thumb character (█)
-    // not the track character (│).
+    // Check that every row in the scrollbar column shows the thumb (detected by background color).
+    // Scrollbars are rendered with background fills, not characters.
     for row in content_first_row..=content_last_row {
-        let cell_content = harness.get_cell(scrollbar_col, row as u16);
-        assert_eq!(
-            cell_content.as_deref(),
-            Some("█"),
-            "Row {}: Expected scrollbar thumb (█), got {:?}. \
-             When buffer fits in viewport, entire scrollbar should be filled.",
+        assert!(
+            harness.is_scrollbar_thumb_at(scrollbar_col, row as u16),
+            "Row {}: Expected scrollbar thumb (background color). \
+             When buffer fits in viewport, entire scrollbar should be filled with thumb. \
+             Got style: {:?}",
             row,
-            cell_content
+            harness.get_cell_style(scrollbar_col, row as u16)
         );
     }
 }

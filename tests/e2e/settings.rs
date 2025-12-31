@@ -685,8 +685,15 @@ fn test_settings_scrollbar_visible() {
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Scrollbar should be visible (█ character is used for scrollbar thumb)
-    harness.assert_screen_contains("█");
+    // Scrollbar should be visible (rendered with background colors)
+    // Settings panel uses a popup layout, so the scrollbar may be at the right edge
+    // of the settings area, not necessarily the rightmost terminal column.
+    // Check any column in the settings area for scrollbar presence.
+    let has_scrollbar = (40..100).any(|col| harness.has_scrollbar_at_column(col));
+    assert!(
+        has_scrollbar,
+        "Settings panel should have a visible scrollbar (checked columns 40-99)"
+    );
 
     // Close settings
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();

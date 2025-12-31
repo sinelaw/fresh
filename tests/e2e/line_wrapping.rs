@@ -1021,7 +1021,9 @@ fn test_wrapped_line_cursor_no_empty_space() {
                     "      Expected char '{expected_char}' from text, but screen shows space"
                 );
                 found_empty_space = true;
-            } else if content == "█" {
+            }
+            // Also check if cursor is on scrollbar (rendered with background colors)
+            if harness.is_scrollbar_thumb_at(cur_x, cur_y) || harness.is_scrollbar_track_at(cur_x, cur_y) {
                 // Hit scrollbar or UI element
                 eprintln!("  ⚠️  CURSOR ON UI ELEMENT (scrollbar?) at ({cur_x}, {cur_y})");
                 found_empty_space = true;
