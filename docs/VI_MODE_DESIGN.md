@@ -72,19 +72,18 @@ editor.executeActions([
 | Line ops | `dd` `cc` `yy`, `D` `C` |
 | Char ops | `x` `X` `s` |
 | Find char | `f` `t` `F` `T`, `;` `,` |
-| Visual mode | `v` (char), `V` (line) - select with motions, then `d`/`c`/`y` |
+| Visual mode | `v` (char), `V` (line), `Ctrl-v` (block) - select with motions, then `d`/`c`/`y` |
 | Text objects | `iw` `aw` (word), `i"` `a"` `i'` `a'` (quotes), `i(` `a(` `i{` `a{` `i[` `a[` (brackets) |
 | Insert | `i` `a` `I` `A` `o` `O` |
 | Search | `/` `n` `N` |
 | Colon cmds | `:w` `:q` `:wq` `:q!` `:e` `:sp` `:vs` `:bn` `:bp` `:<line>` and more |
+| Repeat | `.` - repeat last change (works with `x`, `dd`, `dw`, `cw`, insert, etc.) |
 | Other | `u` `Ctrl-r` (undo/redo), `p` `P` (paste), `%` (bracket match) |
 
 ### Not Implemented
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| Visual block | Medium | `Ctrl-v` - column/block selection |
-| `.` repeat | Medium | Repeat last change - big productivity boost |
 | Registers | Low | `"a`, `"b`, named registers |
 | Macros | Low | `q`, `@` |
 

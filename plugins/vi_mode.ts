@@ -13,9 +13,22 @@
  */
 
 // Vi mode state
-type ViMode = "normal" | "insert" | "operator-pending" | "find-char" | "visual" | "visual-line" | "text-object";
+type ViMode = "normal" | "insert" | "operator-pending" | "find-char" | "visual" | "visual-line" | "visual-block" | "text-object";
 type FindCharType = "f" | "t" | "F" | "T" | null;
 type TextObjectType = "inner" | "around" | null;
+
+// Types for tracking repeatable changes
+type ChangeType = "simple" | "operator-motion" | "operator-textobj" | "insert" | "line-op";
+
+interface LastChange {
+  type: ChangeType;
+  action?: string;           // For simple actions like "delete_forward", "delete_line"
+  operator?: string;         // For operator+motion/textobj: "d", "c", "y"
+  motion?: string;           // For operator+motion: the motion action
+  textObject?: { modifier: TextObjectType; object: string }; // For operator+textobj
+  count?: number;            // Count used with the command
+  insertedText?: string;     // Text inserted during insert mode
+}
 
 interface ViState {
   mode: ViMode;
@@ -24,9 +37,11 @@ interface ViState {
   pendingTextObject: TextObjectType; // For i/a text objects
   lastFindChar: { type: FindCharType; char: string } | null; // For ; and , repeat
   count: number | null;
-  lastCommand: (() => void) | null; // For '.' repeat
+  lastChange: LastChange | null; // For '.' repeat
   lastYankWasLinewise: boolean; // Track if last yank was line-wise for proper paste
   visualAnchor: number | null; // Starting position for visual mode selection
+  insertStartPos: number | null; // Cursor position when entering insert mode
+  visualBlockAnchor: { line: number; col: number } | null; // For visual block mode
 }
 
 const state: ViState = {
@@ -36,9 +51,11 @@ const state: ViState = {
   pendingTextObject: null,
   lastFindChar: null,
   count: null,
-  lastCommand: null,
+  lastChange: null,
   lastYankWasLinewise: false,
   visualAnchor: null,
+  insertStartPos: null,
+  visualBlockAnchor: null,
 };
 
 // Mode indicator for status bar
@@ -57,6 +74,8 @@ function getModeIndicator(mode: ViMode): string {
       return `-- VISUAL --${countPrefix ? ` (${state.count})` : ""}`;
     case "visual-line":
       return `-- VISUAL LINE --${countPrefix ? ` (${state.count})` : ""}`;
+    case "visual-block":
+      return `-- VISUAL BLOCK --${countPrefix ? ` (${state.count})` : ""}`;
     case "text-object":
       return `-- ${state.pendingOperator}${state.pendingTextObject === "inner" ? "i" : "a"}? --`;
     default:
@@ -81,25 +100,67 @@ function switchMode(newMode: ViMode): void {
 
   // Preserve count when entering operator-pending or text-object mode (for 3dw = delete 3 words)
   // Also preserve count in visual modes
-  if (newMode !== "operator-pending" && newMode !== "text-object" && newMode !== "visual" && newMode !== "visual-line") {
+  if (newMode !== "operator-pending" && newMode !== "text-object" &&
+      newMode !== "visual" && newMode !== "visual-line" && newMode !== "visual-block") {
     state.count = null;
   }
 
   // Clear visual anchor when leaving visual modes
-  if (newMode !== "visual" && newMode !== "visual-line") {
+  if (newMode !== "visual" && newMode !== "visual-line" && newMode !== "visual-block") {
     state.visualAnchor = null;
+    state.visualBlockAnchor = null;
     // Clear any selection when leaving visual mode by moving cursor
     // (any non-select movement clears selection in Fresh)
-    if (oldMode === "visual" || oldMode === "visual-line") {
+    if (oldMode === "visual" || oldMode === "visual-line" || oldMode === "visual-block") {
       editor.executeAction("move_left");
       editor.executeAction("move_right");
     }
+  }
+
+  // Track insert mode start position for '.' repeat
+  if (newMode === "insert" && oldMode !== "insert") {
+    state.insertStartPos = editor.getCursorPosition();
+  }
+
+  // Capture inserted text when leaving insert mode (for '.' repeat)
+  if (oldMode === "insert" && newMode !== "insert" && state.insertStartPos !== null) {
+    captureInsertedText();
   }
 
   // All modes use vi-{mode} naming, including insert mode
   // vi-insert has read_only=false so normal typing works, but Escape is bound
   editor.setEditorMode(`vi-${newMode}`);
   editor.setStatus(getModeIndicator(newMode));
+}
+
+// Capture text inserted during insert mode for '.' repeat
+async function captureInsertedText(): Promise<void> {
+  if (state.insertStartPos === null) return;
+
+  const endPos = editor.getCursorPosition();
+  if (endPos === null || endPos <= state.insertStartPos) {
+    state.insertStartPos = null;
+    return;
+  }
+
+  const bufferId = editor.getActiveBufferId();
+  const text = await editor.getBufferText(bufferId, state.insertStartPos, endPos);
+
+  if (text && text.length > 0) {
+    // Only record if we have a pending insert change or if there was actual text inserted
+    if (state.lastChange?.type === "insert" || !state.lastChange) {
+      state.lastChange = {
+        type: "insert",
+        insertedText: text,
+      };
+    } else if (state.lastChange.type === "simple" || state.lastChange.type === "operator-motion" ||
+               state.lastChange.type === "operator-textobj" || state.lastChange.type === "line-op") {
+      // A change command (c, s, etc.) was used - append the inserted text
+      state.lastChange.insertedText = text;
+    }
+  }
+
+  state.insertStartPos = null;
 }
 
 // Get the current count (defaults to 1 if no count specified)
@@ -175,6 +236,11 @@ const atomicOperatorActions: OperatorMotionMap = {
 // Apply an operator using atomic actions if available, otherwise selection-based approach
 // The count parameter specifies how many times to apply the motion (e.g., d3w = delete 3 words)
 function applyOperatorWithMotion(operator: string, motionAction: string, count: number = 1): void {
+  // Record last change for '.' repeat (only for delete and change, not yank)
+  if (operator === "d" || operator === "c") {
+    state.lastChange = { type: "operator-motion", operator, motion: motionAction, count };
+  }
+
   // For "change" operator, use delete action and then enter insert mode
   const lookupOperator = operator === "c" ? "d" : operator;
 
@@ -379,6 +445,7 @@ globalThis.vi_yank_operator = function (): void {
 // Line operations (dd, cc, yy) - support count prefix (3dd = delete 3 lines)
 globalThis.vi_delete_line = function (): void {
   const count = consumeCount();
+  state.lastChange = { type: "line-op", action: "delete_line", count };
   if (count === 1) {
     editor.executeAction("delete_line");
   } else {
@@ -388,7 +455,8 @@ globalThis.vi_delete_line = function (): void {
 };
 
 globalThis.vi_change_line = function (): void {
-  consumeCount(); // TODO: support count for change line
+  const count = consumeCount();
+  state.lastChange = { type: "line-op", action: "change_line", count };
   editor.executeAction("move_line_start");
   const start = editor.getCursorPosition();
   editor.executeAction("move_line_end");
@@ -419,11 +487,15 @@ globalThis.vi_yank_line = function (): void {
 
 // Single character operations - support count prefix (3x = delete 3 chars)
 globalThis.vi_delete_char = function (): void {
-  executeWithCount("delete_forward");
+  const count = consumeCount();
+  state.lastChange = { type: "simple", action: "delete_forward", count };
+  executeWithCount("delete_forward", count);
 };
 
 globalThis.vi_delete_char_before = function (): void {
-  executeWithCount("delete_backward");
+  const count = consumeCount();
+  state.lastChange = { type: "simple", action: "delete_backward", count };
+  executeWithCount("delete_backward", count);
 };
 
 globalThis.vi_replace_char = function (): void {
@@ -433,12 +505,19 @@ globalThis.vi_replace_char = function (): void {
 
 // Substitute (delete char and enter insert mode)
 globalThis.vi_substitute = function (): void {
-  editor.executeAction("delete_forward");
+  const count = consumeCount();
+  state.lastChange = { type: "simple", action: "substitute", count };
+  if (count > 1) {
+    editor.executeActions([{ action: "delete_forward", count }]);
+  } else {
+    editor.executeAction("delete_forward");
+  }
   switchMode("insert");
 };
 
 // Delete to end of line
 globalThis.vi_delete_to_end = function (): void {
+  state.lastChange = { type: "operator-motion", operator: "d", motion: "move_line_end" };
   const start = editor.getCursorPosition();
   editor.executeAction("move_line_end");
   const end = editor.getCursorPosition();
@@ -449,6 +528,7 @@ globalThis.vi_delete_to_end = function (): void {
 
 // Change to end of line
 globalThis.vi_change_to_end = function (): void {
+  state.lastChange = { type: "operator-motion", operator: "c", motion: "move_line_end" };
   const start = editor.getCursorPosition();
   editor.executeAction("move_line_end");
   const end = editor.getCursorPosition();
@@ -496,6 +576,104 @@ globalThis.vi_undo = function (): void {
 
 globalThis.vi_redo = function (): void {
   editor.executeAction("redo");
+};
+
+// Repeat last change (. command)
+globalThis.vi_repeat = async function (): Promise<void> {
+  if (!state.lastChange) {
+    editor.setStatus("No change to repeat");
+    return;
+  }
+
+  const change = state.lastChange;
+  const count = consumeCount() || change.count || 1;
+
+  switch (change.type) {
+    case "simple": {
+      // Simple actions like x, X, s
+      if (change.action === "substitute") {
+        // Substitute: delete chars and insert text
+        if (count > 1) {
+          editor.executeActions([{ action: "delete_forward", count }]);
+        } else {
+          editor.executeAction("delete_forward");
+        }
+        if (change.insertedText) {
+          editor.insertText(change.insertedText);
+        }
+      } else if (change.action) {
+        // Simple action like delete_forward, delete_backward
+        if (count > 1) {
+          editor.executeActions([{ action: change.action, count }]);
+        } else {
+          editor.executeAction(change.action);
+        }
+      }
+      break;
+    }
+
+    case "line-op": {
+      // Line operations like dd, cc
+      if (change.action === "delete_line") {
+        if (count > 1) {
+          editor.executeActions([{ action: "delete_line", count }]);
+        } else {
+          editor.executeAction("delete_line");
+        }
+      } else if (change.action === "change_line") {
+        // Change line: delete line content and insert text
+        editor.executeAction("move_line_start");
+        const start = editor.getCursorPosition();
+        editor.executeAction("move_line_end");
+        const end = editor.getCursorPosition();
+        if (start !== null && end !== null) {
+          editor.deleteRange(editor.getActiveBufferId(), start, end);
+        }
+        if (change.insertedText) {
+          editor.insertText(change.insertedText);
+        }
+      }
+      break;
+    }
+
+    case "operator-motion": {
+      // Operator + motion like dw, cw, d$
+      if (change.operator && change.motion) {
+        if (change.operator === "c") {
+          // For change: do the delete part, then insert the text
+          applyOperatorWithMotion("d", change.motion, count);
+          if (change.insertedText) {
+            editor.insertText(change.insertedText);
+          }
+        } else {
+          applyOperatorWithMotion(change.operator, change.motion, count);
+        }
+      }
+      break;
+    }
+
+    case "operator-textobj": {
+      // Operator + text object like diw, ci"
+      if (change.operator && change.textObject) {
+        // Set up the pending state and call applyTextObject
+        state.pendingOperator = change.operator === "c" ? "d" : change.operator;
+        state.pendingTextObject = change.textObject.modifier;
+        await applyTextObject(change.textObject.object);
+        if (change.operator === "c" && change.insertedText) {
+          editor.insertText(change.insertedText);
+        }
+      }
+      break;
+    }
+
+    case "insert": {
+      // Pure insert (i, a, o, O)
+      if (change.insertedText) {
+        editor.insertText(change.insertedText);
+      }
+      break;
+    }
+  }
 };
 
 // Join lines
@@ -608,6 +786,95 @@ globalThis.vi_visual_toggle_line = function (): void {
     editor.setEditorMode("vi-visual");
     editor.setStatus(getModeIndicator("visual"));
   }
+};
+
+// Enter visual block mode (Ctrl-v)
+globalThis.vi_visual_block = function (): void {
+  // Store anchor position for block selection
+  state.visualAnchor = editor.getCursorPosition();
+
+  // Calculate line and column for block anchor
+  const cursorPos = editor.getCursorPosition();
+  if (cursorPos !== null) {
+    const line = editor.getCursorLine() ?? 1;
+    const lineStart = editor.getLineStartPosition(line);
+    const col = lineStart !== null ? cursorPos - lineStart : 0;
+    state.visualBlockAnchor = { line, col };
+  }
+
+  // Select current character to start
+  editor.executeAction("select_right");
+  switchMode("visual-block");
+};
+
+// Visual block mode motions - these extend the rectangular selection
+globalThis.vi_vblock_left = function (): void {
+  executeWithCount("select_left");
+};
+
+globalThis.vi_vblock_down = function (): void {
+  executeWithCount("select_down");
+};
+
+globalThis.vi_vblock_up = function (): void {
+  executeWithCount("select_up");
+};
+
+globalThis.vi_vblock_right = function (): void {
+  executeWithCount("select_right");
+};
+
+globalThis.vi_vblock_line_start = function (): void {
+  consumeCount();
+  editor.executeAction("select_line_start");
+};
+
+globalThis.vi_vblock_line_end = function (): void {
+  consumeCount();
+  editor.executeAction("select_line_end");
+};
+
+// Visual block delete - delete the selected block
+globalThis.vi_vblock_delete = function (): void {
+  editor.executeAction("cut");
+  state.lastYankWasLinewise = false;
+  switchMode("normal");
+};
+
+// Visual block change - delete and enter insert mode
+globalThis.vi_vblock_change = function (): void {
+  editor.executeAction("cut");
+  switchMode("insert");
+};
+
+// Visual block yank
+globalThis.vi_vblock_yank = function (): void {
+  editor.executeAction("copy");
+  state.lastYankWasLinewise = false;
+  // Move cursor to start of selection
+  editor.executeAction("move_left");
+  switchMode("normal");
+};
+
+// Exit visual block mode
+globalThis.vi_vblock_escape = function (): void {
+  switchMode("normal");
+};
+
+// Toggle from visual block to other visual modes
+globalThis.vi_vblock_toggle_char = function (): void {
+  // Switch to character visual mode
+  state.mode = "visual";
+  editor.setEditorMode("vi-visual");
+  editor.setStatus(getModeIndicator("visual"));
+};
+
+globalThis.vi_vblock_toggle_line = function (): void {
+  // Switch to line visual mode
+  editor.executeAction("select_line");
+  state.mode = "visual-line";
+  editor.setEditorMode("vi-visual-line");
+  editor.setStatus(getModeIndicator("visual-line"));
 };
 
 // Visual mode motions - these extend the selection
@@ -727,10 +994,16 @@ globalThis.vi_text_object_around = function (): void {
 async function applyTextObject(objectType: string): Promise<void> {
   const operator = state.pendingOperator;
   const isInner = state.pendingTextObject === "inner";
+  const modifier = state.pendingTextObject;
 
   if (!operator) {
     switchMode("normal");
     return;
+  }
+
+  // Record last change for '.' repeat (only for delete and change, not yank)
+  if ((operator === "d" || operator === "c") && modifier) {
+    state.lastChange = { type: "operator-textobj", operator, textObject: { modifier, object: objectType } };
   }
 
   const bufferId = editor.getActiveBufferId();
@@ -1269,9 +1542,13 @@ editor.defineMode("vi-normal", null, [
   ["u", "vi_undo"],
   ["C-r", "vi_redo"],
 
+  // Repeat last change
+  [".", "vi_repeat"],
+
   // Visual mode
   ["v", "vi_visual_char"],
   ["V", "vi_visual_line"],
+  ["C-v", "vi_visual_block"],
 
   // Other
   ["J", "vi_join"],
@@ -1520,6 +1797,44 @@ editor.defineMode("vi-visual-line", null, [
   // Exit
   ["Escape", "vi_vis_escape"],
   ["V", "vi_vis_escape"], // V again exits visual-line mode
+], true);
+
+// Define vi-visual-block mode (column/block selection)
+editor.defineMode("vi-visual-block", null, [
+  // Count prefix
+  ["1", "vi_digit_1"],
+  ["2", "vi_digit_2"],
+  ["3", "vi_digit_3"],
+  ["4", "vi_digit_4"],
+  ["5", "vi_digit_5"],
+  ["6", "vi_digit_6"],
+  ["7", "vi_digit_7"],
+  ["8", "vi_digit_8"],
+  ["9", "vi_digit_9"],
+  ["0", "vi_vblock_line_start"],
+
+  // Motions (extend block selection)
+  ["h", "vi_vblock_left"],
+  ["j", "vi_vblock_down"],
+  ["k", "vi_vblock_up"],
+  ["l", "vi_vblock_right"],
+  ["$", "vi_vblock_line_end"],
+  ["^", "vi_vblock_line_start"],
+
+  // Switch to other visual modes
+  ["v", "vi_vblock_toggle_char"],
+  ["V", "vi_vblock_toggle_line"],
+
+  // Operators
+  ["d", "vi_vblock_delete"],
+  ["x", "vi_vblock_delete"],
+  ["c", "vi_vblock_change"],
+  ["s", "vi_vblock_change"],
+  ["y", "vi_vblock_yank"],
+
+  // Exit
+  ["Escape", "vi_vblock_escape"],
+  ["C-v", "vi_vblock_escape"], // Ctrl-v again exits visual-block mode
 ], true);
 
 // ============================================================================
