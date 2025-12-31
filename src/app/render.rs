@@ -835,9 +835,9 @@ impl Editor {
                     &self.cached_layout.split_areas
                 {
                     if sid == split_id {
-                        let hover_style = Style::default().fg(self.theme.scrollbar_thumb_hover_fg);
+                        let hover_style = Style::default().bg(self.theme.scrollbar_thumb_hover_fg);
                         for row_offset in *thumb_start..*thumb_end {
-                            let paragraph = Paragraph::new(Span::styled("█", hover_style));
+                            let paragraph = Paragraph::new(Span::styled(" ", hover_style));
                             frame.render_widget(
                                 paragraph,
                                 ratatui::layout::Rect::new(
@@ -858,17 +858,17 @@ impl Editor {
                 {
                     if sid == split_id {
                         let track_hover_style =
-                            Style::default().fg(self.theme.scrollbar_track_hover_fg);
-                        let thumb_style = Style::default().fg(self.theme.scrollbar_thumb_fg);
+                            Style::default().bg(self.theme.scrollbar_track_hover_fg);
+                        let thumb_style = Style::default().bg(self.theme.scrollbar_thumb_fg);
                         for row_offset in 0..scrollbar_rect.height {
                             let is_thumb = (row_offset as usize) >= *thumb_start
                                 && (row_offset as usize) < *thumb_end;
-                            let (char, style) = if is_thumb {
-                                ("█", thumb_style)
+                            let style = if is_thumb {
+                                thumb_style
                             } else {
-                                ("│", track_hover_style)
+                                track_hover_style
                             };
-                            let paragraph = Paragraph::new(Span::styled(char, style));
+                            let paragraph = Paragraph::new(Span::styled(" ", style));
                             frame.render_widget(
                                 paragraph,
                                 ratatui::layout::Rect::new(

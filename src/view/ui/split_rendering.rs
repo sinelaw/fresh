@@ -1169,19 +1169,19 @@ impl SplitRenderer {
             Color::DarkGray
         };
 
-        // Render scrollbar track and thumb
+        // Render as background fills to avoid glyph gaps in terminals like Apple Terminal.
         for row in 0..height {
             let cell_area = Rect::new(scrollbar_rect.x, scrollbar_rect.y + row as u16, 1, 1);
 
-            let (char, color) = if row >= thumb_start && row < thumb_end {
+            let style = if row >= thumb_start && row < thumb_end {
                 // Thumb
-                ("█", thumb_color)
+                Style::default().bg(thumb_color)
             } else {
                 // Track
-                ("│", track_color)
+                Style::default().bg(track_color)
             };
 
-            let paragraph = Paragraph::new(char).style(Style::default().fg(color));
+            let paragraph = Paragraph::new(" ").style(style);
             frame.render_widget(paragraph, cell_area);
         }
 

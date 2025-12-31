@@ -169,17 +169,17 @@ pub fn render_scrollbar(
     let (thumb_start, thumb_size) = state.thumb_geometry(height);
     let thumb_end = thumb_start + thumb_size;
 
-    // Render each row of the scrollbar
+    // Render as background fills to avoid gaps with box-drawing glyphs in some terminals.
     for row in 0..height {
         let cell_area = Rect::new(area.x, area.y + row as u16, 1, 1);
 
-        let (char, color) = if row >= thumb_start && row < thumb_end {
-            ("█", colors.thumb)
+        let style = if row >= thumb_start && row < thumb_end {
+            Style::default().bg(colors.thumb)
         } else {
-            ("│", colors.track)
+            Style::default().bg(colors.track)
         };
 
-        let paragraph = Paragraph::new(char).style(Style::default().fg(color));
+        let paragraph = Paragraph::new(" ").style(style);
         frame.render_widget(paragraph, cell_area);
     }
 
@@ -214,13 +214,13 @@ pub fn render_scrollbar_with_hover(
     for row in 0..height {
         let cell_area = Rect::new(area.x, area.y + row as u16, 1, 1);
 
-        let (char, color) = if row >= thumb_start && row < thumb_end {
-            ("█", thumb_color)
+        let style = if row >= thumb_start && row < thumb_end {
+            Style::default().bg(thumb_color)
         } else {
-            ("│", colors.track)
+            Style::default().bg(colors.track)
         };
 
-        let paragraph = Paragraph::new(char).style(Style::default().fg(color));
+        let paragraph = Paragraph::new(" ").style(style);
         frame.render_widget(paragraph, cell_area);
     }
 
