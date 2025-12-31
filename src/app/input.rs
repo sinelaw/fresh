@@ -675,7 +675,8 @@ impl Editor {
 
             Action::SwitchKeybindingMap(map_name) => {
                 // Check if the map exists (either built-in or user-defined)
-                let is_builtin = matches!(map_name.as_str(), "default" | "emacs" | "vscode");
+                let is_builtin =
+                    matches!(map_name.as_str(), "default" | "emacs" | "vscode" | "macos");
                 let is_user_defined = self.config.keybinding_maps.contains_key(&map_name);
 
                 if is_builtin || is_user_defined {
@@ -1917,7 +1918,7 @@ impl Editor {
     /// Start the keybinding map selection prompt with available maps
     fn start_select_keybinding_map_prompt(&mut self) {
         // Built-in keybinding maps
-        let builtin_maps = vec!["default", "emacs", "vscode"];
+        let builtin_maps = vec!["default", "emacs", "vscode", "macos"];
 
         // Collect user-defined keybinding maps from config
         let user_maps: Vec<&str> = self
@@ -1985,7 +1986,7 @@ impl Editor {
         }
 
         // Check if the map exists (either built-in or user-defined)
-        let is_builtin = matches!(map_name, "default" | "emacs" | "vscode");
+        let is_builtin = matches!(map_name, "default" | "emacs" | "vscode" | "macos");
         let is_user_defined = self.config.keybinding_maps.contains_key(map_name);
 
         if is_builtin || is_user_defined {

@@ -170,7 +170,7 @@ pub struct KeybindingMapName(pub String);
 
 impl KeybindingMapName {
     /// Built-in keybinding map options shown in the settings dropdown
-    pub const BUILTIN_OPTIONS: &'static [&'static str] = &["default", "emacs", "vscode"];
+    pub const BUILTIN_OPTIONS: &'static [&'static str] = &["default", "emacs", "vscode", "macos"];
 }
 
 impl Deref for KeybindingMapName {
@@ -325,7 +325,13 @@ pub struct Config {
 }
 
 fn default_keybinding_map_name() -> KeybindingMapName {
-    KeybindingMapName("default".to_string())
+    // On macOS, default to the macOS keymap which has Mac-specific bindings
+    // (Ctrl+A/E for Home/End, Ctrl+Shift+Z for redo, etc.)
+    if cfg!(target_os = "macos") {
+        KeybindingMapName("macos".to_string())
+    } else {
+        KeybindingMapName("default".to_string())
+    }
 }
 
 fn default_theme_name() -> ThemeName {
@@ -1123,6 +1129,7 @@ impl Config {
             "default" => include_str!("../keymaps/default.json"),
             "emacs" => include_str!("../keymaps/emacs.json"),
             "vscode" => include_str!("../keymaps/vscode.json"),
+            "macos" => include_str!("../keymaps/macos.json"),
             _ => return None,
         };
 

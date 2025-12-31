@@ -449,7 +449,8 @@
       "enum": [
         "default",
         "emacs",
-        "vscode"
+        "vscode",
+        "macos"
       ]
     },
     "LanguageConfig": {
