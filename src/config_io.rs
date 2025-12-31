@@ -10,6 +10,35 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 // ============================================================================
+// JSON Utilities
+// ============================================================================
+
+/// Recursively strip null values and empty objects from a JSON value.
+/// This ensures that config layer files only contain the actual overridden values,
+/// not null placeholders for inherited fields.
+fn strip_nulls(value: Value) -> Option<Value> {
+    match value {
+        Value::Null => None,
+        Value::Object(map) => {
+            let filtered: serde_json::Map<String, Value> = map
+                .into_iter()
+                .filter_map(|(k, v)| strip_nulls(v).map(|v| (k, v)))
+                .collect();
+            if filtered.is_empty() {
+                None
+            } else {
+                Some(Value::Object(filtered))
+            }
+        }
+        Value::Array(arr) => {
+            let filtered: Vec<Value> = arr.into_iter().filter_map(strip_nulls).collect();
+            Some(Value::Array(filtered))
+        }
+        other => Some(other),
+    }
+}
+
+// ============================================================================
 // Configuration Migration System
 // ============================================================================
 
@@ -235,12 +264,17 @@ impl ConfigResolver {
         }
 
         // Calculate parent config (merge all layers below target)
-        let parent = self.resolve_up_to_layer(layer)?;
+        let parent_partial = self.resolve_up_to_layer(layer)?;
+
+        // Resolve parent to full config and convert back to get all values populated.
+        // This ensures proper comparison - both current and parent have all fields set,
+        // so the diff will correctly identify only the actual differences.
+        let parent = PartialConfig::from(&parent_partial.resolve());
 
         // Convert current config to partial
         let current = PartialConfig::from(config);
 
-        // Calculate delta
+        // Calculate delta - now both are fully populated, so only actual differences are captured
         let delta = diff_partial_config(&current, &parent);
 
         // Get path for target layer (use write paths for new configs)
@@ -257,8 +291,11 @@ impl ConfigResolver {
                 .map_err(|e| ConfigError::IoError(format!("{}: {}", parent_dir.display(), e)))?;
         }
 
-        // Write delta to file
-        let json = serde_json::to_string_pretty(&delta)
+        // Write delta to file, stripping null values to keep configs minimal
+        let delta_value =
+            serde_json::to_value(&delta).map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+        let clean_delta = strip_nulls(delta_value).unwrap_or(Value::Object(Default::default()));
+        let json = serde_json::to_string_pretty(&clean_delta)
             .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
         std::fs::write(&path, json)
             .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
@@ -1040,5 +1077,101 @@ mod tests {
         // Resolve should pick up session value
         let config = resolver.resolve().unwrap();
         assert_eq!(config.editor.tab_size, 16);
+    }
+
+    #[test]
+    fn save_to_layer_writes_minimal_delta() {
+        let (temp, resolver) = create_test_resolver();
+
+        // Create user config with tab_size=2
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{"editor": {"tab_size": 2, "line_numbers": false}}"#,
+        )
+        .unwrap();
+
+        // Resolve the full config (inherits user values)
+        let mut config = resolver.resolve().unwrap();
+        assert_eq!(config.editor.tab_size, 2);
+        assert!(!config.editor.line_numbers);
+
+        // Change only tab_size in the project layer
+        config.editor.tab_size = 8;
+
+        // Save to project layer
+        resolver
+            .save_to_layer(&config, ConfigLayer::Project)
+            .unwrap();
+
+        // Read the project config file and verify it contains ONLY the delta
+        let project_config_path = resolver.project_config_write_path();
+        let content = std::fs::read_to_string(&project_config_path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // Should only have editor.tab_size = 8, nothing else
+        assert_eq!(
+            json.get("editor").and_then(|e| e.get("tab_size")),
+            Some(&serde_json::json!(8)),
+            "Project config should contain tab_size override"
+        );
+
+        // Should NOT have line_numbers (inherited from user, not changed)
+        assert!(
+            json.get("editor")
+                .and_then(|e| e.get("line_numbers"))
+                .is_none(),
+            "Project config should NOT contain line_numbers (it's inherited from user layer)"
+        );
+
+        // Should NOT have other editor fields like scroll_offset (system default)
+        assert!(
+            json.get("editor")
+                .and_then(|e| e.get("scroll_offset"))
+                .is_none(),
+            "Project config should NOT contain scroll_offset (it's a system default)"
+        );
+
+        drop(temp);
+    }
+
+    #[test]
+    fn save_to_layer_removes_inherited_values() {
+        let (temp, resolver) = create_test_resolver();
+
+        // Create user config with tab_size=2
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(&user_config_path, r#"{"editor": {"tab_size": 2}}"#).unwrap();
+
+        // Create project config with tab_size=8
+        let project_config_path = resolver.project_config_write_path();
+        std::fs::create_dir_all(project_config_path.parent().unwrap()).unwrap();
+        std::fs::write(&project_config_path, r#"{"editor": {"tab_size": 8}}"#).unwrap();
+
+        // Resolve config
+        let mut config = resolver.resolve().unwrap();
+        assert_eq!(config.editor.tab_size, 8);
+
+        // Set tab_size back to the user value (2)
+        config.editor.tab_size = 2;
+
+        // Save to project layer
+        resolver
+            .save_to_layer(&config, ConfigLayer::Project)
+            .unwrap();
+
+        // Read the project config - tab_size should be removed (same as parent)
+        let content = std::fs::read_to_string(&project_config_path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // Should not have editor.tab_size since it matches the user value
+        assert!(
+            json.get("editor").and_then(|e| e.get("tab_size")).is_none(),
+            "Project config should NOT contain tab_size when it matches user layer"
+        );
+
+        drop(temp);
     }
 }
