@@ -1031,22 +1031,21 @@ fn test_vi_colon_write_quit() {
     );
 }
 
-/// Test ':10' goes to line 10
+/// Test ':35' goes to line 35 and edits happen at the correct position
 #[test]
 fn test_vi_colon_goto_line() {
     init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
-    // Create a file with multiple lines
-    let content = (1..=20).map(|i| format!("line{}\n", i)).collect::<String>();
+    // Create a file with 50 lines - line 35 won't be visible initially
+    let content = (1..=50)
+        .map(|i| format!("line_{:02}_content\n", i))
+        .collect::<String>();
     let fixture = TestFixture::new("test.txt", &content).unwrap();
     harness.open_file(&fixture.path).unwrap();
     harness.render().unwrap();
 
     enable_vi_mode(&mut harness);
-
-    // Store initial cursor position to verify movement
-    let initial_pos = harness.cursor_position();
 
     // Press ':' to enter command mode
     harness
@@ -1057,21 +1056,34 @@ fn test_vi_colon_goto_line() {
     // Wait for prompt to appear
     harness.wait_for_screen_contains(":").unwrap();
 
-    // Type '10' and press Enter to go to line 10
-    harness.type_text("10").unwrap();
+    // Type '35' and press Enter to go to line 35
+    harness.type_text("35").unwrap();
+    harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
-    // Wait for cursor to move from initial position (semantic waiting)
+    // Enter insert mode and type "INSERTED_" at the beginning of line 35
     harness
-        .wait_until(|h| h.cursor_position() > initial_pos)
+        .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
         .unwrap();
 
-    // Verify we're back in normal mode
+    harness.type_text("INSERTED_").unwrap();
+    harness.render().unwrap();
+
+    // Return to normal mode
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
         .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
+
+    // Verify the complete modified line is visible - proves goto AND edit worked
+    harness
+        .wait_for_screen_contains("INSERTED_line_35_content")
         .unwrap();
 }
 
