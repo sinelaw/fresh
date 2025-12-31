@@ -1538,9 +1538,9 @@ fn render_footer(
     let help = if state.search_active {
         "Type to search, ↑↓:Navigate  Enter:Jump  Esc:Cancel"
     } else if footer_focused {
-        "←/→:Select button  Enter:Activate  Tab:Switch panel  Esc:Close"
+        "Tab:Next button  Enter:Activate  Esc:Close"
     } else {
-        "↑↓:Navigate  Tab:Switch panel  Enter:Edit  /:Search  Esc:Close"
+        "↑↓:Navigate  Tab:Next  Enter:Edit  /:Search  Esc:Close"
     };
     let help_style = Style::default().fg(theme.line_number_fg);
     frame.render_widget(
