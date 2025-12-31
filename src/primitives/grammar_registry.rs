@@ -116,6 +116,9 @@ impl GrammarRegistry {
             ".zlogout",
             ".bash_aliases",
             // .bashrc and .bash_profile are already recognized by syntect
+            // Common shell script files without extensions
+            "PKGBUILD",
+            "APKBUILD",
         ] {
             map.insert(filename.to_string(), shell_scope.clone());
         }
@@ -298,6 +301,59 @@ impl GrammarRegistry {
         None
     }
 
+    /// Find syntax for a file, checking user-configured languages first.
+    ///
+    /// This method extends `find_syntax_for_file` by first checking the provided
+    /// languages configuration for filename and extension matches. This allows
+    /// users to configure custom filename patterns (like PKGBUILD for bash) that
+    /// will be respected for syntax highlighting.
+    ///
+    /// Checks in order:
+    /// 1. User-configured language filenames from config
+    /// 2. User-configured language extensions from config
+    /// 3. Falls back to `find_syntax_for_file` for built-in detection
+    pub fn find_syntax_for_file_with_languages(
+        &self,
+        path: &Path,
+        languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
+    ) -> Option<&SyntaxReference> {
+        // Try filename match from languages config first
+        if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+            for (_language_name, lang_config) in languages {
+                if lang_config.filenames.iter().any(|f| f == filename) {
+                    // Found a match - try to find syntax by grammar name
+                    if let Some(syntax) = self.find_syntax_by_name(&lang_config.grammar) {
+                        return Some(syntax);
+                    }
+                    // Also try finding by extension if grammar name didn't work
+                    // (some grammars are named differently)
+                    if !lang_config.extensions.is_empty() {
+                        if let Some(ext) = lang_config.extensions.first() {
+                            if let Some(syntax) = self.syntax_set.find_syntax_by_extension(ext) {
+                                return Some(syntax);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try extension match from languages config
+        if let Some(extension) = path.extension().and_then(|e| e.to_str()) {
+            for (_language_name, lang_config) in languages {
+                if lang_config.extensions.iter().any(|ext| ext == extension) {
+                    // Found a match - try to find syntax by grammar name
+                    if let Some(syntax) = self.find_syntax_by_name(&lang_config.grammar) {
+                        return Some(syntax);
+                    }
+                }
+            }
+        }
+
+        // Fall back to built-in detection
+        self.find_syntax_for_file(path)
+    }
+
     /// Find syntax by first line content (shebang, mode line, etc.)
     ///
     /// Use this when you have the file content but path-based detection failed.
@@ -462,6 +518,87 @@ mod tests {
                 syntax.name
             );
         }
+    }
+
+    #[test]
+    fn test_pkgbuild_detection() {
+        let registry = GrammarRegistry::load();
+
+        // PKGBUILD and APKBUILD should be detected as shell scripts
+        for filename in ["PKGBUILD", "APKBUILD"] {
+            let path = Path::new(filename);
+            let result = registry.find_syntax_for_file(path);
+            assert!(
+                result.is_some(),
+                "{} should be detected as a syntax",
+                filename
+            );
+            let syntax = result.unwrap();
+            // Should be detected as Bash/Shell
+            assert!(
+                syntax.name.to_lowercase().contains("bash")
+                    || syntax.name.to_lowercase().contains("shell"),
+                "{} should be detected as shell/bash, got: {}",
+                filename,
+                syntax.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_find_syntax_with_custom_languages_config() {
+        let registry = GrammarRegistry::load();
+
+        // Create a custom languages config that maps "custom.myext" files to bash
+        let mut languages = std::collections::HashMap::new();
+        languages.insert(
+            "bash".to_string(),
+            crate::config::LanguageConfig {
+                extensions: vec!["myext".to_string()],
+                filenames: vec!["CUSTOMBUILD".to_string()],
+                grammar: "Bourne Again Shell (bash)".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                highlighter: crate::config::HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        // Test that custom filename is detected via languages config
+        let path = Path::new("CUSTOMBUILD");
+        let result = registry.find_syntax_for_file_with_languages(path, &languages);
+        assert!(
+            result.is_some(),
+            "CUSTOMBUILD should be detected via languages config"
+        );
+        let syntax = result.unwrap();
+        assert!(
+            syntax.name.to_lowercase().contains("bash")
+                || syntax.name.to_lowercase().contains("shell"),
+            "CUSTOMBUILD should be detected as shell/bash, got: {}",
+            syntax.name
+        );
+
+        // Test that custom extension is detected via languages config
+        let path = Path::new("script.myext");
+        let result = registry.find_syntax_for_file_with_languages(path, &languages);
+        assert!(
+            result.is_some(),
+            "script.myext should be detected via languages config"
+        );
+        let syntax = result.unwrap();
+        assert!(
+            syntax.name.to_lowercase().contains("bash")
+                || syntax.name.to_lowercase().contains("shell"),
+            "script.myext should be detected as shell/bash, got: {}",
+            syntax.name
+        );
     }
 
     #[test]

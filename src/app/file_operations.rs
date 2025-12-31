@@ -118,12 +118,13 @@ impl Editor {
         let old_cursors = self.active_state().cursors.clone();
 
         // Load the file content fresh from disk
-        let mut new_state = EditorState::from_file(
+        let mut new_state = EditorState::from_file_with_languages(
             &path,
             self.terminal_width,
             self.terminal_height,
             self.config.editor.large_file_threshold_bytes as usize,
             &self.grammar_registry,
+            &self.config.languages,
         )?;
 
         // Restore cursor positions (clamped to valid range for new file size)
@@ -560,12 +561,13 @@ impl Editor {
     /// cursors (clamped to valid positions), but does NOT touch any viewport state.
     fn revert_buffer_by_id(&mut self, buffer_id: BufferId, path: &Path) -> io::Result<()> {
         // Load the file content fresh from disk
-        let new_state = EditorState::from_file(
+        let new_state = EditorState::from_file_with_languages(
             path,
             self.terminal_width,
             self.terminal_height,
             self.config.editor.large_file_threshold_bytes as usize,
             &self.grammar_registry,
+            &self.config.languages,
         )?;
 
         // Get the new file size for clamping

@@ -490,6 +490,49 @@ impl HighlightEngine {
         Self::for_file_with_preference(path, registry, HighlighterPreference::Auto)
     }
 
+    /// Create a highlighting engine for a file, using language configuration for detection.
+    ///
+    /// This method checks the provided languages configuration for filename and extension
+    /// matches before falling back to built-in detection. This allows users to configure
+    /// custom filename patterns (like PKGBUILD for bash) that will be respected for
+    /// syntax highlighting.
+    pub fn for_file_with_languages(
+        path: &Path,
+        registry: &GrammarRegistry,
+        languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
+    ) -> Self {
+        Self::for_file_with_languages_and_preference(
+            path,
+            registry,
+            languages,
+            HighlighterPreference::Auto,
+        )
+    }
+
+    /// Create a highlighting engine with explicit preference and language configuration.
+    pub fn for_file_with_languages_and_preference(
+        path: &Path,
+        registry: &GrammarRegistry,
+        languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
+        preference: HighlighterPreference,
+    ) -> Self {
+        match preference {
+            // Auto now defaults to TextMate for highlighting (syntect has broader coverage)
+            // but still detects tree-sitter language for indentation/semantic features
+            HighlighterPreference::Auto | HighlighterPreference::TextMate => {
+                Self::textmate_for_file_with_languages(path, registry, languages)
+            }
+            HighlighterPreference::TreeSitter => {
+                if let Some(lang) = Language::from_path(path) {
+                    if let Ok(highlighter) = Highlighter::new(lang) {
+                        return Self::TreeSitter(highlighter);
+                    }
+                }
+                Self::None
+            }
+        }
+    }
+
     /// Create a highlighting engine with explicit preference
     pub fn for_file_with_preference(
         path: &Path,
@@ -522,6 +565,48 @@ impl HighlightEngine {
 
         // Find syntax by file extension
         if let Some(syntax) = registry.find_syntax_for_file(path) {
+            // Find the index of this syntax in the set
+            if let Some(index) = syntax_set
+                .syntaxes()
+                .iter()
+                .position(|s| s.name == syntax.name)
+            {
+                return Self::TextMate(TextMateEngine::with_language(
+                    syntax_set,
+                    index,
+                    ts_language,
+                ));
+            }
+        }
+
+        // No TextMate grammar found - fall back to tree-sitter if available
+        // This handles languages like TypeScript that syntect doesn't include by default
+        if let Some(lang) = ts_language {
+            if let Ok(highlighter) = Highlighter::new(lang) {
+                tracing::debug!(
+                    "No TextMate grammar for {:?}, falling back to tree-sitter",
+                    path.extension()
+                );
+                return Self::TreeSitter(highlighter);
+            }
+        }
+
+        Self::None
+    }
+
+    /// Create a TextMate engine for a file with language configuration support
+    fn textmate_for_file_with_languages(
+        path: &Path,
+        registry: &GrammarRegistry,
+        languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
+    ) -> Self {
+        let syntax_set = registry.syntax_set_arc();
+
+        // Detect tree-sitter language for non-highlighting features
+        let ts_language = Language::from_path(path);
+
+        // Find syntax by file extension, checking languages config first
+        if let Some(syntax) = registry.find_syntax_for_file_with_languages(path, languages) {
             // Find the index of this syntax in the set
             if let Some(index) = syntax_set
                 .syntaxes()

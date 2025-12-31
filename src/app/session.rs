@@ -643,12 +643,13 @@ impl Editor {
         }
 
         let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
-        if let Ok(new_state) = EditorState::from_file(
+        if let Ok(new_state) = EditorState::from_file_with_languages(
             backing_path,
             self.terminal_width,
             self.terminal_height,
             large_file_threshold,
             &self.grammar_registry,
+            &self.config.languages,
         ) {
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 *state = new_state;

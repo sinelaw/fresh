@@ -1368,6 +1368,9 @@ impl Config {
                     ".zshenv".to_string(),
                     ".zlogin".to_string(),
                     ".zlogout".to_string(),
+                    // Common shell script files without extensions
+                    "PKGBUILD".to_string(),
+                    "APKBUILD".to_string(),
                 ],
                 grammar: "bash".to_string(),
                 comment_prefix: Some("#".to_string()),

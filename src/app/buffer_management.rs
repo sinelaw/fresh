@@ -150,12 +150,13 @@ impl Editor {
 
         // Create the editor state - either load from file or create empty buffer
         let mut state = if file_exists {
-            EditorState::from_file(
+            EditorState::from_file_with_languages(
                 path,
                 self.terminal_width,
                 self.terminal_height,
                 self.config.editor.large_file_threshold_bytes as usize,
                 &self.grammar_registry,
+                &self.config.languages,
             )?
         } else {
             // File doesn't exist - create empty buffer with the file path set
@@ -503,14 +504,15 @@ impl Editor {
         // Get file size for status message before loading
         let file_size = std::fs::metadata(temp_path)?.len() as usize;
 
-        // Load from temp file using EditorState::from_file
+        // Load from temp file using EditorState::from_file_with_languages
         // This enables lazy chunk loading for large inputs (>100MB by default)
-        let mut state = EditorState::from_file(
+        let mut state = EditorState::from_file_with_languages(
             temp_path,
             self.terminal_width,
             self.terminal_height,
             self.config.editor.large_file_threshold_bytes as usize,
             &self.grammar_registry,
+            &self.config.languages,
         )?;
 
         // Clear the file path so the buffer is "unnamed" for save purposes

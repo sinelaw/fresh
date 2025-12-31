@@ -234,6 +234,76 @@ impl EditorState {
         })
     }
 
+    /// Create an editor state from a file with language configuration.
+    ///
+    /// This version uses the provided languages configuration for syntax detection,
+    /// allowing user-configured filename patterns to be respected for highlighting.
+    ///
+    /// Note: width/height parameters are kept for backward compatibility but
+    /// are no longer used - viewport is now owned by SplitViewState.
+    pub fn from_file_with_languages(
+        path: &std::path::Path,
+        _width: u16,
+        _height: u16,
+        large_file_threshold: usize,
+        registry: &GrammarRegistry,
+        languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
+    ) -> std::io::Result<Self> {
+        let buffer = Buffer::load_from_file(path, large_file_threshold)?;
+
+        // Create highlighter using HighlightEngine with language config
+        let highlighter = HighlightEngine::for_file_with_languages(path, registry, languages);
+        tracing::debug!(
+            "Created highlighter for {:?} (backend: {})",
+            path,
+            highlighter.backend_name()
+        );
+
+        // Initialize semantic highlighter with language if available
+        let language = Language::from_path(path);
+        let mut semantic_highlighter = SemanticHighlighter::new();
+        if let Some(lang) = language {
+            semantic_highlighter.set_language(&lang);
+        }
+
+        // Initialize marker list with buffer size
+        let mut marker_list = MarkerList::new();
+        if buffer.len() > 0 {
+            tracing::debug!(
+                "Initializing marker list for file with {} bytes",
+                buffer.len()
+            );
+            marker_list.adjust_for_insert(0, buffer.len());
+        }
+
+        Ok(Self {
+            buffer,
+            cursors: Cursors::new(),
+            highlighter,
+            indent_calculator: RefCell::new(IndentCalculator::new()),
+            overlays: OverlayManager::new(),
+            marker_list,
+            virtual_texts: VirtualTextManager::new(),
+            popups: PopupManager::new(),
+            margins: MarginManager::new(),
+            primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
+            mode: "insert".to_string(),
+            text_properties: TextPropertyManager::new(),
+            show_cursors: true,
+            editing_disabled: false,
+            show_whitespace_tabs: true,
+            use_tabs: false,
+            tab_size: 4, // Default tab size
+            semantic_highlighter,
+            view_mode: ViewMode::Source,
+            debug_highlight_mode: false,
+            compose_width: None,
+            compose_prev_line_numbers: None,
+            compose_column_guides: None,
+            view_transform: None,
+        })
+    }
+
     /// Handle an Insert event - adjusts markers, buffer, highlighter, cursors, and line numbers
     fn apply_insert(
         &mut self,
