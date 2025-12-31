@@ -111,7 +111,7 @@ impl SettingsState {
             selected_category: 0,
             selected_item: 0,
             focus_panel: FocusPanel::Categories,
-            footer_button_index: 1, // Default to Save button
+            footer_button_index: 2, // Default to Save button (0=Layer, 1=Reset, 2=Save, 3=Cancel)
             pending_changes: HashMap::new(),
             original_config: config_value,
             visible: false,
@@ -136,7 +136,7 @@ impl SettingsState {
     pub fn show(&mut self) {
         self.visible = true;
         self.focus_panel = FocusPanel::Categories;
-        self.footer_button_index = 1; // Default to Save button
+        self.footer_button_index = 2; // Default to Save button (0=Layer, 1=Reset, 2=Save, 3=Cancel)
         self.selected_category = 0;
         self.selected_item = 0;
         self.scroll_panel = ScrollablePanel::new();

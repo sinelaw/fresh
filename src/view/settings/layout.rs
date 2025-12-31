@@ -16,6 +16,8 @@ pub struct SettingsLayout {
     pub items: Vec<ItemLayout>,
     /// Search result items (page_index, item_index, area)
     pub search_results: Vec<SearchResultLayout>,
+    /// Layer button area
+    pub layer_button: Option<Rect>,
     /// Save button area
     pub save_button: Option<Rect>,
     /// Cancel button area
@@ -60,6 +62,7 @@ impl SettingsLayout {
             categories: Vec::new(),
             items: Vec::new(),
             search_results: Vec::new(),
+            layer_button: None,
             save_button: None,
             cancel_button: None,
             reset_button: None,
@@ -100,6 +103,11 @@ impl SettingsLayout {
         }
 
         // Check footer buttons
+        if let Some(ref layer) = self.layer_button {
+            if self.contains(*layer, x, y) {
+                return Some(SettingsHit::LayerButton);
+            }
+        }
         if let Some(ref save) = self.save_button {
             if self.contains(*save, x, y) {
                 return Some(SettingsHit::SaveButton);
@@ -239,6 +247,8 @@ pub enum SettingsHit {
     ControlTextListRow(usize, usize),
     /// Click on map row (item_idx, row_idx)
     ControlMapRow(usize, usize),
+    /// Click on layer button
+    LayerButton,
     /// Click on save button
     SaveButton,
     /// Click on cancel button

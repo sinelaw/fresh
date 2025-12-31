@@ -7,6 +7,7 @@
 //! - Activating/toggling settings
 //! - Incrementing/decrementing numeric values
 
+use crate::config_io::{ConfigLayer, ConfigResolver};
 use crate::input::keybindings::KeybindingResolver;
 
 use super::Editor;
@@ -54,13 +55,14 @@ impl Editor {
     pub fn save_settings(&mut self) {
         let old_theme = self.config.theme.clone();
 
-        let new_config = {
+        // Get target layer and new config
+        let (target_layer, new_config) = {
             if let Some(ref state) = self.settings_state {
                 if !state.has_changes() {
                     return;
                 }
                 match state.apply_changes(&self.config) {
-                    Ok(config) => config,
+                    Ok(config) => (state.target_layer, config),
                     Err(e) => {
                         self.set_status_message(format!("Failed to apply settings: {}", e));
                         return;
@@ -72,7 +74,7 @@ impl Editor {
         };
 
         // Apply the new config
-        self.config = new_config;
+        self.config = new_config.clone();
 
         // Apply runtime changes
         if old_theme != self.config.theme {
@@ -83,16 +85,19 @@ impl Editor {
         // Update keybindings
         self.keybindings = KeybindingResolver::new(&self.config);
 
-        // Save to disk
-        if let Err(e) = std::fs::create_dir_all(&self.dir_context.config_dir) {
-            self.set_status_message(format!("Failed to create config directory: {}", e));
-            return;
-        }
+        // Save to disk using the appropriate layer
+        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
 
-        let config_path = self.dir_context.config_path();
-        match self.config.save_to_file(&config_path) {
+        let layer_name = match target_layer {
+            ConfigLayer::User => "User",
+            ConfigLayer::Project => "Project",
+            ConfigLayer::Session => "Session",
+            ConfigLayer::System => "System", // Should never happen
+        };
+
+        match resolver.save_to_layer(&new_config, target_layer) {
             Ok(()) => {
-                self.set_status_message("Settings saved".to_string());
+                self.set_status_message(format!("Settings saved to {} layer", layer_name));
                 // Clear settings state entirely so next open creates fresh state
                 // from the updated config. This fixes issue #474 where reopening
                 // settings after save would show stale values.
@@ -135,19 +140,25 @@ impl Editor {
                 .settings_state
                 .as_ref()
                 .map(|s| s.footer_button_index)
-                .unwrap_or(1);
+                .unwrap_or(2);
             match button_index {
                 0 => {
+                    // Layer button - cycle target layer
+                    if let Some(ref mut state) = self.settings_state {
+                        state.cycle_target_layer();
+                    }
+                }
+                1 => {
                     // Reset button
                     if let Some(ref mut state) = self.settings_state {
                         state.reset_current_to_default();
                     }
                 }
-                1 => {
+                2 => {
                     // Save button - save and close
                     self.close_settings(true);
                 }
-                2 => {
+                3 => {
                     // Cancel button
                     self.close_settings(false);
                 }
@@ -266,7 +277,7 @@ impl Editor {
         if focus_panel == FocusPanel::Footer {
             if let Some(ref mut state) = self.settings_state {
                 // Navigate to next footer button (wrapping around)
-                state.footer_button_index = (state.footer_button_index + 1) % 3;
+                state.footer_button_index = (state.footer_button_index + 1) % 4;
             }
             return;
         }
@@ -329,7 +340,7 @@ impl Editor {
             if let Some(ref mut state) = self.settings_state {
                 // Navigate to previous footer button (wrapping around)
                 state.footer_button_index = if state.footer_button_index == 0 {
-                    2
+                    3
                 } else {
                     state.footer_button_index - 1
                 };

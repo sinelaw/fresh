@@ -119,13 +119,13 @@ pub fn render_settings(
     frame.render_widget(Clear, modal_area);
 
     let title = if state.has_changes() {
-        " Settings • (modified) "
+        format!(" Settings [{}] • (modified) ", state.target_layer_name())
     } else {
-        " Settings "
+        format!(" Settings [{}] ", state.target_layer_name())
     };
 
     let block = Block::default()
-        .title(title)
+        .title(title.as_str())
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.popup_border_fg))
         .style(Style::default().bg(theme.popup_bg));
@@ -1414,27 +1414,63 @@ fn render_footer(
     let footer_focused = state.focus_panel == FocusPanel::Footer;
 
     // Determine hover and keyboard focus states for buttons
-    // Button indices: 0=Reset, 1=Save, 2=Cancel
+    // Button indices: 0=Layer, 1=Reset, 2=Save, 3=Cancel
+    let layer_hovered = matches!(state.hover_hit, Some(SettingsHit::LayerButton));
     let reset_hovered = matches!(state.hover_hit, Some(SettingsHit::ResetButton));
     let save_hovered = matches!(state.hover_hit, Some(SettingsHit::SaveButton));
     let cancel_hovered = matches!(state.hover_hit, Some(SettingsHit::CancelButton));
 
-    let reset_focused = footer_focused && state.footer_button_index == 0;
-    let save_focused = footer_focused && state.footer_button_index == 1;
-    let cancel_focused = footer_focused && state.footer_button_index == 2;
+    let layer_focused = footer_focused && state.footer_button_index == 0;
+    let reset_focused = footer_focused && state.footer_button_index == 1;
+    let save_focused = footer_focused && state.footer_button_index == 2;
+    let cancel_focused = footer_focused && state.footer_button_index == 3;
+
+    // Build layer button text dynamically
+    let layer_text = format!("[ {} ]", state.target_layer_name());
+    let layer_text_focused = format!(">[ {} ]", state.target_layer_name());
 
     // Calculate button positions from right
     // When focused, buttons get a ">" prefix adding 1 char
     let cancel_width = if cancel_focused { 11 } else { 10 }; // ">[ Cancel ]" or "[ Cancel ]"
     let save_width = if save_focused { 9 } else { 8 }; // ">[ Save ]" or "[ Save ]"
     let reset_width = if reset_focused { 10 } else { 9 }; // ">[ Reset ]" or "[ Reset ]"
+    let layer_width = if layer_focused {
+        layer_text_focused.len() as u16
+    } else {
+        layer_text.len() as u16
+    };
     let gap = 2;
 
     let cancel_x = footer_area.x + footer_area.width - cancel_width;
     let save_x = cancel_x - save_width - gap;
     let reset_x = save_x - reset_width - gap;
+    let layer_x = reset_x - layer_width - gap;
 
     // Render buttons with focus indicators
+    // Layer button
+    let layer_area = Rect::new(layer_x, footer_y, layer_width, 1);
+    if layer_focused {
+        let style = Style::default()
+            .fg(theme.menu_highlight_fg)
+            .bg(theme.menu_highlight_bg)
+            .add_modifier(Modifier::BOLD);
+        frame.render_widget(
+            Paragraph::new(layer_text_focused.as_str()).style(style),
+            layer_area,
+        );
+    } else if layer_hovered {
+        let style = Style::default()
+            .fg(theme.menu_hover_fg)
+            .bg(theme.menu_hover_bg);
+        frame.render_widget(Paragraph::new(layer_text.as_str()).style(style), layer_area);
+    } else {
+        frame.render_widget(
+            Paragraph::new(layer_text.as_str()).style(Style::default().fg(theme.popup_text_fg)),
+            layer_area,
+        );
+    }
+    layout.layer_button = Some(layer_area);
+
     // Reset button
     let reset_area = Rect::new(reset_x, footer_y, reset_width, 1);
     if reset_focused {
@@ -1509,7 +1545,12 @@ fn render_footer(
     let help_style = Style::default().fg(theme.line_number_fg);
     frame.render_widget(
         Paragraph::new(help).style(help_style),
-        Rect::new(footer_area.x, footer_y, reset_x - footer_area.x - 1, 1),
+        Rect::new(
+            footer_area.x,
+            footer_y,
+            layer_x.saturating_sub(footer_area.x + 1),
+            1,
+        ),
     );
 }
 

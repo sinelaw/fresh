@@ -573,7 +573,10 @@ impl SettingsState {
     }
 
     /// Handle input when Footer is focused
+    /// Footer buttons: [Layer] [Reset] [Save] [Cancel]
     fn handle_footer_input(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
+        const FOOTER_BUTTON_COUNT: usize = 4;
+
         match event.code {
             KeyCode::Left => {
                 if self.footer_button_index > 0 {
@@ -582,7 +585,7 @@ impl SettingsState {
                 InputResult::Consumed
             }
             KeyCode::Right => {
-                if self.footer_button_index < 2 {
+                if self.footer_button_index < FOOTER_BUTTON_COUNT - 1 {
                     self.footer_button_index += 1;
                 }
                 InputResult::Consumed
@@ -593,9 +596,10 @@ impl SettingsState {
             }
             KeyCode::Enter => {
                 match self.footer_button_index {
-                    0 => self.reset_current_to_default(),
-                    1 => ctx.defer(DeferredAction::CloseSettings { save: true }),
-                    2 => self.request_close(ctx),
+                    0 => self.cycle_target_layer(), // Layer button
+                    1 => self.reset_current_to_default(),
+                    2 => ctx.defer(DeferredAction::CloseSettings { save: true }),
+                    3 => self.request_close(ctx),
                     _ => {}
                 }
                 InputResult::Consumed
@@ -1070,7 +1074,7 @@ mod tests {
         let mut state = SettingsState::new(schema, &config).unwrap();
         state.visible = true;
         state.focus_panel = FocusPanel::Footer;
-        state.footer_button_index = 1; // Save button
+        state.footer_button_index = 2; // Save button (0=Layer, 1=Reset, 2=Save, 3=Cancel)
 
         let mut ctx = InputContext::new();
 

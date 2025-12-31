@@ -233,6 +233,11 @@ impl Editor {
                     self.settings_activate_current();
                 }
             }
+            SettingsHit::LayerButton => {
+                if let Some(ref mut state) = self.settings_state {
+                    state.cycle_target_layer();
+                }
+            }
             SettingsHit::SaveButton => self.save_settings(),
             SettingsHit::CancelButton => {
                 if let Some(ref mut state) = self.settings_state {
