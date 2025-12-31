@@ -83,7 +83,23 @@ impl ConfigResolver {
     }
 
     /// Get the path to project config file.
+    /// Checks new location first (.fresh/config.json), falls back to legacy (config.json).
     pub fn project_config_path(&self) -> PathBuf {
+        let new_path = self.working_dir.join(".fresh").join("config.json");
+        if new_path.exists() {
+            return new_path;
+        }
+        // Fall back to legacy location for backward compatibility
+        let legacy_path = self.working_dir.join("config.json");
+        if legacy_path.exists() {
+            return legacy_path;
+        }
+        // Return new path as default for new projects
+        new_path
+    }
+
+    /// Get the preferred path for writing project config (new location).
+    pub fn project_config_write_path(&self) -> PathBuf {
         self.working_dir.join(".fresh").join("config.json")
     }
 
@@ -139,10 +155,10 @@ impl ConfigResolver {
         // Calculate delta
         let delta = diff_partial_config(&current, &parent);
 
-        // Get path for target layer
+        // Get path for target layer (use write paths for new configs)
         let path = match layer {
             ConfigLayer::User => self.user_config_path(),
-            ConfigLayer::Project => self.project_config_path(),
+            ConfigLayer::Project => self.project_config_write_path(),
             ConfigLayer::Session => self.session_config_path(),
             ConfigLayer::System => unreachable!(),
         };
@@ -280,6 +296,24 @@ impl Config {
         }
         tracing::debug!("No config file found, using defaults");
         Self::default()
+    }
+
+    /// Load configuration using the 4-level layer system.
+    ///
+    /// Merges layers in precedence order: Session > Project > User > System
+    /// Falls back to defaults for any unspecified values.
+    pub fn load_with_layers(dir_context: &DirectoryContext, working_dir: &Path) -> Self {
+        let resolver = ConfigResolver::new(dir_context.clone(), working_dir.to_path_buf());
+        match resolver.resolve() {
+            Ok(config) => {
+                tracing::info!("Loaded layered config for {}", working_dir.display());
+                config
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load layered config: {}, using defaults", e);
+                Self::default()
+            }
+        }
     }
 
     /// Read the raw user config file content as JSON.
@@ -603,5 +637,55 @@ mod tests {
         let config = Config::default();
         let result = resolver.save_to_layer(&config, ConfigLayer::System);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolver_loads_legacy_project_config() {
+        let (temp, resolver) = create_test_resolver();
+
+        // Create legacy project config at {working_dir}/config.json
+        let working_dir = temp.path().join("project");
+        let legacy_path = working_dir.join("config.json");
+        std::fs::write(&legacy_path, r#"{"editor": {"tab_size": 3}}"#).unwrap();
+
+        let config = resolver.resolve().unwrap();
+        assert_eq!(config.editor.tab_size, 3);
+        drop(temp);
+    }
+
+    #[test]
+    fn resolver_prefers_new_config_over_legacy() {
+        let (temp, resolver) = create_test_resolver();
+
+        // Create both legacy and new project configs
+        let working_dir = temp.path().join("project");
+
+        // Legacy: tab_size=3
+        let legacy_path = working_dir.join("config.json");
+        std::fs::write(&legacy_path, r#"{"editor": {"tab_size": 3}}"#).unwrap();
+
+        // New: tab_size=5
+        let new_path = working_dir.join(".fresh").join("config.json");
+        std::fs::create_dir_all(new_path.parent().unwrap()).unwrap();
+        std::fs::write(&new_path, r#"{"editor": {"tab_size": 5}}"#).unwrap();
+
+        let config = resolver.resolve().unwrap();
+        assert_eq!(config.editor.tab_size, 5); // New path wins
+        drop(temp);
+    }
+
+    #[test]
+    fn load_with_layers_works() {
+        let temp = TempDir::new().unwrap();
+        let dir_context = DirectoryContext::for_testing(temp.path());
+        let working_dir = temp.path().join("project");
+        std::fs::create_dir_all(&working_dir).unwrap();
+
+        // Create user config
+        std::fs::create_dir_all(&dir_context.config_dir).unwrap();
+        std::fs::write(dir_context.config_path(), r#"{"editor": {"tab_size": 2}}"#).unwrap();
+
+        let config = Config::load_with_layers(&dir_context, &working_dir);
+        assert_eq!(config.editor.tab_size, 2);
     }
 }
