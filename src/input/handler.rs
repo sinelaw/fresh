@@ -95,6 +95,10 @@ pub enum DeferredAction {
     CloseSettings {
         save: bool,
     },
+    /// Open the config file for the specified layer in the editor
+    OpenConfigFile {
+        layer: crate::config_io::ConfigLayer,
+    },
 
     // Menu actions
     CloseMenu,

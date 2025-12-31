@@ -249,6 +249,13 @@ impl Editor {
                     state.reset_current_to_default();
                 }
             }
+            SettingsHit::EditButton => {
+                // Open config file for the selected layer
+                if let Some(ref state) = self.settings_state {
+                    let layer = state.target_layer;
+                    let _ = self.open_config_file(layer);
+                }
+            }
             SettingsHit::Scrollbar => self.settings_scrollbar_click(row),
         }
 

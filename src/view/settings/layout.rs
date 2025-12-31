@@ -18,6 +18,8 @@ pub struct SettingsLayout {
     pub search_results: Vec<SearchResultLayout>,
     /// Layer button area
     pub layer_button: Option<Rect>,
+    /// Edit config file button area
+    pub edit_button: Option<Rect>,
     /// Save button area
     pub save_button: Option<Rect>,
     /// Cancel button area
@@ -63,6 +65,7 @@ impl SettingsLayout {
             items: Vec::new(),
             search_results: Vec::new(),
             layer_button: None,
+            edit_button: None,
             save_button: None,
             cancel_button: None,
             reset_button: None,
@@ -106,6 +109,11 @@ impl SettingsLayout {
         if let Some(ref layer) = self.layer_button {
             if self.contains(*layer, x, y) {
                 return Some(SettingsHit::LayerButton);
+            }
+        }
+        if let Some(ref edit) = self.edit_button {
+            if self.contains(*edit, x, y) {
+                return Some(SettingsHit::EditButton);
             }
         }
         if let Some(ref save) = self.save_button {
@@ -249,6 +257,8 @@ pub enum SettingsHit {
     ControlMapRow(usize, usize),
     /// Click on layer button
     LayerButton,
+    /// Click on edit config file button
+    EditButton,
     /// Click on save button
     SaveButton,
     /// Click on cancel button

@@ -115,6 +115,76 @@ impl Editor {
         }
     }
 
+    /// Open the config file for the specified layer in the editor.
+    /// Creates the file with default template if it doesn't exist.
+    pub fn open_config_file(&mut self, layer: ConfigLayer) -> std::io::Result<()> {
+        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+
+        let path = match layer {
+            ConfigLayer::User => resolver.user_config_path(),
+            ConfigLayer::Project => resolver.project_config_write_path(),
+            ConfigLayer::Session => resolver.session_config_path(),
+            ConfigLayer::System => {
+                self.set_status_message("Cannot edit System layer (read-only defaults)".to_string());
+                return Ok(());
+            }
+        };
+
+        // Create parent directory if needed
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Create file with template if it doesn't exist
+        if !path.exists() {
+            let template = match layer {
+                ConfigLayer::User => {
+                    r#"{
+  "version": 1,
+  "theme": "default",
+  "editor": {
+    "tab_size": 4,
+    "line_numbers": true
+  }
+}
+"#
+                }
+                ConfigLayer::Project => {
+                    r#"{
+  "version": 1,
+  "editor": {
+    "tab_size": 4
+  },
+  "languages": {}
+}
+"#
+                }
+                ConfigLayer::Session => {
+                    r#"{
+  "version": 1
+}
+"#
+                }
+                ConfigLayer::System => unreachable!(),
+            };
+            std::fs::write(&path, template)?;
+        }
+
+        // Close settings and open the config file
+        self.settings_state = None;
+        self.open_file(&path)?;
+
+        let layer_name = match layer {
+            ConfigLayer::User => "User",
+            ConfigLayer::Project => "Project",
+            ConfigLayer::Session => "Session",
+            ConfigLayer::System => "System",
+        };
+        self.set_status_message(format!("Editing {} config: {}", layer_name, path.display()));
+
+        Ok(())
+    }
+
     /// Navigate settings up
     pub fn settings_navigate_up(&mut self) {
         if let Some(ref mut state) = self.settings_state {

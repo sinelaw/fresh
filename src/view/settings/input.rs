@@ -573,10 +573,10 @@ impl SettingsState {
     }
 
     /// Handle input when Footer is focused
-    /// Footer buttons: [Layer] [Reset] [Save] [Cancel]
+    /// Footer buttons: [Layer] [Reset] [Save] [Cancel] + [Edit] on left for advanced users
     /// Tab cycles between buttons; after last button, moves to Categories panel
     fn handle_footer_input(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
-        const FOOTER_BUTTON_COUNT: usize = 4;
+        const FOOTER_BUTTON_COUNT: usize = 5;
 
         match event.code {
             KeyCode::Left | KeyCode::BackTab => {
@@ -610,6 +610,9 @@ impl SettingsState {
                     1 => self.reset_current_to_default(),
                     2 => ctx.defer(DeferredAction::CloseSettings { save: true }),
                     3 => self.request_close(ctx),
+                    4 => ctx.defer(DeferredAction::OpenConfigFile {
+                        layer: self.target_layer,
+                    }), // Edit config file
                     _ => {}
                 }
                 InputResult::Consumed

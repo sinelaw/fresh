@@ -169,6 +169,9 @@ impl Editor {
                 }
                 self.close_settings(false);
             }
+            DeferredAction::OpenConfigFile { layer } => {
+                self.open_config_file(layer)?;
+            }
 
             // Menu actions
             DeferredAction::CloseMenu => {
