@@ -429,3 +429,92 @@ fn test_issue_564_query_replace_all_hang_large_file() {
         }
     }
 }
+
+/// Test issue #580: Panic when changing tab arrow visibility in settings
+///
+/// The crash occurs in view_pipeline.rs:159:
+/// `self.tab_size - (col % self.tab_size)`
+///
+/// When tab_size is 0, this causes a division by zero panic with:
+/// "attempt to calculate the remainder with a divisor of zero"
+///
+/// This can happen when:
+/// 1. A language config has tab_size: 0 (schema allows minimum: 0)
+/// 2. The settings UI displays null tab_size as 0 and saves it
+/// 3. ViewLineIterator::new is called with tab_size = 0 during rendering
+#[test]
+fn test_issue_580_tab_size_zero_causes_panic() {
+    use fresh::config::Config;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.cpp");
+
+    // Create a C++ file with tab characters - this will trigger ViewLineIterator
+    fs::write(&file_path, "\tint main() {\n\t\treturn 0;\n\t}").unwrap();
+
+    // Create a config with tab_size = 0 for cpp language (simulating the bug)
+    let mut config = Config::default();
+    if let Some(cpp_config) = config.languages.get_mut("cpp") {
+        // This simulates what happens when the settings UI saves tab_size: 0
+        cpp_config.tab_size = Some(0);
+    }
+
+    // Create harness with this config
+    let mut harness =
+        EditorTestHarness::with_config(80, 24, config).expect("Should create harness");
+
+    // Open the file
+    harness
+        .open_file(&file_path)
+        .expect("Should open cpp file");
+
+    // This render should NOT panic even with tab_size = 0
+    // If the bug exists, this will panic with:
+    // "attempt to calculate the remainder with a divisor of zero"
+    let render_result = harness.render();
+    assert!(
+        render_result.is_ok(),
+        "Rendering should not panic with tab_size = 0. The editor should handle this gracefully."
+    );
+
+    // Verify the file is displayed (content should still be visible)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("int main"),
+        "File content should be visible even with tab_size = 0"
+    );
+}
+
+/// Test issue #580: Global editor.tab_size = 0 should not cause panic
+///
+/// Similar to the language-specific case, but tests the global editor.tab_size setting.
+#[test]
+fn test_issue_580_global_tab_size_zero_causes_panic() {
+    use fresh::config::Config;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Create a file with tab characters
+    fs::write(&file_path, "\thello\n\t\tworld").unwrap();
+
+    // Create a config with global tab_size = 0
+    let mut config = Config::default();
+    config.editor.tab_size = 0;
+
+    // Create harness with this config
+    let mut harness =
+        EditorTestHarness::with_config(80, 24, config).expect("Should create harness");
+
+    // Open the file
+    harness
+        .open_file(&file_path)
+        .expect("Should open text file");
+
+    // This render should NOT panic even with tab_size = 0
+    let render_result = harness.render();
+    assert!(
+        render_result.is_ok(),
+        "Rendering should not panic with global tab_size = 0"
+    );
+}
