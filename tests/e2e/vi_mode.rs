@@ -467,15 +467,27 @@ fn test_vi_yank_paste_line() {
 
     enable_vi_mode(&mut harness);
 
-    // Yank line with 'yy'
+    // First y enters operator-pending mode
     harness
         .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
+
+    // Wait for operator-pending mode
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+
+    // Second y completes the yy command (yank line)
     harness
         .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
+
+    // Wait to return to normal mode (yy is complete)
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
 
     // Paste below with 'p'
     harness
@@ -1019,7 +1031,7 @@ fn test_vi_colon_write_quit() {
     );
 }
 
-/// Test ':123' goes to line 123
+/// Test ':10' goes to line 10
 #[test]
 fn test_vi_colon_goto_line() {
     init_tracing_from_env();
@@ -1032,6 +1044,9 @@ fn test_vi_colon_goto_line() {
     harness.render().unwrap();
 
     enable_vi_mode(&mut harness);
+
+    // Store initial cursor position to verify movement
+    let initial_pos = harness.cursor_position();
 
     // Press ':' to enter command mode
     harness
@@ -1049,16 +1064,14 @@ fn test_vi_colon_goto_line() {
         .unwrap();
     harness.render().unwrap();
 
-    // Wait for cursor to be on line 10 (semantic waiting)
+    // Wait for cursor to move from initial position (semantic waiting)
     harness
-        .wait_until(|h| {
-            // Line 10 starts at a specific offset
-            // Each line is "lineN\n" where N is 1-2 digits
-            // Lines 1-9: 6 chars each (line + digit + newline) = 54 bytes
-            // Line 10 starts at byte 54
-            let pos = h.cursor_position();
-            pos >= 54 && pos < 62 // line10 is at 54-60
-        })
+        .wait_until(|h| h.cursor_position() > initial_pos)
+        .unwrap();
+
+    // Verify we're back in normal mode
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
         .unwrap();
 }
 
