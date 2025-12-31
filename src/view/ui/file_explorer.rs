@@ -49,6 +49,11 @@ impl FileExplorerRenderer {
         let scroll_offset = view.get_scroll_offset();
         let selected_index = view.get_selected_index();
 
+        // Clamp scroll_offset to valid range to prevent panic after tree mutations
+        // (e.g., when deleting a folder with many children while scrolled down)
+        // Issue #562: scroll_offset can become larger than display_nodes.len()
+        let scroll_offset = scroll_offset.min(display_nodes.len());
+
         // Only render the visible subset of items (for manual scroll control)
         // This prevents ratatui's List widget from auto-scrolling
         let visible_end = (scroll_offset + viewport_height).min(display_nodes.len());
