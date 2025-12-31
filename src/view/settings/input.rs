@@ -984,9 +984,11 @@ mod tests {
         assert_eq!(state.focus_panel, FocusPanel::Footer);
         assert_eq!(state.footer_button_index, 2);
 
-        // Tab through footer buttons: 2 -> 3 -> wrap to Categories
+        // Tab through footer buttons: 2 -> 3 -> 4 -> wrap to Categories
         state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
         assert_eq!(state.footer_button_index, 3);
+        state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
+        assert_eq!(state.footer_button_index, 4); // Edit button
         state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
         assert_eq!(state.focus_panel, FocusPanel::Categories);
     }
