@@ -307,6 +307,7 @@ impl EditorState {
             compose_prev_line_numbers: None,
             compose_column_guides: None,
             view_transform: None,
+            semantic_highlight_cache: SemanticHighlightCache::new(),
         })
     }
 
