@@ -638,6 +638,93 @@ impl Default for LanguageConfig {
     }
 }
 
+/// Session-specific configuration for runtime/volatile overrides.
+///
+/// This struct represents the session layer of the config hierarchy - settings
+/// that are temporary and may not persist across editor restarts.
+///
+/// Unlike PartialConfig, SessionConfig provides a focused API for common
+/// runtime modifications like temporary theme switching.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SessionConfig {
+    /// Temporarily override the theme (e.g., for preview)
+    pub theme: Option<ThemeName>,
+
+    /// Temporary editor overrides (e.g., changing tab_size for current session)
+    pub editor: Option<PartialEditorConfig>,
+
+    /// Buffer-specific overrides keyed by absolute file path.
+    /// These allow per-file settings that persist only during the session.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub buffer_overrides: HashMap<std::path::PathBuf, PartialEditorConfig>,
+}
+
+impl SessionConfig {
+    /// Create a new empty session config.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set a temporary theme override.
+    pub fn set_theme(&mut self, theme: ThemeName) {
+        self.theme = Some(theme);
+    }
+
+    /// Clear the theme override, reverting to lower layers.
+    pub fn clear_theme(&mut self) {
+        self.theme = None;
+    }
+
+    /// Set an editor setting for the current session.
+    pub fn set_editor_option<F>(&mut self, setter: F)
+    where
+        F: FnOnce(&mut PartialEditorConfig),
+    {
+        let editor = self.editor.get_or_insert_with(Default::default);
+        setter(editor);
+    }
+
+    /// Set a buffer-specific editor override.
+    pub fn set_buffer_override(&mut self, path: std::path::PathBuf, config: PartialEditorConfig) {
+        self.buffer_overrides.insert(path, config);
+    }
+
+    /// Clear buffer-specific overrides for a path.
+    pub fn clear_buffer_override(&mut self, path: &std::path::Path) {
+        self.buffer_overrides.remove(path);
+    }
+
+    /// Get buffer-specific editor config if set.
+    pub fn get_buffer_override(&self, path: &std::path::Path) -> Option<&PartialEditorConfig> {
+        self.buffer_overrides.get(path)
+    }
+
+    /// Convert to a PartialConfig for merging with other layers.
+    pub fn to_partial_config(&self) -> PartialConfig {
+        PartialConfig {
+            theme: self.theme.clone(),
+            editor: self.editor.clone(),
+            ..Default::default()
+        }
+    }
+
+    /// Check if this session config has any values set.
+    pub fn is_empty(&self) -> bool {
+        self.theme.is_none() && self.editor.is_none() && self.buffer_overrides.is_empty()
+    }
+}
+
+impl From<PartialConfig> for SessionConfig {
+    fn from(partial: PartialConfig) -> Self {
+        Self {
+            theme: partial.theme,
+            editor: partial.editor,
+            buffer_overrides: HashMap::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -780,5 +867,65 @@ mod tests {
         assert_eq!(original.theme, resolved.theme);
         assert_eq!(original.editor.tab_size, resolved.editor.tab_size);
         assert_eq!(original.check_for_updates, resolved.check_for_updates);
+    }
+
+    #[test]
+    fn session_config_new_is_empty() {
+        let session = SessionConfig::new();
+        assert!(session.is_empty());
+    }
+
+    #[test]
+    fn session_config_set_theme() {
+        let mut session = SessionConfig::new();
+        session.set_theme(ThemeName::from("dark"));
+        assert_eq!(session.theme, Some(ThemeName::from("dark")));
+        assert!(!session.is_empty());
+    }
+
+    #[test]
+    fn session_config_clear_theme() {
+        let mut session = SessionConfig::new();
+        session.set_theme(ThemeName::from("dark"));
+        session.clear_theme();
+        assert!(session.theme.is_none());
+    }
+
+    #[test]
+    fn session_config_set_editor_option() {
+        let mut session = SessionConfig::new();
+        session.set_editor_option(|e| e.tab_size = Some(2));
+        assert_eq!(session.editor.as_ref().unwrap().tab_size, Some(2));
+    }
+
+    #[test]
+    fn session_config_buffer_overrides() {
+        let mut session = SessionConfig::new();
+        let path = std::path::PathBuf::from("/test/file.rs");
+        let config = PartialEditorConfig {
+            tab_size: Some(8),
+            ..Default::default()
+        };
+
+        session.set_buffer_override(path.clone(), config);
+        assert!(session.get_buffer_override(&path).is_some());
+        assert_eq!(
+            session.get_buffer_override(&path).unwrap().tab_size,
+            Some(8)
+        );
+
+        session.clear_buffer_override(&path);
+        assert!(session.get_buffer_override(&path).is_none());
+    }
+
+    #[test]
+    fn session_config_to_partial_config() {
+        let mut session = SessionConfig::new();
+        session.set_theme(ThemeName::from("dark"));
+        session.set_editor_option(|e| e.tab_size = Some(2));
+
+        let partial = session.to_partial_config();
+        assert_eq!(partial.theme, Some(ThemeName::from("dark")));
+        assert_eq!(partial.editor.as_ref().unwrap().tab_size, Some(2));
     }
 }

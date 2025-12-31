@@ -9,6 +9,7 @@ use super::layout::SettingsHit;
 use super::schema::{parse_schema, SettingCategory, SettingSchema};
 use super::search::{search_settings, SearchResult};
 use crate::config::Config;
+use crate::config_io::ConfigLayer;
 use crate::view::controls::FocusState;
 use crate::view::ui::ScrollablePanel;
 use std::collections::HashMap;
@@ -91,6 +92,10 @@ pub struct SettingsState {
     /// Stack of entry dialogs (for nested editing of Maps/ObjectArrays)
     /// The top of the stack (last element) is the currently active dialog.
     pub entry_dialog_stack: Vec<EntryDialogState>,
+    /// Which configuration layer to save changes to.
+    /// User layer is the default (global settings).
+    /// Project layer saves to the current project's .fresh/config.json.
+    pub target_layer: ConfigLayer,
 }
 
 impl SettingsState {
@@ -123,6 +128,7 @@ impl SettingsState {
             hover_position: None,
             hover_hit: None,
             entry_dialog_stack: Vec::new(),
+            target_layer: ConfigLayer::User, // Default to user-global settings
         })
     }
 
@@ -370,6 +376,38 @@ impl SettingsState {
         self.pending_changes.clear();
         // Rebuild pages from original config
         self.pages = super::items::build_pages(&self.categories, &self.original_config);
+    }
+
+    /// Set the target layer for saving changes.
+    pub fn set_target_layer(&mut self, layer: ConfigLayer) {
+        if layer != ConfigLayer::System {
+            // Cannot target System layer (read-only)
+            self.target_layer = layer;
+            // Clear pending changes when switching layers
+            self.pending_changes.clear();
+        }
+    }
+
+    /// Cycle through writable layers: User -> Project -> Session -> User
+    pub fn cycle_target_layer(&mut self) {
+        self.target_layer = match self.target_layer {
+            ConfigLayer::System => ConfigLayer::User, // Should never be System, but handle it
+            ConfigLayer::User => ConfigLayer::Project,
+            ConfigLayer::Project => ConfigLayer::Session,
+            ConfigLayer::Session => ConfigLayer::User,
+        };
+        // Clear pending changes when switching layers
+        self.pending_changes.clear();
+    }
+
+    /// Get a display name for the current target layer.
+    pub fn target_layer_name(&self) -> &'static str {
+        match self.target_layer {
+            ConfigLayer::System => "System (read-only)",
+            ConfigLayer::User => "User",
+            ConfigLayer::Project => "Project",
+            ConfigLayer::Session => "Session",
+        }
     }
 
     /// Reset the current item to its default value
@@ -1800,5 +1838,49 @@ mod tests {
         assert_eq!(display_text, Some(String::new()));
 
         state.number_cancel();
+    }
+
+    #[test]
+    fn test_layer_selection() {
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+
+        // Default is User layer
+        assert_eq!(state.target_layer, ConfigLayer::User);
+        assert_eq!(state.target_layer_name(), "User");
+
+        // Cycle through layers
+        state.cycle_target_layer();
+        assert_eq!(state.target_layer, ConfigLayer::Project);
+        assert_eq!(state.target_layer_name(), "Project");
+
+        state.cycle_target_layer();
+        assert_eq!(state.target_layer, ConfigLayer::Session);
+        assert_eq!(state.target_layer_name(), "Session");
+
+        state.cycle_target_layer();
+        assert_eq!(state.target_layer, ConfigLayer::User);
+
+        // Set directly
+        state.set_target_layer(ConfigLayer::Project);
+        assert_eq!(state.target_layer, ConfigLayer::Project);
+
+        // Setting to System should be ignored (read-only)
+        state.set_target_layer(ConfigLayer::System);
+        assert_eq!(state.target_layer, ConfigLayer::Project);
+    }
+
+    #[test]
+    fn test_layer_switch_clears_pending_changes() {
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+
+        // Add a pending change
+        state.set_pending_change("/theme", serde_json::Value::String("light".to_string()));
+        assert!(state.has_changes());
+
+        // Switching layers clears pending changes
+        state.cycle_target_layer();
+        assert!(!state.has_changes());
     }
 }

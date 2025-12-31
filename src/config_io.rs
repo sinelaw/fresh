@@ -5,7 +5,7 @@
 //! These are separated from config.rs to allow schema-only builds.
 
 use crate::config::{Config, ConfigError};
-use crate::partial_config::{Merge, PartialConfig};
+use crate::partial_config::{Merge, PartialConfig, SessionConfig};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -263,6 +263,44 @@ impl ConfigResolver {
         std::fs::write(&path, json)
             .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
 
+        Ok(())
+    }
+
+    /// Save a SessionConfig to the session layer file.
+    pub fn save_session(&self, session: &SessionConfig) -> Result<(), ConfigError> {
+        let path = self.session_config_path();
+
+        // Ensure .fresh directory exists
+        if let Some(parent_dir) = path.parent() {
+            std::fs::create_dir_all(parent_dir)
+                .map_err(|e| ConfigError::IoError(format!("{}: {}", parent_dir.display(), e)))?;
+        }
+
+        let json = serde_json::to_string_pretty(session)
+            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+        std::fs::write(&path, json)
+            .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
+
+        tracing::debug!("Saved session config to {}", path.display());
+        Ok(())
+    }
+
+    /// Load the session config from disk, or return an empty one if it doesn't exist.
+    pub fn load_session(&self) -> Result<SessionConfig, ConfigError> {
+        match self.load_session_layer()? {
+            Some(partial) => Ok(SessionConfig::from(partial)),
+            None => Ok(SessionConfig::new()),
+        }
+    }
+
+    /// Clear the session config file on editor exit.
+    pub fn clear_session(&self) -> Result<(), ConfigError> {
+        let path = self.session_config_path();
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
+            tracing::debug!("Cleared session config at {}", path.display());
+        }
         Ok(())
     }
 
@@ -885,5 +923,59 @@ mod tests {
         assert_eq!(config.editor.tab_size, 3);
         assert!(!config.editor.line_numbers);
         drop(temp);
+    }
+
+    #[test]
+    fn save_and_load_session() {
+        let (_temp, resolver) = create_test_resolver();
+
+        let mut session = SessionConfig::new();
+        session.set_theme(crate::config::ThemeName::from("dark"));
+        session.set_editor_option(|e| e.tab_size = Some(2));
+
+        // Save session
+        resolver.save_session(&session).unwrap();
+
+        // Load session
+        let loaded = resolver.load_session().unwrap();
+        assert_eq!(loaded.theme, Some(crate::config::ThemeName::from("dark")));
+        assert_eq!(loaded.editor.as_ref().unwrap().tab_size, Some(2));
+    }
+
+    #[test]
+    fn clear_session_removes_file() {
+        let (_temp, resolver) = create_test_resolver();
+
+        let mut session = SessionConfig::new();
+        session.set_theme(crate::config::ThemeName::from("dark"));
+
+        // Save then clear
+        resolver.save_session(&session).unwrap();
+        assert!(resolver.session_config_path().exists());
+
+        resolver.clear_session().unwrap();
+        assert!(!resolver.session_config_path().exists());
+    }
+
+    #[test]
+    fn load_session_returns_empty_when_no_file() {
+        let (_temp, resolver) = create_test_resolver();
+
+        let session = resolver.load_session().unwrap();
+        assert!(session.is_empty());
+    }
+
+    #[test]
+    fn session_affects_resolved_config() {
+        let (_temp, resolver) = create_test_resolver();
+
+        // Save a session with tab_size=16
+        let mut session = SessionConfig::new();
+        session.set_editor_option(|e| e.tab_size = Some(16));
+        resolver.save_session(&session).unwrap();
+
+        // Resolve should pick up session value
+        let config = resolver.resolve().unwrap();
+        assert_eq!(config.editor.tab_size, 16);
     }
 }

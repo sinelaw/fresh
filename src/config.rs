@@ -806,6 +806,117 @@ pub struct LanguageConfig {
     pub on_save: Vec<OnSaveAction>,
 }
 
+/// Resolved editor configuration for a specific buffer.
+///
+/// This struct contains the effective settings for a buffer after applying
+/// language-specific overrides on top of the global editor config.
+///
+/// Use `BufferConfig::resolve()` to create one from a Config and optional language ID.
+#[derive(Debug, Clone)]
+pub struct BufferConfig {
+    /// Number of spaces per tab character
+    pub tab_size: usize,
+
+    /// Whether to insert a tab character (true) or spaces (false) when pressing Tab
+    pub use_tabs: bool,
+
+    /// Whether to auto-indent new lines
+    pub auto_indent: bool,
+
+    /// Whether to show whitespace tab indicators (→)
+    pub show_whitespace_tabs: bool,
+
+    /// Formatter command for this buffer
+    pub formatter: Option<FormatterConfig>,
+
+    /// Whether to format on save
+    pub format_on_save: bool,
+
+    /// Actions to run when saving
+    pub on_save: Vec<OnSaveAction>,
+
+    /// Preferred highlighter backend
+    pub highlighter: HighlighterPreference,
+
+    /// Path to custom TextMate grammar (if any)
+    pub textmate_grammar: Option<std::path::PathBuf>,
+}
+
+impl BufferConfig {
+    /// Resolve the effective configuration for a buffer given its language.
+    ///
+    /// This merges the global editor settings with any language-specific overrides
+    /// from `Config.languages`.
+    ///
+    /// # Arguments
+    /// * `global_config` - The resolved global configuration
+    /// * `language_id` - Optional language identifier (e.g., "rust", "python")
+    pub fn resolve(global_config: &Config, language_id: Option<&str>) -> Self {
+        let editor = &global_config.editor;
+
+        // Start with global editor settings
+        let mut config = BufferConfig {
+            tab_size: editor.tab_size,
+            use_tabs: false, // Global default is spaces
+            auto_indent: editor.auto_indent,
+            show_whitespace_tabs: true, // Global default
+            formatter: None,
+            format_on_save: false,
+            on_save: Vec::new(),
+            highlighter: HighlighterPreference::Auto,
+            textmate_grammar: None,
+        };
+
+        // Apply language-specific overrides if available
+        if let Some(lang_id) = language_id {
+            if let Some(lang_config) = global_config.languages.get(lang_id) {
+                // Tab size: use language setting if specified, else global
+                if let Some(ts) = lang_config.tab_size {
+                    config.tab_size = ts;
+                }
+
+                // Use tabs: language override
+                config.use_tabs = lang_config.use_tabs;
+
+                // Auto indent: language override
+                config.auto_indent = lang_config.auto_indent;
+
+                // Show whitespace tabs: language override
+                config.show_whitespace_tabs = lang_config.show_whitespace_tabs;
+
+                // Formatter: from language config
+                config.formatter = lang_config.formatter.clone();
+
+                // Format on save: from language config
+                config.format_on_save = lang_config.format_on_save;
+
+                // On save actions: from language config
+                config.on_save = lang_config.on_save.clone();
+
+                // Highlighter preference: from language config
+                config.highlighter = lang_config.highlighter;
+
+                // TextMate grammar path: from language config
+                config.textmate_grammar = lang_config.textmate_grammar.clone();
+            }
+        }
+
+        config
+    }
+
+    /// Get the effective indentation string for this buffer.
+    ///
+    /// Returns a tab character if `use_tabs` is true, otherwise returns
+    /// `tab_size` spaces.
+    pub fn indent_string(&self) -> String {
+        if self.use_tabs {
+            "\t".to_string()
+        } else {
+            " ".repeat(self.tab_size)
+        }
+    }
+}
+
 /// Preference for which syntax highlighting backend to use
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -2478,5 +2589,89 @@ mod tests {
             }
             _ => panic!("Action should remain Action after expand_dynamic"),
         }
+    }
+
+    #[test]
+    fn test_buffer_config_uses_global_defaults() {
+        let config = Config::default();
+        let buffer_config = BufferConfig::resolve(&config, None);
+
+        assert_eq!(buffer_config.tab_size, config.editor.tab_size);
+        assert_eq!(buffer_config.auto_indent, config.editor.auto_indent);
+        assert!(!buffer_config.use_tabs); // Default is spaces
+        assert!(buffer_config.show_whitespace_tabs);
+        assert!(buffer_config.formatter.is_none());
+        assert!(!buffer_config.format_on_save);
+    }
+
+    #[test]
+    fn test_buffer_config_applies_language_overrides() {
+        let mut config = Config::default();
+
+        // Add a language config with custom settings
+        config.languages.insert(
+            "go".to_string(),
+            LanguageConfig {
+                extensions: vec!["go".to_string()],
+                filenames: vec![],
+                grammar: "go".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: false, // Go hides tab indicators
+                use_tabs: true,              // Go uses tabs
+                tab_size: Some(8),           // Go uses 8-space tabs
+                formatter: Some(FormatterConfig {
+                    command: "gofmt".to_string(),
+                    args: vec![],
+                    stdin: true,
+                    timeout_ms: 10000,
+                }),
+                format_on_save: true,
+                on_save: vec![],
+            },
+        );
+
+        let buffer_config = BufferConfig::resolve(&config, Some("go"));
+
+        assert_eq!(buffer_config.tab_size, 8);
+        assert!(buffer_config.use_tabs);
+        assert!(!buffer_config.show_whitespace_tabs);
+        assert!(buffer_config.format_on_save);
+        assert!(buffer_config.formatter.is_some());
+        assert_eq!(buffer_config.formatter.as_ref().unwrap().command, "gofmt");
+    }
+
+    #[test]
+    fn test_buffer_config_unknown_language_uses_global() {
+        let config = Config::default();
+        let buffer_config = BufferConfig::resolve(&config, Some("unknown_lang"));
+
+        // Should fall back to global settings
+        assert_eq!(buffer_config.tab_size, config.editor.tab_size);
+        assert!(!buffer_config.use_tabs);
+    }
+
+    #[test]
+    fn test_buffer_config_indent_string() {
+        let config = Config::default();
+
+        // Spaces indent
+        let spaces_config = BufferConfig::resolve(&config, None);
+        assert_eq!(spaces_config.indent_string(), "    "); // 4 spaces
+
+        // Tabs indent - create a language that uses tabs
+        let mut config_with_tabs = Config::default();
+        config_with_tabs.languages.insert(
+            "makefile".to_string(),
+            LanguageConfig {
+                use_tabs: true,
+                tab_size: Some(8),
+                ..Default::default()
+            },
+        );
+        let tabs_config = BufferConfig::resolve(&config_with_tabs, Some("makefile"));
+        assert_eq!(tabs_config.indent_string(), "\t");
     }
 }
