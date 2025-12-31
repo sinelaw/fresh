@@ -2,15 +2,7 @@
   "inherits": "default",
   "bindings": [
     {
-      "comment": "=== VS Code macOS-style keymap for terminals ===",
-      "comment2": "Cmd→Ctrl mapping since terminals don't receive Cmd key"
-    },
-
-    {
-      "comment": "=== Basic Editing (VS Code style) ==="
-    },
-    {
-      "comment": "Ctrl+Shift+Z -> Redo (Mac: ⌘⇧Z)",
+      "comment": "Ctrl+Shift+Z -> Redo (Mac: Cmd+Shift+Z)",
       "key": "z",
       "modifiers": ["ctrl", "shift"],
       "action": "redo",
@@ -18,19 +10,15 @@
       "when": "normal"
     },
     {
-      "comment": "Ctrl+Shift+K -> Delete line (Mac: ⇧⌘K)",
+      "comment": "Ctrl+Shift+K -> Delete line (Mac: Cmd+Shift+K)",
       "key": "k",
       "modifiers": ["ctrl", "shift"],
       "action": "delete_line",
       "args": {},
       "when": "normal"
     },
-
     {
-      "comment": "=== Navigation (VS Code style) ==="
-    },
-    {
-      "comment": "Ctrl+G -> Go to line (Mac: ⌃G, same as VS Code)",
+      "comment": "Ctrl+G -> Go to line (Mac: Ctrl+G, same as VS Code)",
       "key": "g",
       "modifiers": ["ctrl"],
       "action": "goto_line",
@@ -46,7 +34,7 @@
       "when": "normal"
     },
     {
-      "comment": "Ctrl+- -> Navigate back (Mac: ⌃-)",
+      "comment": "Ctrl+- -> Navigate back (Mac: Ctrl+-)",
       "key": "-",
       "modifiers": ["ctrl"],
       "action": "navigate_back",
@@ -54,23 +42,15 @@
       "when": "normal"
     },
     {
-      "comment": "Ctrl+Shift+- -> Navigate forward (Mac: ⌃⇧-)",
+      "comment": "Ctrl+Shift+- -> Navigate forward (Mac: Ctrl+Shift+-)",
       "key": "-",
       "modifiers": ["ctrl", "shift"],
       "action": "navigate_forward",
       "args": {},
       "when": "normal"
     },
-
     {
-      "comment": "=== Search (VS Code style) ==="
-    },
-    {
-      "comment": "Note: Ctrl+R is already 'replace' in default keymap",
-      "comment2": "Ctrl+H conflicts with terminal backspace, so we don't remap it"
-    },
-    {
-      "comment": "Ctrl+D -> Add selection to next find match (Mac: ⌘D)",
+      "comment": "Ctrl+D -> Add selection to next find match (Mac: Cmd+D)",
       "key": "d",
       "modifiers": ["ctrl"],
       "action": "add_cursor_next_match",
@@ -78,19 +58,15 @@
       "when": "normal"
     },
     {
-      "comment": "Ctrl+Shift+L -> Select all (Mac: ⇧⌘L selects all occurrences, here it's select all)",
+      "comment": "Ctrl+Shift+L -> Select all (Mac: Cmd+Shift+L selects all occurrences)",
       "key": "l",
       "modifiers": ["ctrl", "shift"],
       "action": "select_all",
       "args": {},
       "when": "normal"
     },
-
     {
-      "comment": "=== Code Navigation (VS Code style, F-key alternatives) ==="
-    },
-    {
-      "comment": "Ctrl+Click is standard, but also: Ctrl+. for go to definition",
+      "comment": "Ctrl+. -> Go to definition (replaces F12)",
       "key": ".",
       "modifiers": ["ctrl"],
       "action": "lsp_goto_definition",
@@ -98,7 +74,7 @@
       "when": "normal"
     },
     {
-      "comment": "Ctrl+Shift+. -> Find all references (replaces ⇧F12)",
+      "comment": "Ctrl+Shift+. -> Find all references (replaces Shift+F12)",
       "key": ".",
       "modifiers": ["ctrl", "shift"],
       "action": "lsp_references",
@@ -113,12 +89,8 @@
       "args": {},
       "when": "normal"
     },
-
     {
-      "comment": "=== Multi-cursor (VS Code style) ==="
-    },
-    {
-      "comment": "Ctrl+Alt+Up -> Add cursor above (Mac: ⌥⌘↑)",
+      "comment": "Ctrl+Alt+Up -> Add cursor above (Mac: Option+Cmd+Up)",
       "key": "Up",
       "modifiers": ["ctrl", "alt"],
       "action": "add_cursor_above",
@@ -126,16 +98,12 @@
       "when": "normal"
     },
     {
-      "comment": "Ctrl+Alt+Down -> Add cursor below (Mac: ⌥⌘↓)",
+      "comment": "Ctrl+Alt+Down -> Add cursor below (Mac: Option+Cmd+Down)",
       "key": "Down",
       "modifiers": ["ctrl", "alt"],
       "action": "add_cursor_below",
       "args": {},
       "when": "normal"
-    },
-
-    {
-      "comment": "=== Home/End for Mac terminals ==="
     },
     {
       "comment": "Ctrl+A -> Line start (Mac terminals send this for Home)",
@@ -169,11 +137,8 @@
       "args": {},
       "when": "normal"
     },
-
     {
-      "comment": "=== Word movement (VS Code: ⌥Arrow, works with terminal config) ==="
-    },
-    {
+      "comment": "Alt+Left -> Word left (VS Code: Option+Arrow)",
       "key": "Left",
       "modifiers": ["alt"],
       "action": "move_word_left",
@@ -216,12 +181,8 @@
       "args": {},
       "when": "normal"
     },
-
     {
-      "comment": "=== File explorer (VS Code: ⌘B toggles sidebar) ==="
-    },
-    {
-      "comment": "Ctrl+B -> Toggle sidebar/file explorer (Mac: ⌘B)",
+      "comment": "Ctrl+B -> Toggle sidebar/file explorer (Mac: Cmd+B)",
       "key": "b",
       "modifiers": ["ctrl"],
       "action": "toggle_file_explorer",
@@ -234,10 +195,6 @@
       "action": "focus_editor",
       "args": {},
       "when": "file_explorer"
-    },
-
-    {
-      "comment": "=== Error navigation (VS Code style, F8 alternatives) ==="
     },
     {
       "comment": "Ctrl+' -> Next error (easy to reach, near Enter)",
@@ -255,10 +212,6 @@
       "args": {},
       "when": "normal"
     },
-
-    {
-      "comment": "=== Terminal mode ==="
-    },
     {
       "comment": "Ctrl+\\ -> Toggle keyboard capture (replaces F9)",
       "key": "\\",
@@ -266,10 +219,6 @@
       "action": "toggle_keyboard_capture",
       "args": {},
       "when": "terminal"
-    },
-
-    {
-      "comment": "=== Prompt context ==="
     },
     {
       "key": "a",
@@ -313,11 +262,8 @@
       "args": {},
       "when": "prompt"
     },
-
     {
-      "comment": "=== Disable Alt+number (Mac international keyboard conflict) ==="
-    },
-    {
+      "comment": "Disable Alt+0-9 (Mac international keyboard conflict with special chars)",
       "key": "0",
       "modifiers": ["alt"],
       "action": "none",
