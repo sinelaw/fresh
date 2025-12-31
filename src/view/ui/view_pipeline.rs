@@ -137,7 +137,7 @@ impl<'a> ViewLineIterator<'a> {
     /// - `ansi_aware`: Whether to parse ANSI escape sequences (giving them zero visual width)
     /// - `tab_size`: Tab width for rendering (number of spaces per tab, should be > 0)
     ///
-    /// Note: If tab_size is 0, it will be treated as 1 to prevent division by zero.
+    /// Note: If tab_size is 0, it will be treated as 4 (the default) to prevent division by zero.
     /// This is a defensive measure to handle invalid configuration gracefully.
     pub fn new(
         tokens: &'a [ViewTokenWire],
@@ -145,9 +145,9 @@ impl<'a> ViewLineIterator<'a> {
         ansi_aware: bool,
         tab_size: usize,
     ) -> Self {
-        // Defensive: treat 0 as 1 to prevent division by zero in tab_expansion_width
+        // Defensive: treat 0 as 4 (default) to prevent division by zero in tab_expansion_width
         // This can happen if invalid config (tab_size: 0) is loaded
-        let tab_size = if tab_size == 0 { 1 } else { tab_size };
+        let tab_size = if tab_size == 0 { 4 } else { tab_size };
         Self {
             tokens,
             token_idx: 0,
