@@ -5,7 +5,205 @@
 //! These are separated from config.rs to allow schema-only builds.
 
 use crate::config::{Config, ConfigError};
+use crate::partial_config::{Merge, PartialConfig};
 use std::path::{Path, PathBuf};
+
+/// Represents a configuration layer in the 4-level hierarchy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigLayer {
+    /// Hardcoded defaults embedded in binary (lowest precedence)
+    System,
+    /// User-global settings (~/.config/fresh/config.json)
+    User,
+    /// Project-local settings ($PROJECT_ROOT/.fresh/config.json)
+    Project,
+    /// Runtime/volatile session state (highest precedence)
+    Session,
+}
+
+impl ConfigLayer {
+    /// Get the precedence level (higher = takes priority)
+    pub fn precedence(self) -> u8 {
+        match self {
+            ConfigLayer::System => 0,
+            ConfigLayer::User => 1,
+            ConfigLayer::Project => 2,
+            ConfigLayer::Session => 3,
+        }
+    }
+}
+
+/// Manages loading and merging of all configuration layers.
+///
+/// Resolution order: System → User → Project → Session
+/// Higher precedence layers override lower precedence layers.
+pub struct ConfigResolver {
+    dir_context: DirectoryContext,
+    working_dir: PathBuf,
+}
+
+impl ConfigResolver {
+    /// Create a new ConfigResolver for a working directory.
+    pub fn new(dir_context: DirectoryContext, working_dir: PathBuf) -> Self {
+        Self {
+            dir_context,
+            working_dir,
+        }
+    }
+
+    /// Load all layers and merge them into a resolved Config.
+    ///
+    /// Layers are merged from highest to lowest precedence:
+    /// Session > Project > User > System
+    ///
+    /// Each layer fills in values missing from higher precedence layers.
+    pub fn resolve(&self) -> Result<Config, ConfigError> {
+        // Start with highest precedence layer (Session)
+        let mut merged = self.load_session_layer()?.unwrap_or_default();
+
+        // Merge in Project layer (fills missing values)
+        if let Some(project_partial) = self.load_project_layer()? {
+            tracing::debug!("Loaded project config layer");
+            merged.merge_from(&project_partial);
+        }
+
+        // Merge in User layer (fills remaining missing values)
+        if let Some(user_partial) = self.load_user_layer()? {
+            tracing::debug!("Loaded user config layer");
+            merged.merge_from(&user_partial);
+        }
+
+        // Resolve to concrete Config (applies system defaults for any remaining None values)
+        Ok(merged.resolve())
+    }
+
+    /// Get the path to user config file.
+    pub fn user_config_path(&self) -> PathBuf {
+        self.dir_context.config_path()
+    }
+
+    /// Get the path to project config file.
+    pub fn project_config_path(&self) -> PathBuf {
+        self.working_dir.join(".fresh").join("config.json")
+    }
+
+    /// Get the path to session config file.
+    pub fn session_config_path(&self) -> PathBuf {
+        self.working_dir.join(".fresh").join("session.json")
+    }
+
+    /// Load the user layer from disk.
+    pub fn load_user_layer(&self) -> Result<Option<PartialConfig>, ConfigError> {
+        self.load_layer_from_path(&self.user_config_path())
+    }
+
+    /// Load the project layer from disk.
+    pub fn load_project_layer(&self) -> Result<Option<PartialConfig>, ConfigError> {
+        self.load_layer_from_path(&self.project_config_path())
+    }
+
+    /// Load the session layer from disk.
+    pub fn load_session_layer(&self) -> Result<Option<PartialConfig>, ConfigError> {
+        self.load_layer_from_path(&self.session_config_path())
+    }
+
+    /// Load a layer from a specific path.
+    fn load_layer_from_path(&self, path: &Path) -> Result<Option<PartialConfig>, ConfigError> {
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
+
+        let partial: PartialConfig = serde_json::from_str(&content)
+            .map_err(|e| ConfigError::ParseError(format!("{}: {}", path.display(), e)))?;
+
+        Ok(Some(partial))
+    }
+
+    /// Save a config to a specific layer, writing only the delta from parent layers.
+    pub fn save_to_layer(&self, config: &Config, layer: ConfigLayer) -> Result<(), ConfigError> {
+        if layer == ConfigLayer::System {
+            return Err(ConfigError::ValidationError(
+                "Cannot write to System layer".to_string(),
+            ));
+        }
+
+        // Calculate parent config (merge all layers below target)
+        let parent = self.resolve_up_to_layer(layer)?;
+
+        // Convert current config to partial
+        let current = PartialConfig::from(config);
+
+        // Calculate delta
+        let delta = diff_partial_config(&current, &parent);
+
+        // Get path for target layer
+        let path = match layer {
+            ConfigLayer::User => self.user_config_path(),
+            ConfigLayer::Project => self.project_config_path(),
+            ConfigLayer::Session => self.session_config_path(),
+            ConfigLayer::System => unreachable!(),
+        };
+
+        // Ensure parent directory exists
+        if let Some(parent_dir) = path.parent() {
+            std::fs::create_dir_all(parent_dir)
+                .map_err(|e| ConfigError::IoError(format!("{}: {}", parent_dir.display(), e)))?;
+        }
+
+        // Write delta to file
+        let json = serde_json::to_string_pretty(&delta)
+            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+        std::fs::write(&path, json)
+            .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
+
+        Ok(())
+    }
+
+    /// Resolve config by merging layers below the target layer.
+    /// Used to calculate the "parent" config for delta serialization.
+    fn resolve_up_to_layer(&self, layer: ConfigLayer) -> Result<PartialConfig, ConfigError> {
+        let mut merged = PartialConfig::default();
+
+        // Merge from highest precedence (just below target) to lowest
+        // Session layer: parent includes Project + User
+        // Project layer: parent includes User only
+        // User layer: parent is empty (system defaults applied during resolve)
+
+        if layer == ConfigLayer::Session {
+            // Session's parent is Project + User
+            if let Some(project) = self.load_project_layer()? {
+                merged = project;
+            }
+            if let Some(user) = self.load_user_layer()? {
+                merged.merge_from(&user);
+            }
+        } else if layer == ConfigLayer::Project {
+            // Project's parent is User only
+            if let Some(user) = self.load_user_layer()? {
+                merged = user;
+            }
+        }
+        // User layer's parent is empty (defaults handled during resolve)
+
+        Ok(merged)
+    }
+}
+
+/// Calculate the delta between a partial config and its parent.
+/// Returns a PartialConfig containing only values that differ from parent.
+fn diff_partial_config(current: &PartialConfig, parent: &PartialConfig) -> PartialConfig {
+    // Convert both to JSON values and diff them
+    let current_json = serde_json::to_value(current).unwrap_or_default();
+    let parent_json = serde_json::to_value(parent).unwrap_or_default();
+
+    let diff = json_diff(&parent_json, &current_json);
+
+    // Convert diff back to PartialConfig
+    serde_json::from_value(diff).unwrap_or_default()
+}
 
 impl Config {
     /// Get the system config file paths (without local/working directory).
@@ -303,5 +501,107 @@ impl DirectoryContext {
     /// Get the plugins directory path
     pub fn plugins_dir(&self) -> std::path::PathBuf {
         self.config_dir.join("plugins")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn create_test_resolver() -> (TempDir, ConfigResolver) {
+        let temp_dir = TempDir::new().unwrap();
+        let dir_context = DirectoryContext::for_testing(temp_dir.path());
+        let working_dir = temp_dir.path().join("project");
+        std::fs::create_dir_all(&working_dir).unwrap();
+        let resolver = ConfigResolver::new(dir_context, working_dir);
+        (temp_dir, resolver)
+    }
+
+    #[test]
+    fn resolver_returns_defaults_when_no_config_files() {
+        let (_temp, resolver) = create_test_resolver();
+        let config = resolver.resolve().unwrap();
+
+        // Should have system defaults
+        assert_eq!(config.editor.tab_size, 4);
+        assert!(config.editor.line_numbers);
+    }
+
+    #[test]
+    fn resolver_loads_user_layer() {
+        let (temp, resolver) = create_test_resolver();
+
+        // Create user config
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(&user_config_path, r#"{"editor": {"tab_size": 2}}"#).unwrap();
+
+        let config = resolver.resolve().unwrap();
+        assert_eq!(config.editor.tab_size, 2);
+        assert!(config.editor.line_numbers); // Still default
+        drop(temp);
+    }
+
+    #[test]
+    fn resolver_project_overrides_user() {
+        let (temp, resolver) = create_test_resolver();
+
+        // Create user config with tab_size=2
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{"editor": {"tab_size": 2, "line_numbers": false}}"#,
+        )
+        .unwrap();
+
+        // Create project config with tab_size=8
+        let project_config_path = resolver.project_config_path();
+        std::fs::create_dir_all(project_config_path.parent().unwrap()).unwrap();
+        std::fs::write(&project_config_path, r#"{"editor": {"tab_size": 8}}"#).unwrap();
+
+        let config = resolver.resolve().unwrap();
+        assert_eq!(config.editor.tab_size, 8); // Project wins
+        assert!(!config.editor.line_numbers); // User value preserved
+        drop(temp);
+    }
+
+    #[test]
+    fn resolver_session_overrides_all() {
+        let (temp, resolver) = create_test_resolver();
+
+        // Create user config
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(&user_config_path, r#"{"editor": {"tab_size": 2}}"#).unwrap();
+
+        // Create project config
+        let project_config_path = resolver.project_config_path();
+        std::fs::create_dir_all(project_config_path.parent().unwrap()).unwrap();
+        std::fs::write(&project_config_path, r#"{"editor": {"tab_size": 4}}"#).unwrap();
+
+        // Create session config
+        let session_config_path = resolver.session_config_path();
+        std::fs::write(&session_config_path, r#"{"editor": {"tab_size": 16}}"#).unwrap();
+
+        let config = resolver.resolve().unwrap();
+        assert_eq!(config.editor.tab_size, 16); // Session wins
+        drop(temp);
+    }
+
+    #[test]
+    fn layer_precedence_ordering() {
+        assert!(ConfigLayer::Session.precedence() > ConfigLayer::Project.precedence());
+        assert!(ConfigLayer::Project.precedence() > ConfigLayer::User.precedence());
+        assert!(ConfigLayer::User.precedence() > ConfigLayer::System.precedence());
+    }
+
+    #[test]
+    fn save_to_system_layer_fails() {
+        let (_temp, resolver) = create_test_resolver();
+        let config = Config::default();
+        let result = resolver.save_to_layer(&config, ConfigLayer::System);
+        assert!(result.is_err());
     }
 }
