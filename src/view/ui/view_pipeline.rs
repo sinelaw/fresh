@@ -135,14 +135,19 @@ impl<'a> ViewLineIterator<'a> {
     /// - `tokens`: The token stream to convert to display lines
     /// - `binary_mode`: Whether to render unprintable chars as code points
     /// - `ansi_aware`: Whether to parse ANSI escape sequences (giving them zero visual width)
-    /// - `tab_size`: Tab width for rendering (number of spaces per tab, must be > 0)
+    /// - `tab_size`: Tab width for rendering (number of spaces per tab, should be > 0)
+    ///
+    /// Note: If tab_size is 0, it will be treated as 1 to prevent division by zero.
+    /// This is a defensive measure to handle invalid configuration gracefully.
     pub fn new(
         tokens: &'a [ViewTokenWire],
         binary_mode: bool,
         ansi_aware: bool,
         tab_size: usize,
     ) -> Self {
-        debug_assert!(tab_size > 0, "tab_size must be > 0");
+        // Defensive: treat 0 as 1 to prevent division by zero in tab_expansion_width
+        // This can happen if invalid config (tab_size: 0) is loaded
+        let tab_size = if tab_size == 0 { 1 } else { tab_size };
         Self {
             tokens,
             token_idx: 0,
