@@ -1029,12 +1029,13 @@ globalThis.review_drill_down = async () => {
         const oldContent = gitShow.stdout;
 
         // Read new file content
-        const newFileResult = await editor.spawnProcess("cat", [h.file]);
-        if (newFileResult.exit_code !== 0) {
+        let newContent: string;
+        try {
+            newContent = await editor.readFile(h.file);
+        } catch (e) {
             editor.setStatus("Failed to load new file version");
             return;
         }
-        const newContent = newFileResult.stdout;
 
         // Close the Review Diff buffer to make room for side-by-side view
         // Store the review buffer ID so we can restore it later
@@ -1373,10 +1374,7 @@ globalThis.review_export_session = async () => {
     const cwd = editor.getCwd();
     const reviewDir = editor.pathJoin(cwd, ".review");
 
-    // Create .review directory if needed
-    await editor.spawnProcess("mkdir", ["-p", reviewDir]);
-
-    // Generate markdown content
+    // Generate markdown content (writeFile creates parent directories)
     let md = `# Code Review Session\n`;
     md += `Date: ${new Date().toISOString()}\n\n`;
 
@@ -1448,7 +1446,7 @@ globalThis.review_export_session = async () => {
 globalThis.review_export_json = async () => {
     const cwd = editor.getCwd();
     const reviewDir = editor.pathJoin(cwd, ".review");
-    await editor.spawnProcess("mkdir", ["-p", reviewDir]);
+    // writeFile creates parent directories
 
     const session = {
         version: "1.0",
@@ -1597,12 +1595,13 @@ globalThis.side_by_side_diff_current_file = async () => {
     const oldContent = gitShow.stdout;
 
     // Read new file content
-    const newFileResult = await editor.spawnProcess("cat", [filePath]);
-    if (newFileResult.exit_code !== 0) {
+    let newContent: string;
+    try {
+        newContent = await editor.readFile(filePath);
+    } catch (e) {
         editor.setStatus("Failed to load new file version");
         return;
     }
-    const newContent = newFileResult.stdout;
 
     // Compute aligned diff for the FULL file
     const alignedLines = computeFullFileAlignedDiff(oldContent, newContent, fileHunks);
