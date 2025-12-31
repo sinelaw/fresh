@@ -110,6 +110,8 @@ pub enum Event {
         face: OverlayFace,
         priority: i32,
         message: Option<String>,
+        /// Whether to extend the overlay's background to the end of the visual line
+        extend_to_line_end: bool,
     },
 
     /// Remove overlay by handle

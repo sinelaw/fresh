@@ -41,6 +41,7 @@ impl Editor {
         underline: bool,
         bold: bool,
         italic: bool,
+        extend_to_line_end: bool,
     ) {
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let face = crate::model::event::OverlayFace::Style {
@@ -56,6 +57,7 @@ impl Editor {
                 face,
                 priority: 10,
                 message: None,
+                extend_to_line_end,
             };
             state.apply(&event);
             // Note: Overlays are ephemeral, not added to event log for undo/redo
@@ -563,6 +565,8 @@ impl Editor {
                 view_state.viewport.top_byte = clamped_byte;
                 // Also reset view line offset to 0 as we are setting absolute byte position
                 view_state.viewport.top_view_line_offset = 0;
+                // Skip ensure_visible so the scroll position isn't undone during render
+                view_state.viewport.set_skip_ensure_visible();
 
                 tracing::debug!(
                     "SetSplitScroll: split {:?} scrolled to byte {}",

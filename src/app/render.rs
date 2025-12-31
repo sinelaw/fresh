@@ -6,6 +6,17 @@ impl Editor {
         let _span = tracing::trace_span!("render").entered();
         let size = frame.area();
 
+        // For scroll sync groups, we need to update the active split's viewport position BEFORE
+        // calling sync_scroll_groups, so that the sync reads the correct position.
+        // Otherwise, cursor movements like 'G' (go to end) won't sync properly because
+        // viewport.top_byte hasn't been updated yet.
+        let active_split = self.split_manager.active_split();
+        self.pre_sync_ensure_visible(active_split);
+
+        // Synchronize scroll sync groups (anchor-based scroll for side-by-side diffs)
+        // This sets viewport positions based on the authoritative scroll_line in each group
+        self.sync_scroll_groups();
+
         // NOTE: Viewport sync with cursor is handled by split_rendering.rs which knows the
         // correct content area dimensions. Don't sync here with incorrect EditorState viewport size.
 
@@ -312,18 +323,6 @@ impl Editor {
 
         let is_maximized = self.split_manager.is_maximized();
 
-        // Record initial viewport states to detect changes
-        let initial_viewports: HashMap<SplitId, (usize, u16, u16)> = self
-            .split_view_states
-            .iter()
-            .map(|(id, vs)| {
-                (
-                    *id,
-                    (vs.viewport.top_byte, vs.viewport.width, vs.viewport.height),
-                )
-            })
-            .collect();
-
         let (split_areas, tab_areas, close_split_areas, maximize_split_areas, view_line_mappings) =
             SplitRenderer::render_content(
                 frame,
@@ -350,6 +349,8 @@ impl Editor {
             );
 
         // Detect viewport changes and fire hooks
+        // Compare against previous frame's viewport state (stored in self.previous_viewports)
+        // This correctly detects changes from scroll events that happen before render()
         if self.plugin_manager.is_active() {
             for (split_id, view_state) in &self.split_view_states {
                 let current = (
@@ -357,23 +358,55 @@ impl Editor {
                     view_state.viewport.width,
                     view_state.viewport.height,
                 );
-                if let Some(initial) = initial_viewports.get(split_id) {
-                    if *initial != current {
-                        if let Some(buffer_id) = self.split_manager.get_buffer_id(*split_id) {
-                            self.plugin_manager.run_hook(
-                                "viewport_changed",
-                                crate::services::plugins::hooks::HookArgs::ViewportChanged {
-                                    split_id: *split_id,
-                                    buffer_id,
-                                    top_byte: view_state.viewport.top_byte,
-                                    width: view_state.viewport.width,
-                                    height: view_state.viewport.height,
-                                },
-                            );
-                        }
+                // Compare against previous frame's state
+                // Skip new splits (None case) - only fire hooks for established splits
+                // This matches the original behavior where hooks only fire for splits
+                // that existed at the start of render
+                let (changed, previous) = match self.previous_viewports.get(split_id) {
+                    Some(previous) => (*previous != current, Some(*previous)),
+                    None => (false, None), // Skip new splits until they're established
+                };
+                tracing::trace!(
+                    "viewport_changed check: split={:?} current={:?} previous={:?} changed={}",
+                    split_id,
+                    current,
+                    previous,
+                    changed
+                );
+                if changed {
+                    if let Some(buffer_id) = self.split_manager.get_buffer_id(*split_id) {
+                        tracing::debug!(
+                            "Firing viewport_changed hook: split={:?} buffer={:?} top_byte={}",
+                            split_id,
+                            buffer_id,
+                            view_state.viewport.top_byte
+                        );
+                        self.plugin_manager.run_hook(
+                            "viewport_changed",
+                            crate::services::plugins::hooks::HookArgs::ViewportChanged {
+                                split_id: *split_id,
+                                buffer_id,
+                                top_byte: view_state.viewport.top_byte,
+                                width: view_state.viewport.width,
+                                height: view_state.viewport.height,
+                            },
+                        );
                     }
                 }
             }
+        }
+
+        // Update previous_viewports for next frame's comparison
+        self.previous_viewports.clear();
+        for (split_id, view_state) in &self.split_view_states {
+            self.previous_viewports.insert(
+                *split_id,
+                (
+                    view_state.viewport.top_byte,
+                    view_state.viewport.width,
+                    view_state.viewport.height,
+                ),
+            );
         }
 
         // Render terminal content on top of split content for terminal buffers
@@ -1125,6 +1158,7 @@ impl Editor {
             face,
             priority,
             message,
+            extend_to_line_end: false,
         };
         self.apply_event_to_active_buffer(&event);
         // Return the handle of the last added overlay
@@ -3550,5 +3584,152 @@ impl Editor {
         };
 
         view_state.tab_scroll_offset = new_scroll_offset;
+    }
+
+    /// Synchronize viewports for all scroll sync groups
+    ///
+    /// This syncs the inactive split's viewport to match the active split's position.
+    /// By deriving from the active split's actual viewport, we capture all viewport
+    /// changes regardless of source (scroll events, cursor movements, etc.).
+    fn sync_scroll_groups(&mut self) {
+        let active_split = self.split_manager.active_split();
+        let group_count = self.scroll_sync_manager.groups().len();
+
+        if group_count > 0 {
+            tracing::debug!(
+                "sync_scroll_groups: active_split={:?}, {} groups",
+                active_split,
+                group_count
+            );
+        }
+
+        // Collect sync info: for each group where active split participates,
+        // get the active split's current line position
+        let sync_info: Vec<_> = self
+            .scroll_sync_manager
+            .groups()
+            .iter()
+            .filter_map(|group| {
+                tracing::debug!(
+                    "sync_scroll_groups: checking group {}, left={:?}, right={:?}",
+                    group.id,
+                    group.left_split,
+                    group.right_split
+                );
+
+                if !group.contains_split(active_split) {
+                    tracing::debug!(
+                        "sync_scroll_groups: active split {:?} not in group",
+                        active_split
+                    );
+                    return None;
+                }
+
+                // Get active split's current viewport top_byte
+                let active_top_byte = self
+                    .split_view_states
+                    .get(&active_split)?
+                    .viewport
+                    .top_byte;
+
+                // Get active split's buffer to convert bytes → line
+                let active_buffer_id = self.split_manager.buffer_for_split(active_split)?;
+                let buffer_state = self.buffers.get(&active_buffer_id)?;
+                let buffer_len = buffer_state.buffer.len();
+                let active_line = buffer_state.buffer.get_line_number(active_top_byte);
+
+                tracing::debug!(
+                    "sync_scroll_groups: active_split={:?}, buffer_id={:?}, top_byte={}, buffer_len={}, active_line={}",
+                    active_split,
+                    active_buffer_id,
+                    active_top_byte,
+                    buffer_len,
+                    active_line
+                );
+
+                // Determine the other split and compute its target line
+                let (other_split, other_line) = if group.is_left_split(active_split) {
+                    // Active is left, sync right
+                    (group.right_split, group.left_to_right_line(active_line))
+                } else {
+                    // Active is right, sync left
+                    (group.left_split, group.right_to_left_line(active_line))
+                };
+
+                tracing::debug!(
+                    "sync_scroll_groups: syncing other_split={:?} to line {}",
+                    other_split,
+                    other_line
+                );
+
+                Some((other_split, other_line))
+            })
+            .collect();
+
+        // Apply sync to other splits
+        for (other_split, target_line) in sync_info {
+            if let Some(buffer_id) = self.split_manager.buffer_for_split(other_split) {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    let buffer = &mut state.buffer;
+                    if let Some(view_state) = self.split_view_states.get_mut(&other_split) {
+                        view_state.viewport.scroll_to(buffer, target_line);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Pre-sync ensure_visible for scroll sync groups
+    ///
+    /// When the active split is in a scroll sync group, we need to update its viewport
+    /// BEFORE sync_scroll_groups runs. This ensures cursor movements like 'G' (go to end)
+    /// properly sync to the other split.
+    ///
+    /// After updating the active split's viewport, we mark the OTHER splits in the group
+    /// to skip ensure_visible so the sync position isn't undone during rendering.
+    fn pre_sync_ensure_visible(&mut self, active_split: SplitId) {
+        // Check if active split is in any scroll sync group
+        let group_info = self
+            .scroll_sync_manager
+            .find_group_for_split(active_split)
+            .map(|g| (g.left_split, g.right_split));
+
+        let Some((left_split, right_split)) = group_info else {
+            return;
+        };
+
+        // Get the active split's buffer and update its viewport
+        if let Some(buffer_id) = self.split_manager.buffer_for_split(active_split) {
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                let buffer = &mut state.buffer;
+                let cursor = *state.cursors.primary();
+
+                if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+                    // Update viewport to show cursor - this is what ensure_visible does
+                    view_state.viewport.ensure_visible(buffer, &cursor);
+
+                    tracing::debug!(
+                        "pre_sync_ensure_visible: updated active split {:?} viewport, top_byte={}",
+                        active_split,
+                        view_state.viewport.top_byte
+                    );
+                }
+            }
+        }
+
+        // Mark the OTHER split to skip ensure_visible so the sync position isn't undone
+        let other_split = if active_split == left_split {
+            right_split
+        } else {
+            left_split
+        };
+
+        if let Some(view_state) = self.split_view_states.get_mut(&other_split) {
+            view_state.viewport.set_skip_ensure_visible();
+            tracing::debug!(
+                "pre_sync_ensure_visible: marked other split {:?} to skip ensure_visible",
+                other_split
+            );
+        }
     }
 }

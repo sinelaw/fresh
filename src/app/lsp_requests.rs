@@ -578,6 +578,7 @@ impl Editor {
                 },
                 priority: 90, // Below rename (100) but above syntax (lower)
                 message: None,
+                extend_to_line_end: false,
             };
             self.apply_event_to_active_buffer(&event);
             // Store the handle for later removal

@@ -267,6 +267,7 @@ pub enum PluginCommand {
         underline: bool,
         bold: bool,
         italic: bool,
+        extend_to_line_end: bool,
     },
 
     /// Remove an overlay by its opaque handle
@@ -538,6 +539,8 @@ pub enum PluginCommand {
         show_cursors: bool,
         /// Whether editing is disabled for this buffer (default false)
         editing_disabled: bool,
+        /// Whether line wrapping is enabled for this split (None = use global setting)
+        line_wrap: Option<bool>,
         /// Optional request ID for async response (if set, editor will send back buffer ID)
         request_id: Option<u64>,
     },
@@ -581,6 +584,8 @@ pub enum PluginCommand {
         show_cursors: bool,
         /// Whether editing is disabled for this buffer (default false)
         editing_disabled: bool,
+        /// Whether line wrapping is enabled for this split (None = use global setting)
+        line_wrap: Option<bool>,
         /// Optional request ID for async response
         request_id: Option<u64>,
     },
@@ -709,6 +714,33 @@ pub enum PluginCommand {
     DisableLspForLanguage {
         /// The language to disable LSP for (e.g., "python", "rust")
         language: String,
+    },
+
+    /// Create a scroll sync group for anchor-based synchronized scrolling
+    /// Used for side-by-side diff views where two panes need to scroll together
+    /// The plugin provides the group ID (must be unique per plugin)
+    CreateScrollSyncGroup {
+        /// Plugin-assigned group ID
+        group_id: u32,
+        /// The left (primary) split - scroll position is tracked in this split's line space
+        left_split: SplitId,
+        /// The right (secondary) split - position is derived from anchors
+        right_split: SplitId,
+    },
+
+    /// Set sync anchors for a scroll sync group
+    /// Anchors map corresponding line numbers between left and right buffers
+    SetScrollSyncAnchors {
+        /// The group ID returned by CreateScrollSyncGroup
+        group_id: u32,
+        /// List of (left_line, right_line) pairs marking corresponding positions
+        anchors: Vec<(usize, usize)>,
+    },
+
+    /// Remove a scroll sync group
+    RemoveScrollSyncGroup {
+        /// The group ID returned by CreateScrollSyncGroup
+        group_id: u32,
     },
 }
 
@@ -845,6 +877,7 @@ impl PluginApi {
         underline: bool,
         bold: bool,
         italic: bool,
+        extend_to_line_end: bool,
     ) -> Result<(), String> {
         self.send_command(PluginCommand::AddOverlay {
             buffer_id,
@@ -855,6 +888,7 @@ impl PluginApi {
             underline,
             bold,
             italic,
+            extend_to_line_end,
         })
     }
 
@@ -1223,6 +1257,7 @@ mod tests {
             true,
             false,
             false,
+            false,
         );
         assert!(result.is_ok());
 
@@ -1237,6 +1272,7 @@ mod tests {
                 underline,
                 bold,
                 italic,
+                extend_to_line_end,
             } => {
                 assert_eq!(buffer_id.0, 1);
                 assert_eq!(namespace.as_ref().map(|n| n.as_str()), Some("test-overlay"));
@@ -1246,6 +1282,7 @@ mod tests {
                 assert!(underline);
                 assert!(!bold);
                 assert!(!italic);
+                assert!(!extend_to_line_end);
             }
             _ => panic!("Wrong command type"),
         }

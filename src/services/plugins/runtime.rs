@@ -446,6 +446,7 @@ fn op_fresh_delete_range(state: &mut OpState, buffer_id: u32, start: u32, end: u
 /// @param underline - Add underline decoration
 /// @param bold - Use bold text
 /// @param italic - Use italic text
+/// @param extend_to_line_end - Extend background to end of visual line
 /// @returns true if overlay was added
 #[op2(fast)]
 #[allow(clippy::too_many_arguments)]
@@ -464,6 +465,7 @@ fn op_fresh_add_overlay(
     underline: bool,
     bold: bool,
     italic: bool,
+    extend_to_line_end: bool,
 ) -> bool {
     if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
         let runtime_state = runtime_state.borrow();
@@ -492,6 +494,7 @@ fn op_fresh_add_overlay(
                 underline,
                 bold,
                 italic,
+                extend_to_line_end,
             });
         return result.is_ok();
     }
@@ -2404,6 +2407,8 @@ struct CreateVirtualBufferOptions {
     show_cursors: Option<bool>,
     /// Disable all editing commands (default: false)
     editing_disabled: Option<bool>,
+    /// Enable/disable line wrapping (None = use global setting)
+    line_wrap: Option<bool>,
 }
 
 /// Create a virtual buffer in a new horizontal split below current pane
@@ -2489,6 +2494,7 @@ async fn op_fresh_create_virtual_buffer_in_split(
                 show_line_numbers: options.show_line_numbers.unwrap_or(true),
                 show_cursors: options.show_cursors.unwrap_or(true),
                 editing_disabled: options.editing_disabled.unwrap_or(false),
+                line_wrap: options.line_wrap,
                 request_id: Some(request_id),
             })
             .map_err(|_| JsErrorBox::generic("Failed to send command"))?;
@@ -2537,6 +2543,8 @@ struct CreateVirtualBufferInExistingSplitOptions {
     show_cursors: Option<bool>,
     /// Whether editing is disabled for this buffer (default false)
     editing_disabled: Option<bool>,
+    /// Enable/disable line wrapping (None = use global setting)
+    line_wrap: Option<bool>,
 }
 
 /// Create a virtual buffer in an existing split
@@ -2594,6 +2602,7 @@ async fn op_fresh_create_virtual_buffer_in_existing_split(
                 show_line_numbers: options.show_line_numbers.unwrap_or(true),
                 show_cursors: options.show_cursors.unwrap_or(true),
                 editing_disabled: options.editing_disabled.unwrap_or(false),
+                line_wrap: options.line_wrap,
                 request_id: Some(request_id),
             })
             .map_err(|_| JsErrorBox::generic("Failed to send command"))?;
@@ -3282,6 +3291,66 @@ fn op_fresh_disable_lsp_for_language(state: &mut OpState, #[string] language: St
     false
 }
 
+/// Create a scroll sync group for anchor-based synchronized scrolling
+///
+/// Used for side-by-side diff views where two panes need to scroll together.
+/// The plugin provides the group ID (must be unique per plugin).
+#[op2(fast)]
+fn op_fresh_create_scroll_sync_group(
+    state: &mut OpState,
+    group_id: u32,
+    left_split: u32,
+    right_split: u32,
+) -> bool {
+    use crate::model::event::SplitId;
+
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::CreateScrollSyncGroup {
+                group_id,
+                left_split: SplitId(left_split as usize),
+                right_split: SplitId(right_split as usize),
+            });
+        return result.is_ok();
+    }
+    false
+}
+
+/// Set sync anchors for a scroll sync group
+///
+/// Anchors map corresponding line numbers between left and right buffers.
+/// Each anchor is a tuple of (left_line, right_line).
+#[op2]
+fn op_fresh_set_scroll_sync_anchors(
+    state: &mut OpState,
+    group_id: u32,
+    #[serde] anchors: Vec<(usize, usize)>,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::SetScrollSyncAnchors { group_id, anchors });
+        return result.is_ok();
+    }
+    false
+}
+
+/// Remove a scroll sync group
+#[op2(fast)]
+fn op_fresh_remove_scroll_sync_group(state: &mut OpState, group_id: u32) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::RemoveScrollSyncGroup { group_id });
+        return result.is_ok();
+    }
+    false
+}
+
 // Define the extension with our ops
 extension!(
     fresh_runtime,
@@ -3385,6 +3454,10 @@ extension!(
         // LSP helper operations
         op_fresh_show_action_popup,
         op_fresh_disable_lsp_for_language,
+        // Scroll sync operations
+        op_fresh_create_scroll_sync_group,
+        op_fresh_set_scroll_sync_anchors,
+        op_fresh_remove_scroll_sync_group,
     ],
 );
 
@@ -3537,8 +3610,9 @@ impl TypeScriptRuntime {
                     // namespace: group overlays together for efficient batch removal
                     // Use empty string for no namespace
                     // bg_r, bg_g, bg_b: background color (-1 for no background)
-                    addOverlay(bufferId, namespace, start, end, r, g, b, underline, bold = false, italic = false, bg_r = -1, bg_g = -1, bg_b = -1) {
-                        return core.ops.op_fresh_add_overlay(bufferId, namespace, start, end, r, g, b, bg_r, bg_g, bg_b, underline, bold, italic);
+                    // extend_to_line_end: extend background to end of visual line
+                    addOverlay(bufferId, namespace, start, end, r, g, b, underline, bold = false, italic = false, bg_r = -1, bg_g = -1, bg_b = -1, extend_to_line_end = false) {
+                        return core.ops.op_fresh_add_overlay(bufferId, namespace, start, end, r, g, b, bg_r, bg_g, bg_b, underline, bold, italic, extend_to_line_end);
                     },
                     removeOverlay(bufferId, handle) {
                         return core.ops.op_fresh_remove_overlay(bufferId, handle);
@@ -3838,6 +3912,17 @@ impl TypeScriptRuntime {
                     },
                     disableLspForLanguage(language) {
                         return core.ops.op_fresh_disable_lsp_for_language(language);
+                    },
+
+                    // Scroll sync for side-by-side diff views
+                    createScrollSyncGroup(groupId, leftSplit, rightSplit) {
+                        return core.ops.op_fresh_create_scroll_sync_group(groupId, leftSplit, rightSplit);
+                    },
+                    setScrollSyncAnchors(groupId, anchors) {
+                        return core.ops.op_fresh_set_scroll_sync_anchors(groupId, anchors);
+                    },
+                    removeScrollSyncGroup(groupId) {
+                        return core.ops.op_fresh_remove_scroll_sync_group(groupId);
                     },
                 };
 
@@ -4655,6 +4740,7 @@ mod tests {
                 underline,
                 bold,
                 italic,
+                extend_to_line_end,
             } => {
                 assert_eq!(buffer_id.0, 42);
                 assert_eq!(namespace.as_ref().map(|n| n.as_str()), Some("test-overlay"));
@@ -4665,6 +4751,7 @@ mod tests {
                 assert!(*underline);
                 assert!(!*bold);
                 assert!(!*italic);
+                assert!(!*extend_to_line_end);
             }
             _ => panic!("Expected AddOverlay command"),
         }

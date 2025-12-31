@@ -2341,6 +2341,10 @@ impl SplitRenderer {
                 None
             };
 
+            // Track byte positions for extend_to_line_end feature
+            let mut first_line_byte_pos: Option<usize> = None;
+            let mut last_line_byte_pos: Option<usize> = None;
+
             let mut chars_iterator = line_content.chars().peekable();
             while let Some(ch) = chars_iterator.next() {
                 // Get source byte for this character using character index
@@ -2349,6 +2353,14 @@ impl SplitRenderer {
                     .get(display_char_idx)
                     .copied()
                     .flatten();
+
+                // Track byte positions for extend_to_line_end
+                if let Some(bp) = byte_pos {
+                    if first_line_byte_pos.is_none() {
+                        first_line_byte_pos = Some(bp);
+                    }
+                    last_line_byte_pos = Some(bp);
+                }
 
                 // Process character through ANSI parser first (if line has ANSI)
                 // If parser returns None, the character is part of an escape sequence and should be skipped
@@ -2705,6 +2717,62 @@ impl SplitRenderer {
                         // Track the last visible position (rightmost character with a source mapping)
                         // This is used for EOF cursor placement
                         last_visible_x = screen_x as u16;
+                    }
+                }
+            }
+
+            // Fill remaining width for overlays with extend_to_line_end
+            // Only when line wrapping is disabled (side-by-side diff typically disables wrapping)
+            if !line_wrap {
+                // Calculate the content area width (total width minus gutter)
+                let content_width = render_area.width.saturating_sub(gutter_width as u16) as usize;
+                let remaining_cols = content_width.saturating_sub(visible_char_count);
+
+                if remaining_cols > 0 {
+                    // Find the highest priority background color from overlays with extend_to_line_end
+                    // that overlap with this line's byte range
+                    let fill_style: Option<Style> = if let (Some(start), Some(end)) =
+                        (first_line_byte_pos, last_line_byte_pos)
+                    {
+                        viewport_overlays
+                            .iter()
+                            .filter(|(overlay, range)| {
+                                overlay.extend_to_line_end
+                                    && range.start <= end
+                                    && range.end >= start
+                            })
+                            .max_by_key(|(o, _)| o.priority)
+                            .and_then(|(overlay, _)| {
+                                match &overlay.face {
+                                    crate::view::overlay::OverlayFace::Background { color } => {
+                                        // Set both fg and bg to ensure ANSI codes are output
+                                        Some(Style::default().fg(*color).bg(*color))
+                                    }
+                                    crate::view::overlay::OverlayFace::Style { style } => {
+                                        // Extract background from style if present
+                                        if let Some(bg) = style.bg {
+                                            // Set fg to same as bg for invisible text
+                                            Some(Style::default().fg(bg).bg(bg))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    _ => None,
+                                }
+                            })
+                    } else {
+                        None
+                    };
+
+                    if let Some(fill_bg) = fill_style {
+                        let fill_text = " ".repeat(remaining_cols);
+                        push_span_with_map(
+                            &mut line_spans,
+                            &mut line_view_map,
+                            fill_text,
+                            fill_bg,
+                            None,
+                        );
                     }
                 }
             }

@@ -189,6 +189,7 @@ mod tests {
             face: crate::model::event::OverlayFace::Background { color: (255, 0, 0) },
             priority: 10,
             message: None,
+            extend_to_line_end: false,
         };
 
         let buffer_id = BufferId(1);

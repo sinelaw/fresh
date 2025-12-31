@@ -93,6 +93,7 @@ use crate::state::EditorState;
 use crate::types::LspServerConfig;
 use crate::view::file_tree::{FileTree, FileTreeView};
 use crate::view::prompt::{Prompt, PromptType};
+use crate::view::scroll_sync::ScrollSyncManager;
 use crate::view::split::{SplitManager, SplitViewState};
 use crate::view::ui::{
     FileExplorerRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer,
@@ -209,6 +210,15 @@ pub struct Editor {
     /// This allows multiple splits showing the same buffer to have independent
     /// cursor positions and scroll positions
     split_view_states: HashMap<SplitId, SplitViewState>,
+
+    /// Previous viewport states for viewport_changed hook detection
+    /// Stores (top_byte, width, height) from the end of the last render frame
+    /// Used to detect viewport changes that occur between renders (e.g., scroll events)
+    previous_viewports: HashMap<SplitId, (usize, u16, u16)>,
+
+    /// Scroll sync manager for anchor-based synchronized scrolling
+    /// Used for side-by-side diff views where two panes need to scroll together
+    scroll_sync_manager: ScrollSyncManager,
 
     /// File explorer view (optional, only when open)
     file_explorer: Option<FileTreeView>,
@@ -821,6 +831,8 @@ impl Editor {
             async_bridge: Some(async_bridge),
             split_manager,
             split_view_states,
+            previous_viewports: HashMap::new(),
+            scroll_sync_manager: ScrollSyncManager::new(),
             file_explorer: None,
             fs_manager,
             file_explorer_visible: false,
@@ -1965,7 +1977,22 @@ impl Editor {
 
         let active_split = self.split_manager.active_split();
 
-        // Find other splits in the same sync group if any
+        // Check if this split is in a scroll sync group (anchor-based sync for diffs)
+        // Mark both splits to skip ensure_visible so cursor doesn't override scroll
+        // The sync_scroll_groups() at render time will sync the other split
+        if let Some(group) = self.scroll_sync_manager.find_group_for_split(active_split) {
+            let left = group.left_split;
+            let right = group.right_split;
+            if let Some(vs) = self.split_view_states.get_mut(&left) {
+                vs.viewport.set_skip_ensure_visible();
+            }
+            if let Some(vs) = self.split_view_states.get_mut(&right) {
+                vs.viewport.set_skip_ensure_visible();
+            }
+            // Continue to scroll the active split normally below
+        }
+
+        // Fall back to simple sync_group (same delta to all splits)
         let sync_group = self
             .split_view_states
             .get(&active_split)
@@ -2026,7 +2053,37 @@ impl Editor {
     fn handle_set_viewport_event(&mut self, top_line: usize) {
         let active_split = self.split_manager.active_split();
 
-        // Find other splits in the same sync group if any
+        // Check if this split is in a scroll sync group (anchor-based sync for diffs)
+        // If so, set the group's scroll_line and let render sync the viewports
+        if self.scroll_sync_manager.is_split_synced(active_split) {
+            if let Some(group) = self
+                .scroll_sync_manager
+                .find_group_for_split_mut(active_split)
+            {
+                // Convert line to left buffer space if coming from right split
+                let scroll_line = if group.is_left_split(active_split) {
+                    top_line
+                } else {
+                    group.right_to_left_line(top_line)
+                };
+                group.set_scroll_line(scroll_line);
+            }
+
+            // Mark both splits to skip ensure_visible
+            if let Some(group) = self.scroll_sync_manager.find_group_for_split(active_split) {
+                let left = group.left_split;
+                let right = group.right_split;
+                if let Some(vs) = self.split_view_states.get_mut(&left) {
+                    vs.viewport.set_skip_ensure_visible();
+                }
+                if let Some(vs) = self.split_view_states.get_mut(&right) {
+                    vs.viewport.set_skip_ensure_visible();
+                }
+            }
+            return;
+        }
+
+        // Fall back to simple sync_group (same line to all splits)
         let sync_group = self
             .split_view_states
             .get(&active_split)
@@ -3320,9 +3377,18 @@ impl Editor {
                 underline,
                 bold,
                 italic,
+                extend_to_line_end,
             } => {
                 self.handle_add_overlay(
-                    buffer_id, namespace, range, color, bg_color, underline, bold, italic,
+                    buffer_id,
+                    namespace,
+                    range,
+                    color,
+                    bg_color,
+                    underline,
+                    bold,
+                    italic,
+                    extend_to_line_end,
                 );
             }
             PluginCommand::RemoveOverlay { buffer_id, handle } => {
@@ -3679,6 +3745,7 @@ impl Editor {
                 show_line_numbers,
                 show_cursors,
                 editing_disabled,
+                line_wrap,
                 request_id,
             } => {
                 // Check if this panel already exists (for idempotent operations)
@@ -3785,7 +3852,8 @@ impl Editor {
                                 self.terminal_height,
                                 buffer_id,
                             );
-                            view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+                            view_state.viewport.line_wrap_enabled =
+                                line_wrap.unwrap_or(self.config.editor.line_wrap);
                             self.split_view_states.insert(new_split_id, view_state);
 
                             // Focus the new split (the diagnostics panel)
@@ -3851,6 +3919,7 @@ impl Editor {
                 show_line_numbers,
                 show_cursors,
                 editing_disabled,
+                line_wrap,
                 request_id,
             } => {
                 // Create the virtual buffer
@@ -3885,6 +3954,14 @@ impl Editor {
                     // Focus the target split and set its buffer
                     self.split_manager.set_active_split(split_id);
                     self.split_manager.set_active_buffer_id(buffer_id);
+
+                    // Apply line_wrap setting if provided
+                    if let Some(wrap) = line_wrap {
+                        if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                            view_state.viewport.line_wrap_enabled = wrap;
+                        }
+                    }
+
                     tracing::info!(
                         "Displayed virtual buffer {:?} in split {:?}",
                         buffer_id,
@@ -4019,6 +4096,56 @@ impl Editor {
 
                 // 4. Clear any LSP-related warnings for this language
                 self.warning_domains.lsp.clear();
+            }
+
+            // ==================== Scroll Sync Commands ====================
+            PluginCommand::CreateScrollSyncGroup {
+                group_id,
+                left_split,
+                right_split,
+            } => {
+                let success = self.scroll_sync_manager.create_group_with_id(
+                    group_id,
+                    left_split,
+                    right_split,
+                );
+                if success {
+                    tracing::debug!(
+                        "Created scroll sync group {} for splits {:?} and {:?}",
+                        group_id,
+                        left_split,
+                        right_split
+                    );
+                } else {
+                    tracing::warn!(
+                        "Failed to create scroll sync group {} (ID already exists)",
+                        group_id
+                    );
+                }
+            }
+            PluginCommand::SetScrollSyncAnchors { group_id, anchors } => {
+                use crate::view::scroll_sync::SyncAnchor;
+                let anchor_count = anchors.len();
+                let sync_anchors: Vec<SyncAnchor> = anchors
+                    .into_iter()
+                    .map(|(left_line, right_line)| SyncAnchor {
+                        left_line,
+                        right_line,
+                    })
+                    .collect();
+                self.scroll_sync_manager.set_anchors(group_id, sync_anchors);
+                tracing::debug!(
+                    "Set {} anchors for scroll sync group {}",
+                    anchor_count,
+                    group_id
+                );
+            }
+            PluginCommand::RemoveScrollSyncGroup { group_id } => {
+                if self.scroll_sync_manager.remove_group(group_id) {
+                    tracing::debug!("Removed scroll sync group {}", group_id);
+                } else {
+                    tracing::warn!("Scroll sync group {} not found", group_id);
+                }
             }
         }
         Ok(())

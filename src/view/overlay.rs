@@ -122,6 +122,10 @@ pub struct Overlay {
 
     /// Optional tooltip/message to show when hovering over this overlay
     pub message: Option<String>,
+
+    /// Whether to extend the overlay's background to the end of the visual line
+    /// Used for full-width line highlighting (e.g., in diff views)
+    pub extend_to_line_end: bool,
 }
 
 impl Overlay {
@@ -145,6 +149,7 @@ impl Overlay {
             face,
             priority: 0,
             message: None,
+            extend_to_line_end: false,
         }
     }
 
@@ -187,6 +192,12 @@ impl Overlay {
     /// Set the namespace
     pub fn with_namespace_value(mut self, namespace: OverlayNamespace) -> Self {
         self.namespace = Some(namespace);
+        self
+    }
+
+    /// Set whether to extend the overlay to the end of the visual line
+    pub fn with_extend_to_line_end(mut self, extend: bool) -> Self {
+        self.extend_to_line_end = extend;
         self
     }
 

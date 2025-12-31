@@ -15,6 +15,7 @@ pub mod popup_input;
 pub mod prompt;
 pub mod prompt_input;
 pub mod query_replace_input;
+pub mod scroll_sync;
 pub mod semantic_highlight_cache;
 pub mod settings;
 pub mod split;
