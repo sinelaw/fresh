@@ -254,6 +254,8 @@ interface CreateVirtualBufferOptions {
   show_cursors?: boolean | null;
   /** Disable all editing commands (default: false) */
   editing_disabled?: boolean | null;
+  /** Enable/disable line wrapping (None = use global setting) */
+  line_wrap?: boolean | null;
 }
 
 /** Options for creating a virtual buffer in an existing split */
@@ -274,6 +276,8 @@ interface CreateVirtualBufferInExistingSplitOptions {
   show_cursors?: boolean | null;
   /** Whether editing is disabled for this buffer (default false) */
   editing_disabled?: boolean | null;
+  /** Enable/disable line wrapping (None = use global setting) */
+  line_wrap?: boolean | null;
 }
 
 /** Options for creating a virtual buffer in the current split as a new tab */
@@ -793,6 +797,22 @@ interface EditorAPI {
    * @param language - The language to disable LSP for (e.g., "python", "rust")
    */
   disableLspForLanguage(language: string): boolean;
+  /**
+   * Create a scroll sync group for anchor-based synchronized scrolling
+   *
+   * Used for side-by-side diff views where two panes need to scroll together.
+   * The plugin provides the group ID (must be unique per plugin).
+   */
+  createScrollSyncGroup(group_id: number, left_split: number, right_split: number): boolean;
+  /**
+   * Set sync anchors for a scroll sync group
+   *
+   * Anchors map corresponding line numbers between left and right buffers.
+   * Each anchor is a tuple of (left_line, right_line).
+   */
+  setScrollSyncAnchors(group_id: number, anchors: Vec<(usize, usize): boolean;
+  /** Remove a scroll sync group */
+  removeScrollSyncGroup(group_id: number): boolean;
 
   /**
    * Spawn an external process and return a cancellable handle
@@ -830,9 +850,10 @@ interface EditorAPI {
    * @param underline - Add underline decoration
    * @param bold - Use bold text
    * @param italic - Use italic text
+   * @param extend_to_line_end - Extend background to end of visual line
    * @returns true if overlay was added
    */
-  addOverlay(buffer_id: number, namespace: string, start: number, end: number, r: number, g: number, b: number, bg_r: i16, bg_g: i16, bg_b: i16, underline: boolean, bold: boolean, italic: boolean): boolean;
+  addOverlay(buffer_id: number, namespace: string, start: number, end: number, r: number, g: number, b: number, bg_r: i16, bg_g: i16, bg_b: i16, underline: boolean, bold: boolean, italic: boolean, extend_to_line_end: boolean): boolean;
   /**
    * Remove a specific overlay by its handle
    * @param buffer_id - The buffer ID

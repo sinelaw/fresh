@@ -210,6 +210,7 @@ interface HighlightTask {
     bg?: [number, number, number];
     bold?: boolean;
     italic?: boolean;
+    extend_to_line_end?: boolean;
 }
 
 /**
@@ -641,11 +642,370 @@ globalThis.review_refresh = () => { refreshReviewData(); };
 
 let activeDiffViewState: { lSplit: number, rSplit: number } | null = null;
 
+/**
+ * Find line number for a given byte offset using binary search
+ */
+function findLineForByte(lineByteOffsets: number[], topByte: number): number {
+    let low = 0;
+    let high = lineByteOffsets.length - 1;
+    while (low < high) {
+        const mid = Math.floor((low + high + 1) / 2);
+        if (lineByteOffsets[mid] <= topByte) {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    return low;
+}
+
 globalThis.on_viewport_changed = (data: any) => {
-    if (!activeDiffViewState) return;
-    if (data.split_id === activeDiffViewState.lSplit) (editor as any).setSplitScroll(activeDiffViewState.rSplit, data.top_byte);
-    else if (data.split_id === activeDiffViewState.rSplit) (editor as any).setSplitScroll(activeDiffViewState.lSplit, data.top_byte);
+    // This handler is now a no-op - scroll sync is handled by the core
+    // using the anchor-based ScrollSyncGroup system.
+    // Keeping the handler for backward compatibility if core sync fails.
+    if (!activeDiffViewState || !activeSideBySideState) return;
+
+    // Skip if core scroll sync is active (we have a scrollSyncGroupId)
+    if (activeSideBySideState.scrollSyncGroupId !== null) return;
+
+    const { oldSplitId, newSplitId, oldLineByteOffsets, newLineByteOffsets } = activeSideBySideState;
+
+    if (data.split_id === oldSplitId && newLineByteOffsets.length > 0) {
+        // OLD pane scrolled - find which line it's on and sync NEW pane to same line
+        const lineNum = findLineForByte(oldLineByteOffsets, data.top_byte);
+        const targetByte = newLineByteOffsets[Math.min(lineNum, newLineByteOffsets.length - 1)];
+        (editor as any).setSplitScroll(newSplitId, targetByte);
+    } else if (data.split_id === newSplitId && oldLineByteOffsets.length > 0) {
+        // NEW pane scrolled - find which line it's on and sync OLD pane to same line
+        const lineNum = findLineForByte(newLineByteOffsets, data.top_byte);
+        const targetByte = oldLineByteOffsets[Math.min(lineNum, oldLineByteOffsets.length - 1)];
+        (editor as any).setSplitScroll(oldSplitId, targetByte);
+    }
 };
+
+/**
+ * Represents an aligned line pair for side-by-side diff display
+ */
+interface AlignedLine {
+    oldLine: string | null;  // null means filler line
+    newLine: string | null;  // null means filler line
+    oldLineNum: number | null;
+    newLineNum: number | null;
+    changeType: 'unchanged' | 'added' | 'removed' | 'modified';
+}
+
+/**
+ * Parse git diff and compute fully aligned line pairs for side-by-side display.
+ * Shows the complete files with proper alignment through all hunks.
+ */
+function computeFullFileAlignedDiff(oldContent: string, newContent: string, hunks: Hunk[]): AlignedLine[] {
+    const oldLines = oldContent.split('\n');
+    const newLines = newContent.split('\n');
+    const aligned: AlignedLine[] = [];
+
+    // Build a map of changes from all hunks for this file
+    // Key: old line number (1-based), Value: { type, newLineNum, content }
+    interface ChangeInfo {
+        type: 'removed' | 'added' | 'modified' | 'context';
+        oldContent?: string;
+        newContent?: string;
+        newLineNum?: number;
+    }
+
+    // Parse all hunks for this file
+    const allHunkChanges: { oldStart: number, newStart: number, changes: { type: 'add' | 'remove' | 'context', content: string }[] }[] = [];
+    for (const hunk of hunks) {
+        const changes: { type: 'add' | 'remove' | 'context', content: string }[] = [];
+        for (const line of hunk.lines) {
+            if (line.startsWith('+')) {
+                changes.push({ type: 'add', content: line.substring(1) });
+            } else if (line.startsWith('-')) {
+                changes.push({ type: 'remove', content: line.substring(1) });
+            } else if (line.startsWith(' ')) {
+                changes.push({ type: 'context', content: line.substring(1) });
+            }
+        }
+        allHunkChanges.push({
+            oldStart: hunk.oldRange.start,
+            newStart: hunk.range.start,
+            changes
+        });
+    }
+
+    // Sort hunks by old line start
+    allHunkChanges.sort((a, b) => a.oldStart - b.oldStart);
+
+    // Process the file line by line
+    let oldIdx = 0;  // 0-based index into oldLines
+    let newIdx = 0;  // 0-based index into newLines
+    let hunkIdx = 0;
+
+    while (oldIdx < oldLines.length || newIdx < newLines.length || hunkIdx < allHunkChanges.length) {
+        // Check if we're at a hunk boundary
+        const currentHunk = hunkIdx < allHunkChanges.length ? allHunkChanges[hunkIdx] : null;
+
+        if (currentHunk && oldIdx + 1 === currentHunk.oldStart) {
+            // Process this hunk
+            let changeIdx = 0;
+            while (changeIdx < currentHunk.changes.length) {
+                const change = currentHunk.changes[changeIdx];
+
+                if (change.type === 'context') {
+                    aligned.push({
+                        oldLine: oldLines[oldIdx],
+                        newLine: newLines[newIdx],
+                        oldLineNum: oldIdx + 1,
+                        newLineNum: newIdx + 1,
+                        changeType: 'unchanged'
+                    });
+                    oldIdx++;
+                    newIdx++;
+                    changeIdx++;
+                } else if (change.type === 'remove') {
+                    // Look ahead to see if next is an 'add' (modification)
+                    if (changeIdx + 1 < currentHunk.changes.length &&
+                        currentHunk.changes[changeIdx + 1].type === 'add') {
+                        // Modified line
+                        aligned.push({
+                            oldLine: oldLines[oldIdx],
+                            newLine: newLines[newIdx],
+                            oldLineNum: oldIdx + 1,
+                            newLineNum: newIdx + 1,
+                            changeType: 'modified'
+                        });
+                        oldIdx++;
+                        newIdx++;
+                        changeIdx += 2;
+                    } else {
+                        // Pure removal
+                        aligned.push({
+                            oldLine: oldLines[oldIdx],
+                            newLine: null,
+                            oldLineNum: oldIdx + 1,
+                            newLineNum: null,
+                            changeType: 'removed'
+                        });
+                        oldIdx++;
+                        changeIdx++;
+                    }
+                } else if (change.type === 'add') {
+                    // Pure addition
+                    aligned.push({
+                        oldLine: null,
+                        newLine: newLines[newIdx],
+                        oldLineNum: null,
+                        newLineNum: newIdx + 1,
+                        changeType: 'added'
+                    });
+                    newIdx++;
+                    changeIdx++;
+                }
+            }
+            hunkIdx++;
+        } else if (oldIdx < oldLines.length && newIdx < newLines.length) {
+            // Not in a hunk - add unchanged line
+            aligned.push({
+                oldLine: oldLines[oldIdx],
+                newLine: newLines[newIdx],
+                oldLineNum: oldIdx + 1,
+                newLineNum: newIdx + 1,
+                changeType: 'unchanged'
+            });
+            oldIdx++;
+            newIdx++;
+        } else if (oldIdx < oldLines.length) {
+            // Only old lines left (shouldn't happen normally)
+            aligned.push({
+                oldLine: oldLines[oldIdx],
+                newLine: null,
+                oldLineNum: oldIdx + 1,
+                newLineNum: null,
+                changeType: 'removed'
+            });
+            oldIdx++;
+        } else if (newIdx < newLines.length) {
+            // Only new lines left
+            aligned.push({
+                oldLine: null,
+                newLine: newLines[newIdx],
+                oldLineNum: null,
+                newLineNum: newIdx + 1,
+                changeType: 'added'
+            });
+            newIdx++;
+        } else {
+            break;
+        }
+    }
+
+    return aligned;
+}
+
+/**
+ * Generate virtual buffer content with diff highlighting for one side.
+ * Returns entries, highlight tasks, and line byte offsets for scroll sync.
+ */
+function generateDiffPaneContent(
+    alignedLines: AlignedLine[],
+    side: 'old' | 'new'
+): { entries: TextPropertyEntry[], highlights: HighlightTask[], lineByteOffsets: number[] } {
+    const entries: TextPropertyEntry[] = [];
+    const highlights: HighlightTask[] = [];
+    const lineByteOffsets: number[] = [];
+    let currentByte = 0;
+
+    for (const line of alignedLines) {
+        lineByteOffsets.push(currentByte);
+        const content = side === 'old' ? line.oldLine : line.newLine;
+        const lineNum = side === 'old' ? line.oldLineNum : line.newLineNum;
+        const isFiller = content === null;
+
+        // Format: "│ NNN │ content" or "│     │ ~~~~~~~~" for filler
+        let lineNumStr: string;
+        if (lineNum !== null) {
+            lineNumStr = lineNum.toString().padStart(4, ' ');
+        } else {
+            lineNumStr = '    ';
+        }
+
+        // Gutter marker based on change type
+        let gutterMarker = ' ';
+        if (line.changeType === 'added' && side === 'new') gutterMarker = '+';
+        else if (line.changeType === 'removed' && side === 'old') gutterMarker = '-';
+        else if (line.changeType === 'modified') gutterMarker = '~';
+
+        let lineText: string;
+        if (isFiller) {
+            // Filler line for alignment
+            lineText = `│${gutterMarker}${lineNumStr} │ ${"░".repeat(40)}\n`;
+        } else {
+            lineText = `│${gutterMarker}${lineNumStr} │ ${content}\n`;
+        }
+
+        const lineLen = getByteLength(lineText);
+        const prefixLen = getByteLength(`│${gutterMarker}${lineNumStr} │ `);
+
+        entries.push({
+            text: lineText,
+            properties: {
+                type: 'diff-line',
+                changeType: line.changeType,
+                lineNum: lineNum,
+                side: side
+            }
+        });
+
+        // Apply colors based on change type
+        // Border color
+        highlights.push({ range: [currentByte, currentByte + 1], fg: STYLE_BORDER });
+        highlights.push({ range: [currentByte + prefixLen - 3, currentByte + prefixLen - 1], fg: STYLE_BORDER });
+
+        // Line number color
+        highlights.push({
+            range: [currentByte + 2, currentByte + 6],
+            fg: [120, 120, 120]  // Gray line numbers
+        });
+
+        if (isFiller) {
+            // Filler styling - extend to full line width
+            highlights.push({
+                range: [currentByte + prefixLen, currentByte + lineLen - 1],
+                fg: [60, 60, 60],
+                bg: [30, 30, 30],
+                extend_to_line_end: true
+            });
+        } else if (line.changeType === 'added' && side === 'new') {
+            // Added line (green) - extend to full line width
+            highlights.push({ range: [currentByte + 1, currentByte + 2], fg: STYLE_ADD_TEXT, bold: true }); // gutter marker
+            highlights.push({
+                range: [currentByte + prefixLen, currentByte + lineLen - 1],
+                fg: STYLE_ADD_TEXT,
+                bg: [30, 50, 30],
+                extend_to_line_end: true
+            });
+        } else if (line.changeType === 'removed' && side === 'old') {
+            // Removed line (red) - extend to full line width
+            highlights.push({ range: [currentByte + 1, currentByte + 2], fg: STYLE_REMOVE_TEXT, bold: true }); // gutter marker
+            highlights.push({
+                range: [currentByte + prefixLen, currentByte + lineLen - 1],
+                fg: STYLE_REMOVE_TEXT,
+                bg: [50, 30, 30],
+                extend_to_line_end: true
+            });
+        } else if (line.changeType === 'modified') {
+            // Modified line - show word-level diff
+            const oldText = line.oldLine || '';
+            const newText = line.newLine || '';
+            const diffParts = diffStrings(oldText, newText);
+
+            let offset = currentByte + prefixLen;
+            if (side === 'old') {
+                highlights.push({ range: [currentByte + 1, currentByte + 2], fg: STYLE_REMOVE_TEXT, bold: true });
+                // Highlight removed parts in old line
+                for (const part of diffParts) {
+                    const partLen = getByteLength(part.text);
+                    if (part.type === 'removed') {
+                        highlights.push({
+                            range: [offset, offset + partLen],
+                            fg: STYLE_REMOVE_TEXT,
+                            bg: STYLE_REMOVE_BG,
+                            bold: true
+                        });
+                    } else if (part.type === 'unchanged') {
+                        highlights.push({
+                            range: [offset, offset + partLen],
+                            fg: STYLE_REMOVE_TEXT
+                        });
+                    }
+                    if (part.type !== 'added') {
+                        offset += partLen;
+                    }
+                }
+            } else {
+                highlights.push({ range: [currentByte + 1, currentByte + 2], fg: STYLE_ADD_TEXT, bold: true });
+                // Highlight added parts in new line
+                for (const part of diffParts) {
+                    const partLen = getByteLength(part.text);
+                    if (part.type === 'added') {
+                        highlights.push({
+                            range: [offset, offset + partLen],
+                            fg: STYLE_ADD_TEXT,
+                            bg: STYLE_ADD_BG,
+                            bold: true
+                        });
+                    } else if (part.type === 'unchanged') {
+                        highlights.push({
+                            range: [offset, offset + partLen],
+                            fg: STYLE_ADD_TEXT
+                        });
+                    }
+                    if (part.type !== 'removed') {
+                        offset += partLen;
+                    }
+                }
+            }
+        }
+
+        currentByte += lineLen;
+    }
+
+    return { entries, highlights, lineByteOffsets };
+}
+
+// State for active side-by-side diff view
+interface SideBySideDiffState {
+    oldSplitId: number;
+    newSplitId: number;
+    oldBufferId: number;
+    newBufferId: number;
+    alignedLines: AlignedLine[];
+    oldLineByteOffsets: number[];
+    newLineByteOffsets: number[];
+    scrollSyncGroupId: number | null;  // Core scroll sync group ID
+}
+
+let activeSideBySideState: SideBySideDiffState | null = null;
+let nextScrollSyncGroupId = 1;
 
 globalThis.review_drill_down = async () => {
     const bid = editor.getActiveBufferId();
@@ -654,38 +1014,190 @@ globalThis.review_drill_down = async () => {
         const id = props[0].hunkId as string;
         const h = state.hunks.find(x => x.id === id);
         if (!h) return;
+
+        editor.setStatus("Loading side-by-side diff...");
+
+        // Get all hunks for this file
+        const fileHunks = state.hunks.filter(hunk => hunk.file === h.file);
+
+        // Get old (HEAD) and new (working) file content
         const gitShow = await editor.spawnProcess("git", ["show", `HEAD:${h.file}`]);
-        if (gitShow.exit_code !== 0) return;
+        if (gitShow.exit_code !== 0) {
+            editor.setStatus("Failed to load old file version");
+            return;
+        }
+        const oldContent = gitShow.stdout;
 
-        // Side-by-side layout: NEW (editable, left) | OLD (read-only, right)
-        // Note: Ideally OLD should be on left per convention, but API creates splits to the right
+        // Read new file content
+        const newFileResult = await editor.spawnProcess("cat", [h.file]);
+        if (newFileResult.exit_code !== 0) {
+            editor.setStatus("Failed to load new file version");
+            return;
+        }
+        const newContent = newFileResult.stdout;
 
-        // Step 1: Open NEW file in current split (becomes LEFT pane)
-        editor.openFile(h.file, h.range.start, 0);
-        const newSplitId = (editor as any).getActiveSplitId();
+        // Close the Review Diff buffer to make room for side-by-side view
+        // Store the review buffer ID so we can restore it later
+        const reviewBufferId = bid;
 
-        // Step 2: Create OLD (HEAD) version in new split (becomes RIGHT pane)
-        // editing_disabled: true prevents text input in read-only buffer
-        const oldRes = await editor.createVirtualBufferInSplit({
-            name: `[OLD ◀] ${h.file}`,  // Arrow indicates this is the old/reference version
-            mode: "special",
+        // Compute aligned diff for the FULL file with all hunks
+        const alignedLines = computeFullFileAlignedDiff(oldContent, newContent, fileHunks);
+
+        // Generate content for both panes
+        const oldPane = generateDiffPaneContent(alignedLines, 'old');
+        const newPane = generateDiffPaneContent(alignedLines, 'new');
+
+        // Close any existing side-by-side views
+        if (activeSideBySideState) {
+            try {
+                // Remove scroll sync group first
+                if (activeSideBySideState.scrollSyncGroupId !== null) {
+                    (editor as any).removeScrollSyncGroup(activeSideBySideState.scrollSyncGroupId);
+                }
+                editor.closeBuffer(activeSideBySideState.oldBufferId);
+                editor.closeBuffer(activeSideBySideState.newBufferId);
+            } catch {}
+            activeSideBySideState = null;
+        }
+
+        // Get the current split ID before closing the Review Diff buffer
+        const currentSplitId = (editor as any).getActiveSplitId();
+
+        // Create OLD buffer in the CURRENT split (replaces Review Diff)
+        const oldBufferId = await editor.createVirtualBufferInExistingSplit({
+            name: `[OLD] ${h.file}`,
+            mode: "diff-view",
             read_only: true,
             editing_disabled: true,
-            entries: [{ text: gitShow.stdout, properties: {} }],
+            entries: oldPane.entries,
+            split_id: currentSplitId,
+            show_line_numbers: false,
+            line_wrap: false
+        });
+        const oldSplitId = currentSplitId;
+
+        // Close the Review Diff buffer after showing OLD
+        editor.closeBuffer(reviewBufferId);
+
+        // Apply highlights to old pane
+        editor.clearNamespace(oldBufferId, "diff-view");
+        for (const hl of oldPane.highlights) {
+            const bg = hl.bg || [-1, -1, -1];
+            editor.addOverlay(
+                oldBufferId, "diff-view",
+                hl.range[0], hl.range[1],
+                hl.fg[0], hl.fg[1], hl.fg[2],
+                false, hl.bold || false, false,
+                bg[0], bg[1], bg[2],
+                hl.extend_to_line_end || false
+            );
+        }
+
+        // Step 2: Create NEW pane in a vertical split (RIGHT of OLD)
+        const newRes = await editor.createVirtualBufferInSplit({
+            name: `[NEW] ${h.file}`,
+            mode: "diff-view",
+            read_only: true,
+            editing_disabled: true,
+            entries: newPane.entries,
             ratio: 0.5,
             direction: "vertical",
-            show_line_numbers: true
+            show_line_numbers: false,
+            line_wrap: false
         });
-        const oldSplitId = oldRes.split_id!;
+        const newBufferId = newRes.buffer_id;
+        const newSplitId = newRes.split_id!;
 
-        // Focus on NEW (left) pane - this is the editable working version
-        (editor as any).focusSplit(newSplitId);
+        // Apply highlights to new pane
+        editor.clearNamespace(newBufferId, "diff-view");
+        for (const hl of newPane.highlights) {
+            const bg = hl.bg || [-1, -1, -1];
+            editor.addOverlay(
+                newBufferId, "diff-view",
+                hl.range[0], hl.range[1],
+                hl.fg[0], hl.fg[1], hl.fg[2],
+                false, hl.bold || false, false,
+                bg[0], bg[1], bg[2],
+                hl.extend_to_line_end || false
+            );
+        }
 
-        // Track splits for synchronized scrolling
-        activeDiffViewState = { lSplit: newSplitId, rSplit: oldSplitId };
-        editor.on("viewport_changed", "on_viewport_changed");
+        // Focus OLD pane (left) - convention is to start on old side
+        (editor as any).focusSplit(oldSplitId);
+
+        // Set up core-handled scroll sync using the new anchor-based API
+        // This replaces the old viewport_changed hook approach
+        let scrollSyncGroupId: number | null = null;
+        try {
+            // Generate a unique group ID
+            scrollSyncGroupId = nextScrollSyncGroupId++;
+            (editor as any).createScrollSyncGroup(scrollSyncGroupId, oldSplitId, newSplitId);
+
+            // Compute sync anchors from aligned lines
+            // Each aligned line is a sync point - we map line indices to anchors
+            // For the new core sync, we use line numbers (not byte offsets)
+            const anchors: [number, number][] = [];
+            for (let i = 0; i < alignedLines.length; i++) {
+                // Add anchors at meaningful boundaries: start of file, and at change boundaries
+                const line = alignedLines[i];
+                const prevLine = i > 0 ? alignedLines[i - 1] : null;
+
+                // Add anchor at start of file
+                if (i === 0) {
+                    anchors.push([0, 0]);
+                }
+
+                // Add anchor at change boundaries (when change type changes)
+                if (prevLine && prevLine.changeType !== line.changeType) {
+                    anchors.push([i, i]);
+                }
+            }
+
+            // Add anchor at end
+            if (alignedLines.length > 0) {
+                anchors.push([alignedLines.length, alignedLines.length]);
+            }
+
+            (editor as any).setScrollSyncAnchors(scrollSyncGroupId, anchors);
+        } catch (e) {
+            editor.debug(`Failed to create scroll sync group: ${e}`);
+            scrollSyncGroupId = null;
+        }
+
+        // Store state for synchronized scrolling
+        activeSideBySideState = {
+            oldSplitId,
+            newSplitId,
+            oldBufferId,
+            newBufferId,
+            alignedLines,
+            oldLineByteOffsets: oldPane.lineByteOffsets,
+            newLineByteOffsets: newPane.lineByteOffsets,
+            scrollSyncGroupId
+        };
+        activeDiffViewState = { lSplit: oldSplitId, rSplit: newSplitId };
+
+        const addedLines = alignedLines.filter(l => l.changeType === 'added').length;
+        const removedLines = alignedLines.filter(l => l.changeType === 'removed').length;
+        const modifiedLines = alignedLines.filter(l => l.changeType === 'modified').length;
+        editor.setStatus(`Side-by-side diff: +${addedLines} -${removedLines} ~${modifiedLines} | 'q' to return`);
     }
 };
+
+// Define the diff-view mode with navigation keys
+editor.defineMode("diff-view", "special", [
+    ["q", "close_buffer"],
+    ["j", "move_down"],
+    ["k", "move_up"],
+    ["g", "move_document_start"],
+    ["G", "move_document_end"],
+    ["Ctrl+d", "move_page_down"],
+    ["Ctrl+u", "move_page_up"],
+    ["Down", "move_down"],
+    ["Up", "move_up"],
+    ["PageDown", "move_page_down"],
+    ["PageUp", "move_page_up"],
+], true);
 
 // --- Review Comment Actions ---
 
@@ -1006,10 +1518,221 @@ globalThis.on_review_buffer_closed = (data: any) => {
     if (data.buffer_id === state.reviewBufferId) stop_review_diff();
 };
 
+// Side-by-side diff for current file (can be called directly without Review Diff mode)
+globalThis.side_by_side_diff_current_file = async () => {
+    const bid = editor.getActiveBufferId();
+    const absolutePath = editor.getBufferPath(bid);
+
+    if (!absolutePath) {
+        editor.setStatus("No file open - cannot show diff");
+        return;
+    }
+
+    editor.setStatus("Loading side-by-side diff...");
+
+    // Get the git root directory to compute relative path
+    const gitRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"]);
+    if (gitRootResult.exit_code !== 0) {
+        editor.setStatus("Not in a git repository");
+        return;
+    }
+    const gitRoot = gitRootResult.stdout.trim();
+
+    // Compute relative path from git root
+    let filePath = absolutePath;
+    if (absolutePath.startsWith(gitRoot)) {
+        filePath = absolutePath.substring(gitRoot.length + 1); // +1 to skip the leading /
+    }
+
+    // Get hunks for this specific file
+    const result = await editor.spawnProcess("git", ["diff", "HEAD", "--unified=3", "--", filePath]);
+    if (result.exit_code !== 0) {
+        editor.setStatus("Failed to get git diff for file");
+        return;
+    }
+
+    // Parse hunks from diff output
+    const lines = result.stdout.split('\n');
+    const fileHunks: Hunk[] = [];
+    let currentHunk: Hunk | null = null;
+
+    for (const line of lines) {
+        if (line.startsWith('@@')) {
+            const match = line.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@(.*)/);
+            if (match) {
+                const oldStart = parseInt(match[1]);
+                const newStart = parseInt(match[2]);
+                currentHunk = {
+                    id: `${filePath}:${newStart}`,
+                    file: filePath,
+                    range: { start: newStart, end: newStart },
+                    oldRange: { start: oldStart, end: oldStart },
+                    type: 'modify',
+                    lines: [],
+                    status: 'pending',
+                    reviewStatus: 'pending',
+                    contextHeader: match[3]?.trim() || "",
+                    byteOffset: 0
+                };
+                fileHunks.push(currentHunk);
+            }
+        } else if (currentHunk && (line.startsWith('+') || line.startsWith('-') || line.startsWith(' '))) {
+            if (!line.startsWith('---') && !line.startsWith('+++')) {
+                currentHunk.lines.push(line);
+            }
+        }
+    }
+
+    if (fileHunks.length === 0) {
+        editor.setStatus("No changes in this file");
+        return;
+    }
+
+    // Get old (HEAD) and new (working) file content
+    const gitShow = await editor.spawnProcess("git", ["show", `HEAD:${filePath}`]);
+    if (gitShow.exit_code !== 0) {
+        editor.setStatus("Failed to load old file version (file may be new)");
+        return;
+    }
+    const oldContent = gitShow.stdout;
+
+    // Read new file content
+    const newFileResult = await editor.spawnProcess("cat", [filePath]);
+    if (newFileResult.exit_code !== 0) {
+        editor.setStatus("Failed to load new file version");
+        return;
+    }
+    const newContent = newFileResult.stdout;
+
+    // Compute aligned diff for the FULL file
+    const alignedLines = computeFullFileAlignedDiff(oldContent, newContent, fileHunks);
+
+    // Generate content for both panes
+    const oldPane = generateDiffPaneContent(alignedLines, 'old');
+    const newPane = generateDiffPaneContent(alignedLines, 'new');
+
+    // Close any existing side-by-side views
+    if (activeSideBySideState) {
+        try {
+            if (activeSideBySideState.scrollSyncGroupId !== null) {
+                (editor as any).removeScrollSyncGroup(activeSideBySideState.scrollSyncGroupId);
+            }
+            editor.closeBuffer(activeSideBySideState.oldBufferId);
+            editor.closeBuffer(activeSideBySideState.newBufferId);
+        } catch {}
+        activeSideBySideState = null;
+    }
+
+    // Get the current split ID
+    const currentSplitId = (editor as any).getActiveSplitId();
+
+    // Create OLD buffer in the CURRENT split
+    const oldBufferId = await editor.createVirtualBufferInExistingSplit({
+        name: `[OLD] ${filePath}`,
+        mode: "diff-view",
+        read_only: true,
+        editing_disabled: true,
+        entries: oldPane.entries,
+        split_id: currentSplitId,
+        show_line_numbers: false,
+        line_wrap: false
+    });
+    const oldSplitId = currentSplitId;
+
+    // Apply highlights to old pane
+    editor.clearNamespace(oldBufferId, "diff-view");
+    for (const hl of oldPane.highlights) {
+        const bg = hl.bg || [-1, -1, -1];
+        editor.addOverlay(
+            oldBufferId, "diff-view",
+            hl.range[0], hl.range[1],
+            hl.fg[0], hl.fg[1], hl.fg[2],
+            false, hl.bold || false, false,
+            bg[0], bg[1], bg[2],
+            hl.extend_to_line_end || false
+        );
+    }
+
+    // Create NEW pane in a vertical split (RIGHT of OLD)
+    const newRes = await editor.createVirtualBufferInSplit({
+        name: `[NEW] ${filePath}`,
+        mode: "diff-view",
+        read_only: true,
+        editing_disabled: true,
+        entries: newPane.entries,
+        ratio: 0.5,
+        direction: "vertical",
+        show_line_numbers: false,
+        line_wrap: false
+    });
+    const newBufferId = newRes.buffer_id;
+    const newSplitId = newRes.split_id!;
+
+    // Apply highlights to new pane
+    editor.clearNamespace(newBufferId, "diff-view");
+    for (const hl of newPane.highlights) {
+        const bg = hl.bg || [-1, -1, -1];
+        editor.addOverlay(
+            newBufferId, "diff-view",
+            hl.range[0], hl.range[1],
+            hl.fg[0], hl.fg[1], hl.fg[2],
+            false, hl.bold || false, false,
+            bg[0], bg[1], bg[2],
+            hl.extend_to_line_end || false
+        );
+    }
+
+    // Focus OLD pane (left)
+    (editor as any).focusSplit(oldSplitId);
+
+    // Set up scroll sync
+    let scrollSyncGroupId: number | null = null;
+    try {
+        scrollSyncGroupId = nextScrollSyncGroupId++;
+        (editor as any).createScrollSyncGroup(scrollSyncGroupId, oldSplitId, newSplitId);
+
+        const anchors: [number, number][] = [];
+        for (let i = 0; i < alignedLines.length; i++) {
+            const line = alignedLines[i];
+            const prevLine = i > 0 ? alignedLines[i - 1] : null;
+            if (i === 0) anchors.push([0, 0]);
+            if (prevLine && prevLine.changeType !== line.changeType) {
+                anchors.push([i, i]);
+            }
+        }
+        if (alignedLines.length > 0) {
+            anchors.push([alignedLines.length, alignedLines.length]);
+        }
+        (editor as any).setScrollSyncAnchors(scrollSyncGroupId, anchors);
+    } catch (e) {
+        editor.debug(`Failed to create scroll sync group: ${e}`);
+        scrollSyncGroupId = null;
+    }
+
+    // Store state
+    activeSideBySideState = {
+        oldSplitId,
+        newSplitId,
+        oldBufferId,
+        newBufferId,
+        alignedLines,
+        oldLineByteOffsets: oldPane.lineByteOffsets,
+        newLineByteOffsets: newPane.lineByteOffsets,
+        scrollSyncGroupId
+    };
+    activeDiffViewState = { lSplit: oldSplitId, rSplit: newSplitId };
+
+    const addedLines = alignedLines.filter(l => l.changeType === 'added').length;
+    const removedLines = alignedLines.filter(l => l.changeType === 'removed').length;
+    const modifiedLines = alignedLines.filter(l => l.changeType === 'modified').length;
+    editor.setStatus(`Side-by-side diff: +${addedLines} -${removedLines} ~${modifiedLines} | 'q' to return`);
+};
+
 // Register Modes and Commands
 editor.registerCommand("Review Diff", "Start code review session", "start_review_diff", "global");
 editor.registerCommand("Stop Review Diff", "Stop the review session", "stop_review_diff", "review-mode");
 editor.registerCommand("Refresh Review Diff", "Refresh the list of changes", "review_refresh", "review-mode");
+editor.registerCommand("Side-by-Side Diff", "Show side-by-side diff for current file", "side_by_side_diff_current_file", "global");
 
 // Review Comment Commands
 editor.registerCommand("Review: Add Comment", "Add a review comment to the current hunk", "review_add_comment", "review-mode");
@@ -1021,6 +1744,24 @@ editor.registerCommand("Review: Clear Status", "Clear hunk review status", "revi
 editor.registerCommand("Review: Overall Feedback", "Set overall review feedback", "review_set_overall_feedback", "review-mode");
 editor.registerCommand("Review: Export to Markdown", "Export review to .review/session.md", "review_export_session", "review-mode");
 editor.registerCommand("Review: Export to JSON", "Export review to .review/session.json", "review_export_json", "review-mode");
+
+// Handler for when buffers are closed - cleans up scroll sync groups
+globalThis.on_buffer_closed = (data: any) => {
+    // If one of the diff view buffers is closed, clean up the scroll sync group
+    if (activeSideBySideState) {
+        if (data.buffer_id === activeSideBySideState.oldBufferId ||
+            data.buffer_id === activeSideBySideState.newBufferId) {
+            // Remove scroll sync group
+            if (activeSideBySideState.scrollSyncGroupId !== null) {
+                try {
+                    (editor as any).removeScrollSyncGroup(activeSideBySideState.scrollSyncGroupId);
+                } catch {}
+            }
+            activeSideBySideState = null;
+            activeDiffViewState = null;
+        }
+    }
+};
 
 editor.on("buffer_closed", "on_buffer_closed");
 

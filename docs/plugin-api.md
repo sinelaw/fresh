@@ -295,6 +295,7 @@ interface CreateVirtualBufferOptions {
   show_line_numbers?: boolean | null;
   show_cursors?: boolean | null;
   editing_disabled?: boolean | null;
+  line_wrap?: boolean | null;
 }
 ```
 
@@ -310,6 +311,7 @@ interface CreateVirtualBufferOptions {
 | `show_line_numbers` | Show line numbers gutter (default: true) |
 | `show_cursors` | Show cursor in buffer (default: true) |
 | `editing_disabled` | Disable all editing commands (default: false) |
+| `line_wrap` | Enable/disable line wrapping (None = use global setting) |
 
 ### CreateVirtualBufferInExistingSplitOptions
 
@@ -325,6 +327,7 @@ interface CreateVirtualBufferInExistingSplitOptions {
   show_line_numbers?: boolean | null;
   show_cursors?: boolean | null;
   editing_disabled?: boolean | null;
+  line_wrap?: boolean | null;
 }
 ```
 
@@ -338,6 +341,7 @@ interface CreateVirtualBufferInExistingSplitOptions {
 | `show_line_numbers` | Whether to show line numbers in the buffer (default true) |
 | `show_cursors` | Whether to show cursors in the buffer (default true) |
 | `editing_disabled` | Whether editing is disabled for this buffer (default false) |
+| `line_wrap` | Enable/disable line wrapping (None = use global setting) |
 
 ### CreateVirtualBufferInCurrentSplitOptions
 
@@ -1286,6 +1290,55 @@ disableLspForLanguage(language: string): boolean
 |------|------|-------------|
 | `language` | `string` | The language to disable LSP for (e.g., "python", "rust") |
 
+#### `createScrollSyncGroup`
+
+Create a scroll sync group for anchor-based synchronized scrolling
+Used for side-by-side diff views where two panes need to scroll together.
+The plugin provides the group ID (must be unique per plugin).
+
+```typescript
+createScrollSyncGroup(group_id: number, left_split: number, right_split: number): boolean
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `group_id` | `number` | - |
+| `left_split` | `number` | - |
+| `right_split` | `number` | - |
+
+#### `setScrollSyncAnchors`
+
+Set sync anchors for a scroll sync group
+Anchors map corresponding line numbers between left and right buffers.
+Each anchor is a tuple of (left_line, right_line).
+
+```typescript
+setScrollSyncAnchors(group_id: number, anchors: Vec<(usize, usize): boolean
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `group_id` | `number` | - |
+| `anchors` | `Vec<(usize, usize` | - |
+
+#### `removeScrollSyncGroup`
+
+Remove a scroll sync group
+
+```typescript
+removeScrollSyncGroup(group_id: number): boolean
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `group_id` | `number` | - |
+
 ### Overlay Operations
 
 #### `addOverlay`
@@ -1297,7 +1350,7 @@ Use namespaces for easy batch removal (e.g., "spell", "todo").
 Multiple overlays can apply to the same range; colors blend.
 
 ```typescript
-addOverlay(buffer_id: number, namespace: string, start: number, end: number, r: number, g: number, b: number, bg_r: i16, bg_g: i16, bg_b: i16, underline: boolean, bold: boolean, italic: boolean): boolean
+addOverlay(buffer_id: number, namespace: string, start: number, end: number, r: number, g: number, b: number, bg_r: i16, bg_g: i16, bg_b: i16, underline: boolean, bold: boolean, italic: boolean, extend_to_line_end: boolean): boolean
 ```
 
 **Parameters:**
@@ -1317,6 +1370,7 @@ addOverlay(buffer_id: number, namespace: string, start: number, end: number, r: 
 | `underline` | `boolean` | Add underline decoration |
 | `bold` | `boolean` | Use bold text |
 | `italic` | `boolean` | Use italic text |
+| `extend_to_line_end` | `boolean` | Extend background to end of visual line |
 
 #### `removeOverlay`
 
