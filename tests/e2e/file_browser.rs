@@ -996,12 +996,12 @@ fn test_file_browser_toggle_hidden_checkbox_click() {
         })
         .expect("Should find Show Hidden checkbox row");
 
-    // Click on the checkbox area (right side of the line)
-    // The checkbox " ☐ Show Hidden " is at the right edge
+    // Click on the checkbox area (left side of the row)
+    // The checkbox " ☐ Show Hidden (Alt+.)" is at the left side on its own row
     harness
         .send_mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: 72, // Right side where checkbox is
+            column: 10, // Left side where checkbox is
             row: checkbox_row as u16,
             modifiers: KeyModifiers::NONE,
         })

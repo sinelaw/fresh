@@ -485,7 +485,7 @@ impl Editor {
                 .map(|s| s.shortcuts.iter().map(|sc| sc.label.as_str()).collect())
                 .unwrap_or_default();
 
-            if let Some(shortcut_idx) = layout.nav_shortcut_at(x, &shortcut_labels) {
+            if let Some(shortcut_idx) = layout.nav_shortcut_at(x, y, &shortcut_labels) {
                 // Get the path from the shortcut and navigate there
                 let target_path = self
                     .file_open_state
@@ -579,7 +579,7 @@ impl Editor {
                 .map(|s| s.shortcuts.iter().map(|sc| sc.label.as_str()).collect())
                 .unwrap_or_default();
 
-            if let Some(idx) = layout.nav_shortcut_at(x, &shortcut_labels) {
+            if let Some(idx) = layout.nav_shortcut_at(x, y, &shortcut_labels) {
                 return Some(HoverTarget::FileBrowserNavShortcut(idx));
             }
         }

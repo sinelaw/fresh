@@ -154,7 +154,7 @@ impl FileBrowserRenderer {
         })
     }
 
-    /// Render navigation shortcuts section with "Show Hidden" checkbox
+    /// Render navigation shortcuts section with "Show Hidden" checkbox on separate row
     fn render_navigation(
         frame: &mut Frame,
         area: Rect,
@@ -165,10 +165,71 @@ impl FileBrowserRenderer {
     ) {
         use crate::app::HoverTarget;
 
+        // Look up the keybinding for toggle hidden action
+        let shortcut_hint = keybindings
+            .and_then(|kb| {
+                kb.get_keybinding_for_action(
+                    &crate::input::keybindings::Action::FileBrowserToggleHidden,
+                    crate::input::keybindings::KeyContext::Prompt,
+                )
+            })
+            .unwrap_or_default();
+
+        // First line: "Show Hidden" checkbox (on its own row to avoid truncation on Windows)
+        let checkbox_icon = if state.show_hidden { "☑" } else { "☐" };
+        let checkbox_label = format!("{} Show Hidden", checkbox_icon);
+        let shortcut_text = if shortcut_hint.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", shortcut_hint)
+        };
+
+        let is_checkbox_hovered = matches!(
+            hover_target,
+            Some(HoverTarget::FileBrowserShowHiddenCheckbox)
+        );
+        let checkbox_style = if is_checkbox_hovered {
+            Style::default()
+                .fg(theme.menu_hover_fg)
+                .bg(theme.menu_hover_bg)
+        } else if state.show_hidden {
+            Style::default()
+                .fg(theme.menu_highlight_fg)
+                .bg(theme.popup_bg)
+        } else {
+            Style::default().fg(theme.help_key_fg).bg(theme.popup_bg)
+        };
+        let shortcut_style = if is_checkbox_hovered {
+            Style::default()
+                .fg(theme.menu_hover_fg)
+                .bg(theme.menu_hover_bg)
+        } else {
+            Style::default()
+                .fg(theme.help_separator_fg)
+                .bg(theme.popup_bg)
+        };
+
+        let mut checkbox_spans = Vec::new();
+        checkbox_spans.push(Span::styled(format!(" {}", checkbox_label), checkbox_style));
+        if !shortcut_text.is_empty() {
+            checkbox_spans.push(Span::styled(shortcut_text, shortcut_style));
+        }
+        // Fill rest of row with background
+        let checkbox_line_width: usize = checkbox_spans.iter().map(|s| str_width(&s.content)).sum();
+        let remaining = (area.width as usize).saturating_sub(checkbox_line_width);
+        if remaining > 0 {
+            checkbox_spans.push(Span::styled(
+                " ".repeat(remaining),
+                Style::default().bg(theme.popup_bg),
+            ));
+        }
+        let checkbox_line = Line::from(checkbox_spans);
+
+        // Second line: Navigation shortcuts
         let is_nav_active = state.active_section == FileOpenSection::Navigation;
 
-        let mut spans = Vec::new();
-        spans.push(Span::styled(
+        let mut nav_spans = Vec::new();
+        nav_spans.push(Span::styled(
             " Navigation: ",
             Style::default()
                 .fg(theme.help_separator_fg)
@@ -193,10 +254,10 @@ impl FileBrowserRenderer {
                 Style::default().fg(theme.help_key_fg).bg(theme.popup_bg)
             };
 
-            spans.push(Span::styled(format!(" {} ", shortcut.label), style));
+            nav_spans.push(Span::styled(format!(" {} ", shortcut.label), style));
 
             if idx < state.shortcuts.len() - 1 {
-                spans.push(Span::styled(
+                nav_spans.push(Span::styled(
                     " │ ",
                     Style::default()
                         .fg(theme.help_separator_fg)
@@ -205,76 +266,18 @@ impl FileBrowserRenderer {
             }
         }
 
-        // Calculate width for left side (navigation shortcuts)
-        let left_width: usize = spans.iter().map(|s| str_width(&s.content)).sum();
-
-        // Look up the keybinding for toggle hidden action
-        let shortcut_hint = keybindings
-            .and_then(|kb| {
-                kb.get_keybinding_for_action(
-                    &crate::input::keybindings::Action::FileBrowserToggleHidden,
-                    crate::input::keybindings::KeyContext::Prompt,
-                )
-            })
-            .unwrap_or_default();
-
-        // "Show Hidden" checkbox on the right side with keyboard shortcut
-        // Format: "☐ Show Hidden (Alt+.)" or "☑ Show Hidden" if no shortcut
-        let checkbox_icon = if state.show_hidden { "☑" } else { "☐" };
-        let checkbox_label = format!("{} Show Hidden", checkbox_icon);
-        let shortcut_text = if shortcut_hint.is_empty() {
-            String::new()
-        } else {
-            format!(" ({})", shortcut_hint)
-        };
-        let checkbox_width = str_width(&checkbox_label) + str_width(&shortcut_text) + 2; // +2 for padding
-
-        // Calculate gap between navigation and checkbox
-        let total_width = area.width as usize;
-        let gap = total_width.saturating_sub(left_width + checkbox_width);
-
-        // Add gap
-        if gap > 0 {
-            spans.push(Span::styled(
-                " ".repeat(gap),
+        // Fill rest of navigation row with background
+        let nav_line_width: usize = nav_spans.iter().map(|s| str_width(&s.content)).sum();
+        let nav_remaining = (area.width as usize).saturating_sub(nav_line_width);
+        if nav_remaining > 0 {
+            nav_spans.push(Span::styled(
+                " ".repeat(nav_remaining),
                 Style::default().bg(theme.popup_bg),
             ));
         }
+        let nav_line = Line::from(nav_spans);
 
-        // Add checkbox with hover/click styling
-        let is_checkbox_hovered = matches!(
-            hover_target,
-            Some(HoverTarget::FileBrowserShowHiddenCheckbox)
-        );
-        let checkbox_style = if is_checkbox_hovered {
-            Style::default()
-                .fg(theme.menu_hover_fg)
-                .bg(theme.menu_hover_bg)
-        } else if state.show_hidden {
-            Style::default()
-                .fg(theme.menu_highlight_fg)
-                .bg(theme.popup_bg)
-        } else {
-            Style::default().fg(theme.help_key_fg).bg(theme.popup_bg)
-        };
-        // Shortcut hint uses dimmer style from theme
-        let shortcut_style = if is_checkbox_hovered {
-            Style::default()
-                .fg(theme.menu_hover_fg)
-                .bg(theme.menu_hover_bg)
-        } else {
-            Style::default()
-                .fg(theme.help_separator_fg)
-                .bg(theme.popup_bg)
-        };
-        spans.push(Span::styled(format!(" {}", checkbox_label), checkbox_style));
-        if !shortcut_text.is_empty() {
-            spans.push(Span::styled(shortcut_text, shortcut_style));
-        }
-        spans.push(Span::styled(" ", checkbox_style));
-
-        let line = Line::from(spans);
-        let paragraph = Paragraph::new(vec![line]);
+        let paragraph = Paragraph::new(vec![checkbox_line, nav_line]);
         frame.render_widget(paragraph, area);
     }
 
@@ -617,7 +620,13 @@ impl FileBrowserLayout {
 
     /// Determine which navigation shortcut was clicked based on x position
     /// The layout is: " Navigation: " (13 chars) then for each shortcut: " {label} " + " │ " separator
-    pub fn nav_shortcut_at(&self, x: u16, shortcut_labels: &[&str]) -> Option<usize> {
+    /// Navigation shortcuts are on the second row (y == nav_area.y + 1)
+    pub fn nav_shortcut_at(&self, x: u16, y: u16, shortcut_labels: &[&str]) -> Option<usize> {
+        // Navigation shortcuts are on the second row of the nav area
+        if y != self.nav_area.y + 1 {
+            return None;
+        }
+
         let rel_x = x.saturating_sub(self.nav_area.x) as usize;
 
         // Skip " Navigation: " prefix
@@ -686,19 +695,22 @@ impl FileBrowserLayout {
     }
 
     /// Check if a position is on the "Show Hidden" checkbox
-    /// The checkbox is positioned at the right side of the navigation area
-    /// Format: " ☐ Show Hidden Alt+. " (includes keyboard shortcut hint)
+    /// The checkbox is on its own row (first row of navigation area)
+    /// Format: " ☐ Show Hidden (Alt+.)" (includes keyboard shortcut hint)
     pub fn is_on_show_hidden_checkbox(&self, x: u16, y: u16) -> bool {
-        // Must be in navigation area row
-        if !self.is_in_nav(x, y) {
+        // Must be on the first row of navigation area (checkbox row)
+        if y != self.nav_area.y {
             return false;
         }
 
-        // Checkbox is at the right side
-        // " ☐ Show Hidden Alt+. " is approximately 23 characters (with shortcut hint)
-        let checkbox_width = 23u16;
-        let checkbox_start = self.nav_area.x + self.content_width.saturating_sub(checkbox_width);
+        // Must be within the x bounds of the navigation area
+        if x < self.nav_area.x || x >= self.nav_area.x + self.nav_area.width {
+            return false;
+        }
 
-        x >= checkbox_start && x < self.nav_area.x + self.content_width
+        // Checkbox spans the left portion of the row
+        // " ☐ Show Hidden (Alt+.)" is approximately 24 characters
+        let checkbox_width = 24u16;
+        x < self.nav_area.x + checkbox_width
     }
 }
