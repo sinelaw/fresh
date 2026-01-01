@@ -1249,8 +1249,16 @@ impl SettingsState {
 
     /// Select previous option in dropdown
     pub fn dropdown_prev(&mut self) {
+        // Estimate max_visible from scroll panel viewport (minus 1 for dropdown header row)
+        let estimated_max_visible = self.scroll_panel.viewport_height().saturating_sub(1);
         if let Some(item) = self.current_item_mut() {
             if let SettingControl::Dropdown(ref mut d) = item.control {
+                // Update max_visible if not set or if estimate is smaller
+                if d.max_visible == 0
+                    || (estimated_max_visible > 0 && estimated_max_visible < d.max_visible)
+                {
+                    d.max_visible = estimated_max_visible.max(3); // At least 3 visible
+                }
                 d.select_prev();
             }
         }
@@ -1258,8 +1266,16 @@ impl SettingsState {
 
     /// Select next option in dropdown
     pub fn dropdown_next(&mut self) {
+        // Estimate max_visible from scroll panel viewport (minus 1 for dropdown header row)
+        let estimated_max_visible = self.scroll_panel.viewport_height().saturating_sub(1);
         if let Some(item) = self.current_item_mut() {
             if let SettingControl::Dropdown(ref mut d) = item.control {
+                // Update max_visible if not set or if estimate is smaller
+                if d.max_visible == 0
+                    || (estimated_max_visible > 0 && estimated_max_visible < d.max_visible)
+                {
+                    d.max_visible = estimated_max_visible.max(3); // At least 3 visible
+                }
                 d.select_next();
             }
         }
@@ -1280,6 +1296,17 @@ impl SettingsState {
         if let Some(item) = self.current_item_mut() {
             if let SettingControl::Dropdown(ref mut d) = item.control {
                 d.cancel();
+            }
+        }
+    }
+
+    /// Scroll open dropdown by delta (positive = down, negative = up)
+    pub fn dropdown_scroll(&mut self, delta: i32) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Dropdown(ref mut d) = item.control {
+                if d.open {
+                    d.scroll_by(delta);
+                }
             }
         }
     }

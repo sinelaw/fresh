@@ -229,6 +229,11 @@ impl ScrollablePanel {
         self.scroll.set_viewport(height);
     }
 
+    /// Get current viewport height
+    pub fn viewport_height(&self) -> usize {
+        self.scroll.viewport as usize
+    }
+
     /// Calculate total content height from items
     pub fn update_content_height<I: ScrollItem>(&mut self, items: &[I]) {
         let height: u16 = items.iter().map(|i| i.height()).sum();

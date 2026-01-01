@@ -145,6 +145,7 @@ impl DropdownState {
             KeyCode::Home => {
                 if !self.options.is_empty() {
                     self.selected = 0;
+                    self.ensure_visible();
                     Some(DropdownEvent::SelectionChanged(0))
                 } else {
                     None
@@ -153,6 +154,7 @@ impl DropdownState {
             KeyCode::End => {
                 if !self.options.is_empty() {
                     self.selected = self.options.len() - 1;
+                    self.ensure_visible();
                     Some(DropdownEvent::SelectionChanged(self.selected))
                 } else {
                     None

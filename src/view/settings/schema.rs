@@ -366,10 +366,18 @@ fn determine_type(
         let options: Vec<EnumOption> = values
             .iter()
             .filter_map(|v| {
-                v.as_str().map(|s| EnumOption {
-                    name: s.to_string(),
-                    value: s.to_string(),
-                })
+                if v.is_null() {
+                    // null in enum represents "auto-detect" or "default"
+                    Some(EnumOption {
+                        name: "Auto-detect".to_string(),
+                        value: String::new(), // Empty string represents null
+                    })
+                } else {
+                    v.as_str().map(|s| EnumOption {
+                        name: s.to_string(),
+                        value: s.to_string(),
+                    })
+                }
             })
             .collect();
         if !options.is_empty() {

@@ -611,10 +611,22 @@ pub fn build_item(schema: &SettingSchema, config_value: &serde_json::Value) -> S
         }
 
         SettingType::Enum { options } => {
-            let current = current_value
-                .and_then(|v| v.as_str())
-                .or_else(|| schema.default.as_ref().and_then(|d| d.as_str()))
-                .unwrap_or("");
+            // Handle null values in enums (represented as empty string in dropdown values)
+            let current = if current_value.map(|v| v.is_null()).unwrap_or(false) {
+                "" // null maps to empty string (Auto-detect option)
+            } else {
+                current_value
+                    .and_then(|v| v.as_str())
+                    .or_else(|| {
+                        let default = schema.default.as_ref()?;
+                        if default.is_null() {
+                            Some("")
+                        } else {
+                            default.as_str()
+                        }
+                    })
+                    .unwrap_or("")
+            };
 
             let display_names: Vec<String> = options.iter().map(|o| o.name.clone()).collect();
             let values: Vec<String> = options.iter().map(|o| o.value.clone()).collect();
@@ -769,10 +781,22 @@ pub fn build_item_from_value(
         }
 
         SettingType::Enum { options } => {
-            let current = current_value
-                .and_then(|v| v.as_str())
-                .or_else(|| schema.default.as_ref().and_then(|d| d.as_str()))
-                .unwrap_or("");
+            // Handle null values in enums (represented as empty string in dropdown values)
+            let current = if current_value.map(|v| v.is_null()).unwrap_or(false) {
+                "" // null maps to empty string (Auto-detect option)
+            } else {
+                current_value
+                    .and_then(|v| v.as_str())
+                    .or_else(|| {
+                        let default = schema.default.as_ref()?;
+                        if default.is_null() {
+                            Some("")
+                        } else {
+                            default.as_str()
+                        }
+                    })
+                    .unwrap_or("")
+            };
 
             let display_names: Vec<String> = options.iter().map(|o| o.name.clone()).collect();
             let values: Vec<String> = options.iter().map(|o| o.value.clone()).collect();
@@ -882,7 +906,14 @@ pub fn control_to_value(control: &SettingControl) -> serde_json::Value {
 
         SettingControl::Dropdown(state) => state
             .selected_value()
-            .map(|s| serde_json::Value::String(s.to_string()))
+            .map(|s| {
+                if s.is_empty() {
+                    // Empty string represents null in nullable enums
+                    serde_json::Value::Null
+                } else {
+                    serde_json::Value::String(s.to_string())
+                }
+            })
             .unwrap_or(serde_json::Value::Null),
 
         SettingControl::Text(state) => serde_json::Value::String(state.value.clone()),

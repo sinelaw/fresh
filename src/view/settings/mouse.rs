@@ -134,8 +134,26 @@ impl Editor {
                 }
                 return Ok(false);
             }
-            MouseEventKind::ScrollUp => return Ok(self.settings_scroll_up(3)),
-            MouseEventKind::ScrollDown => return Ok(self.settings_scroll_down(3)),
+            MouseEventKind::ScrollUp => {
+                // If a dropdown is open, forward scroll to it
+                if let Some(ref mut state) = self.settings_state {
+                    if state.is_dropdown_open() {
+                        state.dropdown_scroll(-3);
+                        return Ok(true);
+                    }
+                }
+                return Ok(self.settings_scroll_up(3));
+            }
+            MouseEventKind::ScrollDown => {
+                // If a dropdown is open, forward scroll to it
+                if let Some(ref mut state) = self.settings_state {
+                    if state.is_dropdown_open() {
+                        state.dropdown_scroll(3);
+                        return Ok(true);
+                    }
+                }
+                return Ok(self.settings_scroll_down(3));
+            }
             MouseEventKind::Drag(MouseButton::Left) => {
                 return Ok(self.settings_scrollbar_drag(col, row))
             }

@@ -112,7 +112,7 @@ pub fn render_dropdown_aligned(
         let scrollbar_width: u16 = if needs_scrollbar { 1 } else { 0 };
         let option_width = button_width.saturating_sub(scrollbar_width);
 
-        // Use scroll offset from state
+        // Use options_to_show for scroll calculations (max_visible is updated during navigation)
         let scroll_offset = state
             .scroll_offset
             .min(state.options.len().saturating_sub(options_to_show));
