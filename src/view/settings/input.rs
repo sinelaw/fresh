@@ -770,6 +770,14 @@ impl SettingsState {
                 self.dropdown_next();
                 InputResult::Consumed
             }
+            KeyCode::Home => {
+                self.dropdown_home();
+                InputResult::Consumed
+            }
+            KeyCode::End => {
+                self.dropdown_end();
+                InputResult::Consumed
+            }
             KeyCode::Enter => {
                 self.dropdown_confirm();
                 InputResult::Consumed

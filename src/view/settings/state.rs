@@ -1265,6 +1265,30 @@ impl SettingsState {
         }
     }
 
+    /// Jump to first option in dropdown
+    pub fn dropdown_home(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Dropdown(ref mut d) = item.control {
+                if !d.options.is_empty() {
+                    d.selected = 0;
+                    d.ensure_visible();
+                }
+            }
+        }
+    }
+
+    /// Jump to last option in dropdown
+    pub fn dropdown_end(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Dropdown(ref mut d) = item.control {
+                if !d.options.is_empty() {
+                    d.selected = d.options.len() - 1;
+                    d.ensure_visible();
+                }
+            }
+        }
+    }
+
     /// Confirm dropdown selection (close and record change)
     pub fn dropdown_confirm(&mut self) {
         if let Some(item) = self.current_item_mut() {
