@@ -17,6 +17,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
+use rust_i18n::t;
 
 /// Renderer for the file browser popup
 pub struct FileBrowserRenderer;
@@ -177,7 +178,7 @@ impl FileBrowserRenderer {
 
         // First line: "Show Hidden" checkbox (on its own row to avoid truncation on Windows)
         let checkbox_icon = if state.show_hidden { "☑" } else { "☐" };
-        let checkbox_label = format!("{} Show Hidden", checkbox_icon);
+        let checkbox_label = format!("{} {}", checkbox_icon, t!("file_browser.show_hidden"));
         let shortcut_text = if shortcut_hint.is_empty() {
             String::new()
         } else {
@@ -230,7 +231,7 @@ impl FileBrowserRenderer {
 
         let mut nav_spans = Vec::new();
         nav_spans.push(Span::styled(
-            " Navigation: ",
+            format!(" {}", t!("file_browser.navigation")),
             Style::default()
                 .fg(theme.help_separator_fg)
                 .bg(theme.popup_bg),
@@ -320,7 +321,8 @@ impl FileBrowserRenderer {
 
         // Name column
         let name_header = format!(
-            " Name{}",
+            " {}{}",
+            t!("file_browser.name"),
             if state.sort_mode == SortMode::Name {
                 sort_arrow
             } else {
@@ -349,7 +351,8 @@ impl FileBrowserRenderer {
         let size_header = format!(
             "{:>width$}",
             format!(
-                "Size{}",
+                "{}{}",
+                t!("file_browser.size"),
                 if state.sort_mode == SortMode::Size {
                     sort_arrow
                 } else {
@@ -378,7 +381,8 @@ impl FileBrowserRenderer {
         let modified_header = format!(
             "{:>width$}",
             format!(
-                "Modified{}",
+                "{}{}",
+                t!("file_browser.modified"),
                 if state.sort_mode == SortMode::Modified {
                     sort_arrow
                 } else {
@@ -430,7 +434,7 @@ impl FileBrowserRenderer {
         // Loading state
         if state.loading {
             let loading_line = Line::from(Span::styled(
-                " Loading...",
+                t!("file_browser.loading").to_string(),
                 Style::default()
                     .fg(theme.help_separator_fg)
                     .bg(theme.popup_bg),
@@ -443,7 +447,7 @@ impl FileBrowserRenderer {
         // Error state
         if let Some(error) = &state.error {
             let error_line = Line::from(Span::styled(
-                format!(" Error: {}", error),
+                t!("file_browser.error", error = error).to_string(),
                 Style::default()
                     .fg(theme.diagnostic_error_fg)
                     .bg(theme.popup_bg),
@@ -456,7 +460,7 @@ impl FileBrowserRenderer {
         // Empty state
         if state.entries.is_empty() {
             let empty_line = Line::from(Span::styled(
-                " (empty directory)",
+                format!(" {}", t!("file_browser.empty")),
                 Style::default()
                     .fg(theme.help_separator_fg)
                     .bg(theme.popup_bg),

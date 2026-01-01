@@ -307,3 +307,158 @@ fn test_multiple_locales_can_be_loaded() {
         harness.assert_screen_contains(expected_text);
     }
 }
+
+/// Helper function to switch locale via command palette
+fn switch_locale(harness: &mut EditorTestHarness, locale: &str) {
+    // Open command palette with Ctrl+P
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type to filter for locale command
+    harness.type_text("Select Locale").unwrap();
+    harness.render().unwrap();
+
+    // Execute the command
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Clear the default "en" and type the new locale code (matching existing test pattern)
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text(locale).unwrap();
+    harness.render().unwrap();
+
+    // Confirm selection
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+}
+
+#[test]
+fn test_locale_switch_affects_file_browser_columns() {
+    // Test that file browser column headers are properly localized when switching locales
+    // on a live editor instance
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // Verify English file browser columns first
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Name");
+    harness.assert_screen_contains("Size");
+    harness.assert_screen_contains("Modified");
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Switch to Spanish
+    switch_locale(&mut harness, "es");
+
+    // Verify Spanish file browser columns
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Nombre");
+    harness.assert_screen_contains("Tamaño");
+    harness.assert_screen_contains("Modificado");
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Switch to German
+    switch_locale(&mut harness, "de");
+
+    // Verify German file browser columns
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Größe");
+    harness.assert_screen_contains("Geändert");
+}
+
+#[test]
+fn test_locale_switch_affects_clipboard_messages() {
+    // Test that clipboard status messages are properly localized when switching locales
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // Type some text
+    harness.type_text("hello").unwrap();
+    harness.render().unwrap();
+
+    // Select all and copy - verify English message
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Copied");
+
+    // Switch to Spanish
+    switch_locale(&mut harness, "es");
+
+    // Select all and copy - verify Spanish message
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Copiado");
+
+    // Switch to French
+    switch_locale(&mut harness, "fr");
+
+    // Select all and copy - verify French message
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Copié");
+}
+
+#[test]
+fn test_locale_switch_affects_file_browser_show_hidden() {
+    // Test that "Show Hidden" checkbox label is properly localized when switching locales
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // Verify English "Show Hidden" label
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Show Hidden");
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Switch to Spanish
+    switch_locale(&mut harness, "es");
+
+    // Verify Spanish "Show Hidden" label
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Mostrar ocultos");
+}

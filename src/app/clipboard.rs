@@ -5,6 +5,8 @@
 //! - Copy with formatting (HTML with syntax highlighting)
 //! - Multi-cursor add above/below/at next match
 
+use rust_i18n::t;
+
 use crate::input::multi_cursor::{
     add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult,
 };
@@ -61,7 +63,7 @@ impl Editor {
 
             if !text.is_empty() {
                 self.clipboard.copy(text);
-                self.status_message = Some("Copied".to_string());
+                self.status_message = Some(t!("clipboard.copied").to_string());
             }
         } else {
             // No selection: copy entire line(s) for each cursor
@@ -84,7 +86,7 @@ impl Editor {
 
             if !text.is_empty() {
                 self.clipboard.copy(text);
-                self.status_message = Some("Copied line".to_string());
+                self.status_message = Some(t!("clipboard.copied_line").to_string());
             }
         }
     }
@@ -104,7 +106,7 @@ impl Editor {
         };
 
         if !has_selection {
-            self.status_message = Some("No selection to copy".to_string());
+            self.status_message = Some(t!("clipboard.no_selection").to_string());
             return;
         }
 
@@ -129,7 +131,7 @@ impl Editor {
         };
 
         if ranges.is_empty() {
-            self.status_message = Some("No selection to copy".to_string());
+            self.status_message = Some(t!("clipboard.no_selection").to_string());
             return;
         }
 
@@ -167,7 +169,7 @@ impl Editor {
         };
 
         if text.is_empty() {
-            self.status_message = Some("No text to copy".to_string());
+            self.status_message = Some(t!("clipboard.no_text").to_string());
             return;
         }
 
@@ -201,10 +203,10 @@ impl Editor {
 
         // Copy the HTML to clipboard (with plain text fallback)
         if self.clipboard.copy_html(&html, &text) {
-            self.status_message = Some(format!("Copied with '{}' theme", theme_name));
+            self.status_message = Some(t!("clipboard.copied_with_theme", theme = theme_name).to_string());
         } else {
             self.clipboard.copy(text);
-            self.status_message = Some("Copied as plain text".to_string());
+            self.status_message = Some(t!("clipboard.copied_plain").to_string());
         }
     }
 
@@ -303,7 +305,7 @@ impl Editor {
             }
 
             if !deletions.is_empty() {
-                self.status_message = Some("Cut".to_string());
+                self.status_message = Some(t!("clipboard.cut").to_string());
             }
         } else {
             // No selection: delete entire line(s) for each cursor
@@ -348,7 +350,7 @@ impl Editor {
             }
 
             if !deletions.is_empty() {
-                self.status_message = Some("Cut line".to_string());
+                self.status_message = Some(t!("clipboard.cut_line").to_string());
             }
         }
     }
@@ -393,7 +395,7 @@ impl Editor {
         if let Some(prompt) = self.prompt.as_mut() {
             prompt.insert_str(&normalized);
             self.update_prompt_suggestions();
-            self.status_message = Some("Pasted".to_string());
+            self.status_message = Some(t!("clipboard.pasted").to_string());
             return;
         }
 
@@ -464,7 +466,7 @@ impl Editor {
             self.apply_event_to_active_buffer(&event);
         }
 
-        self.status_message = Some("Pasted".to_string());
+        self.status_message = Some(t!("clipboard.pasted").to_string());
     }
 
     /// Set clipboard content for testing purposes
@@ -511,7 +513,7 @@ impl Editor {
                 self.active_event_log_mut().append(event.clone());
                 self.apply_event_to_active_buffer(&event);
 
-                self.status_message = Some(format!("Added cursor at match ({})", total_cursors));
+                self.status_message = Some(t!("clipboard.added_cursor_match", count = total_cursors).to_string());
             }
             AddCursorResult::Failed { message } => {
                 self.status_message = Some(message);
@@ -539,7 +541,7 @@ impl Editor {
                 self.active_event_log_mut().append(event.clone());
                 self.apply_event_to_active_buffer(&event);
 
-                self.status_message = Some(format!("Added cursor above ({})", total_cursors));
+                self.status_message = Some(t!("clipboard.added_cursor_above", count = total_cursors).to_string());
             }
             AddCursorResult::Failed { message } => {
                 self.status_message = Some(message);
@@ -567,7 +569,7 @@ impl Editor {
                 self.active_event_log_mut().append(event.clone());
                 self.apply_event_to_active_buffer(&event);
 
-                self.status_message = Some(format!("Added cursor below ({})", total_cursors));
+                self.status_message = Some(t!("clipboard.added_cursor_below", count = total_cursors).to_string());
             }
             AddCursorResult::Failed { message } => {
                 self.status_message = Some(message);
@@ -616,7 +618,7 @@ impl Editor {
         if !text.is_empty() {
             let len = text.len();
             self.clipboard.copy(text);
-            self.status_message = Some(format!("Yanked {} chars", len));
+            self.status_message = Some(t!("clipboard.yanked", count = len).to_string());
         }
     }
 
@@ -656,7 +658,7 @@ impl Editor {
         if !text.is_empty() {
             let len = text.len();
             self.clipboard.copy(text);
-            self.status_message = Some(format!("Yanked {} chars", len));
+            self.status_message = Some(t!("clipboard.yanked", count = len).to_string());
         }
     }
 
@@ -706,7 +708,7 @@ impl Editor {
         if !text.is_empty() {
             let len = text.len();
             self.clipboard.copy(text);
-            self.status_message = Some(format!("Yanked {} chars", len));
+            self.status_message = Some(t!("clipboard.yanked", count = len).to_string());
         }
     }
 
@@ -751,7 +753,7 @@ impl Editor {
         if !text.is_empty() {
             let len = text.len();
             self.clipboard.copy(text);
-            self.status_message = Some(format!("Yanked {} chars", len));
+            self.status_message = Some(t!("clipboard.yanked", count = len).to_string());
         }
     }
 }
