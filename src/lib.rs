@@ -1,5 +1,10 @@
 // Editor library - exposes all core modules for testing
 
+// Initialize i18n with translations from locales/ directory
+rust_i18n::i18n!("locales", fallback = "en");
+
+pub mod i18n;
+
 #[cfg(feature = "plugins")]
 pub mod v8_init;
 

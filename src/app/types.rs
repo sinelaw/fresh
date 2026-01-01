@@ -3,6 +3,7 @@ use crate::input::keybindings::Action;
 use crate::model::event::{BufferId, SplitDirection, SplitId};
 use crate::services::async_bridge::LspMessageType;
 use ratatui::layout::Rect;
+use rust_i18n::t;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -148,7 +149,7 @@ impl BufferMetadata {
                 path: PathBuf::new(),
                 uri: None,
             },
-            display_name: "[No Name]".to_string(),
+            display_name: t!("buffer.no_name").to_string(),
             lsp_enabled: true,
             lsp_disabled_reason: None,
             read_only: false,
@@ -167,7 +168,7 @@ impl BufferMetadata {
             },
             display_name,
             lsp_enabled: false, // No file path, so no LSP
-            lsp_disabled_reason: Some("Unnamed buffer".to_string()),
+            lsp_disabled_reason: Some(t!("lsp.disabled.unnamed").to_string()),
             read_only: false,
             binary: false,
             lsp_opened_with: HashSet::new(),
@@ -230,7 +231,7 @@ impl BufferMetadata {
 
         relative
             .or_else(|| canonical_path.to_str().map(|s| s.to_string()))
-            .unwrap_or_else(|| "[Unknown]".to_string())
+            .unwrap_or_else(|| t!("buffer.unknown").to_string())
     }
 
     /// Create metadata for a virtual buffer (not backed by a file)
@@ -244,7 +245,7 @@ impl BufferMetadata {
             kind: BufferKind::Virtual { mode },
             display_name: name,
             lsp_enabled: false, // Virtual buffers don't use LSP
-            lsp_disabled_reason: Some("Virtual buffer".to_string()),
+            lsp_disabled_reason: Some(t!("lsp.disabled.virtual").to_string()),
             read_only,
             binary: false,
             lsp_opened_with: HashSet::new(),
@@ -373,13 +374,13 @@ impl TabContextMenuItem {
     }
 
     /// Get the display label for this menu item
-    pub fn label(&self) -> &'static str {
+    pub fn label(&self) -> String {
         match self {
-            TabContextMenuItem::Close => "Close",
-            TabContextMenuItem::CloseOthers => "Close Others",
-            TabContextMenuItem::CloseToRight => "Close to the Right",
-            TabContextMenuItem::CloseToLeft => "Close to the Left",
-            TabContextMenuItem::CloseAll => "Close All",
+            TabContextMenuItem::Close => t!("tab.close").to_string(),
+            TabContextMenuItem::CloseOthers => t!("tab.close_others").to_string(),
+            TabContextMenuItem::CloseToRight => t!("tab.close_to_right").to_string(),
+            TabContextMenuItem::CloseToLeft => t!("tab.close_to_left").to_string(),
+            TabContextMenuItem::CloseAll => t!("tab.close_all").to_string(),
         }
     }
 }

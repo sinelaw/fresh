@@ -1,4 +1,5 @@
 use super::*;
+use rust_i18n::t;
 
 impl Editor {
     /// Render the editor to the terminal
@@ -752,7 +753,7 @@ impl Editor {
             crate::view::ui::MenuRenderer::render(
                 frame,
                 menu_bar_area,
-                &self.config.menu,
+                &self.menus,
                 &self.menu_state,
                 &self.keybindings,
                 &self.theme,
@@ -1952,7 +1953,7 @@ impl Editor {
 
         if query.is_empty() {
             self.search_state = None;
-            self.set_status_message("Search cancelled.".to_string());
+            self.set_status_message(t!("search.cancelled").to_string());
             return;
         }
 
@@ -2097,7 +2098,7 @@ impl Editor {
             } else if search_state.wrap_search {
                 0 // Wrap to beginning
             } else {
-                self.set_status_message("No more matches.".to_string());
+                self.set_status_message(t!("search.no_matches").to_string());
                 return;
             };
 
@@ -2122,7 +2123,7 @@ impl Editor {
 
             self.set_status_message(format!("Match {} of {}", next_index + 1, matches_len));
         } else {
-            self.set_status_message("No active search. Press Ctrl+F to search.".to_string());
+            self.set_status_message(t!("search.no_active").to_string());
         }
     }
 
@@ -2139,7 +2140,7 @@ impl Editor {
             } else if search_state.wrap_search {
                 search_state.matches.len() - 1 // Wrap to end
             } else {
-                self.set_status_message("No more matches.".to_string());
+                self.set_status_message(t!("search.no_matches").to_string());
                 return;
             };
 
@@ -2164,7 +2165,7 @@ impl Editor {
 
             self.set_status_message(format!("Match {} of {}", prev_index + 1, matches_len));
         } else {
-            self.set_status_message("No active search. Press Ctrl+F to search.".to_string());
+            self.set_status_message(t!("search.no_active").to_string());
         }
     }
 
@@ -2218,7 +2219,7 @@ impl Editor {
                 }
             }
             _ => {
-                self.set_status_message("No text to search".to_string());
+                self.set_status_message(t!("search.no_text").to_string());
             }
         }
     }
@@ -2277,7 +2278,7 @@ impl Editor {
                 }
             }
             _ => {
-                self.set_status_message("No text to search".to_string());
+                self.set_status_message(t!("search.no_text").to_string());
             }
         }
     }
@@ -3199,9 +3200,9 @@ impl Editor {
             let key = state.key;
             self.macros.insert(key, state.actions);
             self.last_macro_register = Some(key);
-            self.set_status_message(format!("Macro '{}' saved ({} actions)", key, action_count));
+            self.set_status_message(t!("macro.saved", key = key, count = action_count).to_string());
         } else {
-            self.set_status_message("Not recording a macro".to_string());
+            self.set_status_message(t!("macro.not_recording").to_string());
         }
     }
 
@@ -3209,7 +3210,7 @@ impl Editor {
     pub(super) fn play_macro(&mut self, key: char) {
         if let Some(actions) = self.macros.get(&key).cloned() {
             if actions.is_empty() {
-                self.set_status_message(format!("Macro '{}' is empty", key));
+                self.set_status_message(t!("macro.empty", key = key).to_string());
                 return;
             }
 
@@ -3224,9 +3225,11 @@ impl Editor {
             // Restore recording state
             self.macro_recording = was_recording;
 
-            self.set_status_message(format!("Played macro '{}' ({} actions)", key, action_count));
+            self.set_status_message(
+                t!("macro.played", key = key, count = action_count).to_string(),
+            );
         } else {
-            self.set_status_message(format!("No macro recorded for '{}'", key));
+            self.set_status_message(t!("macro.not_found", key = key).to_string());
         }
     }
 
@@ -3408,7 +3411,7 @@ impl Editor {
                 position,
             },
         );
-        self.set_status_message(format!("Bookmark '{}' set", key));
+        self.set_status_message(t!("bookmark.set", key = key).to_string());
     }
 
     /// Jump to a bookmark
@@ -3419,7 +3422,7 @@ impl Editor {
                 if self.buffers.contains_key(&bookmark.buffer_id) {
                     self.set_active_buffer(bookmark.buffer_id);
                 } else {
-                    self.set_status_message(format!("Bookmark '{}': buffer no longer exists", key));
+                    self.set_status_message(t!("bookmark.buffer_gone", key = key).to_string());
                     self.bookmarks.remove(&key);
                     return;
                 }

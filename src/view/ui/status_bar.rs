@@ -11,6 +11,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
+use rust_i18n::t;
 
 /// Layout information returned from status bar rendering for mouse click detection
 #[derive(Debug, Clone, Default)]
@@ -365,11 +366,12 @@ impl StatusBarRenderer {
         let mut spans = Vec::new();
 
         // "Open: " prefix
-        spans.push(Span::styled("Open: ", base_style));
+        let open_prompt = t!("file.open_prompt").to_string();
+        spans.push(Span::styled(open_prompt.clone(), base_style));
 
         // Calculate if we need to truncate
         // Only truncate if full path + input exceeds 90% of available width
-        let prefix_len = 6; // "Open: "
+        let prefix_len = str_width(&open_prompt);
         let dir_path = file_open_state.current_dir.to_string_lossy();
         let dir_path_len = dir_path.len() + 1; // +1 for trailing slash
         let input_len = prompt.input.len();
@@ -426,7 +428,7 @@ impl StatusBarRenderer {
         // Set cursor position in the prompt
         // Use display width for proper handling of Unicode characters
         // We need to calculate the visual width of: "Open: " + dir_display + input[..cursor_pos]
-        let prefix_width = str_width("Open: ");
+        let prefix_width = str_width(&open_prompt);
         let dir_display_width = if truncated.truncated {
             let suffix_with_slash = if truncated.suffix.ends_with('/') {
                 &truncated.suffix
@@ -546,7 +548,7 @@ impl StatusBarRenderer {
 
         // Build cursor count indicator (only show if multiple cursors)
         let cursor_count_indicator = if state.cursors.count() > 1 {
-            format!(" | {} cursors", state.cursors.count())
+            format!(" | {}", t!("status.cursors", count = state.cursors.count()))
         } else {
             String::new()
         };
@@ -604,7 +606,8 @@ impl StatusBarRenderer {
         let warning_badge_width = str_width(&warning_badge);
 
         // Build update indicator for right side (if update available)
-        let update_indicator = update_available.map(|version| format!(" Update: v{} ", version));
+        let update_indicator = update_available
+            .map(|version| format!(" {} ", t!("status.update_available", version = version)));
         let update_width = update_indicator.as_ref().map(|s| s.len()).unwrap_or(0);
 
         // Build Command Palette indicator for right side
@@ -615,7 +618,7 @@ impl StatusBarRenderer {
                 crate::input::keybindings::KeyContext::Global,
             )
             .unwrap_or_else(|| "?".to_string());
-        let cmd_palette_indicator = format!("Palette: {}", cmd_palette_shortcut);
+        let cmd_palette_indicator = t!("status.palette", shortcut = cmd_palette_shortcut);
         let padded_cmd_palette = format!(" {} ", cmd_palette_indicator);
 
         // Calculate available width and right side width
@@ -970,7 +973,7 @@ impl StatusBarRenderer {
         // Case Sensitive option
         let case_hovered = hover == SearchOptionsHover::CaseSensitive;
         let case_start = current_col;
-        let case_label = format!("{} Case Sensitive", case_checkbox);
+        let case_label = format!("{} {}", case_checkbox, t!("search.case_sensitive"));
         let case_shortcut_text = case_shortcut
             .as_ref()
             .map(|s| format!(" ({})", s))
@@ -1001,7 +1004,7 @@ impl StatusBarRenderer {
         // Whole Word option
         let word_hovered = hover == SearchOptionsHover::WholeWord;
         let word_start = current_col;
-        let word_label = format!("{} Whole Word", word_checkbox);
+        let word_label = format!("{} {}", word_checkbox, t!("search.whole_word"));
         let word_shortcut_text = word_shortcut
             .as_ref()
             .map(|s| format!(" ({})", s))
@@ -1032,7 +1035,7 @@ impl StatusBarRenderer {
         // Regex option
         let regex_hovered = hover == SearchOptionsHover::Regex;
         let regex_start = current_col;
-        let regex_label = format!("{} Regex", regex_checkbox);
+        let regex_label = format!("{} {}", regex_checkbox, t!("search.regex"));
         let regex_shortcut_text = regex_shortcut
             .as_ref()
             .map(|s| format!(" ({})", s))
@@ -1068,7 +1071,7 @@ impl StatusBarRenderer {
 
             let confirm_hovered = hover == SearchOptionsHover::ConfirmEach;
             let confirm_start = current_col;
-            let confirm_label = format!("{} Confirm each", confirm_checkbox);
+            let confirm_label = format!("{} {}", confirm_checkbox, t!("search.confirm_each"));
             let confirm_shortcut_text = confirm_shortcut
                 .as_ref()
                 .map(|s| format!(" ({})", s))
