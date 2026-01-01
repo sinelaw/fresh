@@ -1,4 +1,6 @@
 /// <reference path="../types/fresh.d.ts" />
+const editor = getEditor();
+
 
 /**
  * 3-Way Merge Conflict Resolution Plugin

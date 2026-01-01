@@ -1,6 +1,8 @@
 // TypeScript Color Highlighter Plugin
 // Highlights color codes in source code with a colored swatch
 // Supports: #RGB, #RRGGBB, rgb(), rgba(), hsl(), hsla(), Color::Rgb()
+const editor = getEditor();
+
 
 interface ColorHighlighterConfig {
   enabled: boolean;

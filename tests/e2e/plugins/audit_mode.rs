@@ -17,7 +17,7 @@ fn setup_audit_mode_plugin(repo: &GitTestRepo) {
         .map(PathBuf::from)
         .expect("CARGO_MANIFEST_DIR not set");
 
-    // Copy audit_mode.ts plugin
+    // Copy audit_mode.ts plugin and its i18n file
     let audit_mode_src = project_root.join("plugins/audit_mode.ts");
     let audit_mode_dst = plugins_dir.join("audit_mode.ts");
     fs::copy(&audit_mode_src, &audit_mode_dst).unwrap_or_else(|e| {
@@ -26,6 +26,11 @@ fn setup_audit_mode_plugin(repo: &GitTestRepo) {
             audit_mode_src, e
         )
     });
+    let audit_mode_i18n_src = project_root.join("plugins/audit_mode.i18n.json");
+    let audit_mode_i18n_dst = plugins_dir.join("audit_mode.i18n.json");
+    if audit_mode_i18n_src.exists() {
+        fs::copy(&audit_mode_i18n_src, &audit_mode_i18n_dst).ok();
+    }
 
     // Copy plugins/lib directory (contains virtual-buffer-factory.ts and fresh.d.ts)
     let lib_src = project_root.join("plugins/lib");
@@ -223,6 +228,7 @@ fn start_server(config: Config) {
 /// This test verifies that setSplitScroll is available in the editor API
 #[test]
 fn test_review_diff_side_by_side_view() {
+    init_tracing_from_env();
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
     setup_audit_mode_plugin(&repo);

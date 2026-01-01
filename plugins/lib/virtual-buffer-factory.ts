@@ -29,130 +29,102 @@ export interface SplitBufferOptions extends VirtualBufferOptions {
 }
 
 /**
- * VirtualBufferFactory - Simplified virtual buffer creation
- *
- * Provides convenience methods for creating virtual buffers with
- * sensible defaults for read-only panel views.
+ * Create a VirtualBufferFactory bound to a specific editor instance.
  *
  * @example
  * ```typescript
- * // Create buffer as a tab in current split (e.g., help, manual)
- * const bufferId = await VirtualBufferFactory.create({
+ * const editor = getEditor();
+ * const bufferFactory = createVirtualBufferFactory(editor);
+ *
+ * // Create buffer as a tab in current split
+ * const bufferId = await bufferFactory.create({
  *   name: "*Help*",
  *   mode: "help-manual",
  *   entries: helpEntries,
  * });
- *
- * // Create buffer in existing split (e.g., commit detail view)
- * const bufferId = await VirtualBufferFactory.createInSplit(splitId, {
- *   name: "*Commit Details*",
- *   mode: "git-commit-detail",
- *   entries: detailEntries,
- * });
- *
- * // Create buffer in new split
- * const bufferId = await VirtualBufferFactory.createWithSplit({
- *   name: "*References*",
- *   mode: "references-list",
- *   entries: refEntries,
- *   ratio: 0.4,
- * });
  * ```
  */
-export const VirtualBufferFactory = {
-  /**
-   * Create a virtual buffer as a new tab in the current split
-   * This is ideal for documentation, help panels, and content that should
-   * appear alongside other buffers rather than in a separate split.
-   *
-   * @param options - Buffer configuration
-   * @returns Buffer ID
-   */
-  async create(options: VirtualBufferOptions): Promise<number> {
-    const {
-      name,
-      mode,
-      entries,
-      showLineNumbers = false,
-      editingDisabled = true,
-      readOnly = true,
-    } = options;
+export function createVirtualBufferFactory(editor: EditorAPI) {
+  return {
+    /**
+     * Create a virtual buffer as a new tab in the current split
+     */
+    async create(options: VirtualBufferOptions): Promise<number> {
+      const {
+        name,
+        mode,
+        entries,
+        showLineNumbers = false,
+        editingDisabled = true,
+        readOnly = true,
+      } = options;
 
-    return await editor.createVirtualBuffer({
-      name,
-      mode,
-      read_only: readOnly,
-      entries,
-      show_line_numbers: showLineNumbers,
-      editing_disabled: editingDisabled,
-    });
-  },
+      return await editor.createVirtualBuffer({
+        name,
+        mode,
+        read_only: readOnly,
+        entries,
+        show_line_numbers: showLineNumbers,
+        editing_disabled: editingDisabled,
+      });
+    },
 
-  /**
-   * Create a virtual buffer in an existing split
-   *
-   * @param splitId - Target split ID
-   * @param options - Buffer configuration
-   * @returns Buffer ID
-   */
-  async createInSplit(splitId: number, options: VirtualBufferOptions): Promise<number> {
-    const {
-      name,
-      mode,
-      entries,
-      showLineNumbers = false,
-      editingDisabled = true,
-      readOnly = true,
-    } = options;
+    /**
+     * Create a virtual buffer in an existing split
+     */
+    async createInSplit(splitId: number, options: VirtualBufferOptions): Promise<number> {
+      const {
+        name,
+        mode,
+        entries,
+        showLineNumbers = false,
+        editingDisabled = true,
+        readOnly = true,
+      } = options;
 
-    return await editor.createVirtualBufferInExistingSplit({
-      name,
-      mode,
-      read_only: readOnly,
-      entries,
-      split_id: splitId,
-      show_line_numbers: showLineNumbers,
-      editing_disabled: editingDisabled,
-    });
-  },
+      return await editor.createVirtualBufferInExistingSplit({
+        name,
+        mode,
+        read_only: readOnly,
+        entries,
+        split_id: splitId,
+        show_line_numbers: showLineNumbers,
+        editing_disabled: editingDisabled,
+      });
+    },
 
-  /**
-   * Create a virtual buffer in a new split
-   *
-   * @param options - Buffer and split configuration
-   * @returns Buffer ID
-   */
-  async createWithSplit(options: SplitBufferOptions): Promise<number> {
-    const {
-      name,
-      mode,
-      entries,
-      ratio = 0.3,
-      panelId,
-      showLineNumbers = false,
-      editingDisabled = true,
-      readOnly = true,
-    } = options;
+    /**
+     * Create a virtual buffer in a new split
+     */
+    async createWithSplit(options: SplitBufferOptions): Promise<number> {
+      const {
+        name,
+        mode,
+        entries,
+        ratio = 0.3,
+        panelId,
+        showLineNumbers = false,
+        editingDisabled = true,
+        readOnly = true,
+      } = options;
 
-    return await editor.createVirtualBufferInSplit({
-      name,
-      mode,
-      read_only: readOnly,
-      entries,
-      ratio,
-      panel_id: panelId,
-      show_line_numbers: showLineNumbers,
-      editing_disabled: editingDisabled,
-    });
-  },
+      return await editor.createVirtualBufferInSplit({
+        name,
+        mode,
+        read_only: readOnly,
+        entries,
+        ratio,
+        panel_id: panelId,
+        show_line_numbers: showLineNumbers,
+        editing_disabled: editingDisabled,
+      });
+    },
 
-  /**
-   * Update content of an existing virtual buffer
-   *
-   * @param bufferId - Buffer to update
-   * @param entries - New entries
-   */
-  updateContent(bufferId: number, entries: TextPropertyEntry[]): void {
-    editor.setVirtualBufferContent(bufferId, entries);
-  },
-};
+    /**
+     * Update content of an existing virtual buffer
+     */
+    updateContent(bufferId: number, entries: TextPropertyEntry[]): void {
+      editor.setVirtualBufferContent(bufferId, entries);
+    },
+  };
+}

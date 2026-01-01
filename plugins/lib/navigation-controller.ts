@@ -33,7 +33,7 @@ export class NavigationController<T> {
   private currentIndex: number = 0;
   private options: NavigationOptions<T>;
 
-  constructor(options: NavigationOptions<T> = {}) {
+  constructor(private readonly editor: EditorAPI, options: NavigationOptions<T> = {}) {
     this.options = {
       itemLabel: "Item",
       wrap: false,
@@ -168,13 +168,13 @@ export class NavigationController<T> {
    */
   showStatus(customMessage?: string): void {
     if (this.items.length === 0) {
-      editor.setStatus(`No ${this.options.itemLabel}s`);
+      this.editor.setStatus(`No ${this.options.itemLabel}s`);
       return;
     }
 
     const message = customMessage ||
       `${this.options.itemLabel} ${this.currentIndex + 1}/${this.items.length}`;
-    editor.setStatus(message);
+    this.editor.setStatus(message);
   }
 
   /**

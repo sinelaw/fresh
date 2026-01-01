@@ -1,4 +1,6 @@
 /// <reference path="../types/fresh.d.ts" />
+const editor = getEditor();
+
 
 /**
  * Multi-File Search & Replace Plugin

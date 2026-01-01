@@ -1,4 +1,6 @@
 /// <reference path="../types/fresh.d.ts" />
+const editor = getEditor();
+
 
 /**
  * Welcome Plugin

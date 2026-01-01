@@ -1,4 +1,6 @@
 /// <reference path="../types/fresh.d.ts" />
+const editor = getEditor();
+
 
 /**
  * Clangd helper plugin
@@ -90,7 +92,7 @@ globalThis.clangdSwitchSourceHeader = async function(): Promise<void> {
   }
 };
 
-const projectPanel = new PanelManager("Clangd project setup", "clangd-project-setup");
+const projectPanel = new PanelManager(editor, "Clangd project setup", "clangd-project-setup");
 
 function pathDesc(path: string): string {
   if (!path) {

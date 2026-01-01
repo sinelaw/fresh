@@ -1,4 +1,6 @@
 /// <reference path="../types/fresh.d.ts" />
+const editor = getEditor();
+
 
 /**
  * Git Blame Plugin - Magit-style Git Blame Interface

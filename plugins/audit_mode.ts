@@ -1,11 +1,13 @@
 // Review Diff Plugin
 // Provides a unified workflow for reviewing code changes (diffs, conflicts, AI outputs).
+const editor = getEditor();
 
 /// <reference path="./lib/fresh.d.ts" />
 /// <reference path="./lib/types.ts" />
 /// <reference path="./lib/virtual-buffer-factory.ts" />
 
-import { VirtualBufferFactory } from "./lib/virtual-buffer-factory.ts";
+import { createVirtualBufferFactory } from "./lib/virtual-buffer-factory.ts";
+const VirtualBufferFactory = createVirtualBufferFactory(editor);
 
 /**
  * Hunk status for staging

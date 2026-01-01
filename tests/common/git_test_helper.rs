@@ -264,14 +264,19 @@ A sample project for testing.
             .map(PathBuf::from)
             .expect("CARGO_MANIFEST_DIR not set");
 
-        // Copy git_grep.ts plugin
+        // Copy git_grep.ts plugin and its i18n file
         let git_grep_src = project_root.join("plugins/git_grep.ts");
         let git_grep_dst = plugins_dir.join("git_grep.ts");
         fs::copy(&git_grep_src, &git_grep_dst).unwrap_or_else(|e| {
             panic!("Failed to copy git_grep.ts from {:?}: {}", git_grep_src, e)
         });
+        let git_grep_i18n_src = project_root.join("plugins/git_grep.i18n.json");
+        let git_grep_i18n_dst = plugins_dir.join("git_grep.i18n.json");
+        if git_grep_i18n_src.exists() {
+            fs::copy(&git_grep_i18n_src, &git_grep_i18n_dst).ok();
+        }
 
-        // Copy git_find_file.ts plugin
+        // Copy git_find_file.ts plugin and its i18n file
         let git_find_file_src = project_root.join("plugins/git_find_file.ts");
         let git_find_file_dst = plugins_dir.join("git_find_file.ts");
         fs::copy(&git_find_file_src, &git_find_file_dst).unwrap_or_else(|e| {
@@ -280,6 +285,11 @@ A sample project for testing.
                 git_find_file_src, e
             )
         });
+        let git_find_file_i18n_src = project_root.join("plugins/git_find_file.i18n.json");
+        let git_find_file_i18n_dst = plugins_dir.join("git_find_file.i18n.json");
+        if git_find_file_i18n_src.exists() {
+            fs::copy(&git_find_file_i18n_src, &git_find_file_i18n_dst).ok();
+        }
     }
 
     /// Set up git log plugin by copying it from the project's plugins directory
@@ -293,11 +303,16 @@ A sample project for testing.
             .map(PathBuf::from)
             .expect("CARGO_MANIFEST_DIR not set");
 
-        // Copy git_log.ts plugin
+        // Copy git_log.ts plugin and its i18n file
         let git_log_src = project_root.join("plugins/git_log.ts");
         let git_log_dst = plugins_dir.join("git_log.ts");
         fs::copy(&git_log_src, &git_log_dst)
             .unwrap_or_else(|e| panic!("Failed to copy git_log.ts from {:?}: {}", git_log_src, e));
+        let git_log_i18n_src = project_root.join("plugins/git_log.i18n.json");
+        let git_log_i18n_dst = plugins_dir.join("git_log.i18n.json");
+        if git_log_i18n_src.exists() {
+            fs::copy(&git_log_i18n_src, &git_log_i18n_dst).ok();
+        }
     }
 
     /// Set up git blame plugin by copying it from the project's plugins directory
@@ -311,7 +326,7 @@ A sample project for testing.
             .map(PathBuf::from)
             .expect("CARGO_MANIFEST_DIR not set");
 
-        // Copy git_blame.ts plugin
+        // Copy git_blame.ts plugin and its i18n file
         let git_blame_src = project_root.join("plugins/git_blame.ts");
         let git_blame_dst = plugins_dir.join("git_blame.ts");
         fs::copy(&git_blame_src, &git_blame_dst).unwrap_or_else(|e| {
@@ -320,6 +335,11 @@ A sample project for testing.
                 git_blame_src, e
             )
         });
+        let git_blame_i18n_src = project_root.join("plugins/git_blame.i18n.json");
+        let git_blame_i18n_dst = plugins_dir.join("git_blame.i18n.json");
+        if git_blame_i18n_src.exists() {
+            fs::copy(&git_blame_i18n_src, &git_blame_i18n_dst).ok();
+        }
     }
 
     /// Set up test view marker plugin for debugging view transforms
@@ -353,6 +373,11 @@ A sample project for testing.
         let dst = plugins_dir.join("git_gutter.ts");
         fs::copy(&src, &dst)
             .unwrap_or_else(|e| panic!("Failed to copy git_gutter.ts from {:?}: {}", src, e));
+        let i18n_src = project_root.join("plugins/git_gutter.i18n.json");
+        let i18n_dst = plugins_dir.join("git_gutter.i18n.json");
+        if i18n_src.exists() {
+            fs::copy(&i18n_src, &i18n_dst).ok();
+        }
     }
 
     /// Set up buffer modified plugin for unsaved changes indicator tests

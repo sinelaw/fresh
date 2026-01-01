@@ -1,6 +1,8 @@
 // TypeScript TODO Highlighter Plugin
 // Highlights TODO, FIXME, XXX keywords in source code
 // Uses targeted overlay invalidation for efficient updates on edits
+const editor = getEditor();
+
 
 interface HighlightConfig {
   enabled: boolean;

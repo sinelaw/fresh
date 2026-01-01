@@ -20,5 +20,5 @@ export { PanelManager } from "./panel-manager.ts";
 export { NavigationController } from "./navigation-controller.ts";
 
 // Buffer Creation
-export { VirtualBufferFactory } from "./virtual-buffer-factory.ts";
+export { createVirtualBufferFactory } from "./virtual-buffer-factory.ts";
 export type { VirtualBufferOptions, SplitBufferOptions } from "./virtual-buffer-factory.ts";

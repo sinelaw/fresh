@@ -40,10 +40,12 @@ export class PanelManager {
   /**
    * Create a new PanelManager
    *
+   * @param editor - The editor API instance
    * @param panelName - Display name for the panel (e.g., "*Diagnostics*")
    * @param modeName - Mode name for keybindings (e.g., "diagnostics-list")
    */
   constructor(
+    private readonly editor: EditorAPI,
     private readonly panelName: string,
     private readonly modeName: string
   ) {}
@@ -101,11 +103,11 @@ export class PanelManager {
     }
 
     // Save current context
-    this.state.sourceSplitId = editor.getActiveSplitId();
-    this.state.sourceBufferId = editor.getActiveBufferId();
+    this.state.sourceSplitId = this.editor.getActiveSplitId();
+    this.state.sourceBufferId = this.editor.getActiveBufferId();
 
     // Create virtual buffer in split
-    const bufferId = await editor.createVirtualBufferInSplit({
+    const bufferId = await this.editor.createVirtualBufferInSplit({
       name: this.panelName,
       mode: this.modeName,
       read_only: true,
@@ -118,7 +120,7 @@ export class PanelManager {
 
     // Track state
     this.state.bufferId = bufferId;
-    this.state.splitId = editor.getActiveSplitId();
+    this.state.splitId = this.editor.getActiveSplitId();
     this.state.isOpen = true;
 
     return bufferId;
@@ -134,12 +136,12 @@ export class PanelManager {
 
     // Close the split containing the panel
     if (this.state.splitId !== null) {
-      editor.closeSplit(this.state.splitId);
+      this.editor.closeSplit(this.state.splitId);
     }
 
     // Focus back on source split
     if (this.state.sourceSplitId !== null) {
-      editor.focusSplit(this.state.sourceSplitId);
+      this.editor.focusSplit(this.state.sourceSplitId);
     }
 
     // Reset state
@@ -156,7 +158,7 @@ export class PanelManager {
       return;
     }
 
-    editor.setVirtualBufferContent(this.state.bufferId, entries);
+    this.editor.setVirtualBufferContent(this.state.bufferId, entries);
   }
 
   /**
@@ -177,7 +179,7 @@ export class PanelManager {
    */
   focusSource(): void {
     if (this.state.sourceSplitId !== null) {
-      editor.focusSplit(this.state.sourceSplitId);
+      this.editor.focusSplit(this.state.sourceSplitId);
     }
   }
 
@@ -186,7 +188,7 @@ export class PanelManager {
    */
   focusPanel(): void {
     if (this.state.splitId !== null) {
-      editor.focusSplit(this.state.splitId);
+      this.editor.focusSplit(this.state.splitId);
     }
   }
 
@@ -203,13 +205,13 @@ export class PanelManager {
     }
 
     // Focus source split and open file
-    editor.focusSplit(this.state.sourceSplitId);
-    await editor.openFile(filePath);
+    this.editor.focusSplit(this.state.sourceSplitId);
+    await this.editor.openFile(filePath);
 
     // Jump to location
-    editor.gotoLine(line);
+    this.editor.gotoLine(line);
     if (column > 1) {
-      editor.gotoColumn(column);
+      this.editor.gotoColumn(column);
     }
 
     // Focus back on panel

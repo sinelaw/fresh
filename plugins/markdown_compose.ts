@@ -6,6 +6,8 @@
 //
 // Syntax highlighting is handled by the TextMate grammar (built-in to the editor)
 // This plugin only adds the compose mode layout features.
+const editor = getEditor();
+
 
 interface MarkdownConfig {
   composeWidth: number;

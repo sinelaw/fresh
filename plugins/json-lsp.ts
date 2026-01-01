@@ -1,4 +1,6 @@
 /// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
+
 
 /**
  * JSON LSP Helper Plugin

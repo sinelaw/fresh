@@ -619,6 +619,7 @@ fn test_git_find_file_scrolling_many_files() {
 /// Test that git commands work from command palette
 #[test]
 fn test_git_commands_via_command_palette() {
+    init_tracing_from_env();
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
     repo.setup_git_plugins();
@@ -748,6 +749,7 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
 /// REPRODUCTION TEST: Git find file selection should actually open the file
 #[test]
 fn test_git_find_file_actually_opens_file() {
+    init_tracing_from_env();
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
     repo.setup_git_plugins();
