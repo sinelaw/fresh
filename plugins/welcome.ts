@@ -6,33 +6,33 @@
  */
 
 // Show welcome message in status bar
-editor.setStatus("Plugins are working! Welcome Plugin loaded successfully!");
+editor.setStatus(editor.t("status.loaded"));
 
 // Register commands that use built-in actions
 editor.registerCommand(
-  "Plugin Demo: Open Help",
-  "Open the editor help page (uses built-in action)",
+  "%cmd.open_help",
+  "%cmd.open_help_desc",
   "show_help",
   "normal"
 );
 
 editor.registerCommand(
-  "Plugin Demo: Save File",
-  "Save the current file (uses built-in action)",
+  "%cmd.save_file",
+  "%cmd.save_file_desc",
   "save",
   "normal"
 );
 
 // Register commands with custom TypeScript callbacks
 globalThis.plugin_say_hello = function(): void {
-  editor.insertAtCursor("Hello from TypeScript! The plugin system is working!\n");
-  editor.setStatus("Inserted greeting at cursor position");
+  editor.insertAtCursor(editor.t("text.greeting") + "\n");
+  editor.setStatus(editor.t("status.greeting_inserted"));
   editor.debug("Plugin callback executed: say_hello");
 };
 
 editor.registerCommand(
-  "Plugin Demo: Say Hello",
-  "Insert a friendly greeting into the buffer",
+  "%cmd.say_hello",
+  "%cmd.say_hello_desc",
   "plugin_say_hello",
   "normal"
 );
@@ -40,26 +40,26 @@ editor.registerCommand(
 globalThis.plugin_insert_time = function(): void {
   const time = new Date().toLocaleTimeString();
   editor.insertAtCursor(`Current time: ${time}\n`);
-  editor.setStatus("Inserted time at cursor position");
+  editor.setStatus(editor.t("status.time_inserted"));
   editor.debug(`Plugin callback executed: insert_time at ${time}`);
 };
 
 editor.registerCommand(
-  "Plugin Demo: Insert Time",
-  "Insert the current time at cursor position",
+  "%cmd.insert_time",
+  "%cmd.insert_time_desc",
   "plugin_insert_time",
   "normal"
 );
 
 globalThis.plugin_insert_comment = function(): void {
-  editor.insertAtCursor("// This comment was inserted by a TypeScript plugin!\n");
-  editor.setStatus("Comment inserted by plugin");
+  editor.insertAtCursor(editor.t("text.comment") + "\n");
+  editor.setStatus(editor.t("status.comment_inserted"));
   editor.debug("Plugin callback executed: insert_comment");
 };
 
 editor.registerCommand(
-  "Plugin Demo: Insert Comment",
-  "Insert a sample comment at cursor position",
+  "%cmd.insert_comment",
+  "%cmd.insert_comment_desc",
   "plugin_insert_comment",
   "normal"
 );

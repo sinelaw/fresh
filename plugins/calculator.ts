@@ -272,7 +272,7 @@ function isCopyButtonAt(contentCol: number, contentRow: number): boolean {
 function copyResultToClipboard(): void {
   const textToCopy = state.error || state.result;
   editor.copyToClipboard(textToCopy);
-  editor.setStatus(`Copied: ${textToCopy}`);
+  editor.setStatus(editor.t("status.copied", { value: textToCopy }));
 }
 
 // Get button position at content-relative coordinates
@@ -721,7 +721,7 @@ globalThis.calculator_open = async function (): Promise<void> {
 
   state.splitId = editor.getActiveSplitId();
 
-  editor.setStatus("Calculator opened");
+  editor.setStatus(editor.t("status.opened"));
 };
 
 // Mouse move handler for hover effect
@@ -763,6 +763,6 @@ editor.on("mouse_click", "onCalculatorMouseClick");
 editor.on("mouse_move", "onCalculatorMouseMove");
 
 // Register main command
-editor.registerCommand("Calculator", "Open calculator", "calculator_open", "normal");
+editor.registerCommand("%cmd.calculator", "%cmd.calculator_desc", "calculator_open", "normal");
 
-editor.setStatus("Calculator plugin loaded");
+editor.setStatus(editor.t("status.loaded"));

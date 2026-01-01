@@ -77,7 +77,7 @@ function entriesToSuggestions(entries: DirEntry[], basePath: string): PromptSugg
 
     return {
       text: displayName,
-      description: entry.is_dir ? "directory" : undefined,
+      description: entry.is_dir ? editor.t("suggestion.directory") : undefined,
       value: value,
       disabled: false,
     };
@@ -108,8 +108,8 @@ function missingFileSuggestion(
   }
 
   return {
-    text: `${input} (new file)`,
-    description: "File does not exist yet",
+    text: editor.t("suggestion.new_file", { filename: input }),
+    description: editor.t("suggestion.new_file_desc"),
     value: input,
   };
 }
@@ -160,4 +160,4 @@ globalThis.onPathCompletePromptChanged = function (args: { prompt_type: string; 
 // Register event handler
 editor.on("prompt_changed", "onPathCompletePromptChanged");
 
-editor.debug("Path completion plugin loaded successfully");
+editor.setStatus(editor.t("status.loaded"));

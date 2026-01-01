@@ -63,19 +63,19 @@ function getModeIndicator(mode: ViMode): string {
   const countPrefix = state.count !== null ? `${state.count} ` : "";
   switch (mode) {
     case "normal":
-      return `-- NORMAL --${countPrefix ? ` (${state.count})` : ""}`;
+      return `-- ${editor.t("mode.normal")} --${countPrefix ? ` (${state.count})` : ""}`;
     case "insert":
-      return "-- INSERT --";
+      return `-- ${editor.t("mode.insert")} --`;
     case "operator-pending":
-      return `-- OPERATOR (${state.pendingOperator}) --${countPrefix ? ` (${state.count})` : ""}`;
+      return `-- ${editor.t("mode.operator")} (${state.pendingOperator}) --${countPrefix ? ` (${state.count})` : ""}`;
     case "find-char":
-      return `-- FIND (${state.pendingFindChar}) --`;
+      return `-- ${editor.t("mode.find")} (${state.pendingFindChar}) --`;
     case "visual":
-      return `-- VISUAL --${countPrefix ? ` (${state.count})` : ""}`;
+      return `-- ${editor.t("mode.visual")} --${countPrefix ? ` (${state.count})` : ""}`;
     case "visual-line":
-      return `-- VISUAL LINE --${countPrefix ? ` (${state.count})` : ""}`;
+      return `-- ${editor.t("mode.visual_line")} --${countPrefix ? ` (${state.count})` : ""}`;
     case "visual-block":
-      return `-- VISUAL BLOCK --${countPrefix ? ` (${state.count})` : ""}`;
+      return `-- ${editor.t("mode.visual_block")} --${countPrefix ? ` (${state.count})` : ""}`;
     case "text-object":
       return `-- ${state.pendingOperator}${state.pendingTextObject === "inner" ? "i" : "a"}? --`;
     default:
@@ -481,7 +481,7 @@ globalThis.vi_yank_line = function (): void {
   editor.executeAction("move_up");
   editor.executeAction("move_line_start");
   state.lastYankWasLinewise = true;
-  editor.setStatus(`Yanked ${count} line${count > 1 ? "s" : ""}`);
+  editor.setStatus(editor.t("status.yanked_lines", { count: String(count) }));
   switchMode("normal");
 };
 
@@ -500,7 +500,7 @@ globalThis.vi_delete_char_before = function (): void {
 
 globalThis.vi_replace_char = function (): void {
   // TODO: implement character replacement (need to read next char)
-  editor.setStatus("Replace char not yet implemented");
+  editor.setStatus(editor.t("status.replace_not_implemented"));
 };
 
 // Substitute (delete char and enter insert mode)
@@ -581,7 +581,7 @@ globalThis.vi_redo = function (): void {
 // Repeat last change (. command)
 globalThis.vi_repeat = async function (): Promise<void> {
   if (!state.lastChange) {
-    editor.setStatus("No change to repeat");
+    editor.setStatus(editor.t("status.no_change_to_repeat"));
     return;
   }
 
@@ -1843,75 +1843,75 @@ editor.defineMode("vi-visual-block", null, [
 
 // Navigation commands
 const navCommands = [
-  ["vi_left", "Move left"],
-  ["vi_down", "Move down"],
-  ["vi_up", "Move up"],
-  ["vi_right", "Move right"],
-  ["vi_word", "Move to next word"],
-  ["vi_word_back", "Move to previous word"],
-  ["vi_word_end", "Move to end of word"],
-  ["vi_line_start", "Move to line start"],
-  ["vi_line_end", "Move to line end"],
-  ["vi_doc_start", "Move to document start"],
-  ["vi_doc_end", "Move to document end"],
-  ["vi_page_down", "Page down"],
-  ["vi_page_up", "Page up"],
-  ["vi_half_page_down", "Half page down"],
-  ["vi_half_page_up", "Half page up"],
-  ["vi_center_cursor", "Center cursor on screen"],
-  ["vi_search_forward", "Search forward"],
-  ["vi_search_backward", "Search backward"],
-  ["vi_find_next", "Find next match"],
-  ["vi_find_prev", "Find previous match"],
-  ["vi_find_char_f", "Find char forward"],
-  ["vi_find_char_t", "Find till char forward"],
-  ["vi_find_char_F", "Find char backward"],
-  ["vi_find_char_T", "Find till char backward"],
-  ["vi_find_char_repeat", "Repeat last find char"],
-  ["vi_find_char_repeat_reverse", "Repeat last find char (reverse)"],
+  ["vi_left", "move_left"],
+  ["vi_down", "move_down"],
+  ["vi_up", "move_up"],
+  ["vi_right", "move_right"],
+  ["vi_word", "move_word"],
+  ["vi_word_back", "move_word_back"],
+  ["vi_word_end", "move_word_end"],
+  ["vi_line_start", "move_line_start"],
+  ["vi_line_end", "move_line_end"],
+  ["vi_doc_start", "move_doc_start"],
+  ["vi_doc_end", "move_doc_end"],
+  ["vi_page_down", "page_down"],
+  ["vi_page_up", "page_up"],
+  ["vi_half_page_down", "half_page_down"],
+  ["vi_half_page_up", "half_page_up"],
+  ["vi_center_cursor", "center_cursor"],
+  ["vi_search_forward", "search_forward"],
+  ["vi_search_backward", "search_backward"],
+  ["vi_find_next", "find_next"],
+  ["vi_find_prev", "find_prev"],
+  ["vi_find_char_f", "find_char_f"],
+  ["vi_find_char_t", "find_char_t"],
+  ["vi_find_char_F", "find_char_F"],
+  ["vi_find_char_T", "find_char_T"],
+  ["vi_find_char_repeat", "find_char_repeat"],
+  ["vi_find_char_repeat_reverse", "find_char_repeat_reverse"],
 ];
 
-for (const [name, desc] of navCommands) {
-  editor.registerCommand(name, `Vi: ${desc}`, name, "vi-normal");
+for (const [name, key] of navCommands) {
+  editor.registerCommand(`%cmd.${key}`, `%cmd.${key}`, name, "vi-normal");
 }
 
 // Mode commands
 const modeCommands = [
-  ["vi_insert_before", "Insert before cursor"],
-  ["vi_insert_after", "Insert after cursor"],
-  ["vi_insert_line_start", "Insert at line start"],
-  ["vi_insert_line_end", "Insert at line end"],
-  ["vi_open_below", "Open line below"],
-  ["vi_open_above", "Open line above"],
-  ["vi_escape", "Return to normal mode"],
+  ["vi_insert_before", "insert_before"],
+  ["vi_insert_after", "insert_after"],
+  ["vi_insert_line_start", "insert_line_start"],
+  ["vi_insert_line_end", "insert_line_end"],
+  ["vi_open_below", "open_below"],
+  ["vi_open_above", "open_above"],
+  ["vi_escape", "return_to_normal"],
 ];
 
-for (const [name, desc] of modeCommands) {
-  editor.registerCommand(name, `Vi: ${desc}`, name, "vi-normal");
+for (const [name, key] of modeCommands) {
+  editor.registerCommand(`%cmd.${key}`, `%cmd.${key}`, name, "vi-normal");
 }
 
 // Operator commands
 const opCommands = [
-  ["vi_delete_operator", "Delete operator"],
-  ["vi_change_operator", "Change operator"],
-  ["vi_yank_operator", "Yank operator"],
-  ["vi_delete_line", "Delete line"],
-  ["vi_change_line", "Change line"],
-  ["vi_yank_line", "Yank line"],
-  ["vi_delete_char", "Delete character"],
-  ["vi_delete_char_before", "Delete char before cursor"],
-  ["vi_substitute", "Substitute character"],
-  ["vi_delete_to_end", "Delete to end of line"],
-  ["vi_change_to_end", "Change to end of line"],
-  ["vi_paste_after", "Paste after"],
-  ["vi_paste_before", "Paste before"],
-  ["vi_undo", "Undo"],
-  ["vi_redo", "Redo"],
-  ["vi_join", "Join lines"],
+  ["vi_delete_operator", "delete_operator"],
+  ["vi_change_operator", "change_operator"],
+  ["vi_yank_operator", "yank_operator"],
+  ["vi_delete_line", "delete_line"],
+  ["vi_change_line", "change_line"],
+  ["vi_yank_line", "yank_line"],
+  ["vi_delete_char", "delete_char"],
+  ["vi_delete_char_before", "delete_char_before"],
+  ["vi_substitute", "substitute"],
+  ["vi_delete_to_end", "delete_to_end"],
+  ["vi_change_to_end", "change_to_end"],
+  ["vi_paste_after", "paste_after"],
+  ["vi_paste_before", "paste_before"],
+  ["vi_undo", "undo"],
+  ["vi_redo", "redo"],
+  ["vi_join", "join_lines"],
 ];
 
-for (const [name, desc] of opCommands) {
-  editor.registerCommand(name, `Vi: ${desc}`, name, "vi-normal");
+for (const [name, key] of opCommands) {
+  editor.registerCommand(`%cmd.${key}`, `%cmd.${key}`, name, "vi-normal");
 }
 
 // ============================================================================
@@ -2115,7 +2115,7 @@ async function executeViCommand(cmd: string): Promise<CommandResult> {
   // Handle special commands that start with symbols
   if (processedCmd.startsWith("!")) {
     // Shell command - not implemented
-    return { error: "Shell commands not supported (use terminal)" };
+    return { error: editor.t("error.shell_not_supported") };
   }
 
   // Handle +cmd syntax for :e +10 file (open file at line 10)
@@ -2139,7 +2139,7 @@ async function executeViCommand(cmd: string): Promise<CommandResult> {
         return executeCommand(cmdDef.name, false, null, range);
       }
     }
-    return { error: `Not a valid command: ${cmd}` };
+    return { error: editor.t("error.not_valid_command", { cmd: processedCmd }) };
   }
 
   const [, commandInput, bang, args] = match;
@@ -2148,12 +2148,12 @@ async function executeViCommand(cmd: string): Promise<CommandResult> {
   // Look up the command
   const cmdDef = findCommand(commandInput);
   if (!cmdDef) {
-    return { error: `Unknown command: ${commandInput}` };
+    return { error: editor.t("error.unknown_command", { cmd: commandInput }) };
   }
 
   // Validate bang usage
   if (force && !cmdDef.allowBang) {
-    return { error: `Command does not accept !: ${cmdDef.name}` };
+    return { error: editor.t("error.command_no_bang", { cmd: cmdDef.name }) };
   }
 
   // Execute the command
@@ -2173,10 +2173,10 @@ async function executeCommand(
       // :w - save current file
       // :w filename - save as filename (not implemented yet)
       if (args) {
-        return { error: "Save as not implemented. Use :w to save current file." };
+        return { error: editor.t("error.save_as_not_implemented") };
       }
       editor.executeAction("save");
-      return { message: "File saved" };
+      return { message: editor.t("status.file_saved") };
     }
 
     case "quit": {
@@ -2184,7 +2184,7 @@ async function executeCommand(
       // :q! - force quit (discard changes)
       const bufferId = editor.getActiveBufferId();
       if (!force && editor.isBufferModified(bufferId)) {
-        return { error: "No write since last change (use :q! to override)" };
+        return { error: editor.t("error.no_write_since_change", { cmd: ":q!" }) };
       }
       editor.executeAction("close_buffer");
       return {};
@@ -2202,7 +2202,7 @@ async function executeCommand(
     case "wall": {
       // :wa - save all buffers
       editor.executeAction("save_all");
-      return { message: "All files saved" };
+      return { message: editor.t("status.all_files_saved") };
     }
 
     case "qall": {
@@ -2215,7 +2215,7 @@ async function executeCommand(
         const buffers = editor.listBuffers();
         for (const buf of buffers) {
           if (buf.modified) {
-            return { error: "No write since last change (use :qa! to override)" };
+            return { error: editor.t("error.no_write_since_change", { cmd: ":qa!" }) };
           }
         }
         editor.executeAction("quit_all");
@@ -2237,14 +2237,14 @@ async function executeCommand(
       if (!args) {
         if (force) {
           editor.executeAction("revert");
-          return { message: "File reverted (changes discarded)" };
+          return { message: editor.t("status.file_reverted_discarded") };
         }
         const bufferId = editor.getActiveBufferId();
         if (editor.isBufferModified(bufferId)) {
-          return { error: "No write since last change (use :e! to override)" };
+          return { error: editor.t("error.no_write_since_change", { cmd: ":e!" }) };
         }
         editor.executeAction("revert");
-        return { message: "File reverted" };
+        return { message: editor.t("status.file_reverted") };
       }
       // Open the specified file
       const path = args.trim();
@@ -2257,7 +2257,7 @@ async function executeCommand(
       if (!force) {
         const bufferId = editor.getActiveBufferId();
         if (editor.isBufferModified(bufferId)) {
-          return { error: "No write since last change (use :enew! to override)" };
+          return { error: editor.t("error.no_write_since_change", { cmd: ":enew!" }) };
         }
       }
       editor.executeAction("new_buffer");
@@ -2267,7 +2267,7 @@ async function executeCommand(
     case "revert": {
       // :revert - Fresh-specific command to reload file
       editor.executeAction("revert");
-      return { message: "File reverted" };
+      return { message: editor.t("status.file_reverted") };
     }
 
     case "next": {
@@ -2299,7 +2299,7 @@ async function executeCommand(
       // :bd! - force close even if modified
       const bufferId = editor.getActiveBufferId();
       if (!force && editor.isBufferModified(bufferId)) {
-        return { error: "No write since last change (use :bd! to override)" };
+        return { error: editor.t("error.no_write_since_change", { cmd: ":bd!" }) };
       }
       editor.executeAction("close_buffer");
       return {};
@@ -2313,8 +2313,8 @@ async function executeCommand(
         const bufferId = editor.getActiveBufferId();
         const info = editor.getBufferInfo(bufferId);
         if (info) {
-          const name = info.path ? editor.pathBasename(info.path) : "[No Name]";
-          return { message: `Buffer ${info.id}: ${name}` };
+          const name = info.path ? editor.pathBasename(info.path) : editor.t("info.no_name");
+          return { message: editor.t("info.buffer", { id: String(info.id), name }) };
         }
         return {};
       }
@@ -2327,7 +2327,7 @@ async function executeCommand(
           editor.showBuffer(target.id);
           return {};
         }
-        return { error: `Buffer ${bufNum} not found` };
+        return { error: editor.t("error.buffer_not_found", { id: String(bufNum) }) };
       }
       // Try to match buffer by name
       const buffers = editor.listBuffers();
@@ -2340,9 +2340,9 @@ async function executeCommand(
         editor.showBuffer(matches[0].id);
         return {};
       } else if (matches.length > 1) {
-        return { error: `Multiple buffers match "${args}". Be more specific.` };
+        return { error: editor.t("error.multiple_buffers_match", { pattern: args }) };
       }
-      return { error: `No buffer matching "${args}"` };
+      return { error: editor.t("error.no_buffer_matching", { pattern: args }) };
     }
 
     case "buffers":
@@ -2353,10 +2353,10 @@ async function executeCommand(
       const lines = buffers.map(buf => {
         const modified = buf.modified ? " [+]" : "";
         const current = buf.id === editor.getActiveBufferId() ? "%" : " ";
-        const name = buf.path ? editor.pathBasename(buf.path) : "[No Name]";
+        const name = buf.path ? editor.pathBasename(buf.path) : editor.t("info.no_name");
         return `${current}${buf.id}: ${name}${modified}`;
       });
-      return { message: lines.join(" | ") || "No buffers" };
+      return { message: lines.join(" | ") || editor.t("info.no_buffers") };
     }
 
     case "split": {
@@ -2413,7 +2413,7 @@ async function executeCommand(
       // :close - close current split (same as :q for Fresh)
       const bufferId = editor.getActiveBufferId();
       if (!force && editor.isBufferModified(bufferId)) {
-        return { error: "No write since last change (use :close! to override)" };
+        return { error: editor.t("error.no_write_since_change", { cmd: ":close!" }) };
       }
       editor.executeAction("close_buffer");
       return {};
@@ -2434,7 +2434,7 @@ async function executeCommand(
       // :tabclose - close current tab/buffer
       const bufferId = editor.getActiveBufferId();
       if (!force && editor.isBufferModified(bufferId)) {
-        return { error: "No write since last change (use :tabclose! to override)" };
+        return { error: editor.t("error.no_write_since_change", { cmd: ":tabclose!" }) };
       }
       editor.executeAction("close_buffer");
       return {};
@@ -2460,7 +2460,7 @@ async function executeCommand(
 
     case "cclose": {
       // :cclose - close diagnostics panel
-      return { message: "Use :bd to close diagnostics panel" };
+      return { message: editor.t("info.close_diagnostics") };
     }
 
     case "cnext": {
@@ -2496,13 +2496,13 @@ async function executeCommand(
     case "substitute": {
       // :s - substitute (not implemented)
       // This would require parsing /pattern/replacement/flags
-      return { error: "Substitute not implemented. Use Ctrl+H for search/replace." };
+      return { error: editor.t("error.substitute_not_implemented") };
     }
 
     case "global":
     case "vglobal": {
       // :g - global command (not implemented)
-      return { error: "Global command not implemented" };
+      return { error: editor.t("error.global_not_implemented") };
     }
 
     case "undo": {
@@ -2520,7 +2520,7 @@ async function executeCommand(
     case "set": {
       // :set - set options (limited implementation)
       if (!args) {
-        return { error: "Usage: :set option or :set option=value" };
+        return { error: editor.t("error.set_usage") };
       }
       return handleSetCommand(args);
     }
@@ -2536,72 +2536,72 @@ async function executeCommand(
       if (!args) {
         return { message: editor.getCwd() };
       }
-      return { error: "Cannot change directory (editor cwd is fixed)" };
+      return { error: editor.t("error.cannot_change_directory") };
     }
 
     case "file": {
       // :f - show current file info
       // :f name - rename current buffer (not implemented)
       if (args) {
-        return { error: "Renaming buffer not implemented" };
+        return { error: editor.t("error.rename_not_implemented") };
       }
       const bufferId = editor.getActiveBufferId();
       const info = editor.getBufferInfo(bufferId);
       if (info) {
-        const modified = info.modified ? " [Modified]" : "";
-        const path = info.path || "[No Name]";
+        const modified = info.modified ? editor.t("info.modified") : "";
+        const path = info.path || editor.t("info.no_name");
         const line = editor.getCursorLine();
-        return { message: `"${path}"${modified} line ${line}, ${info.length} bytes` };
+        return { message: editor.t("info.file", { path, modified, line: String(line), bytes: String(info.length) }) };
       }
-      return { error: "No buffer" };
+      return { error: editor.t("error.no_buffer") };
     }
 
     case "help": {
       // :help - show help
       if (args) {
-        return { message: `Help for "${args}" not available. Try :help for command list.` };
+        return { message: editor.t("info.help_not_available", { topic: args }) };
       }
       return {
-        message: "Commands: :w :q :wq :q! :e :sp :vs :bn :bp :bd :b :ls :set :noh :123 :help"
+        message: editor.t("info.help_commands")
       };
     }
 
     case "version": {
       // :version - show version
-      return { message: "Fresh Editor with Vi mode plugin" };
+      return { message: editor.t("info.version") };
     }
 
     case "marks": {
       // :marks - show marks (not implemented)
-      return { error: "Marks not implemented" };
+      return { error: editor.t("error.marks_not_implemented") };
     }
 
     case "registers": {
       // :registers - show registers (not implemented)
-      return { error: "Registers not implemented (Fresh uses system clipboard)" };
+      return { error: editor.t("error.registers_not_implemented") };
     }
 
     case "jumps": {
       // :jumps - show jump list (not implemented)
-      return { error: "Jump list not implemented" };
+      return { error: editor.t("error.jump_list_not_implemented") };
     }
 
     case "syntax": {
       // :syntax - syntax info
       if (args === "off") {
-        return { error: "Syntax highlighting cannot be disabled" };
+        return { error: editor.t("error.syntax_cannot_disable") };
       }
-      return { message: "Syntax highlighting is always on" };
+      return { message: editor.t("status.syntax_always_on") };
     }
 
     case "read": {
       // :r - read file into buffer (not implemented)
-      return { error: "Read file into buffer not implemented. Use :e to open files." };
+      return { error: editor.t("error.read_not_implemented") };
     }
 
     case "saveas": {
       // :saveas - save as (not implemented)
-      return { error: "Save as not implemented. Use Ctrl+Shift+S or menu." };
+      return { error: editor.t("error.saveas_not_implemented") };
     }
 
     case "grep":
@@ -2610,7 +2610,7 @@ async function executeCommand(
       if (args) {
         // Could potentially pass args to search, but for now just open search
         editor.executeAction("search");
-        return { message: `Use the search dialog to search for: ${args}` };
+        return { message: editor.t("info.use_search_dialog", { pattern: args }) };
       }
       editor.executeAction("search");
       return {};
@@ -2618,16 +2618,16 @@ async function executeCommand(
 
     case "make": {
       // :make - run build command (not implemented)
-      return { error: "Use terminal for build commands" };
+      return { error: editor.t("error.use_terminal") };
     }
 
     case "ascii": {
       // :ascii - show ASCII value of char under cursor
-      return { message: "Use the status bar for character info" };
+      return { message: editor.t("info.status_bar_char") };
     }
 
     default: {
-      return { error: `Unknown command: ${command}` };
+      return { error: editor.t("error.unknown_command", { cmd: command }) };
     }
   }
 }
@@ -2635,7 +2635,7 @@ async function executeCommand(
 // Go to a specific line number
 async function gotoLine(lineNum: number): Promise<CommandResult> {
   if (lineNum < 1) {
-    return { error: "Line number must be positive" };
+    return { error: editor.t("error.line_must_be_positive") };
   }
 
   const bufferId = editor.getActiveBufferId();
@@ -2644,7 +2644,7 @@ async function gotoLine(lineNum: number): Promise<CommandResult> {
   // Get the text to find the line offset
   const text = await editor.getBufferText(bufferId, 0, bufferLength);
   if (!text) {
-    return { error: "Cannot read buffer" };
+    return { error: editor.t("error.cannot_read_buffer") };
   }
 
   let lineStart = 0;
@@ -2664,7 +2664,7 @@ async function gotoLine(lineNum: number): Promise<CommandResult> {
 
   // If requested line is beyond file, go to last line
   editor.executeAction("move_document_end");
-  return { message: `Line ${lineNum} beyond end of file, moved to end` };
+  return { message: editor.t("status.line_beyond_end", { line: String(lineNum) }) };
 }
 
 // Handle :set command options
@@ -2679,7 +2679,7 @@ function handleSetCommand(args: string): CommandResult {
       // :set number - show line numbers
       const bufferId = editor.getActiveBufferId();
       editor.setLineNumbers(bufferId, true);
-      return { message: "Line numbers on" };
+      return { message: editor.t("status.line_numbers_on") };
     }
 
     case "nonumber":
@@ -2687,23 +2687,23 @@ function handleSetCommand(args: string): CommandResult {
       // :set nonumber - hide line numbers
       const bufferId = editor.getActiveBufferId();
       editor.setLineNumbers(bufferId, false);
-      return { message: "Line numbers off" };
+      return { message: editor.t("status.line_numbers_off") };
     }
 
     case "wrap": {
       // :set wrap - enable line wrap
       editor.executeAction("toggle_wrap");
-      return { message: "Line wrap toggled" };
+      return { message: editor.t("status.line_wrap_toggled") };
     }
 
     case "nowrap": {
       // :set nowrap - disable line wrap
       editor.executeAction("toggle_wrap");
-      return { message: "Line wrap toggled" };
+      return { message: editor.t("status.line_wrap_toggled") };
     }
 
     default: {
-      return { error: `Unknown option: ${option}` };
+      return { error: editor.t("error.unknown_option", { option }) };
     }
   }
 }
@@ -2722,18 +2722,18 @@ globalThis.vi_mode_toggle = function (): void {
 
   if (viModeEnabled) {
     switchMode("normal");
-    editor.setStatus("Vi mode enabled - NORMAL");
+    editor.setStatus(editor.t("status.enabled"));
   } else {
     editor.setEditorMode(null);
     state.mode = "normal";
     state.pendingOperator = null;
-    editor.setStatus("Vi mode disabled");
+    editor.setStatus(editor.t("status.disabled"));
   }
 };
 
 editor.registerCommand(
-  "Toggle Vi mode",
-  "Enable or disable vi-style modal editing",
+  "%cmd.toggle_vi_mode",
+  "%cmd.toggle_vi_mode_desc",
   "vi_mode_toggle",
   "normal",
 );
@@ -2742,4 +2742,4 @@ editor.registerCommand(
 // Initialization
 // ============================================================================
 
-editor.setStatus("Vi mode plugin loaded. Use 'Toggle Vi mode' command to enable.");
+editor.setStatus(editor.t("status.loaded"));

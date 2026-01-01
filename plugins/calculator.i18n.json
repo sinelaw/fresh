@@ -1,0 +1,44 @@
+{
+  "en": {
+    "cmd.calculator": "Calculator",
+    "cmd.calculator_desc": "Open calculator",
+    "status.loaded": "Calculator plugin loaded",
+    "status.opened": "Calculator opened",
+    "status.copied": "Copied: {value}"
+  },
+  "es": {
+    "cmd.calculator": "Calculadora",
+    "cmd.calculator_desc": "Abrir calculadora",
+    "status.loaded": "Plugin de calculadora cargado",
+    "status.opened": "Calculadora abierta",
+    "status.copied": "Copiado: {value}"
+  },
+  "de": {
+    "cmd.calculator": "Taschenrechner",
+    "cmd.calculator_desc": "Taschenrechner offnen",
+    "status.loaded": "Taschenrechner-Plugin geladen",
+    "status.opened": "Taschenrechner geoffnet",
+    "status.copied": "Kopiert: {value}"
+  },
+  "fr": {
+    "cmd.calculator": "Calculatrice",
+    "cmd.calculator_desc": "Ouvrir la calculatrice",
+    "status.loaded": "Plugin calculatrice charge",
+    "status.opened": "Calculatrice ouverte",
+    "status.copied": "Copie: {value}"
+  },
+  "ja": {
+    "cmd.calculator": "電卓",
+    "cmd.calculator_desc": "電卓を開く",
+    "status.loaded": "電卓プラグインが読み込まれました",
+    "status.opened": "電卓を開きました",
+    "status.copied": "コピーしました: {value}"
+  },
+  "zh": {
+    "cmd.calculator": "计算器",
+    "cmd.calculator_desc": "打开计算器",
+    "status.loaded": "计算器插件已加载",
+    "status.opened": "计算器已打开",
+    "status.copied": "已复制: {value}"
+  }
+}

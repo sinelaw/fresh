@@ -253,14 +253,14 @@ globalThis.colorHighlighterEnable = function(): void {
   // Refresh lines so next render processes all visible lines
   const bufferId = editor.getActiveBufferId();
   editor.refreshLines(bufferId);
-  editor.setStatus("Color Highlighter: Enabled");
+  editor.setStatus(editor.t("status.enabled"));
 };
 
 globalThis.colorHighlighterDisable = function(): void {
   config.enabled = false;
   const bufferId = editor.getActiveBufferId();
   clearHighlights(bufferId);
-  editor.setStatus("Color Highlighter: Disabled");
+  editor.setStatus(editor.t("status.disabled"));
 };
 
 globalThis.colorHighlighterToggle = function(): void {
@@ -272,31 +272,31 @@ globalThis.colorHighlighterToggle = function(): void {
   } else {
     clearHighlights(bufferId);
   }
-  editor.setStatus(`Color Highlighter: ${config.enabled ? "Enabled" : "Disabled"}`);
+  editor.setStatus(config.enabled ? editor.t("status.enabled") : editor.t("status.disabled"));
 };
 
 // Register commands
 editor.registerCommand(
-  "Color Highlighter: Enable",
-  "Enable color code highlighting with swatches",
+  "%cmd.enable",
+  "%cmd.enable_desc",
   "colorHighlighterEnable",
   "normal"
 );
 
 editor.registerCommand(
-  "Color Highlighter: Disable",
-  "Disable color code highlighting",
+  "%cmd.disable",
+  "%cmd.disable_desc",
   "colorHighlighterDisable",
   "normal"
 );
 
 editor.registerCommand(
-  "Color Highlighter: Toggle",
-  "Toggle color code highlighting",
+  "%cmd.toggle",
+  "%cmd.toggle_desc",
   "colorHighlighterToggle",
   "normal"
 );
 
 // Initialization
-editor.setStatus("Color Highlighter plugin loaded");
+editor.setStatus(editor.t("status.loaded"));
 editor.debug("Color Highlighter initialized - supports hex, rgb, hsl, and Rust Color::Rgb");

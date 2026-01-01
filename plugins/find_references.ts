@@ -78,16 +78,16 @@ function buildPanelEntries(): TextPropertyEntry[] {
 
   // Header with symbol name
   const totalCount = currentReferences.length;
-  const limitNote = totalCount >= MAX_RESULTS ? ` (limited to ${MAX_RESULTS})` : "";
+  const limitNote = totalCount >= MAX_RESULTS ? editor.t("panel.limited", { max: String(MAX_RESULTS) }) : "";
   const symbolDisplay = currentSymbol ? `'${currentSymbol}'` : "symbol";
   entries.push({
-    text: `═══ References to ${symbolDisplay} (${totalCount}${limitNote}) ═══\n`,
+    text: `═══ ${editor.t("panel.header", { symbol: symbolDisplay, count: String(totalCount), limit: limitNote })} ═══\n`,
     properties: { type: "header" },
   });
 
   if (currentReferences.length === 0) {
     entries.push({
-      text: "  No references found\n",
+      text: "  " + editor.t("panel.no_references") + "\n",
       properties: { type: "empty" },
     });
   } else {
@@ -115,7 +115,7 @@ function buildPanelEntries(): TextPropertyEntry[] {
     properties: { type: "separator" },
   });
   entries.push({
-    text: `[↑/↓] navigate  [RET] jump  [q/Esc] close\n`,
+    text: editor.t("panel.help") + "\n",
     properties: { type: "help" },
   });
 
@@ -202,15 +202,15 @@ async function showReferencesPanel(symbol: string, references: ReferenceItem[]):
     referencesSplitId = editor.getActiveSplitId();
 
     const limitMsg = references.length > MAX_RESULTS
-      ? ` (showing first ${MAX_RESULTS})`
+      ? editor.t("status.showing_first", { max: String(MAX_RESULTS) })
       : "";
     editor.setStatus(
-      `Found ${references.length} reference(s)${limitMsg} - ↑/↓ navigate, RET jump, q close`
+      editor.t("status.found_references", { count: String(references.length), limit: limitMsg })
     );
     editor.debug(`References panel opened with buffer ID ${referencesBufferId}, split ID ${referencesSplitId}`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    editor.setStatus("Failed to open references panel");
+    editor.setStatus(editor.t("status.failed_open_panel"));
     editor.debug(`ERROR: createVirtualBufferInSplit failed: ${errorMessage}`);
   }
 }
@@ -220,7 +220,7 @@ globalThis.on_lsp_references = function (data: { symbol: string; locations: Refe
   editor.debug(`Received ${data.locations.length} references for '${data.symbol}'`);
 
   if (data.locations.length === 0) {
-    editor.setStatus(`No references found for '${data.symbol}'`);
+    editor.setStatus(editor.t("status.no_references", { symbol: data.symbol }));
     return;
   }
 
@@ -254,7 +254,7 @@ globalThis.on_references_cursor_moved = function (data: {
   const refIndex = cursorLine - 1;
 
   if (refIndex >= 0 && refIndex < currentReferences.length) {
-    editor.setStatus(`Reference ${refIndex + 1}/${currentReferences.length}`);
+    editor.setStatus(editor.t("status.reference_index", { current: String(refIndex + 1), total: String(currentReferences.length) }));
   }
 };
 
@@ -283,18 +283,18 @@ globalThis.hide_references_panel = function (): void {
   currentReferences = [];
   currentSymbol = "";
   lineCache.clear();
-  editor.setStatus("References panel closed");
+  editor.setStatus(editor.t("status.closed"));
 };
 
 // Navigation: go to selected reference (based on cursor position)
 globalThis.references_goto = function (): void {
   if (currentReferences.length === 0) {
-    editor.setStatus("No references to jump to");
+    editor.setStatus(editor.t("status.no_references_to_jump"));
     return;
   }
 
   if (sourceSplitId === null) {
-    editor.setStatus("Source split not available");
+    editor.setStatus(editor.t("status.source_split_unavailable"));
     return;
   }
 
@@ -321,14 +321,14 @@ globalThis.references_goto = function (): void {
         location.column || 0
       );
       const displayPath = getRelativePath(location.file);
-      editor.setStatus(`Jumped to ${displayPath}:${location.line}`);
+      editor.setStatus(editor.t("status.jumped_to", { file: displayPath, line: String(location.line) }));
     } else {
       editor.debug(`references_goto: no location in props[0]`);
-      editor.setStatus("Move cursor to a reference line");
+      editor.setStatus(editor.t("status.move_cursor"));
     }
   } else {
     editor.debug(`references_goto: no props found at cursor`);
-    editor.setStatus("Move cursor to a reference line");
+    editor.setStatus(editor.t("status.move_cursor"));
   }
 };
 
@@ -339,19 +339,19 @@ globalThis.references_close = function (): void {
 
 // Register commands
 editor.registerCommand(
-  "Show References Panel",
-  "Display current references",
+  "%cmd.show_references",
+  "%cmd.show_references_desc",
   "show_references_panel",
   "normal"
 );
 
 editor.registerCommand(
-  "Hide References Panel",
-  "Close the references panel",
+  "%cmd.hide_references",
+  "%cmd.hide_references_desc",
   "hide_references_panel",
   "normal"
 );
 
 // Plugin initialization
-editor.setStatus("Find References plugin loaded");
+editor.setStatus(editor.t("status.ready"));
 editor.debug("Find References plugin initialized");

@@ -1,0 +1,38 @@
+{
+  "en": {
+    "status.restoring_packages": "Restoring NuGet packages for {project}...",
+    "status.restore_completed": "NuGet restore completed for {project}",
+    "status.restore_failed": "NuGet restore failed: {error}",
+    "status.restore_error": "NuGet restore error: {error}"
+  },
+  "es": {
+    "status.restoring_packages": "Restaurando paquetes NuGet para {project}...",
+    "status.restore_completed": "Restauracion de NuGet completada para {project}",
+    "status.restore_failed": "Restauracion de NuGet fallida: {error}",
+    "status.restore_error": "Error de restauracion de NuGet: {error}"
+  },
+  "de": {
+    "status.restoring_packages": "NuGet-Pakete werden fur {project} wiederhergestellt...",
+    "status.restore_completed": "NuGet-Wiederherstellung fur {project} abgeschlossen",
+    "status.restore_failed": "NuGet-Wiederherstellung fehlgeschlagen: {error}",
+    "status.restore_error": "NuGet-Wiederherstellungsfehler: {error}"
+  },
+  "fr": {
+    "status.restoring_packages": "Restauration des paquets NuGet pour {project}...",
+    "status.restore_completed": "Restauration NuGet terminee pour {project}",
+    "status.restore_failed": "Echec de la restauration NuGet: {error}",
+    "status.restore_error": "Erreur de restauration NuGet: {error}"
+  },
+  "ja": {
+    "status.restoring_packages": "{project}のNuGetパッケージを復元中...",
+    "status.restore_completed": "{project}のNuGet復元が完了しました",
+    "status.restore_failed": "NuGet復元に失敗しました: {error}",
+    "status.restore_error": "NuGet復元エラー: {error}"
+  },
+  "zh": {
+    "status.restoring_packages": "正在为{project}恢复NuGet包...",
+    "status.restore_completed": "{project}的NuGet恢复已完成",
+    "status.restore_failed": "NuGet恢复失败: {error}",
+    "status.restore_error": "NuGet恢复错误: {error}"
+  }
+}

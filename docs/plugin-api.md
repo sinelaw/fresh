@@ -426,8 +426,8 @@ setStatus(message: string): void
 
 #### `debug`
 
-Log a debug message to the editor's trace output
-Messages appear in stderr when running with RUST_LOG=debug.
+Log a debug message from a plugin
+Messages appear in log file when running with RUST_LOG=debug.
 Useful for plugin development and troubleshooting.
 
 ```typescript
@@ -532,6 +532,14 @@ isBufferModified(buffer_id: number): boolean
 | Name | Type | Description |
 |------|------|-------------|
 | `buffer_id` | `number` | Target buffer ID |
+
+#### `getCurrentLocale`
+
+Get the currently active locale
+
+```typescript
+getCurrentLocale(): string
+```
 
 #### `getActiveSplitId`
 
@@ -748,6 +756,54 @@ stay in sync with the saved config.
 reloadConfig(): void
 ```
 
+#### `error`
+
+Log an error message from a plugin
+Messages appear in log file when running with RUST_LOG=error.
+Use for critical errors that need attention.
+
+```typescript
+error(message: string): void
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `message` | `string` | Error message |
+
+#### `warn`
+
+Log a warning message from a plugin
+Messages appear in log file when running with RUST_LOG=warn.
+Use for warnings that don't prevent operation but indicate issues.
+
+```typescript
+warn(message: string): void
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `message` | `string` | Warning message |
+
+#### `info`
+
+Log an info message from a plugin
+Messages appear in log file when running with RUST_LOG=info.
+Use for important operational messages.
+
+```typescript
+info(message: string): void
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `message` | `string` | Info message |
+
 #### `setClipboard`
 
 Copy text to the system clipboard
@@ -941,10 +997,25 @@ insertAtCursor(text: string): boolean
 |------|------|-------------|
 | `text` | `string` | The text to insert |
 
+#### `pluginTranslate`
+
+Translate a string for a plugin using the current locale
+
+```typescript
+pluginTranslate(plugin_name: string, key: string, args: Record<string, unknown>): string
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `plugin_name` | `string` | - |
+| `key` | `string` | - |
+| `args` | `Record<string, unknown>` | - |
+
 #### `registerCommand`
 
 Register a custom command that can be triggered by keybindings or the command palette
-fileexplorer, menu) and custom plugin-defined contexts (e.g., "normal,config-editor")
 
 ```typescript
 registerCommand(name: string, description: string, action: string, contexts: string, source: string): boolean
@@ -954,11 +1025,11 @@ registerCommand(name: string, description: string, action: string, contexts: str
 
 | Name | Type | Description |
 |------|------|-------------|
-| `name` | `string` | Unique command name (e.g., "my_plugin_action") |
-| `description` | `string` | Human-readable description |
-| `action` | `string` | JavaScript function name to call when command is triggered |
-| `contexts` | `string` | Comma-separated list of contexts, including both built-in (normal, prompt, popup, |
-| `source` | `string` | Plugin source name (empty string for builtin) |
+| `name` | `string` | - |
+| `description` | `string` | - |
+| `action` | `string` | - |
+| `contexts` | `string` | - |
+| `source` | `string` | - |
 
 #### `unregisterCommand`
 

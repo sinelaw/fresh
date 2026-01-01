@@ -332,9 +332,9 @@ interface EditorAPI {
    */
   setStatus(message: string): void;
   /**
-   * Log a debug message to the editor's trace output
+   * Log a debug message from a plugin
    *
-   * Messages appear in stderr when running with RUST_LOG=debug.
+   * Messages appear in log file when running with RUST_LOG=debug.
    * Useful for plugin development and troubleshooting.
    * @param message - Debug message; include context like function name and relevant values
    */
@@ -398,6 +398,8 @@ interface EditorAPI {
    * @param buffer_id - Target buffer ID
    */
   isBufferModified(buffer_id: number): boolean;
+  /** Get the currently active locale */
+  getCurrentLocale(): string;
   /**
    * Get the ID of the focused split pane
    *
@@ -513,6 +515,30 @@ interface EditorAPI {
    */
   reloadConfig(): void;
   /**
+   * Log an error message from a plugin
+   *
+   * Messages appear in log file when running with RUST_LOG=error.
+   * Use for critical errors that need attention.
+   * @param message - Error message
+   */
+  error(message: string): void;
+  /**
+   * Log a warning message from a plugin
+   *
+   * Messages appear in log file when running with RUST_LOG=warn.
+   * Use for warnings that don't prevent operation but indicate issues.
+   * @param message - Warning message
+   */
+  warn(message: string): void;
+  /**
+   * Log an info message from a plugin
+   *
+   * Messages appear in log file when running with RUST_LOG=info.
+   * Use for important operational messages.
+   * @param message - Info message
+   */
+  info(message: string): void;
+  /**
    * Copy text to the system clipboard
    *
    * Copies the provided text to both the internal and system clipboard.
@@ -616,16 +642,9 @@ interface EditorAPI {
    * @returns true if insertion succeeded
    */
   insertAtCursor(text: string): boolean;
-  /**
-   * Register a custom command that can be triggered by keybindings or the command palette
-   * @param name - Unique command name (e.g., "my_plugin_action")
-   * @param description - Human-readable description
-   * @param action - JavaScript function name to call when command is triggered
-   * @param contexts - Comma-separated list of contexts, including both built-in (normal, prompt, popup,
-   * fileexplorer, menu) and custom plugin-defined contexts (e.g., "normal,config-editor")
-   * @param source - Plugin source name (empty string for builtin)
-   * @returns true if command was registered
-   */
+  /** Translate a string for a plugin using the current locale */
+  pluginTranslate(plugin_name: string, key: string, args: Record<string, unknown>): string;
+  /** Register a custom command that can be triggered by keybindings or the command palette */
   registerCommand(name: string, description: string, action: string, contexts: string, source: string): boolean;
   /**
    * Unregister a custom command by name

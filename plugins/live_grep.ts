@@ -264,31 +264,31 @@ async function runSearch(query: string): Promise<void> {
       editor.setPromptSuggestions(suggestions);
 
       if (results.length > 0) {
-        editor.setStatus(`Found ${results.length} matches`);
+        editor.setStatus(editor.t("status.found_matches", { count: String(results.length) }));
         // Show preview of first result
         await updatePreview(results[0]);
       } else {
-        editor.setStatus("No matches found");
+        editor.setStatus(editor.t("status.no_matches"));
       }
     } else if (result.exit_code === 1) {
       // No matches
       editor.debug(`[live_grep] no matches (exit_code=1)`);
       grepResults = [];
       editor.setPromptSuggestions([]);
-      editor.setStatus("No matches found");
+      editor.setStatus(editor.t("status.no_matches"));
     } else if (result.exit_code === -1) {
       // Process was killed, ignore
       editor.debug(`[live_grep] process was killed`);
     } else {
       editor.debug(`[live_grep] search error: ${result.stderr}`);
-      editor.setStatus(`Search error: ${result.stderr}`);
+      editor.setStatus(editor.t("status.search_error", { error: result.stderr }));
     }
   } catch (e) {
     // Ignore errors from killed processes
     const errorMsg = String(e);
     editor.debug(`[live_grep] caught error: ${errorMsg}`);
     if (!errorMsg.includes("killed") && !errorMsg.includes("not found")) {
-      editor.setStatus(`Search error: ${e}`);
+      editor.setStatus(editor.t("status.search_error", { error: String(e) }));
     }
   }
 }
@@ -304,8 +304,8 @@ globalThis.start_live_grep = function (): void {
   originalSplitId = editor.getActiveSplitId();
 
   // Start the prompt
-  editor.startPrompt("Live grep: ", "live-grep");
-  editor.setStatus("Type to search (min 2 chars)...");
+  editor.startPrompt(editor.t("prompt.live_grep"), "live-grep");
+  editor.setStatus(editor.t("status.type_to_search"));
 };
 
 // Handle prompt input changes
@@ -365,9 +365,9 @@ globalThis.onLiveGrepPromptConfirmed = function (args: {
   if (args.selected_index !== null && grepResults[args.selected_index]) {
     const selected = grepResults[args.selected_index];
     editor.openFile(selected.file, selected.line, selected.column);
-    editor.setStatus(`Opened ${selected.file}:${selected.line}`);
+    editor.setStatus(editor.t("status.opened_file", { file: selected.file, line: String(selected.line) }));
   } else {
-    editor.setStatus("No file selected");
+    editor.setStatus(editor.t("status.no_file_selected"));
   }
 
   // Clear state
@@ -397,7 +397,7 @@ globalThis.onLiveGrepPromptCancelled = function (args: {
   grepResults = [];
   originalSplitId = null;
   previewSplitId = null;
-  editor.setStatus("Live grep cancelled");
+  editor.setStatus(editor.t("status.cancelled"));
 
   return true;
 };
@@ -410,11 +410,11 @@ editor.on("prompt_cancelled", "onLiveGrepPromptCancelled");
 
 // Register command
 editor.registerCommand(
-  "Live Grep (Find in Files)",
-  "Search for text across project with live preview",
+  "%cmd.live_grep",
+  "%cmd.live_grep_desc",
   "start_live_grep",
   "normal"
 );
 
 editor.debug("Live Grep plugin loaded");
-editor.setStatus("Live Grep ready - use command palette or bind 'start_live_grep'");
+editor.setStatus(editor.t("status.ready"));

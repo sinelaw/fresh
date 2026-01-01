@@ -223,31 +223,31 @@ async function renderReviewStream(): Promise<{ entries: TextPropertyEntry[], hig
   let currentByte = 0;
 
   // Add help header with keybindings at the TOP
-  const helpHeader = "╔══════════════════════════════════════════════════════════════════════════╗\n";
+  const helpHeader = "╔" + "═".repeat(74) + "╗\n";
   const helpLen0 = getByteLength(helpHeader);
   entries.push({ text: helpHeader, properties: { type: "help" } });
   highlights.push({ range: [currentByte, currentByte + helpLen0], fg: STYLE_COMMENT_BORDER });
   currentByte += helpLen0;
 
-  const helpLine1 = "║ REVIEW: [c]omment [a]pprove [x]reject [!]changes [?]question [u]ndo       ║\n";
+  const helpLine1 = "║ " + editor.t("panel.help_review").padEnd(72) + " ║\n";
   const helpLen1 = getByteLength(helpLine1);
   entries.push({ text: helpLine1, properties: { type: "help" } });
   highlights.push({ range: [currentByte, currentByte + helpLen1], fg: STYLE_COMMENT });
   currentByte += helpLen1;
 
-  const helpLine2 = "║ STAGE:  [s]tage [d]iscard | NAV: [n]ext [p]rev [Enter]drill [q]uit        ║\n";
+  const helpLine2 = "║ " + editor.t("panel.help_stage").padEnd(72) + " ║\n";
   const helpLen2 = getByteLength(helpLine2);
   entries.push({ text: helpLine2, properties: { type: "help" } });
   highlights.push({ range: [currentByte, currentByte + helpLen2], fg: STYLE_COMMENT });
   currentByte += helpLen2;
 
-  const helpLine3 = "║ EXPORT: [E] .review/session.md | [O]verall feedback | [r]efresh           ║\n";
+  const helpLine3 = "║ " + editor.t("panel.help_export").padEnd(72) + " ║\n";
   const helpLen3 = getByteLength(helpLine3);
   entries.push({ text: helpLine3, properties: { type: "help" } });
   highlights.push({ range: [currentByte, currentByte + helpLen3], fg: STYLE_COMMENT });
   currentByte += helpLen3;
 
-  const helpFooter = "╚══════════════════════════════════════════════════════════════════════════╝\n\n";
+  const helpFooter = "╚" + "═".repeat(74) + "╝\n\n";
   const helpLen4 = getByteLength(helpFooter);
   entries.push({ text: helpFooter, properties: { type: "help" } });
   highlights.push({ range: [currentByte, currentByte + helpLen4], fg: STYLE_COMMENT_BORDER });
@@ -510,7 +510,7 @@ async function renderReviewStream(): Promise<{ entries: TextPropertyEntry[], hig
   }
 
   if (entries.length === 0) {
-    entries.push({ text: "No changes to review.\n", properties: {} });
+    entries.push({ text: editor.t("panel.no_changes") + "\n", properties: {} });
   } else {
     // Add help footer with keybindings
     const helpSeparator = "\n" + "─".repeat(70) + "\n";
@@ -519,19 +519,19 @@ async function renderReviewStream(): Promise<{ entries: TextPropertyEntry[], hig
     highlights.push({ range: [currentByte, currentByte + helpLen1], fg: STYLE_BORDER });
     currentByte += helpLen1;
 
-    const helpLine1 = "REVIEW: [c]omment  [a]pprove  [x]reject  [!]needs-changes  [?]question  [u]ndo\n";
+    const helpLine1 = editor.t("panel.help_review_footer") + "\n";
     const helpLen2 = getByteLength(helpLine1);
     entries.push({ text: helpLine1, properties: { type: "help" } });
     highlights.push({ range: [currentByte, currentByte + helpLen2], fg: STYLE_COMMENT });
     currentByte += helpLen2;
 
-    const helpLine2 = "STAGE:  [s]tage    [d]iscard  |  NAV: [n]ext [p]rev [Enter]drill-down  [q]uit\n";
+    const helpLine2 = editor.t("panel.help_stage_footer") + "\n";
     const helpLen3 = getByteLength(helpLine2);
     entries.push({ text: helpLine2, properties: { type: "help" } });
     highlights.push({ range: [currentByte, currentByte + helpLen3], fg: STYLE_COMMENT });
     currentByte += helpLen3;
 
-    const helpLine3 = "EXPORT: [E]xport to .review/session.md  |  [O]verall feedback  [r]efresh\n";
+    const helpLine3 = editor.t("panel.help_export_footer") + "\n";
     const helpLen4 = getByteLength(helpLine3);
     entries.push({ text: helpLine3, properties: { type: "help" } });
     highlights.push({ range: [currentByte, currentByte + helpLen4], fg: STYLE_COMMENT });
@@ -573,13 +573,13 @@ async function updateReviewUI() {
 async function refreshReviewData() {
     if (isUpdating) return;
     isUpdating = true;
-    editor.setStatus("Refreshing review diff...");
+    editor.setStatus(editor.t("status.refreshing"));
     try {
         const newHunks = await getGitDiff();
         newHunks.forEach(h => h.status = state.hunkStatus[h.id] || 'pending');
         state.hunks = newHunks;
         await updateReviewUI();
-        editor.setStatus(`Review diff updated. Found ${state.hunks.length} hunks.`);
+        editor.setStatus(editor.t("status.updated", { count: String(state.hunks.length) }));
     } catch (e) {
         editor.debug(`ReviewDiff Error: ${e}`);
     } finally {
@@ -1015,7 +1015,7 @@ globalThis.review_drill_down = async () => {
         const h = state.hunks.find(x => x.id === id);
         if (!h) return;
 
-        editor.setStatus("Loading side-by-side diff...");
+        editor.setStatus(editor.t("status.loading_diff"));
 
         // Get all hunks for this file
         const fileHunks = state.hunks.filter(hunk => hunk.file === h.file);
@@ -1023,7 +1023,7 @@ globalThis.review_drill_down = async () => {
         // Get git root to construct absolute path
         const gitRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"]);
         if (gitRootResult.exit_code !== 0) {
-            editor.setStatus("Not in a git repository");
+            editor.setStatus(editor.t("status.not_git_repo"));
             return;
         }
         const gitRoot = gitRootResult.stdout.trim();
@@ -1032,7 +1032,7 @@ globalThis.review_drill_down = async () => {
         // Get old (HEAD) and new (working) file content
         const gitShow = await editor.spawnProcess("git", ["show", `HEAD:${h.file}`]);
         if (gitShow.exit_code !== 0) {
-            editor.setStatus("Failed to load old file version");
+            editor.setStatus(editor.t("status.failed_old_version"));
             return;
         }
         const oldContent = gitShow.stdout;
@@ -1042,7 +1042,7 @@ globalThis.review_drill_down = async () => {
         try {
             newContent = await editor.readFile(absoluteFilePath);
         } catch (e) {
-            editor.setStatus("Failed to load new file version");
+            editor.setStatus(editor.t("status.failed_new_version"));
             return;
         }
 
@@ -1190,7 +1190,7 @@ globalThis.review_drill_down = async () => {
         const addedLines = alignedLines.filter(l => l.changeType === 'added').length;
         const removedLines = alignedLines.filter(l => l.changeType === 'removed').length;
         const modifiedLines = alignedLines.filter(l => l.changeType === 'modified').length;
-        editor.setStatus(`Side-by-side diff: +${addedLines} -${removedLines} ~${modifiedLines} | 'q' to return`);
+        editor.setStatus(editor.t("status.diff_summary", { added: String(addedLines), removed: String(removedLines), modified: String(modifiedLines) }));
     }
 };
 
@@ -1250,7 +1250,7 @@ let pendingCommentInfo: PendingCommentInfo | null = null;
 globalThis.review_add_comment = async () => {
     const info = getCurrentLineInfo();
     if (!info) {
-        editor.setStatus("No hunk selected for comment");
+        editor.setStatus(editor.t("status.no_hunk_selected"));
         return;
     }
     pendingCommentInfo = info;
@@ -1266,7 +1266,7 @@ globalThis.review_add_comment = async () => {
     } else if (info.oldLine) {
         lineRef = `L${info.oldLine}`;
     }
-    editor.startPrompt(`Comment on ${lineRef}: `, "review-comment");
+    editor.startPrompt(editor.t("prompt.comment", { line: lineRef }), "review-comment");
 };
 
 // Prompt event handlers
@@ -1298,7 +1298,7 @@ globalThis.on_review_prompt_confirm = (args: { prompt_type: string; input: strin
         } else if (comment.old_line) {
             lineRef = `line ${comment.old_line}`;
         }
-        editor.setStatus(`Comment added to ${lineRef}`);
+        editor.setStatus(editor.t("status.comment_added", { line: lineRef }));
     }
     pendingCommentInfo = null;
     return true;
@@ -1307,7 +1307,7 @@ globalThis.on_review_prompt_confirm = (args: { prompt_type: string; input: strin
 globalThis.on_review_prompt_cancel = (args: { prompt_type: string }): boolean => {
     if (args.prompt_type === "review-comment") {
         pendingCommentInfo = null;
-        editor.setStatus("Comment cancelled");
+        editor.setStatus(editor.t("status.comment_cancelled"));
     }
     return true;
 };
@@ -1323,7 +1323,7 @@ globalThis.review_approve_hunk = async () => {
     if (h) {
         h.reviewStatus = 'approved';
         await updateReviewUI();
-        editor.setStatus(`Hunk approved`);
+        editor.setStatus(editor.t("status.hunk_approved"));
     }
 };
 
@@ -1334,7 +1334,7 @@ globalThis.review_reject_hunk = async () => {
     if (h) {
         h.reviewStatus = 'rejected';
         await updateReviewUI();
-        editor.setStatus(`Hunk rejected`);
+        editor.setStatus(editor.t("status.hunk_rejected"));
     }
 };
 
@@ -1345,7 +1345,7 @@ globalThis.review_needs_changes = async () => {
     if (h) {
         h.reviewStatus = 'needs_changes';
         await updateReviewUI();
-        editor.setStatus(`Hunk marked as needs changes`);
+        editor.setStatus(editor.t("status.hunk_needs_changes"));
     }
 };
 
@@ -1356,7 +1356,7 @@ globalThis.review_question_hunk = async () => {
     if (h) {
         h.reviewStatus = 'question';
         await updateReviewUI();
-        editor.setStatus(`Hunk marked with question`);
+        editor.setStatus(editor.t("status.hunk_question"));
     }
 };
 
@@ -1367,15 +1367,15 @@ globalThis.review_clear_status = async () => {
     if (h) {
         h.reviewStatus = 'pending';
         await updateReviewUI();
-        editor.setStatus(`Hunk review status cleared`);
+        editor.setStatus(editor.t("status.hunk_status_cleared"));
     }
 };
 
 globalThis.review_set_overall_feedback = async () => {
-    const text = await editor.prompt("Overall feedback: ", state.overallFeedback || "");
+    const text = await editor.prompt(editor.t("prompt.overall_feedback"), state.overallFeedback || "");
     if (text !== null) {
         state.overallFeedback = text.trim();
-        editor.setStatus(`Overall feedback ${text.trim() ? 'set' : 'cleared'}`);
+        editor.setStatus(text.trim() ? editor.t("status.feedback_set") : editor.t("status.feedback_cleared"));
     }
 };
 
@@ -1449,7 +1449,7 @@ globalThis.review_export_session = async () => {
     // Write file
     const filePath = editor.pathJoin(reviewDir, "session.md");
     await editor.writeFile(filePath, md);
-    editor.setStatus(`Review exported to ${filePath}`);
+    editor.setStatus(editor.t("status.exported", { path: filePath }));
 };
 
 globalThis.review_export_json = async () => {
@@ -1485,11 +1485,11 @@ globalThis.review_export_json = async () => {
 
     const filePath = editor.pathJoin(reviewDir, "session.json");
     await editor.writeFile(filePath, JSON.stringify(session, null, 2));
-    editor.setStatus(`Review exported to ${filePath}`);
+    editor.setStatus(editor.t("status.exported", { path: filePath }));
 };
 
 globalThis.start_review_diff = async () => {
-    editor.setStatus("Generating Review Diff Stream...");
+    editor.setStatus(editor.t("status.generating"));
     editor.setContext("review-mode", true);
 
     // Initial data fetch
@@ -1504,7 +1504,7 @@ globalThis.start_review_diff = async () => {
     state.reviewBufferId = bufferId;
     await updateReviewUI(); // Apply initial highlights
 
-    editor.setStatus(`Review Diff: ${state.hunks.length} hunks | [c]omment [a]pprove [x]reject [!]changes [?]question [E]xport`);
+    editor.setStatus(editor.t("status.review_summary", { count: String(state.hunks.length) }));
     editor.on("buffer_activated", "on_review_buffer_activated");
     editor.on("buffer_closed", "on_review_buffer_closed");
 };
@@ -1514,8 +1514,9 @@ globalThis.stop_review_diff = () => {
     editor.setContext("review-mode", false);
     editor.off("buffer_activated", "on_review_buffer_activated");
     editor.off("buffer_closed", "on_review_buffer_closed");
-    editor.setStatus("Review Diff Mode stopped.");
+    editor.setStatus(editor.t("status.stopped"));
 };
+
 
 globalThis.on_review_buffer_activated = (data: any) => {
     if (data.buffer_id === state.reviewBufferId) refreshReviewData();
@@ -1531,11 +1532,11 @@ globalThis.side_by_side_diff_current_file = async () => {
     const absolutePath = editor.getBufferPath(bid);
 
     if (!absolutePath) {
-        editor.setStatus("No file open - cannot show diff");
+        editor.setStatus(editor.t("status.no_file_open"));
         return;
     }
 
-    editor.setStatus("Loading side-by-side diff...");
+    editor.setStatus(editor.t("status.loading_diff"));
 
     // Get the file's directory and name for running git commands
     const fileDir = editor.pathDirname(absolutePath);
@@ -1544,7 +1545,7 @@ globalThis.side_by_side_diff_current_file = async () => {
     // Run git commands from the file's directory to avoid path format issues on Windows
     const gitRootResult = await editor.spawnProcess("git", ["-C", fileDir, "rev-parse", "--show-toplevel"]);
     if (gitRootResult.exit_code !== 0) {
-        editor.setStatus("Not in a git repository");
+        editor.setStatus(editor.t("status.not_git_repo"));
         return;
     }
     const gitRoot = gitRootResult.stdout.trim();
@@ -1570,7 +1571,7 @@ globalThis.side_by_side_diff_current_file = async () => {
     // Get hunks for this specific file (use -C gitRoot since filePath is relative to git root)
     const result = await editor.spawnProcess("git", ["-C", gitRoot, "diff", "HEAD", "--unified=3", "--", filePath]);
     if (result.exit_code !== 0) {
-        editor.setStatus("Failed to get git diff for file");
+        editor.setStatus(editor.t("status.failed_git_diff"));
         return;
     }
 
@@ -1607,14 +1608,14 @@ globalThis.side_by_side_diff_current_file = async () => {
     }
 
     if (fileHunks.length === 0) {
-        editor.setStatus("No changes in this file");
+        editor.setStatus(editor.t("status.no_changes"));
         return;
     }
 
     // Get old (HEAD) and new (working) file content (use -C gitRoot since filePath is relative to git root)
     const gitShow = await editor.spawnProcess("git", ["-C", gitRoot, "show", `HEAD:${filePath}`]);
     if (gitShow.exit_code !== 0) {
-        editor.setStatus("Failed to load old file version (file may be new)");
+        editor.setStatus(editor.t("status.failed_old_new_file"));
         return;
     }
     const oldContent = gitShow.stdout;
@@ -1624,7 +1625,7 @@ globalThis.side_by_side_diff_current_file = async () => {
     try {
         newContent = await editor.readFile(absolutePath);
     } catch (e) {
-        editor.setStatus("Failed to load new file version");
+        editor.setStatus(editor.t("status.failed_new_version"));
         return;
     }
 
@@ -1749,25 +1750,25 @@ globalThis.side_by_side_diff_current_file = async () => {
     const addedLines = alignedLines.filter(l => l.changeType === 'added').length;
     const removedLines = alignedLines.filter(l => l.changeType === 'removed').length;
     const modifiedLines = alignedLines.filter(l => l.changeType === 'modified').length;
-    editor.setStatus(`Side-by-side diff: +${addedLines} -${removedLines} ~${modifiedLines} | 'q' to return`);
+    editor.setStatus(editor.t("status.diff_summary", { added: String(addedLines), removed: String(removedLines), modified: String(modifiedLines) }));
 };
 
 // Register Modes and Commands
-editor.registerCommand("Review Diff", "Start code review session", "start_review_diff", "global");
-editor.registerCommand("Stop Review Diff", "Stop the review session", "stop_review_diff", "review-mode");
-editor.registerCommand("Refresh Review Diff", "Refresh the list of changes", "review_refresh", "review-mode");
-editor.registerCommand("Side-by-Side Diff", "Show side-by-side diff for current file", "side_by_side_diff_current_file", "global");
+editor.registerCommand("%cmd.review_diff", "%cmd.review_diff_desc", "start_review_diff", "global");
+editor.registerCommand("%cmd.stop_review_diff", "%cmd.stop_review_diff_desc", "stop_review_diff", "review-mode");
+editor.registerCommand("%cmd.refresh_review_diff", "%cmd.refresh_review_diff_desc", "review_refresh", "review-mode");
+editor.registerCommand("%cmd.side_by_side_diff", "%cmd.side_by_side_diff_desc", "side_by_side_diff_current_file", "global");
 
 // Review Comment Commands
-editor.registerCommand("Review: Add Comment", "Add a review comment to the current hunk", "review_add_comment", "review-mode");
-editor.registerCommand("Review: Approve Hunk", "Mark hunk as approved", "review_approve_hunk", "review-mode");
-editor.registerCommand("Review: Reject Hunk", "Mark hunk as rejected", "review_reject_hunk", "review-mode");
-editor.registerCommand("Review: Needs Changes", "Mark hunk as needing changes", "review_needs_changes", "review-mode");
-editor.registerCommand("Review: Question", "Mark hunk with a question", "review_question_hunk", "review-mode");
-editor.registerCommand("Review: Clear Status", "Clear hunk review status", "review_clear_status", "review-mode");
-editor.registerCommand("Review: Overall Feedback", "Set overall review feedback", "review_set_overall_feedback", "review-mode");
-editor.registerCommand("Review: Export to Markdown", "Export review to .review/session.md", "review_export_session", "review-mode");
-editor.registerCommand("Review: Export to JSON", "Export review to .review/session.json", "review_export_json", "review-mode");
+editor.registerCommand("%cmd.add_comment", "%cmd.add_comment_desc", "review_add_comment", "review-mode");
+editor.registerCommand("%cmd.approve_hunk", "%cmd.approve_hunk_desc", "review_approve_hunk", "review-mode");
+editor.registerCommand("%cmd.reject_hunk", "%cmd.reject_hunk_desc", "review_reject_hunk", "review-mode");
+editor.registerCommand("%cmd.needs_changes", "%cmd.needs_changes_desc", "review_needs_changes", "review-mode");
+editor.registerCommand("%cmd.question", "%cmd.question_desc", "review_question_hunk", "review-mode");
+editor.registerCommand("%cmd.clear_status", "%cmd.clear_status_desc", "review_clear_status", "review-mode");
+editor.registerCommand("%cmd.overall_feedback", "%cmd.overall_feedback_desc", "review_set_overall_feedback", "review-mode");
+editor.registerCommand("%cmd.export_markdown", "%cmd.export_markdown_desc", "review_export_session", "review-mode");
+editor.registerCommand("%cmd.export_json", "%cmd.export_json_desc", "review_export_json", "review-mode");
 
 // Handler for when buffers are closed - cleans up scroll sync groups
 globalThis.on_buffer_closed = (data: any) => {

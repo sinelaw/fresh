@@ -1,0 +1,80 @@
+{
+  "en": {
+    "cmd.grep": "Git Grep",
+    "cmd.grep_desc": "Search for text in git-tracked files",
+    "prompt.grep": "Git grep: ",
+    "status.ready": "Git Grep plugin ready",
+    "status.type_to_search": "Type to search...",
+    "status.found": "Found %{count} matches",
+    "status.no_matches": "No matches found",
+    "status.error": "Git grep error: %{error}",
+    "status.opened": "Opened %{location}",
+    "status.no_selection": "No file selected",
+    "status.cancelled": "Git grep cancelled"
+  },
+  "es": {
+    "cmd.grep": "Git Grep",
+    "cmd.grep_desc": "Buscar texto en archivos rastreados por git",
+    "prompt.grep": "Git grep: ",
+    "status.ready": "Plugin Git Grep listo",
+    "status.type_to_search": "Escribe para buscar...",
+    "status.found": "Encontradas %{count} coincidencias",
+    "status.no_matches": "No se encontraron coincidencias",
+    "status.error": "Error de git grep: %{error}",
+    "status.opened": "Abierto %{location}",
+    "status.no_selection": "Ningún archivo seleccionado",
+    "status.cancelled": "Git grep cancelado"
+  },
+  "de": {
+    "cmd.grep": "Git Grep",
+    "cmd.grep_desc": "Text in git-verfolgten Dateien suchen",
+    "prompt.grep": "Git grep: ",
+    "status.ready": "Git Grep Plugin bereit",
+    "status.type_to_search": "Tippen zum Suchen...",
+    "status.found": "%{count} Treffer gefunden",
+    "status.no_matches": "Keine Treffer gefunden",
+    "status.error": "Git grep Fehler: %{error}",
+    "status.opened": "Geöffnet: %{location}",
+    "status.no_selection": "Keine Datei ausgewählt",
+    "status.cancelled": "Git grep abgebrochen"
+  },
+  "fr": {
+    "cmd.grep": "Git Grep",
+    "cmd.grep_desc": "Rechercher du texte dans les fichiers suivis par git",
+    "prompt.grep": "Git grep: ",
+    "status.ready": "Plugin Git Grep prêt",
+    "status.type_to_search": "Tapez pour rechercher...",
+    "status.found": "%{count} correspondances trouvées",
+    "status.no_matches": "Aucune correspondance trouvée",
+    "status.error": "Erreur git grep: %{error}",
+    "status.opened": "Ouvert: %{location}",
+    "status.no_selection": "Aucun fichier sélectionné",
+    "status.cancelled": "Git grep annulé"
+  },
+  "ja": {
+    "cmd.grep": "Git Grep",
+    "cmd.grep_desc": "Git追跡ファイル内でテキストを検索",
+    "prompt.grep": "Git grep: ",
+    "status.ready": "Git Grepプラグイン準備完了",
+    "status.type_to_search": "入力して検索...",
+    "status.found": "%{count}件の一致",
+    "status.no_matches": "一致なし",
+    "status.error": "Git grepエラー: %{error}",
+    "status.opened": "開きました: %{location}",
+    "status.no_selection": "ファイルが選択されていません",
+    "status.cancelled": "Git grepキャンセル"
+  },
+  "zh-CN": {
+    "cmd.grep": "Git Grep",
+    "cmd.grep_desc": "在Git跟踪的文件中搜索文本",
+    "prompt.grep": "Git grep: ",
+    "status.ready": "Git Grep插件已就绪",
+    "status.type_to_search": "输入以搜索...",
+    "status.found": "找到%{count}个匹配",
+    "status.no_matches": "未找到匹配",
+    "status.error": "Git grep错误: %{error}",
+    "status.opened": "已打开: %{location}",
+    "status.no_selection": "未选择文件",
+    "status.cancelled": "Git grep已取消"
+  }
+}

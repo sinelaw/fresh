@@ -1,0 +1,12 @@
+{
+  "en": {
+    "cmd.test": "Test Localized Command",
+    "cmd.test_desc": "A command to test plugin localization",
+    "msg.hello": "Hello, %{name}! Your locale is %{locale}."
+  },
+  "es": {
+    "cmd.test": "Comando de prueba localizado",
+    "cmd.test_desc": "Un comando para probar la localización de plugins",
+    "msg.hello": "¡Hola, %{name}! Tu idioma es %{locale}."
+  }
+}

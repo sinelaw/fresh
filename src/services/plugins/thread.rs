@@ -708,6 +708,20 @@ async fn load_plugin_internal(
         .to_str()
         .ok_or_else(|| anyhow!("Invalid path encoding"))?;
 
+    // Try to load accompanying .i18n.json file
+    let i18n_path = path.with_extension("i18n.json");
+    if i18n_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&i18n_path) {
+            if let Ok(strings) = serde_json::from_str::<
+                std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+            >(&content)
+            {
+                crate::i18n::register_plugin_strings(&plugin_name, strings);
+                tracing::debug!("Loaded i18n strings for plugin '{}'", plugin_name);
+            }
+        }
+    }
+
     let load_start = std::time::Instant::now();
     runtime
         .borrow_mut()
@@ -801,6 +815,9 @@ fn unload_plugin_internal(
 ) -> Result<()> {
     if plugins.remove(name).is_some() {
         tracing::info!("Unloading TypeScript plugin: {}", name);
+
+        // Unregister i18n strings
+        crate::i18n::unregister_plugin_strings(name);
 
         // Remove plugin's commands (assuming they're prefixed with plugin name)
         let prefix = format!("{}:", name);

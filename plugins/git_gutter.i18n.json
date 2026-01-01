@@ -1,0 +1,44 @@
+{
+  "en": {
+    "cmd.refresh": "Git Gutter: Refresh",
+    "cmd.refresh_desc": "Refresh git gutter indicators for the current buffer",
+    "status.ready": "Git Gutter plugin ready",
+    "status.no_file": "Git Gutter: No file open",
+    "status.changes": "Git Gutter: %{count} change(s) detected"
+  },
+  "es": {
+    "cmd.refresh": "Git Gutter: Actualizar",
+    "cmd.refresh_desc": "Actualizar indicadores de git gutter para el buffer actual",
+    "status.ready": "Plugin Git Gutter listo",
+    "status.no_file": "Git Gutter: Ningún archivo abierto",
+    "status.changes": "Git Gutter: %{count} cambio(s) detectado(s)"
+  },
+  "de": {
+    "cmd.refresh": "Git Gutter: Aktualisieren",
+    "cmd.refresh_desc": "Git Gutter-Indikatoren für den aktuellen Buffer aktualisieren",
+    "status.ready": "Git Gutter Plugin bereit",
+    "status.no_file": "Git Gutter: Keine Datei geöffnet",
+    "status.changes": "Git Gutter: %{count} Änderung(en) erkannt"
+  },
+  "fr": {
+    "cmd.refresh": "Git Gutter: Rafraîchir",
+    "cmd.refresh_desc": "Rafraîchir les indicateurs git gutter pour le tampon actuel",
+    "status.ready": "Plugin Git Gutter prêt",
+    "status.no_file": "Git Gutter: Aucun fichier ouvert",
+    "status.changes": "Git Gutter: %{count} modification(s) détectée(s)"
+  },
+  "ja": {
+    "cmd.refresh": "Git Gutter: 更新",
+    "cmd.refresh_desc": "現在のバッファのGit Gutterインジケーターを更新",
+    "status.ready": "Git Gutterプラグイン準備完了",
+    "status.no_file": "Git Gutter: ファイルが開かれていません",
+    "status.changes": "Git Gutter: %{count}件の変更を検出"
+  },
+  "zh-CN": {
+    "cmd.refresh": "Git Gutter: 刷新",
+    "cmd.refresh_desc": "刷新当前缓冲区的Git Gutter指示器",
+    "status.ready": "Git Gutter插件已就绪",
+    "status.no_file": "Git Gutter: 没有打开的文件",
+    "status.changes": "Git Gutter: 检测到%{count}处更改"
+  }
+}

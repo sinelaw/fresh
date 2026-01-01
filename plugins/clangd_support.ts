@@ -60,13 +60,13 @@ globalThis.clangdSwitchSourceHeader = async function(): Promise<void> {
   const bufferId = editor.getActiveBufferId();
   const path = editor.getBufferPath(bufferId);
   if (!path) {
-    setClangdStatus("Clangd: there is no active file to switch");
+    setClangdStatus(editor.t("status.no_active_file"));
     return;
   }
 
   const language = detectLanguage(path);
   if (!language) {
-    setClangdStatus("Clangd: unsupported file type for switch header");
+    setClangdStatus(editor.t("status.unsupported_file_type"));
     return;
   }
 
@@ -80,12 +80,12 @@ globalThis.clangdSwitchSourceHeader = async function(): Promise<void> {
     if (typeof result === "string" && result.length > 0) {
       const targetPath = fileUriToPath(result);
       editor.openFile(targetPath, 0, 0);
-      setClangdStatus("Clangd: opened corresponding file");
+      setClangdStatus(editor.t("status.opened_corresponding_file"));
       return;
     }
-    setClangdStatus("Clangd: no matching header/source found");
+    setClangdStatus(editor.t("status.no_matching_found"));
   } catch (err) {
-    setClangdStatus(`Clangd switch source/header failed: ${err}`);
+    setClangdStatus(editor.t("status.switch_failed", { error: String(err) }));
     editor.debug(`clangdSwitchSourceHeader error: ${err}`);
   }
 };
@@ -246,8 +246,8 @@ globalThis.clangdProjectSetup = async function (): Promise<void> {
 };
 
 editor.registerCommand(
-  "Clangd: Project Setup",
-  "Analyze C/C++ clangd readiness (compile_commands.json, .clangd)",
+  "%cmd.project_setup",
+  "%cmd.project_setup_desc",
   "clangdProjectSetup",
   ""
 );
@@ -270,32 +270,32 @@ globalThis.clangdOpenProjectConfig = function(): void {
     const configPath = editor.pathJoin(dir, ".clangd");
     if (editor.fileExists(configPath)) {
       editor.openFile(configPath, 0, 0);
-      setClangdStatus("Opened .clangd configuration");
+      setClangdStatus(editor.t("status.opened_config"));
       opened = true;
       break;
     }
   }
 
   if (!opened) {
-    setClangdStatus("Could not find .clangd configuration in workspace");
+    setClangdStatus(editor.t("status.config_not_found"));
   }
 };
 
 editor.registerCommand(
-  "Clangd: Switch Source/Header",
-  "Jump to header/source pair using clangd",
+  "%cmd.switch_source_header",
+  "%cmd.switch_source_header_desc",
   "clangdSwitchSourceHeader",
   "normal"
 );
 
 editor.registerCommand(
-  "Clangd: Open Project Config",
-  "Open the nearest .clangd file",
+  "%cmd.open_project_config",
+  "%cmd.open_project_config_desc",
   "clangdOpenProjectConfig",
   "normal"
 );
 
-setClangdStatus("Clangd support plugin loaded (switch header + config commands)");
+setClangdStatus(editor.t("status.plugin_loaded"));
 
 globalThis.onClangdCustomNotification = function(payload: {
   language: string;
@@ -313,7 +313,7 @@ globalThis.onClangdCustomNotification = function(payload: {
   if (payload.method === "textDocument/clangd.fileStatus" && payload.params) {
     const status = (payload.params as any).status ?? "unknown";
     editor.debug(`Clangd file status: ${JSON.stringify(status)}`);
-    setClangdStatus(`Clangd file status: ${status}`);
+    setClangdStatus(editor.t("status.file_status", { status: String(status) }));
   } else if (payload.method === "$/memoryUsage" && payload.params) {
     const usage = (payload.params as any).used ?? "unknown";
     editor.debug(`Clangd memory usage: ${usage}`);

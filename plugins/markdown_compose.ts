@@ -364,18 +364,18 @@ globalThis.markdownToggleCompose = function(): void {
 
   // Only work with markdown files
   if (!info.path.endsWith('.md') && !info.path.endsWith('.markdown')) {
-    editor.setStatus("Not a Markdown file");
+    editor.setStatus(editor.t("status.not_markdown_file"));
     return;
   }
 
   if (composeBuffers.has(bufferId)) {
     disableMarkdownCompose(bufferId);
-    editor.setStatus("Markdown Compose: OFF");
+    editor.setStatus(editor.t("status.compose_off"));
   } else {
     enableMarkdownCompose(bufferId);
     // Trigger a re-render to apply the transform
     editor.refreshLines(bufferId);
-    editor.setStatus("Markdown Compose: ON (soft breaks, centered)");
+    editor.setStatus(editor.t("status.compose_on"));
   }
 };
 
@@ -577,12 +577,12 @@ editor.on("prompt_confirmed", "onMarkdownComposeWidthConfirmed");
 
 // Set compose width command - starts interactive prompt
 globalThis.markdownSetComposeWidth = function(): void {
-  editor.startPrompt("Compose width: ", "markdown-compose-width");
+  editor.startPrompt(editor.t("prompt.compose_width"), "markdown-compose-width");
   editor.setPromptSuggestions([
-    { text: "60", description: "Narrow - good for side panels" },
-    { text: "72", description: "Classic - traditional terminal width" },
-    { text: "80", description: "Standard - default width" },
-    { text: "100", description: "Wide - more content per line" },
+    { text: "60", description: editor.t("suggestion.narrow") },
+    { text: "72", description: editor.t("suggestion.classic") },
+    { text: "80", description: editor.t("suggestion.standard") },
+    { text: "100", description: editor.t("suggestion.wide") },
   ]);
 };
 
@@ -596,7 +596,7 @@ globalThis.onMarkdownComposeWidthConfirmed = function(args: {
   const width = parseInt(args.text, 10);
   if (!isNaN(width) && width > 20 && width < 300) {
     config.composeWidth = width;
-    editor.setStatus(`Markdown compose width set to ${width}`);
+    editor.setStatus(editor.t("status.width_set", { width: String(width) }));
 
     // Re-process active buffer if in compose mode
     const bufferId = editor.getActiveBufferId();
@@ -604,25 +604,25 @@ globalThis.onMarkdownComposeWidthConfirmed = function(args: {
       editor.refreshLines(bufferId);  // Trigger re-transform
     }
   } else {
-    editor.setStatus("Invalid width - must be between 20 and 300");
+    editor.setStatus(editor.t("status.invalid_width"));
   }
 };
 
 // Register commands
 editor.registerCommand(
-  "Markdown: Toggle Compose",
-  "Toggle compose mode (soft wrapping, centered margins)",
+  "%cmd.toggle_compose",
+  "%cmd.toggle_compose_desc",
   "markdownToggleCompose",
   "normal"
 );
 
 editor.registerCommand(
-  "Markdown: Set Compose Width",
-  "Set the width for compose mode wrapping and margins",
+  "%cmd.set_compose_width",
+  "%cmd.set_compose_width_desc",
   "markdownSetComposeWidth",
   "normal"
 );
 
 // Initialization
 editor.debug("Markdown Compose plugin loaded - use 'Markdown: Toggle Compose' command");
-editor.setStatus("Markdown plugin ready");
+editor.setStatus(editor.t("status.plugin_ready"));

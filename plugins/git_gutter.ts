@@ -418,7 +418,7 @@ globalThis.git_gutter_refresh = function (): void {
   const filePath = editor.getBufferPath(bufferId);
 
   if (!filePath || filePath === "") {
-    editor.setStatus("Git Gutter: No file open");
+    editor.setStatus(editor.t("status.no_file"));
     return;
   }
 
@@ -435,7 +435,7 @@ globalThis.git_gutter_refresh = function (): void {
   updateGitGutter(bufferId).then(() => {
     const state = bufferStates.get(bufferId);
     const count = state?.hunks.length || 0;
-    editor.setStatus(`Git Gutter: ${count} change${count !== 1 ? "s" : ""} detected`);
+    editor.setStatus(editor.t("status.changes", { count: String(count) }));
   });
 };
 
@@ -453,8 +453,8 @@ editor.on("buffer_closed", "onGitGutterBufferClosed");
 
 // Register commands
 editor.registerCommand(
-  "Git Gutter: Refresh",
-  "Refresh git gutter indicators for the current buffer",
+  "%cmd.refresh",
+  "%cmd.refresh_desc",
   "git_gutter_refresh",
   "normal"
 );
@@ -472,4 +472,4 @@ if (initPath && initPath !== "") {
 }
 
 editor.debug("Git Gutter plugin loaded");
-editor.setStatus("Git Gutter plugin ready");
+editor.setStatus(editor.t("status.ready"));

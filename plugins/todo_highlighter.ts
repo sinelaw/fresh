@@ -143,14 +143,14 @@ globalThis.todoHighlighterEnable = function(): void {
   // Refresh lines so next render processes all visible lines
   const bufferId = editor.getActiveBufferId();
   editor.refreshLines(bufferId);
-  editor.setStatus("TODO Highlighter: Enabled");
+  editor.setStatus(editor.t("status.enabled"));
 };
 
 globalThis.todoHighlighterDisable = function(): void {
   config.enabled = false;
   const bufferId = editor.getActiveBufferId();
   clearHighlights(bufferId);
-  editor.setStatus("TODO Highlighter: Disabled");
+  editor.setStatus(editor.t("status.disabled"));
 };
 
 globalThis.todoHighlighterToggle = function(): void {
@@ -162,43 +162,43 @@ globalThis.todoHighlighterToggle = function(): void {
   } else {
     clearHighlights(bufferId);
   }
-  editor.setStatus(`TODO Highlighter: ${config.enabled ? "Enabled" : "Disabled"}`);
+  editor.setStatus(config.enabled ? editor.t("status.enabled") : editor.t("status.disabled"));
 };
 
 globalThis.todoHighlighterShowKeywords = function(): void {
   const keywords = config.keywords.map(k => k.word).join(", ");
-  editor.setStatus(`TODO Keywords: ${keywords}`);
+  editor.setStatus(editor.t("status.keywords", { keywords }));
 };
 
 // Register commands
 editor.registerCommand(
-  "TODO Highlighter: Enable",
-  "Enable TODO keyword highlighting",
+  "%cmd.enable",
+  "%cmd.enable_desc",
   "todoHighlighterEnable",
   "normal"
 );
 
 editor.registerCommand(
-  "TODO Highlighter: Disable",
-  "Disable TODO keyword highlighting",
+  "%cmd.disable",
+  "%cmd.disable_desc",
   "todoHighlighterDisable",
   "normal"
 );
 
 editor.registerCommand(
-  "TODO Highlighter: Toggle",
-  "Toggle TODO keyword highlighting",
+  "%cmd.toggle",
+  "%cmd.toggle_desc",
   "todoHighlighterToggle",
   "normal"
 );
 
 editor.registerCommand(
-  "TODO Highlighter: Show Keywords",
-  "Show currently tracked keywords",
+  "%cmd.show_keywords",
+  "%cmd.show_keywords_desc",
   "todoHighlighterShowKeywords",
   "normal"
 );
 
 // Initialization
-editor.setStatus("TODO Highlighter plugin loaded (TypeScript)");
+editor.setStatus(editor.t("status.loaded"));
 editor.debug("TODO Highlighter initialized with keywords: " + config.keywords.map(k => k.word).join(", "));

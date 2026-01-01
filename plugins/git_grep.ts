@@ -67,8 +67,8 @@ globalThis.start_git_grep = function(): void {
   gitGrepResults = [];
 
   // Start the prompt
-  editor.startPrompt("Git grep: ", "git-grep");
-  editor.setStatus("Type to search...");
+  editor.startPrompt(editor.t("prompt.grep"), "git-grep");
+  editor.setStatus(editor.t("status.type_to_search"));
 };
 
 // React to prompt input changes
@@ -102,22 +102,22 @@ globalThis.onGitGrepPromptChanged = function(args: {
 
         // Update status
         if (results.length > 0) {
-          editor.setStatus(`Found ${results.length} matches`);
+          editor.setStatus(editor.t("status.found", { count: String(results.length) }));
         } else {
-          editor.setStatus("No matches found");
+          editor.setStatus(editor.t("status.no_matches"));
         }
       } else if (result.exit_code === 1) {
         // No matches found (git grep returns 1)
         gitGrepResults = [];
         editor.setPromptSuggestions([]);
-        editor.setStatus("No matches found");
+        editor.setStatus(editor.t("status.no_matches"));
       } else {
         // Error occurred
-        editor.setStatus(`Git grep error: ${result.stderr}`);
+        editor.setStatus(editor.t("status.error", { error: result.stderr }));
       }
     })
     .catch((e) => {
-      editor.setStatus(`Git grep error: ${e}`);
+      editor.setStatus(editor.t("status.error", { error: String(e) }));
     });
 
   return true;
@@ -145,11 +145,11 @@ globalThis.onGitGrepPromptConfirmed = function(args: {
 
     // Open the file at the specific location
     editor.openFile(selected.file, selected.line, selected.column);
-    editor.setStatus(`Opened ${selected.file}:${selected.line}:${selected.column}`);
+    editor.setStatus(editor.t("status.opened", { location: `${selected.file}:${selected.line}:${selected.column}` }));
   } else {
     // No selection
     editor.debug("No file selected - selected_index is null or out of bounds");
-    editor.setStatus("No file selected");
+    editor.setStatus(editor.t("status.no_selection"));
   }
 
   return true;
@@ -165,7 +165,7 @@ globalThis.onGitGrepPromptCancelled = function(args: {
 
   // Clear results
   gitGrepResults = [];
-  editor.setStatus("Git grep cancelled");
+  editor.setStatus(editor.t("status.cancelled"));
 
   return true;
 };
@@ -177,8 +177,8 @@ editor.on("prompt_cancelled", "onGitGrepPromptCancelled");
 
 // Register command
 editor.registerCommand(
-  "Git Grep",
-  "Search for text in git-tracked files",
+  "%cmd.grep",
+  "%cmd.grep_desc",
   "start_git_grep",
   "normal"
 );
@@ -186,4 +186,4 @@ editor.registerCommand(
 // Log that plugin loaded successfully
 editor.debug("Git Grep plugin loaded successfully (TypeScript)");
 editor.debug("Usage: Call start_git_grep() or use command palette 'Git Grep'");
-editor.setStatus("Git Grep plugin ready");
+editor.setStatus(editor.t("status.ready"));

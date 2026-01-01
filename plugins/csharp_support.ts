@@ -65,22 +65,22 @@ async function restoreProject(projectPath: string): Promise<void> {
     return;
   }
 
-  editor.setStatus(`Restoring NuGet packages for ${projectPath}...`);
+  editor.setStatus(editor.t("status.restoring_packages", { project: projectPath }));
   editor.debug(`csharp_support: Running dotnet restore for ${projectPath}`);
 
   try {
     const result = await editor.spawnProcess("dotnet", ["restore", projectPath]);
 
     if (result.exit_code === 0) {
-      editor.setStatus(`NuGet restore completed for ${projectPath}`);
+      editor.setStatus(editor.t("status.restore_completed", { project: projectPath }));
       editor.debug(`csharp_support: dotnet restore succeeded`);
     } else {
-      editor.setStatus(`NuGet restore failed: ${result.stderr}`);
+      editor.setStatus(editor.t("status.restore_failed", { error: result.stderr }));
       editor.debug(`csharp_support: dotnet restore failed: ${result.stderr}`);
     }
   } catch (e) {
     const err = e instanceof Error ? e : new Error(String(e));
-    editor.setStatus(`NuGet restore error: ${err.message}`);
+    editor.setStatus(editor.t("status.restore_error", { error: err.message }));
     editor.debug(`csharp_support: dotnet restore error: ${err.message}`);
   }
 }

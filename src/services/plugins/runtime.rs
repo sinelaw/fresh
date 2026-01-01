@@ -172,6 +172,8 @@ struct TsRuntimeState {
     process_pids: Rc<RefCell<HashMap<u64, u32>>>,
     /// Next process ID for background processes
     next_process_id: Rc<RefCell<u64>>,
+    /// Action to plugin source mapping (action_name -> plugin_source)
+    action_sources: Rc<RefCell<HashMap<String, String>>>,
 }
 
 /// Display a transient message in the editor's status bar
@@ -262,9 +264,39 @@ fn op_fresh_get_user_config(state: &mut OpState) -> serde_json::Value {
     serde_json::Value::Object(serde_json::Map::new())
 }
 
-/// Log a debug message to the editor's trace output
+/// Log an error message from a plugin
 ///
-/// Messages appear in stderr when running with RUST_LOG=debug.
+/// Messages appear in log file when running with RUST_LOG=error.
+/// Use for critical errors that need attention.
+/// @param message - Error message
+#[op2(fast)]
+fn op_fresh_error(#[string] message: String) {
+    tracing::error!("TypeScript plugin: {}", message);
+}
+
+/// Log a warning message from a plugin
+///
+/// Messages appear in log file when running with RUST_LOG=warn.
+/// Use for warnings that don't prevent operation but indicate issues.
+/// @param message - Warning message
+#[op2(fast)]
+fn op_fresh_warn(#[string] message: String) {
+    tracing::warn!("TypeScript plugin: {}", message);
+}
+
+/// Log an info message from a plugin
+///
+/// Messages appear in log file when running with RUST_LOG=info.
+/// Use for important operational messages.
+/// @param message - Info message
+#[op2(fast)]
+fn op_fresh_info(#[string] message: String) {
+    tracing::info!("TypeScript plugin: {}", message);
+}
+
+/// Log a debug message from a plugin
+///
+/// Messages appear in log file when running with RUST_LOG=debug.
 /// Useful for plugin development and troubleshooting.
 /// @param message - Debug message; include context like function name and relevant values
 #[op2(fast)]
@@ -960,14 +992,25 @@ fn op_fresh_insert_at_cursor(state: &mut OpState, #[string] text: String) -> boo
     false
 }
 
+/// Get the currently active locale
+#[op2]
+#[string]
+fn op_fresh_get_current_locale() -> String {
+    crate::i18n::current_locale()
+}
+
+/// Translate a string for a plugin using the current locale
+#[op2]
+#[string]
+fn op_fresh_plugin_translate(
+    #[string] plugin_name: String,
+    #[string] key: String,
+    #[serde] args: std::collections::HashMap<String, String>,
+) -> String {
+    crate::i18n::translate_plugin_string(&plugin_name, &key, &args)
+}
+
 /// Register a custom command that can be triggered by keybindings or the command palette
-/// @param name - Unique command name (e.g., "my_plugin_action")
-/// @param description - Human-readable description
-/// @param action - JavaScript function name to call when command is triggered
-/// @param contexts - Comma-separated list of contexts, including both built-in (normal, prompt, popup,
-///                   fileexplorer, menu) and custom plugin-defined contexts (e.g., "normal,config-editor")
-/// @param source - Plugin source name (empty string for builtin)
-/// @returns true if command was registered
 #[op2(fast)]
 fn op_fresh_register_command(
     state: &mut OpState,
@@ -1011,8 +1054,16 @@ fn op_fresh_register_command(
         let command_source = if source.is_empty() {
             crate::input::commands::CommandSource::Builtin
         } else {
-            crate::input::commands::CommandSource::Plugin(source)
+            crate::input::commands::CommandSource::Plugin(source.clone())
         };
+
+        // Store action -> source mapping for i18n support
+        if !source.is_empty() {
+            runtime_state
+                .action_sources
+                .borrow_mut()
+                .insert(action.clone(), source);
+        }
 
         let command = crate::input::commands::Command {
             name: name.clone(),
@@ -3360,6 +3411,11 @@ extension!(
         op_fresh_reload_config,
         op_fresh_get_config,
         op_fresh_get_user_config,
+        op_fresh_get_current_locale,
+        op_fresh_plugin_translate,
+        op_fresh_error,
+        op_fresh_warn,
+        op_fresh_info,
         op_fresh_debug,
         op_fresh_set_clipboard,
         op_fresh_get_active_buffer_id,
@@ -3475,6 +3531,8 @@ pub struct TypeScriptRuntime {
     event_handlers: Rc<RefCell<HashMap<String, Vec<String>>>>,
     /// Pending response senders (shared with runtime state for delivering responses)
     pending_responses: PendingResponses,
+    /// Action to plugin source mapping (shared with runtime state)
+    action_sources: Rc<RefCell<HashMap<String, String>>>,
 }
 
 impl TypeScriptRuntime {
@@ -3508,6 +3566,7 @@ impl TypeScriptRuntime {
 
         tracing::debug!("TypeScriptRuntime::with_state_and_responses: creating runtime state");
         let event_handlers = Rc::new(RefCell::new(HashMap::new()));
+        let action_sources = Rc::new(RefCell::new(HashMap::new()));
         let runtime_state = Rc::new(RefCell::new(TsRuntimeState {
             state_snapshot,
             command_sender,
@@ -3518,6 +3577,7 @@ impl TypeScriptRuntime {
             cancellable_processes: Rc::new(RefCell::new(HashMap::new())),
             process_pids: Rc::new(RefCell::new(HashMap::new())),
             next_process_id: Rc::new(RefCell::new(1)),
+            action_sources: action_sources.clone(),
         }));
 
         tracing::debug!(
@@ -3550,8 +3610,21 @@ impl TypeScriptRuntime {
                     setStatus(message) {
                         core.ops.op_fresh_set_status(message);
                     },
+                    error(message) {
+                        const source = globalThis.__PLUGIN_SOURCE__ || 'unknown';
+                        core.ops.op_fresh_error(`[${source}] ${message}`);
+                    },
+                    warn(message) {
+                        const source = globalThis.__PLUGIN_SOURCE__ || 'unknown';
+                        core.ops.op_fresh_warn(`[${source}] ${message}`);
+                    },
+                    info(message) {
+                        const source = globalThis.__PLUGIN_SOURCE__ || 'unknown';
+                        core.ops.op_fresh_info(`[${source}] ${message}`);
+                    },
                     debug(message) {
-                        core.ops.op_fresh_debug(message);
+                        const source = globalThis.__PLUGIN_SOURCE__ || 'unknown';
+                        core.ops.op_fresh_debug(`[${source}] ${message}`);
                     },
 
                     // Theme operations
@@ -3924,10 +3997,39 @@ impl TypeScriptRuntime {
                     removeScrollSyncGroup(groupId) {
                         return core.ops.op_fresh_remove_scroll_sync_group(groupId);
                     },
+
+                    getCurrentLocale() {
+                        return core.ops.op_fresh_get_current_locale();
+                    },
+
+                    t(key, args = {}, pluginName = null) {
+                        const source = pluginName || globalThis.__PLUGIN_SOURCE__;
+                        if (!source) {
+                            editor.debug(`editor.t("${key}") called without plugin context. Pass plugin name or use getL10n().`);
+                            return key;
+                        }
+                        return core.ops.op_fresh_plugin_translate(source, key, args);
+                    },
+
+                    getL10n() {
+                        const source = globalThis.__PLUGIN_SOURCE__;
+                        return {
+                            t: (key, args = {}) => this.t(key, args, source)
+                        };
+                    },
                 };
 
                 // Make editor globally available
                 globalThis.editor = editor;
+
+                // Override console to route through editor logging instead of stderr
+                globalThis.console = {
+                    log: (...args) => editor.info(args.map(a => String(a)).join(' ')),
+                    warn: (...args) => editor.warn(args.map(a => String(a)).join(' ')),
+                    error: (...args) => editor.error(args.map(a => String(a)).join(' ')),
+                    info: (...args) => editor.info(args.map(a => String(a)).join(' ')),
+                    debug: (...args) => editor.debug(args.map(a => String(a)).join(' ')),
+                };
 
                 // Pre-compiled event dispatcher for performance
                 // This avoids recompiling JavaScript code for each event emission
@@ -3939,7 +4041,7 @@ impl TypeScriptRuntime {
                         // Return true by default if handler doesn't return anything
                         return finalResult !== false;
                     } else {
-                        console.warn('Event handler "' + handlerName + '" is not defined');
+                        editor.debug('Event handler "' + handlerName + '" is not defined');
                         return true;
                     }
                 };
@@ -3956,6 +4058,7 @@ impl TypeScriptRuntime {
             js_runtime,
             event_handlers,
             pending_responses,
+            action_sources,
         })
     }
 
@@ -4070,6 +4173,18 @@ impl TypeScriptRuntime {
 
     /// Execute a global function by name (for plugin actions)
     pub async fn execute_action(&mut self, action_name: &str) -> Result<()> {
+        // Look up the plugin source for this action (for i18n support)
+        let plugin_source = self.action_sources.borrow().get(action_name).cloned();
+
+        // Set __PLUGIN_SOURCE__ if we have a source
+        if let Some(ref source) = plugin_source {
+            let set_source: FastString =
+                format!("globalThis.__PLUGIN_SOURCE__ = \"{}\";", source).into();
+            self.js_runtime
+                .execute_script("<set_action_source>", set_source)
+                .map_err(|e| anyhow!("Failed to set plugin source: {}", e))?;
+        }
+
         let code = format!(
             r#"
             (async () => {{
@@ -4086,7 +4201,18 @@ impl TypeScriptRuntime {
             action_name, action_name, action_name
         );
 
-        self.execute_script("<action>", &code).await
+        let result = self.execute_script("<action>", &code).await;
+
+        // Clear __PLUGIN_SOURCE__ after execution
+        if plugin_source.is_some() {
+            let clear_source: FastString =
+                "globalThis.__PLUGIN_SOURCE__ = null;".to_string().into();
+            let _ = self
+                .js_runtime
+                .execute_script("<clear_action_source>", clear_source);
+        }
+
+        result
     }
 
     /// Emit an event to all registered handlers

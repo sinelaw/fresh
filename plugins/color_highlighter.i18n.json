@@ -1,0 +1,68 @@
+{
+  "en": {
+    "cmd.enable": "Color Highlighter: Enable",
+    "cmd.enable_desc": "Enable color code highlighting with swatches",
+    "cmd.disable": "Color Highlighter: Disable",
+    "cmd.disable_desc": "Disable color code highlighting",
+    "cmd.toggle": "Color Highlighter: Toggle",
+    "cmd.toggle_desc": "Toggle color code highlighting",
+    "status.enabled": "Color Highlighter: Enabled",
+    "status.disabled": "Color Highlighter: Disabled",
+    "status.loaded": "Color Highlighter plugin loaded"
+  },
+  "es": {
+    "cmd.enable": "Resaltador de Colores: Activar",
+    "cmd.enable_desc": "Activar resaltado de códigos de color con muestras",
+    "cmd.disable": "Resaltador de Colores: Desactivar",
+    "cmd.disable_desc": "Desactivar resaltado de códigos de color",
+    "cmd.toggle": "Resaltador de Colores: Alternar",
+    "cmd.toggle_desc": "Alternar resaltado de códigos de color",
+    "status.enabled": "Resaltador de Colores: Activado",
+    "status.disabled": "Resaltador de Colores: Desactivado",
+    "status.loaded": "Plugin Resaltador de Colores cargado"
+  },
+  "de": {
+    "cmd.enable": "Farbhervorhebung: Aktivieren",
+    "cmd.enable_desc": "Farbcode-Hervorhebung mit Farbfeldern aktivieren",
+    "cmd.disable": "Farbhervorhebung: Deaktivieren",
+    "cmd.disable_desc": "Farbcode-Hervorhebung deaktivieren",
+    "cmd.toggle": "Farbhervorhebung: Umschalten",
+    "cmd.toggle_desc": "Farbcode-Hervorhebung umschalten",
+    "status.enabled": "Farbhervorhebung: Aktiviert",
+    "status.disabled": "Farbhervorhebung: Deaktiviert",
+    "status.loaded": "Farbhervorhebung-Plugin geladen"
+  },
+  "fr": {
+    "cmd.enable": "Surligneur de Couleurs: Activer",
+    "cmd.enable_desc": "Activer le surlignage des codes couleur avec aperçu",
+    "cmd.disable": "Surligneur de Couleurs: Désactiver",
+    "cmd.disable_desc": "Désactiver le surlignage des codes couleur",
+    "cmd.toggle": "Surligneur de Couleurs: Basculer",
+    "cmd.toggle_desc": "Basculer le surlignage des codes couleur",
+    "status.enabled": "Surligneur de Couleurs: Activé",
+    "status.disabled": "Surligneur de Couleurs: Désactivé",
+    "status.loaded": "Plugin Surligneur de Couleurs chargé"
+  },
+  "ja": {
+    "cmd.enable": "カラーハイライター: 有効化",
+    "cmd.enable_desc": "カラーコードのハイライトとスウォッチ表示を有効化",
+    "cmd.disable": "カラーハイライター: 無効化",
+    "cmd.disable_desc": "カラーコードのハイライトを無効化",
+    "cmd.toggle": "カラーハイライター: 切り替え",
+    "cmd.toggle_desc": "カラーコードのハイライトを切り替え",
+    "status.enabled": "カラーハイライター: 有効",
+    "status.disabled": "カラーハイライター: 無効",
+    "status.loaded": "カラーハイライタープラグインを読み込みました"
+  },
+  "zh-CN": {
+    "cmd.enable": "颜色高亮器: 启用",
+    "cmd.enable_desc": "启用颜色代码高亮显示和色块预览",
+    "cmd.disable": "颜色高亮器: 禁用",
+    "cmd.disable_desc": "禁用颜色代码高亮显示",
+    "cmd.toggle": "颜色高亮器: 切换",
+    "cmd.toggle_desc": "切换颜色代码高亮显示",
+    "status.enabled": "颜色高亮器: 已启用",
+    "status.disabled": "颜色高亮器: 已禁用",
+    "status.loaded": "颜色高亮器插件已加载"
+  }
+}

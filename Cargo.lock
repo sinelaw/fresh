@@ -1203,6 +1203,7 @@ dependencies = [
  "lru 0.16.2",
  "lsp-types",
  "nix 0.30.1",
+ "once_cell",
  "portable-pty",
  "proptest",
  "pulldown-cmark",

@@ -1,0 +1,38 @@
+{
+  "en": {
+    "status.loaded": "Path completion plugin loaded successfully",
+    "suggestion.directory": "directory",
+    "suggestion.new_file": "%{filename} (new file)",
+    "suggestion.new_file_desc": "File does not exist yet"
+  },
+  "es": {
+    "status.loaded": "Plugin de autocompletado de rutas cargado correctamente",
+    "suggestion.directory": "directorio",
+    "suggestion.new_file": "%{filename} (archivo nuevo)",
+    "suggestion.new_file_desc": "El archivo aún no existe"
+  },
+  "de": {
+    "status.loaded": "Pfadvervollständigungs-Plugin erfolgreich geladen",
+    "suggestion.directory": "Verzeichnis",
+    "suggestion.new_file": "%{filename} (neue Datei)",
+    "suggestion.new_file_desc": "Datei existiert noch nicht"
+  },
+  "fr": {
+    "status.loaded": "Plugin de complétion de chemin chargé avec succès",
+    "suggestion.directory": "répertoire",
+    "suggestion.new_file": "%{filename} (nouveau fichier)",
+    "suggestion.new_file_desc": "Le fichier n'existe pas encore"
+  },
+  "ja": {
+    "status.loaded": "パス補完プラグインを正常に読み込みました",
+    "suggestion.directory": "ディレクトリ",
+    "suggestion.new_file": "%{filename} (新規ファイル)",
+    "suggestion.new_file_desc": "ファイルはまだ存在しません"
+  },
+  "zh-CN": {
+    "status.loaded": "路径补全插件加载成功",
+    "suggestion.directory": "目录",
+    "suggestion.new_file": "%{filename} (新文件)",
+    "suggestion.new_file_desc": "文件尚不存在"
+  }
+}

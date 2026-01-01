@@ -500,8 +500,8 @@ function buildVisibleFields(): ThemeField[] {
     fields.push({
       def: {
         key: section.name,
-        displayName: section.displayName,
-        description: section.description,
+        displayName: editor.t(`section.${section.name}`),
+        description: editor.t(`section.${section.name}_desc`),
         section: section.name,
       },
       value: [0, 0, 0], // Placeholder
@@ -518,7 +518,11 @@ function buildVisibleFields(): ThemeField[] {
         const value = getNestedValue(state.themeData, path) as ColorValue || [128, 128, 128];
 
         fields.push({
-          def: fieldDef,
+          def: {
+            ...fieldDef,
+            displayName: editor.t(`field.${fieldDef.key}`),
+            description: editor.t(`field.${fieldDef.key}_desc`),
+          },
           value,
           path,
           depth: 1,
@@ -542,20 +546,20 @@ function buildDisplayEntries(): TextPropertyEntry[] {
   const entries: TextPropertyEntry[] = [];
 
   // Title
-  const modifiedMarker = state.hasChanges ? " [modified]" : "";
+  const modifiedMarker = state.hasChanges ? " " + editor.t("panel.modified") : "";
   entries.push({
-    text: `━━━ Theme Editor: ${state.themeName}${modifiedMarker} ━━━\n`,
+    text: `━━━ ${editor.t("panel.title", { name: state.themeName })}${modifiedMarker} ━━━\n`,
     properties: { type: "title" },
   });
 
   if (state.themePath) {
     entries.push({
-      text: `File: ${state.themePath}\n`,
+      text: `${editor.t("panel.file", { path: state.themePath })}\n`,
       properties: { type: "file-path" },
     });
   } else {
     entries.push({
-      text: "New theme (not yet saved)\n",
+      text: editor.t("panel.new_theme") + "\n",
       properties: { type: "file-path" },
     });
   }
@@ -623,11 +627,11 @@ function buildDisplayEntries(): TextPropertyEntry[] {
     properties: { type: "separator" },
   });
   entries.push({
-    text: "↑/↓: navigate | RET/SPC: edit color | TAB: expand/collapse\n",
+    text: editor.t("panel.nav_hint") + "\n",
     properties: { type: "footer" },
   });
   entries.push({
-    text: "c: copy from builtin | n: set name | s: save | S: save as | d: set as default | q: quit\n",
+    text: editor.t("panel.action_hint") + "\n",
     properties: { type: "footer" },
   });
 
@@ -814,13 +818,13 @@ function editColorField(field: ThemeField): void {
   const currentValue = formatColorValue(field.value);
 
   // Use startPromptWithInitial to pre-fill with current value
-  editor.startPromptWithInitial(`${field.def.displayName} (#RRGGBB or named): `, `theme-color-${field.path}`, currentValue);
+  editor.startPromptWithInitial(editor.t("prompt.color_input", { field: field.def.displayName }), `theme-color-${field.path}`, currentValue);
 
   // Build suggestions with named colors and current value
   const suggestions: PromptSuggestion[] = [
     {
       text: currentValue,
-      description: "(current)",
+      description: editor.t("suggestion.current"),
       value: currentValue,
     },
   ];
@@ -829,7 +833,7 @@ function editColorField(field: ThemeField): void {
   for (const name of SPECIAL_COLORS) {
     suggestions.push({
       text: name,
-      description: "Use terminal's native color",
+      description: editor.t("suggestion.terminal_native"),
       value: name,
     });
   }
@@ -906,9 +910,9 @@ globalThis.onThemeColorPromptConfirmed = function(args: {
     setNestedValue(state.themeData, path, newValue);
     state.hasChanges = !deepEqual(state.themeData, state.originalThemeData);
     updateDisplay();
-    editor.setStatus(`Updated ${path}`);
+    editor.setStatus(editor.t("status.updated", { path }));
   } else {
-    editor.setStatus("Invalid color format. Use #RRGGBB, [r,g,b], or named color.");
+    editor.setStatus(editor.t("status.invalid_color"));
   }
 
   return true;
@@ -930,7 +934,7 @@ globalThis.onThemeNamePromptConfirmed = function(args: {
     state.themeData.name = name;
     state.hasChanges = true;
     updateDisplay();
-    editor.setStatus(`Theme name set to: ${name}`);
+    editor.setStatus(editor.t("status.name_set", { name }));
   }
 
   return true;
@@ -956,9 +960,9 @@ globalThis.onThemeCopyPromptConfirmed = async function(args: {
     state.themePath = null; // New theme, not saved yet
     state.hasChanges = true;
     updateDisplay();
-    editor.setStatus(`Copied from ${themeName}. Edit and save as new theme.`);
+    editor.setStatus(editor.t("status.copied", { theme: themeName }));
   } else {
-    editor.setStatus(`Failed to load theme: ${themeName}`);
+    editor.setStatus(editor.t("status.load_failed", { name: themeName }));
   }
 
   return true;
@@ -1007,7 +1011,7 @@ globalThis.onThemeSetDefaultPromptConfirmed = async function(args: {
  */
 globalThis.onThemePromptCancelled = function(args: { prompt_type: string }): boolean {
   if (!args.prompt_type.startsWith("theme-")) return true;
-  editor.setStatus("Cancelled");
+  editor.setStatus(editor.t("status.cancelled"));
   return true;
 };
 
@@ -1036,7 +1040,7 @@ async function saveTheme(name?: string): Promise<boolean> {
       // Create directory via shell command
       await editor.spawnProcess("mkdir", ["-p", userThemesDir]);
     } catch (e) {
-      editor.setStatus(`Failed to create themes directory: ${e}`);
+      editor.setStatus(editor.t("status.mkdir_failed", { error: String(e) }));
       return false;
     }
   }
@@ -1054,10 +1058,10 @@ async function saveTheme(name?: string): Promise<boolean> {
     state.hasChanges = false;
     updateDisplay();
 
-    editor.setStatus(`Theme saved to ${themePath}`);
+    editor.setStatus(editor.t("status.saved", { path: themePath }));
     return true;
   } catch (e) {
-    editor.setStatus(`Failed to save theme: ${e}`);
+    editor.setStatus(editor.t("status.save_failed", { error: String(e) }));
     return false;
   }
 }
@@ -1069,9 +1073,9 @@ async function setThemeAsDefault(themeName: string): Promise<void> {
   try {
     // Use the editor API to apply and persist the theme
     editor.applyTheme(themeName);
-    editor.setStatus(`Theme "${themeName}" applied and saved as default.`);
+    editor.setStatus(editor.t("status.default_set", { name: themeName }));
   } catch (e) {
-    editor.setStatus(`Failed to apply theme: ${e}`);
+    editor.setStatus(editor.t("status.apply_failed", { error: String(e) }));
   }
 }
 
@@ -1177,11 +1181,11 @@ editor.on("cursor_moved", "onThemeEditorCursorMoved");
  */
 globalThis.open_theme_editor = async function(): Promise<void> {
   if (state.isOpen) {
-    editor.setStatus("Theme editor already open");
+    editor.setStatus(editor.t("status.already_open"));
     return;
   }
 
-  editor.setStatus("Loading theme editor...");
+  editor.setStatus(editor.t("status.loading"));
 
   // Save context
   state.sourceSplitId = editor.getActiveSplitId();
@@ -1219,9 +1223,9 @@ globalThis.open_theme_editor = async function(): Promise<void> {
     editor.setContext("theme-editor", true);
 
     applyHighlighting();
-    editor.setStatus("Theme Editor | c: copy from builtin | s: save | d: set as default | q: quit");
+    editor.setStatus(editor.t("status.ready"));
   } else {
-    editor.setStatus("Failed to open theme editor");
+    editor.setStatus(editor.t("status.open_failed"));
   }
 };
 
@@ -1232,7 +1236,7 @@ globalThis.theme_editor_close = function(): void {
   if (!state.isOpen) return;
 
   if (state.hasChanges) {
-    editor.setStatus("Warning: Unsaved changes discarded");
+    editor.setStatus(editor.t("status.unsaved_discarded"));
   }
 
   editor.setContext("theme-editor", false);
@@ -1250,7 +1254,7 @@ globalThis.theme_editor_close = function(): void {
   state.originalThemeData = {};
   state.hasChanges = false;
 
-  editor.setStatus("Theme editor closed");
+  editor.setStatus(editor.t("status.closed"));
 };
 
 /**
@@ -1259,7 +1263,7 @@ globalThis.theme_editor_close = function(): void {
 globalThis.theme_editor_edit_color = function(): void {
   const field = getFieldAtCursor();
   if (!field) {
-    editor.setStatus("No field selected");
+    editor.setStatus(editor.t("status.no_field"));
     return;
   }
 
@@ -1277,7 +1281,7 @@ globalThis.theme_editor_edit_color = function(): void {
 globalThis.theme_editor_toggle_section = function(): void {
   const field = getFieldAtCursor();
   if (!field || !field.isSection) {
-    editor.setStatus("Not a section");
+    editor.setStatus(editor.t("status.not_section"));
     return;
   }
 
@@ -1294,11 +1298,11 @@ globalThis.theme_editor_toggle_section = function(): void {
  * Copy from a built-in theme
  */
 globalThis.theme_editor_copy_from_builtin = function(): void {
-  editor.startPrompt("Copy from theme: ", "theme-copy-builtin");
+  editor.startPrompt(editor.t("prompt.copy_theme"), "theme-copy-builtin");
 
   const suggestions: PromptSuggestion[] = state.builtinThemes.map(name => ({
     text: name,
-    description: "Built-in theme",
+    description: editor.t("suggestion.builtin_theme"),
     value: name,
   }));
 
@@ -1309,11 +1313,11 @@ globalThis.theme_editor_copy_from_builtin = function(): void {
  * Set theme name
  */
 globalThis.theme_editor_set_name = function(): void {
-  editor.startPrompt("Theme name: ", "theme-name");
+  editor.startPrompt(editor.t("prompt.theme_name"), "theme-name");
 
   editor.setPromptSuggestions([{
     text: state.themeName,
-    description: "(current)",
+    description: editor.t("suggestion.current"),
     value: state.themeName,
   }]);
 };
@@ -1323,7 +1327,7 @@ globalThis.theme_editor_set_name = function(): void {
  */
 globalThis.theme_editor_save = async function(): Promise<void> {
   if (!state.hasChanges && state.themePath) {
-    editor.setStatus("No changes to save");
+    editor.setStatus(editor.t("status.no_changes"));
     return;
   }
 
@@ -1334,11 +1338,11 @@ globalThis.theme_editor_save = async function(): Promise<void> {
  * Save theme as (new name)
  */
 globalThis.theme_editor_save_as = function(): void {
-  editor.startPrompt("Save theme as: ", "theme-save-as");
+  editor.startPrompt(editor.t("prompt.save_as"), "theme-save-as");
 
   editor.setPromptSuggestions([{
     text: state.themeName,
-    description: "(current)",
+    description: editor.t("suggestion.current"),
     value: state.themeName,
   }]);
 };
@@ -1347,7 +1351,7 @@ globalThis.theme_editor_save_as = function(): void {
  * Set current theme as default
  */
 globalThis.theme_editor_set_as_default = function(): void {
-  editor.startPrompt("Set default theme: ", "theme-set-default");
+  editor.startPrompt(editor.t("prompt.set_default"), "theme-set-default");
 
   // Suggest current theme and all builtins
   const suggestions: PromptSuggestion[] = [];
@@ -1355,7 +1359,7 @@ globalThis.theme_editor_set_as_default = function(): void {
   if (state.themeName && state.themePath) {
     suggestions.push({
       text: state.themeName,
-      description: "(current)",
+      description: editor.t("suggestion.current"),
       value: state.themeName,
     });
   }
@@ -1363,7 +1367,7 @@ globalThis.theme_editor_set_as_default = function(): void {
   for (const name of state.builtinThemes) {
     suggestions.push({
       text: name,
-      description: "Built-in",
+      description: editor.t("suggestion.builtin"),
       value: name,
     });
   }
@@ -1383,14 +1387,14 @@ globalThis.theme_editor_reload = async function(): Promise<void> {
       state.originalThemeData = deepClone(themeData);
       state.hasChanges = false;
       updateDisplay();
-      editor.setStatus("Theme reloaded from file");
+      editor.setStatus(editor.t("status.reloaded"));
     }
   } else {
     state.themeData = createDefaultTheme();
     state.originalThemeData = deepClone(state.themeData);
     state.hasChanges = false;
     updateDisplay();
-    editor.setStatus("Theme reset to defaults");
+    editor.setStatus(editor.t("status.reset"));
   }
 };
 
@@ -1398,9 +1402,7 @@ globalThis.theme_editor_reload = async function(): Promise<void> {
  * Show help
  */
 globalThis.theme_editor_show_help = function(): void {
-  editor.setStatus(
-    "Keys: ↑/↓ navigate | RET/SPC edit | TAB expand | c copy | n name | s save | S save-as | d default | q quit"
-  );
+  editor.setStatus(editor.t("status.help"));
 };
 
 // =============================================================================
@@ -1409,79 +1411,79 @@ globalThis.theme_editor_show_help = function(): void {
 
 // Main command to open theme editor
 editor.registerCommand(
-  "Edit Theme",
-  "Open the theme color editor",
+  "%cmd.edit_theme",
+  "%cmd.edit_theme_desc",
   "open_theme_editor",
   "normal"
 );
 
 // Context-specific commands
 editor.registerCommand(
-  "Theme: Close Editor",
-  "Close the theme editor",
+  "%cmd.close_editor",
+  "%cmd.close_editor_desc",
   "theme_editor_close",
   "normal,theme-editor"
 );
 
 editor.registerCommand(
-  "Theme: Edit Color",
-  "Edit the selected color",
+  "%cmd.edit_color",
+  "%cmd.edit_color_desc",
   "theme_editor_edit_color",
   "normal,theme-editor"
 );
 
 editor.registerCommand(
-  "Theme: Toggle Section",
-  "Expand or collapse section",
+  "%cmd.toggle_section",
+  "%cmd.toggle_section_desc",
   "theme_editor_toggle_section",
   "normal,theme-editor"
 );
 
 editor.registerCommand(
-  "Theme: Copy From Built-in",
-  "Copy colors from a built-in theme",
+  "%cmd.copy_builtin",
+  "%cmd.copy_builtin_desc",
   "theme_editor_copy_from_builtin",
   "normal,theme-editor"
 );
 
 editor.registerCommand(
-  "Theme: Set Name",
-  "Set the theme name",
+  "%cmd.set_name",
+  "%cmd.set_name_desc",
   "theme_editor_set_name",
   "normal,theme-editor"
 );
 
 editor.registerCommand(
-  "Theme: Save",
-  "Save the theme",
+  "%cmd.save",
+  "%cmd.save_desc",
   "theme_editor_save",
   "normal,theme-editor"
 );
 
 editor.registerCommand(
-  "Theme: Save As",
-  "Save theme with a new name",
+  "%cmd.save_as",
+  "%cmd.save_as_desc",
   "theme_editor_save_as",
   "normal,theme-editor"
 );
 
 editor.registerCommand(
-  "Theme: Set As Default",
-  "Set a theme as the default",
+  "%cmd.set_default",
+  "%cmd.set_default_desc",
   "theme_editor_set_as_default",
   "normal,theme-editor"
 );
 
 editor.registerCommand(
-  "Theme: Reload",
-  "Reload theme from file",
+  "%cmd.reload",
+  "%cmd.reload_desc",
   "theme_editor_reload",
   "normal,theme-editor"
 );
 
 editor.registerCommand(
-  "Theme: Show Help",
-  "Show theme editor help",
+  "%cmd.show_help",
+  "%cmd.show_help_desc",
   "theme_editor_show_help",
   "normal,theme-editor"
 );
@@ -1490,5 +1492,5 @@ editor.registerCommand(
 // Plugin Initialization
 // =============================================================================
 
-editor.setStatus("Theme Editor plugin loaded");
+editor.setStatus(editor.t("status.plugin_loaded"));
 editor.debug("Theme Editor plugin initialized - Use 'Edit Theme' command to open");

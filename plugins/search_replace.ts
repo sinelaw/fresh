@@ -97,15 +97,15 @@ function buildPanelEntries(): TextPropertyEntry[] {
   // Header
   const selectedCount = searchResults.filter(r => r.selected).length;
   entries.push({
-    text: `═══ Search & Replace ═══\n`,
+    text: `═══ ${editor.t("panel.header")} ═══\n`,
     properties: { type: "header" },
   });
   entries.push({
-    text: `Search:  "${searchPattern}"${searchRegex ? " (regex)" : ""}\n`,
+    text: `${editor.t("panel.search_label")} "${searchPattern}"${searchRegex ? " " + editor.t("panel.regex") : ""}\n`,
     properties: { type: "info" },
   });
   entries.push({
-    text: `Replace: "${replaceText}"\n`,
+    text: `${editor.t("panel.replace_label")} "${replaceText}"\n`,
     properties: { type: "info" },
   });
   entries.push({
@@ -115,14 +115,14 @@ function buildPanelEntries(): TextPropertyEntry[] {
 
   if (searchResults.length === 0) {
     entries.push({
-      text: "  No matches found\n",
+      text: "  " + editor.t("panel.no_matches") + "\n",
       properties: { type: "empty" },
     });
   } else {
     // Results header
-    const limitNote = searchResults.length >= MAX_RESULTS ? ` (limited to ${MAX_RESULTS})` : "";
+    const limitNote = searchResults.length >= MAX_RESULTS ? " " + editor.t("panel.limited", { max: String(MAX_RESULTS) }) : "";
     entries.push({
-      text: `Results: ${searchResults.length}${limitNote} (${selectedCount} selected)\n`,
+      text: `${editor.t("panel.results", { count: String(searchResults.length) })}${limitNote} ${editor.t("panel.selected", { selected: String(selectedCount) })}\n`,
       properties: { type: "count" },
     });
     entries.push({
@@ -154,7 +154,7 @@ function buildPanelEntries(): TextPropertyEntry[] {
     properties: { type: "separator" },
   });
   entries.push({
-    text: `[SPC] toggle  [a] all  [n] none  [r] REPLACE  [RET] preview  [q] close\n`,
+    text: editor.t("panel.help") + "\n",
     properties: { type: "help" },
   });
 
@@ -202,12 +202,12 @@ async function performSearch(pattern: string, replace: string, isRegex: boolean)
     }
 
     if (searchResults.length === 0) {
-      editor.setStatus(`No matches found for "${pattern}"`);
+      editor.setStatus(editor.t("status.no_matches", { pattern }));
     } else {
-      editor.setStatus(`Found ${searchResults.length} matches`);
+      editor.setStatus(editor.t("status.found_matches", { count: String(searchResults.length) }));
     }
   } catch (e) {
-    editor.setStatus(`Search error: ${e}`);
+    editor.setStatus(editor.t("status.search_error", { error: String(e) }));
     searchResults = [];
   }
 }
@@ -239,7 +239,7 @@ async function showResultsPanel(): Promise<void> {
     editor.debug(`Search/Replace panel opened with buffer ID ${resultsBufferId}`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    editor.setStatus("Failed to open search/replace panel");
+    editor.setStatus(editor.t("status.failed_open_panel"));
     editor.debug(`ERROR: createVirtualBufferInSplit failed: ${errorMessage}`);
   }
 }
@@ -249,7 +249,7 @@ async function executeReplacements(): Promise<void> {
   const selectedResults = searchResults.filter(r => r.selected);
 
   if (selectedResults.length === 0) {
-    editor.setStatus("No items selected for replacement");
+    editor.setStatus(editor.t("status.no_selected"));
     return;
   }
 
@@ -309,10 +309,10 @@ async function executeReplacements(): Promise<void> {
 
   // Report results
   if (errors.length > 0) {
-    editor.setStatus(`Replaced in ${filesModified} files (${errors.length} errors)`);
+    editor.setStatus(editor.t("status.replaced_with_errors", { files: String(filesModified), errors: String(errors.length) }));
     editor.debug(`Replacement errors: ${errors.join(", ")}`);
   } else {
-    editor.setStatus(`Replaced ${replacementsCount} occurrences in ${filesModified} files`);
+    editor.setStatus(editor.t("status.replaced", { count: String(replacementsCount), files: String(filesModified) }));
   }
 
   // Close panel after replacement
@@ -325,8 +325,8 @@ globalThis.start_search_replace = function(): void {
   searchPattern = "";
   replaceText = "";
 
-  editor.startPrompt("Search (in project): ", "search-replace-search");
-  editor.setStatus("Enter search pattern...");
+  editor.startPrompt(editor.t("prompt.search"), "search-replace-search");
+  editor.setStatus(editor.t("status.enter_pattern"));
 };
 
 // Handle search prompt confirmation
@@ -341,14 +341,14 @@ globalThis.onSearchReplaceSearchConfirmed = function(args: {
 
   const pattern = args.input.trim();
   if (!pattern) {
-    editor.setStatus("Search cancelled - empty pattern");
+    editor.setStatus(editor.t("status.cancelled_empty"));
     return true;
   }
 
   searchPattern = pattern;
 
   // Ask for replacement text
-  editor.startPrompt("Replace with: ", "search-replace-replace");
+  editor.startPrompt(editor.t("prompt.replace"), "search-replace-replace");
   return true;
 };
 
@@ -380,7 +380,7 @@ globalThis.onSearchReplacePromptCancelled = function(args: {
     return true;
   }
 
-  editor.setStatus("Search/Replace cancelled");
+  editor.setStatus(editor.t("status.cancelled"));
   return true;
 };
 
@@ -395,7 +395,7 @@ globalThis.search_replace_toggle_item = function(): void {
       searchResults[index].selected = !searchResults[index].selected;
       updatePanelContent();
       const selected = searchResults.filter(r => r.selected).length;
-      editor.setStatus(`${selected}/${searchResults.length} selected`);
+      editor.setStatus(editor.t("status.selected_count", { selected: String(selected), total: String(searchResults.length) }));
     }
   }
 };
@@ -406,7 +406,7 @@ globalThis.search_replace_select_all = function(): void {
     result.selected = true;
   }
   updatePanelContent();
-  editor.setStatus(`${searchResults.length}/${searchResults.length} selected`);
+  editor.setStatus(editor.t("status.selected_count", { selected: String(searchResults.length), total: String(searchResults.length) }));
 };
 
 // Select no items
@@ -415,18 +415,18 @@ globalThis.search_replace_select_none = function(): void {
     result.selected = false;
   }
   updatePanelContent();
-  editor.setStatus(`0/${searchResults.length} selected`);
+  editor.setStatus(editor.t("status.selected_count", { selected: "0", total: String(searchResults.length) }));
 };
 
 // Execute replacement
 globalThis.search_replace_execute = function(): void {
   const selected = searchResults.filter(r => r.selected).length;
   if (selected === 0) {
-    editor.setStatus("No items selected");
+    editor.setStatus(editor.t("status.no_items_selected"));
     return;
   }
 
-  editor.setStatus(`Replacing ${selected} occurrences...`);
+  editor.setStatus(editor.t("status.replacing", { count: String(selected) }));
   executeReplacements();
 };
 
@@ -439,7 +439,7 @@ globalThis.search_replace_preview = function(): void {
     const location = props[0].location as { file: string; line: number; column: number } | undefined;
     if (location) {
       editor.openFileInSplit(sourceSplitId, location.file, location.line, location.column);
-      editor.setStatus(`Preview: ${getRelativePath(location.file)}:${location.line}`);
+      editor.setStatus(editor.t("status.preview", { file: getRelativePath(location.file), line: String(location.line) }));
     }
   }
 };
@@ -461,7 +461,7 @@ globalThis.search_replace_close = function(): void {
   sourceSplitId = null;
   resultsSplitId = null;
   searchResults = [];
-  editor.setStatus("Search/Replace closed");
+  editor.setStatus(editor.t("status.closed"));
 };
 
 // Register event handlers
@@ -471,12 +471,12 @@ editor.on("prompt_cancelled", "onSearchReplacePromptCancelled");
 
 // Register command
 editor.registerCommand(
-  "Search and Replace in Project",
-  "Search and replace text across all git-tracked files",
+  "%cmd.search_replace",
+  "%cmd.search_replace_desc",
   "start_search_replace",
   "normal"
 );
 
 // Plugin initialization
 editor.debug("Search & Replace plugin loaded");
-editor.setStatus("Search & Replace plugin ready");
+editor.setStatus(editor.t("status.ready"));

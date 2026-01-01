@@ -1,0 +1,32 @@
+{
+  "en": {
+    "status.loaded": "Buffer Modified plugin loaded",
+    "status.initialized": "Buffer Modified: initialized for %{path}",
+    "status.cleared_on_save": "Buffer Modified: cleared on save"
+  },
+  "es": {
+    "status.loaded": "Plugin Buffer Modificado cargado",
+    "status.initialized": "Buffer Modificado: inicializado para %{path}",
+    "status.cleared_on_save": "Buffer Modificado: limpiado al guardar"
+  },
+  "de": {
+    "status.loaded": "Buffer Modified Plugin geladen",
+    "status.initialized": "Buffer Modified: initialisiert für %{path}",
+    "status.cleared_on_save": "Buffer Modified: beim Speichern gelöscht"
+  },
+  "fr": {
+    "status.loaded": "Plugin Buffer Modified chargé",
+    "status.initialized": "Buffer Modified: initialisé pour %{path}",
+    "status.cleared_on_save": "Buffer Modified: effacé lors de la sauvegarde"
+  },
+  "ja": {
+    "status.loaded": "Buffer Modifiedプラグインを読み込みました",
+    "status.initialized": "Buffer Modified: %{path}を初期化しました",
+    "status.cleared_on_save": "Buffer Modified: 保存時にクリアしました"
+  },
+  "zh-CN": {
+    "status.loaded": "Buffer Modified插件已加载",
+    "status.initialized": "Buffer Modified: 已为%{path}初始化",
+    "status.cleared_on_save": "Buffer Modified: 保存时已清除"
+  }
+}

@@ -185,7 +185,7 @@ async function fetchGitLog(): Promise<GitCommit[]> {
   const result = await editor.spawnProcess("git", args, cwd);
 
   if (result.exit_code !== 0) {
-    editor.setStatus(`Git log error: ${result.stderr}`);
+    editor.setStatus(editor.t("status.git_error", { error: result.stderr }));
     return [];
   }
 
@@ -226,7 +226,7 @@ async function fetchCommitDiff(hash: string): Promise<string> {
   ], cwd);
 
   if (result.exit_code !== 0) {
-    return `Error fetching diff: ${result.stderr}`;
+    return editor.t("status.error_fetching_diff", { error: result.stderr });
   }
 
   return result.stdout;
@@ -265,13 +265,13 @@ function buildGitLogEntries(): TextPropertyEntry[] {
 
   // Magit-style header
   entries.push({
-    text: "Commits:\n",
+    text: editor.t("panel.commits_header") + "\n",
     properties: { type: "section-header" },
   });
 
   if (gitLogState.commits.length === 0) {
     entries.push({
-      text: "  No commits found\n",
+      text: editor.t("panel.no_commits") + "\n",
       properties: { type: "empty" },
     });
   } else {
@@ -301,7 +301,7 @@ function buildGitLogEntries(): TextPropertyEntry[] {
     properties: { type: "blank" },
   });
   entries.push({
-    text: `${gitLogState.commits.length} commits | ↑/↓/j/k: navigate | RET: show | y: yank hash | r: refresh | q: quit\n`,
+    text: editor.t("panel.log_footer", { count: String(gitLogState.commits.length) }) + "\n",
     properties: { type: "footer" },
   });
 
@@ -333,7 +333,7 @@ function applyGitLogHighlighting(): void {
     const lineEnd = byteOffset + line.length;
 
     // Highlight section header
-    if (line === "Commits:") {
+    if (line === editor.t("panel.commits_header")) {
       editor.addOverlay(
         bufferId,
         "gitlog",
@@ -590,7 +590,7 @@ function buildCommitDetailEntries(commit: GitCommit, showOutput: string): TextPr
     properties: { type: "blank" },
   });
   entries.push({
-    text: `↑/↓/j/k: navigate | RET: open file at line | q: back to log\n`,
+    text: editor.t("panel.detail_footer") + "\n",
     properties: { type: "footer" },
   });
 
@@ -737,11 +737,11 @@ function applyCommitDetailHighlighting(): void {
 
 globalThis.show_git_log = async function(): Promise<void> {
   if (gitLogState.isOpen) {
-    editor.setStatus("Git log already open");
+    editor.setStatus(editor.t("status.already_open"));
     return;
   }
 
-  editor.setStatus("Loading git log...");
+  editor.setStatus(editor.t("status.loading"));
 
   // Store the current split ID and buffer ID before opening git log
   gitLogState.splitId = editor.getActiveSplitId();
@@ -751,7 +751,7 @@ globalThis.show_git_log = async function(): Promise<void> {
   gitLogState.commits = await fetchGitLog();
 
   if (gitLogState.commits.length === 0) {
-    editor.setStatus("No commits found or not a git repository");
+    editor.setStatus(editor.t("status.no_commits"));
     gitLogState.splitId = null;
     return;
   }
@@ -779,11 +779,11 @@ globalThis.show_git_log = async function(): Promise<void> {
     // Apply syntax highlighting
     applyGitLogHighlighting();
 
-    editor.setStatus(`Git log: ${gitLogState.commits.length} commits | ↑/↓: navigate | RET: show | q: quit`);
+    editor.setStatus(editor.t("status.log_ready", { count: String(gitLogState.commits.length) }));
     editor.debug("Git log panel opened");
   } else {
     gitLogState.splitId = null;
-    editor.setStatus("Failed to open git log panel");
+    editor.setStatus(editor.t("status.failed_open"));
   }
 };
 
@@ -807,7 +807,7 @@ globalThis.git_log_close = function(): void {
   gitLogState.splitId = null;
   gitLogState.sourceBufferId = null;
   gitLogState.commits = [];
-  editor.setStatus("Git log closed");
+  editor.setStatus(editor.t("status.closed"));
 };
 
 // Cursor moved handler for git log - update highlighting and status
@@ -831,7 +831,7 @@ globalThis.on_git_log_cursor_moved = function(data: {
   const commitIndex = cursorLine - headerLines;
 
   if (commitIndex >= 0 && commitIndex < gitLogState.commits.length) {
-    editor.setStatus(`Commit ${commitIndex + 1}/${gitLogState.commits.length}`);
+    editor.setStatus(editor.t("status.commit_position", { current: String(commitIndex + 1), total: String(gitLogState.commits.length) }));
   }
 };
 
@@ -841,10 +841,10 @@ editor.on("cursor_moved", "on_git_log_cursor_moved");
 globalThis.git_log_refresh = async function(): Promise<void> {
   if (!gitLogState.isOpen) return;
 
-  editor.setStatus("Refreshing git log...");
+  editor.setStatus(editor.t("status.refreshing"));
   gitLogState.commits = await fetchGitLog();
   updateGitLogView();
-  editor.setStatus(`Git log refreshed: ${gitLogState.commits.length} commits`);
+  editor.setStatus(editor.t("status.refreshed", { count: String(gitLogState.commits.length) }));
 };
 
 // Helper function to get commit at current cursor position
@@ -879,11 +879,11 @@ globalThis.git_log_show_commit = async function(): Promise<void> {
 
   const commit = getCommitAtCursor();
   if (!commit) {
-    editor.setStatus("Move cursor to a commit line");
+    editor.setStatus(editor.t("status.move_to_commit"));
     return;
   }
 
-  editor.setStatus(`Loading commit ${commit.shortHash}...`);
+  editor.setStatus(editor.t("status.loading_commit", { hash: commit.shortHash }));
 
   // Fetch full commit info using git show (includes header and diff)
   const showOutput = await fetchCommitDiff(commit.hash);
@@ -915,9 +915,9 @@ globalThis.git_log_show_commit = async function(): Promise<void> {
     // Apply syntax highlighting
     applyCommitDetailHighlighting();
 
-    editor.setStatus(`Commit ${commit.shortHash} | ↑/↓: navigate | RET: open file | q: back`);
+    editor.setStatus(editor.t("status.commit_ready", { hash: commit.shortHash }));
   } else {
-    editor.setStatus("Failed to open commit details");
+    editor.setStatus(editor.t("status.failed_open_details"));
   }
 };
 
@@ -926,7 +926,7 @@ globalThis.git_log_copy_hash = function(): void {
 
   const commit = getCommitAtCursor();
   if (!commit) {
-    editor.setStatus("Move cursor to a commit line");
+    editor.setStatus(editor.t("status.move_to_commit"));
     return;
   }
 
@@ -934,11 +934,11 @@ globalThis.git_log_copy_hash = function(): void {
   // Try xclip first (Linux), then pbcopy (macOS), then xsel
   editor.spawnProcess("sh", ["-c", `echo -n "${commit.hash}" | xclip -selection clipboard 2>/dev/null || echo -n "${commit.hash}" | pbcopy 2>/dev/null || echo -n "${commit.hash}" | xsel --clipboard 2>/dev/null`])
     .then(() => {
-      editor.setStatus(`Copied: ${commit.shortHash} (${commit.hash})`);
+      editor.setStatus(editor.t("status.hash_copied", { short: commit.shortHash, full: commit.hash }));
     })
     .catch(() => {
       // If all clipboard commands fail, just show the hash
-      editor.setStatus(`Hash: ${commit.hash}`);
+      editor.setStatus(editor.t("status.hash_display", { hash: commit.hash }));
     });
 };
 
@@ -968,7 +968,7 @@ globalThis.git_commit_detail_close = function(): void {
   commitDetailState.splitId = null;
   commitDetailState.commit = null;
 
-  editor.setStatus(`Git log: ${gitLogState.commits.length} commits | ↑/↓: navigate | RET: show | q: quit`);
+  editor.setStatus(editor.t("status.log_ready", { count: String(gitLogState.commits.length) }));
 };
 
 // Close file view and go back to commit detail
@@ -996,7 +996,7 @@ globalThis.git_file_view_close = function(): void {
   fileViewState.commitHash = null;
 
   if (commitDetailState.commit) {
-    editor.setStatus(`Commit ${commitDetailState.commit.shortHash} | ↑/↓: navigate | RET: open file | q: back`);
+    editor.setStatus(editor.t("status.commit_ready", { hash: commitDetailState.commit.shortHash }));
   }
 };
 
@@ -1181,7 +1181,7 @@ globalThis.git_commit_detail_open_file = async function(): Promise<void> {
 
   const commit = commitDetailState.commit;
   if (!commit) {
-    editor.setStatus("No commit context available");
+    editor.setStatus(editor.t("status.move_to_commit"));
     return;
   }
 
@@ -1193,13 +1193,13 @@ globalThis.git_commit_detail_open_file = async function(): Promise<void> {
     const line = props[0].line as number | undefined;
 
     if (file) {
-      editor.setStatus(`Loading ${file} at ${commit.shortHash}...`);
+      editor.setStatus(editor.t("status.file_loading", { file, hash: commit.shortHash }));
 
       // Fetch file content at this commit
       const content = await fetchFileAtCommit(commit.hash, file);
 
       if (content === null) {
-        editor.setStatus(`File ${file} not found at commit ${commit.shortHash}`);
+        editor.setStatus(editor.t("status.file_not_found", { file, hash: commit.shortHash }));
         return;
       }
 
@@ -1238,15 +1238,15 @@ globalThis.git_commit_detail_open_file = async function(): Promise<void> {
         applyFileViewHighlighting(bufferId, content, file);
 
         const targetLine = line || 1;
-        editor.setStatus(`${file} @ ${commit.shortHash} (read-only) | Target: line ${targetLine} | q: back`);
+        editor.setStatus(editor.t("status.file_view_ready", { file, hash: commit.shortHash, line: String(targetLine) }));
       } else {
-        editor.setStatus(`Failed to open ${file}`);
+        editor.setStatus(editor.t("status.failed_open_file", { file }));
       }
     } else {
-      editor.setStatus("Move cursor to a diff line with file context");
+      editor.setStatus(editor.t("status.move_to_diff_with_context"));
     }
   } else {
-    editor.setStatus("Move cursor to a diff line");
+    editor.setStatus(editor.t("status.move_to_diff"));
   }
 };
 
@@ -1255,22 +1255,22 @@ globalThis.git_commit_detail_open_file = async function(): Promise<void> {
 // =============================================================================
 
 editor.registerCommand(
-  "Git Log",
-  "Show git log in magit-style interface",
+  "%cmd.git_log",
+  "%cmd.git_log_desc",
   "show_git_log",
   "normal"
 );
 
 editor.registerCommand(
-  "Git Log: Close",
-  "Close the git log panel",
+  "%cmd.git_log_close",
+  "%cmd.git_log_close_desc",
   "git_log_close",
   "normal"
 );
 
 editor.registerCommand(
-  "Git Log: Refresh",
-  "Refresh the git log",
+  "%cmd.git_log_refresh",
+  "%cmd.git_log_refresh_desc",
   "git_log_refresh",
   "normal"
 );
@@ -1279,5 +1279,5 @@ editor.registerCommand(
 // Plugin Initialization
 // =============================================================================
 
-editor.setStatus("Git Log plugin loaded (magit-style)");
+editor.setStatus(editor.t("status.ready", { count: "0" }));
 editor.debug("Git Log plugin initialized - Use 'Git Log' command to open");

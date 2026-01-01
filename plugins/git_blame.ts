@@ -125,7 +125,7 @@ async function fetchGitBlame(filePath: string, commit: string | null): Promise<B
   const result = await editor.spawnProcess("git", args);
 
   if (result.exit_code !== 0) {
-    editor.setStatus(`Git blame error: ${result.stderr}`);
+    editor.setStatus(editor.t("status.git_error", { error: result.stderr }));
     return [];
   }
 
@@ -215,25 +215,25 @@ function formatRelativeDate(timestamp: number): string {
   const diff = now - timestamp;
 
   if (diff < 60) {
-    return "just now";
+    return editor.t("time.just_now");
   } else if (diff < 3600) {
-    const mins = Math.floor(diff / 60);
-    return `${mins} minute${mins > 1 ? "s" : ""} ago`;
+    const count = Math.floor(diff / 60);
+    return editor.t(count > 1 ? "time.minutes_ago_plural" : "time.minutes_ago", { count: String(count) });
   } else if (diff < 86400) {
-    const hours = Math.floor(diff / 3600);
-    return `${hours} hour${hours > 1 ? "s" : ""} ago`;
+    const count = Math.floor(diff / 3600);
+    return editor.t(count > 1 ? "time.hours_ago_plural" : "time.hours_ago", { count: String(count) });
   } else if (diff < 604800) {
-    const days = Math.floor(diff / 86400);
-    return `${days} day${days > 1 ? "s" : ""} ago`;
+    const count = Math.floor(diff / 86400);
+    return editor.t(count > 1 ? "time.days_ago_plural" : "time.days_ago", { count: String(count) });
   } else if (diff < 2592000) {
-    const weeks = Math.floor(diff / 604800);
-    return `${weeks} week${weeks > 1 ? "s" : ""} ago`;
+    const count = Math.floor(diff / 604800);
+    return editor.t(count > 1 ? "time.weeks_ago_plural" : "time.weeks_ago", { count: String(count) });
   } else if (diff < 31536000) {
-    const months = Math.floor(diff / 2592000);
-    return `${months} month${months > 1 ? "s" : ""} ago`;
+    const count = Math.floor(diff / 2592000);
+    return editor.t(count > 1 ? "time.months_ago_plural" : "time.months_ago", { count: String(count) });
   } else {
-    const years = Math.floor(diff / 31536000);
-    return `${years} year${years > 1 ? "s" : ""} ago`;
+    const count = Math.floor(diff / 31536000);
+    return editor.t(count > 1 ? "time.years_ago_plural" : "time.years_ago", { count: String(count) });
   }
 }
 
@@ -404,7 +404,7 @@ function addBlameHeaders(): void {
  */
 globalThis.show_git_blame = async function(): Promise<void> {
   if (blameState.isOpen) {
-    editor.setStatus("Git blame already open");
+    editor.setStatus(editor.t("status.already_open"));
     return;
   }
 
@@ -412,11 +412,11 @@ globalThis.show_git_blame = async function(): Promise<void> {
   const activeBufferId = editor.getActiveBufferId();
   const filePath = editor.getBufferPath(activeBufferId);
   if (!filePath || filePath === "") {
-    editor.setStatus("No file open to blame");
+    editor.setStatus(editor.t("status.no_file"));
     return;
   }
 
-  editor.setStatus("Loading git blame...");
+  editor.setStatus(editor.t("status.loading"));
 
   // Store state before opening blame
   blameState.splitId = editor.getActiveSplitId();
@@ -432,7 +432,7 @@ globalThis.show_git_blame = async function(): Promise<void> {
   ]);
 
   if (blameLines.length === 0) {
-    editor.setStatus("No blame information available (not a git file or error)");
+    editor.setStatus(editor.t("status.no_blame_info"));
     resetState();
     return;
   }
@@ -494,11 +494,11 @@ globalThis.show_git_blame = async function(): Promise<void> {
     // Add virtual lines for blame headers (persistent state model)
     addBlameHeaders();
 
-    editor.setStatus(`Git blame: ${blameState.blocks.length} blocks | b: blame at parent | q: close`);
+    editor.setStatus(editor.t("status.blame_ready", { count: String(blameState.blocks.length) }));
     editor.debug("Git blame panel opened with virtual lines architecture");
   } else {
     resetState();
-    editor.setStatus("Failed to open git blame panel");
+    editor.setStatus(editor.t("status.failed_open"));
   }
 };
 
@@ -538,7 +538,7 @@ globalThis.git_blame_close = function(): void {
   blameState.bufferId = null;
   resetState();
 
-  editor.setStatus("Git blame closed");
+  editor.setStatus(editor.t("status.closed"));
 };
 
 /**
@@ -569,17 +569,17 @@ globalThis.git_blame_go_back = async function(): Promise<void> {
 
   const currentHash = getCommitAtCursor();
   if (!currentHash) {
-    editor.setStatus("Move cursor to a blame line first");
+    editor.setStatus(editor.t("status.move_to_line"));
     return;
   }
 
   // Skip if this is the "not committed yet" hash (all zeros)
   if (currentHash === "0000000000000000000000000000000000000000") {
-    editor.setStatus("This line is not yet committed");
+    editor.setStatus(editor.t("status.not_committed"));
     return;
   }
 
-  editor.setStatus(`Loading blame at ${currentHash.slice(0, 7)}^...`);
+  editor.setStatus(editor.t("status.loading_parent", { hash: currentHash.slice(0, 7) }));
 
   // Get the parent commit
   const parentCommit = `${currentHash}^`;
@@ -600,7 +600,7 @@ globalThis.git_blame_go_back = async function(): Promise<void> {
   if (blameLines.length === 0) {
     // Pop the stack since we couldn't navigate
     blameState.commitStack.pop();
-    editor.setStatus(`Cannot get blame at ${currentHash.slice(0, 7)}^ (may be initial commit or file didn't exist)`);
+    editor.setStatus(editor.t("status.cannot_go_back", { hash: currentHash.slice(0, 7) }));
     return;
   }
 
@@ -641,7 +641,7 @@ globalThis.git_blame_go_back = async function(): Promise<void> {
   }
 
   const depth = blameState.commitStack.length;
-  editor.setStatus(`Git blame at ${currentHash.slice(0, 7)}^ | depth: ${depth} | b: go deeper | q: close`);
+  editor.setStatus(editor.t("status.blame_at_parent", { hash: currentHash.slice(0, 7), depth: String(depth) }));
 };
 
 /**
@@ -652,23 +652,23 @@ globalThis.git_blame_copy_hash = function(): void {
 
   const hash = getCommitAtCursor();
   if (!hash) {
-    editor.setStatus("Move cursor to a blame line first");
+    editor.setStatus(editor.t("status.move_to_line"));
     return;
   }
 
   // Skip if this is the "not committed yet" hash
   if (hash === "0000000000000000000000000000000000000000") {
-    editor.setStatus("This line is not yet committed");
+    editor.setStatus(editor.t("status.not_committed"));
     return;
   }
 
   // Use spawn to copy to clipboard
   editor.spawnProcess("sh", ["-c", `echo -n "${hash}" | xclip -selection clipboard 2>/dev/null || echo -n "${hash}" | pbcopy 2>/dev/null || echo -n "${hash}" | xsel --clipboard 2>/dev/null`])
     .then(() => {
-      editor.setStatus(`Copied: ${hash.slice(0, 7)} (${hash})`);
+      editor.setStatus(editor.t("status.hash_copied", { short: hash.slice(0, 7), full: hash }));
     })
     .catch(() => {
-      editor.setStatus(`Hash: ${hash}`);
+      editor.setStatus(editor.t("status.hash_display", { hash }));
     });
 };
 
@@ -677,22 +677,22 @@ globalThis.git_blame_copy_hash = function(): void {
 // =============================================================================
 
 editor.registerCommand(
-  "Git Blame",
-  "Show git blame for current file (magit-style)",
+  "%cmd.git_blame",
+  "%cmd.git_blame_desc",
   "show_git_blame",
   "normal"
 );
 
 editor.registerCommand(
-  "Git Blame: Close",
-  "Close the git blame panel",
+  "%cmd.git_blame_close",
+  "%cmd.git_blame_close_desc",
   "git_blame_close",
   "normal"
 );
 
 editor.registerCommand(
-  "Git Blame: Go Back",
-  "Show blame at parent commit of current line",
+  "%cmd.git_blame_go_back",
+  "%cmd.git_blame_go_back_desc",
   "git_blame_go_back",
   "normal"
 );
@@ -701,5 +701,5 @@ editor.registerCommand(
 // Plugin Initialization
 // =============================================================================
 
-editor.setStatus("Git Blame plugin loaded (virtual lines architecture)");
+editor.setStatus(editor.t("status.ready"));
 editor.debug("Git Blame plugin initialized - Use 'Git Blame' command to open");

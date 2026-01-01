@@ -96,6 +96,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 schemars = { version = "1.2", features = ["preserve_order"] }  # JSON Schema generation for config editor
 rust-i18n = "3"  # Internationalization support
+once_cell = "1.20"
 
 # Runtime dependencies (optional, enabled by "runtime" feature)
 crossterm = { version = "0.29.0", features = ["osc52"], optional = true }

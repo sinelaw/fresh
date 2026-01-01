@@ -185,15 +185,15 @@ function buildPanelEntries(): TextPropertyEntry[] {
   // Header (line 2)
   let filterLabel: string;
   if (state.showAllFiles) {
-    filterLabel = "All Files";
+    filterLabel = editor.t("panel.all_files");
   } else if (activeUri) {
     const fileName = editor.pathBasename(uriToPath(activeUri));
     filterLabel = fileName;
   } else {
-    filterLabel = "Current File";
+    filterLabel = editor.t("panel.current_file");
   }
   entries.push({
-    text: `Diagnostics (${filterLabel}):\n`,
+    text: editor.t("panel.header", { filter: filterLabel }) + "\n",
     properties: { type: "header" },
   });
 
@@ -201,7 +201,7 @@ function buildPanelEntries(): TextPropertyEntry[] {
 
   if (filtered.length === 0) {
     entries.push({
-      text: "  No diagnostics\n",
+      text: "  " + editor.t("panel.no_diagnostics") + "\n",
       properties: { type: "empty" },
     });
     currentPanelLine++;
@@ -424,11 +424,11 @@ globalThis.show_diagnostics_panel = async function(): Promise<void> {
     applyHighlighting();
 
     const diagnostics = editor.getAllDiagnostics();
-    editor.setStatus(`Diagnostics: ${diagnostics.length} items | a: toggle filter | RET: goto | q: close`);
+    editor.setStatus(editor.t("status.diagnostics_count", { count: String(diagnostics.length) }));
   } else {
     state.sourceSplitId = null;
     state.sourceBufferId = null;
-    editor.setStatus("Failed to open diagnostics panel");
+    editor.setStatus(editor.t("status.failed_to_open"));
   }
 };
 
@@ -470,7 +470,7 @@ globalThis.diagnostics_close = function(): void {
     editor.focusSplit(sourceSplitId);
   }
 
-  editor.setStatus("Diagnostics panel closed");
+  editor.setStatus(editor.t("status.closed"));
 };
 
 globalThis.diagnostics_goto = function(): void {
@@ -490,12 +490,12 @@ globalThis.diagnostics_goto = function(): void {
         editor.focusSplit(state.sourceSplitId);
       }
       editor.openFile(file, line, col);
-      editor.setStatus(`Jumped to ${editor.pathBasename(file)}:${line}`);
+      editor.setStatus(editor.t("status.jumped_to", { file: editor.pathBasename(file), line: String(line) }));
       return;
     }
   }
 
-  editor.setStatus("Move cursor to a diagnostic line");
+  editor.setStatus(editor.t("status.move_to_diagnostic"));
 };
 
 globalThis.diagnostics_toggle_all = function(): void {
@@ -504,15 +504,15 @@ globalThis.diagnostics_toggle_all = function(): void {
   state.showAllFiles = !state.showAllFiles;
   updatePanel();
 
-  const label = state.showAllFiles ? "All Files" : "Current File";
-  editor.setStatus(`Showing: ${label}`);
+  const label = state.showAllFiles ? editor.t("panel.all_files") : editor.t("panel.current_file");
+  editor.setStatus(editor.t("status.showing", { label }));
 };
 
 globalThis.diagnostics_refresh = function(): void {
   if (!state.isOpen) return;
 
   updatePanel();
-  editor.setStatus("Diagnostics refreshed");
+  editor.setStatus(editor.t("status.refreshed"));
 };
 
 globalThis.toggle_diagnostics_panel = function(): void {
@@ -619,15 +619,15 @@ editor.on("buffer_activated", "on_diagnostics_buffer_activated");
 // =============================================================================
 
 editor.registerCommand(
-  "Show Diagnostics Panel",
-  "Open the diagnostics panel",
+  "%cmd.show_diagnostics_panel",
+  "%cmd.show_diagnostics_panel_desc",
   "show_diagnostics_panel",
   "normal"
 );
 
 editor.registerCommand(
-  "Toggle Diagnostics Panel",
-  "Toggle the diagnostics panel",
+  "%cmd.toggle_diagnostics_panel",
+  "%cmd.toggle_diagnostics_panel_desc",
   "toggle_diagnostics_panel",
   "normal"
 );
@@ -636,5 +636,5 @@ editor.registerCommand(
 // Initialization
 // =============================================================================
 
-editor.setStatus("Diagnostics Panel plugin loaded");
+editor.setStatus(editor.t("status.loaded"));
 editor.debug("Diagnostics Panel plugin initialized");

@@ -477,7 +477,7 @@ function buildFullFileEntries(side: "ours" | "theirs"): TextPropertyEntry[] {
   // If we don't have the git version, fall back to showing conflict regions only
   if (!content) {
     entries.push({
-      text: `(Git version not available - showing conflict regions only)\n\n`,
+      text: editor.t("panel.git_unavailable") + "\n\n",
       properties: { type: "warning" },
     });
 
@@ -487,7 +487,7 @@ function buildFullFileEntries(side: "ours" | "theirs"): TextPropertyEntry[] {
       const isSelected = conflict.index === mergeState.selectedIndex;
 
       entries.push({
-        text: `--- Conflict ${conflict.index + 1} ---\n`,
+        text: `--- ${editor.t("panel.conflict", { index: String(conflict.index + 1) })} ---\n`,
         properties: {
           type: "conflict-header",
           conflictIndex: conflict.index,
@@ -496,7 +496,7 @@ function buildFullFileEntries(side: "ours" | "theirs"): TextPropertyEntry[] {
       });
 
       entries.push({
-        text: (conflictContent || "(empty)") + "\n",
+        text: (conflictContent || editor.t("panel.empty")) + "\n",
         properties: {
           type: "conflict-content",
           conflictIndex: conflict.index,
@@ -619,7 +619,7 @@ function buildOursEntries(): TextPropertyEntry[] {
     properties: { type: "separator" },
   });
   entries.push({
-    text: "  OURS (Read-only) - Changes from your branch\n",
+    text: "  " + editor.t("panel.ours_header") + "\n",
     properties: { type: "header", panel: "ours" },
   });
   entries.push({
@@ -631,10 +631,10 @@ function buildOursEntries(): TextPropertyEntry[] {
   for (const conflict of mergeState.conflicts) {
     const isSelected = conflict.index === mergeState.selectedIndex;
     const marker = isSelected ? "> " : "  ";
-    const status = conflict.resolved ? "[RESOLVED]" : "[PENDING]";
+    const status = conflict.resolved ? editor.t("panel.resolved") : editor.t("panel.pending");
 
     entries.push({
-      text: `\n${marker}Conflict ${conflict.index + 1} ${status}\n`,
+      text: `\n${marker}${editor.t("panel.conflict", { index: String(conflict.index + 1) })} ${status}\n`,
       properties: {
         type: "conflict-header",
         conflictIndex: conflict.index,
@@ -649,7 +649,7 @@ function buildOursEntries(): TextPropertyEntry[] {
     });
 
     // Content
-    const content = conflict.ours || "(empty)";
+    const content = conflict.ours || editor.t("panel.empty");
     for (const line of content.split("\n")) {
       entries.push({
         text: `  ${line}\n`,
@@ -677,7 +677,7 @@ function buildTheirsEntries(): TextPropertyEntry[] {
     properties: { type: "separator" },
   });
   entries.push({
-    text: "  THEIRS (Read-only) - Incoming changes\n",
+    text: "  " + editor.t("panel.theirs_header") + "\n",
     properties: { type: "header", panel: "theirs" },
   });
   entries.push({
@@ -689,10 +689,10 @@ function buildTheirsEntries(): TextPropertyEntry[] {
   for (const conflict of mergeState.conflicts) {
     const isSelected = conflict.index === mergeState.selectedIndex;
     const marker = isSelected ? "> " : "  ";
-    const status = conflict.resolved ? "[RESOLVED]" : "[PENDING]";
+    const status = conflict.resolved ? editor.t("panel.resolved") : editor.t("panel.pending");
 
     entries.push({
-      text: `\n${marker}Conflict ${conflict.index + 1} ${status}\n`,
+      text: `\n${marker}${editor.t("panel.conflict", { index: String(conflict.index + 1) })} ${status}\n`,
       properties: {
         type: "conflict-header",
         conflictIndex: conflict.index,
@@ -707,7 +707,7 @@ function buildTheirsEntries(): TextPropertyEntry[] {
     });
 
     // Content
-    const content = conflict.theirs || "(empty)";
+    const content = conflict.theirs || editor.t("panel.empty");
     for (const line of content.split("\n")) {
       entries.push({
         text: `  ${line}\n`,
@@ -735,7 +735,7 @@ function buildResultEntries(): TextPropertyEntry[] {
     properties: { type: "separator" },
   });
   entries.push({
-    text: "  RESULT (Editable) - Resolved content\n",
+    text: "  " + editor.t("panel.result_header") + "\n",
     properties: { type: "header", panel: "result" },
   });
   entries.push({
@@ -744,17 +744,16 @@ function buildResultEntries(): TextPropertyEntry[] {
   });
 
   // Build result content
-  let resultText = "";
   const unresolvedCount = mergeState.conflicts.filter(c => !c.resolved).length;
 
   if (unresolvedCount > 0) {
     entries.push({
-      text: `\n  ⚠ ${unresolvedCount} conflict(s) remaining\n\n`,
+      text: `\n  ⚠ ${editor.t("panel.remaining", { count: String(unresolvedCount) })}\n\n`,
       properties: { type: "warning" },
     });
   } else {
     entries.push({
-      text: "\n  ✓ All conflicts resolved!\n\n",
+      text: "\n  ✓ " + editor.t("panel.all_resolved") + "\n\n",
       properties: { type: "success" },
     });
   }
@@ -765,7 +764,7 @@ function buildResultEntries(): TextPropertyEntry[] {
     const marker = isSelected ? "> " : "  ";
 
     entries.push({
-      text: `${marker}Conflict ${conflict.index + 1}:\n`,
+      text: `${marker}${editor.t("panel.conflict", { index: String(conflict.index + 1) })}:\n`,
       properties: {
         type: "conflict-header",
         conflictIndex: conflict.index,
@@ -776,7 +775,7 @@ function buildResultEntries(): TextPropertyEntry[] {
     if (conflict.resolved && conflict.resolvedContent !== undefined) {
       // Show resolved content
       entries.push({
-        text: `  [Resolved: ${conflict.resolution}]\n`,
+        text: `  ${editor.t("panel.resolved_with", { resolution: conflict.resolution || "" })}\n`,
         properties: { type: "resolution-info", resolution: conflict.resolution },
       });
 
@@ -797,7 +796,7 @@ function buildResultEntries(): TextPropertyEntry[] {
         properties: { type: "action-prefix" },
       });
       entries.push({
-        text: "[u] Accept Ours",
+        text: editor.t("btn.accept_ours"),
         properties: {
           type: "action-button",
           conflictIndex: conflict.index,
@@ -809,7 +808,7 @@ function buildResultEntries(): TextPropertyEntry[] {
         properties: { type: "action-separator" },
       });
       entries.push({
-        text: "[t] Accept Theirs",
+        text: editor.t("btn.accept_theirs"),
         properties: {
           type: "action-button",
           conflictIndex: conflict.index,
@@ -821,7 +820,7 @@ function buildResultEntries(): TextPropertyEntry[] {
         properties: { type: "action-separator" },
       });
       entries.push({
-        text: "[b] Both",
+        text: editor.t("btn.both"),
         properties: {
           type: "action-button",
           conflictIndex: conflict.index,
@@ -847,7 +846,7 @@ function buildResultEntries(): TextPropertyEntry[] {
   });
   // Navigation
   entries.push({
-    text: "[n] Next",
+    text: editor.t("btn.next"),
     properties: { type: "help-button", onClick: "merge_next_conflict" },
   });
   entries.push({
@@ -855,7 +854,7 @@ function buildResultEntries(): TextPropertyEntry[] {
     properties: { type: "help-separator" },
   });
   entries.push({
-    text: "[p] Prev",
+    text: editor.t("btn.prev"),
     properties: { type: "help-button", onClick: "merge_prev_conflict" },
   });
   entries.push({
@@ -864,7 +863,7 @@ function buildResultEntries(): TextPropertyEntry[] {
   });
   // Resolution
   entries.push({
-    text: "[u] Use Ours",
+    text: editor.t("btn.use_ours"),
     properties: { type: "help-button", onClick: "merge_use_ours" },
   });
   entries.push({
@@ -872,7 +871,7 @@ function buildResultEntries(): TextPropertyEntry[] {
     properties: { type: "help-separator" },
   });
   entries.push({
-    text: "[t] Take Theirs",
+    text: editor.t("btn.take_theirs"),
     properties: { type: "help-button", onClick: "merge_take_theirs" },
   });
   entries.push({
@@ -880,7 +879,7 @@ function buildResultEntries(): TextPropertyEntry[] {
     properties: { type: "help-separator" },
   });
   entries.push({
-    text: "[b] Both",
+    text: editor.t("btn.both"),
     properties: { type: "help-button", onClick: "merge_use_both" },
   });
   entries.push({
@@ -889,7 +888,7 @@ function buildResultEntries(): TextPropertyEntry[] {
   });
   // Completion
   entries.push({
-    text: "[s] Save & Exit",
+    text: editor.t("btn.save_exit"),
     properties: { type: "help-button", onClick: "merge_save_and_exit" },
   });
   entries.push({
@@ -897,7 +896,7 @@ function buildResultEntries(): TextPropertyEntry[] {
     properties: { type: "help-separator" },
   });
   entries.push({
-    text: "[q] Abort",
+    text: editor.t("btn.abort"),
     properties: { type: "help-button", onClick: "merge_abort" },
   });
   entries.push({
@@ -1037,9 +1036,9 @@ function updateStatusBar(): void {
   const remaining = total - resolved;
 
   if (remaining > 0) {
-    editor.setStatus(`Merge: ${remaining} of ${total} conflicts remaining | Current: ${mergeState.selectedIndex + 1}`);
+    editor.setStatus(editor.t("status.progress", { remaining: String(remaining), total: String(total), current: String(mergeState.selectedIndex + 1) }));
   } else {
-    editor.setStatus(`Merge: All ${total} conflicts resolved! Press 's' to save`);
+    editor.setStatus(editor.t("status.all_resolved", { total: String(total) }));
   }
 }
 
@@ -1174,7 +1173,7 @@ function computeResultConflictOffset(conflictIndex: number): number {
  */
 globalThis.start_merge_conflict = async function(): Promise<void> {
   if (mergeState.isActive) {
-    editor.setStatus("Merge mode already active");
+    editor.setStatus(editor.t("status.already_active"));
     return;
   }
 
@@ -1182,7 +1181,7 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
   const info = editor.getBufferInfo(bufferId);
 
   if (!info || !info.path) {
-    editor.setStatus("No file open");
+    editor.setStatus(editor.t("status.no_file"));
     return;
   }
 
@@ -1197,7 +1196,7 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
   editor.debug(`Merge: git rev-parse exit_code=${gitCheck.exit_code}, stdout=${gitCheck.stdout.trim()}`);
 
   if (gitCheck.exit_code !== 0 || gitCheck.stdout.trim() !== "true") {
-    editor.setStatus("Not in a git repository - merge conflict resolution requires git");
+    editor.setStatus(editor.t("status.not_git_repo"));
     return;
   }
 
@@ -1208,7 +1207,7 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
   const hasUnmergedEntries = lsFilesResult.exit_code === 0 && lsFilesResult.stdout.trim().length > 0;
 
   if (!hasUnmergedEntries) {
-    editor.setStatus("No unmerged entries - file is not in a merge conflict state");
+    editor.setStatus(editor.t("status.no_unmerged"));
     return;
   }
 
@@ -1221,7 +1220,7 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
     editor.debug(`Merge: git show :0: failed, reading working tree file`);
     const fileContent = await editor.readFile(info.path);
     if (!fileContent) {
-      editor.setStatus("Failed to read file content");
+      editor.setStatus(editor.t("status.failed_read"));
       return;
     }
     content = fileContent;
@@ -1229,7 +1228,7 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
     // The staged version shouldn't have conflict markers, use working tree
     const fileContent = await editor.readFile(info.path);
     if (!fileContent) {
-      editor.setStatus("Failed to read file content");
+      editor.setStatus(editor.t("status.failed_read"));
       return;
     }
     content = fileContent;
@@ -1240,11 +1239,11 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
   editor.debug(`Merge: file has conflict markers: ${hasMarkers}, content length: ${content.length}`);
 
   if (!hasMarkers) {
-    editor.setStatus("No conflict markers found in file content");
+    editor.setStatus(editor.t("status.no_markers"));
     return;
   }
 
-  editor.setStatus("Starting merge conflict resolution...");
+  editor.setStatus(editor.t("status.starting"));
 
   // Store original state
   mergeState.sourceBufferId = bufferId;
@@ -1258,7 +1257,7 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
   editor.debug(`Merge: parseConflicts found ${mergeState.conflicts.length} conflicts`);
 
   if (mergeState.conflicts.length === 0) {
-    editor.setStatus("Failed to parse conflict markers");
+    editor.setStatus(editor.t("status.failed_parse"));
     // Log more detail for debugging
     editor.debug(`Merge: regex failed, content has <<<<<<< at index ${content.indexOf("<<<<<<<")}`);
     editor.debug(`Merge: content around <<<<<<< : ${content.substring(content.indexOf("<<<<<<<") - 20, content.indexOf("<<<<<<<") + 100)}`);
@@ -1308,9 +1307,9 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
 
   const remaining = mergeState.conflicts.length - autoResolved;
   if (remaining > 0) {
-    editor.setStatus(`Merge: ${remaining} conflicts to resolve (${autoResolved} auto-resolved)`);
+    editor.setStatus(editor.t("status.conflicts_to_resolve", { remaining: String(remaining), auto_resolved: String(autoResolved) }));
   } else {
-    editor.setStatus(`Merge: All ${mergeState.conflicts.length} conflicts auto-resolved! Press 's' to save`);
+    editor.setStatus(editor.t("status.all_auto_resolved", { total: String(mergeState.conflicts.length) }));
   }
 };
 
@@ -1406,16 +1405,16 @@ globalThis.merge_next_conflict = function(): void {
   editor.debug(`merge_next_conflict called, isActive=${mergeState.isActive}, conflicts=${mergeState.conflicts.length}`);
 
   if (!mergeState.isActive) {
-    editor.setStatus("No active merge - use 'Merge: Start Resolution' first");
+    editor.setStatus(editor.t("status.no_active_merge"));
     return;
   }
   if (mergeState.conflicts.length === 0) {
-    editor.setStatus("No conflicts to navigate");
+    editor.setStatus(editor.t("status.no_conflicts"));
     return;
   }
   if (mergeState.conflicts.length === 1) {
     // Single conflict: just re-scroll to it (useful for re-focusing)
-    editor.setStatus("Conflict 1 of 1 (re-focused)");
+    editor.setStatus(editor.t("status.single_refocused"));
     scrollToSelectedConflict();
     return;
   }
@@ -1428,7 +1427,7 @@ globalThis.merge_next_conflict = function(): void {
   while (index !== startIndex) {
     if (!mergeState.conflicts[index].resolved) {
       mergeState.selectedIndex = index;
-      editor.setStatus(`Conflict ${index + 1} of ${mergeState.conflicts.length}`);
+      editor.setStatus(editor.t("status.conflict_of", { current: String(index + 1), total: String(mergeState.conflicts.length) }));
       updateViews();
       scrollToSelectedConflict();
       return;
@@ -1438,7 +1437,7 @@ globalThis.merge_next_conflict = function(): void {
 
   // If all resolved, just move to next
   mergeState.selectedIndex = (mergeState.selectedIndex + 1) % mergeState.conflicts.length;
-  editor.setStatus(`Conflict ${mergeState.selectedIndex + 1} of ${mergeState.conflicts.length} (all resolved)`);
+  editor.setStatus(editor.t("status.conflict_all_resolved", { current: String(mergeState.selectedIndex + 1), total: String(mergeState.conflicts.length) }));
   updateViews();
   scrollToSelectedConflict();
 };
@@ -1447,16 +1446,16 @@ globalThis.merge_prev_conflict = function(): void {
   editor.debug(`merge_prev_conflict called, isActive=${mergeState.isActive}, conflicts=${mergeState.conflicts.length}`);
 
   if (!mergeState.isActive) {
-    editor.setStatus("No active merge - use 'Merge: Start Resolution' first");
+    editor.setStatus(editor.t("status.no_active_merge"));
     return;
   }
   if (mergeState.conflicts.length === 0) {
-    editor.setStatus("No conflicts to navigate");
+    editor.setStatus(editor.t("status.no_conflicts"));
     return;
   }
   if (mergeState.conflicts.length === 1) {
     // Single conflict: just re-scroll to it (useful for re-focusing)
-    editor.setStatus("Conflict 1 of 1 (re-focused)");
+    editor.setStatus(editor.t("status.single_refocused"));
     scrollToSelectedConflict();
     return;
   }
@@ -1469,7 +1468,7 @@ globalThis.merge_prev_conflict = function(): void {
   while (index !== startIndex) {
     if (!mergeState.conflicts[index].resolved) {
       mergeState.selectedIndex = index;
-      editor.setStatus(`Conflict ${index + 1} of ${mergeState.conflicts.length}`);
+      editor.setStatus(editor.t("status.conflict_of", { current: String(index + 1), total: String(mergeState.conflicts.length) }));
       updateViews();
       scrollToSelectedConflict();
       return;
@@ -1479,7 +1478,7 @@ globalThis.merge_prev_conflict = function(): void {
 
   // If all resolved, just move to previous
   mergeState.selectedIndex = (mergeState.selectedIndex - 1 + mergeState.conflicts.length) % mergeState.conflicts.length;
-  editor.setStatus(`Conflict ${mergeState.selectedIndex + 1} of ${mergeState.conflicts.length} (all resolved)`);
+  editor.setStatus(editor.t("status.conflict_all_resolved", { current: String(mergeState.selectedIndex + 1), total: String(mergeState.conflicts.length) }));
   updateViews();
   scrollToSelectedConflict();
 };
@@ -1490,7 +1489,7 @@ globalThis.merge_prev_conflict = function(): void {
 
 globalThis.merge_use_ours = function(): void {
   if (!mergeState.isActive) {
-    editor.setStatus("No active merge - use 'Merge: Start Resolution' first");
+    editor.setStatus(editor.t("status.no_active_merge"));
     return;
   }
 
@@ -1510,7 +1509,7 @@ globalThis.merge_use_ours = function(): void {
 
 globalThis.merge_take_theirs = function(): void {
   if (!mergeState.isActive) {
-    editor.setStatus("No active merge - use 'Merge: Start Resolution' first");
+    editor.setStatus(editor.t("status.no_active_merge"));
     return;
   }
 
@@ -1530,7 +1529,7 @@ globalThis.merge_take_theirs = function(): void {
 
 globalThis.merge_use_both = function(): void {
   if (!mergeState.isActive) {
-    editor.setStatus("No active merge - use 'Merge: Start Resolution' first");
+    editor.setStatus(editor.t("status.no_active_merge"));
     return;
   }
 
@@ -1572,7 +1571,7 @@ function moveToNextUnresolved(): void {
 
 globalThis.merge_save_and_exit = async function(): Promise<void> {
   if (!mergeState.isActive) {
-    editor.setStatus("No active merge - use 'Merge: Start Resolution' first");
+    editor.setStatus(editor.t("status.no_active_merge"));
     return;
   }
 
@@ -1580,7 +1579,7 @@ globalThis.merge_save_and_exit = async function(): Promise<void> {
 
   if (unresolvedCount > 0) {
     // TODO: Add confirmation prompt
-    editor.setStatus(`Cannot save: ${unresolvedCount} unresolved conflicts remaining`);
+    editor.setStatus(editor.t("status.cannot_save", { count: String(unresolvedCount) }));
     return;
   }
 
@@ -1617,12 +1616,12 @@ globalThis.merge_save_and_exit = async function(): Promise<void> {
   // Close merge panels
   closeMergePanels();
 
-  editor.setStatus("Merge complete! File updated with resolved content");
+  editor.setStatus(editor.t("status.complete"));
 };
 
 globalThis.merge_abort = function(): void {
   if (!mergeState.isActive) {
-    editor.setStatus("No active merge - nothing to abort");
+    editor.setStatus(editor.t("status.nothing_to_abort"));
     return;
   }
 
@@ -1631,7 +1630,7 @@ globalThis.merge_abort = function(): void {
   // Close merge panels without saving
   closeMergePanels();
 
-  editor.setStatus("Merge aborted - no changes made");
+  editor.setStatus(editor.t("status.aborted"));
 };
 
 /**
@@ -1692,9 +1691,7 @@ function closeMergePanels(): void {
 // =============================================================================
 
 globalThis.merge_show_help = function(): void {
-  editor.setStatus(
-    "Merge: [n/p] Navigate | [u] Ours [t] Theirs [b] Both | [s] Save [q] Abort"
-  );
+  editor.setStatus(editor.t("status.help"));
 };
 
 // =============================================================================
@@ -1723,7 +1720,7 @@ globalThis.onMergeBufferActivated = async function(data: { buffer_id: number }):
     // Check for unmerged entries
     const lsFiles = await editor.spawnProcess("git", ["ls-files", "-u", info.path], fileDir);
     if (lsFiles.exit_code === 0 && lsFiles.stdout.trim().length > 0) {
-      editor.setStatus(`Conflicts detected! Use 'Merge: Start Resolution' or run start_merge_conflict`);
+      editor.setStatus(editor.t("status.detected"));
     }
   } catch (e) {
     // Not in git repo or other error, ignore
@@ -1748,7 +1745,7 @@ globalThis.onMergeAfterFileOpen = async function(data: { buffer_id: number; path
     // Check for unmerged entries
     const lsFiles = await editor.spawnProcess("git", ["ls-files", "-u", data.path], fileDir);
     if (lsFiles.exit_code === 0 && lsFiles.stdout.trim().length > 0) {
-      editor.setStatus(`⚠ Merge conflicts detected in ${data.path} - Use 'Merge: Start Resolution'`);
+      editor.setStatus(editor.t("status.detected_file", { path: data.path }));
     }
   } catch (e) {
     // Not in git repo or other error, ignore
@@ -1768,13 +1765,13 @@ editor.on("after_file_open", "onMergeAfterFileOpen");
 
 // Commands that are only available during active merge mode
 const MERGE_MODE_COMMANDS = [
-  { name: "Merge: Next Conflict", desc: "Jump to next unresolved conflict", action: "merge_next_conflict" },
-  { name: "Merge: Previous Conflict", desc: "Jump to previous unresolved conflict", action: "merge_prev_conflict" },
-  { name: "Merge: Use Ours", desc: "Accept our version for current conflict", action: "merge_use_ours" },
-  { name: "Merge: Take Theirs", desc: "Accept their version for current conflict", action: "merge_take_theirs" },
-  { name: "Merge: Use Both", desc: "Accept both versions for current conflict", action: "merge_use_both" },
-  { name: "Merge: Save & Exit", desc: "Save resolved content and exit merge mode", action: "merge_save_and_exit" },
-  { name: "Merge: Abort", desc: "Abort merge resolution without saving", action: "merge_abort" },
+  { name: "%cmd.next", desc: "%cmd.next_desc", action: "merge_next_conflict" },
+  { name: "%cmd.prev", desc: "%cmd.prev_desc", action: "merge_prev_conflict" },
+  { name: "%cmd.use_ours", desc: "%cmd.use_ours_desc", action: "merge_use_ours" },
+  { name: "%cmd.take_theirs", desc: "%cmd.take_theirs_desc", action: "merge_take_theirs" },
+  { name: "%cmd.use_both", desc: "%cmd.use_both_desc", action: "merge_use_both" },
+  { name: "%cmd.save_exit", desc: "%cmd.save_exit_desc", action: "merge_save_and_exit" },
+  { name: "%cmd.abort", desc: "%cmd.abort_desc", action: "merge_abort" },
 ];
 
 /**
@@ -1797,8 +1794,8 @@ function unregisterMergeModeCommands(): void {
 
 // Only register "Start Resolution" at plugin load - other commands are registered dynamically
 editor.registerCommand(
-  "Merge: Start Resolution",
-  "Start 3-way merge conflict resolution for current file",
+  "%cmd.start",
+  "%cmd.start_desc",
   "start_merge_conflict",
   "normal"
 );
@@ -1807,5 +1804,5 @@ editor.registerCommand(
 // Plugin Initialization
 // =============================================================================
 
-editor.setStatus("Merge Conflict Resolution plugin loaded");
+editor.setStatus(editor.t("status.ready"));
 editor.debug("Merge plugin initialized - Use 'Merge: Start Resolution' for files with conflicts");
