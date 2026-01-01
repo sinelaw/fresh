@@ -30,6 +30,36 @@ pub struct Command {
     pub source: CommandSource,
 }
 
+impl Command {
+    /// Get the localized name of the command
+    pub fn get_localized_name(&self) -> String {
+        if self.name.starts_with('%') {
+            if let CommandSource::Plugin(ref plugin_name) = self.source {
+                return crate::i18n::translate_plugin_string(
+                    plugin_name,
+                    &self.name[1..],
+                    &std::collections::HashMap::new(),
+                );
+            }
+        }
+        self.name.clone()
+    }
+
+    /// Get the localized description of the command
+    pub fn get_localized_description(&self) -> String {
+        if self.description.starts_with('%') {
+            if let CommandSource::Plugin(ref plugin_name) = self.source {
+                return crate::i18n::translate_plugin_string(
+                    plugin_name,
+                    &self.description[1..],
+                    &std::collections::HashMap::new(),
+                );
+            }
+        }
+        self.description.clone()
+    }
+}
+
 /// A single suggestion item for autocomplete
 #[derive(Debug, Clone, PartialEq)]
 pub struct Suggestion {

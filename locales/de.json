@@ -954,6 +954,8 @@
   "view.line_wrap_state": "Zeilenumbruch %{state}",
   "view.mode": "Modus: %{mode}",
   "view.plugin_error": "Plugin-Fehler: %{error}",
+  "view.state_disabled": "deaktiviert",
+  "view.state_enabled": "aktiviert",
   "view.theme_changed": "Theme geändert zu '%{theme}'",
   "warning.copy_install_command": "Installationsbefehl kopieren",
   "warning.disable_lsp": "%{language} LSP deaktivieren",

@@ -411,9 +411,9 @@ impl Editor {
                 }
 
                 let state = if self.config.editor.line_wrap {
-                    "enabled"
+                    t!("view.state_enabled").to_string()
                 } else {
-                    "disabled"
+                    t!("view.state_disabled").to_string()
                 };
                 self.set_status_message(t!("view.line_wrap_state", state = state).to_string());
             }
@@ -2250,6 +2250,11 @@ impl Editor {
 
             // Regenerate menus with the new locale
             self.menus = crate::config::MenuConfig::translated();
+
+            // Refresh command palette commands with new locale
+            if let Ok(mut registry) = self.command_registry.write() {
+                registry.refresh_builtin_commands();
+            }
 
             // Persist to config file
             self.save_locale_to_config();

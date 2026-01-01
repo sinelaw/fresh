@@ -309,7 +309,7 @@ fn test_multiple_locales_can_be_loaded() {
 }
 
 /// Helper function to switch locale via command palette
-fn switch_locale(harness: &mut EditorTestHarness, locale: &str) {
+fn switch_locale(harness: &mut EditorTestHarness, locale: &str, search_command: &str) {
     // Open command palette with Ctrl+P
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -317,7 +317,7 @@ fn switch_locale(harness: &mut EditorTestHarness, locale: &str) {
     harness.render().unwrap();
 
     // Type to filter for locale command
-    harness.type_text("Select Locale").unwrap();
+    harness.type_text(search_command).unwrap();
     harness.render().unwrap();
 
     // Execute the command
@@ -361,8 +361,8 @@ fn test_locale_switch_affects_file_browser_columns() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Switch to Spanish
-    switch_locale(&mut harness, "es");
+    // Switch to Spanish (start from English -> "Select Locale")
+    switch_locale(&mut harness, "es", "Select Locale");
 
     // Verify Spanish file browser columns
     harness
@@ -375,8 +375,8 @@ fn test_locale_switch_affects_file_browser_columns() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Switch to German
-    switch_locale(&mut harness, "de");
+    // Switch to German (start from Spanish -> "Seleccionar idioma")
+    switch_locale(&mut harness, "de", "Seleccionar idioma");
 
     // Verify German file browser columns
     harness
@@ -408,8 +408,8 @@ fn test_locale_switch_affects_clipboard_messages() {
     harness.render().unwrap();
     harness.assert_screen_contains("Copied");
 
-    // Switch to Spanish
-    switch_locale(&mut harness, "es");
+    // Switch to Spanish (from English)
+    switch_locale(&mut harness, "es", "Select Locale");
 
     // Select all and copy - verify Spanish message
     harness
@@ -422,8 +422,8 @@ fn test_locale_switch_affects_clipboard_messages() {
     harness.render().unwrap();
     harness.assert_screen_contains("Copiado");
 
-    // Switch to French
-    switch_locale(&mut harness, "fr");
+    // Switch to French (from Spanish)
+    switch_locale(&mut harness, "fr", "Seleccionar idioma");
 
     // Select all and copy - verify French message
     harness
@@ -452,8 +452,8 @@ fn test_locale_switch_affects_file_browser_show_hidden() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Switch to Spanish
-    switch_locale(&mut harness, "es");
+    // Switch to Spanish (from English)
+    switch_locale(&mut harness, "es", "Select Locale");
 
     // Verify Spanish "Show Hidden" label
     harness
@@ -461,4 +461,40 @@ fn test_locale_switch_affects_file_browser_show_hidden() {
         .unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains("Mostrar ocultos");
+}
+
+#[test]
+fn test_locale_switch_affects_command_palette_commands() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // 1. Open command palette and search for "Open File"
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // In English
+    harness.type_text("Open File").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Open File");
+
+    // Close command palette
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // 2. Switch to Spanish
+    switch_locale(&mut harness, "es", "Select Locale");
+
+    // 3. Open command palette and search for "Abrir archivo" (Spanish for Open File)
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.type_text("Abrir archivo").unwrap();
+    harness.render().unwrap();
+
+    // Should confirm that we see the translated command
+    harness.assert_screen_contains("Abrir archivo");
 }

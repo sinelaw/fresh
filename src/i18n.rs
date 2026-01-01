@@ -15,6 +15,60 @@
 //! let msg = t!("file.saved_as", path = "/path/to/file");
 //! ```
 
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use std::sync::RwLock;
+
+static PLUGIN_STRINGS: Lazy<RwLock<HashMap<String, HashMap<String, HashMap<String, String>>>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// Register strings for a plugin.
+/// format: { "en": { "key": "value" }, "es": { "key": "value" } }
+pub fn register_plugin_strings(
+    plugin_name: &str,
+    strings: HashMap<String, HashMap<String, String>>,
+) {
+    let mut all_strings = PLUGIN_STRINGS.write().unwrap();
+    all_strings.insert(plugin_name.to_string(), strings);
+}
+
+/// Translate a string for a plugin using the current locale.
+pub fn translate_plugin_string(
+    plugin_name: &str,
+    key: &str,
+    args: &HashMap<String, String>,
+) -> String {
+    let locale = current_locale();
+    let all_strings = PLUGIN_STRINGS.read().unwrap();
+
+    let plugin_map: &HashMap<String, HashMap<String, String>> = match all_strings.get(plugin_name) {
+        Some(m) => m,
+        None => return key.to_string(),
+    };
+
+    // Try current locale, then fallback to English
+    let lang_map: Option<&HashMap<String, String>> =
+        plugin_map.get(&locale).or_else(|| plugin_map.get("en"));
+
+    let template: &String = match lang_map.and_then(|m| m.get(key)) {
+        Some(t) => t,
+        None => return key.to_string(),
+    };
+
+    // Simple interpolation: %{variable}
+    let mut result = template.clone();
+    for (k, v) in args {
+        result = result.replace(&format!("%{{{}}}", k), v);
+    }
+    result
+}
+
+/// Unregister strings for a plugin.
+pub fn unregister_plugin_strings(plugin_name: &str) {
+    let mut all_strings = PLUGIN_STRINGS.write().unwrap();
+    all_strings.remove(plugin_name);
+}
+
 /// Initialize i18n with the user's locale preference.
 ///
 /// This should be called early in application startup. It detects the system
@@ -35,10 +89,24 @@ pub fn init() {
 ///
 /// If `config_locale` is `Some`, use that locale. Otherwise, detect from environment.
 pub fn init_with_config(config_locale: Option<&str>) {
-    let locale = config_locale
-        .map(|s| s.to_string())
-        .or_else(detect_locale)
-        .unwrap_or_else(|| "en".to_string());
+    let locale = if let Some(req_locale) = config_locale {
+        // Try to match the requested locale against available ones
+        let supported = available_locales();
+        let req_lower = req_locale.replace('_', "-").to_lowercase();
+
+        let mut matched = None;
+        for &loc in &supported {
+            if loc.to_lowercase() == req_lower {
+                matched = Some(loc.to_string());
+                break;
+            }
+        }
+
+        matched.unwrap_or_else(|| req_locale.to_string())
+    } else {
+        detect_locale().unwrap_or_else(|| "en".to_string())
+    };
+
     rust_i18n::set_locale(&locale);
 }
 
@@ -46,21 +114,40 @@ pub fn init_with_config(config_locale: Option<&str>) {
 ///
 /// Checks `LC_ALL`, `LC_MESSAGES`, and `LANG` in order, parsing the locale
 /// string to extract the language code (e.g., "en_US.UTF-8" -> "en").
+///
+/// This function also attempts to match region-specific locales supported by Fresh,
+/// such as "pt-BR" and "zh-CN".
 fn detect_locale() -> Option<String> {
-    std::env::var("LC_ALL")
+    let env_locale = std::env::var("LC_ALL")
         .or_else(|_| std::env::var("LC_MESSAGES"))
         .or_else(|_| std::env::var("LANG"))
-        .ok()
-        .and_then(|s| {
-            // Parse locale string: "en_US.UTF-8" -> "en"
-            // Handle both underscore and hyphen separators
-            let lang = s.split(|c| c == '_' || c == '-' || c == '.').next()?;
-            if lang.is_empty() || lang == "C" || lang == "POSIX" {
-                None
-            } else {
-                Some(lang.to_lowercase())
-            }
-        })
+        .ok()?;
+
+    if env_locale.is_empty() || env_locale == "C" || env_locale == "POSIX" {
+        return None;
+    }
+
+    // First, try exact match with supported region-specific locales
+    // e.g. "pt_BR.UTF-8" -> "pt-BR"
+    let normalized = env_locale.replace('_', "-").to_lowercase();
+    let supported = available_locales();
+
+    for &loc in &supported {
+        if normalized.starts_with(&loc.to_lowercase()) {
+            return Some(loc.to_string());
+        }
+    }
+
+    // Fall back to primary language code
+    // e.g. "en_US.UTF-8" -> "en"
+    let lang = env_locale
+        .split(|c| c == '_' || c == '-' || c == '.')
+        .next()?;
+    if lang.is_empty() || lang == "C" || lang == "POSIX" {
+        None
+    } else {
+        Some(lang.to_lowercase())
+    }
 }
 
 /// Get the currently active locale.

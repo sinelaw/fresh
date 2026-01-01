@@ -2723,6 +2723,11 @@ impl Editor {
         &self.command_registry
     }
 
+    /// Get access to the plugin manager
+    pub fn plugin_manager(&self) -> &PluginManager {
+        &self.plugin_manager
+    }
+
     /// Check if file explorer has focus
     pub fn file_explorer_is_focused(&self) -> bool {
         self.key_context == KeyContext::FileExplorer
