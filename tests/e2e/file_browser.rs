@@ -320,7 +320,7 @@ fn test_file_browser_cancel() {
 
     // File browser should be closed
     harness.assert_screen_not_contains("Navigation:");
-    harness.assert_screen_contains("Canceled");
+    harness.assert_screen_contains("cancelled");
 }
 
 /// Test that column headers are shown (Name, Size, Modified)

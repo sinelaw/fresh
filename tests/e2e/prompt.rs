@@ -96,9 +96,9 @@ fn test_prompt_cancel() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Prompt should be gone, and "Canceled" message should appear
+    // Prompt should be gone, and "cancelled" message should appear
     harness.assert_screen_not_contains("Open:");
-    harness.assert_screen_contains("Canceled");
+    harness.assert_screen_contains("cancelled");
 }
 
 /// Test the complete open file workflow

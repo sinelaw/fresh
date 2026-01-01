@@ -310,7 +310,7 @@ fn test_switch_project_cancel_preserves_directory() {
 
     // Folder browser should be closed
     harness.assert_screen_not_contains("Navigation:");
-    harness.assert_screen_contains("Canceled");
+    harness.assert_screen_contains("cancelled");
 }
 
 /// Test that folder browser can navigate using backspace to go to parent

@@ -109,7 +109,7 @@ fn test_command_palette_cancel() {
 
     // Prompt should be gone
     harness.assert_screen_not_contains("Command:");
-    harness.assert_screen_contains("Canceled");
+    harness.assert_screen_contains("cancelled");
 }
 
 /// Test executing a command from the palette
