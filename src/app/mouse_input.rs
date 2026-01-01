@@ -1122,7 +1122,9 @@ impl Editor {
 
         if let Some(split_id) = close_split_click {
             if let Err(e) = self.split_manager.close_split(split_id) {
-                self.set_status_message(format!("Cannot close split: {}", e));
+                self.set_status_message(
+                    t!("error.cannot_close_split", error = e.to_string()).to_string(),
+                );
             } else {
                 // Update active buffer to match the new active split
                 let new_active_split = self.split_manager.active_split();

@@ -7,6 +7,7 @@ use super::file_open::{FileOpenSection, SortMode};
 use super::Editor;
 use crate::input::keybindings::Action;
 use crate::view::prompt::PromptType;
+use rust_i18n::t;
 
 impl Editor {
     /// Check if the file open dialog is active (for both OpenFile and SwitchProject)
@@ -268,9 +269,11 @@ impl Editor {
 
         // Open the file
         if let Err(e) = self.open_file(&path) {
-            self.set_status_message(format!("Error opening file: {}", e));
+            self.set_status_message(t!("file.error_opening", error = e.to_string()).to_string());
         } else {
-            self.set_status_message(format!("Opened {}", path.display()));
+            self.set_status_message(
+                t!("file.opened", path = path.display().to_string()).to_string(),
+            );
         }
     }
 

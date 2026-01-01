@@ -11,6 +11,7 @@ use crate::view::file_browser_input::FileBrowserInputHandler;
 use crate::view::query_replace_input::QueryReplaceConfirmInputHandler;
 use crate::view::ui::MenuInputHandler;
 use crossterm::event::KeyEvent;
+use rust_i18n::t;
 
 impl Editor {
     /// Dispatch input when in terminal mode.
@@ -153,7 +154,9 @@ impl Editor {
         // Process each deferred action
         for action in ctx.deferred_actions {
             if let Err(e) = self.execute_deferred_action(action) {
-                self.set_status_message(format!("Error: {}", e));
+                self.set_status_message(
+                    t!("error.deferred_action", error = e.to_string()).to_string(),
+                );
             }
         }
     }

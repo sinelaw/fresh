@@ -377,7 +377,9 @@ impl Editor {
             Err(e) => {
                 // Restore active split on error
                 self.split_manager.set_active_split(original_active);
-                self.set_status_message(format!("Failed to create split: {}", e));
+                self.set_status_message(
+                    t!("error.split_failed", error = e.to_string()).to_string(),
+                );
             }
         }
     }

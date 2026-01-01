@@ -700,6 +700,7 @@ fn main() -> io::Result<()> {
             }
 
             editor.show_file_explorer();
+            // Note: t! macro doesn't work in binary crates, use format! here
             editor.set_status_message(format!(
                 "Switched to project: {}",
                 current_working_dir

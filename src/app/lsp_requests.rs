@@ -1059,10 +1059,9 @@ impl Editor {
 
         // Note: Executing code actions would require storing the actions and handling
         // key presses to select and apply them. This is left for future enhancement.
-        self.set_status_message(format!(
-            "Found {} code action(s) - selection not yet implemented",
-            actions.len()
-        ));
+        self.set_status_message(
+            t!("lsp.code_actions_not_implemented", count = actions.len()).to_string(),
+        );
     }
 
     /// Handle find references response from LSP

@@ -937,7 +937,9 @@ impl Editor {
                                 .push((action_name.clone(), receiver));
                         }
                         Err(e) => {
-                            self.set_status_message(format!("Plugin error: {}", e));
+                            self.set_status_message(
+                                t!("view.plugin_error", error = e.to_string()).to_string(),
+                            );
                             tracing::error!("Plugin action error: {}", e);
                         }
                     }
@@ -1947,7 +1949,9 @@ impl Editor {
             // Persist to config file
             self.save_theme_to_config();
 
-            self.set_status_message(format!("Theme changed to '{}'", self.theme.name));
+            self.set_status_message(
+                t!("view.theme_changed", theme = self.theme.name.clone()).to_string(),
+            );
         }
     }
 
@@ -2050,9 +2054,9 @@ impl Editor {
             // Persist to config file
             self.save_keybinding_map_to_config();
 
-            self.set_status_message(format!("Switched to '{}' keybindings", map_name));
+            self.set_status_message(t!("view.keybindings_switched", map = map_name).to_string());
         } else {
-            self.set_status_message(format!("Unknown keybinding map: '{}'", map_name));
+            self.set_status_message(t!("view.keybindings_unknown", map = map_name).to_string());
         }
     }
 
@@ -2142,7 +2146,9 @@ impl Editor {
                 .map(|(_, desc)| *desc)
                 .unwrap_or(style_name);
 
-            self.set_status_message(format!("Cursor style changed to {}", description));
+            self.set_status_message(
+                t!("view.cursor_style_changed", style = description).to_string(),
+            );
         }
     }
 

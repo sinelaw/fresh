@@ -12,6 +12,7 @@ use super::Editor;
 use crate::config::{FormatterConfig, OnSaveAction};
 use crate::model::event::Event;
 use crate::services::lsp::manager::detect_language;
+use rust_i18n::t;
 
 /// Result of running a formatter or on-save action
 enum ActionResult {
@@ -131,7 +132,13 @@ impl Editor {
         match self.run_formatter(&formatter, &path) {
             ActionResult::Success(output) => {
                 self.replace_buffer_with_output(&output)?;
-                self.set_status_message(format!("Formatted with {}", formatter.command));
+                self.set_status_message(
+                    t!(
+                        "format.formatted_with",
+                        formatter = formatter.command.clone()
+                    )
+                    .to_string(),
+                );
                 Ok(())
             }
             ActionResult::CommandNotFound(cmd) => Err(format!("Formatter '{}' not found", cmd)),

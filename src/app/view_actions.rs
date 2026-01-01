@@ -4,6 +4,7 @@
 
 use super::Editor;
 use crate::state::ViewMode;
+use rust_i18n::t;
 
 impl Editor {
     /// Toggle between Compose and Source view modes.
@@ -67,9 +68,9 @@ impl Editor {
         }
 
         let mode_label = match view_mode {
-            ViewMode::Compose => "Compose",
-            ViewMode::Source => "Source",
+            ViewMode::Compose => t!("view.compose").to_string(),
+            ViewMode::Source => "Source".to_string(),
         };
-        self.set_status_message(format!("Mode: {}", mode_label));
+        self.set_status_message(t!("view.mode", mode = mode_label).to_string());
     }
 }

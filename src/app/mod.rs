@@ -1363,7 +1363,13 @@ impl Editor {
 
         self.ansi_background = Some(parsed);
         self.ansi_background_path = Some(canonical.clone());
-        self.set_status_message(format!("Background set to {}", canonical.display()));
+        self.set_status_message(
+            t!(
+                "view.background_set",
+                path = canonical.display().to_string()
+            )
+            .to_string(),
+        );
 
         Ok(())
     }
@@ -2643,10 +2649,13 @@ impl Editor {
                     if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
                         // Don't confirm disabled commands
                         if suggestion.disabled {
-                            self.set_status_message(format!(
-                                "Command '{}' is not available in current context",
-                                suggestion.text
-                            ));
+                            self.set_status_message(
+                                t!(
+                                    "error.command_not_available",
+                                    command = suggestion.text.clone()
+                                )
+                                .to_string(),
+                            );
                             return None;
                         }
                         // Use the selected suggestion value
@@ -2670,10 +2679,9 @@ impl Editor {
                 if !is_valid {
                     // Restore the prompt and don't confirm
                     self.prompt = Some(prompt);
-                    self.set_status_message(format!(
-                        "No running LSP server matches '{}'",
-                        final_input
-                    ));
+                    self.set_status_message(
+                        t!("error.no_lsp_match", input = final_input.clone()).to_string(),
+                    );
                     return None;
                 }
             }
@@ -3142,7 +3150,9 @@ impl Editor {
                         .find(|(_, &tid)| tid == terminal_id)
                     {
                         self.terminal_buffers.remove(&buffer_id);
-                        self.set_status_message(format!("Terminal {} exited", terminal_id));
+                        self.set_status_message(
+                            t!("terminal.exited", id = terminal_id.0).to_string(),
+                        );
                     }
                     self.terminal_manager.close(terminal_id);
                 }
