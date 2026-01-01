@@ -820,7 +820,7 @@ fn test_file_open_prompt_grapheme_movement() {
     harness.render().unwrap();
 
     // Verify file open prompt is open (prompt shows "Open:" at bottom)
-    harness.assert_screen_contains("Open:");
+    harness.assert_screen_contains("Open file:");
 
     // Clear any prefilled text by going to start and selecting all then deleting
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();

@@ -14,7 +14,7 @@ fn test_prompt_rendering() {
 
     // Check that the prompt is visible in the status bar area (bottom line)
     let _screen = harness.screen_to_string();
-    harness.assert_screen_contains("Open:");
+    harness.assert_screen_contains("Open file:");
 
     // Check the prompt styling
     let buffer = harness.buffer();
@@ -43,7 +43,7 @@ fn test_prompt_input_handling() {
         .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Open:");
+    harness.assert_screen_contains("Open file:");
 
     // Type some text
     harness.type_text("test.txt").unwrap();
@@ -86,7 +86,7 @@ fn test_prompt_cancel() {
         .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Open:");
+    harness.assert_screen_contains("Open file:");
 
     // Type some text (relative path)
     harness.type_text("test.txt").unwrap();
@@ -97,7 +97,7 @@ fn test_prompt_cancel() {
     harness.render().unwrap();
 
     // Prompt should be gone, and "cancelled" message should appear
-    harness.assert_screen_not_contains("Open:");
+    harness.assert_screen_not_contains("Open file:");
     harness.assert_screen_contains("cancelled");
 }
 
@@ -121,7 +121,7 @@ fn test_open_file_workflow() {
         .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Open:");
+    harness.assert_screen_contains("Open file:");
 
     // Type the file path
     let path_str = file_path.to_str().unwrap();
@@ -134,7 +134,7 @@ fn test_open_file_workflow() {
     harness.render().unwrap();
 
     // Check that the file was opened
-    harness.assert_screen_not_contains("Open:");
+    harness.assert_screen_not_contains("Open file:");
 
     // Check that the file content is displayed
     // Note: File content display may require additional renders after async file load
@@ -694,7 +694,7 @@ fn test_open_file_prompt_truncates_long_paths() {
     harness.render().unwrap();
 
     // The prompt should show "Open:" and the truncated path
-    harness.assert_screen_contains("Open:");
+    harness.assert_screen_contains("Open file:");
 
     // The path should be truncated with "[...]" indicator
     // Since the path is very long, it should show something like:
@@ -784,7 +784,7 @@ fn test_open_file_prompt_shows_completions_immediately() {
         .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
         .unwrap();
 
-    harness.assert_screen_contains("Open:");
+    harness.assert_screen_contains("Open file:");
 
     // ISSUE #193: File completions should appear IMMEDIATELY when the prompt opens
     // The prompt starts empty, so we should see files from cwd right away.
