@@ -108,19 +108,38 @@ pub fn render_dropdown_aligned(
         let menu_y = area.y + 1;
         let available_height = area.height.saturating_sub(1) as usize;
         let options_to_show = state.options.len().min(available_height);
+        let needs_scrollbar = state.options.len() > available_height;
+        let scrollbar_width: u16 = if needs_scrollbar { 1 } else { 0 };
+        let option_width = button_width.saturating_sub(scrollbar_width);
 
-        for (i, option) in state.options.iter().take(options_to_show).enumerate() {
-            let option_area = Rect::new(button_start, menu_y + i as u16, button_width, 1);
+        // Use scroll offset from state
+        let scroll_offset = state
+            .scroll_offset
+            .min(state.options.len().saturating_sub(options_to_show));
+
+        for (i, option) in state
+            .options
+            .iter()
+            .skip(scroll_offset)
+            .take(options_to_show)
+            .enumerate()
+        {
+            let actual_index = scroll_offset + i;
+            let option_area = Rect::new(button_start, menu_y + i as u16, option_width, 1);
             option_areas.push(option_area);
 
-            let is_selected = i == state.selected;
+            let is_selected = actual_index == state.selected;
             let (bg, fg) = if is_selected {
                 (colors.highlight_bg, colors.selected)
             } else {
                 (Color::Reset, colors.option)
             };
 
-            let padded_option = format!(" {:width$} ", option, width = display_width);
+            let padded_option = format!(
+                " {:width$} ",
+                option,
+                width = display_width.saturating_sub(1)
+            );
             let option_line = Line::from(vec![Span::styled(
                 padded_option,
                 Style::default().fg(fg).bg(bg),
@@ -129,11 +148,53 @@ pub fn render_dropdown_aligned(
             let option_para = Paragraph::new(option_line);
             frame.render_widget(option_para, option_area);
         }
+
+        // Render scrollbar if needed
+        if needs_scrollbar && available_height > 0 {
+            let scrollbar_x = button_start + option_width;
+            let total_options = state.options.len();
+            let max_offset = total_options.saturating_sub(options_to_show);
+
+            // Calculate thumb position and size
+            let thumb_size = ((options_to_show as f32 / total_options as f32)
+                * available_height as f32)
+                .max(1.0) as usize;
+            let thumb_pos = if max_offset > 0 {
+                ((scroll_offset as f32 / max_offset as f32)
+                    * (available_height - thumb_size) as f32) as usize
+            } else {
+                0
+            };
+
+            for i in 0..available_height {
+                let scrollbar_char = if i >= thumb_pos && i < thumb_pos + thumb_size {
+                    "█"
+                } else {
+                    "░"
+                };
+                let scrollbar_area = Rect::new(scrollbar_x, menu_y + i as u16, 1, 1);
+                let scrollbar_span =
+                    Span::styled(scrollbar_char, Style::default().fg(colors.border));
+                frame.render_widget(Paragraph::new(Line::from(scrollbar_span)), scrollbar_area);
+            }
+        }
     }
+
+    // Get scroll_offset for the layout (need to recalculate since we used it above)
+    let layout_scroll_offset = if state.open && area.height > 1 {
+        let available_height = area.height.saturating_sub(1) as usize;
+        let options_to_show = state.options.len().min(available_height);
+        state
+            .scroll_offset
+            .min(state.options.len().saturating_sub(options_to_show))
+    } else {
+        0
+    };
 
     DropdownLayout {
         button_area: Rect::new(button_start, area.y, button_width, 1),
         option_areas,
         full_area: Rect::new(area.x, area.y, button_start - area.x + button_width, 1),
+        scroll_offset: layout_scroll_offset,
     }
 }

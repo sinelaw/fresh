@@ -60,6 +60,7 @@ impl Editor {
     /// Save the settings from the modal to config
     pub fn save_settings(&mut self) {
         let old_theme = self.config.theme.clone();
+        let old_locale = self.config.locale.clone();
 
         // Get target layer and new config
         let (target_layer, new_config) = {
@@ -86,6 +87,21 @@ impl Editor {
         if old_theme != self.config.theme {
             self.theme = crate::view::theme::Theme::from_name(&self.config.theme);
             tracing::info!("Theme changed to '{}'", self.config.theme.0);
+        }
+
+        // Apply locale change at runtime
+        if old_locale != self.config.locale {
+            if let Some(locale) = self.config.locale.as_option() {
+                crate::i18n::set_locale(locale);
+                // Regenerate menus with the new locale
+                self.menus = crate::config::MenuConfig::translated();
+                tracing::info!("Locale changed to '{}'", locale);
+            } else {
+                // Auto-detect from environment
+                crate::i18n::init();
+                self.menus = crate::config::MenuConfig::translated();
+                tracing::info!("Locale reset to auto-detect");
+            }
         }
 
         // Update keybindings

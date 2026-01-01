@@ -81,6 +81,22 @@ impl DropdownState {
                     None
                 }
             }
+            MouseEventKind::ScrollUp => {
+                if self.open {
+                    self.scroll_by(-3);
+                    Some(DropdownEvent::SelectionChanged(self.selected))
+                } else {
+                    None
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if self.open {
+                    self.scroll_by(3);
+                    Some(DropdownEvent::SelectionChanged(self.selected))
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -158,6 +174,7 @@ mod tests {
             button_area: Rect::new(10, 0, 15, 1),
             option_areas: Vec::new(),
             full_area: Rect::new(0, 0, 25, 1),
+            scroll_offset: 0,
         };
         if open {
             layout.option_areas = vec![

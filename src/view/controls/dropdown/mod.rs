@@ -37,6 +37,10 @@ pub struct DropdownState {
     pub focus: FocusState,
     /// Original selection when dropdown opened (for cancel/restore)
     original_selected: Option<usize>,
+    /// Scroll offset for long option lists
+    pub scroll_offset: usize,
+    /// Maximum visible options (set during render)
+    pub max_visible: usize,
 }
 
 impl DropdownState {
@@ -50,6 +54,8 @@ impl DropdownState {
             open: false,
             focus: FocusState::Normal,
             original_selected: None,
+            scroll_offset: 0,
+            max_visible: 10, // Default, updated during render
         }
     }
 
@@ -68,6 +74,8 @@ impl DropdownState {
             open: false,
             focus: FocusState::Normal,
             original_selected: None,
+            scroll_offset: 0,
+            max_visible: 10, // Default, updated during render
         }
     }
 
@@ -143,6 +151,7 @@ impl DropdownState {
     pub fn select_next(&mut self) {
         if self.is_enabled() && !self.options.is_empty() {
             self.selected = (self.selected + 1) % self.options.len();
+            self.ensure_visible();
         }
     }
 
@@ -154,6 +163,7 @@ impl DropdownState {
             } else {
                 self.selected - 1
             };
+            self.ensure_visible();
         }
     }
 
@@ -164,6 +174,54 @@ impl DropdownState {
             self.original_selected = None;
             self.open = false;
         }
+    }
+
+    /// Ensure the selected item is visible within the scroll view
+    pub fn ensure_visible(&mut self) {
+        if self.max_visible == 0 || self.options.len() <= self.max_visible {
+            self.scroll_offset = 0;
+            return;
+        }
+
+        // If selected is above visible area, scroll up
+        if self.selected < self.scroll_offset {
+            self.scroll_offset = self.selected;
+        }
+        // If selected is below visible area, scroll down
+        else if self.selected >= self.scroll_offset + self.max_visible {
+            self.scroll_offset = self.selected.saturating_sub(self.max_visible - 1);
+        }
+    }
+
+    /// Scroll the dropdown by a delta (positive = down, negative = up)
+    pub fn scroll_by(&mut self, delta: i32) {
+        if self.options.len() <= self.max_visible {
+            return;
+        }
+
+        let max_offset = self.options.len().saturating_sub(self.max_visible);
+        if delta > 0 {
+            self.scroll_offset = (self.scroll_offset + delta as usize).min(max_offset);
+        } else {
+            self.scroll_offset = self.scroll_offset.saturating_sub((-delta) as usize);
+        }
+    }
+
+    /// Check if scrollbar should be shown
+    pub fn needs_scrollbar(&self) -> bool {
+        self.open && self.options.len() > self.max_visible
+    }
+
+    /// Get the scroll position as a fraction (0.0 to 1.0) for scrollbar rendering
+    pub fn scroll_fraction(&self) -> f32 {
+        if self.options.len() <= self.max_visible {
+            return 0.0;
+        }
+        let max_offset = self.options.len().saturating_sub(self.max_visible);
+        if max_offset == 0 {
+            return 0.0;
+        }
+        self.scroll_offset as f32 / max_offset as f32
     }
 }
 
@@ -228,6 +286,8 @@ pub struct DropdownLayout {
     pub option_areas: Vec<Rect>,
     /// The full control area
     pub full_area: Rect,
+    /// Scroll offset used during rendering (for mapping visible to actual indices)
+    pub scroll_offset: usize,
 }
 
 impl DropdownLayout {
@@ -240,10 +300,11 @@ impl DropdownLayout {
     }
 
     /// Get the option index at a point, if any
+    /// Returns the actual option index (accounting for scroll offset)
     pub fn option_at(&self, x: u16, y: u16) -> Option<usize> {
         for (i, area) in self.option_areas.iter().enumerate() {
             if x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height {
-                return Some(i);
+                return Some(self.scroll_offset + i);
             }
         }
         None
@@ -407,5 +468,83 @@ mod tests {
         state.toggle_open();
         assert!(!state.open);
         assert_eq!(state.selected, 1);
+    }
+
+    #[test]
+    fn test_dropdown_scrolling() {
+        // Create dropdown with many options
+        let options: Vec<String> = (0..20).map(|i| format!("Option {}", i)).collect();
+        let mut state = DropdownState::new(options, "Long List");
+        state.max_visible = 5; // Only show 5 options at a time
+
+        assert_eq!(state.scroll_offset, 0);
+
+        // Select option beyond visible area
+        state.selected = 10;
+        state.ensure_visible();
+
+        // Should have scrolled down
+        assert!(state.scroll_offset > 0);
+        assert!(state.selected >= state.scroll_offset);
+        assert!(state.selected < state.scroll_offset + state.max_visible);
+    }
+
+    #[test]
+    fn test_dropdown_scroll_by() {
+        let options: Vec<String> = (0..20).map(|i| format!("Option {}", i)).collect();
+        let mut state = DropdownState::new(options, "Long List");
+        state.max_visible = 5;
+
+        // Scroll down
+        state.scroll_by(3);
+        assert_eq!(state.scroll_offset, 3);
+
+        // Scroll up
+        state.scroll_by(-2);
+        assert_eq!(state.scroll_offset, 1);
+
+        // Scroll up past beginning
+        state.scroll_by(-10);
+        assert_eq!(state.scroll_offset, 0);
+
+        // Scroll down past end
+        state.scroll_by(100);
+        assert_eq!(state.scroll_offset, 15); // 20 - 5 = 15 max
+    }
+
+    #[test]
+    fn test_dropdown_needs_scrollbar() {
+        let options: Vec<String> = (0..10).map(|i| format!("Option {}", i)).collect();
+        let mut state = DropdownState::new(options, "Test");
+
+        // When closed, no scrollbar needed
+        state.max_visible = 5;
+        assert!(!state.needs_scrollbar());
+
+        // When open with more options than visible, scrollbar needed
+        state.open = true;
+        assert!(state.needs_scrollbar());
+
+        // When all options fit, no scrollbar needed
+        state.max_visible = 20;
+        assert!(!state.needs_scrollbar());
+    }
+
+    #[test]
+    fn test_dropdown_keyboard_nav_scrolls() {
+        let options: Vec<String> = (0..10).map(|i| format!("Option {}", i)).collect();
+        let mut state = DropdownState::new(options, "Test");
+        state.max_visible = 3;
+        state.open = true;
+
+        // Navigate down past visible area
+        for _ in 0..5 {
+            state.select_next();
+        }
+
+        assert_eq!(state.selected, 5);
+        // Selected should be visible
+        assert!(state.selected >= state.scroll_offset);
+        assert!(state.selected < state.scroll_offset + state.max_visible);
     }
 }
