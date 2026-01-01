@@ -8,6 +8,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 use super::Editor;
+use rust_i18n::t;
 use crate::model::event::Event;
 use crate::view::prompt::PromptType;
 
@@ -216,7 +217,7 @@ impl Editor {
             self.apply_event_to_active_buffer(&batch);
         }
 
-        self.set_status_message("Shell command completed".to_string());
+        self.set_status_message(t!("status.shell_command_completed").to_string());
     }
 
     /// Create a new buffer with the shell command output.

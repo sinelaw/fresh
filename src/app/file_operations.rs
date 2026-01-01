@@ -12,6 +12,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use lsp_types::TextDocumentContentChangeEvent;
+use rust_i18n::t;
 
 use crate::model::event::{BufferId, EventLog};
 use crate::services::lsp::manager::{detect_language, LspSpawnResult};
@@ -28,7 +29,7 @@ impl Editor {
             .file_path()
             .map(|p| p.to_path_buf());
         self.active_state_mut().buffer.save()?;
-        self.status_message = Some("Saved".to_string());
+        self.status_message = Some(t!("status.file_saved").to_string());
 
         // Mark the event log position as saved (for undo modified tracking)
         self.active_event_log_mut().mark_saved();
@@ -75,8 +76,8 @@ impl Editor {
             Ok(true) => {
                 // Actions ran successfully - if status_message was set by run_on_save_actions
                 // (e.g., for missing optional formatters), keep it. Otherwise update status.
-                if self.status_message.as_deref() == Some("Saved") {
-                    self.status_message = Some("Saved (with on-save actions)".to_string());
+                if self.status_message.as_deref() == Some(&t!("status.file_saved")) {
+                    self.status_message = Some(t!("status.file_saved_with_actions").to_string());
                 }
                 // else: keep the message set by run_on_save_actions (e.g., missing formatter)
             }
@@ -98,13 +99,13 @@ impl Editor {
         let path = match self.active_state().buffer.file_path() {
             Some(p) => p.to_path_buf(),
             None => {
-                self.status_message = Some("Buffer has no file to revert to".to_string());
+                self.status_message = Some(t!("status.no_file_to_revert").to_string());
                 return Ok(false);
             }
         };
 
         if !path.exists() {
-            self.status_message = Some(format!("File does not exist: {}", path.display()));
+            self.status_message = Some(t!("status.file_not_exists", path = path.display().to_string()).to_string());
             return Ok(false);
         }
 
@@ -169,7 +170,7 @@ impl Editor {
         // Notify LSP that the file was changed
         self.notify_lsp_file_changed(&path);
 
-        self.status_message = Some("Reverted to saved file".to_string());
+        self.status_message = Some(t!("status.reverted").to_string());
         Ok(true)
     }
 
@@ -178,9 +179,9 @@ impl Editor {
         self.auto_revert_enabled = !self.auto_revert_enabled;
 
         if self.auto_revert_enabled {
-            self.status_message = Some("Auto-revert enabled".to_string());
+            self.status_message = Some(t!("status.auto_revert_enabled").to_string());
         } else {
-            self.status_message = Some("Auto-revert disabled".to_string());
+            self.status_message = Some(t!("status.auto_revert_disabled").to_string());
         }
     }
 

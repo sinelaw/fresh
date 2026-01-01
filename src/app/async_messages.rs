@@ -11,6 +11,7 @@ use crate::model::event::BufferId;
 use crate::services::async_bridge::{LspMessageType, LspProgressValue, LspServerStatus};
 use crate::view::file_tree::{FileTreeView, NodeId};
 use lsp_types::{Diagnostic, InlayHint};
+use rust_i18n::t;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -543,7 +544,7 @@ impl Editor {
         }
 
         self.file_explorer = Some(view);
-        self.set_status_message("File explorer ready".to_string());
+        self.set_status_message(t!("status.file_explorer_ready").to_string());
     }
 
     /// Handle file explorer node toggle completed
@@ -554,7 +555,7 @@ impl Editor {
     /// Handle file explorer node refresh completed
     pub(super) fn handle_file_explorer_refresh_node(&mut self, node_id: NodeId) {
         tracing::debug!("File explorer refresh completed for node {:?}", node_id);
-        self.set_status_message("Refreshed".to_string());
+        self.set_status_message(t!("explorer.refreshed_default").to_string());
     }
 
     /// Handle file explorer expanded to path

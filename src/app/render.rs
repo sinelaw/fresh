@@ -1964,7 +1964,7 @@ impl Editor {
             match state.buffer.to_string() {
                 Some(t) => t,
                 None => {
-                    self.set_status_message("Buffer not fully loaded".to_string());
+                    self.set_status_message(t!("error.buffer_not_loaded").to_string());
                     return;
                 }
             }
@@ -2330,7 +2330,7 @@ impl Editor {
     /// This directly edits the piece tree without loading the entire buffer into memory
     pub(super) fn perform_replace(&mut self, search: &str, replacement: &str) {
         if search.is_empty() {
-            self.set_status_message("Replace: empty search query.".to_string());
+            self.set_status_message(t!("replace.empty_query").to_string());
             return;
         }
 
@@ -2411,7 +2411,7 @@ impl Editor {
     /// Start interactive replace mode (query-replace)
     pub(super) fn start_interactive_replace(&mut self, search: &str, replacement: &str) {
         if search.is_empty() {
-            self.set_status_message("Query replace: empty search query.".to_string());
+            self.set_status_message(t!("replace.query_empty").to_string());
             return;
         }
 
@@ -2939,13 +2939,13 @@ impl Editor {
 
         let pos = cursor.position;
         if pos >= state.buffer.len() {
-            self.set_status_message("No bracket at cursor".to_string());
+            self.set_status_message(t!("diagnostics.bracket_none").to_string());
             return;
         }
 
         let bytes = state.buffer.slice_bytes(pos..pos + 1);
         if bytes.is_empty() {
-            self.set_status_message("No bracket at cursor".to_string());
+            self.set_status_message(t!("diagnostics.bracket_none").to_string());
             return;
         }
 
@@ -2960,7 +2960,7 @@ impl Editor {
             '<' => ('<', '>', true),
             '>' => ('<', '>', false),
             _ => {
-                self.set_status_message("No bracket at cursor".to_string());
+                self.set_status_message(t!("diagnostics.bracket_none").to_string());
                 return;
             }
         };
@@ -3025,7 +3025,7 @@ impl Editor {
             self.active_event_log_mut().append(event.clone());
             self.apply_event_to_active_buffer(&event);
         } else {
-            self.set_status_message("No matching bracket found".to_string());
+            self.set_status_message(t!("diagnostics.bracket_no_match").to_string());
         }
     }
 
@@ -3053,7 +3053,7 @@ impl Editor {
             .collect();
 
         if diagnostic_positions.is_empty() {
-            self.set_status_message("No diagnostics in current buffer".to_string());
+            self.set_status_message(t!("diagnostics.none").to_string());
             return;
         }
 
@@ -3120,7 +3120,7 @@ impl Editor {
             .collect();
 
         if diagnostic_positions.is_empty() {
-            self.set_status_message("No diagnostics in current buffer".to_string());
+            self.set_status_message(t!("diagnostics.none").to_string());
             return;
         }
 
@@ -3331,7 +3331,7 @@ impl Editor {
     /// List all recorded macros in a buffer
     pub(super) fn list_macros_in_buffer(&mut self) {
         if self.macros.is_empty() {
-            self.set_status_message("No macros recorded".to_string());
+            self.set_status_message(t!("macro.none_recorded").to_string());
             return;
         }
 
@@ -3464,7 +3464,7 @@ impl Editor {
     /// List all bookmarks
     pub(super) fn list_bookmarks(&mut self) {
         if self.bookmarks.is_empty() {
-            self.set_status_message("No bookmarks set".to_string());
+            self.set_status_message(t!("bookmark.none_set").to_string());
             return;
         }
 

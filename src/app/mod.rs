@@ -1346,7 +1346,7 @@ impl Editor {
         if trimmed.is_empty() {
             self.ansi_background = None;
             self.ansi_background_path = None;
-            self.set_status_message("Background cleared".to_string());
+            self.set_status_message(t!("status.background_cleared").to_string());
             return Ok(());
         }
 

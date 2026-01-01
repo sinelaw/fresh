@@ -6,6 +6,7 @@ use super::Editor;
 use crate::model::event::Event;
 use crate::primitives::snippet::{expand_snippet, is_snippet};
 use crate::primitives::word_navigation::find_completion_word_start;
+use rust_i18n::t;
 
 /// Result of handling a popup confirmation.
 pub enum PopupConfirmResult {
@@ -192,7 +193,7 @@ impl Editor {
 
         if self.pending_lsp_confirmation.is_some() {
             self.pending_lsp_confirmation = None;
-            self.set_status_message("LSP server startup cancelled".to_string());
+            self.set_status_message(t!("lsp.startup_cancelled_msg").to_string());
         }
         self.hide_popup();
         // Clear completion items when popup is closed

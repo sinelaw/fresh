@@ -1,12 +1,13 @@
 //! Undo and redo action handlers.
 
 use super::Editor;
+use rust_i18n::t;
 
 impl Editor {
     /// Handle Undo action - revert the last edit operation.
     pub fn handle_undo(&mut self) {
         if self.is_editing_disabled() {
-            self.set_status_message("Editing disabled in this buffer".to_string());
+            self.set_status_message(t!("buffer.editing_disabled").to_string());
             return;
         }
 
@@ -37,7 +38,7 @@ impl Editor {
     /// Handle Redo action - reapply an undone edit operation.
     pub fn handle_redo(&mut self) {
         if self.is_editing_disabled() {
-            self.set_status_message("Editing disabled in this buffer".to_string());
+            self.set_status_message(t!("buffer.editing_disabled").to_string());
             return;
         }
 

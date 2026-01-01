@@ -26,6 +26,7 @@
 use super::{BufferId, BufferMetadata, Editor};
 use crate::services::terminal::TerminalId;
 use crate::state::EditorState;
+use rust_i18n::t;
 
 impl Editor {
     /// Open a new terminal in the current split
@@ -257,7 +258,7 @@ impl Editor {
 
             self.set_status_message(format!("Terminal {} closed", terminal_id));
         } else {
-            self.set_status_message("Not viewing a terminal buffer".to_string());
+            self.set_status_message(t!("status.not_viewing_terminal").to_string());
         }
     }
 
@@ -521,7 +522,7 @@ impl Editor {
             // Ensure terminal PTY is sized correctly for current split dimensions
             self.resize_visible_terminals();
 
-            self.set_status_message("Terminal mode enabled".to_string());
+            self.set_status_message(t!("status.terminal_mode_enabled").to_string());
         }
     }
 

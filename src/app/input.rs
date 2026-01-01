@@ -297,7 +297,7 @@ impl Editor {
                 } else if let Err(e) = self.close_buffer(buffer_id) {
                     self.set_status_message(format!("Cannot close buffer: {}", e));
                 } else {
-                    self.set_status_message("Buffer closed".to_string());
+                    self.set_status_message(t!("buffer.closed").to_string());
                 }
             }
             Action::CloseTab => {
@@ -336,14 +336,14 @@ impl Editor {
             Action::CopyWithTheme(theme) => self.copy_selection_with_theme(&theme),
             Action::Cut => {
                 if self.is_editing_disabled() {
-                    self.set_status_message("Editing disabled in this buffer".to_string());
+                    self.set_status_message(t!("buffer.editing_disabled").to_string());
                     return Ok(());
                 }
                 self.cut_selection()
             }
             Action::Paste => {
                 if self.is_editing_disabled() {
-                    self.set_status_message("Editing disabled in this buffer".to_string());
+                    self.set_status_message(t!("buffer.editing_disabled").to_string());
                     return Ok(());
                 }
                 self.paste()
@@ -573,7 +573,7 @@ impl Editor {
                         self.active_buffer(),
                         self.terminal_width,
                     );
-                    self.set_status_message("Scrolled tabs left".to_string());
+                    self.set_status_message(t!("status.scrolled_tabs_left").to_string());
                 }
             }
             Action::ScrollTabsRight => {
@@ -586,7 +586,7 @@ impl Editor {
                         self.active_buffer(),
                         self.terminal_width,
                     );
-                    self.set_status_message("Scrolled tabs right".to_string());
+                    self.set_status_message(t!("status.scrolled_tabs_right").to_string());
                 }
             }
             Action::NavigateBack => self.navigate_back(),
@@ -878,7 +878,7 @@ impl Editor {
                 if let Some(key) = self.last_macro_register {
                     self.play_macro(key);
                 } else {
-                    self.set_status_message("No macro has been recorded yet".to_string());
+                    self.set_status_message(t!("status.no_macro_recorded").to_string());
                 }
             }
             Action::PromptSetBookmark => {
@@ -893,7 +893,7 @@ impl Editor {
             Action::None => {}
             Action::DeleteBackward => {
                 if self.is_editing_disabled() {
-                    self.set_status_message("Editing disabled in this buffer".to_string());
+                    self.set_status_message(t!("buffer.editing_disabled").to_string());
                     return Ok(());
                 }
                 // Normal backspace handling
@@ -930,7 +930,7 @@ impl Editor {
                         }
                     }
                 } else {
-                    self.set_status_message("Plugin manager not available".to_string());
+                    self.set_status_message(t!("status.plugin_manager_unavailable").to_string());
                 }
                 #[cfg(not(feature = "plugins"))]
                 {
@@ -951,7 +951,7 @@ impl Editor {
                 if self.is_terminal_buffer(self.active_buffer()) {
                     self.terminal_mode = true;
                     self.key_context = KeyContext::Terminal;
-                    self.set_status_message("Terminal mode enabled".to_string());
+                    self.set_status_message(t!("status.terminal_mode_enabled").to_string());
                 }
             }
             Action::TerminalEscape => {
@@ -959,7 +959,7 @@ impl Editor {
                 if self.terminal_mode {
                     self.terminal_mode = false;
                     self.key_context = KeyContext::Normal;
-                    self.set_status_message("Terminal mode disabled".to_string());
+                    self.set_status_message(t!("status.terminal_mode_disabled").to_string());
                 }
             }
             Action::ToggleKeyboardCapture => {
@@ -1080,7 +1080,7 @@ impl Editor {
                     let text = prompt.selected_text().unwrap_or_else(|| prompt.get_text());
                     if !text.is_empty() {
                         self.clipboard.copy(text);
-                        self.set_status_message("Copied".to_string());
+                        self.set_status_message(t!("clipboard.copied").to_string());
                     }
                 }
             }
@@ -1098,7 +1098,7 @@ impl Editor {
                         prompt.clear();
                     }
                 }
-                self.set_status_message("Cut".to_string());
+                self.set_status_message(t!("clipboard.cut").to_string());
                 self.update_prompt_suggestions();
             }
             Action::PromptPaste => {
@@ -2283,10 +2283,10 @@ impl Editor {
 
                 self.set_active_buffer(prev_id);
             } else if !is_valid {
-                self.set_status_message("Previous tab is no longer open".to_string());
+                self.set_status_message(t!("status.previous_tab_closed").to_string());
             }
         } else {
-            self.set_status_message("No previous tab".to_string());
+            self.set_status_message(t!("status.no_previous_tab").to_string());
         }
     }
 
@@ -2300,7 +2300,7 @@ impl Editor {
         };
 
         if open_buffers.is_empty() {
-            self.set_status_message("No tabs open in current split".to_string());
+            self.set_status_message(t!("status.no_tabs_in_split").to_string());
             return;
         }
 
@@ -2366,7 +2366,7 @@ impl Editor {
             .is_some_and(|vs| vs.open_buffers.contains(&buffer_id));
 
         if !is_valid {
-            self.set_status_message("Tab not found in current split".to_string());
+            self.set_status_message(t!("status.tab_not_found").to_string());
             return;
         }
 
@@ -2421,7 +2421,7 @@ impl Editor {
     fn handle_insert_char_editor(&mut self, c: char) -> std::io::Result<()> {
         // Check if editing is disabled (show_cursors = false)
         if self.is_editing_disabled() {
-            self.set_status_message("Editing disabled in this buffer".to_string());
+            self.set_status_message(t!("buffer.editing_disabled").to_string());
             return Ok(());
         }
 
@@ -2476,7 +2476,7 @@ impl Editor {
         );
 
         if is_editing_action && self.is_editing_disabled() {
-            self.set_status_message("Editing disabled in this buffer".to_string());
+            self.set_status_message(t!("buffer.editing_disabled").to_string());
             return Ok(());
         }
 

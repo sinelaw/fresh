@@ -8,6 +8,7 @@
 
 use super::types::TabDropZone;
 use super::Editor;
+use rust_i18n::t;
 use crate::model::event::{BufferId, SplitDirection, SplitId};
 
 impl Editor {
@@ -288,9 +289,9 @@ impl Editor {
         if source_becomes_empty {
             self.split_view_states.remove(&source_split_id);
             let _ = self.split_manager.close_split(source_split_id);
-            self.set_status_message("Moved tab to split (source split closed)".to_string());
+            self.set_status_message(t!("status.moved_tab_split_closed").to_string());
         } else {
-            self.set_status_message("Moved tab to split".to_string());
+            self.set_status_message(t!("status.moved_tab").to_string());
         }
     }
 
@@ -371,7 +372,7 @@ impl Editor {
                 self.split_manager.set_active_split(new_split_id);
                 self.set_active_buffer(buffer_id);
 
-                self.set_status_message("Created new split".to_string());
+                self.set_status_message(t!("status.created_new_split").to_string());
             }
             Err(e) => {
                 // Restore active split on error

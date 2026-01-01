@@ -6,6 +6,7 @@
 
 use crate::input::fuzzy::fuzzy_match;
 use crate::services::fs::{FsEntry, FsEntryType};
+use rust_i18n::t;
 use std::cmp::Ordering;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -125,7 +126,7 @@ impl FileOpenState {
             shortcuts.push(NavigationShortcut {
                 label: "..".to_string(),
                 path: parent.to_path_buf(),
-                description: "Parent directory".to_string(),
+                description: t!("file_browser.parent_dir").to_string(),
             });
         }
 
@@ -135,7 +136,7 @@ impl FileOpenState {
             shortcuts.push(NavigationShortcut {
                 label: "/".to_string(),
                 path: PathBuf::from("/"),
-                description: "Root directory".to_string(),
+                description: t!("file_browser.root_dir").to_string(),
             });
         }
 
@@ -144,25 +145,25 @@ impl FileOpenState {
             shortcuts.push(NavigationShortcut {
                 label: "~".to_string(),
                 path: home,
-                description: "Home directory".to_string(),
+                description: t!("file_browser.home_dir").to_string(),
             });
         }
 
         // Documents directory
         if let Some(docs) = dirs::document_dir() {
             shortcuts.push(NavigationShortcut {
-                label: "Documents".to_string(),
+                label: t!("file_browser.documents").to_string(),
                 path: docs,
-                description: "Documents folder".to_string(),
+                description: t!("file_browser.documents_folder").to_string(),
             });
         }
 
         // Downloads directory
         if let Some(downloads) = dirs::download_dir() {
             shortcuts.push(NavigationShortcut {
-                label: "Downloads".to_string(),
+                label: t!("file_browser.downloads").to_string(),
                 path: downloads,
-                description: "Downloads folder".to_string(),
+                description: t!("file_browser.downloads_folder").to_string(),
             });
         }
 
@@ -175,7 +176,7 @@ impl FileOpenState {
                     shortcuts.push(NavigationShortcut {
                         label: format!("{}:", letter as char),
                         path,
-                        description: "Drive".to_string(),
+                        description: t!("file_browser.drive").to_string(),
                     });
                 }
             }

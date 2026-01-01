@@ -6,6 +6,7 @@
 use super::Editor;
 use crate::input::commands::Suggestion;
 use crate::view::prompt::{Prompt, PromptType};
+use rust_i18n::t;
 
 impl Editor {
     /// Handle the LspRestart action.
@@ -19,20 +20,20 @@ impl Editor {
         };
 
         let Some(path) = metadata.file_path() else {
-            self.set_status_message("Current buffer has no associated file".to_string());
+            self.set_status_message(t!("lsp.buffer_has_no_file").to_string());
             return;
         };
 
         let Some(language) =
             crate::services::lsp::manager::detect_language(path, &self.config.languages)
         else {
-            self.set_status_message("No LSP server configured for this file type".to_string());
+            self.set_status_message(t!("lsp.no_server_configured").to_string());
             return;
         };
 
         // Attempt restart
         let Some(lsp) = self.lsp.as_mut() else {
-            self.set_status_message("No LSP manager available".to_string());
+            self.set_status_message(t!("lsp.no_manager").to_string());
             return;
         };
 
@@ -109,7 +110,7 @@ impl Editor {
             .unwrap_or_default();
 
         if running_servers.is_empty() {
-            self.set_status_message("No LSP servers are currently running".to_string());
+            self.set_status_message(t!("lsp.no_servers_running").to_string());
             return;
         }
 

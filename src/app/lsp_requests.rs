@@ -128,7 +128,7 @@ impl Editor {
             PopupContentData, PopupData, PopupListItemData, PopupPositionData,
         };
         let popup_data = PopupData {
-            title: Some("Completion".to_string()),
+            title: Some(t!("lsp.popup_completion").to_string()),
             description: None,
             transient: false,
             content: PopupContentData::List {
@@ -608,7 +608,7 @@ impl Editor {
         };
 
         // Configure popup properties
-        popup.title = Some("Hover".to_string());
+        popup.title = Some(t!("lsp.popup_hover").to_string());
         popup.transient = true;
         // Use mouse position if this was a mouse-triggered hover, otherwise use cursor position
         popup.position = if let Some((x, y)) = self.mouse_hover_screen_position.take() {
@@ -924,7 +924,7 @@ impl Editor {
         use ratatui::style::Style;
 
         let mut popup = Popup::text(lines, &self.theme);
-        popup.title = Some("Signature Help".to_string());
+        popup.title = Some(t!("lsp.popup_signature").to_string());
         popup.transient = true;
         popup.position = PopupPosition::BelowCursor;
         popup.width = 60;
@@ -1044,7 +1044,7 @@ impl Editor {
         use ratatui::style::Style;
 
         let mut popup = Popup::text(lines, &self.theme);
-        popup.title = Some("Code Actions".to_string());
+        popup.title = Some(t!("lsp.popup_code_actions").to_string());
         popup.position = PopupPosition::BelowCursor;
         popup.width = 60;
         popup.max_height = 15;
@@ -1656,7 +1656,7 @@ impl Editor {
                 color: (50, 100, 200), // Blue background for rename
             },
             100,
-            Some("Renaming".to_string()),
+            Some(t!("lsp.popup_renaming").to_string()),
         );
 
         // Enter rename mode using the Prompt system

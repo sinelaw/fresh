@@ -3,6 +3,7 @@
 //! This module provides a generic architecture for different subsystems (LSP, plugins, etc.)
 //! to report warnings with custom status bar indicators and popup content.
 
+use rust_i18n::t;
 use std::path::PathBuf;
 
 /// Warning severity level
@@ -128,13 +129,13 @@ impl WarningDomain for GeneralWarningDomain {
 
     fn popup_content(&self) -> WarningPopupContent {
         let message = if self.count == 1 {
-            "1 warning has been logged.".to_string()
+            t!("warning.one_logged").to_string()
         } else {
-            format!("{} warnings have been logged.", self.count)
+            t!("warning.many_logged", count = self.count).to_string()
         };
 
         let mut actions = vec![WarningAction {
-            label: "Dismiss".to_string(),
+            label: t!("warning.dismiss").to_string(),
             action_id: WarningActionId::Dismiss,
         }];
 
@@ -142,14 +143,14 @@ impl WarningDomain for GeneralWarningDomain {
             actions.insert(
                 0,
                 WarningAction {
-                    label: "View Log".to_string(),
+                    label: t!("warning.view_log").to_string(),
                     action_id: WarningActionId::ViewLog,
                 },
             );
         }
 
         WarningPopupContent {
-            title: "Warnings".to_string(),
+            title: t!("warning.title").to_string(),
             message,
             actions,
         }
@@ -236,21 +237,21 @@ impl WarningDomain for LspWarningDomain {
 
     fn popup_content(&self) -> WarningPopupContent {
         let title = if let Some(lang) = &self.language {
-            format!("{} LSP", lang)
+            t!("warning.lsp_title", language = lang).to_string()
         } else {
-            "LSP".to_string()
+            t!("warning.lsp_title_default").to_string()
         };
 
         let message = if let Some(cmd) = &self.server_command {
-            format!("Server '{}' not found.\n\n{}", cmd, self.get_install_hint())
+            t!("warning.lsp_server_not_found", command = cmd, hint = self.get_install_hint()).to_string()
         } else if let Some(err) = &self.error_message {
             err.clone()
         } else {
-            "LSP server encountered an error.".to_string()
+            t!("warning.lsp_server_error").to_string()
         };
 
         let mut actions = vec![WarningAction {
-            label: "Dismiss".to_string(),
+            label: t!("warning.dismiss").to_string(),
             action_id: WarningActionId::Dismiss,
         }];
 
@@ -259,7 +260,7 @@ impl WarningDomain for LspWarningDomain {
             actions.insert(
                 0,
                 WarningAction {
-                    label: format!("Disable {} LSP", lang),
+                    label: t!("warning.disable_lsp", language = lang).to_string(),
                     action_id: WarningActionId::DisableLsp(lang.clone()),
                 },
             );
@@ -270,7 +271,7 @@ impl WarningDomain for LspWarningDomain {
             actions.insert(
                 0,
                 WarningAction {
-                    label: "Copy Install Command".to_string(),
+                    label: t!("warning.copy_install_command").to_string(),
                     action_id: WarningActionId::CopyToClipboard(cmd),
                 },
             );
@@ -290,23 +291,17 @@ impl LspWarningDomain {
         let cmd = self.server_command.as_deref().unwrap_or("");
 
         match cmd {
-            "pylsp" => "Install with: pip install python-lsp-server".to_string(),
-            "rust-analyzer" => "Install with: rustup component add rust-analyzer".to_string(),
-            "typescript-language-server" => {
-                "Install with: npm install -g typescript-language-server typescript".to_string()
-            }
-            "gopls" => "Install with: go install golang.org/x/tools/gopls@latest".to_string(),
-            "clangd" => "Install with your package manager (apt, brew, etc.)".to_string(),
-            "bash-language-server" => {
-                "Install with: npm install -g bash-language-server".to_string()
-            }
+            "pylsp" => t!("lsp.install_hint.pylsp").to_string(),
+            "rust-analyzer" => t!("lsp.install_hint.rust_analyzer").to_string(),
+            "typescript-language-server" => t!("lsp.install_hint.typescript").to_string(),
+            "gopls" => t!("lsp.install_hint.gopls").to_string(),
+            "clangd" => t!("lsp.install_hint.clangd").to_string(),
+            "bash-language-server" => t!("lsp.install_hint.bash").to_string(),
             "vscode-html-language-server"
             | "vscode-css-language-server"
-            | "vscode-json-language-server" => {
-                "Install with: npm install -g vscode-langservers-extracted".to_string()
-            }
-            "csharp-ls" => "Install with: dotnet tool install --global csharp-ls".to_string(),
-            _ => format!("Please install '{}' and ensure it's in your PATH.", cmd),
+            | "vscode-json-language-server" => t!("lsp.install_hint.vscode").to_string(),
+            "csharp-ls" => t!("lsp.install_hint.csharp").to_string(),
+            _ => t!("lsp.install_hint.generic", command = cmd).to_string(),
         }
     }
 

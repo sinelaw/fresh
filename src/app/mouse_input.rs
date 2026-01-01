@@ -8,6 +8,7 @@
 //! - Text selection via mouse
 
 use super::*;
+use rust_i18n::t;
 use crate::input::keybindings::Action;
 use crate::model::event::{SplitDirection, SplitId};
 use crate::services::plugins::hooks::HookArgs;
@@ -1128,7 +1129,7 @@ impl Editor {
                 if let Some(buffer_id) = self.split_manager.buffer_for_split(new_active_split) {
                     self.set_active_buffer(buffer_id);
                 }
-                self.set_status_message("Split closed".to_string());
+                self.set_status_message(t!("split.closed").to_string());
             }
             return Ok(());
         }
@@ -1148,9 +1149,9 @@ impl Editor {
             match self.split_manager.toggle_maximize() {
                 Ok(maximized) => {
                     if maximized {
-                        self.set_status_message("Maximized split".to_string());
+                        self.set_status_message(t!("split.maximized").to_string());
                     } else {
-                        self.set_status_message("Restored all splits".to_string());
+                        self.set_status_message(t!("split.restored").to_string());
                     }
                 }
                 Err(e) => self.set_status_message(e),
