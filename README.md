@@ -38,6 +38,7 @@ Fresh is engineered for speed. It delivers a low-latency experience, with text a
 - **Language Server (LSP)**: go to definition, references, hover, code actions, rename, diagnostics, autocompletion
 - **Productivity**: command palette, menu bar, keyboard macros, git log, diagnostics panel
 - **Plugins & Extensibility**: TypeScript plugins, color highlighter, TODO highlighter, merge conflicts, path complete, keymaps
+- **Internationalization**: Multiple language support (see [`locales/`](locales/) for available languages), plugin translation system
 
 ![Fresh Screenshot](docs/screenshot1.png)
 ![Fresh Screenshot](docs/screenshot2.png)

@@ -334,6 +334,104 @@ import type { RGB, Location, PanelOptions, NavigationOptions } from "@plugins/li
 
 See the source files in `plugins/lib/` for full API details.
 
+## Internationalization (i18n)
+
+Plugins can provide translations for their user-facing strings. This allows your plugin to support the same languages as Fresh's core UI.
+
+### Creating Translation Files
+
+Create a `.i18n.json` file alongside your plugin with the same base name:
+
+```
+plugins/
+  my_plugin.ts
+  my_plugin.i18n.json
+```
+
+The translation file structure:
+
+```json
+{
+  "en": {
+    "cmd.do_thing": "My Plugin: Do Thing",
+    "cmd.do_thing_desc": "Description of the command",
+    "status.ready": "My plugin ready",
+    "status.found": "Found %{count} items",
+    "prompt.search": "Search:"
+  },
+  "es": {
+    "cmd.do_thing": "Mi Plugin: Hacer Cosa",
+    "cmd.do_thing_desc": "Descripción del comando",
+    "status.ready": "Mi plugin listo",
+    "status.found": "Encontrados %{count} elementos",
+    "prompt.search": "Buscar:"
+  }
+}
+```
+
+**Key conventions:**
+- `cmd.*` - Command names and descriptions
+- `status.*` - Status bar messages
+- `prompt.*` - Prompt labels
+- Use `%{variable}` for interpolation
+
+### Using Translations in Code
+
+#### Status Messages
+
+Use `editor.t()` to translate status messages:
+
+```typescript
+// Simple message
+editor.setStatus(editor.t("status.ready"));
+
+// With interpolation
+editor.setStatus(editor.t("status.found", { count: String(results.length) }));
+```
+
+#### Command Registration
+
+Use `%` prefix for command names and descriptions to enable automatic translation:
+
+```typescript
+// Before (hardcoded)
+editor.registerCommand(
+  "My Plugin: Search",
+  "Search through files",
+  "my_search",
+  "normal"
+);
+
+// After (i18n-enabled)
+editor.registerCommand(
+  "%cmd.search",
+  "%cmd.search_desc",
+  "my_search",
+  "normal"
+);
+```
+
+#### Prompt Labels
+
+```typescript
+// Before
+editor.startPrompt("Search:", "my-search");
+
+// After
+editor.startPrompt(editor.t("prompt.search"), "my-search");
+```
+
+### Example: Complete i18n Plugin
+
+See these plugins for complete examples:
+- `plugins/git_grep.ts` + `plugins/git_grep.i18n.json`
+- `plugins/git_find_file.ts` + `plugins/git_find_file.i18n.json`
+- `plugins/git_gutter.ts` + `plugins/git_gutter.i18n.json`
+
+### Translation Loading
+
+Translations are automatically loaded when your plugin loads. If the user's locale isn't available in your translation file, English (`en`) is used as a fallback.
+
 ## Tips
 
 - **Use TypeScript types**: Reference `types/fresh.d.ts` for autocomplete and type checking
@@ -341,3 +439,4 @@ See the source files in `plugins/lib/` for full API details.
 - **Handle errors**: Wrap async operations in try/catch
 - **Be efficient**: Use batched events like `lines_changed` instead of per-keystroke handlers
 - **Test incrementally**: Use `editor.debug()` to log values during development
+- **Support i18n**: Add `.i18n.json` files to make your plugin accessible to international users

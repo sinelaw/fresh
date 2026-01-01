@@ -478,6 +478,30 @@ Follow these steps to map **Shift + Up** and **Shift + Down** to specific escape
 | **Shift + Up** | Cursor Up | Shift | Send Text | `\033[1;2A` |
 | **Shift + Down** | Cursor Down | Shift | Send Text | `\033[1;2B` |
 
+## Internationalization (i18n)
+
+Fresh supports multiple languages for its user interface. The editor automatically detects your system locale, but you can also set your preferred language manually.
+
+### Supported Languages
+
+See the [`locales/`](../locales/) directory for the full list of supported languages. Each `.json` file represents a supported locale (e.g., `en.json` for English, `es.json` for Spanish, `ja.json` for Japanese).
+
+### Setting Your Language
+
+You can configure your preferred language in `~/.config/fresh/config.json`:
+
+```json
+{
+  "locale": "es"
+}
+```
+
+Or use the Settings UI (`Ctrl+,`) and navigate to the **General** section to select your language.
+
+### Plugin Translations
+
+Plugins can provide their own translations. If a plugin supports i18n, it will automatically use your configured locale. Plugin translations are stored in `.i18n.json` files alongside the plugin.
+
 ## Troubleshooting
 
 ### Terminal Color Support

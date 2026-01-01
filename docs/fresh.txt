@@ -11,99 +11,83 @@
 [1m[92mEasy To Use[0m | [1m[95mTypeScript Extensible[0m | [1m[94mLight And Fast[0m | [1m[93mHuge File Support[0m
 
 [1m[96m╔════════════════════════════════════════════════════════════╗[0m
-[1m[96m║[0m                    [1m[93mFEATURE OVERVIEW[0m                        [1m[96m║[0m
-[1m[96m╚════════════════════════════════════════════════════════════╝[0m
-
-[1m[92m📁 File Management[0m
-[2m────────────────────────────────────────────────────────────[0m
-  [36m•[0m Open, save, save-as, new file, close buffer, revert
-  [36m•[0m File explorer sidebar with create/delete/rename
-  [36m•[0m Tab-based buffer switching with scroll overflow
-  [36m•[0m Auto-revert when files change on disk
-  [36m•[0m Git file finder (fuzzy search tracked files)
-
-[1m[95m✏️  Editing[0m
-[2m────────────────────────────────────────────────────────────[0m
-  [35m•[0m Unlimited undo/redo with full history
-  [35m•[0m Multi-cursor editing (add above/below, next match)
-  [35m•[0m Block/column selection mode
-  [35m•[0m Word, line, and expanding selection
-  [35m•[0m Smart indent/dedent and auto-indentation
-  [35m•[0m Toggle line comments (language-aware)
-  [35m•[0m Clipboard with system integration
-
-[1m[94m🔍 Search & Replace[0m
-[2m────────────────────────────────────────────────────────────[0m
-  [34m•[0m Incremental search with match highlighting
-  [34m•[0m Search within selection
-  [34m•[0m Replace and replace-all
-  [34m•[0m Interactive query-replace (y/n/!/q per match)
-  [34m•[0m Git grep across entire repository
-
-[1m[93m🧭 Navigation[0m
-[2m────────────────────────────────────────────────────────────[0m
-  [33m•[0m Go to line, go to matching bracket
-  [33m•[0m Word and document movement
-  [33m•[0m Position history (back/forward)
-  [33m•[0m Numbered bookmarks (0-9) with jump
-  [33m•[0m Jump to next/previous error
-
-[1m[96m🖥️  Views & Layout[0m
-[2m────────────────────────────────────────────────────────────[0m
-  [36m•[0m Horizontal and vertical split panes
-  [36m•[0m Resizable splits with keyboard/mouse
-  [36m•[0m Toggle line numbers, line wrap, hidden files
-  [36m•[0m ANSI art background images with blend control
-  [36m•[0m Markdown compose/preview mode
-
-[1m[92m🤖 Language Server (LSP)[0m
-[2m────────────────────────────────────────────────────────────[0m
-  [32m•[0m Go to definition, find references
-  [32m•[0m Hover documentation and signature help
-  [32m•[0m Code actions and quick fixes
-  [32m•[0m Rename symbol across project
-  [32m•[0m Real-time diagnostics (errors/warnings)
-  [32m•[0m Autocompletion with snippets
-
-[1m[95m🎯 Productivity[0m
-[2m────────────────────────────────────────────────────────────[0m
-  [35m•[0m Command palette ([33mCtrl+P[0m) for all actions
-  [35m•[0m Full menu bar with mouse/keyboard navigation
-  [35m•[0m Keyboard macros (record/playback, slots 0-9)
-  [35m•[0m Git log viewer with diff display
-  [35m•[0m Diagnostics panel for all errors
-
-[1m[94m🔌 Plugins & Extensibility[0m
-[2m────────────────────────────────────────────────────────────[0m
-  [34m•[0m TypeScript plugins in sandboxed Deno runtime
-  [34m•[0m Color highlighter (hex/rgb colors in code)
-  [34m•[0m TODO/FIXME highlighter
-  [34m•[0m Git merge conflict resolver
-  [34m•[0m Path autocomplete
-  [34m•[0m Customizable keymaps (JSON config)
-
-[1m[96m╔════════════════════════════════════════════════════════════╗[0m
 [1m[96m║[0m                    [1m[93mGETTING STARTED[0m                         [1m[96m║[0m
 [1m[96m╚════════════════════════════════════════════════════════════╝[0m
 
-[1m[92m⭐ Quick Start[0m
+[1m[92m🎯 Discover Everything[0m
 [2m────────────────────────────────────────────────────────────[0m
-  [36m•[0m [1mOpen Files:[0m Press [33mCtrl+O[0m to browse and open any file
-  [36m•[0m [1mCommand Palette:[0m Hit [33mCtrl+P[0m - your Swiss Army knife!
-  [36m•[0m [1mUse the Mouse![0m Scroll bars, menus, tabs all work
-  [36m•[0m [1mMenu Bar:[0m [33mAlt+F[0m for File, [33mAlt+E[0m for Edit, etc.
+  [36m•[0m [1mCommand Palette: [0m  Search and run any command by name
+  [36m•[0m [1mMenu Bar:[0m          Browse all features organized by category
+  [36m•[0m [1mMouse:[0m             Click menus, tabs, scrollbars - it all works
+  [36m•[0m [1mShow Keybindings:[0m  View all shortcuts for your platform
 
-[1m[93m⭐ Pro Tips[0m
+[1m[95m📁 Working with Files[0m
 [2m────────────────────────────────────────────────────────────[0m
-  [33m•[0m [1mMulti-cursor:[0m [33mCtrl+D[0m adds cursor at next match
-  [33m•[0m [1mSearch:[0m [33mCtrl+F[0m finds, [33mF3[0m/[33mShift+F3[0m navigates matches
-  [33m•[0m [1mFile Explorer:[0m [33mCtrl+E[0m toggles sidebar
-  [33m•[0m [1mSplits:[0m Use View menu or command palette
+  [36m•[0m [1mFile Explorer:[0m     Sidebar for browsing project files
+  [36m•[0m [1mTabs:[0m              Switch between open buffers
+  [36m•[0m [1mSplits:[0m            View multiple files side-by-side
+  [36m•[0m [1mGit Find File:[0m     Fuzzy search across git-tracked files
 
-[1m[37m📚 Documentation[0m
+[1m[94m✏️  Editing[0m
 [2m────────────────────────────────────────────────────────────[0m
-  • [32mREADME.md[0m - Quick start guide
-  • [32mdocs/USER_GUIDE.md[0m - Comprehensive documentation
-  • [32mdocs/PLUGIN_DEVELOPMENT.md[0m - Build your own plugins
+  [36m•[0m [1mMulti-cursor:[0m      Edit multiple places simultaneously
+  [36m•[0m [1mSearch & Replace:[0m  Find text with interactive replacement
+  [36m•[0m [1mUndo/Redo:[0m         Full edit history preserved
+  [36m•[0m [1mComments:[0m          Toggle line comments (language-aware)
 
-[2mPress [33mq[0m[2m or [33mEsc[0m[2m to close | [33mShift+F1[0m[2m for keyboard shortcuts[0m
+[1m[96m╔════════════════════════════════════════════════════════════╗[0m
+[1m[96m║[0m                  [1m[93mINTEGRATED TERMINAL[0m                       [1m[96m║[0m
+[1m[96m╚════════════════════════════════════════════════════════════╝[0m
+
+[1m[92m💻 Terminal Modes[0m  [2m(Command Palette → "Open Terminal")[0m
+[2m────────────────────────────────────────────────────────────[0m
+  The terminal has two modes, shown in the status bar:
+
+  [1mTerminal[0m               Keys go directly to the shell
+  [1mTerminal (read only)[0m   Scrollback mode - scroll and search output
+
+  [36m•[0m [1mToggle Mode:[0m       Switch between terminal and scrollback
+  [36m•[0m [1mKeyboard Capture:[0m  Send ALL keys to terminal (UI dims)
+                       - Use this when terminal apps need special keys
+
+[1m[96m╔════════════════════════════════════════════════════════════╗[0m
+[1m[96m║[0m                    [1m[93mLSP & CODE INTEL[0m                        [1m[96m║[0m
+[1m[96m╚════════════════════════════════════════════════════════════╝[0m
+
+[1m[95m🤖 Language Server Features[0m  [2m(requires LSP server installed)[0m
+[2m────────────────────────────────────────────────────────────[0m
+  [36m•[0m [1mGo to Definition:[0m  Jump to where a symbol is defined
+  [36m•[0m [1mFind References:[0m   See all usages of a symbol
+  [36m•[0m [1mHover:[0m             Mouse over symbols for documentation
+  [36m•[0m [1mCode Actions:[0m      Quick fixes and refactorings
+  [36m•[0m [1mRename Symbol:[0m     Rename across the entire project
+  [36m•[0m [1mDiagnostics:[0m       Errors and warnings shown inline
+
+  All LSP commands are available in the Command Palette.
+
+[1m[96m╔════════════════════════════════════════════════════════════╗[0m
+[1m[96m║[0m                    [1m[93mCONFIGURATION[0m                          [1m[96m║[0m
+[1m[96m╚════════════════════════════════════════════════════════════╝[0m
+
+[1m[94m⚙️  Settings[0m
+[2m────────────────────────────────────────────────────────────[0m
+  [36m•[0m [1mSettings UI:[0m       Visual editor for all options
+  [36m•[0m [1mUser config:[0m       [32m~/.config/fresh/config.json[0m
+  [36m•[0m [1mProject config:[0m    [32m.fresh/config.json[0m [2m(overrides user)[0m
+
+[1m[93m🔧 Adding LSP for a Language[0m
+[2m────────────────────────────────────────────────────────────[0m
+  Add to your config.json:
+  [2m{[0m
+  [2m  "lsp": {[0m
+  [2m    "mylang": { "command": "my-lsp-server", "enabled": true }[0m
+  [2m  }[0m
+  [2m}[0m
+
+[1m[37m📚 Learn More[0m
+[2m────────────────────────────────────────────────────────────[0m
+  [32mdocs/USER_GUIDE.md[0m          Comprehensive documentation
+  [32mdocs/PLUGIN_DEVELOPMENT.md[0m  Build your own plugins
+  [32mlocales/[0m                    Available languages (i18n)
+
+[2mPress [1mq[0m[2m or [1mEsc[0m[2m to close  |  Use [1mShow Keybindings[0m[2m command to see shortcuts[0m
