@@ -44,7 +44,7 @@ fn test_file_browser_popup_appears() {
     let screen = harness.screen_to_string();
 
     // Should show the prompt
-    assert!(screen.contains("Open:"), "Prompt should be visible");
+    assert!(screen.contains("Open file:"), "Prompt should be visible");
 
     // Should show navigation shortcuts
     assert!(
@@ -796,9 +796,9 @@ fn test_file_browser_click_updates_prompt() {
         .wait_until(|h| h.screen_to_string().contains("selected_file.txt"))
         .expect("File should be listed");
 
-    // The prompt line should show "Open:" initially
+    // The prompt line should show "Open file:" initially
     let screen = harness.screen_to_string();
-    assert!(screen.contains("Open:"), "Prompt should be visible");
+    assert!(screen.contains("Open file:"), "Prompt should be visible");
 
     // Click on the file entry (it should be in the file list area)
     // The file list starts after navigation (2 rows) and header (1 row), plus border
@@ -877,10 +877,10 @@ fn test_file_browser_prompt_shows_buffer_directory() {
     let prompt_line = harness.get_prompt_line();
     let prompt_line = prompt_line.trim();
 
-    // Check that prompt starts with "Open: " and ends with the expected directory
+    // Check that prompt starts with "Open file: " and ends with the expected directory
     assert!(
-        prompt_line.starts_with("Open: "),
-        "Prompt should start with 'Open: '\nActual: '{}'",
+        prompt_line.starts_with("Open file: "),
+        "Prompt should start with 'Open file: '\nActual: '{}'",
         prompt_line,
     );
     assert!(
