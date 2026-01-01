@@ -326,6 +326,10 @@ impl EditorTestHarness {
             config.active_keybinding_map = fresh::config::KeybindingMapName("default".to_string());
         }
         config.check_for_updates = false; // Disable update checking in tests
+
+        // Initialize i18n with the config's locale before creating the editor
+        // This ensures menu defaults are created with the correct translations
+        fresh::i18n::init_with_config(config.locale.as_deref());
         config.editor.double_click_time_ms = 10; // Fast double-click for faster tests
 
         // Create filesystem backend (slow or default)
