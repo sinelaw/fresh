@@ -55,7 +55,7 @@ impl DropdownState {
             focus: FocusState::Normal,
             original_selected: None,
             scroll_offset: 0,
-            max_visible: 10, // Default, updated during render
+            max_visible: 5, // Conservative default to ensure visibility
         }
     }
 
@@ -75,7 +75,7 @@ impl DropdownState {
             focus: FocusState::Normal,
             original_selected: None,
             scroll_offset: 0,
-            max_visible: 10, // Default, updated during render
+            max_visible: 5, // Conservative default to ensure visibility
         }
     }
 
@@ -549,5 +549,83 @@ mod tests {
         // Selected should be visible
         assert!(state.selected >= state.scroll_offset);
         assert!(state.selected < state.scroll_offset + state.max_visible);
+    }
+
+    #[test]
+    fn test_dropdown_selection_always_visible() {
+        // Simulate locale dropdown with 13 options and small viewport
+        let options: Vec<String> = vec![
+            "Auto-detect",
+            "Czech",
+            "German",
+            "English",
+            "Spanish",
+            "French",
+            "Japanese",
+            "Korean",
+            "Portuguese",
+            "Russian",
+            "Thai",
+            "Ukrainian",
+            "Chinese",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+
+        let mut state = DropdownState::new(options, "Locale");
+        state.max_visible = 5; // Small viewport like in settings
+        state.open = true;
+
+        // Helper to check visibility invariant
+        let check_visible = |state: &DropdownState| {
+            assert!(
+                state.selected >= state.scroll_offset,
+                "selected {} below scroll_offset {}",
+                state.selected,
+                state.scroll_offset
+            );
+            assert!(
+                state.selected < state.scroll_offset + state.max_visible,
+                "selected {} above visible area (scroll_offset={}, max_visible={})",
+                state.selected,
+                state.scroll_offset,
+                state.max_visible
+            );
+        };
+
+        // Navigate all the way down
+        for i in 0..12 {
+            state.select_next();
+            check_visible(&state);
+            assert_eq!(state.selected, i + 1);
+        }
+
+        // Should be at last item
+        assert_eq!(state.selected, 12);
+        check_visible(&state);
+
+        // Navigate all the way back up
+        for i in (0..12).rev() {
+            state.select_prev();
+            check_visible(&state);
+            assert_eq!(state.selected, i);
+        }
+
+        // Should be at first item
+        assert_eq!(state.selected, 0);
+        check_visible(&state);
+
+        // Test Home key behavior
+        state.selected = 8;
+        state.ensure_visible();
+        state.selected = 0;
+        state.ensure_visible();
+        check_visible(&state);
+
+        // Test End key behavior
+        state.selected = 12;
+        state.ensure_visible();
+        check_visible(&state);
     }
 }
