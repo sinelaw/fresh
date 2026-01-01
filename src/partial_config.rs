@@ -515,7 +515,7 @@ impl From<&crate::config::Config> for PartialConfig {
         Self {
             version: Some(cfg.version),
             theme: Some(cfg.theme.clone()),
-            locale: cfg.locale.clone(),
+            locale: cfg.locale.0.clone(),
             check_for_updates: Some(cfg.check_for_updates),
             editor: Some(PartialEditorConfig::from(&cfg.editor)),
             file_explorer: Some(PartialFileExplorerConfig::from(&cfg.file_explorer)),
@@ -582,7 +582,9 @@ impl PartialConfig {
         crate::config::Config {
             version: self.version.unwrap_or(defaults.version),
             theme: self.theme.unwrap_or_else(|| defaults.theme.clone()),
-            locale: self.locale.or_else(|| defaults.locale.clone()),
+            locale: crate::config::LocaleName::from(
+                self.locale.or_else(|| defaults.locale.0.clone()),
+            ),
             check_for_updates: self.check_for_updates.unwrap_or(defaults.check_for_updates),
             editor: self
                 .editor

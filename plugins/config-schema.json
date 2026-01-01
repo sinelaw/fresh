@@ -18,10 +18,7 @@
     },
     "locale": {
       "description": "UI locale (language) for translations\nIf not set, auto-detected from environment (LC_ALL, LC_MESSAGES, LANG)",
-      "type": [
-        "string",
-        "null"
-      ],
+      "$ref": "#/$defs/LocaleOptions",
       "default": null
     },
     "check_for_updates": {
@@ -136,6 +133,28 @@
         "light",
         "high-contrast",
         "nostalgia"
+      ]
+    },
+    "LocaleOptions": {
+      "description": "Available UI locales (languages)",
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        null,
+        "cs",
+        "de",
+        "en",
+        "es",
+        "fr",
+        "ja",
+        "ko",
+        "pt-BR",
+        "ru",
+        "th",
+        "uk",
+        "zh-CN"
       ]
     },
     "EditorConfig": {

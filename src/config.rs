@@ -64,6 +64,52 @@ impl JsonSchema for ThemeName {
     }
 }
 
+/// Newtype for locale name that generates proper JSON Schema with enum options
+/// Wraps Option<String> to allow null for auto-detection from environment
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(transparent)]
+pub struct LocaleName(pub Option<String>);
+
+// Include the generated locale options from build.rs
+include!(concat!(env!("OUT_DIR"), "/locale_options.rs"));
+
+impl LocaleName {
+    /// Available locale options shown in the settings dropdown
+    /// null means auto-detect from environment
+    /// This is auto-generated from the locales/*.json files by build.rs
+    pub const LOCALE_OPTIONS: &'static [Option<&'static str>] = GENERATED_LOCALE_OPTIONS;
+
+    /// Get the inner value as Option<&str>
+    pub fn as_option(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
+
+impl From<Option<String>> for LocaleName {
+    fn from(s: Option<String>) -> Self {
+        Self(s)
+    }
+}
+
+impl From<Option<&str>> for LocaleName {
+    fn from(s: Option<&str>) -> Self {
+        Self(s.map(|s| s.to_string()))
+    }
+}
+
+impl JsonSchema for LocaleName {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("LocaleOptions")
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "UI locale (language). Use null for auto-detection from environment.",
+            "enum": Self::LOCALE_OPTIONS
+        })
+    }
+}
+
 /// Cursor style options for the terminal cursor
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -278,7 +324,7 @@ pub struct Config {
     /// UI locale (language) for translations
     /// If not set, auto-detected from environment (LC_ALL, LC_MESSAGES, LANG)
     #[serde(default)]
-    pub locale: Option<String>,
+    pub locale: LocaleName,
 
     /// Check for new versions on quit (default: true)
     #[serde(default = "default_true")]
@@ -1055,7 +1101,7 @@ impl Default for Config {
         Self {
             version: 0,
             theme: default_theme_name(),
-            locale: None,
+            locale: LocaleName::default(),
             check_for_updates: true,
             editor: EditorConfig::default(),
             file_explorer: FileExplorerConfig::default(),

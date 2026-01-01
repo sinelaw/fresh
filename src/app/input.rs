@@ -2210,7 +2210,8 @@ impl Editor {
             crate::i18n::set_locale(locale_name);
 
             // Update the config in memory
-            self.config.locale = Some(locale_name.to_string());
+            self.config.locale =
+                crate::config::LocaleName(Some(locale_name.to_string()));
 
             // Regenerate menus with the new locale
             self.menus = crate::config::MenuConfig::translated();
