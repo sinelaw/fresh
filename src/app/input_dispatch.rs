@@ -66,8 +66,7 @@ impl Editor {
         // Menu is next
         if self.menu_state.active_menu.is_some() {
             let all_menus: Vec<crate::config::Menu> = self
-                .config
-                .menu
+                .menus
                 .menus
                 .iter()
                 .chain(self.menu_state.plugin_menus.iter())

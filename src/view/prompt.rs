@@ -68,6 +68,8 @@ pub enum PromptType {
     SelectKeybindingMap,
     /// Select a cursor style (select from list)
     SelectCursorStyle,
+    /// Select a UI locale/language (select from list)
+    SelectLocale,
     /// Select a theme for copy with formatting
     CopyWithFormattingTheme,
     /// Confirm reverting a modified file

@@ -83,6 +83,29 @@ pub fn available_locales() -> Vec<&'static str> {
     rust_i18n::available_locales!()
 }
 
+/// Get the display name for a locale code.
+///
+/// Returns a tuple of (English name, Native name) for display in UI.
+/// For example: ("German", "Deutsch") for "de".
+/// Returns None if the locale is not recognized.
+pub fn locale_display_name(locale: &str) -> Option<(&'static str, &'static str)> {
+    match locale {
+        "cs" => Some(("Czech", "Čeština")),
+        "de" => Some(("German", "Deutsch")),
+        "en" => Some(("English", "English")),
+        "es" => Some(("Spanish", "Español")),
+        "fr" => Some(("French", "Français")),
+        "ja" => Some(("Japanese", "日本語")),
+        "ko" => Some(("Korean", "한국어")),
+        "pt-BR" => Some(("Portuguese (Brazil)", "Português (Brasil)")),
+        "ru" => Some(("Russian", "Русский")),
+        "th" => Some(("Thai", "ไทย")),
+        "uk" => Some(("Ukrainian", "Українська")),
+        "zh-CN" => Some(("Chinese (Simplified)", "简体中文")),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

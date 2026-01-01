@@ -126,6 +126,7 @@ mod tests {
     fn create_test_menus() -> Vec<Menu> {
         vec![
             Menu {
+                id: None,
                 label: "File".to_string(),
                 items: vec![
                     MenuItem::Action {
@@ -146,6 +147,7 @@ mod tests {
                 ],
             },
             Menu {
+                id: None,
                 label: "Edit".to_string(),
                 items: vec![
                     MenuItem::Action {

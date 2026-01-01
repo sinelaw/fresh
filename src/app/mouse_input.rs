@@ -242,8 +242,7 @@ impl Editor {
             // If hovering over a menu dropdown item, check if it's a submenu and open it
             if let Some(HoverTarget::MenuDropdownItem(_, item_idx)) = new_target.clone() {
                 let all_menus: Vec<crate::config::Menu> = self
-                    .config
-                    .menu
+                    .menus
                     .menus
                     .iter()
                     .chain(self.menu_state.plugin_menus.iter())
@@ -322,8 +321,7 @@ impl Editor {
                 }
 
                 let all_menus: Vec<crate::config::Menu> = self
-                    .config
-                    .menu
+                    .menus
                     .menus
                     .iter()
                     .chain(self.menu_state.plugin_menus.iter())
@@ -582,8 +580,7 @@ impl Editor {
         // Check menu bar (row 0)
         if row == 0 {
             let all_menus: Vec<crate::config::Menu> = self
-                .config
-                .menu
+                .menus
                 .menus
                 .iter()
                 .chain(self.menu_state.plugin_menus.iter())
@@ -598,8 +595,7 @@ impl Editor {
         // Check menu dropdown items if a menu is open (including submenus)
         if let Some(active_idx) = self.menu_state.active_menu {
             let all_menus: Vec<crate::config::Menu> = self
-                .config
-                .menu
+                .menus
                 .menus
                 .iter()
                 .chain(self.menu_state.plugin_menus.iter())
@@ -925,8 +921,7 @@ impl Editor {
         // Check if click is on menu bar (row 0)
         if row == 0 {
             let all_menus: Vec<crate::config::Menu> = self
-                .config
-                .menu
+                .menus
                 .menus
                 .iter()
                 .chain(self.menu_state.plugin_menus.iter())
@@ -952,8 +947,7 @@ impl Editor {
         // Check if click is on an open menu dropdown
         if let Some(active_idx) = self.menu_state.active_menu {
             let all_menus: Vec<crate::config::Menu> = self
-                .config
-                .menu
+                .menus
                 .menus
                 .iter()
                 .chain(self.menu_state.plugin_menus.iter())

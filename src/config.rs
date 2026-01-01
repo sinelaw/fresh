@@ -1,5 +1,6 @@
 use crate::types::{context_keys, LspServerConfig, ProcessLimits};
 
+use rust_i18n::t;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -274,6 +275,11 @@ pub struct Config {
     #[serde(default = "default_theme_name")]
     pub theme: ThemeName,
 
+    /// UI locale (language) for translations
+    /// If not set, auto-detected from environment (LC_ALL, LC_MESSAGES, LANG)
+    #[serde(default)]
+    pub locale: Option<String>,
+
     /// Check for new versions on quit (default: true)
     #[serde(default = "default_true")]
     pub check_for_updates: bool,
@@ -314,10 +320,6 @@ pub struct Config {
     /// LSP server configurations by language
     #[serde(default)]
     pub lsp: HashMap<String, LspServerConfig>,
-
-    /// Menu bar configuration
-    #[serde(default)]
-    pub menu: MenuConfig,
 
     /// Warning notification settings
     #[serde(default)]
@@ -949,13 +951,24 @@ pub struct MenuConfig {
 /// A top-level menu in the menu bar
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Menu {
-    /// Display label for the menu (e.g., "File", "Edit")
+    /// Internal identifier for the menu (used for keybinding matching).
+    /// This should NOT be translated - use English names like "File", "Edit".
+    /// If not set, the label is used for matching (for backward compatibility).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Display label for the menu (can be translated)
     pub label: String,
     /// Menu items (actions, separators, or submenus)
     pub items: Vec<MenuItem>,
 }
 
 impl Menu {
+    /// Get the identifier for matching (id if set, otherwise label).
+    /// This is used for keybinding matching and should be stable across translations.
+    pub fn match_id(&self) -> &str {
+        self.id.as_deref().unwrap_or(&self.label)
+    }
+
     /// Expand all DynamicSubmenu items in this menu to regular Submenu items
     /// This should be called before the menu is used for rendering/navigation
     pub fn expand_dynamic_items(&mut self) {
@@ -1042,6 +1055,7 @@ impl Default for Config {
         Self {
             version: 0,
             theme: default_theme_name(),
+            locale: None,
             check_for_updates: true,
             editor: EditorConfig::default(),
             file_explorer: FileExplorerConfig::default(),
@@ -1052,7 +1066,6 @@ impl Default for Config {
             active_keybinding_map: default_keybinding_map_name(),
             languages: Self::default_languages(),
             lsp: Self::default_lsp_config(),
-            menu: MenuConfig::default(),
             warnings: WarningsConfig::default(),
         }
     }
@@ -1060,9 +1073,677 @@ impl Default for Config {
 
 impl Default for MenuConfig {
     fn default() -> Self {
+        Self { menus: vec![] }
+    }
+}
+
+impl MenuConfig {
+    /// Create a MenuConfig with translated menus using the current locale
+    pub fn translated() -> Self {
         Self {
-            menus: Config::default_menus(),
+            menus: Self::translated_menus(),
         }
+    }
+
+    /// Create default menu bar configuration with translated labels
+    fn translated_menus() -> Vec<Menu> {
+        vec![
+            // File menu
+            Menu {
+                id: Some("File".to_string()),
+                label: t!("menu.file").to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: t!("menu.file.new_file").to_string(),
+                        action: "new".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.file.open_file").to_string(),
+                        action: "open".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.file.save").to_string(),
+                        action: "save".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.file.save_as").to_string(),
+                        action: "save_as".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.file.revert").to_string(),
+                        action: "revert".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.file.close_buffer").to_string(),
+                        action: "close".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.file.switch_project").to_string(),
+                        action: "switch_project".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.file.quit").to_string(),
+                        action: "quit".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                ],
+            },
+            // Edit menu
+            Menu {
+                id: Some("Edit".to_string()),
+                label: t!("menu.edit").to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: t!("menu.edit.undo").to_string(),
+                        action: "undo".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.redo").to_string(),
+                        action: "redo".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.edit.cut").to_string(),
+                        action: "cut".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_SELECTION.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.copy").to_string(),
+                        action: "copy".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_SELECTION.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::DynamicSubmenu {
+                        label: t!("menu.edit.copy_with_formatting").to_string(),
+                        source: "copy_with_theme".to_string(),
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.paste").to_string(),
+                        action: "paste".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.edit.select_all").to_string(),
+                        action: "select_all".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.edit.find").to_string(),
+                        action: "search".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.find_in_selection").to_string(),
+                        action: "find_in_selection".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_SELECTION.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.find_next").to_string(),
+                        action: "find_next".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.find_previous").to_string(),
+                        action: "find_previous".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.replace").to_string(),
+                        action: "query_replace".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.edit.delete_line").to_string(),
+                        action: "delete_line".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.format_buffer").to_string(),
+                        action: "format_buffer".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FORMATTER_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                ],
+            },
+            // View menu
+            Menu {
+                id: Some("View".to_string()),
+                label: t!("menu.view").to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: t!("menu.view.file_explorer").to_string(),
+                        action: "toggle_file_explorer".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some(context_keys::FILE_EXPLORER.to_string()),
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.view.line_numbers").to_string(),
+                        action: "toggle_line_numbers".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some(context_keys::LINE_NUMBERS.to_string()),
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.line_wrap").to_string(),
+                        action: "toggle_line_wrap".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some(context_keys::LINE_WRAP.to_string()),
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.mouse_support").to_string(),
+                        action: "toggle_mouse_capture".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some(context_keys::MOUSE_CAPTURE.to_string()),
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.view.set_background").to_string(),
+                        action: "set_background".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.set_background_blend").to_string(),
+                        action: "set_background_blend".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.set_compose_width").to_string(),
+                        action: "set_compose_width".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.view.select_theme").to_string(),
+                        action: "select_theme".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.select_locale").to_string(),
+                        action: "select_locale".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.settings").to_string(),
+                        action: "open_settings".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.view.split_horizontal").to_string(),
+                        action: "split_horizontal".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.split_vertical").to_string(),
+                        action: "split_vertical".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.close_split").to_string(),
+                        action: "close_split".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.focus_next_split").to_string(),
+                        action: "next_split".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.focus_prev_split").to_string(),
+                        action: "prev_split".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.toggle_maximize_split").to_string(),
+                        action: "toggle_maximize_split".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Submenu {
+                        label: t!("menu.terminal").to_string(),
+                        items: vec![
+                            MenuItem::Action {
+                                label: t!("menu.terminal.open").to_string(),
+                                action: "open_terminal".to_string(),
+                                args: HashMap::new(),
+                                when: None,
+                                checkbox: None,
+                            },
+                            MenuItem::Action {
+                                label: t!("menu.terminal.close").to_string(),
+                                action: "close_terminal".to_string(),
+                                args: HashMap::new(),
+                                when: None,
+                                checkbox: None,
+                            },
+                            MenuItem::Separator { separator: true },
+                            MenuItem::Action {
+                                label: t!("menu.terminal.toggle_keyboard_capture").to_string(),
+                                action: "toggle_keyboard_capture".to_string(),
+                                args: HashMap::new(),
+                                when: None,
+                                checkbox: None,
+                            },
+                        ],
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Submenu {
+                        label: t!("menu.view.keybinding_style").to_string(),
+                        items: vec![
+                            MenuItem::Action {
+                                label: t!("menu.view.keybinding_default").to_string(),
+                                action: "switch_keybinding_map".to_string(),
+                                args: {
+                                    let mut map = HashMap::new();
+                                    map.insert("map".to_string(), serde_json::json!("default"));
+                                    map
+                                },
+                                when: None,
+                                checkbox: None,
+                            },
+                            MenuItem::Action {
+                                label: t!("menu.view.keybinding_emacs").to_string(),
+                                action: "switch_keybinding_map".to_string(),
+                                args: {
+                                    let mut map = HashMap::new();
+                                    map.insert("map".to_string(), serde_json::json!("emacs"));
+                                    map
+                                },
+                                when: None,
+                                checkbox: None,
+                            },
+                            MenuItem::Action {
+                                label: t!("menu.view.keybinding_vscode").to_string(),
+                                action: "switch_keybinding_map".to_string(),
+                                args: {
+                                    let mut map = HashMap::new();
+                                    map.insert("map".to_string(), serde_json::json!("vscode"));
+                                    map
+                                },
+                                when: None,
+                                checkbox: None,
+                            },
+                        ],
+                    },
+                ],
+            },
+            // Selection menu
+            Menu {
+                id: Some("Selection".to_string()),
+                label: t!("menu.selection").to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: t!("menu.selection.select_all").to_string(),
+                        action: "select_all".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.selection.select_word").to_string(),
+                        action: "select_word".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.selection.select_line").to_string(),
+                        action: "select_line".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.selection.expand_selection").to_string(),
+                        action: "expand_selection".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.selection.add_cursor_above").to_string(),
+                        action: "add_cursor_above".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.selection.add_cursor_below").to_string(),
+                        action: "add_cursor_below".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.selection.add_cursor_next_match").to_string(),
+                        action: "add_cursor_next_match".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.selection.remove_secondary_cursors").to_string(),
+                        action: "remove_secondary_cursors".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                ],
+            },
+            // Go menu
+            Menu {
+                id: Some("Go".to_string()),
+                label: t!("menu.go").to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: t!("menu.go.goto_line").to_string(),
+                        action: "goto_line".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.go.goto_definition").to_string(),
+                        action: "lsp_goto_definition".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.go.find_references").to_string(),
+                        action: "lsp_references".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.go.next_buffer").to_string(),
+                        action: "next_buffer".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.go.prev_buffer").to_string(),
+                        action: "prev_buffer".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.go.command_palette").to_string(),
+                        action: "command_palette".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                ],
+            },
+            // LSP menu
+            Menu {
+                id: Some("LSP".to_string()),
+                label: t!("menu.lsp").to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: t!("menu.lsp.show_hover").to_string(),
+                        action: "lsp_hover".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.goto_definition").to_string(),
+                        action: "lsp_goto_definition".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.find_references").to_string(),
+                        action: "lsp_references".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.rename_symbol").to_string(),
+                        action: "lsp_rename".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.show_completions").to_string(),
+                        action: "lsp_completion".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.show_signature").to_string(),
+                        action: "lsp_signature_help".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.code_actions").to_string(),
+                        action: "lsp_code_actions".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.toggle_inlay_hints").to_string(),
+                        action: "toggle_inlay_hints".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: Some(context_keys::INLAY_HINTS.to_string()),
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.toggle_mouse_hover").to_string(),
+                        action: "toggle_mouse_hover".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some(context_keys::MOUSE_HOVER.to_string()),
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.restart_server").to_string(),
+                        action: "lsp_restart".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.stop_server").to_string(),
+                        action: "lsp_stop".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                ],
+            },
+            // Explorer menu
+            Menu {
+                id: Some("Explorer".to_string()),
+                label: t!("menu.explorer").to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: t!("menu.explorer.new_file").to_string(),
+                        action: "file_explorer_new_file".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.new_folder").to_string(),
+                        action: "file_explorer_new_directory".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.open").to_string(),
+                        action: "file_explorer_open".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.rename").to_string(),
+                        action: "file_explorer_rename".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.delete").to_string(),
+                        action: "file_explorer_delete".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.refresh").to_string(),
+                        action: "file_explorer_refresh".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.show_hidden").to_string(),
+                        action: "file_explorer_toggle_hidden".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER.to_string()),
+                        checkbox: Some(context_keys::FILE_EXPLORER_SHOW_HIDDEN.to_string()),
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.explorer.show_gitignored").to_string(),
+                        action: "file_explorer_toggle_gitignored".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::FILE_EXPLORER.to_string()),
+                        checkbox: Some(context_keys::FILE_EXPLORER_SHOW_GITIGNORED.to_string()),
+                    },
+                ],
+            },
+            // Help menu
+            Menu {
+                id: Some("Help".to_string()),
+                label: t!("menu.help").to_string(),
+                items: vec![
+                    MenuItem::Label {
+                        info: format!("Fresh v{}", env!("CARGO_PKG_VERSION")),
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.help.show_manual").to_string(),
+                        action: "show_help".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.help.keyboard_shortcuts").to_string(),
+                        action: "keyboard_shortcuts".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                ],
+            },
+        ]
     }
 }
 
@@ -1713,653 +2394,6 @@ impl Config {
         );
 
         lsp
-    }
-
-    /// Create default menu bar configuration
-    fn default_menus() -> Vec<Menu> {
-        vec![
-            // File menu
-            Menu {
-                label: "File".to_string(),
-                items: vec![
-                    MenuItem::Action {
-                        label: "New File".to_string(),
-                        action: "new".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Open File...".to_string(),
-                        action: "open".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Save".to_string(),
-                        action: "save".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Save As...".to_string(),
-                        action: "save_as".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Revert".to_string(),
-                        action: "revert".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Close Buffer".to_string(),
-                        action: "close".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Switch Project...".to_string(),
-                        action: "switch_project".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Quit".to_string(),
-                        action: "quit".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                ],
-            },
-            // Edit menu
-            Menu {
-                label: "Edit".to_string(),
-                items: vec![
-                    MenuItem::Action {
-                        label: "Undo".to_string(),
-                        action: "undo".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Redo".to_string(),
-                        action: "redo".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Cut".to_string(),
-                        action: "cut".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::HAS_SELECTION.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Copy".to_string(),
-                        action: "copy".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::HAS_SELECTION.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::DynamicSubmenu {
-                        label: "Copy with Formatting".to_string(),
-                        source: "copy_with_theme".to_string(),
-                    },
-                    MenuItem::Action {
-                        label: "Paste".to_string(),
-                        action: "paste".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Select All".to_string(),
-                        action: "select_all".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Find...".to_string(),
-                        action: "search".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Find in Selection".to_string(),
-                        action: "find_in_selection".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::HAS_SELECTION.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Find Next".to_string(),
-                        action: "find_next".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Find Previous".to_string(),
-                        action: "find_previous".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Replace...".to_string(),
-                        action: "query_replace".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Delete Line".to_string(),
-                        action: "delete_line".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Format Buffer".to_string(),
-                        action: "format_buffer".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::FORMATTER_AVAILABLE.to_string()),
-                        checkbox: None,
-                    },
-                ],
-            },
-            // View menu
-            Menu {
-                label: "View".to_string(),
-                items: vec![
-                    MenuItem::Action {
-                        label: "File Explorer".to_string(),
-                        action: "toggle_file_explorer".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: Some(context_keys::FILE_EXPLORER.to_string()),
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Line Numbers".to_string(),
-                        action: "toggle_line_numbers".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: Some(context_keys::LINE_NUMBERS.to_string()),
-                    },
-                    MenuItem::Action {
-                        label: "Line Wrap".to_string(),
-                        action: "toggle_line_wrap".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: Some(context_keys::LINE_WRAP.to_string()),
-                    },
-                    MenuItem::Action {
-                        label: "Mouse Support".to_string(),
-                        action: "toggle_mouse_capture".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: Some(context_keys::MOUSE_CAPTURE.to_string()),
-                    },
-                    // Note: Compose Mode removed from menu - markdown_compose plugin provides this
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Set Background...".to_string(),
-                        action: "set_background".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Set Background Blend...".to_string(),
-                        action: "set_background_blend".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Set Compose Width...".to_string(),
-                        action: "set_compose_width".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Select Theme...".to_string(),
-                        action: "select_theme".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Settings...".to_string(),
-                        action: "open_settings".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Split Horizontal".to_string(),
-                        action: "split_horizontal".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Split Vertical".to_string(),
-                        action: "split_vertical".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Close Split".to_string(),
-                        action: "close_split".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Focus Next Split".to_string(),
-                        action: "next_split".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Focus Previous Split".to_string(),
-                        action: "prev_split".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Toggle Maximize Split".to_string(),
-                        action: "toggle_maximize_split".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Submenu {
-                        label: "Terminal".to_string(),
-                        items: vec![
-                            MenuItem::Action {
-                                label: "Open Terminal".to_string(),
-                                action: "open_terminal".to_string(),
-                                args: HashMap::new(),
-                                when: None,
-                                checkbox: None,
-                            },
-                            MenuItem::Action {
-                                label: "Close Terminal".to_string(),
-                                action: "close_terminal".to_string(),
-                                args: HashMap::new(),
-                                when: None,
-                                checkbox: None,
-                            },
-                            MenuItem::Separator { separator: true },
-                            MenuItem::Action {
-                                label: "Toggle Keyboard Capture".to_string(),
-                                action: "toggle_keyboard_capture".to_string(),
-                                args: HashMap::new(),
-                                when: None,
-                                checkbox: None,
-                            },
-                        ],
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Submenu {
-                        label: "Keybinding Style".to_string(),
-                        items: vec![
-                            MenuItem::Action {
-                                label: "Default".to_string(),
-                                action: "switch_keybinding_map".to_string(),
-                                args: {
-                                    let mut map = HashMap::new();
-                                    map.insert("map".to_string(), serde_json::json!("default"));
-                                    map
-                                },
-                                when: None,
-                                checkbox: None,
-                            },
-                            MenuItem::Action {
-                                label: "Emacs".to_string(),
-                                action: "switch_keybinding_map".to_string(),
-                                args: {
-                                    let mut map = HashMap::new();
-                                    map.insert("map".to_string(), serde_json::json!("emacs"));
-                                    map
-                                },
-                                when: None,
-                                checkbox: None,
-                            },
-                            MenuItem::Action {
-                                label: "VSCode".to_string(),
-                                action: "switch_keybinding_map".to_string(),
-                                args: {
-                                    let mut map = HashMap::new();
-                                    map.insert("map".to_string(), serde_json::json!("vscode"));
-                                    map
-                                },
-                                when: None,
-                                checkbox: None,
-                            },
-                        ],
-                    },
-                ],
-            },
-            // Selection menu
-            Menu {
-                label: "Selection".to_string(),
-                items: vec![
-                    MenuItem::Action {
-                        label: "Select All".to_string(),
-                        action: "select_all".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Select Word".to_string(),
-                        action: "select_word".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Select Line".to_string(),
-                        action: "select_line".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Expand Selection".to_string(),
-                        action: "expand_selection".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Add Cursor Above".to_string(),
-                        action: "add_cursor_above".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Add Cursor Below".to_string(),
-                        action: "add_cursor_below".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Add Cursor at Next Match".to_string(),
-                        action: "add_cursor_next_match".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Remove Secondary Cursors".to_string(),
-                        action: "remove_secondary_cursors".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                ],
-            },
-            // Go menu
-            Menu {
-                label: "Go".to_string(),
-                items: vec![
-                    MenuItem::Action {
-                        label: "Go to Line...".to_string(),
-                        action: "goto_line".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Go to Definition".to_string(),
-                        action: "lsp_goto_definition".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Find References".to_string(),
-                        action: "lsp_references".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Next Buffer".to_string(),
-                        action: "next_buffer".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Previous Buffer".to_string(),
-                        action: "prev_buffer".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Command Palette...".to_string(),
-                        action: "command_palette".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                ],
-            },
-            // LSP menu (Language Server Protocol operations)
-            Menu {
-                label: "LSP".to_string(),
-                items: vec![
-                    MenuItem::Action {
-                        label: "Show Hover Info".to_string(),
-                        action: "lsp_hover".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Go to Definition".to_string(),
-                        action: "lsp_goto_definition".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Find References".to_string(),
-                        action: "lsp_references".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Rename Symbol".to_string(),
-                        action: "lsp_rename".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Show Completions".to_string(),
-                        action: "lsp_completion".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Show Signature Help".to_string(),
-                        action: "lsp_signature_help".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Code Actions".to_string(),
-                        action: "lsp_code_actions".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Toggle Inlay Hints".to_string(),
-                        action: "toggle_inlay_hints".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
-                        checkbox: Some(context_keys::INLAY_HINTS.to_string()),
-                    },
-                    MenuItem::Action {
-                        label: "Toggle Mouse Hover".to_string(),
-                        action: "toggle_mouse_hover".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: Some(context_keys::MOUSE_HOVER.to_string()),
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Restart Server".to_string(),
-                        action: "lsp_restart".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Stop Server".to_string(),
-                        action: "lsp_stop".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                ],
-            },
-            // Explorer menu (file explorer operations)
-            Menu {
-                label: "Explorer".to_string(),
-                items: vec![
-                    MenuItem::Action {
-                        label: "New File".to_string(),
-                        action: "file_explorer_new_file".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "New Folder".to_string(),
-                        action: "file_explorer_new_directory".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Open".to_string(),
-                        action: "file_explorer_open".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Rename".to_string(),
-                        action: "file_explorer_rename".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Delete".to_string(),
-                        action: "file_explorer_delete".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Refresh".to_string(),
-                        action: "file_explorer_refresh".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::FILE_EXPLORER_FOCUSED.to_string()),
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Show Hidden Files".to_string(),
-                        action: "file_explorer_toggle_hidden".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::FILE_EXPLORER.to_string()),
-                        checkbox: Some(context_keys::FILE_EXPLORER_SHOW_HIDDEN.to_string()),
-                    },
-                    MenuItem::Action {
-                        label: "Show Gitignored Files".to_string(),
-                        action: "file_explorer_toggle_gitignored".to_string(),
-                        args: HashMap::new(),
-                        when: Some(context_keys::FILE_EXPLORER.to_string()),
-                        checkbox: Some(context_keys::FILE_EXPLORER_SHOW_GITIGNORED.to_string()),
-                    },
-                ],
-            },
-            // Help menu
-            Menu {
-                label: "Help".to_string(),
-                items: vec![
-                    MenuItem::Label {
-                        info: format!("Fresh v{}", env!("CARGO_PKG_VERSION")),
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Show Fresh Manual".to_string(),
-                        action: "show_help".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Keyboard Shortcuts".to_string(),
-                        action: "keyboard_shortcuts".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                ],
-            },
-        ]
     }
 
     /// Validate the configuration

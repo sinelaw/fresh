@@ -8,6 +8,7 @@
 //! - Navigate back/forward in position history
 //! - Buffer state persistence
 
+use rust_i18n::t;
 use std::io;
 use std::path::Path;
 
@@ -1080,8 +1081,18 @@ impl Editor {
             if self.active_state().buffer.is_modified() {
                 // Buffer has unsaved changes - prompt for confirmation
                 let name = self.get_buffer_display_name(buffer_id);
+                let save_key = t!("prompt.key.save").to_string();
+                let discard_key = t!("prompt.key.discard").to_string();
+                let cancel_key = t!("prompt.key.cancel").to_string();
                 self.start_prompt(
-                    format!("'{}' modified. (s)ave, (d)iscard, (C)ancel? ", name),
+                    t!(
+                        "prompt.buffer_modified",
+                        name = name,
+                        save_key = save_key,
+                        discard_key = discard_key,
+                        cancel_key = cancel_key
+                    )
+                    .to_string(),
                     PromptType::ConfirmCloseBuffer { buffer_id },
                 );
             } else if let Err(e) = self.close_buffer(buffer_id) {
@@ -1151,8 +1162,18 @@ impl Editor {
                 if state.buffer.is_modified() {
                     // Buffer has unsaved changes - prompt for confirmation
                     let name = self.get_buffer_display_name(buffer_id);
+                    let save_key = t!("prompt.key.save").to_string();
+                    let discard_key = t!("prompt.key.discard").to_string();
+                    let cancel_key = t!("prompt.key.cancel").to_string();
                     self.start_prompt(
-                        format!("'{}' modified. (s)ave, (d)iscard, (C)ancel? ", name),
+                        t!(
+                            "prompt.buffer_modified",
+                            name = name,
+                            save_key = save_key,
+                            discard_key = discard_key,
+                            cancel_key = cancel_key
+                        )
+                        .to_string(),
                         PromptType::ConfirmCloseBuffer { buffer_id },
                     );
                     return false;

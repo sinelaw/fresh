@@ -32,6 +32,7 @@ mod undo_actions;
 mod view_actions;
 pub mod warning_domains;
 
+use rust_i18n::t;
 use std::path::Component;
 
 /// Normalize a path by resolving `.` and `..` components without requiring the path to exist.
@@ -260,6 +261,9 @@ pub struct Editor {
 
     /// Menu state (active menu, highlighted item)
     menu_state: crate::view::ui::MenuState,
+
+    /// Menu configuration (built-in menus with i18n support)
+    menus: crate::config::MenuConfig,
 
     /// Working directory for file explorer (set at initialization)
     working_dir: PathBuf,
@@ -845,6 +849,7 @@ impl Editor {
             gpm_active: false,
             key_context: KeyContext::Normal,
             menu_state: crate::view::ui::MenuState::new(),
+            menus: crate::config::MenuConfig::translated(),
             working_dir,
             position_history: PositionHistory::new(),
             in_navigation: false,
@@ -2246,14 +2251,24 @@ impl Editor {
         // Check for unsaved buffers
         let modified_count = self.count_modified_buffers();
         if modified_count > 0 {
-            // Prompt user for confirmation
+            // Prompt user for confirmation with translated keys
+            let discard_key = t!("prompt.key.discard").to_string();
+            let cancel_key = t!("prompt.key.cancel").to_string();
             let msg = if modified_count == 1 {
-                "1 buffer has unsaved changes. (d)iscard and quit, (C)ancel? ".to_string()
-            } else {
-                format!(
-                    "{} buffers have unsaved changes. (d)iscard and quit, (C)ancel? ",
-                    modified_count
+                t!(
+                    "prompt.quit_modified_one",
+                    discard_key = discard_key,
+                    cancel_key = cancel_key
                 )
+                .to_string()
+            } else {
+                t!(
+                    "prompt.quit_modified_many",
+                    count = modified_count,
+                    discard_key = discard_key,
+                    cancel_key = cancel_key
+                )
+                .to_string()
             };
             self.start_prompt(msg, PromptType::ConfirmQuitWithModified);
         } else {
@@ -2601,7 +2616,7 @@ impl Editor {
 
         self.prompt = None;
         self.pending_search_range = None;
-        self.status_message = Some("Canceled".to_string());
+        self.status_message = Some(t!("search.cancelled").to_string());
     }
 
     /// Get the confirmed input and prompt type, consuming the prompt
@@ -2620,6 +2635,7 @@ impl Editor {
                     | PromptType::SaveFileAs
                     | PromptType::StopLspServer
                     | PromptType::SelectTheme
+                    | PromptType::SelectLocale
                     | PromptType::SwitchToTab
             ) {
                 // Use the selected suggestion if any
@@ -2803,19 +2819,34 @@ impl Editor {
                     },
                 );
             }
-            PromptType::SwitchToTab | PromptType::SelectTheme | PromptType::StopLspServer => {
+            PromptType::SwitchToTab
+            | PromptType::SelectTheme
+            | PromptType::SelectLocale
+            | PromptType::StopLspServer => {
                 // Filter suggestions using fuzzy matching
-                use crate::input::fuzzy::fuzzy_match;
+                use crate::input::fuzzy::{fuzzy_match, FuzzyMatch};
 
                 if let Some(prompt) = &mut self.prompt {
+                    let match_description = matches!(prompt.prompt_type, PromptType::SelectLocale);
+
                     if let Some(original) = &prompt.original_suggestions {
                         // Apply fuzzy filtering with scoring
                         let mut filtered: Vec<(crate::input::commands::Suggestion, i32)> = original
                             .iter()
                             .filter_map(|s| {
-                                let result = fuzzy_match(&input, &s.text);
-                                if result.matched {
-                                    Some((s.clone(), result.score))
+                                let text_result = fuzzy_match(&input, &s.text);
+                                // For locale selection, also match on description (language names)
+                                let desc_result = if match_description {
+                                    s.description
+                                        .as_ref()
+                                        .map(|d| fuzzy_match(&input, d))
+                                        .unwrap_or_else(FuzzyMatch::no_match)
+                                } else {
+                                    FuzzyMatch::no_match()
+                                };
+                                // Use the best score from either text or description match
+                                if text_result.matched || desc_result.matched {
+                                    Some((s.clone(), text_result.score.max(desc_result.score)))
                                 } else {
                                     None
                                 }

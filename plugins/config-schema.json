@@ -16,6 +16,14 @@
       "$ref": "#/$defs/ThemeOptions",
       "default": "high-contrast"
     },
+    "locale": {
+      "description": "UI locale (language) for translations\nIf not set, auto-detected from environment (LC_ALL, LC_MESSAGES, LANG)",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
     "check_for_updates": {
       "description": "Check for new versions on quit (default: true)",
       "type": "boolean",
@@ -110,10 +118,6 @@
         "$ref": "#/$defs/LspServerConfig"
       },
       "default": {}
-    },
-    "menu": {
-      "description": "Menu bar configuration",
-      "$ref": "#/$defs/MenuConfig"
     },
     "warnings": {
       "description": "Warning notification settings",
@@ -728,141 +732,6 @@
           "default": true
         }
       }
-    },
-    "MenuConfig": {
-      "description": "Menu bar configuration",
-      "type": "object",
-      "properties": {
-        "menus": {
-          "description": "List of top-level menus in the menu bar",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Menu"
-          },
-          "default": []
-        }
-      }
-    },
-    "Menu": {
-      "description": "A top-level menu in the menu bar",
-      "type": "object",
-      "properties": {
-        "label": {
-          "description": "Display label for the menu (e.g., \"File\", \"Edit\")",
-          "type": "string"
-        },
-        "items": {
-          "description": "Menu items (actions, separators, or submenus)",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/MenuItem"
-          }
-        }
-      },
-      "required": [
-        "label",
-        "items"
-      ]
-    },
-    "MenuItem": {
-      "description": "A menu item (action, separator, or submenu)",
-      "anyOf": [
-        {
-          "description": "A separator line",
-          "type": "object",
-          "properties": {
-            "separator": {
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "separator"
-          ]
-        },
-        {
-          "description": "An action item",
-          "type": "object",
-          "properties": {
-            "label": {
-              "type": "string"
-            },
-            "action": {
-              "type": "string"
-            },
-            "args": {
-              "type": "object",
-              "additionalProperties": true,
-              "default": {}
-            },
-            "when": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "default": null
-            },
-            "checkbox": {
-              "description": "Checkbox state condition (e.g., \"line_numbers\", \"line_wrap\")",
-              "type": [
-                "string",
-                "null"
-              ],
-              "default": null
-            }
-          },
-          "required": [
-            "label",
-            "action"
-          ]
-        },
-        {
-          "description": "A submenu (for future extensibility)",
-          "type": "object",
-          "properties": {
-            "label": {
-              "type": "string"
-            },
-            "items": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/MenuItem"
-              }
-            }
-          },
-          "required": [
-            "label",
-            "items"
-          ]
-        },
-        {
-          "description": "A dynamic submenu whose items are generated at runtime\nThe `source` field specifies what to generate (e.g., \"themes\")",
-          "type": "object",
-          "properties": {
-            "label": {
-              "type": "string"
-            },
-            "source": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "label",
-            "source"
-          ]
-        },
-        {
-          "description": "A disabled info label (no action)",
-          "type": "object",
-          "properties": {
-            "info": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "info"
-          ]
-        }
-      ]
     },
     "WarningsConfig": {
       "description": "Warning notification configuration",

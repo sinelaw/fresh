@@ -6,12 +6,12 @@ use super::Editor;
 use crate::app::types::HoverTarget;
 use crate::config::{Menu, MenuItem};
 use crate::input::keybindings::Action;
+use crate::primitives::display_width::str_width;
 
 impl Editor {
-    /// Get all menus (config menus + plugin menus) with DynamicSubmenus expanded.
+    /// Get all menus (built-in menus + plugin menus) with DynamicSubmenus expanded.
     fn all_menus(&self) -> Vec<Menu> {
-        self.config
-            .menu
+        self.menus
             .menus
             .iter()
             .chain(self.menu_state.plugin_menus.iter())
@@ -54,7 +54,7 @@ impl Editor {
     /// Handle MenuLeft action - close submenu or go to previous menu.
     pub fn handle_menu_left(&mut self) {
         if !self.menu_state.close_submenu() {
-            let total_menus = self.config.menu.menus.len() + self.menu_state.plugin_menus.len();
+            let total_menus = self.menus.menus.len() + self.menu_state.plugin_menus.len();
             self.menu_state.prev_menu(total_menus);
         }
     }
@@ -63,7 +63,7 @@ impl Editor {
     pub fn handle_menu_right(&mut self) {
         let all_menus = self.all_menus();
         if !self.menu_state.open_submenu(&all_menus) {
-            let total_menus = self.config.menu.menus.len() + self.menu_state.plugin_menus.len();
+            let total_menus = self.menus.menus.len() + self.menu_state.plugin_menus.len();
             self.menu_state.next_menu(total_menus);
         }
     }
@@ -138,7 +138,8 @@ impl Editor {
 
         let all_menus = self.all_menus();
         for (idx, menu) in all_menus.iter().enumerate() {
-            if menu.label.eq_ignore_ascii_case(menu_name) {
+            // Match by id (locale-independent) rather than label (translated)
+            if menu.match_id().eq_ignore_ascii_case(menu_name) {
                 self.menu_state.open_menu(idx);
                 break;
             }
@@ -160,7 +161,7 @@ impl Editor {
             if idx == menu_index {
                 break;
             }
-            x_offset += m.label.len() + 3;
+            x_offset += str_width(&m.label) + 3;
         }
 
         let mut current_items: &[MenuItem] = &menu.items;
@@ -173,11 +174,11 @@ impl Editor {
             let max_width = current_items
                 .iter()
                 .filter_map(|item| match item {
-                    MenuItem::Action { label, .. } => Some(label.len() + 20),
-                    MenuItem::Submenu { label, .. } => Some(label.len() + 20),
-                    MenuItem::DynamicSubmenu { label, .. } => Some(label.len() + 20),
+                    MenuItem::Action { label, .. } => Some(str_width(label) + 20),
+                    MenuItem::Submenu { label, .. } => Some(str_width(label) + 20),
+                    MenuItem::DynamicSubmenu { label, .. } => Some(str_width(label) + 20),
                     MenuItem::Separator { .. } => Some(20),
-                    MenuItem::Label { info } => Some(info.len() + 4),
+                    MenuItem::Label { info } => Some(str_width(info) + 4),
                 })
                 .max()
                 .unwrap_or(20)
@@ -246,7 +247,7 @@ impl Editor {
             if idx == menu_index {
                 break;
             }
-            x_offset += m.label.len() + 3;
+            x_offset += str_width(&m.label) + 3;
         }
 
         let mut current_items: &[MenuItem] = &menu.items;
@@ -261,11 +262,11 @@ impl Editor {
             let max_width = current_items
                 .iter()
                 .filter_map(|item| match item {
-                    MenuItem::Action { label, .. } => Some(label.len() + 20),
-                    MenuItem::Submenu { label, .. } => Some(label.len() + 20),
-                    MenuItem::DynamicSubmenu { label, .. } => Some(label.len() + 20),
+                    MenuItem::Action { label, .. } => Some(str_width(label) + 20),
+                    MenuItem::Submenu { label, .. } => Some(str_width(label) + 20),
+                    MenuItem::DynamicSubmenu { label, .. } => Some(str_width(label) + 20),
                     MenuItem::Separator { .. } => Some(20),
-                    MenuItem::Label { info } => Some(info.len() + 4),
+                    MenuItem::Label { info } => Some(str_width(info) + 4),
                 })
                 .max()
                 .unwrap_or(20)

@@ -1,6 +1,7 @@
 //! Menu bar rendering
 
 use crate::config::{Menu, MenuConfig, MenuItem};
+use crate::primitives::display_width::str_width;
 use crate::view::theme::Theme;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -342,7 +343,7 @@ impl MenuState {
         let mut current_x = 0u16;
 
         for (idx, menu) in menus.iter().enumerate() {
-            let label_width = menu.label.len() as u16 + 2; // " Label "
+            let label_width = str_width(&menu.label) as u16 + 2; // " Label "
             let total_width = label_width + 1; // Plus trailing space
 
             if x >= current_x && x < current_x + label_width {
@@ -503,7 +504,7 @@ impl MenuRenderer {
             if idx == menu_index {
                 break;
             }
-            x_offset += m.label.len() + 3; // label + spaces
+            x_offset += str_width(&m.label) + 3; // label + spaces
         }
 
         let terminal_width = frame.area().width;
@@ -583,11 +584,11 @@ impl MenuRenderer {
         items
             .iter()
             .filter_map(|item| match item {
-                MenuItem::Action { label, .. } => Some(label.len() + 20),
-                MenuItem::Submenu { label, .. } => Some(label.len() + 20),
-                MenuItem::DynamicSubmenu { label, .. } => Some(label.len() + 20),
+                MenuItem::Action { label, .. } => Some(str_width(label) + 20),
+                MenuItem::Submenu { label, .. } => Some(str_width(label) + 20),
+                MenuItem::DynamicSubmenu { label, .. } => Some(str_width(label) + 20),
                 MenuItem::Separator { .. } => Some(20),
-                MenuItem::Label { info } => Some(info.len() + 4),
+                MenuItem::Label { info } => Some(str_width(info) + 4),
             })
             .max()
             .unwrap_or(20)
@@ -716,13 +717,24 @@ impl MenuRenderer {
                     };
 
                     let checkbox_width = if checkbox.is_some() { 2 } else { 0 };
-                    let label_width =
-                        content_width.saturating_sub(keybinding.len() + checkbox_width + 2);
+                    let label_display_width = str_width(label);
+                    let keybinding_display_width = str_width(&keybinding);
+
                     let text = if keybinding.is_empty() {
-                        let padding = content_width.saturating_sub(checkbox_width);
-                        format!(" {}{:<width$}", checkbox_icon, label, width = padding)
+                        let padding_needed =
+                            content_width.saturating_sub(checkbox_width + label_display_width + 1);
+                        format!(" {}{}{}", checkbox_icon, label, " ".repeat(padding_needed))
                     } else {
-                        format!(" {}{:<label_width$} {}", checkbox_icon, label, keybinding)
+                        let padding_needed = content_width.saturating_sub(
+                            checkbox_width + label_display_width + keybinding_display_width + 2,
+                        );
+                        format!(
+                            " {}{}{} {}",
+                            checkbox_icon,
+                            label,
+                            " ".repeat(padding_needed),
+                            keybinding
+                        )
                     };
 
                     Line::from(vec![Span::styled(text, style)])
@@ -754,9 +766,10 @@ impl MenuRenderer {
 
                     // Format: " Label        > " - label left-aligned, arrow near the end with padding
                     // content_width minus: leading space (1) + space before arrow (1) + arrow (1) + trailing space (2)
-                    let label_width = content_width.saturating_sub(5);
+                    let label_display_width = str_width(label);
+                    let padding_needed = content_width.saturating_sub(label_display_width + 5);
                     Line::from(vec![Span::styled(
-                        format!(" {:<label_width$} >  ", label),
+                        format!(" {}{} >  ", label, " ".repeat(padding_needed)),
                         style,
                     )])
                 }
@@ -765,9 +778,10 @@ impl MenuRenderer {
                     let style = Style::default()
                         .fg(theme.menu_disabled_fg)
                         .bg(theme.menu_dropdown_bg);
-                    let padding = content_width;
+                    let info_display_width = str_width(info);
+                    let padding_needed = content_width.saturating_sub(info_display_width);
                     Line::from(vec![Span::styled(
-                        format!(" {:<width$}", info, width = padding),
+                        format!(" {}{}", info, " ".repeat(padding_needed)),
                         style,
                     )])
                 }
@@ -796,6 +810,7 @@ mod tests {
     fn create_test_menus() -> Vec<Menu> {
         vec![
             Menu {
+                id: None,
                 label: "File".to_string(),
                 items: vec![
                     MenuItem::Action {
@@ -823,6 +838,7 @@ mod tests {
                 ],
             },
             Menu {
+                id: None,
                 label: "Edit".to_string(),
                 items: vec![
                     MenuItem::Action {
@@ -842,6 +858,7 @@ mod tests {
                 ],
             },
             Menu {
+                id: None,
                 label: "View".to_string(),
                 items: vec![MenuItem::Action {
                     label: "Toggle Explorer".to_string(),
@@ -966,6 +983,7 @@ mod tests {
     fn test_menu_item_when_requires_selection() {
         let mut state = MenuState::new();
         let select_menu = Menu {
+            id: None,
             label: "Edit".to_string(),
             items: vec![MenuItem::Action {
                 label: "Find in Selection".to_string(),
@@ -1171,6 +1189,7 @@ mod tests {
 
     fn create_menu_with_submenus() -> Vec<Menu> {
         vec![Menu {
+            id: None,
             label: "View".to_string(),
             items: vec![
                 MenuItem::Action {

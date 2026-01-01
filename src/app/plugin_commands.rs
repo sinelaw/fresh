@@ -15,10 +15,10 @@ use super::Editor;
 impl Editor {
     // ==================== Menu Helpers ====================
 
-    /// Find a menu by label, searching config menus first then plugin menus.
+    /// Find a menu by label, searching built-in menus first then plugin menus.
     fn find_menu_by_label_mut(&mut self, label: &str) -> Option<&mut crate::config::Menu> {
-        // Check config menus first
-        if let Some(menu) = self.config.menu.menus.iter_mut().find(|m| m.label == label) {
+        // Check built-in menus first
+        if let Some(menu) = self.menus.menus.iter_mut().find(|m| m.label == label) {
             return Some(menu);
         }
         // Then check plugin menus
@@ -300,55 +300,53 @@ impl Editor {
     /// Handle AddMenu command
     pub(super) fn handle_add_menu(&mut self, menu: crate::config::Menu, position: MenuPosition) {
         // Calculate insert index based on position
-        let total_menus = self.config.menu.menus.len() + self.menu_state.plugin_menus.len();
+        let total_menus = self.menus.menus.len() + self.menu_state.plugin_menus.len();
 
         let insert_idx = match position {
             MenuPosition::Top => 0,
             MenuPosition::Bottom => total_menus,
             MenuPosition::Before(label) => {
-                // Find in config menus first
-                self.config
-                    .menu
+                // Find in built-in menus first
+                self.menus
                     .menus
                     .iter()
                     .position(|m| m.label == label)
                     .or_else(|| {
-                        // Then in plugin menus (offset by config menus count)
+                        // Then in plugin menus (offset by built-in menus count)
                         self.menu_state
                             .plugin_menus
                             .iter()
                             .position(|m| m.label == label)
-                            .map(|i| self.config.menu.menus.len() + i)
+                            .map(|i| self.menus.menus.len() + i)
                     })
                     .unwrap_or(total_menus)
             }
             MenuPosition::After(label) => {
-                // Find in config menus first
-                self.config
-                    .menu
+                // Find in built-in menus first
+                self.menus
                     .menus
                     .iter()
                     .position(|m| m.label == label)
                     .map(|i| i + 1)
                     .or_else(|| {
-                        // Then in plugin menus (offset by config menus count)
+                        // Then in plugin menus (offset by built-in menus count)
                         self.menu_state
                             .plugin_menus
                             .iter()
                             .position(|m| m.label == label)
-                            .map(|i| self.config.menu.menus.len() + i + 1)
+                            .map(|i| self.menus.menus.len() + i + 1)
                     })
                     .unwrap_or(total_menus)
             }
         };
 
-        // If inserting before config menus end, we can't actually insert into config menus
+        // If inserting before built-in menus end, we can't actually insert into built-in menus
         // So we always add to plugin_menus, but position it logically
-        // For now, just append to plugin_menus (they appear after config menus)
-        let plugin_idx = if insert_idx >= self.config.menu.menus.len() {
-            insert_idx - self.config.menu.menus.len()
+        // For now, just append to plugin_menus (they appear after built-in menus)
+        let plugin_idx = if insert_idx >= self.menus.menus.len() {
+            insert_idx - self.menus.menus.len()
         } else {
-            // Can't insert before config menus, so put at start of plugin menus
+            // Can't insert before built-in menus, so put at start of plugin menus
             0
         };
 
@@ -358,7 +356,7 @@ impl Editor {
         tracing::info!(
             "Added plugin menu at index {} (total menus: {})",
             plugin_idx,
-            self.config.menu.menus.len() + self.menu_state.plugin_menus.len()
+            self.menus.menus.len() + self.menu_state.plugin_menus.len()
         );
     }
 

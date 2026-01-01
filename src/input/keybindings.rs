@@ -354,6 +354,7 @@ pub enum Action {
     SelectTheme,
     SelectKeybindingMap,
     SelectCursorStyle,
+    SelectLocale,
 
     // Buffer/tab navigation
     NextBuffer,
@@ -796,6 +797,7 @@ impl Action {
             "set_background_blend" => Some(Action::SetBackgroundBlend),
             "select_theme" => Some(Action::SelectTheme),
             "select_keybinding_map" => Some(Action::SelectKeybindingMap),
+            "select_locale" => Some(Action::SelectLocale),
 
             // Buffer settings
             "set_tab_size" => Some(Action::SetTabSize),
@@ -1784,6 +1786,7 @@ impl KeybindingResolver {
             Action::SelectTheme => "Select theme".to_string(),
             Action::SelectKeybindingMap => "Select keybinding map".to_string(),
             Action::SelectCursorStyle => "Select cursor style".to_string(),
+            Action::SelectLocale => "Select locale".to_string(),
             Action::SwitchToPreviousTab => "Switch to previous tab".to_string(),
             Action::SwitchToTabByName => "Switch to tab by name".to_string(),
             Action::OpenTerminal => "Open terminal".to_string(),

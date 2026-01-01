@@ -2,6 +2,8 @@
 //!
 //! Renders the settings modal with category navigation and setting controls.
 
+use rust_i18n::t;
+
 use super::items::SettingControl;
 use super::layout::{SettingsHit, SettingsLayout};
 use super::search::SearchResult;
@@ -1816,8 +1818,9 @@ fn render_confirm_dialog(
     // Clear and draw border
     frame.render_widget(Clear, dialog_area);
 
+    let title = format!(" {} ", t!("confirm.unsaved_changes_title"));
     let block = Block::default()
-        .title(" Unsaved Changes ")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.diagnostic_warning_fg))
         .style(Style::default().bg(theme.popup_bg));
@@ -1834,7 +1837,7 @@ fn render_confirm_dialog(
     let mut y = inner.y;
 
     // Prompt text
-    let prompt = "You have unsaved changes:";
+    let prompt = t!("confirm.unsaved_changes_prompt").to_string();
     let prompt_style = Style::default().fg(theme.popup_text_fg);
     frame.render_widget(
         Paragraph::new(prompt).style(prompt_style),
@@ -1871,7 +1874,11 @@ fn render_confirm_dialog(
     );
 
     // Render the three options
-    let options = ["Save and Exit", "Discard", "Cancel"];
+    let options = [
+        t!("confirm.save_and_exit").to_string(),
+        t!("confirm.discard").to_string(),
+        t!("confirm.cancel").to_string(),
+    ];
     let total_width: u16 = options.iter().map(|o| o.len() as u16 + 4).sum::<u16>() + 4; // +4 for gaps
     let mut x = inner.x + (inner.width.saturating_sub(total_width)) / 2;
 

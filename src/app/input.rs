@@ -1,5 +1,6 @@
 use super::*;
 use crate::services::plugins::hooks::HookArgs;
+use rust_i18n::t;
 impl Editor {
     /// Determine the current keybinding context based on UI state
     pub fn get_key_context(&self) -> crate::input::keybindings::KeyContext {
@@ -273,8 +274,18 @@ impl Editor {
                 if self.active_state().buffer.is_modified() {
                     // Buffer has unsaved changes - prompt for confirmation
                     let name = self.get_buffer_display_name(buffer_id);
+                    let save_key = t!("prompt.key.save").to_string();
+                    let discard_key = t!("prompt.key.discard").to_string();
+                    let cancel_key = t!("prompt.key.cancel").to_string();
                     self.start_prompt(
-                        format!("'{}' modified. (s)ave, (d)iscard, (C)ancel? ", name),
+                        t!(
+                            "prompt.buffer_modified",
+                            name = name,
+                            save_key = save_key,
+                            discard_key = discard_key,
+                            cancel_key = cancel_key
+                        )
+                        .to_string(),
                         PromptType::ConfirmCloseBuffer { buffer_id },
                     );
                 } else if let Err(e) = self.close_buffer(buffer_id) {
@@ -289,8 +300,15 @@ impl Editor {
             Action::Revert => {
                 // Check if buffer has unsaved changes - prompt for confirmation
                 if self.active_state().buffer.is_modified() {
+                    let revert_key = t!("prompt.key.revert").to_string();
+                    let cancel_key = t!("prompt.key.cancel").to_string();
                     self.start_prompt(
-                        "Buffer has unsaved changes. (r)evert, (C)ancel? ".to_string(),
+                        t!(
+                            "prompt.revert_confirm",
+                            revert_key = revert_key,
+                            cancel_key = cancel_key
+                        )
+                        .to_string(),
                         PromptType::ConfirmRevert,
                     );
                 } else {
@@ -469,6 +487,9 @@ impl Editor {
             }
             Action::SelectCursorStyle => {
                 self.start_select_cursor_style_prompt();
+            }
+            Action::SelectLocale => {
+                self.start_select_locale_prompt();
             }
             Action::Search => {
                 // If already in a search-related prompt, Ctrl+F acts like Enter (confirm search)
@@ -2107,6 +2128,112 @@ impl Editor {
         let config_path = self.dir_context.config_path();
         if let Err(e) = self.config.save_to_file(&config_path) {
             tracing::warn!("Failed to save cursor style to config: {}", e);
+        }
+    }
+
+    /// Start the locale selection prompt with available locales
+    fn start_select_locale_prompt(&mut self) {
+        let available_locales = crate::i18n::available_locales();
+        let current_locale = crate::i18n::current_locale();
+
+        // Find the index of the current locale
+        let current_index = available_locales
+            .iter()
+            .position(|name| *name == current_locale)
+            .unwrap_or(0);
+
+        let suggestions: Vec<crate::input::commands::Suggestion> = available_locales
+            .iter()
+            .map(|locale_name| {
+                let is_current = *locale_name == current_locale;
+                let description = if let Some((english_name, native_name)) =
+                    crate::i18n::locale_display_name(locale_name)
+                {
+                    if english_name == native_name {
+                        // Same name (e.g., English/English)
+                        if is_current {
+                            format!("{} (current)", english_name)
+                        } else {
+                            english_name.to_string()
+                        }
+                    } else {
+                        // Different names (e.g., German/Deutsch)
+                        if is_current {
+                            format!("{} / {} (current)", english_name, native_name)
+                        } else {
+                            format!("{} / {}", english_name, native_name)
+                        }
+                    }
+                } else {
+                    // Unknown locale
+                    if is_current {
+                        "(current)".to_string()
+                    } else {
+                        String::new()
+                    }
+                };
+                crate::input::commands::Suggestion {
+                    text: locale_name.to_string(),
+                    description: if description.is_empty() {
+                        None
+                    } else {
+                        Some(description)
+                    },
+                    value: Some(locale_name.to_string()),
+                    disabled: false,
+                    keybinding: None,
+                    source: None,
+                }
+            })
+            .collect();
+
+        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+            t!("locale.select_prompt").to_string(),
+            PromptType::SelectLocale,
+            suggestions,
+        ));
+
+        if let Some(prompt) = self.prompt.as_mut() {
+            if !prompt.suggestions.is_empty() {
+                prompt.selected_suggestion = Some(current_index);
+                // Start with empty input to show all options initially
+                prompt.input = String::new();
+                prompt.cursor_pos = 0;
+            }
+        }
+    }
+
+    /// Apply a locale and persist it to config
+    pub(super) fn apply_locale(&mut self, locale_name: &str) {
+        if !locale_name.is_empty() {
+            // Update the locale at runtime
+            crate::i18n::set_locale(locale_name);
+
+            // Update the config in memory
+            self.config.locale = Some(locale_name.to_string());
+
+            // Regenerate menus with the new locale
+            self.menus = crate::config::MenuConfig::translated();
+
+            // Persist to config file
+            self.save_locale_to_config();
+
+            self.set_status_message(t!("locale.changed", locale = locale_name).to_string());
+        }
+    }
+
+    /// Save the current locale setting to the user's config file
+    fn save_locale_to_config(&mut self) {
+        // Create the directory if it doesn't exist
+        if let Err(e) = std::fs::create_dir_all(&self.dir_context.config_dir) {
+            tracing::warn!("Failed to create config directory: {}", e);
+            return;
+        }
+
+        // Save the config
+        let config_path = self.dir_context.config_path();
+        if let Err(e) = self.config.save_to_file(&config_path) {
+            tracing::warn!("Failed to save locale to config: {}", e);
         }
     }
 

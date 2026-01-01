@@ -1105,6 +1105,15 @@ pub fn get_all_commands() -> Vec<Command> {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
         },
+        // Locale selection
+        Command {
+            name: "Select Locale".to_string(),
+            description: "Choose the UI language for the editor".to_string(),
+            action: Action::SelectLocale,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
         // Settings
         Command {
             name: "Open Settings".to_string(),

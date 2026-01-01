@@ -2,6 +2,8 @@
 //!
 //! This module contains handlers for different prompt types when the user confirms input.
 
+use rust_i18n::t;
+
 use super::normalize_path;
 use super::BufferId;
 use super::BufferMetadata;
@@ -178,7 +180,8 @@ impl Editor {
             }
             PromptType::ConfirmRevert => {
                 let input_lower = input.trim().to_lowercase();
-                if input_lower == "r" || input_lower == "revert" {
+                let revert_key = t!("prompt.key.revert").to_string().to_lowercase();
+                if input_lower == revert_key || input_lower == "revert" {
                     if let Err(e) = self.revert_file() {
                         self.set_status_message(format!("Failed to revert: {}", e));
                     }
@@ -211,7 +214,8 @@ impl Editor {
             }
             PromptType::ConfirmQuitWithModified => {
                 let input_lower = input.trim().to_lowercase();
-                if input_lower == "d" || input_lower == "discard" {
+                let discard_key = t!("prompt.key.discard").to_string().to_lowercase();
+                if input_lower == discard_key || input_lower == "discard" {
                     self.should_quit = true;
                 } else {
                     self.set_status_message("Quit cancelled".to_string());
@@ -250,6 +254,9 @@ impl Editor {
             }
             PromptType::SelectCursorStyle => {
                 self.apply_cursor_style(input.trim());
+            }
+            PromptType::SelectLocale => {
+                self.apply_locale(input.trim());
             }
             PromptType::CopyWithFormattingTheme => {
                 self.copy_selection_with_theme(input.trim());
@@ -479,49 +486,52 @@ impl Editor {
     /// Handle ConfirmCloseBuffer prompt. Returns true if early return is needed.
     fn handle_confirm_close_buffer(&mut self, input: &str, buffer_id: BufferId) -> bool {
         let input_lower = input.trim().to_lowercase();
-        match input_lower.chars().next() {
-            Some('s') => {
-                // Save and close
-                let has_path = self
-                    .buffers
-                    .get(&buffer_id)
-                    .map(|s| s.buffer.file_path().is_some())
-                    .unwrap_or(false);
+        let save_key = t!("prompt.key.save").to_string().to_lowercase();
+        let discard_key = t!("prompt.key.discard").to_string().to_lowercase();
 
-                if has_path {
-                    let old_active = self.active_buffer();
-                    self.set_active_buffer(buffer_id);
-                    if let Err(e) = self.save() {
-                        self.set_status_message(format!("Failed to save: {}", e));
-                        self.set_active_buffer(old_active);
-                        return true; // Early return
-                    }
+        let first_char = input_lower.chars().next();
+        let save_first = save_key.chars().next();
+        let discard_first = discard_key.chars().next();
+
+        if first_char == save_first {
+            // Save and close
+            let has_path = self
+                .buffers
+                .get(&buffer_id)
+                .map(|s| s.buffer.file_path().is_some())
+                .unwrap_or(false);
+
+            if has_path {
+                let old_active = self.active_buffer();
+                self.set_active_buffer(buffer_id);
+                if let Err(e) = self.save() {
+                    self.set_status_message(format!("Failed to save: {}", e));
                     self.set_active_buffer(old_active);
-                    if let Err(e) = self.force_close_buffer(buffer_id) {
-                        self.set_status_message(format!("Cannot close buffer: {}", e));
-                    } else {
-                        self.set_status_message("Saved and closed".to_string());
-                    }
-                } else {
-                    self.pending_close_buffer = Some(buffer_id);
-                    self.start_prompt_with_initial_text(
-                        "Save as: ".to_string(),
-                        PromptType::SaveFileAs,
-                        String::new(),
-                    );
+                    return true; // Early return
                 }
-            }
-            Some('d') => {
-                // Discard and close
+                self.set_active_buffer(old_active);
                 if let Err(e) = self.force_close_buffer(buffer_id) {
                     self.set_status_message(format!("Cannot close buffer: {}", e));
                 } else {
-                    self.set_status_message("Buffer closed (changes discarded)".to_string());
+                    self.set_status_message("Saved and closed".to_string());
                 }
+            } else {
+                self.pending_close_buffer = Some(buffer_id);
+                self.start_prompt_with_initial_text(
+                    "Save as: ".to_string(),
+                    PromptType::SaveFileAs,
+                    String::new(),
+                );
             }
-            _ => {
-                self.set_status_message("Close cancelled".to_string());
+        } else if first_char == discard_first {
+            // Discard and close
+            if let Err(e) = self.force_close_buffer(buffer_id) {
+                self.set_status_message(format!("Cannot close buffer: {}", e));
+            } else {
+                self.set_status_message("Buffer closed (changes discarded)".to_string());
             }
+        } else {
+            self.set_status_message("Close cancelled".to_string());
         }
         false
     }

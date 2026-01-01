@@ -5,8 +5,8 @@
 
 use crate::config::{
     CursorStyle, FileBrowserConfig, FileExplorerConfig, FormatterConfig, HighlighterPreference,
-    Keybinding, KeybindingMapName, KeymapConfig, LanguageConfig, LineEndingOption, MenuConfig,
-    OnSaveAction, TerminalConfig, ThemeName, WarningsConfig,
+    Keybinding, KeybindingMapName, KeymapConfig, LanguageConfig, LineEndingOption, OnSaveAction,
+    TerminalConfig, ThemeName, WarningsConfig,
 };
 use crate::types::LspServerConfig;
 use serde::{Deserialize, Serialize};
@@ -75,6 +75,7 @@ where
 pub struct PartialConfig {
     pub version: Option<u32>,
     pub theme: Option<ThemeName>,
+    pub locale: Option<String>,
     pub check_for_updates: Option<bool>,
     pub editor: Option<PartialEditorConfig>,
     pub file_explorer: Option<PartialFileExplorerConfig>,
@@ -85,7 +86,6 @@ pub struct PartialConfig {
     pub active_keybinding_map: Option<KeybindingMapName>,
     pub languages: Option<HashMap<String, PartialLanguageConfig>>,
     pub lsp: Option<HashMap<String, LspServerConfig>>,
-    pub menu: Option<MenuConfig>,
     pub warnings: Option<PartialWarningsConfig>,
 }
 
@@ -93,6 +93,7 @@ impl Merge for PartialConfig {
     fn merge_from(&mut self, other: &Self) {
         self.version.merge_from(&other.version);
         self.theme.merge_from(&other.theme);
+        self.locale.merge_from(&other.locale);
         self.check_for_updates.merge_from(&other.check_for_updates);
 
         // Nested structs: merge recursively
@@ -112,7 +113,6 @@ impl Merge for PartialConfig {
 
         self.active_keybinding_map
             .merge_from(&other.active_keybinding_map);
-        self.menu.merge_from(&other.menu);
     }
 }
 
@@ -515,6 +515,7 @@ impl From<&crate::config::Config> for PartialConfig {
         Self {
             version: Some(cfg.version),
             theme: Some(cfg.theme.clone()),
+            locale: cfg.locale.clone(),
             check_for_updates: Some(cfg.check_for_updates),
             editor: Some(PartialEditorConfig::from(&cfg.editor)),
             file_explorer: Some(PartialFileExplorerConfig::from(&cfg.file_explorer)),
@@ -530,7 +531,6 @@ impl From<&crate::config::Config> for PartialConfig {
                     .collect(),
             ),
             lsp: Some(cfg.lsp.clone()),
-            menu: Some(cfg.menu.clone()),
             warnings: Some(PartialWarningsConfig::from(&cfg.warnings)),
         }
     }
@@ -582,6 +582,7 @@ impl PartialConfig {
         crate::config::Config {
             version: self.version.unwrap_or(defaults.version),
             theme: self.theme.unwrap_or_else(|| defaults.theme.clone()),
+            locale: self.locale.or_else(|| defaults.locale.clone()),
             check_for_updates: self.check_for_updates.unwrap_or(defaults.check_for_updates),
             editor: self
                 .editor
@@ -608,7 +609,6 @@ impl PartialConfig {
                 .unwrap_or_else(|| defaults.active_keybinding_map.clone()),
             languages,
             lsp,
-            menu: self.menu.unwrap_or_else(|| defaults.menu.clone()),
             warnings: self
                 .warnings
                 .map(|e| e.resolve(&defaults.warnings))
