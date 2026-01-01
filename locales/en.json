@@ -393,6 +393,11 @@
   "search.no_matches": "No more matches.",
   "search.cancelled": "Search cancelled.",
   "search.match_of": "Match %{current} of %{total}",
+  "search.no_occurrences": "No occurrences of '%{search}' found.",
+  "search.case_sensitive_state": "Case-sensitive search %{state}",
+  "search.whole_word_state": "Whole word search %{state}",
+  "search.regex_state": "Regex search %{state}",
+  "search.confirm_each_state": "Confirm each replacement %{state}",
   "search.case_sensitive": "Case Sensitive",
   "search.whole_word": "Whole Word",
   "search.regex": "Regex",
@@ -495,6 +500,11 @@
   "error.config_save_failed": "Error saving config: %{error}",
   "error.config_saved_open_failed": "Config saved but failed to open: %{error}",
   "error.split_failed": "Failed to create split: %{error}",
+  "error.cannot_close_buffer": "Cannot close buffer: %{error}",
+  "error.cannot_close_split": "Cannot close split: %{error}",
+  "error.failed_to_revert": "Failed to revert: %{error}",
+  "error.format_failed": "Format failed: %{error}",
+  "error.failed_to_serialize_macro": "Failed to serialize macro: %{error}",
 
   "diagnostics.none": "No diagnostics in current buffer",
   "diagnostics.at_position": "Diagnostic %{current} of %{total}: %{message}",
@@ -502,6 +512,27 @@
   "diagnostics.bracket_no_match": "No matching bracket found",
 
   "view.compose": "Compose",
+  "view.mode": "Mode: %{mode}",
+  "view.line_wrap_state": "Line wrap %{state}",
+  "view.keybindings_switched": "Switched to '%{map}' keybindings",
+  "view.keybindings_unknown": "Unknown keybinding map: '%{map}'",
+  "view.background_set": "Background set to %{path}",
+  "view.theme_changed": "Theme changed to '%{theme}'",
+  "view.cursor_style_changed": "Cursor style changed to %{style}",
+  "view.plugin_error": "Plugin error: %{error}",
+
+  "format.formatted_with": "Formatted with %{formatter}",
+
+  "file.opened": "Opened %{path}",
+  "file.error_opening": "Error opening file: %{error}",
+
+  "macro.no_recorded": "No macro recorded for '%{key}'",
+  "macro.showing_count": "Showing %{count} recorded macro(s)",
+
+  "bookmark.jumped": "Jumped to bookmark '%{key}'",
+  "bookmark.not_set": "Bookmark '%{key}' not set",
+  "bookmark.cleared": "Bookmark '%{key}' cleared",
+  "bookmark.list": "Bookmarks: %{list}",
 
   "clipboard.copied": "Copied",
   "clipboard.copied_line": "Copied line",
@@ -609,6 +640,10 @@
 
   "lsp.renamed": "Renamed successfully (%{count} changes)",
   "lsp.code_action_hint": "Press number to select, Esc to cancel",
+  "lsp.server_started_for": "LSP server for %{language} started",
+  "lsp.server_started_auto": "LSP server for %{language} started (auto-start enabled)",
+  "lsp.startup_cancelled": "LSP server for %{language} startup cancelled",
+  "lsp.startup_denied": "LSP server for %{language} startup denied by user",
 
   "stdin.streaming": "Streaming from stdin...",
   "stdin.streaming_bytes": "Streaming from stdin... %{bytes} bytes received",
@@ -616,6 +651,15 @@
   "stdin.read_error_panic": "Stdin read error: thread panicked",
   "stdin.read_complete": "Read %{bytes} bytes from stdin",
   "stdin.display_name": "[stdin]",
+
+  "terminal.opened": "Terminal %{id} opened (Ctrl+Space to exit)",
+  "terminal.failed_to_open": "Failed to open terminal: %{error}",
+  "terminal.closed": "Terminal %{id} closed",
+  "terminal.exited": "Terminal %{id} exited",
+
+  "shell.command_prompt": "Shell command: ",
+  "shell.command_replace_prompt": "Shell command (replace): ",
+  "shell.output_in": "Shell output in %{buffer}",
 
   "buffer.binary_file": "Binary file",
   "buffer.saved_and_closed": "Saved and closed",
@@ -630,6 +674,13 @@
   "settings.tab_size_set": "Tab size set to %{value}",
   "settings.tab_size_positive": "Tab size must be greater than 0",
   "settings.line_ending_set": "Line ending set to %{value}",
+  "settings.failed_to_open": "Failed to open settings: %{error}",
+  "settings.failed_to_apply": "Failed to apply settings: %{error}",
+  "settings.saved_to_layer": "Settings saved to %{layer} layer",
+  "settings.failed_to_save": "Failed to save settings: %{error}",
+  "settings.pending_changes": "Save or discard pending changes before editing config file",
+  "settings.cannot_edit_system": "Cannot edit System layer (read-only defaults)",
+  "settings.editing_config": "Editing %{layer} config: %{path}",
 
   "register.must_be_digit": "%{type} register must be 0-9",
   "register.not_specified": "No register specified",

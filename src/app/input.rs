@@ -295,7 +295,9 @@ impl Editor {
                         PromptType::ConfirmCloseBuffer { buffer_id },
                     );
                 } else if let Err(e) = self.close_buffer(buffer_id) {
-                    self.set_status_message(format!("Cannot close buffer: {}", e));
+                    self.set_status_message(
+                        t!("error.cannot_close_buffer", error = e.to_string()).to_string(),
+                    );
                 } else {
                     self.set_status_message(t!("buffer.closed").to_string());
                 }
@@ -320,7 +322,9 @@ impl Editor {
                 } else {
                     // No local changes, just revert
                     if let Err(e) = self.revert_file() {
-                        self.set_status_message(format!("Failed to revert: {}", e));
+                        self.set_status_message(
+                            t!("error.failed_to_revert", error = e.to_string()).to_string(),
+                        );
                     }
                 }
             }
@@ -329,7 +333,9 @@ impl Editor {
             }
             Action::FormatBuffer => {
                 if let Err(e) = self.format_buffer() {
-                    self.set_status_message(format!("Format failed: {}", e));
+                    self.set_status_message(
+                        t!("error.format_failed", error = e.to_string()).to_string(),
+                    );
                 }
             }
             Action::Copy => self.copy_selection(),
@@ -409,7 +415,7 @@ impl Editor {
                 } else {
                     "disabled"
                 };
-                self.set_status_message(format!("Line wrap {}", state));
+                self.set_status_message(t!("view.line_wrap_state", state = state).to_string());
             }
             Action::ToggleComposeMode => {
                 self.handle_toggle_compose_mode();
@@ -726,9 +732,13 @@ impl Editor {
                     self.keybindings =
                         crate::input::keybindings::KeybindingResolver::new(&self.config);
 
-                    self.set_status_message(format!("Switched to '{}' keybindings", map_name));
+                    self.set_status_message(
+                        t!("view.keybindings_switched", map = map_name).to_string(),
+                    );
                 } else {
-                    self.set_status_message(format!("Unknown keybinding map: '{}'", map_name));
+                    self.set_status_message(
+                        t!("view.keybindings_unknown", map = map_name).to_string(),
+                    );
                 }
             }
 
@@ -766,7 +776,9 @@ impl Editor {
                 } else {
                     "disabled"
                 };
-                self.set_status_message(format!("Case-sensitive search {}", state));
+                self.set_status_message(
+                    t!("search.case_sensitive_state", state = state).to_string(),
+                );
                 // Update incremental highlights if in search prompt, otherwise re-run completed search
                 // Check prompt FIRST since we want to use current prompt input, not stale search_state
                 if let Some(prompt) = &self.prompt {
@@ -791,7 +803,7 @@ impl Editor {
                 } else {
                     "disabled"
                 };
-                self.set_status_message(format!("Whole word search {}", state));
+                self.set_status_message(t!("search.whole_word_state", state = state).to_string());
                 // Update incremental highlights if in search prompt, otherwise re-run completed search
                 // Check prompt FIRST since we want to use current prompt input, not stale search_state
                 if let Some(prompt) = &self.prompt {
@@ -816,7 +828,7 @@ impl Editor {
                 } else {
                     "disabled"
                 };
-                self.set_status_message(format!("Regex search {}", state));
+                self.set_status_message(t!("search.regex_state", state = state).to_string());
                 // Update incremental highlights if in search prompt, otherwise re-run completed search
                 // Check prompt FIRST since we want to use current prompt input, not stale search_state
                 if let Some(prompt) = &self.prompt {
@@ -841,7 +853,7 @@ impl Editor {
                 } else {
                     "disabled"
                 };
-                self.set_status_message(format!("Confirm each replacement {}", state));
+                self.set_status_message(t!("search.confirm_each_state", state = state).to_string());
             }
             Action::FileBrowserToggleHidden => {
                 // Toggle hidden files in file browser (handled via file_open_toggle_hidden)

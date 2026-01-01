@@ -94,10 +94,7 @@ impl Editor {
                 // Resize terminal to match actual split content area
                 self.resize_visible_terminals();
 
-                self.set_status_message(format!(
-                    "Terminal {} opened (Ctrl+Space to exit)",
-                    terminal_id
-                ));
+                self.set_status_message(t!("terminal.opened", id = terminal_id.0).to_string());
                 tracing::info!(
                     "Opened terminal {:?} with buffer {:?}",
                     terminal_id,
@@ -105,7 +102,9 @@ impl Editor {
                 );
             }
             Err(e) => {
-                self.set_status_message(format!("Failed to open terminal: {}", e));
+                self.set_status_message(
+                    t!("terminal.failed_to_open", error = e.to_string()).to_string(),
+                );
                 tracing::error!("Failed to open terminal: {}", e);
             }
         }
@@ -256,7 +255,7 @@ impl Editor {
             // Close the buffer
             let _ = self.close_buffer(buffer_id);
 
-            self.set_status_message(format!("Terminal {} closed", terminal_id));
+            self.set_status_message(t!("terminal.closed", id = terminal_id.0).to_string());
         } else {
             self.set_status_message(t!("status.not_viewing_terminal").to_string());
         }

@@ -9,6 +9,7 @@
 
 use crate::config_io::{ConfigLayer, ConfigResolver};
 use crate::input::keybindings::KeybindingResolver;
+use rust_i18n::t;
 
 use super::Editor;
 
@@ -32,7 +33,9 @@ impl Editor {
                     self.settings_state = Some(state);
                 }
                 Err(e) => {
-                    self.set_status_message(format!("Failed to open settings: {}", e));
+                    self.set_status_message(
+                        t!("settings.failed_to_open", error = e.to_string()).to_string(),
+                    );
                     return;
                 }
             }
@@ -71,7 +74,9 @@ impl Editor {
                 match state.apply_changes(&self.config) {
                     Ok(config) => (state.target_layer, config),
                     Err(e) => {
-                        self.set_status_message(format!("Failed to apply settings: {}", e));
+                        self.set_status_message(
+                            t!("settings.failed_to_apply", error = e.to_string()).to_string(),
+                        );
                         return;
                     }
                 }
@@ -119,14 +124,18 @@ impl Editor {
 
         match resolver.save_to_layer(&new_config, target_layer) {
             Ok(()) => {
-                self.set_status_message(format!("Settings saved to {} layer", layer_name));
+                self.set_status_message(
+                    t!("settings.saved_to_layer", layer = layer_name).to_string(),
+                );
                 // Clear settings state entirely so next open creates fresh state
                 // from the updated config. This fixes issue #474 where reopening
                 // settings after save would show stale values.
                 self.settings_state = None;
             }
             Err(e) => {
-                self.set_status_message(format!("Failed to save settings: {}", e));
+                self.set_status_message(
+                    t!("settings.failed_to_save", error = e.to_string()).to_string(),
+                );
             }
         }
     }
@@ -138,9 +147,7 @@ impl Editor {
         // Check for pending changes before opening config file
         if let Some(ref state) = self.settings_state {
             if state.has_changes() {
-                self.set_status_message(
-                    "Save or discard pending changes before editing config file".to_string(),
-                );
+                self.set_status_message(t!("settings.pending_changes").to_string());
                 return Ok(());
             }
         }
@@ -152,9 +159,7 @@ impl Editor {
             ConfigLayer::Project => resolver.project_config_write_path(),
             ConfigLayer::Session => resolver.session_config_path(),
             ConfigLayer::System => {
-                self.set_status_message(
-                    "Cannot edit System layer (read-only defaults)".to_string(),
-                );
+                self.set_status_message(t!("settings.cannot_edit_system").to_string());
                 return Ok(());
             }
         };
@@ -209,7 +214,14 @@ impl Editor {
             ConfigLayer::Session => "Session",
             ConfigLayer::System => "System",
         };
-        self.set_status_message(format!("Editing {} config: {}", layer_name, path.display()));
+        self.set_status_message(
+            t!(
+                "settings.editing_config",
+                layer = layer_name,
+                path = path.display().to_string()
+            )
+            .to_string(),
+        );
 
         Ok(())
     }
