@@ -43,9 +43,13 @@ impl Editor {
                 };
 
                 if let Err(e) = self.open_file(&resolved_path) {
-                    self.set_status_message(t!("file.error_opening", error = e.to_string()).to_string());
+                    self.set_status_message(
+                        t!("file.error_opening", error = e.to_string()).to_string(),
+                    );
                 } else {
-                    self.set_status_message(t!("buffer.opened", name = resolved_path.display().to_string()).to_string());
+                    self.set_status_message(
+                        t!("buffer.opened", name = resolved_path.display().to_string()).to_string(),
+                    );
                 }
             }
             PromptType::SwitchProject => {
@@ -59,7 +63,13 @@ impl Editor {
                 if resolved_path.is_dir() {
                     self.change_working_dir(resolved_path);
                 } else {
-                    self.set_status_message(t!("file.not_directory", path = resolved_path.display().to_string()).to_string());
+                    self.set_status_message(
+                        t!(
+                            "file.not_directory",
+                            path = resolved_path.display().to_string()
+                        )
+                        .to_string(),
+                    );
                 }
             }
             PromptType::SaveFileAs => {
@@ -112,7 +122,9 @@ impl Editor {
                         .record_usage(&cmd_name);
                     return PromptResult::ExecuteAction(action);
                 } else {
-                    self.set_status_message(t!("error.unknown_command", input = &input).to_string());
+                    self.set_status_message(
+                        t!("error.unknown_command", input = &input).to_string(),
+                    );
                 }
             }
             PromptType::GotoLine => match input.trim().parse::<usize>() {
@@ -129,14 +141,22 @@ impl Editor {
             },
             PromptType::SetBackgroundFile => {
                 if let Err(e) = self.load_ansi_background(&input) {
-                    self.set_status_message(t!("error.background_load_failed", error = e.to_string()).to_string());
+                    self.set_status_message(
+                        t!("error.background_load_failed", error = e.to_string()).to_string(),
+                    );
                 }
             }
             PromptType::SetBackgroundBlend => match input.trim().parse::<f32>() {
                 Ok(val) => {
                     let clamped = val.clamp(0.0, 1.0);
                     self.background_fade = clamped;
-                    self.set_status_message(t!("error.background_blend_set", value = format!("{:.2}", clamped)).to_string());
+                    self.set_status_message(
+                        t!(
+                            "error.background_blend_set",
+                            value = format!("{:.2}", clamped)
+                        )
+                        .to_string(),
+                    );
                 }
                 Err(_) => {
                     self.set_status_message(t!("error.invalid_blend", input = &input).to_string());
@@ -180,7 +200,9 @@ impl Editor {
                 let revert_key = t!("prompt.key.revert").to_string().to_lowercase();
                 if input_lower == revert_key || input_lower == "revert" {
                     if let Err(e) = self.revert_file() {
-                        self.set_status_message(t!("file.revert_failed", error = e.to_string()).to_string());
+                        self.set_status_message(
+                            t!("file.revert_failed", error = e.to_string()).to_string(),
+                        );
                     }
                 } else {
                     self.set_status_message(t!("buffer.revert_cancelled").to_string());
@@ -190,7 +212,9 @@ impl Editor {
                 let input_lower = input.trim().to_lowercase();
                 if input_lower == "o" || input_lower == "overwrite" {
                     if let Err(e) = self.save() {
-                        self.set_status_message(t!("file.save_failed", error = e.to_string()).to_string());
+                        self.set_status_message(
+                            t!("file.save_failed", error = e.to_string()).to_string(),
+                        );
                     }
                 } else {
                     self.set_status_message(t!("buffer.save_cancelled").to_string());
@@ -370,12 +394,16 @@ impl Editor {
 
                 if let Some(buffer_to_close) = self.pending_close_buffer.take() {
                     if let Err(e) = self.force_close_buffer(buffer_to_close) {
-                        self.set_status_message(t!("file.saved_cannot_close", error = e.to_string()).to_string());
+                        self.set_status_message(
+                            t!("file.saved_cannot_close", error = e.to_string()).to_string(),
+                        );
                     } else {
                         self.set_status_message(t!("buffer.saved_and_closed").to_string());
                     }
                 } else {
-                    self.set_status_message(t!("file.saved_as", path = full_path.display().to_string()).to_string());
+                    self.set_status_message(
+                        t!("file.saved_as", path = full_path.display().to_string()).to_string(),
+                    );
                 }
             }
             Err(e) => {
@@ -408,10 +436,14 @@ impl Editor {
                     if let Some(vs) = self.split_view_states.get_mut(&active_split) {
                         vs.compose_width = Some(val);
                     }
-                    self.set_status_message(t!("settings.compose_width_set", value = val).to_string());
+                    self.set_status_message(
+                        t!("settings.compose_width_set", value = val).to_string(),
+                    );
                 }
                 _ => {
-                    self.set_status_message(t!("error.invalid_compose_width", input = input).to_string());
+                    self.set_status_message(
+                        t!("error.invalid_compose_width", input = input).to_string(),
+                    );
                 }
             }
         }
@@ -456,7 +488,9 @@ impl Editor {
         match line_ending {
             Some(le) => {
                 self.active_state_mut().buffer.set_line_ending(le);
-                self.set_status_message(t!("settings.line_ending_set", value = le.display_name()).to_string());
+                self.set_status_message(
+                    t!("settings.line_ending_set", value = le.display_name()).to_string(),
+                );
             }
             None => {
                 self.set_status_message(t!("error.unknown_line_ending", input = input).to_string());
@@ -473,7 +507,9 @@ impl Editor {
             if c.is_ascii_digit() {
                 action(self, c);
             } else {
-                self.set_status_message(t!("register.must_be_digit", "type" = register_type).to_string());
+                self.set_status_message(
+                    t!("register.must_be_digit", "type" = register_type).to_string(),
+                );
             }
         } else {
             self.set_status_message(t!("register.not_specified").to_string());
@@ -502,13 +538,17 @@ impl Editor {
                 let old_active = self.active_buffer();
                 self.set_active_buffer(buffer_id);
                 if let Err(e) = self.save() {
-                    self.set_status_message(t!("file.save_failed", error = e.to_string()).to_string());
+                    self.set_status_message(
+                        t!("file.save_failed", error = e.to_string()).to_string(),
+                    );
                     self.set_active_buffer(old_active);
                     return true; // Early return
                 }
                 self.set_active_buffer(old_active);
                 if let Err(e) = self.force_close_buffer(buffer_id) {
-                    self.set_status_message(t!("file.cannot_close", error = e.to_string()).to_string());
+                    self.set_status_message(
+                        t!("file.cannot_close", error = e.to_string()).to_string(),
+                    );
                 } else {
                     self.set_status_message(t!("buffer.saved_and_closed").to_string());
                 }
@@ -561,7 +601,9 @@ impl Editor {
                 }
                 self.set_status_message(t!("lsp.server_stopped", language = language).to_string());
             } else {
-                self.set_status_message(t!("lsp.server_not_found", language = language).to_string());
+                self.set_status_message(
+                    t!("lsp.server_not_found", language = language).to_string(),
+                );
             }
         }
     }

@@ -118,7 +118,9 @@ impl Editor {
                 self.set_status_message(t!("split.closed").to_string());
             }
             Err(e) => {
-                self.set_status_message(t!("split.cannot_close", error = e.to_string()).to_string());
+                self.set_status_message(
+                    t!("split.cannot_close", error = e.to_string()).to_string(),
+                );
             }
         }
     }

@@ -169,7 +169,9 @@ impl Editor {
     pub fn dump_config(&mut self) {
         // Create the config directory if it doesn't exist
         if let Err(e) = std::fs::create_dir_all(&self.dir_context.config_dir) {
-            self.set_status_message(t!("error.config_dir_failed", error = e.to_string()).to_string());
+            self.set_status_message(
+                t!("error.config_dir_failed", error = e.to_string()).to_string(),
+            );
             return;
         }
 
@@ -181,15 +183,22 @@ impl Editor {
                 // Open the saved config file in a new buffer
                 match self.open_file(&config_path) {
                     Ok(_buffer_id) => {
-                        self.set_status_message(t!("config.saved", path = config_path.display().to_string()).to_string());
+                        self.set_status_message(
+                            t!("config.saved", path = config_path.display().to_string())
+                                .to_string(),
+                        );
                     }
                     Err(e) => {
-                        self.set_status_message(t!("config.saved_failed_open", error = e.to_string()).to_string());
+                        self.set_status_message(
+                            t!("config.saved_failed_open", error = e.to_string()).to_string(),
+                        );
                     }
                 }
             }
             Err(e) => {
-                self.set_status_message(t!("error.config_save_failed", error = e.to_string()).to_string());
+                self.set_status_message(
+                    t!("error.config_save_failed", error = e.to_string()).to_string(),
+                );
             }
         }
     }

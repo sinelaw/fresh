@@ -221,7 +221,14 @@ impl Editor {
                 }
             }
 
-            self.status_message = Some(t!("lsp.jumped_to_definition", path = path.display().to_string(), line = line + 1).to_string());
+            self.status_message = Some(
+                t!(
+                    "lsp.jumped_to_definition",
+                    path = path.display().to_string(),
+                    line = line + 1
+                )
+                .to_string(),
+            );
         } else {
             self.status_message = Some(t!("lsp.cannot_open_definition").to_string());
         }
@@ -1106,7 +1113,9 @@ impl Editor {
 
         let count = lsp_locations.len();
         let symbol = std::mem::take(&mut self.pending_references_symbol);
-        self.set_status_message(t!("lsp.found_references", count = count, symbol = &symbol).to_string());
+        self.set_status_message(
+            t!("lsp.found_references", count = count, symbol = &symbol).to_string(),
+        );
 
         // Fire the lsp_references hook so plugins can display the results
         self.plugin_manager.run_hook(
@@ -1318,8 +1327,7 @@ impl Editor {
                     }
                 }
 
-                self.status_message =
-                    Some(t!("lsp.renamed", count = total_changes).to_string());
+                self.status_message = Some(t!("lsp.renamed", count = total_changes).to_string());
             }
             Err(error) => {
                 // Per LSP spec: ContentModified errors (-32801) should NOT be shown to user

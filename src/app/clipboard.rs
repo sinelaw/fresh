@@ -203,7 +203,8 @@ impl Editor {
 
         // Copy the HTML to clipboard (with plain text fallback)
         if self.clipboard.copy_html(&html, &text) {
-            self.status_message = Some(t!("clipboard.copied_with_theme", theme = theme_name).to_string());
+            self.status_message =
+                Some(t!("clipboard.copied_with_theme", theme = theme_name).to_string());
         } else {
             self.clipboard.copy(text);
             self.status_message = Some(t!("clipboard.copied_plain").to_string());
@@ -513,7 +514,8 @@ impl Editor {
                 self.active_event_log_mut().append(event.clone());
                 self.apply_event_to_active_buffer(&event);
 
-                self.status_message = Some(t!("clipboard.added_cursor_match", count = total_cursors).to_string());
+                self.status_message =
+                    Some(t!("clipboard.added_cursor_match", count = total_cursors).to_string());
             }
             AddCursorResult::Failed { message } => {
                 self.status_message = Some(message);
@@ -541,7 +543,8 @@ impl Editor {
                 self.active_event_log_mut().append(event.clone());
                 self.apply_event_to_active_buffer(&event);
 
-                self.status_message = Some(t!("clipboard.added_cursor_above", count = total_cursors).to_string());
+                self.status_message =
+                    Some(t!("clipboard.added_cursor_above", count = total_cursors).to_string());
             }
             AddCursorResult::Failed { message } => {
                 self.status_message = Some(message);
@@ -569,7 +572,8 @@ impl Editor {
                 self.active_event_log_mut().append(event.clone());
                 self.apply_event_to_active_buffer(&event);
 
-                self.status_message = Some(t!("clipboard.added_cursor_below", count = total_cursors).to_string());
+                self.status_message =
+                    Some(t!("clipboard.added_cursor_below", count = total_cursors).to_string());
             }
             AddCursorResult::Failed { message } => {
                 self.status_message = Some(message);

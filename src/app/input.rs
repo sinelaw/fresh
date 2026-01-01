@@ -262,10 +262,16 @@ impl Editor {
                 self.init_file_open_state();
             }
             Action::SwitchProject => {
-                self.start_prompt(t!("file.switch_project_prompt").to_string(), PromptType::SwitchProject);
+                self.start_prompt(
+                    t!("file.switch_project_prompt").to_string(),
+                    PromptType::SwitchProject,
+                );
                 self.init_folder_open_state();
             }
-            Action::GotoLine => self.start_prompt(t!("file.goto_line_prompt").to_string(), PromptType::GotoLine),
+            Action::GotoLine => self.start_prompt(
+                t!("file.goto_line_prompt").to_string(),
+                PromptType::GotoLine,
+            ),
             Action::New => {
                 self.new_buffer();
             }
@@ -505,12 +511,20 @@ impl Editor {
                 if is_search_prompt {
                     self.confirm_prompt();
                 } else {
-                    self.start_search_prompt(t!("file.search_prompt").to_string(), PromptType::Search, false);
+                    self.start_search_prompt(
+                        t!("file.search_prompt").to_string(),
+                        PromptType::Search,
+                        false,
+                    );
                 }
             }
             Action::Replace => {
                 // Use same flow as query-replace, just with confirm_each defaulting to false
-                self.start_search_prompt(t!("file.replace_prompt").to_string(), PromptType::ReplaceSearch, false);
+                self.start_search_prompt(
+                    t!("file.replace_prompt").to_string(),
+                    PromptType::ReplaceSearch,
+                    false,
+                );
             }
             Action::QueryReplace => {
                 // Enable confirm mode by default for query-replace
@@ -522,7 +536,11 @@ impl Editor {
                 );
             }
             Action::FindInSelection => {
-                self.start_search_prompt(t!("file.search_prompt").to_string(), PromptType::Search, true);
+                self.start_search_prompt(
+                    t!("file.search_prompt").to_string(),
+                    PromptType::Search,
+                    true,
+                );
             }
             Action::FindNext => {
                 self.find_next();

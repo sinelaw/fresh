@@ -296,7 +296,9 @@ impl Editor {
                     }
                 }
                 Err(e) => {
-                    self.set_status_message(t!("explorer.error", error = e.to_string()).to_string());
+                    self.set_status_message(
+                        t!("explorer.error", error = e.to_string()).to_string(),
+                    );
                 }
             }
         }
@@ -356,7 +358,9 @@ impl Editor {
                     }
                 }
                 Err(e) => {
-                    self.set_status_message(t!("explorer.error_refreshing", error = e.to_string()).to_string());
+                    self.set_status_message(
+                        t!("explorer.error_refreshing", error = e.to_string()).to_string(),
+                    );
                 }
             }
         }
@@ -383,10 +387,15 @@ impl Editor {
                                     get_parent_node_id(explorer.tree(), selected_id, node.is_dir());
                                 let tree = explorer.tree_mut();
                                 let _ = runtime.block_on(tree.refresh_node(parent_id));
-                                self.set_status_message(t!("explorer.created_file", name = &filename).to_string());
+                                self.set_status_message(
+                                    t!("explorer.created_file", name = &filename).to_string(),
+                                );
                             }
                             Err(e) => {
-                                self.set_status_message(t!("explorer.error_creating_file", error = e.to_string()).to_string());
+                                self.set_status_message(
+                                    t!("explorer.error_creating_file", error = e.to_string())
+                                        .to_string(),
+                                );
                             }
                         }
                     }
@@ -417,7 +426,9 @@ impl Editor {
                                     get_parent_node_id(explorer.tree(), selected_id, node.is_dir());
                                 let tree = explorer.tree_mut();
                                 let _ = runtime.block_on(tree.refresh_node(parent_id));
-                                self.set_status_message(t!("explorer.created_dir", name = &dirname_clone).to_string());
+                                self.set_status_message(
+                                    t!("explorer.created_dir", name = &dirname_clone).to_string(),
+                                );
 
                                 // Enter rename mode for the new folder
                                 let prompt = crate::view::prompt::Prompt::with_initial_text(
@@ -431,7 +442,10 @@ impl Editor {
                                 self.prompt = Some(prompt);
                             }
                             Err(e) => {
-                                self.set_status_message(t!("explorer.error_creating_dir", error = e.to_string()).to_string());
+                                self.set_status_message(
+                                    t!("explorer.error_creating_dir", error = e.to_string())
+                                        .to_string(),
+                                );
                             }
                         }
                     }
@@ -490,7 +504,9 @@ impl Editor {
                 self.set_status_message(t!("explorer.moved_to_trash", name = &name).to_string());
             }
             Err(e) => {
-                self.set_status_message(t!("explorer.error_trash", error = e.to_string()).to_string());
+                self.set_status_message(
+                    t!("explorer.error_trash", error = e.to_string()).to_string(),
+                );
             }
         }
     }
@@ -557,10 +573,14 @@ impl Editor {
                         // Navigate to the renamed file to restore selection
                         explorer.navigate_to_path(&new_path);
                     }
-                    self.set_status_message(t!("explorer.renamed", old = &original_name, new = &new_name).to_string());
+                    self.set_status_message(
+                        t!("explorer.renamed", old = &original_name, new = &new_name).to_string(),
+                    );
                 }
                 Err(e) => {
-                    self.set_status_message(t!("explorer.error_renaming", error = e.to_string()).to_string());
+                    self.set_status_message(
+                        t!("explorer.error_renaming", error = e.to_string()).to_string(),
+                    );
                 }
             }
         }

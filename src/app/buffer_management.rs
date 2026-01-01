@@ -535,7 +535,8 @@ impl Editor {
             .insert(buffer_id, crate::model::event::EventLog::new());
 
         // Create metadata for this buffer (no file path)
-        let metadata = super::types::BufferMetadata::new_unnamed(t!("stdin.display_name").to_string());
+        let metadata =
+            super::types::BufferMetadata::new_unnamed(t!("stdin.display_name").to_string());
         self.buffer_metadata.insert(buffer_id, metadata);
 
         // Add buffer to the active split's tabs
@@ -593,7 +594,8 @@ impl Editor {
             stream_state.last_known_size = current_size;
 
             // Update status message with current progress
-            self.status_message = Some(t!("stdin.streaming_bytes", bytes = current_size).to_string());
+            self.status_message =
+                Some(t!("stdin.streaming_bytes", bytes = current_size).to_string());
             changed = true;
         }
 
@@ -613,7 +615,8 @@ impl Editor {
                     }
                     Ok(Err(e)) => {
                         tracing::warn!("Stdin streaming error: {}", e);
-                        self.status_message = Some(t!("stdin.read_error", error = e.to_string()).to_string());
+                        self.status_message =
+                            Some(t!("stdin.read_error", error = e.to_string()).to_string());
                     }
                     Err(_) => {
                         tracing::warn!("Stdin streaming thread panicked");
@@ -648,7 +651,8 @@ impl Editor {
                 stream_state.last_known_size = final_size;
             }
 
-            self.status_message = Some(t!("stdin.read_complete", bytes = stream_state.last_known_size).to_string());
+            self.status_message =
+                Some(t!("stdin.read_complete", bytes = stream_state.last_known_size).to_string());
         }
     }
 
