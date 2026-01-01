@@ -369,7 +369,7 @@ fn test_external_paste_in_open_file_prompt() {
         .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Open:");
+    harness.assert_screen_contains("Open file:");
 
     // Simulate external paste of a file path
     harness
