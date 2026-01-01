@@ -266,12 +266,15 @@ impl DropdownColors {
     pub fn from_theme(theme: &crate::view::theme::Theme) -> Self {
         Self {
             label: theme.editor_fg,
-            selected: theme.menu_active_fg,
+            // Use editor_fg for selected value to ensure visibility
+            // menu_active_fg can be hard to see against some backgrounds
+            selected: theme.editor_fg,
             border: theme.line_number_fg,
             arrow: theme.line_number_fg,
             option: theme.editor_fg,
             highlight_bg: theme.selection_bg,
-            focused: theme.selection_bg,
+            // Use menu_highlight_fg for focus indicator (bright, visible color)
+            focused: theme.menu_highlight_fg,
             disabled: theme.line_number_fg,
         }
     }
