@@ -7,6 +7,8 @@
 //! - Managing per-split view states (cursors, viewport)
 //! - Split size adjustment and maximize
 
+use rust_i18n::t;
+
 use crate::model::event::{BufferId, Event, SplitDirection, SplitId};
 use crate::view::split::SplitViewState;
 
@@ -38,10 +40,10 @@ impl Editor {
                 self.split_view_states.insert(new_split_id, view_state);
                 // Restore the new split's view state to the buffer
                 self.restore_current_split_view_state();
-                self.set_status_message("Split pane horizontally".to_string());
+                self.set_status_message(t!("split.horizontal").to_string());
             }
             Err(e) => {
-                self.set_status_message(format!("Error splitting pane: {}", e));
+                self.set_status_message(t!("split.error", error = e.to_string()).to_string());
             }
         }
     }
@@ -71,10 +73,10 @@ impl Editor {
                 self.split_view_states.insert(new_split_id, view_state);
                 // Restore the new split's view state to the buffer
                 self.restore_current_split_view_state();
-                self.set_status_message("Split pane vertically".to_string());
+                self.set_status_message(t!("split.vertical").to_string());
             }
             Err(e) => {
-                self.set_status_message(format!("Error splitting pane: {}", e));
+                self.set_status_message(t!("split.error", error = e.to_string()).to_string());
             }
         }
     }
@@ -113,10 +115,10 @@ impl Editor {
                 // Sync the view state to editor state
                 self.sync_split_view_state_to_editor_state();
 
-                self.set_status_message("Closed split".to_string());
+                self.set_status_message(t!("split.closed").to_string());
             }
             Err(e) => {
-                self.set_status_message(format!("Cannot close split: {}", e));
+                self.set_status_message(t!("split.cannot_close", error = e.to_string()).to_string());
             }
         }
     }
@@ -124,13 +126,13 @@ impl Editor {
     /// Switch to next split
     pub fn next_split(&mut self) {
         self.switch_split(true);
-        self.set_status_message("Switched to next split".to_string());
+        self.set_status_message(t!("split.next").to_string());
     }
 
     /// Switch to previous split
     pub fn prev_split(&mut self) {
         self.switch_split(false);
-        self.set_status_message("Switched to previous split".to_string());
+        self.set_status_message(t!("split.prev").to_string());
     }
 
     /// Common split switching logic
@@ -282,9 +284,10 @@ impl Editor {
     pub fn adjust_split_size(&mut self, delta: f32) {
         let active_split = self.split_manager.active_split();
         if let Err(e) = self.split_manager.adjust_ratio(active_split, delta) {
-            self.set_status_message(format!("Cannot adjust split size: {}", e));
+            self.set_status_message(t!("split.cannot_adjust", error = e).to_string());
         } else {
-            self.set_status_message(format!("Adjusted split size by {:.0}%", delta * 100.0));
+            let percent = (delta * 100.0) as i32;
+            self.set_status_message(t!("split.size_adjusted", percent = percent).to_string());
             // Resize visible terminals to match new split dimensions
             self.resize_visible_terminals();
         }
@@ -295,9 +298,9 @@ impl Editor {
         match self.split_manager.toggle_maximize() {
             Ok(maximized) => {
                 if maximized {
-                    self.set_status_message("Maximized split".to_string());
+                    self.set_status_message(t!("split.maximized").to_string());
                 } else {
-                    self.set_status_message("Restored all splits".to_string());
+                    self.set_status_message(t!("split.restored").to_string());
                 }
                 // Resize visible terminals to match new split dimensions
                 self.resize_visible_terminals();

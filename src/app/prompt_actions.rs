@@ -43,9 +43,9 @@ impl Editor {
                 };
 
                 if let Err(e) = self.open_file(&resolved_path) {
-                    self.set_status_message(format!("Error opening file: {e}"));
+                    self.set_status_message(t!("file.error_opening", error = e.to_string()).to_string());
                 } else {
-                    self.set_status_message(format!("Opened {}", resolved_path.display()));
+                    self.set_status_message(t!("buffer.opened", name = resolved_path.display().to_string()).to_string());
                 }
             }
             PromptType::SwitchProject => {
@@ -59,10 +59,7 @@ impl Editor {
                 if resolved_path.is_dir() {
                     self.change_working_dir(resolved_path);
                 } else {
-                    self.set_status_message(format!(
-                        "Not a directory: {}",
-                        resolved_path.display()
-                    ));
+                    self.set_status_message(t!("file.not_directory", path = resolved_path.display().to_string()).to_string());
                 }
             }
             PromptType::SaveFileAs => {
@@ -74,7 +71,7 @@ impl Editor {
             PromptType::ReplaceSearch => {
                 self.perform_search(&input);
                 self.start_prompt(
-                    format!("Replace '{}' with: ", input),
+                    t!("replace.prompt", search = &input).to_string(),
                     PromptType::Replace {
                         search: input.clone(),
                     },
@@ -90,7 +87,7 @@ impl Editor {
             PromptType::QueryReplaceSearch => {
                 self.perform_search(&input);
                 self.start_prompt(
-                    format!("Query replace '{}' with: ", input),
+                    t!("replace.query_prompt", search = &input).to_string(),
                     PromptType::QueryReplace {
                         search: input.clone(),
                     },
@@ -108,41 +105,41 @@ impl Editor {
                 if let Some(cmd) = commands.iter().find(|c| c.name == input) {
                     let action = cmd.action.clone();
                     let cmd_name = cmd.name.clone();
-                    self.set_status_message(format!("Executing: {}", cmd_name));
+                    self.set_status_message(t!("error.executing", cmd = &cmd_name).to_string());
                     self.command_registry
                         .write()
                         .unwrap()
                         .record_usage(&cmd_name);
                     return PromptResult::ExecuteAction(action);
                 } else {
-                    self.set_status_message(format!("Unknown command: {input}"));
+                    self.set_status_message(t!("error.unknown_command", input = &input).to_string());
                 }
             }
             PromptType::GotoLine => match input.trim().parse::<usize>() {
                 Ok(line_num) if line_num > 0 => {
                     self.goto_line_col(line_num, None);
-                    self.set_status_message(format!("Jumped to line {}", line_num));
+                    self.set_status_message(t!("goto.jumped", line = line_num).to_string());
                 }
                 Ok(_) => {
-                    self.set_status_message("Line number must be positive".to_string());
+                    self.set_status_message(t!("goto.line_must_be_positive").to_string());
                 }
                 Err(_) => {
-                    self.set_status_message(format!("Invalid line number: {}", input));
+                    self.set_status_message(t!("error.invalid_line", input = &input).to_string());
                 }
             },
             PromptType::SetBackgroundFile => {
                 if let Err(e) = self.load_ansi_background(&input) {
-                    self.set_status_message(format!("Failed to load background: {}", e));
+                    self.set_status_message(t!("error.background_load_failed", error = e.to_string()).to_string());
                 }
             }
             PromptType::SetBackgroundBlend => match input.trim().parse::<f32>() {
                 Ok(val) => {
                     let clamped = val.clamp(0.0, 1.0);
                     self.background_fade = clamped;
-                    self.set_status_message(format!("Background blend set to {:.2}", clamped));
+                    self.set_status_message(t!("error.background_blend_set", value = format!("{:.2}", clamped)).to_string());
                 }
                 Err(_) => {
-                    self.set_status_message(format!("Invalid blend value: {}", input));
+                    self.set_status_message(t!("error.invalid_blend", input = &input).to_string());
                 }
             },
             PromptType::SetComposeWidth => {
@@ -183,20 +180,20 @@ impl Editor {
                 let revert_key = t!("prompt.key.revert").to_string().to_lowercase();
                 if input_lower == revert_key || input_lower == "revert" {
                     if let Err(e) = self.revert_file() {
-                        self.set_status_message(format!("Failed to revert: {}", e));
+                        self.set_status_message(t!("file.revert_failed", error = e.to_string()).to_string());
                     }
                 } else {
-                    self.set_status_message("Revert cancelled".to_string());
+                    self.set_status_message(t!("buffer.revert_cancelled").to_string());
                 }
             }
             PromptType::ConfirmSaveConflict => {
                 let input_lower = input.trim().to_lowercase();
                 if input_lower == "o" || input_lower == "overwrite" {
                     if let Err(e) = self.save() {
-                        self.set_status_message(format!("Failed to save: {}", e));
+                        self.set_status_message(t!("file.save_failed", error = e.to_string()).to_string());
                     }
                 } else {
-                    self.set_status_message("Save cancelled".to_string());
+                    self.set_status_message(t!("buffer.save_cancelled").to_string());
                 }
             }
             PromptType::ConfirmOverwriteFile { path } => {
@@ -204,7 +201,7 @@ impl Editor {
                 if input_lower == "o" || input_lower == "overwrite" {
                     self.perform_save_file_as(path);
                 } else {
-                    self.set_status_message("Save cancelled".to_string());
+                    self.set_status_message(t!("buffer.save_cancelled").to_string());
                 }
             }
             PromptType::ConfirmCloseBuffer { buffer_id } => {
@@ -218,7 +215,7 @@ impl Editor {
                 if input_lower == discard_key || input_lower == "discard" {
                     self.should_quit = true;
                 } else {
-                    self.set_status_message("Quit cancelled".to_string());
+                    self.set_status_message(t!("buffer.close_cancelled").to_string());
                 }
             }
             PromptType::LspRename {
@@ -240,7 +237,7 @@ impl Editor {
                 if input_lower == "y" || input_lower == "yes" {
                     self.perform_file_explorer_delete(path, is_dir);
                 } else {
-                    self.set_status_message("Delete cancelled".to_string());
+                    self.set_status_message(t!("explorer.delete_cancelled").to_string());
                 }
             }
             PromptType::StopLspServer => {
@@ -310,7 +307,7 @@ impl Editor {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| full_path.display().to_string());
             self.start_prompt(
-                format!("'{}' exists. (o)verwrite, (C)ancel? ", filename),
+                t!("buffer.overwrite_confirm", name = &filename).to_string(),
                 PromptType::ConfirmOverwriteFile { path: full_path },
             );
             return;
@@ -373,17 +370,17 @@ impl Editor {
 
                 if let Some(buffer_to_close) = self.pending_close_buffer.take() {
                     if let Err(e) = self.force_close_buffer(buffer_to_close) {
-                        self.set_status_message(format!("Saved, but cannot close buffer: {}", e));
+                        self.set_status_message(t!("file.saved_cannot_close", error = e.to_string()).to_string());
                     } else {
-                        self.set_status_message("Saved and closed".to_string());
+                        self.set_status_message(t!("buffer.saved_and_closed").to_string());
                     }
                 } else {
-                    self.set_status_message(format!("Saved as: {}", full_path.display()));
+                    self.set_status_message(t!("file.saved_as", path = full_path.display().to_string()).to_string());
                 }
             }
             Err(e) => {
                 self.pending_close_buffer = None;
-                self.set_status_message(format!("Error saving file: {}", e));
+                self.set_status_message(t!("file.error_saving", error = e.to_string()).to_string());
             }
         }
     }
@@ -401,7 +398,7 @@ impl Editor {
             if let Some(vs) = self.split_view_states.get_mut(&active_split) {
                 vs.compose_width = None;
             }
-            self.set_status_message("Compose width cleared (viewport)".to_string());
+            self.set_status_message(t!("settings.compose_width_cleared").to_string());
         } else {
             match trimmed.parse::<u16>() {
                 Ok(val) if val > 0 => {
@@ -411,10 +408,10 @@ impl Editor {
                     if let Some(vs) = self.split_view_states.get_mut(&active_split) {
                         vs.compose_width = Some(val);
                     }
-                    self.set_status_message(format!("Compose width set to {}", val));
+                    self.set_status_message(t!("settings.compose_width_set", value = val).to_string());
                 }
                 _ => {
-                    self.set_status_message(format!("Invalid compose width: {}", input));
+                    self.set_status_message(t!("error.invalid_compose_width", input = input).to_string());
                 }
             }
         }
@@ -430,13 +427,13 @@ impl Editor {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     state.tab_size = val;
                 }
-                self.set_status_message(format!("Tab size set to {}", val));
+                self.set_status_message(t!("settings.tab_size_set", value = val).to_string());
             }
             Ok(_) => {
-                self.set_status_message("Tab size must be greater than 0".to_string());
+                self.set_status_message(t!("settings.tab_size_positive").to_string());
             }
             Err(_) => {
-                self.set_status_message(format!("Invalid tab size: {}", input));
+                self.set_status_message(t!("error.invalid_tab_size", input = input).to_string());
             }
         }
     }
@@ -459,10 +456,10 @@ impl Editor {
         match line_ending {
             Some(le) => {
                 self.active_state_mut().buffer.set_line_ending(le);
-                self.set_status_message(format!("Line ending set to {}", le.display_name()));
+                self.set_status_message(t!("settings.line_ending_set", value = le.display_name()).to_string());
             }
             None => {
-                self.set_status_message(format!("Unknown line ending: {}", input));
+                self.set_status_message(t!("error.unknown_line_ending", input = input).to_string());
             }
         }
     }
@@ -476,10 +473,10 @@ impl Editor {
             if c.is_ascii_digit() {
                 action(self, c);
             } else {
-                self.set_status_message(format!("{} register must be 0-9", register_type));
+                self.set_status_message(t!("register.must_be_digit", "type" = register_type).to_string());
             }
         } else {
-            self.set_status_message("No register specified".to_string());
+            self.set_status_message(t!("register.not_specified").to_string());
         }
     }
 
@@ -505,20 +502,20 @@ impl Editor {
                 let old_active = self.active_buffer();
                 self.set_active_buffer(buffer_id);
                 if let Err(e) = self.save() {
-                    self.set_status_message(format!("Failed to save: {}", e));
+                    self.set_status_message(t!("file.save_failed", error = e.to_string()).to_string());
                     self.set_active_buffer(old_active);
                     return true; // Early return
                 }
                 self.set_active_buffer(old_active);
                 if let Err(e) = self.force_close_buffer(buffer_id) {
-                    self.set_status_message(format!("Cannot close buffer: {}", e));
+                    self.set_status_message(t!("file.cannot_close", error = e.to_string()).to_string());
                 } else {
-                    self.set_status_message("Saved and closed".to_string());
+                    self.set_status_message(t!("buffer.saved_and_closed").to_string());
                 }
             } else {
                 self.pending_close_buffer = Some(buffer_id);
                 self.start_prompt_with_initial_text(
-                    "Save as: ".to_string(),
+                    t!("file.save_as_prompt").to_string(),
                     PromptType::SaveFileAs,
                     String::new(),
                 );
@@ -526,12 +523,12 @@ impl Editor {
         } else if first_char == discard_first {
             // Discard and close
             if let Err(e) = self.force_close_buffer(buffer_id) {
-                self.set_status_message(format!("Cannot close buffer: {}", e));
+                self.set_status_message(t!("file.cannot_close", error = e.to_string()).to_string());
             } else {
-                self.set_status_message("Buffer closed (changes discarded)".to_string());
+                self.set_status_message(t!("buffer.changes_discarded").to_string());
             }
         } else {
-            self.set_status_message("Close cancelled".to_string());
+            self.set_status_message(t!("buffer.close_cancelled").to_string());
         }
         false
     }
@@ -562,12 +559,9 @@ impl Editor {
                         );
                     }
                 }
-                self.set_status_message(format!(
-                    "LSP server for '{}' stopped (auto-start disabled)",
-                    language
-                ));
+                self.set_status_message(t!("lsp.server_stopped", language = language).to_string());
             } else {
-                self.set_status_message(format!("No running LSP server found for '{}'", language));
+                self.set_status_message(t!("lsp.server_not_found", language = language).to_string());
             }
         }
     }

@@ -6,6 +6,8 @@
 //! - Reset buffer settings
 //! - Config dump, save, and reload
 
+use rust_i18n::t;
+
 use crate::config::Config;
 use crate::input::keybindings::KeybindingResolver;
 use crate::services::lsp::manager::detect_language;
@@ -19,12 +21,12 @@ impl Editor {
             let currently_shown = state.margins.show_line_numbers;
             state.margins.set_line_numbers(!currently_shown);
             if currently_shown {
-                self.set_status_message("Line numbers hidden".to_string());
+                self.set_status_message(t!("toggle.line_numbers_hidden").to_string());
             } else {
                 // Restore proper width based on buffer size
                 let total_lines = state.buffer.line_count().unwrap_or(1);
                 state.margins.update_width_for_buffer(total_lines);
-                self.set_status_message("Line numbers shown".to_string());
+                self.set_status_message(t!("toggle.line_numbers_shown").to_string());
             }
         }
     }
@@ -35,11 +37,9 @@ impl Editor {
         if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
             state.debug_highlight_mode = !state.debug_highlight_mode;
             if state.debug_highlight_mode {
-                self.set_status_message(
-                    "Debug highlight mode ON - showing byte ranges".to_string(),
-                );
+                self.set_status_message(t!("toggle.debug_mode_on").to_string());
             } else {
-                self.set_status_message("Debug highlight mode OFF".to_string());
+                self.set_status_message(t!("toggle.debug_mode_off").to_string());
             }
         }
     }
@@ -54,9 +54,9 @@ impl Editor {
             self.menu_state.close_menu();
         }
         let status = if self.menu_bar_visible {
-            "Menu bar shown"
+            t!("toggle.menu_bar_shown")
         } else {
-            "Menu bar hidden"
+            t!("toggle.menu_bar_hidden")
         };
         self.set_status_message(status.to_string());
     }
@@ -97,7 +97,7 @@ impl Editor {
             state.show_whitespace_tabs = show_whitespace_tabs;
         }
 
-        self.set_status_message("Buffer settings reset to config defaults".to_string());
+        self.set_status_message(t!("toggle.buffer_settings_reset").to_string());
     }
 
     /// Toggle mouse capture on/off
@@ -108,10 +108,10 @@ impl Editor {
 
         if self.mouse_enabled {
             let _ = crossterm::execute!(stdout(), crossterm::event::EnableMouseCapture);
-            self.set_status_message("Mouse capture enabled".to_string());
+            self.set_status_message(t!("toggle.mouse_capture_enabled").to_string());
         } else {
             let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
-            self.set_status_message("Mouse capture disabled".to_string());
+            self.set_status_message(t!("toggle.mouse_capture_disabled").to_string());
         }
     }
 
@@ -125,12 +125,12 @@ impl Editor {
         self.config.editor.mouse_hover_enabled = !self.config.editor.mouse_hover_enabled;
 
         if self.config.editor.mouse_hover_enabled {
-            self.set_status_message("Mouse hover enabled".to_string());
+            self.set_status_message(t!("toggle.mouse_hover_enabled").to_string());
         } else {
             // Clear any pending hover state
             self.mouse_state.lsp_hover_state = None;
             self.mouse_state.lsp_hover_request_sent = false;
-            self.set_status_message("Mouse hover disabled".to_string());
+            self.set_status_message(t!("toggle.mouse_hover_disabled").to_string());
         }
     }
 
@@ -155,13 +155,13 @@ impl Editor {
         if self.config.editor.enable_inlay_hints {
             // Re-request inlay hints for the active buffer
             self.request_inlay_hints_for_active_buffer();
-            self.set_status_message("Inlay hints enabled".to_string());
+            self.set_status_message(t!("toggle.inlay_hints_enabled").to_string());
         } else {
             // Clear inlay hints from all buffers
             for state in self.buffers.values_mut() {
                 state.virtual_texts.clear(&mut state.marker_list);
             }
-            self.set_status_message("Inlay hints disabled".to_string());
+            self.set_status_message(t!("toggle.inlay_hints_disabled").to_string());
         }
     }
 
@@ -169,7 +169,7 @@ impl Editor {
     pub fn dump_config(&mut self) {
         // Create the config directory if it doesn't exist
         if let Err(e) = std::fs::create_dir_all(&self.dir_context.config_dir) {
-            self.set_status_message(format!("Error creating config directory: {}", e));
+            self.set_status_message(t!("error.config_dir_failed", error = e.to_string()).to_string());
             return;
         }
 
@@ -181,18 +181,15 @@ impl Editor {
                 // Open the saved config file in a new buffer
                 match self.open_file(&config_path) {
                     Ok(_buffer_id) => {
-                        self.set_status_message(format!(
-                            "Config saved to {}",
-                            config_path.display()
-                        ));
+                        self.set_status_message(t!("config.saved", path = config_path.display().to_string()).to_string());
                     }
                     Err(e) => {
-                        self.set_status_message(format!("Config saved but failed to open: {}", e));
+                        self.set_status_message(t!("config.saved_failed_open", error = e.to_string()).to_string());
                     }
                 }
             }
             Err(e) => {
-                self.set_status_message(format!("Error saving config: {}", e));
+                self.set_status_message(t!("error.config_save_failed", error = e.to_string()).to_string());
             }
         }
     }

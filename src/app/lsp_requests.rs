@@ -10,6 +10,7 @@
 //! - Rename operations
 //! - Inlay hints
 
+use rust_i18n::t;
 use std::io;
 
 use lsp_types::TextDocumentContentChangeEvent;
@@ -180,7 +181,7 @@ impl Editor {
         self.pending_goto_definition_request = None;
 
         if locations.is_empty() {
-            self.status_message = Some("No definition found".to_string());
+            self.status_message = Some(t!("lsp.no_definition").to_string());
             return Ok(());
         }
 
@@ -220,13 +221,9 @@ impl Editor {
                 }
             }
 
-            self.status_message = Some(format!(
-                "Jumped to definition at {}:{}",
-                path.display(),
-                line + 1
-            ));
+            self.status_message = Some(t!("lsp.jumped_to_definition", path = path.display().to_string(), line = line + 1).to_string());
         } else {
-            self.status_message = Some("Could not open definition location".to_string());
+            self.status_message = Some(t!("lsp.cannot_open_definition").to_string());
         }
 
         Ok(())
@@ -538,7 +535,7 @@ impl Editor {
         self.lsp_status.clear();
 
         if contents.is_empty() {
-            self.set_status_message("No hover information available".to_string());
+            self.set_status_message(t!("lsp.no_hover").to_string());
             self.hover_symbol_range = None;
             return;
         }
@@ -696,7 +693,7 @@ impl Editor {
             let text = match state.buffer.to_string() {
                 Some(t) => t,
                 None => {
-                    self.set_status_message("Buffer not fully loaded".to_string());
+                    self.set_status_message(t!("error.buffer_not_loaded").to_string());
                     return Ok(());
                 }
             };
@@ -1015,7 +1012,7 @@ impl Editor {
         self.lsp_status.clear();
 
         if actions.is_empty() {
-            self.set_status_message("No code actions available".to_string());
+            self.set_status_message(t!("lsp.no_code_actions").to_string());
             return;
         }
 
@@ -1033,7 +1030,7 @@ impl Editor {
         }
 
         lines.push(String::new());
-        lines.push("Press number to select, Esc to cancel".to_string());
+        lines.push(t!("lsp.code_action_hint").to_string());
 
         // Create a popup with the code actions
         use crate::view::popup::{Popup, PopupPosition};
@@ -1083,7 +1080,7 @@ impl Editor {
         self.lsp_status.clear();
 
         if locations.is_empty() {
-            self.set_status_message("No references found".to_string());
+            self.set_status_message(t!("lsp.no_references").to_string());
             return Ok(());
         }
 
@@ -1109,7 +1106,7 @@ impl Editor {
 
         let count = lsp_locations.len();
         let symbol = std::mem::take(&mut self.pending_references_symbol);
-        self.set_status_message(format!("Found {} reference(s) for '{}'", count, symbol));
+        self.set_status_message(t!("lsp.found_references", count = count, symbol = &symbol).to_string());
 
         // Fire the lsp_references hook so plugins can display the results
         self.plugin_manager.run_hook(
@@ -1322,7 +1319,7 @@ impl Editor {
                 }
 
                 self.status_message =
-                    Some(format!("Renamed successfully ({} changes)", total_changes));
+                    Some(t!("lsp.renamed", count = total_changes).to_string());
             }
             Err(error) => {
                 // Per LSP spec: ContentModified errors (-32801) should NOT be shown to user
@@ -1333,11 +1330,10 @@ impl Editor {
                         "LSP rename: ContentModified error (expected, ignoring): {}",
                         error
                     );
-                    self.status_message =
-                        Some("Rename cancelled (document was modified)".to_string());
+                    self.status_message = Some(t!("lsp.rename_cancelled").to_string());
                 } else {
                     // Show other errors to user
-                    self.status_message = Some(format!("Rename failed: {}", error));
+                    self.status_message = Some(t!("lsp.rename_failed", error = &error).to_string());
                 }
             }
         }
@@ -1634,7 +1630,7 @@ impl Editor {
 
             // Check if we're on a word
             if word_start >= word_end {
-                self.status_message = Some("No symbol at cursor".to_string());
+                self.status_message = Some(t!("lsp.no_symbol_at_cursor").to_string());
                 return Ok(());
             }
 
@@ -1691,7 +1687,7 @@ impl Editor {
 
         // Check if the name actually changed
         if new_name == original_text {
-            self.status_message = Some("Name unchanged".to_string());
+            self.status_message = Some(t!("lsp.name_unchanged").to_string());
             return;
         }
 
@@ -1738,7 +1734,7 @@ impl Editor {
             .and_then(|m| m.file_path())
             .is_none()
         {
-            self.status_message = Some("Cannot rename in unsaved buffer".to_string());
+            self.status_message = Some(t!("lsp.cannot_rename_unsaved").to_string());
         }
     }
 

@@ -66,9 +66,9 @@ impl Editor {
 
         // Show appropriate status message for binary vs regular files
         if is_binary {
-            self.status_message = Some(format!("Opened {} [binary file, read-only]", display_name));
+            self.status_message = Some(t!("buffer.opened_binary", name = display_name).to_string());
         } else {
-            self.status_message = Some(format!("Opened {}", display_name));
+            self.status_message = Some(t!("buffer.opened", name = display_name).to_string());
         }
 
         Ok(buffer_id)
@@ -212,7 +212,7 @@ impl Editor {
         if is_binary {
             metadata.binary = true;
             metadata.read_only = true;
-            metadata.disable_lsp("Binary file".to_string());
+            metadata.disable_lsp(t!("buffer.binary_file").to_string());
         }
 
         // Notify LSP about the newly opened file (skip for binary files)
@@ -454,7 +454,7 @@ impl Editor {
         }
 
         self.set_active_buffer(buffer_id);
-        self.status_message = Some("New buffer".to_string());
+        self.status_message = Some(t!("buffer.new").to_string());
 
         buffer_id
     }
@@ -535,7 +535,7 @@ impl Editor {
             .insert(buffer_id, crate::model::event::EventLog::new());
 
         // Create metadata for this buffer (no file path)
-        let metadata = super::types::BufferMetadata::new_unnamed("[stdin]".to_string());
+        let metadata = super::types::BufferMetadata::new_unnamed(t!("stdin.display_name").to_string());
         self.buffer_metadata.insert(buffer_id, metadata);
 
         // Add buffer to the active split's tabs
@@ -560,7 +560,7 @@ impl Editor {
         });
 
         // Status will be updated by poll_stdin_streaming
-        self.status_message = Some("Streaming from stdin...".to_string());
+        self.status_message = Some(t!("stdin.streaming").to_string());
 
         Ok(buffer_id)
     }
@@ -593,10 +593,7 @@ impl Editor {
             stream_state.last_known_size = current_size;
 
             // Update status message with current progress
-            self.status_message = Some(format!(
-                "Streaming from stdin... {} bytes received",
-                current_size
-            ));
+            self.status_message = Some(t!("stdin.streaming_bytes", bytes = current_size).to_string());
             changed = true;
         }
 
@@ -616,11 +613,11 @@ impl Editor {
                     }
                     Ok(Err(e)) => {
                         tracing::warn!("Stdin streaming error: {}", e);
-                        self.status_message = Some(format!("Stdin read error: {}", e));
+                        self.status_message = Some(t!("stdin.read_error", error = e.to_string()).to_string());
                     }
                     Err(_) => {
                         tracing::warn!("Stdin streaming thread panicked");
-                        self.status_message = Some("Stdin read error: thread panicked".to_string());
+                        self.status_message = Some(t!("stdin.read_error_panic").to_string());
                     }
                 }
             }
@@ -651,10 +648,7 @@ impl Editor {
                 stream_state.last_known_size = final_size;
             }
 
-            self.status_message = Some(format!(
-                "Read {} bytes from stdin",
-                stream_state.last_known_size
-            ));
+            self.status_message = Some(t!("stdin.read_complete", bytes = stream_state.last_known_size).to_string());
         }
     }
 
@@ -882,7 +876,7 @@ impl Editor {
     /// Otherwise, opens the warning log file for the user to view.
     pub fn show_warnings_popup(&mut self) {
         if !self.warning_domains.has_any_warnings() {
-            self.status_message = Some("No warnings".to_string());
+            self.status_message = Some(t!("warnings.none").to_string());
             return;
         }
 
@@ -929,9 +923,9 @@ impl Editor {
 
         if !self.warning_domains.lsp.has_warnings() {
             if self.lsp_status.is_empty() {
-                self.status_message = Some("No LSP server active".to_string());
+                self.status_message = Some(t!("lsp.no_server_active").to_string());
             } else {
-                self.status_message = Some(format!("LSP: {}", self.lsp_status));
+                self.status_message = Some(t!("lsp.status", status = &self.lsp_status).to_string());
             }
             return;
         }
@@ -1096,9 +1090,9 @@ impl Editor {
                     PromptType::ConfirmCloseBuffer { buffer_id },
                 );
             } else if let Err(e) = self.close_buffer(buffer_id) {
-                self.set_status_message(format!("Cannot close buffer: {}", e));
+                self.set_status_message(t!("file.cannot_close", error = e.to_string()).to_string());
             } else {
-                self.set_status_message("Tab closed".to_string());
+                self.set_status_message(t!("buffer.tab_closed").to_string());
             }
         } else {
             // There are other viewports of this buffer - just remove from current split's tabs
@@ -1126,7 +1120,7 @@ impl Editor {
                 .split_manager
                 .set_split_buffer(active_split, replacement_buffer);
 
-            self.set_status_message("Tab closed".to_string());
+            self.set_status_message(t!("buffer.tab_closed").to_string());
         }
     }
 
@@ -1180,9 +1174,9 @@ impl Editor {
                 }
             }
             if let Err(e) = self.close_buffer(buffer_id) {
-                self.set_status_message(format!("Cannot close buffer: {}", e));
+                self.set_status_message(t!("file.cannot_close", error = e.to_string()).to_string());
             } else {
-                self.set_status_message("Tab closed".to_string());
+                self.set_status_message(t!("buffer.tab_closed").to_string());
             }
         } else {
             // There are other viewports of this buffer - just remove from this split's tabs
@@ -1210,7 +1204,7 @@ impl Editor {
                 .split_manager
                 .set_split_buffer(split_id, replacement_buffer);
 
-            self.set_status_message("Tab closed".to_string());
+            self.set_status_message(t!("buffer.tab_closed").to_string());
         }
         true
     }
@@ -1336,10 +1330,10 @@ impl Editor {
     /// Set status message for batch close operations
     fn set_batch_close_status_message(&mut self, closed: usize, skipped_modified: usize) {
         let message = match (closed, skipped_modified) {
-            (0, 0) => "No tabs to close".to_string(),
-            (0, n) => format!("Skipped {} modified tab(s)", n),
-            (n, 0) => format!("Closed {} tab(s)", n),
-            (c, s) => format!("Closed {} tab(s), skipped {} modified", c, s),
+            (0, 0) => t!("buffer.no_tabs_to_close").to_string(),
+            (0, n) => t!("buffer.skipped_modified", count = n).to_string(),
+            (n, 0) => t!("buffer.closed_tabs", count = n).to_string(),
+            (c, s) => t!("buffer.closed_tabs_skipped", closed = c, skipped = s).to_string(),
         };
         self.set_status_message(message);
     }

@@ -1,3 +1,5 @@
+use rust_i18n::t;
+
 use super::*;
 use crate::view::file_tree::TreeNode;
 use std::path::PathBuf;
@@ -57,11 +59,11 @@ impl Editor {
                 self.init_file_explorer();
             }
             self.key_context = KeyContext::FileExplorer;
-            self.set_status_message("File explorer opened".to_string());
+            self.set_status_message(t!("explorer.opened").to_string());
             self.sync_file_explorer_to_active_file();
         } else {
             self.key_context = KeyContext::Normal;
-            self.set_status_message("File explorer closed".to_string());
+            self.set_status_message(t!("explorer.closed").to_string());
         }
     }
 
@@ -121,7 +123,7 @@ impl Editor {
             self.cancel_search_prompt_if_active();
 
             self.key_context = KeyContext::FileExplorer;
-            self.set_status_message("File explorer focused".to_string());
+            self.set_status_message(t!("explorer.focused").to_string());
             self.sync_file_explorer_to_active_file();
         } else {
             self.toggle_file_explorer();
@@ -130,7 +132,7 @@ impl Editor {
 
     pub fn focus_editor(&mut self) {
         self.key_context = KeyContext::Normal;
-        self.set_status_message("Editor focused".to_string());
+        self.set_status_message(t!("editor.focused").to_string());
     }
 
     pub(crate) fn init_file_explorer(&mut self) {
@@ -157,7 +159,7 @@ impl Editor {
                 }
             });
 
-            self.set_status_message("Initializing file explorer...".to_string());
+            self.set_status_message(t!("explorer.initializing").to_string());
         }
     }
 
@@ -245,9 +247,9 @@ impl Editor {
         }
 
         let status_msg = if is_expanded {
-            "Collapsing...".to_string()
+            t!("explorer.collapsing").to_string()
         } else {
-            format!("Loading {}...", name)
+            t!("explorer.loading_dir", name = &name).to_string()
         };
         self.set_status_message(status_msg);
 
@@ -286,15 +288,15 @@ impl Editor {
 
                     if let Some(name) = final_name {
                         let msg = if final_expanded {
-                            format!("Expanded: {}", name)
+                            t!("explorer.expanded", name = &name).to_string()
                         } else {
-                            format!("Collapsed: {}", name)
+                            t!("explorer.collapsed", name = &name).to_string()
                         };
                         self.set_status_message(msg);
                     }
                 }
                 Err(e) => {
-                    self.set_status_message(format!("Error: {}", e));
+                    self.set_status_message(t!("explorer.error", error = e.to_string()).to_string());
                 }
             }
         }
@@ -312,7 +314,7 @@ impl Editor {
                 self.file_explorer_toggle_expand();
             } else {
                 self.open_file(&path)?;
-                self.set_status_message(format!("Opened: {}", name));
+                self.set_status_message(t!("explorer.opened_file", name = &name).to_string());
                 self.focus_editor();
             }
         }
@@ -339,7 +341,7 @@ impl Editor {
         };
 
         if let Some(name) = &node_name {
-            self.set_status_message(format!("Refreshing {}...", name));
+            self.set_status_message(t!("explorer.refreshing", name = name).to_string());
         }
 
         if let (Some(runtime), Some(explorer)) = (&self.tokio_runtime, &mut self.file_explorer) {
@@ -348,13 +350,13 @@ impl Editor {
             match result {
                 Ok(()) => {
                     if let Some(name) = node_name {
-                        self.set_status_message(format!("Refreshed: {}", name));
+                        self.set_status_message(t!("explorer.refreshed", name = &name).to_string());
                     } else {
-                        self.set_status_message("Refreshed".to_string());
+                        self.set_status_message(t!("explorer.refreshed_default").to_string());
                     }
                 }
                 Err(e) => {
-                    self.set_status_message(format!("Error refreshing: {}", e));
+                    self.set_status_message(t!("explorer.error_refreshing", error = e.to_string()).to_string());
                 }
             }
         }
@@ -381,10 +383,10 @@ impl Editor {
                                     get_parent_node_id(explorer.tree(), selected_id, node.is_dir());
                                 let tree = explorer.tree_mut();
                                 let _ = runtime.block_on(tree.refresh_node(parent_id));
-                                self.set_status_message(format!("Created {}", filename));
+                                self.set_status_message(t!("explorer.created_file", name = &filename).to_string());
                             }
                             Err(e) => {
-                                self.set_status_message(format!("Error creating file: {}", e));
+                                self.set_status_message(t!("explorer.error_creating_file", error = e.to_string()).to_string());
                             }
                         }
                     }
@@ -415,11 +417,11 @@ impl Editor {
                                     get_parent_node_id(explorer.tree(), selected_id, node.is_dir());
                                 let tree = explorer.tree_mut();
                                 let _ = runtime.block_on(tree.refresh_node(parent_id));
-                                self.set_status_message(format!("Created {}", dirname_clone));
+                                self.set_status_message(t!("explorer.created_dir", name = &dirname_clone).to_string());
 
                                 // Enter rename mode for the new folder
                                 let prompt = crate::view::prompt::Prompt::with_initial_text(
-                                    "Rename to: ".to_string(),
+                                    t!("explorer.rename_prompt").to_string(),
                                     crate::view::prompt::PromptType::FileExplorerRename {
                                         original_path: path_clone,
                                         original_name: dirname_clone,
@@ -429,7 +431,7 @@ impl Editor {
                                 self.prompt = Some(prompt);
                             }
                             Err(e) => {
-                                self.set_status_message(format!("Error creating directory: {}", e));
+                                self.set_status_message(t!("explorer.error_creating_dir", error = e.to_string()).to_string());
                             }
                         }
                     }
@@ -443,7 +445,7 @@ impl Editor {
             if let Some(selected_id) = explorer.get_selected() {
                 // Don't allow deleting the root directory
                 if selected_id == explorer.tree().root_id() {
-                    self.set_status_message("Cannot delete project root".to_string());
+                    self.set_status_message(t!("explorer.cannot_delete_root").to_string());
                     return;
                 }
 
@@ -455,7 +457,7 @@ impl Editor {
 
                     let type_str = if is_dir { "directory" } else { "file" };
                     self.start_prompt(
-                        format!("Delete {} '{}'? (y)es, (N)o: ", type_str, name),
+                        t!("explorer.delete_confirm", "type" = type_str, name = &name).to_string(),
                         PromptType::ConfirmDeleteFile { path, is_dir },
                     );
                 }
@@ -485,10 +487,10 @@ impl Editor {
                         }
                     }
                 }
-                self.set_status_message(format!("Moved to trash: {}", name));
+                self.set_status_message(t!("explorer.moved_to_trash", name = &name).to_string());
             }
             Err(e) => {
-                self.set_status_message(format!("Error moving to trash: {}", e));
+                self.set_status_message(t!("explorer.error_trash", error = e.to_string()).to_string());
             }
         }
     }
@@ -498,7 +500,7 @@ impl Editor {
             if let Some(selected_id) = explorer.get_selected() {
                 // Don't allow renaming the root directory
                 if selected_id == explorer.tree().root_id() {
-                    self.set_status_message("Cannot rename project root".to_string());
+                    self.set_status_message(t!("explorer.cannot_rename_root").to_string());
                     return;
                 }
 
@@ -509,7 +511,7 @@ impl Editor {
 
                     // Create a prompt for the new name, pre-filled with the old name
                     let prompt = crate::view::prompt::Prompt::with_initial_text(
-                        "Rename to: ".to_string(),
+                        t!("explorer.rename_prompt").to_string(),
                         crate::view::prompt::PromptType::FileExplorerRename {
                             original_path: old_path,
                             original_name: old_name.clone(),
@@ -530,7 +532,7 @@ impl Editor {
         new_name: String,
     ) {
         if new_name.is_empty() || new_name == original_name {
-            self.set_status_message("Rename cancelled".to_string());
+            self.set_status_message(t!("explorer.rename_cancelled").to_string());
             return;
         }
 
@@ -555,10 +557,10 @@ impl Editor {
                         // Navigate to the renamed file to restore selection
                         explorer.navigate_to_path(&new_path);
                     }
-                    self.set_status_message(format!("Renamed {} to {}", original_name, new_name));
+                    self.set_status_message(t!("explorer.renamed", old = &original_name, new = &new_name).to_string());
                 }
                 Err(e) => {
-                    self.set_status_message(format!("Error renaming: {}", e));
+                    self.set_status_message(t!("explorer.error_renaming", error = e.to_string()).to_string());
                 }
             }
         }
@@ -568,9 +570,9 @@ impl Editor {
         if let Some(explorer) = &mut self.file_explorer {
             explorer.toggle_show_hidden();
             let msg = if explorer.ignore_patterns().show_hidden() {
-                "Showing hidden files"
+                t!("explorer.showing_hidden")
             } else {
-                "Hiding hidden files"
+                t!("explorer.hiding_hidden")
             };
             self.set_status_message(msg.to_string());
         }
@@ -581,9 +583,9 @@ impl Editor {
             explorer.toggle_show_gitignored();
             let show = explorer.ignore_patterns().show_gitignored();
             let msg = if show {
-                "Showing gitignored files"
+                t!("explorer.showing_gitignored")
             } else {
-                "Hiding gitignored files"
+                t!("explorer.hiding_gitignored")
             };
             self.set_status_message(msg.to_string());
         }
