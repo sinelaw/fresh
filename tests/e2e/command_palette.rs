@@ -878,6 +878,49 @@ fn test_show_keyboard_shortcuts_open_close_reopen() {
     );
 }
 
+/// Test that command palette fuzzy matches on command descriptions
+#[test]
+fn test_command_palette_description_fuzzy_matching() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+
+    // Trigger the command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for "language" which appears in the description of "Select Locale"
+    // ("Choose the UI language for the editor")
+    // but not in the command name itself
+    harness.type_text("language").unwrap();
+    harness.render().unwrap();
+
+    // Should find "Select Locale" because "language" is in its description
+    harness.assert_screen_contains("Select Locale");
+
+    // Clear and try another example
+    for _ in 0..8 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    // Search for "clipboard" which appears in Copy/Paste descriptions
+    // but not in the command names
+    harness.type_text("clipboard").unwrap();
+    harness.render().unwrap();
+
+    // Should find Copy or Paste commands
+    let screen = harness.screen_to_string();
+    let found_clipboard_command = screen.contains("Copy") || screen.contains("Paste");
+    assert!(
+        found_clipboard_command,
+        "Should find commands matching 'clipboard' in their description. Screen:\n{}",
+        screen
+    );
+}
+
 /// Test that cursor style can be changed via command palette
 #[test]
 fn test_command_palette_select_cursor_style() {

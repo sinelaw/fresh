@@ -135,33 +135,54 @@ impl CommandRegistry {
             builtin_ok && custom_ok
         };
 
-        // Filter and convert to suggestions with history position and fuzzy score
-        let mut suggestions: Vec<(Suggestion, Option<usize>, i32)> = commands
-            .into_iter()
-            .filter_map(|cmd| {
-                // Use fuzzy matching
-                let fuzzy_result = fuzzy_match(query, &cmd.name);
-                if !fuzzy_result.matched {
-                    return None;
-                }
+        // Helper to create a suggestion from a command
+        let make_suggestion = |cmd: &Command, score: i32| {
+            let mut available = is_available(cmd);
+            if cmd.action == Action::FindInSelection && !selection_active {
+                available = false;
+            }
+            let keybinding =
+                keybinding_resolver.get_keybinding_for_action(&cmd.action, current_context);
+            let history_pos = self.history_position(&cmd.name);
+            let suggestion = Suggestion::with_source(
+                cmd.name.clone(),
+                Some(cmd.description.clone()),
+                !available,
+                keybinding,
+                Some(cmd.source.clone()),
+            );
+            (suggestion, history_pos, score)
+        };
 
-                let mut available = is_available(&cmd);
-                if cmd.action == Action::FindInSelection && !selection_active {
-                    available = false;
+        // First, try to match by name only
+        let mut suggestions: Vec<(Suggestion, Option<usize>, i32)> = commands
+            .iter()
+            .filter_map(|cmd| {
+                let name_result = fuzzy_match(query, &cmd.name);
+                if name_result.matched {
+                    Some(make_suggestion(cmd, name_result.score))
+                } else {
+                    None
                 }
-                let keybinding =
-                    keybinding_resolver.get_keybinding_for_action(&cmd.action, current_context);
-                let history_pos = self.history_position(&cmd.name);
-                let suggestion = Suggestion::with_source(
-                    cmd.name.clone(),
-                    Some(cmd.description),
-                    !available,
-                    keybinding,
-                    Some(cmd.source),
-                );
-                Some((suggestion, history_pos, fuzzy_result.score))
             })
             .collect();
+
+        // If no name matches found, try description matching as a fallback
+        // This allows finding commands like "Select Locale" by searching "language"
+        if suggestions.is_empty() && !query.is_empty() {
+            suggestions = commands
+                .iter()
+                .filter_map(|cmd| {
+                    let desc_result = fuzzy_match(query, &cmd.description);
+                    if desc_result.matched {
+                        // Description matches get reduced score
+                        Some(make_suggestion(cmd, desc_result.score.saturating_sub(50)))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+        }
 
         // Sort by:
         // 1. Disabled status (enabled first)
