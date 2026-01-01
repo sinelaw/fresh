@@ -105,7 +105,8 @@ impl Editor {
         };
 
         if !path.exists() {
-            self.status_message = Some(t!("status.file_not_exists", path = path.display().to_string()).to_string());
+            self.status_message =
+                Some(t!("status.file_not_exists", path = path.display().to_string()).to_string());
             return Ok(false);
         }
 

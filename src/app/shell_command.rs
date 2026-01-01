@@ -8,9 +8,9 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 use super::Editor;
-use rust_i18n::t;
 use crate::model::event::Event;
 use crate::view::prompt::PromptType;
+use rust_i18n::t;
 
 impl Editor {
     /// Start a shell command prompt.

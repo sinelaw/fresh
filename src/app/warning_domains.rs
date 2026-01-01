@@ -243,7 +243,12 @@ impl WarningDomain for LspWarningDomain {
         };
 
         let message = if let Some(cmd) = &self.server_command {
-            t!("warning.lsp_server_not_found", command = cmd, hint = self.get_install_hint()).to_string()
+            t!(
+                "warning.lsp_server_not_found",
+                command = cmd,
+                hint = self.get_install_hint()
+            )
+            .to_string()
         } else if let Some(err) = &self.error_message {
             err.clone()
         } else {

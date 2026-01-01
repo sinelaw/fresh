@@ -8,11 +8,11 @@
 //! - Text selection via mouse
 
 use super::*;
-use rust_i18n::t;
 use crate::input::keybindings::Action;
 use crate::model::event::{SplitDirection, SplitId};
 use crate::services::plugins::hooks::HookArgs;
 use crate::view::prompt::PromptType;
+use rust_i18n::t;
 
 impl Editor {
     /// Handle a mouse event.

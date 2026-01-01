@@ -8,8 +8,8 @@
 
 use super::types::TabDropZone;
 use super::Editor;
-use rust_i18n::t;
 use crate::model::event::{BufferId, SplitDirection, SplitId};
+use rust_i18n::t;
 
 impl Editor {
     /// Handle tab drag - update position and compute drop zone
