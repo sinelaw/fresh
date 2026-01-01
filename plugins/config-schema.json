@@ -136,11 +136,7 @@
       ]
     },
     "LocaleOptions": {
-      "description": "Available UI locales (languages)",
-      "type": [
-        "string",
-        "null"
-      ],
+      "description": "UI locale (language). Use null for auto-detection from environment.",
       "enum": [
         null,
         "cs",
