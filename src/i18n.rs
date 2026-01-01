@@ -106,6 +106,14 @@ pub fn locale_display_name(locale: &str) -> Option<(&'static str, &'static str)>
     }
 }
 
+/// Get the translated message for "switched to project".
+///
+/// This is a helper function for use by the binary crate (main.rs) since
+/// the t!() macro doesn't work across crate boundaries.
+pub fn switched_to_project_message(path: &str) -> String {
+    rust_i18n::t!("file.switched_to_project", path = path).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

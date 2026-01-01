@@ -700,14 +700,11 @@ fn main() -> io::Result<()> {
             }
 
             editor.show_file_explorer();
-            // Note: t! macro doesn't work in binary crates, use format! here
-            editor.set_status_message(format!(
-                "Switched to project: {}",
-                current_working_dir
-                    .as_ref()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| ".".to_string())
-            ));
+            let path = current_working_dir
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| ".".to_string());
+            editor.set_status_message(fresh::i18n::switched_to_project_message(&path));
         }
 
         if let Err(e) = editor.start_recovery_session() {
