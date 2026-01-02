@@ -3998,7 +3998,7 @@ impl TypeScriptRuntime {
                     return editor;
                 };
 
-                // Default console that works before any plugin is loaded
+                // Default editor for system use (console logging)
                 const defaultEditor = globalThis._createPluginEditor('system');
                 globalThis.console = {
                     log: (...args) => defaultEditor.info(args.map(a => String(a)).join(' ')),
@@ -4709,6 +4709,7 @@ mod tests {
             .execute_script(
                 "<test_state>",
                 r#"
+                var editor = globalThis._createPluginEditor('test');
                 // Test buffer queries
                 const bufferId = editor.getActiveBufferId();
                 if (bufferId !== 42) {
@@ -4746,6 +4747,7 @@ mod tests {
             .execute_script(
                 "<test_commands>",
                 r#"
+                var editor = globalThis._createPluginEditor('test');
                 // Test status command
                 editor.setStatus("Test status from TypeScript");
 
@@ -4856,6 +4858,7 @@ mod tests {
             .execute_script(
                 "<test_api>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 // Verify all API methods exist
                 const methods = [
                     'setStatus', 'debug', 'getActiveBufferId', 'getCursorPosition',
@@ -4903,6 +4906,7 @@ mod tests {
             .execute_script(
                 "<test_new_ops>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 // Test getActiveSplitId
                 const splitId = editor.getActiveSplitId();
                 if (splitId !== 5) {
@@ -4996,6 +5000,7 @@ mod tests {
             .execute_script(
                 "<test_empty_contexts>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 editor.registerCommand("Global Command", "Available everywhere", "global_action", "");
                 "#,
             )
@@ -5028,6 +5033,7 @@ mod tests {
             .execute_script(
                 "<test_all_contexts>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 editor.registerCommand(
                     "All Contexts",
                     "Test all context types",
@@ -5077,6 +5083,7 @@ mod tests {
             .execute_script(
                 "<test_invalid_contexts>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 editor.registerCommand(
                     "Partial Contexts",
                     "Some invalid",
@@ -5115,6 +5122,7 @@ mod tests {
             .execute_script(
                 "<test_zero_values>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 editor.openFile("/test/file.txt", 0, 0);
                 "#,
             )
@@ -5143,6 +5151,7 @@ mod tests {
             .execute_script(
                 "<test_default_params>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 // Call with just path (line and column default to 0)
                 editor.openFile("/test/file.txt");
                 "#,
@@ -5172,6 +5181,7 @@ mod tests {
             .execute_script(
                 "<test_line_only>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 editor.openFile("/test/file.txt", 50);
                 "#,
             )
@@ -5199,6 +5209,7 @@ mod tests {
             .execute_script(
                 "<test_case_insensitive>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 editor.registerCommand(
                     "Case Test",
                     "Test case insensitivity",
@@ -5237,6 +5248,7 @@ mod tests {
             .execute_script(
                 "<test_spawn>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 (async () => {
                     const result = await editor.spawnProcess("echo", ["hello", "world"]);
                     if (!result.stdout.includes("hello world")) {
@@ -5262,6 +5274,7 @@ mod tests {
             .execute_script(
                 "<test_spawn_stderr>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 (async () => {
                     const result = await editor.spawnProcess("sh", ["-c", "echo error >&2"]);
                     if (!result.stderr.includes("error")) {
@@ -5284,6 +5297,7 @@ mod tests {
             .execute_script(
                 "<test_spawn_exit>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 (async () => {
                     const result = await editor.spawnProcess("sh", ["-c", "exit 42"]);
                     if (result.exit_code !== 42) {
@@ -5306,6 +5320,7 @@ mod tests {
             .execute_script(
                 "<test_git>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 (async () => {
                     const result = await editor.spawnProcess("git", ["--version"]);
                     if (!result.stdout.includes("git version")) {
@@ -5328,6 +5343,7 @@ mod tests {
             .execute_script(
                 "<test_file_exists>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 // Test existing file
                 const cargoExists = editor.fileExists("Cargo.toml");
                 if (!cargoExists) {
@@ -5355,6 +5371,7 @@ mod tests {
             .execute_script(
                 "<test_file_stat>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 // Test stat on existing file
                 const stat = editor.fileStat("Cargo.toml");
                 if (!stat.exists) {
@@ -5391,6 +5408,7 @@ mod tests {
             .execute_script(
                 "<test_read_file>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 (async () => {
                     // Read Cargo.toml which should exist
                     const content = await editor.readFile("Cargo.toml");
@@ -5416,6 +5434,7 @@ mod tests {
             .execute_script(
                 "<test_path_ops>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 // Test pathJoin
                 const joined = editor.pathJoin("src", "ts_runtime.rs");
                 if (!joined.includes("src") || !joined.includes("ts_runtime.rs")) {
@@ -5461,6 +5480,7 @@ mod tests {
             .execute_script(
                 "<test_get_env>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 // PATH should always be set
                 const path = editor.getEnv("PATH");
                 if (path === null || path === undefined) {
@@ -5491,6 +5511,7 @@ mod tests {
             .execute_script(
                 "<test_get_cwd>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 const cwd = editor.getCwd();
                 if (!cwd || cwd.length === 0) {
                     throw new Error("getCwd should return non-empty string");
@@ -5515,6 +5536,7 @@ mod tests {
                 "<test_write_file>",
                 &format!(
                     r#"
+                const editor = globalThis._createPluginEditor('test');
                 (async () => {{
                     const testFile = "{temp_file_str}";
                     const testContent = "Hello from TypeScript plugin!\nLine 2\n";
@@ -5560,6 +5582,7 @@ mod tests {
             .execute_script(
                 "<test_read_dir>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 // Read current directory (should have Cargo.toml, src/, etc.)
                 const entries = editor.readDir(".");
 
@@ -5607,6 +5630,7 @@ mod tests {
             .execute_script(
                 "<test_path_is_absolute>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 // Test absolute paths (Unix)
                 if (!editor.pathIsAbsolute("/home/user")) {
                     throw new Error("/home/user should be absolute");
@@ -5642,6 +5666,7 @@ mod tests {
             .execute_script(
                 "<test_path_is_absolute>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 // Test absolute paths (Windows)
                 if (!editor.pathIsAbsolute("C:\\Users\\test")) {
                     throw new Error("C:\\Users\\test should be absolute");
@@ -5682,6 +5707,7 @@ mod tests {
             .execute_script(
                 "<test_hook_registration>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 // Register a handler
                 const registered = editor.on("buffer_save", "onBufferSave");
                 if (!registered) {
@@ -5741,6 +5767,7 @@ mod tests {
             .execute_script(
                 "<test_hook_emit_setup>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 globalThis.eventCounter = 0;
                 globalThis.lastEventData = null;
 
@@ -5793,6 +5820,7 @@ mod tests {
             .execute_script(
                 "<test_hook_cancel_setup>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 globalThis.cancelWasCalled = false;
                 globalThis.onCancelEvent = function(data) {
                     globalThis.cancelWasCalled = true;
@@ -5835,6 +5863,7 @@ mod tests {
             .execute_script(
                 "<test_hook_multi_setup>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 globalThis.handler1Called = false;
                 globalThis.handler2Called = false;
 
@@ -5985,6 +6014,7 @@ mod tests {
         writeln!(
             temp_file,
             r#"
+            const editor = getEditor();
             // Simple test plugin
             editor.setStatus("Test plugin loaded");
 
@@ -6039,6 +6069,7 @@ mod tests {
         writeln!(
             temp_file,
             r#"
+            const editor = getEditor();
             globalThis.myAction = function() {{
                 editor.setStatus("Action executed!");
             }};
@@ -6076,6 +6107,7 @@ mod tests {
             .execute_script(
                 "<test_hook_setup>",
                 r#"
+            const editor = globalThis._createPluginEditor('test');
             globalThis.onBufferActivated = function(data) {
                 editor.setStatus("Buffer " + data.buffer_id + " activated");
             };
@@ -6115,7 +6147,7 @@ mod tests {
 
         // Create and load a plugin
         let mut temp_file = NamedTempFile::with_suffix(".js").unwrap();
-        writeln!(temp_file, r#"// Test plugin"#).unwrap();
+        writeln!(temp_file, r#"const editor = getEditor(); // Test plugin"#).unwrap();
         temp_file.flush().unwrap();
 
         manager.load_plugin(temp_file.path()).await.unwrap();
@@ -6147,6 +6179,7 @@ mod tests {
             .execute_script(
                 "<setup_handler>",
                 r#"
+                const editor = globalThis._createPluginEditor('test');
                 globalThis.onRenderLine = function(data) {
                     // Simulate TODO highlighter: check if line contains keyword
                     if (data.content && data.content.includes("TODO")) {
@@ -6225,6 +6258,7 @@ mod tests {
         std::fs::write(
             &plugin_path,
             r#"
+            const editor = getEditor();
             // Import from the actual lib folder
             import { PanelManager } from "./lib/index.ts";
 
@@ -6290,6 +6324,7 @@ mod tests {
         std::fs::write(
             &plugin_path,
             r#"
+            const editor = getEditor();
             import { MESSAGE, greet } from "./lib.ts";
 
             editor.setStatus(MESSAGE);
@@ -6337,6 +6372,7 @@ mod tests {
         std::fs::write(
             &plugin_path,
             r#"
+            const editor = getEditor();
             // Import from the actual lib folder
             import { PanelManager } from "./lib/index.ts";
 
@@ -6571,6 +6607,7 @@ mod tests {
         std::fs::write(
             &plugin_path,
             r#"
+            const editor = getEditor();
             globalThis.test_spawn = async function(): Promise<void> {
                 editor.setStatus("About to spawn echo...");
 
@@ -6653,6 +6690,7 @@ mod tests {
         std::fs::write(
             &plugin_path,
             r#"
+            const editor = getEditor();
             globalThis.test_git = async function(): Promise<void> {
                 editor.setStatus("About to run git log...");
 
@@ -6739,6 +6777,7 @@ mod tests {
         std::fs::write(
             &plugin_path,
             r#"
+            const editor = getEditor();
             globalThis.test_vbuf = async function(): Promise<void> {
                 editor.debug("Step 1: About to spawn process...");
 
