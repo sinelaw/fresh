@@ -1,6 +1,6 @@
 //! LSP find references tests that depend on the find_references plugin
 
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{copy_plugin, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 /// Test find references functionality with a fake LSP server
@@ -24,9 +24,7 @@ fn test_lsp_find_references() -> std::io::Result<()> {
     let plugins_dir = project_root.join("plugins");
     std::fs::create_dir(&plugins_dir)?;
 
-    let plugin_source = std::env::current_dir()?.join("plugins/find_references.ts");
-    let plugin_dest = plugins_dir.join("find_references.ts");
-    std::fs::copy(&plugin_source, &plugin_dest)?;
+    copy_plugin(&plugins_dir, "find_references");
 
     // Create a fake LSP server script that responds to references requests
     let fake_lsp_script = r#"#!/bin/bash
@@ -224,9 +222,7 @@ fn main() {
     let plugins_dir = project_root.join("plugins");
     std::fs::create_dir(&plugins_dir)?;
 
-    let plugin_source = std::env::current_dir()?.join("plugins/find_references.ts");
-    let plugin_dest = plugins_dir.join("find_references.ts");
-    std::fs::copy(&plugin_source, &plugin_dest)?;
+    copy_plugin(&plugins_dir, "find_references");
 
     // Use default config (which includes rust-analyzer)
     let config = fresh::config::Config::default();

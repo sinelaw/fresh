@@ -2,7 +2,7 @@
 
 use crate::common::fake_lsp::FakeLspServer;
 use crate::common::fixtures::TestFixture;
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
@@ -25,6 +25,7 @@ fn test_render_line_hook_with_args() {
 
     // Create a simple plugin that captures render-line hook args
     let test_plugin = r###"
+const editor = getEditor();
 // Test plugin to verify render-line hook receives args
 let line_count = 0;
 let found_marker = false;
@@ -120,11 +121,7 @@ fn test_todo_highlighter_plugin() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/todo_highlighter.ts");
-    let plugin_dest = plugins_dir.join("todo_highlighter.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "todo_highlighter");
 
     // Create test file with TODO comments
     let test_file_content = r#"// This is a test file for the TODO Highlighter plugin
@@ -227,11 +224,7 @@ fn test_todo_highlighter_disable() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/todo_highlighter.ts");
-    let plugin_dest = plugins_dir.join("todo_highlighter.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "todo_highlighter");
 
     // Create test file with TODO comments
     let test_file_content = "// TODO: Test comment\n";
@@ -289,11 +282,7 @@ fn test_todo_highlighter_toggle() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/todo_highlighter.ts");
-    let plugin_dest = plugins_dir.join("todo_highlighter.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "todo_highlighter");
 
     // Create test file with TODO comments
     let test_file_content = "// TODO: Test comment\n";
@@ -388,11 +377,7 @@ fn test_todo_highlighter_updates_on_edit() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/todo_highlighter.ts");
-    let plugin_dest = plugins_dir.join("todo_highlighter.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "todo_highlighter");
 
     // Create test file with TODO comment at the start
     let test_file_content = "// TODO: Original comment\n";
@@ -526,11 +511,7 @@ fn test_todo_highlighter_updates_on_delete() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/todo_highlighter.ts");
-    let plugin_dest = plugins_dir.join("todo_highlighter.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "todo_highlighter");
 
     // Create test file with TODO on second line
     let test_file_content = "// FIXME: Delete this line\n// TODO: Keep this one\n";
@@ -669,12 +650,7 @@ fn test_diagnostics_panel_plugin_loads() {
     // Create plugins directory and copy the diagnostics panel plugin
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/diagnostics_panel.ts");
-    let plugin_dest = plugins_dir.join("diagnostics_panel.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "diagnostics_panel");
 
     // Create a simple test file in the project directory (not via TestFixture!)
     let test_file_content = "fn main() {\n    println!(\"test\");\n}\n";
@@ -823,6 +799,7 @@ fn test_plugin_message_queue_architecture() {
     // 2. When executed, creates a virtual buffer in split (tests async response)
     // 3. Uses the returned buffer ID to set status (tests async result propagation)
     let test_plugin = r#"
+const editor = getEditor();
 // Test plugin for message queue architecture
 // This plugin exercises the bidirectional message flow
 
@@ -972,6 +949,7 @@ fn test_plugin_multiple_actions_no_deadlock() {
 
     // Create a plugin with multiple commands that all set status
     let test_plugin = r#"
+const editor = getEditor();
 // Test plugin for multiple concurrent actions
 
 editor.registerCommand("Action A", "Set status to A", "action_a", "normal");
@@ -1071,6 +1049,7 @@ fn test_plugin_action_nonblocking() {
 
     // Create a plugin that does some work
     let test_plugin = r#"
+const editor = getEditor();
 // Test plugin to verify non-blocking action execution
 
 editor.registerCommand(
@@ -1168,11 +1147,7 @@ fn test_todo_highlighter_cursor_perf() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/todo_highlighter.ts");
-    let plugin_dest = plugins_dir.join("todo_highlighter.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "todo_highlighter");
 
     // Create a larger test file with many lines and TODO comments
     let mut test_content = String::new();
@@ -1261,12 +1236,7 @@ fn test_color_highlighter_plugin() {
     // Create plugins directory and copy the color highlighter plugin
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/color_highlighter.ts");
-    let plugin_dest = plugins_dir.join("color_highlighter.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "color_highlighter");
 
     // Create test file with various color formats
     let test_file_content = r###"// Test file for Color Highlighter
@@ -1395,12 +1365,7 @@ fn test_color_highlighter_disable() {
     // Create plugins directory and copy the color highlighter plugin
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/color_highlighter.ts");
-    let plugin_dest = plugins_dir.join("color_highlighter.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "color_highlighter");
 
     // Create test file with a color
     let test_file_content = "let color = \"#ff0000\";\n";
@@ -1493,12 +1458,7 @@ fn test_color_highlighter_toggle() {
     // Create plugins directory and copy the color highlighter plugin
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/color_highlighter.ts");
-    let plugin_dest = plugins_dir.join("color_highlighter.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "color_highlighter");
 
     // Create test file with a color
     let test_file_content = "rgb(128, 64, 255)\n";
@@ -1577,21 +1537,8 @@ fn test_clangd_plugin_file_status_notification() -> std::io::Result<()> {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/clangd_support.ts");
-    fs::copy(&plugin_source, plugins_dir.join("clangd_support.ts")).unwrap();
-
-    // Copy the lib directory that the plugin depends on
-    let lib_source_dir = std::env::current_dir().unwrap().join("plugins/lib");
-    let lib_dest_dir = plugins_dir.join("lib");
-    fs::create_dir(&lib_dest_dir).unwrap();
-    for entry in fs::read_dir(&lib_source_dir).unwrap() {
-        let entry = entry.unwrap();
-        if entry.path().extension().map(|e| e == "ts").unwrap_or(false) {
-            fs::copy(entry.path(), lib_dest_dir.join(entry.file_name())).unwrap();
-        }
-    }
+    copy_plugin(&plugins_dir, "clangd_support");
+    copy_plugin_lib(&plugins_dir);
 
     let src_dir = project_root.join("src");
     fs::create_dir_all(&src_dir).unwrap();
@@ -1657,21 +1604,8 @@ fn test_clangd_plugin_switch_source_header() -> std::io::Result<()> {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/clangd_support.ts");
-    fs::copy(&plugin_source, plugins_dir.join("clangd_support.ts")).unwrap();
-
-    // Copy the lib directory that the plugin depends on
-    let lib_source_dir = std::env::current_dir().unwrap().join("plugins/lib");
-    let lib_dest_dir = plugins_dir.join("lib");
-    fs::create_dir(&lib_dest_dir).unwrap();
-    for entry in fs::read_dir(&lib_source_dir).unwrap() {
-        let entry = entry.unwrap();
-        if entry.path().extension().map(|e| e == "ts").unwrap_or(false) {
-            fs::copy(entry.path(), lib_dest_dir.join(entry.file_name())).unwrap();
-        }
-    }
+    copy_plugin(&plugins_dir, "clangd_support");
+    copy_plugin_lib(&plugins_dir);
 
     let src_dir = project_root.join("src");
     fs::create_dir_all(&src_dir).unwrap();
@@ -1752,6 +1686,7 @@ fn test_plugin_command_source_in_palette() {
     // IMPORTANT: description must NOT contain "test_source_plugin" so we can verify
     // that the source column shows it (not the description)
     let test_plugin = r#"
+const editor = getEditor();
 // Simple test plugin to verify command source is shown correctly
 editor.registerCommand(
     "Test Source Plugin Command",
@@ -1875,6 +1810,7 @@ fn test_diagnostics_api_with_fake_lsp() -> std::io::Result<()> {
 
     // Create a simple plugin that captures diagnostics via getAllDiagnostics
     let test_plugin = r#"/// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
 
 // Test plugin to verify getAllDiagnostics API works with real LSP data
 let diagnosticCount = 0;

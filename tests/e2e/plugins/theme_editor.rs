@@ -1,4 +1,4 @@
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{copy_plugin, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::style::Color;
 use std::fs;
@@ -15,12 +15,7 @@ fn test_theme_editor_command_registered() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    // Copy the theme_editor.ts plugin
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/theme_editor.ts");
-    let plugin_dest = plugins_dir.join("theme_editor.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
 
     // Create themes directory with a test theme
     let themes_dir = project_root.join("themes");
@@ -72,12 +67,7 @@ fn test_theme_editor_opens_without_error() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    // Copy the theme_editor.ts plugin
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/theme_editor.ts");
-    let plugin_dest = plugins_dir.join("theme_editor.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
 
     // Create themes directory with a test theme
     let themes_dir = project_root.join("themes");
@@ -184,10 +174,7 @@ fn test_theme_editor_shows_color_sections() {
     fs::create_dir(&plugins_dir).unwrap();
 
     // Copy the theme_editor.ts plugin
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/theme_editor.ts");
-    fs::copy(&plugin_source, plugins_dir.join("theme_editor.ts")).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
 
     // Create themes directory with test themes
     let themes_dir = project_root.join("themes");
@@ -257,10 +244,7 @@ fn test_theme_editor_copy_from_builtin() {
     fs::create_dir(&plugins_dir).unwrap();
 
     // Copy the theme_editor.ts plugin
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/theme_editor.ts");
-    fs::copy(&plugin_source, plugins_dir.join("theme_editor.ts")).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
 
     // Create themes directory with a source theme to copy from
     let themes_dir = project_root.join("themes");
@@ -354,10 +338,7 @@ fn test_theme_editor_displays_correct_colors() {
     fs::create_dir(&plugins_dir).unwrap();
 
     // Copy the theme_editor.ts plugin
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/theme_editor.ts");
-    fs::copy(&plugin_source, plugins_dir.join("theme_editor.ts")).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
 
     // Create themes directory
     let themes_dir = project_root.join("themes");
@@ -517,10 +498,7 @@ fn test_cursor_position_preserved_after_section_toggle() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/theme_editor.ts");
-    fs::copy(&plugin_source, plugins_dir.join("theme_editor.ts")).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
     fs::create_dir(&themes_dir).unwrap();
@@ -601,10 +579,7 @@ fn test_color_prompt_shows_suggestions() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/theme_editor.ts");
-    fs::copy(&plugin_source, plugins_dir.join("theme_editor.ts")).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
     fs::create_dir(&themes_dir).unwrap();
@@ -719,10 +694,7 @@ fn test_colors_displayed_in_hex_format() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/theme_editor.ts");
-    fs::copy(&plugin_source, plugins_dir.join("theme_editor.ts")).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
     fs::create_dir(&themes_dir).unwrap();
@@ -797,10 +769,7 @@ fn test_comments_appear_before_fields() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/theme_editor.ts");
-    fs::copy(&plugin_source, plugins_dir.join("theme_editor.ts")).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
     fs::create_dir(&themes_dir).unwrap();
@@ -884,10 +853,7 @@ fn test_theme_applied_immediately_after_save() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/theme_editor.ts");
-    fs::copy(&plugin_source, plugins_dir.join("theme_editor.ts")).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
 
     // Create a test file to see theme changes
     let test_file = project_root.join("test.txt");
@@ -1043,10 +1009,7 @@ fn test_cursor_x_position_preserved_after_section_toggle() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/theme_editor.ts");
-    fs::copy(&plugin_source, plugins_dir.join("theme_editor.ts")).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
     fs::create_dir(&themes_dir).unwrap();
@@ -1189,10 +1152,7 @@ fn test_color_suggestions_show_hex_format() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/theme_editor.ts");
-    fs::copy(&plugin_source, plugins_dir.join("theme_editor.ts")).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
     fs::create_dir(&themes_dir).unwrap();
@@ -1292,10 +1252,7 @@ fn test_color_prompt_prefilled_with_current_value() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/theme_editor.ts");
-    fs::copy(&plugin_source, plugins_dir.join("theme_editor.ts")).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
     fs::create_dir(&themes_dir).unwrap();
@@ -1386,10 +1343,7 @@ fn test_theme_editor_color_values_no_internal_spaces() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/theme_editor.ts");
-    fs::copy(&plugin_source, plugins_dir.join("theme_editor.ts")).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
     fs::create_dir(&themes_dir).unwrap();

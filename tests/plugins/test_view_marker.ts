@@ -1,4 +1,5 @@
 /// <reference path="../types/fresh.d.ts" />
+const editor = getEditor();
 
 /**
  * Test plugin for virtual lines (Emacs-like persistent state model).

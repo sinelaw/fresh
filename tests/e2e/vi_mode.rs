@@ -8,38 +8,25 @@
 //! Note: These tests require the vi mode plugin to be loaded.
 
 use crate::common::fixtures::TestFixture;
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::input::keybindings::Action::PluginAction;
 use std::fs;
 
 /// Create a harness with vi mode plugin loaded (uses real plugins/vi_mode.ts)
 fn vi_mode_harness(width: u16, height: u16) -> (EditorTestHarness, tempfile::TempDir) {
+    init_tracing_from_env();
     // Create a temporary project directory
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory
+    // Create plugins directory and copy vi_mode plugin
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-
-    // Copy the real vi_mode.ts plugin
-    let vi_plugin_src = std::env::current_dir().unwrap().join("plugins/vi_mode.ts");
-    let vi_plugin_dest = plugins_dir.join("vi_mode.ts");
-    fs::copy(&vi_plugin_src, &vi_plugin_dest).expect("Failed to copy vi_mode.ts");
-
-    // Also copy the lib directory for TypeScript declarations
-    let lib_src = std::env::current_dir().unwrap().join("plugins/lib");
-    let lib_dest = plugins_dir.join("lib");
-    if lib_src.exists() {
-        fs::create_dir_all(&lib_dest).unwrap();
-        for entry in fs::read_dir(&lib_src).unwrap() {
-            let entry = entry.unwrap();
-            let dest_file = lib_dest.join(entry.file_name());
-            fs::copy(entry.path(), dest_file).unwrap();
-        }
-    }
+    copy_plugin(&plugins_dir, "vi_mode");
+    copy_plugin_lib(&plugins_dir);
 
     // Create harness with the project directory (so plugins load)
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -59,11 +46,13 @@ fn vi_mode_harness(width: u16, height: u16) -> (EditorTestHarness, tempfile::Tem
 
 /// Helper to enable vi mode via command palette
 fn enable_vi_mode(harness: &mut EditorTestHarness) {
-    // Wait for plugin command to be registered (semantic: command is available)
+    // Wait for vi_mode plugin command to be registered (check by action name, which is stable)
     harness
         .wait_until(|h| {
             let commands = h.editor().command_registry().read().unwrap().get_all();
-            commands.iter().any(|c| c.name == "Toggle Vi mode")
+            commands
+                .iter()
+                .any(|c| c.action == PluginAction("vi_mode_toggle".to_string()))
         })
         .unwrap();
 
@@ -73,7 +62,7 @@ fn enable_vi_mode(harness: &mut EditorTestHarness) {
         .unwrap();
     harness.render().unwrap();
 
-    // Type "Toggle Vi mode"
+    // Type the localized command name
     harness.type_text("Toggle Vi mode").unwrap();
 
     // Wait for command to appear in palette
@@ -98,7 +87,6 @@ fn enable_vi_mode(harness: &mut EditorTestHarness) {
 /// Test h, j, k, l navigation in vi normal mode
 #[test]
 fn test_vi_hjkl_navigation() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     // Create a multi-line test file
@@ -164,7 +152,6 @@ fn test_vi_hjkl_navigation() {
 /// Test w and b word navigation
 #[test]
 fn test_vi_word_navigation() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "hello world test\n").unwrap();
@@ -207,7 +194,6 @@ fn test_vi_word_navigation() {
 /// Test switching from normal to insert mode with 'i'
 #[test]
 fn test_vi_insert_mode() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "hello\n").unwrap();
@@ -253,7 +239,6 @@ fn test_vi_insert_mode() {
 /// Test 'a' inserts after cursor
 #[test]
 fn test_vi_insert_after() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "abc\n").unwrap();
@@ -293,7 +278,6 @@ fn test_vi_insert_after() {
 /// Test 'o' opens line below
 #[test]
 fn test_vi_open_below() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "line1\nline2\n").unwrap();
@@ -339,7 +323,6 @@ fn test_vi_open_below() {
 /// Test 'x' deletes character under cursor
 #[test]
 fn test_vi_delete_char() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "abc\n").unwrap();
@@ -361,7 +344,6 @@ fn test_vi_delete_char() {
 /// Test 'dd' deletes entire line
 #[test]
 fn test_vi_delete_line() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "line1\nline2\nline3\n").unwrap();
@@ -391,7 +373,6 @@ fn test_vi_delete_line() {
 /// Test 'dw' deletes to next word (operator + motion composability)
 #[test]
 fn test_vi_delete_word() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "hello world test\n").unwrap();
@@ -425,7 +406,6 @@ fn test_vi_delete_word() {
 /// Test 'u' undoes last change
 #[test]
 fn test_vi_undo() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "abc\n").unwrap();
@@ -458,7 +438,6 @@ fn test_vi_undo() {
 /// Test 'yy' yanks line and 'p' pastes it below
 #[test]
 fn test_vi_yank_paste_line() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "AAA\nBBB\nCCC\n").unwrap();
@@ -504,7 +483,6 @@ fn test_vi_yank_paste_line() {
 /// Test 'P' pastes line above current line
 #[test]
 fn test_vi_paste_before_line() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "AAA\nBBB\nCCC\n").unwrap();
@@ -555,7 +533,6 @@ fn test_vi_paste_before_line() {
 /// Test 'v' enters visual mode and 'd' deletes selection
 #[test]
 fn test_vi_visual_delete() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "hello world\n").unwrap();
@@ -596,7 +573,6 @@ fn test_vi_visual_delete() {
 /// Test 'V' enters visual line mode and 'd' deletes line
 #[test]
 fn test_vi_visual_line_delete() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "AAA\nBBB\nCCC\n").unwrap();
@@ -637,7 +613,6 @@ fn test_vi_visual_line_delete() {
 /// Test visual mode yank and paste
 #[test]
 fn test_vi_visual_yank() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "hello world\n").unwrap();
@@ -698,7 +673,6 @@ fn test_vi_visual_yank() {
 /// Test 'diw' deletes inner word
 #[test]
 fn test_vi_delete_inner_word() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "hello world test\n").unwrap();
@@ -747,7 +721,6 @@ fn test_vi_delete_inner_word() {
 /// Test 'ci"' changes inside quotes
 #[test]
 fn test_vi_change_inner_quotes() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "say \"hello world\" here\n").unwrap();
@@ -834,7 +807,6 @@ fn test_vi_change_inner_quotes() {
 /// Test ':w' saves the file
 #[test]
 fn test_vi_colon_write() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "hello\n").unwrap();
@@ -891,7 +863,6 @@ fn test_vi_colon_write() {
 /// Test ':q' closes buffer (via status message confirmation)
 #[test]
 fn test_vi_colon_quit() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     // Open two files so we can close one and stay in editor
@@ -929,7 +900,6 @@ fn test_vi_colon_quit() {
 /// Test ':q!' force quits even with unsaved changes
 #[test]
 fn test_vi_colon_force_quit() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     // Open two files so we can close one and stay in editor
@@ -984,7 +954,6 @@ fn test_vi_colon_force_quit() {
 /// Test ':wq' saves and quits
 #[test]
 fn test_vi_colon_write_quit() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     // Open two files so we can close one and stay in editor
@@ -1046,7 +1015,6 @@ fn test_vi_colon_write_quit() {
 /// Test ':35' goes to line 35 and edits happen at the correct position
 #[test]
 fn test_vi_colon_goto_line() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     // Create a file with 50 lines - line 35 won't be visible initially
@@ -1102,7 +1070,6 @@ fn test_vi_colon_goto_line() {
 /// Test ':bn' goes to next buffer
 #[test]
 fn test_vi_colon_buffer_next() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     // Open two files
@@ -1140,7 +1107,6 @@ fn test_vi_colon_buffer_next() {
 /// Test ':sp' creates horizontal split
 #[test]
 fn test_vi_colon_split() {
-    init_tracing_from_env();
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
     let fixture = TestFixture::new("test.txt", "hello\n").unwrap();

@@ -1,5 +1,5 @@
 use crate::common::fixtures::TestFixture;
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{copy_plugin, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
 
@@ -16,11 +16,7 @@ fn test_live_grep_basic_search() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/live_grep.ts");
-    let plugin_dest = plugins_dir.join("live_grep.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "live_grep");
 
     // Create test files with searchable content
     let file1_content = "fn main() {\n    println!(\"Hello, world!\");\n}\n";
@@ -104,11 +100,7 @@ fn test_live_grep_select_result() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/live_grep.ts");
-    let plugin_dest = plugins_dir.join("live_grep.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "live_grep");
 
     // Create a test file with unique content
     let target_content = "// TARGET_FILE\nfn target_function() {\n    let result = 123;\n}\n";
@@ -176,11 +168,7 @@ fn test_live_grep_preview_split() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/live_grep.ts");
-    let plugin_dest = plugins_dir.join("live_grep.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "live_grep");
 
     // Create a test file with content to search
     let search_content = "PREVIEW_TEST_CONTENT\nLine 2\nLine 3\nLine 4\nLine 5\n";
@@ -242,11 +230,7 @@ fn test_live_grep_input_preserved() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/live_grep.ts");
-    let plugin_dest = plugins_dir.join("live_grep.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "live_grep");
 
     // Create multiple files with matching content
     for i in 1..=5 {
@@ -341,11 +325,7 @@ fn test_live_grep_uses_working_dir() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/live_grep.ts");
-    let plugin_dest = plugins_dir.join("live_grep.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    copy_plugin(&plugins_dir, "live_grep");
 
     // Create a test file with a unique marker that only exists in our temp project
     // This marker should NOT exist in the fresh repo's actual directory

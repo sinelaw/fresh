@@ -1,52 +1,18 @@
 //! E2E tests for audit_mode (Review Diff) plugin
 
 use crate::common::git_test_helper::GitTestRepo;
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use std::fs;
-use std::path::PathBuf;
 
 /// Helper to copy audit_mode plugin and its dependencies to the test repo
 fn setup_audit_mode_plugin(repo: &GitTestRepo) {
     let plugins_dir = repo.path.join("plugins");
     fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
-
-    let project_root = std::env::var("CARGO_MANIFEST_DIR")
-        .map(PathBuf::from)
-        .expect("CARGO_MANIFEST_DIR not set");
-
-    // Copy audit_mode.ts plugin and its i18n file
-    let audit_mode_src = project_root.join("plugins/audit_mode.ts");
-    let audit_mode_dst = plugins_dir.join("audit_mode.ts");
-    fs::copy(&audit_mode_src, &audit_mode_dst).unwrap_or_else(|e| {
-        panic!(
-            "Failed to copy audit_mode.ts from {:?}: {}",
-            audit_mode_src, e
-        )
-    });
-    let audit_mode_i18n_src = project_root.join("plugins/audit_mode.i18n.json");
-    let audit_mode_i18n_dst = plugins_dir.join("audit_mode.i18n.json");
-    if audit_mode_i18n_src.exists() {
-        fs::copy(&audit_mode_i18n_src, &audit_mode_i18n_dst).ok();
-    }
-
-    // Copy plugins/lib directory (contains virtual-buffer-factory.ts and fresh.d.ts)
-    let lib_src = project_root.join("plugins/lib");
-    let lib_dst = plugins_dir.join("lib");
-    if lib_src.exists() {
-        fs::create_dir_all(&lib_dst).expect("Failed to create plugins/lib directory");
-        for entry in fs::read_dir(&lib_src).expect("Failed to read plugins/lib") {
-            let entry = entry.expect("Failed to read directory entry");
-            let src_path = entry.path();
-            let file_name = entry.file_name();
-            let dst_path = lib_dst.join(&file_name);
-            fs::copy(&src_path, &dst_path).unwrap_or_else(|e| {
-                panic!("Failed to copy {:?} to {:?}: {}", src_path, dst_path, e)
-            });
-        }
-    }
+    copy_plugin(&plugins_dir, "audit_mode");
+    copy_plugin_lib(&plugins_dir);
 }
 
 /// Test that opening the diff view works without errors

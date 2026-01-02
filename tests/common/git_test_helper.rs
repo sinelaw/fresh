@@ -1,6 +1,7 @@
 #![cfg(test)]
 //! Git test helper - creates hermetic git repositories for testing
 
+use super::harness::copy_plugin;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -254,92 +255,24 @@ A sample project for testing.
     /// Set up git plugins by copying them from the project's plugins directory
     /// This is needed for testing git functionality which has been moved to TypeScript plugins
     pub fn setup_git_plugins(&self) {
-        // Create plugins directory in the test repo
         let plugins_dir = self.path.join("plugins");
         fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
-
-        // Get the project root by using the CARGO_MANIFEST_DIR environment variable
-        // which is set by cargo and points to the directory containing Cargo.toml
-        let project_root = std::env::var("CARGO_MANIFEST_DIR")
-            .map(PathBuf::from)
-            .expect("CARGO_MANIFEST_DIR not set");
-
-        // Copy git_grep.ts plugin and its i18n file
-        let git_grep_src = project_root.join("plugins/git_grep.ts");
-        let git_grep_dst = plugins_dir.join("git_grep.ts");
-        fs::copy(&git_grep_src, &git_grep_dst).unwrap_or_else(|e| {
-            panic!("Failed to copy git_grep.ts from {:?}: {}", git_grep_src, e)
-        });
-        let git_grep_i18n_src = project_root.join("plugins/git_grep.i18n.json");
-        let git_grep_i18n_dst = plugins_dir.join("git_grep.i18n.json");
-        if git_grep_i18n_src.exists() {
-            fs::copy(&git_grep_i18n_src, &git_grep_i18n_dst).ok();
-        }
-
-        // Copy git_find_file.ts plugin and its i18n file
-        let git_find_file_src = project_root.join("plugins/git_find_file.ts");
-        let git_find_file_dst = plugins_dir.join("git_find_file.ts");
-        fs::copy(&git_find_file_src, &git_find_file_dst).unwrap_or_else(|e| {
-            panic!(
-                "Failed to copy git_find_file.ts from {:?}: {}",
-                git_find_file_src, e
-            )
-        });
-        let git_find_file_i18n_src = project_root.join("plugins/git_find_file.i18n.json");
-        let git_find_file_i18n_dst = plugins_dir.join("git_find_file.i18n.json");
-        if git_find_file_i18n_src.exists() {
-            fs::copy(&git_find_file_i18n_src, &git_find_file_i18n_dst).ok();
-        }
+        copy_plugin(&plugins_dir, "git_grep");
+        copy_plugin(&plugins_dir, "git_find_file");
     }
 
     /// Set up git log plugin by copying it from the project's plugins directory
     pub fn setup_git_log_plugin(&self) {
-        // Create plugins directory in the test repo
         let plugins_dir = self.path.join("plugins");
         fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
-
-        // Get the project root
-        let project_root = std::env::var("CARGO_MANIFEST_DIR")
-            .map(PathBuf::from)
-            .expect("CARGO_MANIFEST_DIR not set");
-
-        // Copy git_log.ts plugin and its i18n file
-        let git_log_src = project_root.join("plugins/git_log.ts");
-        let git_log_dst = plugins_dir.join("git_log.ts");
-        fs::copy(&git_log_src, &git_log_dst)
-            .unwrap_or_else(|e| panic!("Failed to copy git_log.ts from {:?}: {}", git_log_src, e));
-        let git_log_i18n_src = project_root.join("plugins/git_log.i18n.json");
-        let git_log_i18n_dst = plugins_dir.join("git_log.i18n.json");
-        if git_log_i18n_src.exists() {
-            fs::copy(&git_log_i18n_src, &git_log_i18n_dst).ok();
-        }
+        copy_plugin(&plugins_dir, "git_log");
     }
 
     /// Set up git blame plugin by copying it from the project's plugins directory
     pub fn setup_git_blame_plugin(&self) {
-        // Create plugins directory in the test repo
         let plugins_dir = self.path.join("plugins");
         fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
-
-        // Get the project root
-        let project_root = std::env::var("CARGO_MANIFEST_DIR")
-            .map(PathBuf::from)
-            .expect("CARGO_MANIFEST_DIR not set");
-
-        // Copy git_blame.ts plugin and its i18n file
-        let git_blame_src = project_root.join("plugins/git_blame.ts");
-        let git_blame_dst = plugins_dir.join("git_blame.ts");
-        fs::copy(&git_blame_src, &git_blame_dst).unwrap_or_else(|e| {
-            panic!(
-                "Failed to copy git_blame.ts from {:?}: {}",
-                git_blame_src, e
-            )
-        });
-        let git_blame_i18n_src = project_root.join("plugins/git_blame.i18n.json");
-        let git_blame_i18n_dst = plugins_dir.join("git_blame.i18n.json");
-        if git_blame_i18n_src.exists() {
-            fs::copy(&git_blame_i18n_src, &git_blame_i18n_dst).ok();
-        }
+        copy_plugin(&plugins_dir, "git_blame");
     }
 
     /// Set up test view marker plugin for debugging view transforms
@@ -364,35 +297,14 @@ A sample project for testing.
     pub fn setup_git_gutter_plugin(&self) {
         let plugins_dir = self.path.join("plugins");
         fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
-
-        let project_root = std::env::var("CARGO_MANIFEST_DIR")
-            .map(PathBuf::from)
-            .expect("CARGO_MANIFEST_DIR not set");
-
-        let src = project_root.join("plugins/git_gutter.ts");
-        let dst = plugins_dir.join("git_gutter.ts");
-        fs::copy(&src, &dst)
-            .unwrap_or_else(|e| panic!("Failed to copy git_gutter.ts from {:?}: {}", src, e));
-        let i18n_src = project_root.join("plugins/git_gutter.i18n.json");
-        let i18n_dst = plugins_dir.join("git_gutter.i18n.json");
-        if i18n_src.exists() {
-            fs::copy(&i18n_src, &i18n_dst).ok();
-        }
+        copy_plugin(&plugins_dir, "git_gutter");
     }
 
     /// Set up buffer modified plugin for unsaved changes indicator tests
     pub fn setup_buffer_modified_plugin(&self) {
         let plugins_dir = self.path.join("plugins");
         fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
-
-        let project_root = std::env::var("CARGO_MANIFEST_DIR")
-            .map(PathBuf::from)
-            .expect("CARGO_MANIFEST_DIR not set");
-
-        let src = project_root.join("plugins/buffer_modified.ts");
-        let dst = plugins_dir.join("buffer_modified.ts");
-        fs::copy(&src, &dst)
-            .unwrap_or_else(|e| panic!("Failed to copy buffer_modified.ts from {:?}: {}", src, e));
+        copy_plugin(&plugins_dir, "buffer_modified");
     }
 
     /// Set up both gutter plugins (git gutter + buffer modified)

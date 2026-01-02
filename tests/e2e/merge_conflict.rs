@@ -1,7 +1,35 @@
 use crate::common::fixtures::TestFixture;
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{copy_plugin, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
+use std::path::Path;
+
+/// Set up merge conflict test environment: git repo + plugin + i18n
+fn setup_merge_conflict_test(project_root: &Path) {
+    use std::process::Command;
+
+    // Initialize git repo (required by merge plugin)
+    Command::new("git")
+        .args(["init"])
+        .current_dir(project_root)
+        .output()
+        .expect("git init failed");
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+
+    // Create plugins directory and copy plugin + i18n
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "merge_conflict");
+}
 
 /// Test file content with git conflict markers
 const CONFLICT_FILE_CONTENT: &str = r#"// Some code before conflict
@@ -82,15 +110,7 @@ fn test_merge_conflict_plugin_loads() {
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the merge conflict plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    setup_merge_conflict_test(&project_root);
 
     // Create test file with conflict markers
     let fixture = TestFixture::new("conflict.rs", CONFLICT_FILE_CONTENT).unwrap();
@@ -263,15 +283,7 @@ fn test_merge_start_resolution_command() {
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the merge conflict plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    setup_merge_conflict_test(&project_root);
 
     // Set up a real git merge conflict
     let conflict_file = setup_git_merge_conflict(&project_root);
@@ -339,15 +351,7 @@ fn test_merge_conflict_navigation() {
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the merge conflict plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    setup_merge_conflict_test(&project_root);
 
     // Create test file with multiple conflicts
     let fixture = TestFixture::new("multi_conflict.rs", MULTIPLE_CONFLICTS).unwrap();
@@ -409,15 +413,7 @@ fn test_merge_use_ours_resolution() {
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the merge conflict plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    setup_merge_conflict_test(&project_root);
 
     // Create test file with conflict
     let fixture = TestFixture::new("conflict.rs", SIMPLE_CONFLICT).unwrap();
@@ -462,15 +458,7 @@ fn test_merge_take_theirs_resolution() {
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the merge conflict plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    setup_merge_conflict_test(&project_root);
 
     // Create test file with conflict
     let fixture = TestFixture::new("conflict.rs", SIMPLE_CONFLICT).unwrap();
@@ -515,15 +503,7 @@ fn test_merge_use_both_resolution() {
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the merge conflict plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    setup_merge_conflict_test(&project_root);
 
     // Create test file with conflict
     let fixture = TestFixture::new("conflict.rs", SIMPLE_CONFLICT).unwrap();
@@ -568,15 +548,7 @@ fn test_merge_abort() {
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the merge conflict plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    setup_merge_conflict_test(&project_root);
 
     // Create test file with conflict
     let fixture = TestFixture::new("conflict.rs", SIMPLE_CONFLICT).unwrap();
@@ -621,15 +593,7 @@ fn test_merge_resolve_and_save() {
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the merge conflict plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    setup_merge_conflict_test(&project_root);
 
     // Create test file with conflict
     let fixture = TestFixture::new("conflict.rs", SIMPLE_CONFLICT).unwrap();
@@ -681,15 +645,7 @@ fn test_merge_conflict_detection_on_open() {
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the merge conflict plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    setup_merge_conflict_test(&project_root);
 
     // Create test file with conflict
     let fixture = TestFixture::new("conflict.rs", CONFLICT_FILE_CONTENT).unwrap();
@@ -719,15 +675,7 @@ fn test_no_merge_without_conflicts() {
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the merge conflict plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    setup_merge_conflict_test(&project_root);
 
     // Create test file WITHOUT conflict markers
     let normal_content = "// This is a normal file\nfn main() {\n    println!(\"Hello\");\n}\n";
@@ -766,15 +714,7 @@ fn test_merge_multiple_conflicts_workflow() {
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the merge conflict plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    setup_merge_conflict_test(&project_root);
 
     // Create test file with multiple conflicts
     let fixture = TestFixture::new("multi.rs", MULTIPLE_CONFLICTS).unwrap();
@@ -831,38 +771,156 @@ fn test_merge_multiple_conflicts_workflow() {
     println!("Screen after resolving all conflicts:\n{}", screen);
 }
 
+/// Set up a real git merge conflict with diff3 style (shows base section with |||||||)
+/// Assumes git is already initialized in project_root
+fn setup_diff3_merge_conflict(project_root: &std::path::Path) -> std::path::PathBuf {
+    use std::process::Command;
+
+    let conflict_file = project_root.join("showdf.c");
+
+    // Configure diff3 merge conflict style (shows base section with |||||||)
+    eprintln!("Configuring diff3 style...");
+    Command::new("git")
+        .args(["config", "merge.conflictstyle", "diff3"])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+
+    // Create base version
+    eprintln!("Creating base commit...");
+    fs::write(&conflict_file, "static int showdf(const char *uuid)\n").unwrap();
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+    let out = Command::new("git")
+        .args(["commit", "-m", "base"])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+    eprintln!("Base commit: {:?}", String::from_utf8_lossy(&out.stderr));
+
+    // Create feature branch with one change
+    eprintln!("Creating feature branch...");
+    Command::new("git")
+        .args(["checkout", "-b", "feature"])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+    fs::write(&conflict_file, "static int showdf(char *uuid)\n").unwrap();
+    Command::new("git")
+        .args(["commit", "-am", "feature"])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+
+    // Go back to main and make different change
+    eprintln!("Going back to main branch...");
+    let out = Command::new("git")
+        .args(["checkout", "master"])
+        .current_dir(project_root)
+        .output();
+    eprintln!("checkout master: {:?}", out);
+    let out = Command::new("git")
+        .args(["checkout", "main"])
+        .current_dir(project_root)
+        .output();
+    eprintln!("checkout main: {:?}", out);
+
+    fs::write(
+        &conflict_file,
+        "static int showdf(const char *uuid, int extra)\n",
+    )
+    .unwrap();
+    let out = Command::new("git")
+        .args(["commit", "-am", "main change"])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+    eprintln!("Main commit: {:?}", String::from_utf8_lossy(&out.stderr));
+
+    // Merge - this will fail and leave conflict markers with diff3 style
+    eprintln!("Attempting merge...");
+    let out = Command::new("git")
+        .args(["merge", "feature"])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+    eprintln!("Merge output: {:?}", String::from_utf8_lossy(&out.stdout));
+    eprintln!("Merge stderr: {:?}", String::from_utf8_lossy(&out.stderr));
+
+    // Show file content
+    let content = fs::read_to_string(&conflict_file).unwrap_or_default();
+    eprintln!("Conflict file content:\n{}", content);
+
+    conflict_file
+}
+
 /// Test diff3-style conflict with base section (|||||||) is detected correctly
-/// This is a real-world example from the Lustre project with a complex conflict
 #[test]
 fn test_diff3_conflict_with_base_section() {
-    // Create harness with temp project directory
-    let mut harness =
-        EditorTestHarness::with_temp_project_and_config(120, 40, Default::default()).unwrap();
-    let project_root = harness.project_dir().unwrap();
+    use crate::common::tracing::init_tracing_from_env;
+    use std::process::Command;
 
-    // Create plugins directory and copy the merge conflict plugin
+    init_tracing_from_env();
+    eprintln!("Starting test_diff3_conflict_with_base_section");
+
+    // Create project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    eprintln!("Created project_root: {:?}", project_root);
+
+    // Init git first, then setup plugins
+    let out = Command::new("git")
+        .args(["init"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    eprintln!("git init: {:?}", String::from_utf8_lossy(&out.stderr));
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+
+    // Copy plugin
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "merge_conflict");
+    eprintln!("Copied plugin files");
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    // Create a real diff3-style merge conflict
+    eprintln!("Setting up diff3 merge conflict...");
+    let file_path = setup_diff3_merge_conflict(&project_root);
+    eprintln!("Conflict file: {:?}", file_path);
 
-    // Create test file with diff3-style conflict (includes base section) in project dir
-    let file_path = project_root.join("showdf.c");
-    fs::write(&file_path, DIFF3_CONFLICT_WITH_BASE).unwrap();
+    // Create harness with project directory (so plugins load)
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
 
     // Open the test file
+    eprintln!("Opening file...");
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
+    eprintln!("File opened, checking markers...");
 
     // Verify all conflict markers are visible in the file
     harness.assert_screen_contains("<<<<<<< HEAD");
+    eprintln!("Found <<<<<<< HEAD");
     harness.assert_screen_contains("|||||||");
+    eprintln!("Found |||||||");
     harness.assert_screen_contains("=======");
+    eprintln!("Found =======");
     harness.assert_screen_contains(">>>>>>>");
+    eprintln!("Found >>>>>>>, now starting merge...");
 
     // The file should show the different versions:
     // OURS: char *uuid (non-const)
@@ -901,10 +959,12 @@ fn test_diff3_conflict_with_base_section() {
     );
 
     // Should see OURS or THEIRS or RESULT panel headers
+    eprintln!("Checking for OURS/Merge:/Conflict in screen...");
     assert!(
         screen.contains("OURS") || screen.contains("Merge:") || screen.contains("Conflict"),
         "Merge UI should be visible after starting resolution"
     );
+    eprintln!("Test passed! Cleaning up...");
 }
 
 /// Test that diff3-style conflict can be resolved
@@ -915,15 +975,7 @@ fn test_diff3_conflict_resolution() {
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the merge conflict plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    setup_merge_conflict_test(&project_root);
 
     // Create test file with diff3-style conflict
     let fixture = TestFixture::new("showdf.c", DIFF3_CONFLICT_WITH_BASE).unwrap();
@@ -973,26 +1025,32 @@ fn test_diff3_conflict_resolution() {
 /// Test that CRLF line endings are handled correctly (Windows-style files)
 #[test]
 fn test_merge_conflict_crlf_line_endings() {
-    // Create harness with temp project directory
-    let mut harness =
-        EditorTestHarness::with_temp_project_and_config(120, 40, Default::default()).unwrap();
-    let project_root = harness.project_dir().unwrap();
+    use std::process::Command;
 
-    // Create plugins directory and copy the merge conflict plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
+    // Create project directory and plugins BEFORE harness
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
 
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    setup_merge_conflict_test(&project_root);
 
     // Create test file with CRLF line endings (Windows-style) in project dir
     // This is the diff3 conflict but with \r\n instead of \n
     let crlf_content = "}\r\n\r\nstatic int showdf(char *mntdir, struct obd_statfs *stat,\r\n<<<<<<< HEAD\r\n                  char *uuid, enum mntdf_flags flags,\r\n                  char *type, int index, int rc)\r\n||||||| parent of a3f05d81f6\r\n                  const char *uuid, enum mntdf_flags flags,\r\n                  char *type, int index, int rc)\r\n=======\r\n                  const char *uuid, enum mntdf_flags flags,\r\n                  char *type, int index, int rc, enum showdf_fields fields)\r\n>>>>>>> a3f05d81f6\r\n{\r\n";
     let file_path = project_root.join("crlf_conflict.c");
     fs::write(&file_path, crlf_content).unwrap();
+
+    // Stage the file so git knows about it (required for merge conflict detection)
+    Command::new("git")
+        .args(["add", "crlf_conflict.c"])
+        .current_dir(&project_root)
+        .output()
+        .unwrap();
+
+    // Create harness with project directory (so plugins load)
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
 
     // Open the test file
     harness.open_file(&file_path).unwrap();
@@ -1051,15 +1109,7 @@ fn test_merge_mouse_click_on_buttons() {
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the merge conflict plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    let plugin_source = std::env::current_dir()
-        .unwrap()
-        .join("plugins/merge_conflict.ts");
-    let plugin_dest = plugins_dir.join("merge_conflict.ts");
-    fs::copy(&plugin_source, &plugin_dest).unwrap();
+    setup_merge_conflict_test(&project_root);
 
     // Create test file with conflict
     let fixture = TestFixture::new("conflict.rs", SIMPLE_CONFLICT).unwrap();

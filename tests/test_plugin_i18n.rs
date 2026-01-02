@@ -27,6 +27,7 @@ fn test_plugin_i18n_loading_and_translation() {
     // Create plugin file
     let plugin_path = plugins_dir.join("test_i18n.ts");
     let plugin_code = r#"
+const editor = getEditor();
 // Simple test plugin for i18n
 globalThis.test_i18n_action = function() {
   const msg = editor.t("msg.hello", { name: "TestUser" });
