@@ -13,22 +13,27 @@ fn main() {
     println!("cargo::rerun-if-changed=types/fresh.d.ts.template");
     println!("cargo::rerun-if-changed=locales");
 
-    // Skip type generation during cargo publish (files should be pre-committed)
+    // Check if we're in a package verification context or building on docs.rs
     // DOCS_RS is set when building on docs.rs
-    // We also check if we're in a package verification context by looking for the target/package path
+    // We detect publish verification by looking for the target/package path
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     let is_publish_verify = manifest_dir.contains("target/package");
+    let is_docs_rs = std::env::var("DOCS_RS").is_ok();
 
-    if is_publish_verify || std::env::var("DOCS_RS").is_ok() {
+    // Always generate locale_options.rs - it's required by config.rs at compile time
+    // This must run even during publish verification since the include!() macro needs it
+    if let Err(e) = generate_locale_options() {
+        eprintln!("Warning: Failed to generate locale options: {}", e);
+    }
+
+    // Skip TypeScript type generation during cargo publish (files should be pre-committed)
+    // These files are only needed for plugin development, not for building the editor
+    if is_publish_verify || is_docs_rs {
         return;
     }
 
     if let Err(e) = generate_typescript_types() {
         eprintln!("Warning: Failed to generate TypeScript types: {}", e);
-    }
-
-    if let Err(e) = generate_locale_options() {
-        eprintln!("Warning: Failed to generate locale options: {}", e);
     }
 }
 
