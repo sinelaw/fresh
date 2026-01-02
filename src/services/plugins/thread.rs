@@ -125,7 +125,8 @@ pub mod oneshot {
 /// Handle to the plugin thread for sending requests
 pub struct PluginThreadHandle {
     /// Channel to send requests to the plugin thread
-    request_sender: tokio::sync::mpsc::UnboundedSender<PluginRequest>,
+    /// Wrapped in Option so we can drop it to signal shutdown
+    request_sender: Option<tokio::sync::mpsc::UnboundedSender<PluginRequest>>,
 
     /// Thread join handle
     thread_handle: Option<JoinHandle<()>>,
@@ -222,7 +223,7 @@ impl PluginThreadHandle {
         tracing::info!("Plugin thread spawned");
 
         Ok(Self {
-            request_sender,
+            request_sender: Some(request_sender),
             thread_handle: Some(thread_handle),
             state_snapshot,
             commands,
@@ -242,6 +243,8 @@ impl PluginThreadHandle {
     pub fn load_plugin(&self, path: &Path) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.request_sender
+            .as_ref()
+            .ok_or_else(|| anyhow!("Plugin thread shut down"))?
             .send(PluginRequest::LoadPlugin {
                 path: path.to_path_buf(),
                 response: tx,
@@ -254,8 +257,10 @@ impl PluginThreadHandle {
     /// Load all plugins from a directory (blocking)
     pub fn load_plugins_from_dir(&self, dir: &Path) -> Vec<String> {
         let (tx, rx) = oneshot::channel();
-        if self
-            .request_sender
+        let Some(sender) = self.request_sender.as_ref() else {
+            return vec!["Plugin thread shut down".to_string()];
+        };
+        if sender
             .send(PluginRequest::LoadPluginsFromDir {
                 dir: dir.to_path_buf(),
                 response: tx,
@@ -273,6 +278,8 @@ impl PluginThreadHandle {
     pub fn unload_plugin(&self, name: &str) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.request_sender
+            .as_ref()
+            .ok_or_else(|| anyhow!("Plugin thread shut down"))?
             .send(PluginRequest::UnloadPlugin {
                 name: name.to_string(),
                 response: tx,
@@ -286,6 +293,8 @@ impl PluginThreadHandle {
     pub fn reload_plugin(&self, name: &str) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.request_sender
+            .as_ref()
+            .ok_or_else(|| anyhow!("Plugin thread shut down"))?
             .send(PluginRequest::ReloadPlugin {
                 name: name.to_string(),
                 response: tx,
@@ -303,6 +312,8 @@ impl PluginThreadHandle {
         tracing::trace!("execute_action_async: starting action '{}'", action_name);
         let (tx, rx) = oneshot::channel();
         self.request_sender
+            .as_ref()
+            .ok_or_else(|| anyhow!("Plugin thread shut down"))?
             .send(PluginRequest::ExecuteAction {
                 action_name: action_name.to_string(),
                 response: tx,
@@ -319,17 +330,21 @@ impl PluginThreadHandle {
     /// The plugin thread will execute them asynchronously and
     /// any results will come back via the PluginCommand channel.
     pub fn run_hook(&self, hook_name: &str, args: HookArgs) {
-        let _ = self.request_sender.send(PluginRequest::RunHook {
-            hook_name: hook_name.to_string(),
-            args,
-        });
+        if let Some(sender) = self.request_sender.as_ref() {
+            let _ = sender.send(PluginRequest::RunHook {
+                hook_name: hook_name.to_string(),
+                args,
+            });
+        }
     }
 
     /// Check if any handlers are registered for a hook (blocking)
     pub fn has_hook_handlers(&self, hook_name: &str) -> bool {
         let (tx, rx) = oneshot::channel();
-        if self
-            .request_sender
+        let Some(sender) = self.request_sender.as_ref() else {
+            return false;
+        };
+        if sender
             .send(PluginRequest::HasHookHandlers {
                 hook_name: hook_name.to_string(),
                 response: tx,
@@ -345,8 +360,10 @@ impl PluginThreadHandle {
     /// List all loaded plugins (blocking)
     pub fn list_plugins(&self) -> Vec<TsPluginInfo> {
         let (tx, rx) = oneshot::channel();
-        if self
-            .request_sender
+        let Some(sender) = self.request_sender.as_ref() else {
+            return vec![];
+        };
+        if sender
             .send(PluginRequest::ListPlugins { response: tx })
             .is_err()
         {
@@ -381,11 +398,39 @@ impl PluginThreadHandle {
 
     /// Shutdown the plugin thread
     pub fn shutdown(&mut self) {
-        let _ = self.request_sender.send(PluginRequest::Shutdown);
+        tracing::debug!("PluginThreadHandle::shutdown: starting shutdown");
+
+        // Drop all pending response senders - this wakes up any plugin code waiting for responses
+        // by causing their oneshot receivers to return an error
+        if let Ok(mut pending) = self.pending_responses.lock() {
+            if !pending.is_empty() {
+                tracing::warn!(
+                    "PluginThreadHandle::shutdown: dropping {} pending responses: {:?}",
+                    pending.len(),
+                    pending.keys().collect::<Vec<_>>()
+                );
+                pending.clear(); // Drop all senders, waking up waiting receivers
+            }
+        }
+
+        // First send a Shutdown request to allow clean processing of pending work
+        if let Some(sender) = self.request_sender.as_ref() {
+            tracing::debug!("PluginThreadHandle::shutdown: sending Shutdown request");
+            let _ = sender.send(PluginRequest::Shutdown);
+        }
+
+        // Then drop the sender to close the channel - this reliably wakes the receiver
+        // even when it's parked in a tokio LocalSet (the Shutdown message above may not wake it)
+        tracing::debug!("PluginThreadHandle::shutdown: dropping request_sender to close channel");
+        self.request_sender.take();
 
         if let Some(handle) = self.thread_handle.take() {
+            tracing::debug!("PluginThreadHandle::shutdown: joining plugin thread");
             let _ = handle.join();
+            tracing::debug!("PluginThreadHandle::shutdown: plugin thread joined");
         }
+
+        tracing::debug!("PluginThreadHandle::shutdown: shutdown complete");
     }
 }
 
