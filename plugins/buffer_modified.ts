@@ -147,7 +147,7 @@ globalThis.onBufferModifiedAfterFileOpen = function (args: {
 
   // Initialize tracking - file just loaded, no modifications yet
   initBufferState(bufferId);
-  editor.setStatus(editor.t("status.initialized", { path: args.path }));
+  editor.debug(editor.t("status.initialized", { path: args.path }));
 
   return true;
 };
@@ -182,7 +182,7 @@ globalThis.onBufferModifiedAfterSave = function (args: {
 
   // Clear all modified markers - buffer now matches disk
   clearModifiedState(bufferId);
-  editor.setStatus(editor.t("status.cleared_on_save"));
+  editor.debug(editor.t("status.cleared_on_save"));
 
   return true;
 };
@@ -278,4 +278,4 @@ if (initPath && initPath !== "") {
   initBufferState(initBufferId);
 }
 
-editor.setStatus(editor.t("status.loaded"));
+editor.debug(editor.t("status.loaded"));

@@ -88,7 +88,8 @@ use tempfile::TempDir;
 /// copy_plugin(&plugins_dir, "todo_highlighter");
 /// ```
 pub fn copy_plugin(plugins_dir: &Path, plugin_name: &str) {
-    let source_dir = std::env::current_dir().unwrap().join("plugins");
+    // Use CARGO_MANIFEST_DIR to find plugins regardless of current working directory
+    let source_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("plugins");
 
     // Copy the .ts file
     let ts_src = source_dir.join(format!("{}.ts", plugin_name));
@@ -107,7 +108,8 @@ pub fn copy_plugin(plugins_dir: &Path, plugin_name: &str) {
 
 /// Copy the plugins/lib directory (contains TypeScript declarations like fresh.d.ts)
 pub fn copy_plugin_lib(plugins_dir: &Path) {
-    let lib_src = std::env::current_dir().unwrap().join("plugins/lib");
+    // Use CARGO_MANIFEST_DIR to find plugins regardless of current working directory
+    let lib_src = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("plugins/lib");
     let lib_dest = plugins_dir.join("lib");
     if lib_src.exists() {
         fs::create_dir_all(&lib_dest).unwrap();

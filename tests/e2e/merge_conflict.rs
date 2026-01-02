@@ -906,6 +906,9 @@ fn test_diff3_conflict_with_base_section() {
         EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
             .unwrap();
 
+    // Enable internal-only clipboard to avoid system clipboard interference in parallel tests
+    harness.editor_mut().set_clipboard_for_test("".to_string());
+
     // Open the test file
     eprintln!("Opening file...");
     harness.open_file(&file_path).unwrap();
