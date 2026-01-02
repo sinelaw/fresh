@@ -107,6 +107,10 @@ impl Editor {
                 self.menus = crate::config::MenuConfig::translated();
                 tracing::info!("Locale reset to auto-detect");
             }
+            // Refresh command palette commands with new locale
+            if let Ok(mut registry) = self.command_registry.write() {
+                registry.refresh_builtin_commands();
+            }
         }
 
         // Update keybindings
