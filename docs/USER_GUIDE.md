@@ -250,24 +250,35 @@ The `languages` map uses **deep merging with field-level override**:
 // Result: Rust keeps all system defaults, with tab_size and format_on_save overridden
 ```
 
-#### LSP Map (shallow merge)
+#### LSP Map (deep merge)
 
-The `lsp` map uses **shallow merging**:
+The `lsp` map uses **deep merging with field-level override**:
 - Entries from all layers are combined
-- For the same language key, the **entire config is replaced** (not field-merged)
+- For the same language key, individual fields are merged (not replaced entirely)
+- Unspecified fields inherit from lower layers (you only need to specify what you're changing)
 
-**Example:** To override just one LSP setting, you must specify the complete config:
+**Example:** To disable an LSP while preserving its default command:
 ```json
 {
   "lsp": {
     "rust": {
-      "command": "rust-analyzer",
-      "args": [],
-      "enabled": true,
+      "enabled": false
+    }
+  }
+}
+// Result: rust-analyzer command preserved from defaults, just disabled
+```
+
+**Example:** To add initialization options without repeating the command:
+```json
+{
+  "lsp": {
+    "rust": {
       "initialization_options": { "checkOnSave": { "command": "clippy" } }
     }
   }
 }
+// Result: command="rust-analyzer" (from defaults) + your initialization_options
 ```
 
 #### Lists (keybindings, on_save actions)
