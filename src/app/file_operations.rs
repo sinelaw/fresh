@@ -399,7 +399,7 @@ impl Editor {
 
         match lsp.try_spawn(&language) {
             LspSpawnResult::Spawned => {
-                if let Some(client) = lsp.get_or_spawn(&language) {
+                if let Some(client) = lsp.get_handle_mut(&language) {
                     // Send didOpen
                     tracing::info!("Sending didOpen to LSP for: {}", uri.as_str());
                     if let Err(e) = client.did_open(uri.clone(), text, language.clone()) {
@@ -478,6 +478,8 @@ impl Editor {
 
     /// Notify LSP that a file's contents changed (e.g., after revert)
     pub(crate) fn notify_lsp_file_changed(&mut self, path: &Path) {
+        use crate::services::lsp::manager::LspSpawnResult;
+
         let Ok(uri) = url::Url::from_file_path(path) else {
             return;
         };
@@ -498,12 +500,25 @@ impl Editor {
             return;
         };
 
-        // Get handle ID
+        // Check if we can spawn LSP (respects auto_start setting)
+        let spawn_result = {
+            let Some(lsp) = self.lsp.as_mut() else {
+                return;
+            };
+            lsp.try_spawn(&language)
+        };
+
+        // Only proceed if spawned successfully (or already running)
+        if spawn_result != LspSpawnResult::Spawned {
+            return;
+        }
+
+        // Get handle ID (handle should exist now since try_spawn succeeded)
         let handle_id = {
             let Some(lsp) = self.lsp.as_mut() else {
                 return;
             };
-            let Some(handle) = lsp.get_or_spawn(&language) else {
+            let Some(handle) = lsp.get_handle_mut(&language) else {
                 return;
             };
             handle.id()
@@ -520,7 +535,7 @@ impl Editor {
         if needs_open {
             // Send didOpen first
             if let Some(lsp) = self.lsp.as_mut() {
-                if let Some(handle) = lsp.get_or_spawn(&language) {
+                if let Some(handle) = lsp.get_handle_mut(&language) {
                     if let Err(e) =
                         handle.did_open(lsp_uri.clone(), content.clone(), language.clone())
                     {
@@ -543,7 +558,7 @@ impl Editor {
 
         // Use full document sync - send the entire new content
         if let Some(lsp) = &mut self.lsp {
-            if let Some(client) = lsp.get_or_spawn(&language) {
+            if let Some(client) = lsp.get_handle_mut(&language) {
                 let content_change = TextDocumentContentChangeEvent {
                     range: None, // None means full document replacement
                     range_length: None,

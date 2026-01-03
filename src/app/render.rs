@@ -1357,7 +1357,8 @@ impl Editor {
                 if let Some(lsp) = &mut self.lsp {
                     // Temporarily allow this language for spawning
                     lsp.allow_language(&language);
-                    if lsp.get_or_spawn(&language).is_some() {
+                    // Use force_spawn since user explicitly confirmed
+                    if lsp.force_spawn(&language).is_some() {
                         tracing::info!("LSP server for {} started (allowed once)", language);
                         self.set_status_message(
                             t!("lsp.server_started", language = language).to_string(),
@@ -1375,7 +1376,8 @@ impl Editor {
                 // Spawn the LSP server and remember the preference
                 if let Some(lsp) = &mut self.lsp {
                     lsp.allow_language(&language);
-                    if lsp.get_or_spawn(&language).is_some() {
+                    // Use force_spawn since user explicitly confirmed
+                    if lsp.force_spawn(&language).is_some() {
                         tracing::info!("LSP server for {} started (always allowed)", language);
                         self.set_status_message(
                             t!("lsp.server_started_auto", language = language).to_string(),
@@ -1481,9 +1483,9 @@ impl Editor {
             return;
         };
 
-        // Send didOpen to LSP
+        // Send didOpen to LSP (use force_spawn since this is called after user confirmation)
         if let Some(lsp) = &mut self.lsp {
-            if let Some(client) = lsp.get_or_spawn(language) {
+            if let Some(client) = lsp.force_spawn(language) {
                 tracing::info!("Sending didOpen to newly started LSP for: {}", uri.as_str());
                 if let Err(e) = client.did_open(uri.clone(), text, file_language) {
                     tracing::warn!("Failed to send didOpen to LSP: {}", e);
@@ -1790,8 +1792,17 @@ impl Editor {
             full_text.len()
         );
 
+        // Only send didSave if LSP is already running (respect auto_start setting)
         if let Some(lsp) = &mut self.lsp {
-            if let Some(client) = lsp.get_or_spawn(&language) {
+            use crate::services::lsp::manager::LspSpawnResult;
+            if lsp.try_spawn(&language) != LspSpawnResult::Spawned {
+                tracing::debug!(
+                    "notify_lsp_save: LSP not running for {} (auto_start disabled)",
+                    language
+                );
+                return;
+            }
+            if let Some(client) = lsp.get_handle_mut(&language) {
                 // Send didSave with the full text content
                 if let Err(e) = client.did_save(uri, Some(full_text)) {
                     tracing::warn!("Failed to send didSave to LSP: {}", e);
@@ -1799,10 +1810,7 @@ impl Editor {
                     tracing::info!("Successfully sent didSave to LSP");
                 }
             } else {
-                tracing::warn!(
-                    "notify_lsp_save: failed to get or spawn LSP client for {}",
-                    language
-                );
+                tracing::warn!("notify_lsp_save: failed to get LSP client for {}", language);
             }
         } else {
             tracing::debug!("notify_lsp_save: no LSP manager available");

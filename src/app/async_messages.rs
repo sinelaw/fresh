@@ -190,7 +190,8 @@ impl Editor {
             return;
         };
 
-        let Some(client) = lsp.get_or_spawn(&language) else {
+        // LSP should already be running since we got a quiescent notification
+        let Some(client) = lsp.get_handle_mut(&language) else {
             return;
         };
 
@@ -705,7 +706,8 @@ impl Editor {
                         &self.config.languages,
                     ) {
                         if let Some(lsp) = self.lsp.as_mut() {
-                            if let Some(handle) = lsp.get_or_spawn(&lang_id) {
+                            // LSP should already be running since we just restarted it
+                            if let Some(handle) = lsp.get_handle_mut(&lang_id) {
                                 let _ = handle.did_open(uri, content, lang_id);
                             }
                         }

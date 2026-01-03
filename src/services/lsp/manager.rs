@@ -133,8 +133,8 @@ impl LspManager {
             return LspSpawnResult::NotAutoStart;
         }
 
-        // Spawn the server
-        if self.get_or_spawn(language).is_some() {
+        // Spawn the server (using force_spawn since we've already checked auto_start)
+        if self.force_spawn(language).is_some() {
             LspSpawnResult::Spawned
         } else {
             LspSpawnResult::Failed
@@ -187,8 +187,31 @@ impl LspManager {
         );
     }
 
-    /// Get or spawn an LSP handle for a language
-    pub fn get_or_spawn(&mut self, language: &str) -> Option<&mut LspHandle> {
+    /// Get an existing LSP handle for a language (no spawning)
+    ///
+    /// This is the safe way to get a handle - it only returns an existing handle
+    /// and never spawns a new server. Use this after calling `try_spawn()`.
+    pub fn get_handle(&self, language: &str) -> Option<&LspHandle> {
+        self.handles.get(language)
+    }
+
+    /// Get a mutable existing LSP handle for a language (no spawning)
+    ///
+    /// This is the safe way to get a handle - it only returns an existing handle
+    /// and never spawns a new server. Use this after calling `try_spawn()`.
+    pub fn get_handle_mut(&mut self, language: &str) -> Option<&mut LspHandle> {
+        self.handles.get_mut(language)
+    }
+
+    /// Force spawn an LSP handle, bypassing auto_start checks
+    ///
+    /// **WARNING**: This bypasses the auto_start setting! Only use this when:
+    /// - User has explicitly confirmed they want to start the LSP (via popup)
+    /// - Manually restarting a server (via command palette)
+    /// - Internal operations that need to guarantee spawn (like retry_crashed_servers)
+    ///
+    /// For normal operations, use `try_spawn()` + `get_handle_mut()` instead.
+    pub fn force_spawn(&mut self, language: &str) -> Option<&mut LspHandle> {
         // Return existing handle if available
         if self.handles.contains_key(language) {
             return self.handles.get_mut(language);
@@ -358,8 +381,8 @@ impl LspManager {
                 .or_default()
                 .push(now);
 
-            // Attempt to spawn the server
-            if self.get_or_spawn(&language).is_some() {
+            // Attempt to spawn the server (bypassing auto_start for crash recovery)
+            if self.force_spawn(&language).is_some() {
                 let message = format!("LSP server for {} restarted successfully", language);
                 tracing::info!("{}", message);
                 results.push((language, true, message));
@@ -412,8 +435,8 @@ impl LspManager {
             let _ = handle.shutdown();
         }
 
-        // Spawn new server
-        if self.get_or_spawn(language).is_some() {
+        // Spawn new server (bypassing auto_start for user-initiated restart)
+        if self.force_spawn(language).is_some() {
             let message = format!("LSP server for {} started", language);
             tracing::info!("{}", message);
             (true, message)
@@ -566,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lsp_manager_get_or_spawn_no_runtime() {
+    fn test_lsp_manager_force_spawn_no_runtime() {
         let mut manager = LspManager::new(None);
 
         // Add config for rust
@@ -582,26 +605,26 @@ mod tests {
             },
         );
 
-        // get_or_spawn should return None without runtime
-        let result = manager.get_or_spawn("rust");
+        // force_spawn should return None without runtime
+        let result = manager.force_spawn("rust");
         assert!(result.is_none());
     }
 
     #[test]
-    fn test_lsp_manager_get_or_spawn_no_config() {
+    fn test_lsp_manager_force_spawn_no_config() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut manager = LspManager::new(None);
         let async_bridge = AsyncBridge::new();
 
         manager.set_runtime(rt.handle().clone(), async_bridge);
 
-        // get_or_spawn should return None for unconfigured language
-        let result = manager.get_or_spawn("rust");
+        // force_spawn should return None for unconfigured language
+        let result = manager.force_spawn("rust");
         assert!(result.is_none());
     }
 
     #[test]
-    fn test_lsp_manager_get_or_spawn_disabled_language() {
+    fn test_lsp_manager_force_spawn_disabled_language() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut manager = LspManager::new(None);
         let async_bridge = AsyncBridge::new();
@@ -621,8 +644,8 @@ mod tests {
             },
         );
 
-        // get_or_spawn should return None for disabled language
-        let result = manager.get_or_spawn("rust");
+        // force_spawn should return None for disabled language
+        let result = manager.force_spawn("rust");
         assert!(result.is_none());
     }
 

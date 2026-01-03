@@ -795,7 +795,7 @@ fn test_lsp_waiting_indicator() -> std::io::Result<()> {
             command: FakeLspServer::script_path().to_string_lossy().to_string(),
             args: vec![],
             enabled: true,
-            auto_start: false,
+            auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
         },
@@ -970,7 +970,7 @@ fn test_lsp_completion_canceled_on_cursor_move() -> std::io::Result<()> {
             command: FakeLspServer::script_path().to_string_lossy().to_string(),
             args: vec![],
             enabled: true,
-            auto_start: false,
+            auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
         },
@@ -1035,7 +1035,7 @@ fn test_lsp_cursor_animation() -> std::io::Result<()> {
             command: FakeLspServer::script_path().to_string_lossy().to_string(),
             args: vec![],
             enabled: true,
-            auto_start: false,
+            auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
         },
@@ -1101,7 +1101,7 @@ fn test_lsp_completion_canceled_on_text_edit() -> std::io::Result<()> {
             command: FakeLspServer::script_path().to_string_lossy().to_string(),
             args: vec![],
             enabled: true,
-            auto_start: false,
+            auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
         },
@@ -1685,7 +1685,7 @@ fn test_lsp_diagnostics_non_blocking() -> std::io::Result<()> {
                 .to_string(),
             args: vec![],
             enabled: true,
-            auto_start: false,
+            auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
         },
@@ -1842,7 +1842,7 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
                 ra_log_file.to_string_lossy().to_string(),
             ],
             enabled: true,
-            auto_start: false,
+            auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
         },
@@ -2450,7 +2450,7 @@ fn test_lsp_progress_status_display() -> std::io::Result<()> {
                 .to_string(),
             args: vec![],
             enabled: true,
-            auto_start: false,
+            auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
         },
@@ -2610,7 +2610,7 @@ fn test_lsp_crash_detection_and_restart() -> std::io::Result<()> {
                 .to_string(),
             args: vec![],
             enabled: true,
-            auto_start: false,
+            auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
         },
@@ -2906,7 +2906,7 @@ fn test_pull_diagnostics_auto_trigger_after_open() -> std::io::Result<()> {
                 .to_string(),
             args: vec![],
             enabled: true,
-            auto_start: false,
+            auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
         },
@@ -2984,7 +2984,7 @@ fn test_pull_diagnostics_result_id_tracking() -> std::io::Result<()> {
                 .to_string(),
             args: vec![],
             enabled: true,
-            auto_start: false,
+            auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
         },
@@ -3557,7 +3557,7 @@ fn test_hover_popup_persists_within_symbol_and_popup() -> std::io::Result<()> {
             command: FakeLspServer::script_path().to_string_lossy().to_string(),
             args: vec![],
             enabled: true,
-            auto_start: false,
+            auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
             initialization_options: None,
         },
@@ -4853,6 +4853,164 @@ fn test_completion_plain_text_no_snippet() -> std::io::Result<()> {
     // Cursor should be at end of inserted text
     let cursor_pos = harness.editor().active_state().cursors.primary().position;
     assert_eq!(cursor_pos, 11, "Cursor should be at end of text");
+
+    Ok(())
+}
+
+/// Test that mouse hover does NOT auto-start LSP when auto_start is disabled
+///
+/// This is a regression test for the bug where hovering over text would
+/// start the LSP server even when auto_start was set to false in the config.
+/// The LSP server should only start when:
+/// 1. auto_start is true and a file is opened, OR
+/// 2. The user manually starts the server (via command palette or menu)
+#[test]
+fn test_hover_does_not_autostart_lsp_when_disabled() -> std::io::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+
+    // Spawn fake LSP server script (but we don't want it to actually be used)
+    let _fake_server = FakeLspServer::spawn()?;
+
+    // Create temp dir and test file
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn example_function() {\n    let x = 42;\n}\n")?;
+
+    // Configure editor to use the fake LSP server with auto_start DISABLED
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: false, // This is the key setting - LSP should NOT auto-start
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+    // Enable mouse hover in config
+    config.editor.mouse_hover_enabled = true;
+
+    // Create harness with config
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Verify LSP server was NOT spawned after just opening the file
+    // (because auto_start is false and we haven't manually started it)
+    let running_before_hover = harness.editor().running_lsp_servers();
+    assert!(
+        !running_before_hover.contains(&"rust".to_string()),
+        "LSP server should NOT be spawned after opening file when auto_start=false"
+    );
+
+    // Now simulate mouse hover over the code
+    // The gutter takes some columns, so move to column ~10 which should be over the symbol
+    harness.mouse_move(10, 2)?;
+    harness.render()?;
+
+    // Force check mouse hover to bypass the 500ms timer
+    // This is what would normally trigger the LSP hover request
+    let _ = harness.editor_mut().force_check_mouse_hover();
+
+    // Process any async messages
+    for _ in 0..5 {
+        harness.process_async_and_render()?;
+        harness.sleep(std::time::Duration::from_millis(50));
+    }
+
+    // THE BUG: Currently, the hover request triggers get_or_spawn which starts the LSP
+    // even though auto_start is false. The expected behavior is that the LSP should
+    // NOT be started by a hover request when auto_start is disabled.
+    //
+    // This test SHOULD PASS (LSP not started), but currently FAILS due to the bug.
+    let running_after_hover = harness.editor().running_lsp_servers();
+    assert!(
+        !running_after_hover.contains(&"rust".to_string()),
+        "LSP server should NOT be auto-started by hover when auto_start=false. \
+         The bug is that with_lsp_for_buffer() calls get_or_spawn() which ignores \
+         the auto_start setting. It should use try_spawn() or check auto_start first. \
+         Running servers after hover: {:?}",
+        running_after_hover
+    );
+
+    Ok(())
+}
+
+/// Test that typing does NOT auto-start LSP when auto_start is disabled
+///
+/// This is a regression test for the bug where typing in a buffer would
+/// start the LSP server even when auto_start was set to false in the config.
+#[test]
+fn test_typing_does_not_autostart_lsp_when_disabled() -> std::io::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+    use crossterm::event::KeyCode;
+
+    // Spawn fake LSP server script (but we don't want it to actually be used)
+    let _fake_server = FakeLspServer::spawn()?;
+
+    // Create temp dir and test file
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {\n}\n")?;
+
+    // Configure editor to use the fake LSP server with auto_start DISABLED
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: false, // This is the key setting - LSP should NOT auto-start
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+
+    // Create harness with config
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Verify LSP server was NOT spawned after just opening the file
+    let running_before_typing = harness.editor().running_lsp_servers();
+    assert!(
+        !running_before_typing.contains(&"rust".to_string()),
+        "LSP server should NOT be spawned after opening file when auto_start=false"
+    );
+
+    // Type a character - this should NOT start the LSP
+    harness.send_key(KeyCode::Char('x'), crossterm::event::KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Process any async messages
+    for _ in 0..5 {
+        harness.process_async_and_render()?;
+        harness.sleep(std::time::Duration::from_millis(50));
+    }
+
+    // Verify LSP was NOT started by typing
+    let running_after_typing = harness.editor().running_lsp_servers();
+    assert!(
+        !running_after_typing.contains(&"rust".to_string()),
+        "LSP server should NOT be auto-started by typing when auto_start=false. \
+         Running servers after typing: {:?}",
+        running_after_typing
+    );
 
     Ok(())
 }

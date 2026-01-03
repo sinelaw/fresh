@@ -271,7 +271,8 @@ impl Editor {
         if let Some(path) = file_path {
             if let Some(language) = detect_language(path, &self.config.languages) {
                 if let Some(lsp) = self.lsp.as_mut() {
-                    if let Some(handle) = lsp.get_or_spawn(&language) {
+                    // Only send cancel if LSP is already running (no need to spawn just to cancel)
+                    if let Some(handle) = lsp.get_handle_mut(&language) {
                         if let Err(e) = handle.cancel_request(request_id) {
                             tracing::warn!("Failed to send LSP cancel request: {}", e);
                         } else {
@@ -287,15 +288,19 @@ impl Editor {
     ///
     /// This helper centralizes the logic for:
     /// 1. Getting buffer metadata, URI, and language
-    /// 2. Getting or spawning the LSP handle
+    /// 2. Checking if LSP can be spawned (respects auto_start setting)
     /// 3. Ensuring didOpen was sent to this server instance (lazy - only gets text if needed)
     /// 4. Calling the provided closure with the handle
     ///
-    /// Returns None if any step fails (no file, no language, LSP disabled, etc.)
+    /// Returns None if any step fails (no file, no language, LSP disabled, auto_start=false, etc.)
+    /// Note: This respects the auto_start setting. If auto_start is false and the server
+    /// hasn't been manually started, this will return None without spawning the server.
     pub(crate) fn with_lsp_for_buffer<F, R>(&mut self, buffer_id: BufferId, f: F) -> Option<R>
     where
         F: FnOnce(&crate::services::lsp::async_handler::LspHandle, &lsp_types::Uri, &str) -> R,
     {
+        use crate::services::lsp::manager::LspSpawnResult;
+
         // Get metadata (immutable borrow first to extract what we need)
         let (uri, _path, language) = {
             let metadata = self.buffer_metadata.get(&buffer_id)?;
@@ -308,12 +313,15 @@ impl Editor {
             (uri, path, language)
         };
 
-        // Get handle ID (spawning if needed)
-        let handle_id = {
-            let lsp = self.lsp.as_mut()?;
-            let handle = lsp.get_or_spawn(&language)?;
-            handle.id()
-        };
+        // Try to spawn LSP (respects auto_start setting)
+        // This will only spawn if auto_start=true or the language was manually allowed
+        let lsp = self.lsp.as_mut()?;
+        if lsp.try_spawn(&language) != LspSpawnResult::Spawned {
+            return None;
+        }
+
+        // Get handle ID (handle exists since try_spawn succeeded)
+        let handle_id = lsp.get_handle_mut(&language)?.id();
 
         // Check if didOpen is needed
         let needs_open = {
@@ -326,13 +334,11 @@ impl Editor {
             let text = self.buffers.get(&buffer_id)?.buffer.to_string()?;
 
             // Send didOpen
-            {
-                let lsp = self.lsp.as_mut()?;
-                let handle = lsp.get_or_spawn(&language)?;
-                if let Err(e) = handle.did_open(uri.clone(), text, language.clone()) {
-                    tracing::warn!("Failed to send didOpen: {}", e);
-                    return None;
-                }
+            let lsp = self.lsp.as_mut()?;
+            let handle = lsp.get_handle_mut(&language)?;
+            if let Err(e) = handle.did_open(uri.clone(), text, language.clone()) {
+                tracing::warn!("Failed to send didOpen: {}", e);
+                return None;
             }
 
             // Mark as opened with this server instance
@@ -349,7 +355,7 @@ impl Editor {
 
         // Call the closure with the handle
         let lsp = self.lsp.as_mut()?;
-        let handle = lsp.get_or_spawn(&language)?;
+        let handle = lsp.get_handle_mut(&language)?;
         Some(f(handle, &uri, &language))
     }
 
@@ -1549,21 +1555,26 @@ impl Editor {
             uri.as_str()
         );
 
-        // Get handle ID first
-        let handle_id = {
-            let Some(lsp) = self.lsp.as_mut() else {
-                tracing::debug!("send_lsp_changes_for_buffer: no LSP manager available");
-                return;
-            };
-            let Some(handle) = lsp.get_or_spawn(&language) else {
-                tracing::warn!(
-                    "send_lsp_changes_for_buffer: failed to get or spawn LSP client for {}",
-                    language
-                );
-                return;
-            };
-            handle.id()
+        // Check if we can use LSP (respects auto_start setting)
+        use crate::services::lsp::manager::LspSpawnResult;
+        let Some(lsp) = self.lsp.as_mut() else {
+            tracing::debug!("send_lsp_changes_for_buffer: no LSP manager available");
+            return;
         };
+
+        if lsp.try_spawn(&language) != LspSpawnResult::Spawned {
+            tracing::debug!(
+                "send_lsp_changes_for_buffer: LSP not running for {} (auto_start disabled)",
+                language
+            );
+            return;
+        }
+
+        // Get handle ID (handle exists since try_spawn succeeded)
+        let Some(handle) = lsp.get_handle_mut(&language) else {
+            return;
+        };
+        let handle_id = handle.id();
 
         // Check if didOpen needs to be sent first
         let needs_open = {
@@ -1590,19 +1601,19 @@ impl Editor {
             };
 
             // Send didOpen first
-            if let Some(lsp) = self.lsp.as_mut() {
-                if let Some(handle) = lsp.get_or_spawn(&language) {
-                    if let Err(e) = handle.did_open(uri.clone(), text, language.clone()) {
-                        tracing::warn!("Failed to send didOpen before didChange: {}", e);
-                        return;
-                    }
-                    tracing::debug!(
-                        "Sent didOpen for {} to LSP handle {} before didChange",
-                        uri.as_str(),
-                        handle_id
-                    );
-                }
+            let Some(lsp) = self.lsp.as_mut() else { return };
+            let Some(handle) = lsp.get_handle_mut(&language) else {
+                return;
+            };
+            if let Err(e) = handle.did_open(uri.clone(), text, language.clone()) {
+                tracing::warn!("Failed to send didOpen before didChange: {}", e);
+                return;
             }
+            tracing::debug!(
+                "Sent didOpen for {} to LSP handle {} before didChange",
+                uri.as_str(),
+                handle_id
+            );
 
             // Mark as opened
             if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
@@ -1611,14 +1622,14 @@ impl Editor {
         }
 
         // Now send didChange
-        if let Some(lsp) = &mut self.lsp {
-            if let Some(client) = lsp.get_or_spawn(&language) {
-                if let Err(e) = client.did_change(uri, changes) {
-                    tracing::warn!("Failed to send didChange to LSP: {}", e);
-                } else {
-                    tracing::trace!("Successfully sent batched didChange to LSP");
-                }
-            }
+        let Some(lsp) = self.lsp.as_mut() else { return };
+        let Some(client) = lsp.get_handle_mut(&language) else {
+            return;
+        };
+        if let Err(e) = client.did_change(uri, changes) {
+            tracing::warn!("Failed to send didChange to LSP: {}", e);
+        } else {
+            tracing::trace!("Successfully sent batched didChange to LSP");
         }
     }
 
