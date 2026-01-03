@@ -539,29 +539,6 @@ impl Config {
         Self::config_search_paths(working_dir).into_iter().next()
     }
 
-    /// Load configuration, checking working directory first, then system paths.
-    ///
-    /// Falls back to defaults if no config file is found or all fail to load.
-    pub fn load_for_working_dir(working_dir: &Path) -> Self {
-        for path in Self::config_search_paths(working_dir) {
-            match Self::load_from_file(&path) {
-                Ok(config) => {
-                    tracing::info!("Loaded config from {}", path.display());
-                    return config;
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to load config from {}: {}, trying next option",
-                        path.display(),
-                        e
-                    );
-                }
-            }
-        }
-        tracing::debug!("No config file found, using defaults");
-        Self::default()
-    }
-
     /// Load configuration using the 4-level layer system.
     ///
     /// Merges layers in precedence order: Session > Project > User > System

@@ -475,13 +475,16 @@ fn initialize_app(args: &Args) -> io::Result<SetupState> {
         }
     }
 
-    // Load config - checking working directory first, then system paths
+    // Load config using the layered config system
     let effective_working_dir = working_dir
         .as_ref()
         .cloned()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
+    let dir_context = fresh::config_io::DirectoryContext::from_system()?;
+
     let config = if let Some(config_path) = &args.config {
+        // Explicit config file overrides layered system
         match config::Config::load_from_file(config_path) {
             Ok(cfg) => cfg,
             Err(e) => {
@@ -494,7 +497,7 @@ fn initialize_app(args: &Args) -> io::Result<SetupState> {
             }
         }
     } else {
-        config::Config::load_for_working_dir(&effective_working_dir)
+        config::Config::load_with_layers(&dir_context, &effective_working_dir)
     };
 
     // Initialize i18n with the config's locale before creating the editor
@@ -596,6 +599,8 @@ fn main() -> io::Result<()> {
 
     // Handle --dump-config early (no terminal setup needed)
     if args.dump_config {
+        let dir_context = fresh::config_io::DirectoryContext::from_system()?;
+        let working_dir = std::env::current_dir().unwrap_or_default();
         let config = if let Some(config_path) = &args.config {
             match config::Config::load_from_file(config_path) {
                 Ok(cfg) => cfg,
@@ -609,7 +614,7 @@ fn main() -> io::Result<()> {
                 }
             }
         } else {
-            config::Config::load_for_working_dir(&std::env::current_dir().unwrap_or_default())
+            config::Config::load_with_layers(&dir_context, &working_dir)
         };
 
         // Pretty-print the config as JSON
