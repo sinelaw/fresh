@@ -1804,57 +1804,18 @@ impl Config {
 
     /// Load configuration from a JSON file
     ///
-    /// This deserializes the user's config file and merges it with defaults.
-    /// For HashMap fields like `lsp` and `languages`, entries from the user config
-    /// are merged with (and override) the default entries. This allows users to
-    /// customize a single LSP server without losing the defaults for others.
+    /// This deserializes the user's config file as a partial config and resolves
+    /// it with system defaults. For HashMap fields like `lsp` and `languages`,
+    /// entries from the user config are merged with the default entries.
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
         let contents = std::fs::read_to_string(path.as_ref())
             .map_err(|e| ConfigError::IoError(e.to_string()))?;
 
-        let mut config: Config =
+        // Deserialize as PartialConfig first, then resolve with defaults
+        let partial: crate::partial_config::PartialConfig =
             serde_json::from_str(&contents).map_err(|e| ConfigError::ParseError(e.to_string()))?;
 
-        // Merge with defaults for HashMap fields
-        config.merge_defaults_for_maps();
-
-        Ok(config)
-    }
-
-    /// Merge default values for HashMap fields that should combine user entries with defaults.
-    ///
-    /// This is called after deserializing user config to ensure that:
-    /// - Default LSP servers are present even if user only customizes one
-    /// - Default language configs are present even if user only customizes one
-    ///
-    /// User entries are merged field-by-field with defaults. For LSP configs,
-    /// if a field like `command` is empty (serde default), it takes the default value.
-    pub(crate) fn merge_defaults_for_maps(&mut self) {
-        let defaults = Self::default();
-
-        // Merge LSP configs: start with defaults, merge user entries field-by-field
-        let user_lsp = std::mem::take(&mut self.lsp);
-        self.lsp = defaults.lsp;
-        for (key, user_config) in user_lsp {
-            if let Some(default_config) = self.lsp.get(&key) {
-                self.lsp
-                    .insert(key, user_config.merge_with_defaults(default_config));
-            } else {
-                // New language not in defaults - use as-is
-                self.lsp.insert(key, user_config);
-            }
-        }
-
-        // Merge language configs: start with defaults, overlay user entries
-        let user_languages = std::mem::take(&mut self.languages);
-        self.languages = defaults.languages;
-        for (key, value) in user_languages {
-            self.languages.insert(key, value);
-        }
-
-        // Note: keybinding_maps is NOT merged - user defines their own complete maps
-        // Note: keybindings Vec is NOT merged - it's user customizations only
-        // Note: menu is NOT merged - user can completely override the menu structure
+        Ok(partial.resolve())
     }
 
     /// Load a built-in keymap from embedded JSON
