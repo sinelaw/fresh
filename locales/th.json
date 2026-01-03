@@ -655,7 +655,7 @@
   "lines.action": "%{action}แล้ว %{count} บรรทัด",
   "lines.comment": "คอมเมนต์",
   "lines.uncomment": "ยกเลิกคอมเมนต์",
-  "locale.changed": "เปลี่ยนภาษาเป็น %{locale} แล้ว",
+  "locale.changed": "เปลี่ยนภาษาเป็น %{locale_name} แล้ว",
   "locale.select_prompt": "เลือกภาษา: ",
   "lsp.allow_once": "อนุญาตครั้งนี้",
   "lsp.allow_once_desc": "เริ่มเซิร์ฟเวอร์ LSP สำหรับเซสชันนี้",

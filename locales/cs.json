@@ -656,7 +656,7 @@
   "lines.action": "%{count} řádků %{action}",
   "lines.comment": "Zakomentovat",
   "lines.uncomment": "Odkomentovat",
-  "locale.changed": "Jazyk změněn na %{locale}",
+  "locale.changed": "Jazyk změněn na %{locale_name}",
   "locale.select_prompt": "Vybrat jazyk: ",
   "lsp.allow_once": "Povolit tentokrát",
   "lsp.allow_once_desc": "Spustit LSP server pro tuto relaci",

@@ -2259,7 +2259,7 @@ impl Editor {
             // Persist to config file
             self.save_locale_to_config();
 
-            self.set_status_message(t!("locale.changed", locale = locale_name).to_string());
+            self.set_status_message(t!("locale.changed", locale_name = locale_name).to_string());
         }
     }
 

@@ -655,7 +655,7 @@
   "lines.action": "已%{action} %{count} 行",
   "lines.comment": "注释",
   "lines.uncomment": "取消注释",
-  "locale.changed": "语言已更改为 %{locale}",
+  "locale.changed": "语言已更改为 %{locale_name}",
   "locale.select_prompt": "选择语言：",
   "lsp.allow_once": "本次允许",
   "lsp.allow_once_desc": "为此会话启动 LSP 服务器",

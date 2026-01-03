@@ -655,7 +655,7 @@
   "lines.action": "%{count} рядків %{action}",
   "lines.comment": "Закоментувати",
   "lines.uncomment": "Раскомментувати",
-  "locale.changed": "Мову змінено на %{locale}",
+  "locale.changed": "Мову змінено на %{locale_name}",
   "locale.select_prompt": "Виберіть мову: ",
   "lsp.allow_once": "Дозволити цього разу",
   "lsp.allow_once_desc": "Запустити LSP-сервер для цієї сесії",

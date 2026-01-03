@@ -221,6 +221,20 @@ mod tests {
     }
 
     #[test]
+    fn test_locale_changed_interpolation() {
+        use rust_i18n::t;
+        set_locale("en");
+
+        // Test the locale.changed message interpolation
+        // Note: The placeholder is %{locale_name} not %{locale} because "locale"
+        // is a reserved parameter in rust_i18n that sets the translation locale.
+        let locale_name = "es";
+        let msg = t!("locale.changed", locale_name = locale_name).to_string();
+
+        assert_eq!(msg, "Locale changed to es");
+    }
+
+    #[test]
     fn test_available_locales_includes_en() {
         let locales = available_locales();
         assert!(

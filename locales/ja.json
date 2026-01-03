@@ -655,7 +655,7 @@
   "lines.action": "%{count} 行を%{action}しました",
   "lines.comment": "コメント",
   "lines.uncomment": "コメント解除",
-  "locale.changed": "ロケールが %{locale} に変更されました",
+  "locale.changed": "ロケールが %{locale_name} に変更されました",
   "locale.select_prompt": "ロケールを選択: ",
   "lsp.allow_once": "今回のみ許可",
   "lsp.allow_once_desc": "このセッションで LSP サーバーを起動",

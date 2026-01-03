@@ -655,7 +655,7 @@
   "lines.action": "%{count} строк %{action}",
   "lines.comment": "Закомментировать",
   "lines.uncomment": "Раскомментировать",
-  "locale.changed": "Язык изменён на %{locale}",
+  "locale.changed": "Язык изменён на %{locale_name}",
   "locale.select_prompt": "Выберите язык: ",
   "lsp.allow_once": "Разрешить сейчас",
   "lsp.allow_once_desc": "Запустить LSP-сервер для этой сессии",

@@ -655,7 +655,7 @@
   "lines.action": "%{count} linha(s) %{action}",
   "lines.comment": "Comentar",
   "lines.uncomment": "Descomentar",
-  "locale.changed": "Idioma alterado para %{locale}",
+  "locale.changed": "Idioma alterado para %{locale_name}",
   "locale.select_prompt": "Selecionar idioma: ",
   "lsp.allow_once": "Permitir desta vez",
   "lsp.allow_once_desc": "Iniciar o servidor LSP para esta sessão",

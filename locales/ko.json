@@ -655,7 +655,7 @@
   "lines.action": "%{count}줄 %{action}",
   "lines.comment": "주석 처리",
   "lines.uncomment": "주석 해제",
-  "locale.changed": "언어가 %{locale}(으)로 변경됨",
+  "locale.changed": "언어가 %{locale_name}(으)로 변경됨",
   "locale.select_prompt": "언어 선택: ",
   "lsp.allow_once": "이번만 허용",
   "lsp.allow_once_desc": "이 세션에서 LSP 서버 시작",
