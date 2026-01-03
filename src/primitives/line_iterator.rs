@@ -34,7 +34,9 @@ pub struct LineIterator<'a> {
     buffer_len: usize,
     /// Estimated average line length in bytes (for large file estimation)
     estimated_line_length: usize,
-    /// Whether we still need to emit an empty line at EOF after a trailing newline
+    /// Whether we still need to emit a synthetic empty line at EOF
+    /// (set when starting at EOF after a trailing newline or when a newline-ending
+    /// line exhausts the buffer during forward iteration)
     pending_trailing_empty_line: bool,
 }
 
@@ -113,7 +115,7 @@ impl<'a> LineIterator<'a> {
         let mut pending_trailing_empty_line = false;
         if buffer_len > 0 && byte_pos == buffer_len {
             if let Ok(bytes) = buffer.get_text_range_mut(buffer_len - 1, 1) {
-                if bytes.last() == Some(&b'\n') {
+                if bytes.get(0) == Some(&b'\n') {
                     pending_trailing_empty_line = true;
                 }
             }
@@ -133,7 +135,7 @@ impl<'a> LineIterator<'a> {
     pub fn next(&mut self) -> Option<(usize, String)> {
         if self.pending_trailing_empty_line {
             self.pending_trailing_empty_line = false;
-            let line_start = self.current_pos;
+            let line_start = self.buffer_len;
             return Some((line_start, String::new()));
         }
 
@@ -512,6 +514,21 @@ mod tests {
             .next()
             .expect("Should emit empty line for trailing newline");
         assert_eq!(pos, "Hello world\n".len());
+        assert_eq!(content, "");
+
+        assert!(iter.next().is_none(), "No more lines expected");
+    }
+
+    #[test]
+    fn test_line_iterator_trailing_newline_starting_at_eof() {
+        let mut buffer = TextBuffer::from_bytes(b"Hello world\n".to_vec());
+        let buffer_len = buffer.len();
+        let mut iter = buffer.line_iterator(buffer_len, 80);
+
+        let (pos, content) = iter
+            .next()
+            .expect("Should emit empty line at EOF when starting there");
+        assert_eq!(pos, buffer_len);
         assert_eq!(content, "");
 
         assert!(iter.next().is_none(), "No more lines expected");
