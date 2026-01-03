@@ -488,26 +488,6 @@ impl Viewport {
             viewport_height
         );
 
-        // Check if buffer ends with newline (which creates a phantom empty line)
-        let buffer_ends_with_newline = buffer_len > 0 && {
-            let last_byte_slice = buffer.slice_bytes(buffer_len - 1..buffer_len);
-            !last_byte_slice.is_empty() && last_byte_slice[0] == b'\n'
-        };
-
-        tracing::trace!(
-            "DEBUG: buffer_ends_with_newline={}",
-            buffer_ends_with_newline
-        );
-
-        // Account for the phantom line if buffer ends with newline
-        if buffer_ends_with_newline {
-            lines_visible += 1;
-            tracing::trace!(
-                "DEBUG: After adding phantom line, lines_visible={}",
-                lines_visible
-            );
-        }
-
         // If we have enough lines to fill the viewport, we're good
         if lines_visible >= viewport_height {
             tracing::trace!(

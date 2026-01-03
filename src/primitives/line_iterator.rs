@@ -34,6 +34,10 @@ pub struct LineIterator<'a> {
     buffer_len: usize,
     /// Estimated average line length in bytes (for large file estimation)
     estimated_line_length: usize,
+    /// Whether we still need to emit a synthetic empty line at EOF
+    /// (set when starting at EOF after a trailing newline or when a newline-ending
+    /// line exhausts the buffer during forward iteration)
+    pending_trailing_empty_line: bool,
 }
 
 impl<'a> LineIterator<'a> {
@@ -108,17 +112,33 @@ impl<'a> LineIterator<'a> {
             Self::find_line_start_backward(buffer, byte_pos, estimated_line_length)
         };
 
+        let mut pending_trailing_empty_line = false;
+        if buffer_len > 0 && byte_pos == buffer_len {
+            if let Ok(bytes) = buffer.get_text_range_mut(buffer_len - 1, 1) {
+                if bytes.get(0) == Some(&b'\n') {
+                    pending_trailing_empty_line = true;
+                }
+            }
+        }
+
         LineIterator {
             buffer,
             current_pos: line_start,
             buffer_len,
             estimated_line_length,
+            pending_trailing_empty_line,
         }
     }
 
     /// Get the next line (moving forward)
     /// Uses lazy loading to handle unloaded buffers transparently
     pub fn next(&mut self) -> Option<(usize, String)> {
+        if self.pending_trailing_empty_line {
+            self.pending_trailing_empty_line = false;
+            let line_start = self.buffer_len;
+            return Some((line_start, String::new()));
+        }
+
         if self.current_pos >= self.buffer_len {
             return None;
         }
@@ -205,6 +225,7 @@ impl<'a> LineIterator<'a> {
             // Use the extended chunk
             let line_bytes = &extended_chunk[..line_len];
             self.current_pos += line_len;
+            self.schedule_trailing_empty_line(line_bytes);
             let line_string = String::from_utf8_lossy(line_bytes).into_owned();
             return Some((line_start, line_string));
         }
@@ -212,6 +233,7 @@ impl<'a> LineIterator<'a> {
         // Normal case: found newline or reached EOF within initial chunk
         let line_bytes = &chunk[..line_len];
         self.current_pos += line_len;
+        self.schedule_trailing_empty_line(line_bytes);
         let line_string = String::from_utf8_lossy(line_bytes).into_owned();
         Some((line_start, line_string))
     }
@@ -290,6 +312,12 @@ impl<'a> LineIterator<'a> {
     /// Get the current position in the buffer (byte offset of current line start)
     pub fn current_position(&self) -> usize {
         self.current_pos
+    }
+
+    fn schedule_trailing_empty_line(&mut self, line_bytes: &[u8]) {
+        if line_bytes.ends_with(&[b'\n']) && self.current_pos == self.buffer_len {
+            self.pending_trailing_empty_line = true;
+        }
     }
 }
 
@@ -473,6 +501,39 @@ mod tests {
         assert_eq!(content, "Line3");
     }
 
+    #[test]
+    fn test_line_iterator_trailing_newline_emits_empty_line() {
+        let mut buffer = TextBuffer::from_bytes(b"Hello world\n".to_vec());
+        let mut iter = buffer.line_iterator(0, 80);
+
+        let (pos, content) = iter.next().expect("First line");
+        assert_eq!(pos, 0);
+        assert_eq!(content, "Hello world\n");
+
+        let (pos, content) = iter
+            .next()
+            .expect("Should emit empty line for trailing newline");
+        assert_eq!(pos, "Hello world\n".len());
+        assert_eq!(content, "");
+
+        assert!(iter.next().is_none(), "No more lines expected");
+    }
+
+    #[test]
+    fn test_line_iterator_trailing_newline_starting_at_eof() {
+        let mut buffer = TextBuffer::from_bytes(b"Hello world\n".to_vec());
+        let buffer_len = buffer.len();
+        let mut iter = buffer.line_iterator(buffer_len, 80);
+
+        let (pos, content) = iter
+            .next()
+            .expect("Should emit empty line at EOF when starting there");
+        assert_eq!(pos, buffer_len);
+        assert_eq!(content, "");
+
+        assert!(iter.next().is_none(), "No more lines expected");
+    }
+
     /// BUG REPRODUCTION: Line longer than estimated_line_length
     /// When a line is longer than the estimated_line_length passed to line_iterator(),
     /// the LineIterator::new() constructor fails to find the actual line start.
@@ -544,6 +605,7 @@ mod tests {
         // CRLF content: "abc\r\ndef\r\nghi\r\n"
         // Bytes: a=0, b=1, c=2, \r=3, \n=4, d=5, e=6, f=7, \r=8, \n=9, g=10, h=11, i=12, \r=13, \n=14
         let content = b"abc\r\ndef\r\nghi\r\n";
+        let buffer_len = content.len();
         let mut buffer = TextBuffer::from_bytes(content.to_vec());
 
         let mut iter = buffer.line_iterator(0, 80);
@@ -566,7 +628,13 @@ mod tests {
         );
         assert_eq!(line_content, "ghi\r\n", "Third line content");
 
-        // No more lines
+        // Trailing CRLF means there's an empty synthetic line at EOF
+        let (pos, line_content) = iter
+            .next()
+            .expect("Should emit empty line after trailing CRLF");
+        assert_eq!(pos, buffer_len, "Empty line should start at EOF");
+        assert_eq!(line_content, "", "Empty line content");
+
         assert!(iter.next().is_none(), "Should have no more lines");
     }
 
