@@ -869,6 +869,12 @@ fn test_file_browser_prompt_shows_buffer_directory() {
         .wait_until(|h| h.screen_to_string().contains("Navigation:"))
         .expect("File browser should appear again");
 
+    // Wait for the file list to load - use semantic waiting for file list content
+    // The sibling file "input.rs" should appear when the directory listing completes
+    harness
+        .wait_until(|h| h.screen_to_string().contains("input.rs"))
+        .expect("File list should load and show sibling files");
+
     // The prompt should show the directory path of the open file
     // It will be an absolute path since the file was opened via direct path resolution
     let expected_suffix = "src/components/";
@@ -890,12 +896,8 @@ fn test_file_browser_prompt_shows_buffer_directory() {
         prompt_line,
     );
 
-    // The sibling file should be visible in the file list
+    // Verify all expected files are in the list (already waited for input.rs above)
     let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("input.rs"),
-        "Should show sibling files in the same directory"
-    );
     assert!(
         screen.contains("button.rs"),
         "Should show the current file in the list"

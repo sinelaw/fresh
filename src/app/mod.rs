@@ -5437,8 +5437,11 @@ mod tests {
     fn test_keybinding_new_defaults() {
         use crossterm::event::{KeyEvent, KeyEventKind, KeyEventState};
 
-        // Test that new keybindings are properly registered
-        let config = Config::default();
+        // Test that new keybindings are properly registered in the "default" keymap
+        // Note: We explicitly use "default" keymap, not Config::default() which uses
+        // platform-specific keymaps (e.g., "macos" on macOS has different bindings)
+        let mut config = Config::default();
+        config.active_keybinding_map = crate::config::KeybindingMapName("default".to_string());
         let resolver = KeybindingResolver::new(&config);
 
         // Test Ctrl+/ is ToggleComment (not CommandPalette)

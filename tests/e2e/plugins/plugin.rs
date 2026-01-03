@@ -306,36 +306,30 @@ fn test_todo_highlighter_toggle() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Need multiple async processing cycles for plugin to process RefreshLines and addOverlay commands
-    harness.process_async_and_render().unwrap();
-    harness.process_async_and_render().unwrap();
-    harness.process_async_and_render().unwrap();
+    // Wait for plugin to process and apply highlight overlay using semantic waiting
+    // The plugin needs async cycles to process RefreshLines and addOverlay commands
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            let lines: Vec<&str> = screen.lines().collect();
 
-    // Verify highlighting is enabled by checking for foreground color (overlays set foreground, not background)
-    let screen = harness.screen_to_string();
-    let lines: Vec<&str> = screen.lines().collect();
-    let mut found_highlighted = false;
-
-    for (y, line) in lines.iter().enumerate() {
-        if let Some(x) = line.find("TODO") {
-            if line[..x].contains("//") {
-                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
-                    // Only count as highlighted if it's an actual RGB color
-                    if let Some(fg) = style.fg {
-                        if matches!(fg, ratatui::style::Color::Rgb(_, _, _)) {
-                            found_highlighted = true;
-                            break;
+            for (y, line) in lines.iter().enumerate() {
+                if let Some(x) = line.find("TODO") {
+                    if line[..x].contains("//") {
+                        if let Some(style) = h.get_cell_style(x as u16, y as u16) {
+                            // Check if it's highlighted with an RGB color
+                            if let Some(fg) = style.fg {
+                                if matches!(fg, ratatui::style::Color::Rgb(_, _, _)) {
+                                    return true;
+                                }
+                            }
                         }
                     }
                 }
             }
-        }
-    }
-
-    assert!(
-        found_highlighted,
-        "Expected TODO to be highlighted after toggle on"
-    );
+            false
+        })
+        .expect("Expected TODO to be highlighted after toggle on");
 
     // Toggle off
     harness

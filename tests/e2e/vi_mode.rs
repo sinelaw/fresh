@@ -1004,12 +1004,16 @@ fn test_vi_colon_write_quit() {
     // Wait for buffer to close - we should now see test1.txt
     harness.wait_for_screen_contains("test1.txt").unwrap();
 
-    // Verify file was saved (read it back and check content)
-    let saved_content = fs::read_to_string(&fixture2.path).unwrap();
-    assert!(
-        saved_content.contains("X"),
-        "Saved file should contain the change"
-    );
+    // Wait for file to be written to disk using semantic waiting
+    // The file write is asynchronous, so we poll until the content appears
+    let fixture2_path = fixture2.path.clone();
+    harness
+        .wait_until(move |_h| {
+            fs::read_to_string(&fixture2_path)
+                .map(|content| content.contains("X"))
+                .unwrap_or(false)
+        })
+        .expect("Saved file should contain the change");
 }
 
 /// Test ':35' goes to line 35 and edits happen at the correct position
