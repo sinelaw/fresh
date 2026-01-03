@@ -1378,4 +1378,120 @@ mod tests {
             "Theme should be 'dracula' from config file"
         );
     }
+
+    /// Test that loading a config without command field uses the default command.
+    #[test]
+    fn loading_lsp_without_command_uses_default() {
+        let (_temp, resolver) = create_test_resolver();
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+
+        // Write config with rust LSP but no command field
+        std::fs::write(
+            &user_config_path,
+            r#"{ "lsp": { "rust": { "enabled": false } } }"#,
+        )
+        .unwrap();
+
+        // Load and check that command comes from defaults
+        let config = resolver.resolve().unwrap();
+        assert_eq!(
+            config.lsp["rust"].command, "rust-analyzer",
+            "Command should come from defaults when not in file. Got: '{}'",
+            config.lsp["rust"].command
+        );
+        assert!(!config.lsp["rust"].enabled, "enabled should be false from file");
+    }
+
+    /// Test simulating the Settings UI flow:
+    /// 1. Load config with defaults
+    /// 2. Apply change (toggle enabled) via JSON pointer (like Settings UI does)
+    /// 3. Save via save_to_layer
+    /// 4. Reload and verify command is preserved
+    #[test]
+    fn settings_ui_toggle_lsp_preserves_command() {
+        let (_temp, resolver) = create_test_resolver();
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+
+        // Step 1: Start with empty config
+        std::fs::write(&user_config_path, r#"{}"#).unwrap();
+
+        // Load resolved config - should have rust with command="rust-analyzer"
+        let config = resolver.resolve().unwrap();
+        assert_eq!(
+            config.lsp["rust"].command, "rust-analyzer",
+            "Default rust command should be rust-analyzer"
+        );
+        assert!(config.lsp["rust"].enabled, "Default rust enabled should be true");
+
+        // Step 2: Simulate Settings UI applying a change to disable rust LSP
+        // (This mimics what SettingsState::apply_changes does)
+        let mut config_json = serde_json::to_value(&config).unwrap();
+        *config_json
+            .pointer_mut("/lsp/rust/enabled")
+            .expect("path should exist") = serde_json::json!(false);
+        let modified_config: crate::config::Config =
+            serde_json::from_value(config_json).expect("should deserialize");
+
+        // Verify command is still present after JSON round-trip
+        assert_eq!(
+            modified_config.lsp["rust"].command, "rust-analyzer",
+            "Command should be preserved after JSON modification"
+        );
+
+        // Step 3: Save via save_to_layer
+        resolver
+            .save_to_layer(&modified_config, ConfigLayer::User)
+            .unwrap();
+
+        // Check what was saved to file
+        let saved_content = std::fs::read_to_string(&user_config_path).unwrap();
+        eprintln!("After disable, file contains:\n{}", saved_content);
+
+        // Note: File may contain extra fields like auto_start, process_limits due to
+        // how json_diff handles nested objects. The important thing is that command
+        // is NOT in the file (it matches defaults) and reloading works correctly.
+
+        // Step 4: Reload and verify command is preserved
+        let reloaded = resolver.resolve().unwrap();
+        assert_eq!(
+            reloaded.lsp["rust"].command, "rust-analyzer",
+            "Command should be preserved after save/reload (disabled). Got: '{}'",
+            reloaded.lsp["rust"].command
+        );
+        assert!(
+            !reloaded.lsp["rust"].enabled,
+            "rust should be disabled"
+        );
+
+        // Step 5: Re-enable rust LSP (simulating Settings UI)
+        let mut config_json = serde_json::to_value(&reloaded).unwrap();
+        *config_json
+            .pointer_mut("/lsp/rust/enabled")
+            .expect("path should exist") = serde_json::json!(true);
+        let modified_config: crate::config::Config =
+            serde_json::from_value(config_json).expect("should deserialize");
+
+        // Step 6: Save via save_to_layer
+        resolver
+            .save_to_layer(&modified_config, ConfigLayer::User)
+            .unwrap();
+
+        // Check what was saved to file
+        let saved_content = std::fs::read_to_string(&user_config_path).unwrap();
+        eprintln!("After re-enable, file contains:\n{}", saved_content);
+
+        // Step 7: Reload and verify command is STILL preserved
+        let final_config = resolver.resolve().unwrap();
+        assert_eq!(
+            final_config.lsp["rust"].command, "rust-analyzer",
+            "Command should be preserved after toggle cycle. Got: '{}'",
+            final_config.lsp["rust"].command
+        );
+        assert!(
+            final_config.lsp["rust"].enabled,
+            "rust should be enabled"
+        );
+    }
 }

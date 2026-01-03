@@ -223,10 +223,10 @@ impl Editor {
     ///
     /// This reloads the config from disk, applies runtime changes (theme, keybindings),
     /// and emits a config_changed event so plugins can update their state accordingly.
-    /// Checks local config (working directory) first, then system config paths.
+    /// Uses the layered config system to properly merge with defaults.
     pub fn reload_config(&mut self) {
         let old_theme = self.config.theme.clone();
-        self.config = Config::load_for_working_dir(&self.working_dir);
+        self.config = Config::load_with_layers(&self.dir_context, &self.working_dir);
 
         // Apply theme change if needed
         if old_theme != self.config.theme {

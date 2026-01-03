@@ -104,3 +104,30 @@ pub struct LspServerConfig {
     #[serde(default)]
     pub initialization_options: Option<serde_json::Value>,
 }
+
+impl LspServerConfig {
+    /// Merge this config with defaults, using default values for empty/unset fields.
+    ///
+    /// This is used when loading configs where fields like `command` may be empty
+    /// (serde's default) because they weren't specified in the user's config file.
+    pub fn merge_with_defaults(self, defaults: &LspServerConfig) -> LspServerConfig {
+        LspServerConfig {
+            command: if self.command.is_empty() {
+                defaults.command.clone()
+            } else {
+                self.command
+            },
+            args: if self.args.is_empty() {
+                defaults.args.clone()
+            } else {
+                self.args
+            },
+            enabled: self.enabled,
+            auto_start: self.auto_start,
+            process_limits: self.process_limits,
+            initialization_options: self
+                .initialization_options
+                .or_else(|| defaults.initialization_options.clone()),
+        }
+    }
+}

@@ -1827,15 +1827,22 @@ impl Config {
     /// - Default LSP servers are present even if user only customizes one
     /// - Default language configs are present even if user only customizes one
     ///
-    /// User entries override defaults when keys collide.
+    /// User entries are merged field-by-field with defaults. For LSP configs,
+    /// if a field like `command` is empty (serde default), it takes the default value.
     pub(crate) fn merge_defaults_for_maps(&mut self) {
         let defaults = Self::default();
 
-        // Merge LSP configs: start with defaults, overlay user entries
+        // Merge LSP configs: start with defaults, merge user entries field-by-field
         let user_lsp = std::mem::take(&mut self.lsp);
         self.lsp = defaults.lsp;
-        for (key, value) in user_lsp {
-            self.lsp.insert(key, value);
+        for (key, user_config) in user_lsp {
+            if let Some(default_config) = self.lsp.get(&key) {
+                self.lsp
+                    .insert(key, user_config.merge_with_defaults(default_config));
+            } else {
+                // New language not in defaults - use as-is
+                self.lsp.insert(key, user_config);
+            }
         }
 
         // Merge language configs: start with defaults, overlay user entries

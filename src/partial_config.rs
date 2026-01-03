@@ -582,26 +582,7 @@ impl PartialConfig {
             if let Some(partial_lsp) = self.lsp {
                 for (key, partial_config) in partial_lsp {
                     if let Some(default_config) = result.get(&key) {
-                        // Merge partial config with default - use default values for empty/default fields
-                        let merged = crate::types::LspServerConfig {
-                            command: if partial_config.command.is_empty() {
-                                default_config.command.clone()
-                            } else {
-                                partial_config.command
-                            },
-                            args: if partial_config.args.is_empty() {
-                                default_config.args.clone()
-                            } else {
-                                partial_config.args
-                            },
-                            enabled: partial_config.enabled,
-                            auto_start: partial_config.auto_start,
-                            process_limits: partial_config.process_limits,
-                            initialization_options: partial_config
-                                .initialization_options
-                                .or_else(|| default_config.initialization_options.clone()),
-                        };
-                        result.insert(key, merged);
+                        result.insert(key, partial_config.merge_with_defaults(default_config));
                     } else {
                         // New language not in defaults - use as-is
                         result.insert(key, partial_config);
