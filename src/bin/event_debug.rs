@@ -4,6 +4,7 @@
 //! Press Ctrl+C or 'q' to exit.
 
 use crossterm::{
+    cursor::MoveToColumn,
     event::{
         poll as event_poll, read as event_read, Event, KeyCode, KeyEventKind, KeyModifiers,
         KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -12,7 +13,8 @@ use crossterm::{
     ExecutableCommand,
 };
 use std::{
-    io::{self, stdout},
+    fmt::Arguments,
+    io::{self, stdout, Write},
     time::Duration,
 };
 
@@ -43,6 +45,19 @@ fn main() -> io::Result<()> {
     result
 }
 
+fn log_line(args: Arguments<'_>) {
+    // Move to column 0 to avoid jumbled output
+    let mut out = stdout();
+    let _ = writeln!(out, "{args}");
+    let _ = out.execute(MoveToColumn(0));
+}
+
+macro_rules! log_line {
+    ($($arg:tt)*) => {
+        log_line(format_args!($($arg)*))
+    };
+}
+
 fn run_event_loop() -> io::Result<()> {
     loop {
         // Poll for events with a timeout
@@ -53,9 +68,12 @@ fn run_event_loop() -> io::Result<()> {
                 Event::Key(key_event) => {
                     // Only process key press events (not release/repeat)
                     if key_event.kind == KeyEventKind::Press {
-                        println!(
+                        log_line!(
                             "Key: code={:?}, modifiers={:?}, kind={:?}, state={:?}",
-                            key_event.code, key_event.modifiers, key_event.kind, key_event.state
+                            key_event.code,
+                            key_event.modifiers,
+                            key_event.kind,
+                            key_event.state
                         );
 
                         // Exit on Ctrl+C or 'q'
@@ -70,7 +88,7 @@ fn run_event_loop() -> io::Result<()> {
                     }
                 }
                 Event::Mouse(mouse_event) => {
-                    println!(
+                    log_line!(
                         "Mouse: kind={:?}, column={}, row={}, modifiers={:?}",
                         mouse_event.kind,
                         mouse_event.column,
@@ -79,16 +97,16 @@ fn run_event_loop() -> io::Result<()> {
                     );
                 }
                 Event::Resize(width, height) => {
-                    println!("Resize: width={}, height={}", width, height);
+                    log_line!("Resize: width={}, height={}", width, height);
                 }
                 Event::FocusGained => {
-                    println!("Focus: Gained");
+                    log_line!("Focus: Gained");
                 }
                 Event::FocusLost => {
-                    println!("Focus: Lost");
+                    log_line!("Focus: Lost");
                 }
                 Event::Paste(text) => {
-                    println!("Paste: {:?}", text);
+                    log_line!("Paste: {:?}", text);
                 }
             }
         }
