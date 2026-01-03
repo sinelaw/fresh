@@ -109,7 +109,7 @@ impl Merge for PartialConfig {
         // HashMaps: merge entries, higher precedence wins on key collision
         merge_hashmap(&mut self.keybinding_maps, &other.keybinding_maps);
         merge_hashmap_recursive(&mut self.languages, &other.languages);
-        merge_hashmap(&mut self.lsp, &other.lsp);
+        merge_hashmap_recursive(&mut self.lsp, &other.lsp);
 
         self.active_keybinding_map
             .merge_from(&other.active_keybinding_map);
@@ -292,6 +292,25 @@ impl Merge for PartialLanguageConfig {
         self.formatter.merge_from(&other.formatter);
         self.format_on_save.merge_from(&other.format_on_save);
         self.on_save.merge_from(&other.on_save);
+    }
+}
+
+impl Merge for LspServerConfig {
+    fn merge_from(&mut self, other: &Self) {
+        // If command is empty (serde default), use other's command
+        if self.command.is_empty() {
+            self.command = other.command.clone();
+        }
+        // If args is empty, use other's args
+        if self.args.is_empty() {
+            self.args = other.args.clone();
+        }
+        // For booleans, keep self's value (we can't tell if explicitly set)
+        // For process_limits, keep self's value
+        // For initialization_options, use self if Some, otherwise other
+        if self.initialization_options.is_none() {
+            self.initialization_options = other.initialization_options.clone();
+        }
     }
 }
 
@@ -561,8 +580,32 @@ impl PartialConfig {
         let lsp = {
             let mut result = defaults.lsp.clone();
             if let Some(partial_lsp) = self.lsp {
-                for (key, config) in partial_lsp {
-                    result.insert(key, config);
+                for (key, partial_config) in partial_lsp {
+                    if let Some(default_config) = result.get(&key) {
+                        // Merge partial config with default - use default values for empty/default fields
+                        let merged = crate::types::LspServerConfig {
+                            command: if partial_config.command.is_empty() {
+                                default_config.command.clone()
+                            } else {
+                                partial_config.command
+                            },
+                            args: if partial_config.args.is_empty() {
+                                default_config.args.clone()
+                            } else {
+                                partial_config.args
+                            },
+                            enabled: partial_config.enabled,
+                            auto_start: partial_config.auto_start,
+                            process_limits: partial_config.process_limits,
+                            initialization_options: partial_config
+                                .initialization_options
+                                .or_else(|| default_config.initialization_options.clone()),
+                        };
+                        result.insert(key, merged);
+                    } else {
+                        // New language not in defaults - use as-is
+                        result.insert(key, partial_config);
+                    }
                 }
             }
             result

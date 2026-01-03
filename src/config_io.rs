@@ -38,6 +38,36 @@ fn strip_nulls(value: Value) -> Option<Value> {
     }
 }
 
+/// Recursively strip default values (empty strings, empty arrays) from a JSON value.
+/// This ensures that fields with default serde values don't get saved to config files.
+fn strip_empty_defaults(value: Value) -> Option<Value> {
+    match value {
+        Value::Null => None,
+        Value::String(s) if s.is_empty() => None,
+        Value::Array(arr) if arr.is_empty() => None,
+        Value::Object(map) => {
+            let filtered: serde_json::Map<String, Value> = map
+                .into_iter()
+                .filter_map(|(k, v)| strip_empty_defaults(v).map(|v| (k, v)))
+                .collect();
+            if filtered.is_empty() {
+                None
+            } else {
+                Some(Value::Object(filtered))
+            }
+        }
+        Value::Array(arr) => {
+            let filtered: Vec<Value> = arr.into_iter().filter_map(strip_empty_defaults).collect();
+            if filtered.is_empty() {
+                None
+            } else {
+                Some(Value::Array(filtered))
+            }
+        }
+        other => Some(other),
+    }
+}
+
 // ============================================================================
 // Configuration Migration System
 // ============================================================================
@@ -657,8 +687,10 @@ fn json_diff(defaults: &serde_json::Value, current: &serde_json::Value) -> serde
                         result.insert(key.clone(), diff);
                     }
                 } else {
-                    // Key only in current - include it entirely
-                    result.insert(key.clone(), cur_val.clone());
+                    // Key only in current - include it, but strip empty defaults
+                    if let Some(stripped) = strip_empty_defaults(cur_val.clone()) {
+                        result.insert(key.clone(), stripped);
+                    }
                 }
             }
 
@@ -1326,43 +1358,48 @@ mod tests {
 
     /// Test that toggling LSP enabled/disabled preserves the command field.
     ///
-    /// 1. Start with config that has command set
-    /// 2. Disable LSP, save
-    /// 3. Load, enable LSP, save
-    /// 4. Load and verify command is unchanged
+    /// 1. Start with empty config (defaults apply, python has command "pylsp")
+    /// 2. Disable python LSP, save
+    /// 3. Load, enable python LSP, save
+    /// 4. Load and verify command is still the default
     #[test]
     fn toggle_lsp_preserves_command() {
         let (_temp, resolver) = create_test_resolver();
         let user_config_path = resolver.user_config_path();
         std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
 
-        // Step 1: Config with command set
-        let original_command = "my-custom-pylsp";
-        std::fs::write(
-            &user_config_path,
-            format!(
-                r#"{{
-                    "lsp": {{
-                        "python": {{
-                            "command": "{}",
-                            "enabled": true
-                        }}
-                    }}
-                }}"#,
-                original_command
-            ),
-        )
-        .unwrap();
+        // Step 1: Empty config - defaults apply (python has command "pylsp")
+        std::fs::write(&user_config_path, r#"{}"#).unwrap();
 
-        // Step 2: Load, disable LSP, save
+        // Load and verify default command
+        let config = resolver.resolve().unwrap();
+        let original_command = config.lsp["python"].command.clone();
+        assert!(
+            !original_command.is_empty(),
+            "Default python LSP should have a command"
+        );
+
+        // Step 2: Disable python LSP, save
         let mut config = resolver.resolve().unwrap();
-        assert_eq!(config.lsp["python"].command, original_command);
         config.lsp.get_mut("python").unwrap().enabled = false;
         config.save_to_file(&user_config_path).unwrap();
 
-        // Step 3: Load again, enable LSP, save
+        // Verify saved file only has enabled:false, not empty command/args
+        let saved_content = std::fs::read_to_string(&user_config_path).unwrap();
+        assert!(
+            !saved_content.contains(r#""command""#),
+            "Saved config should not contain 'command' field. File content: {}",
+            saved_content
+        );
+        assert!(
+            !saved_content.contains(r#""args""#),
+            "Saved config should not contain 'args' field. File content: {}",
+            saved_content
+        );
+
+        // Step 3: Load again, enable python LSP, save
         let mut config = resolver.resolve().unwrap();
-        assert_eq!(config.lsp["python"].enabled, false);
+        assert!(!config.lsp["python"].enabled);
         config.lsp.get_mut("python").unwrap().enabled = true;
         config.save_to_file(&user_config_path).unwrap();
 
@@ -1370,7 +1407,7 @@ mod tests {
         let config = resolver.resolve().unwrap();
         assert_eq!(
             config.lsp["python"].command, original_command,
-            "Command should be preserved after toggling enabled. Got: {}",
+            "Command should be preserved after toggling enabled. Got: '{}'",
             config.lsp["python"].command
         );
     }

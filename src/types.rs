@@ -74,7 +74,7 @@ impl ProcessLimits {
 }
 
 /// LSP server configuration
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[schemars(extend("x-display-field" = "/command"))]
 pub struct LspServerConfig {
     /// Command to spawn the server.
