@@ -605,6 +605,7 @@ mod tests {
         // CRLF content: "abc\r\ndef\r\nghi\r\n"
         // Bytes: a=0, b=1, c=2, \r=3, \n=4, d=5, e=6, f=7, \r=8, \n=9, g=10, h=11, i=12, \r=13, \n=14
         let content = b"abc\r\ndef\r\nghi\r\n";
+        let buffer_len = content.len();
         let mut buffer = TextBuffer::from_bytes(content.to_vec());
 
         let mut iter = buffer.line_iterator(0, 80);
@@ -627,7 +628,13 @@ mod tests {
         );
         assert_eq!(line_content, "ghi\r\n", "Third line content");
 
-        // No more lines
+        // Trailing CRLF means there's an empty synthetic line at EOF
+        let (pos, line_content) = iter
+            .next()
+            .expect("Should emit empty line after trailing CRLF");
+        assert_eq!(pos, buffer_len, "Empty line should start at EOF");
+        assert_eq!(line_content, "", "Empty line content");
+
         assert!(iter.next().is_none(), "Should have no more lines");
     }
 
