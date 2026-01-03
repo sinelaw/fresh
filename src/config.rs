@@ -2611,7 +2611,10 @@ mod tests {
 
         // User's rust override should be present
         assert!(loaded.lsp.contains_key("rust"));
-        assert_eq!(loaded.lsp["rust"].command, "custom-rust-analyzer");
+        assert_eq!(
+            loaded.lsp["rust"].command,
+            "custom-rust-analyzer".to_string()
+        );
 
         // Default LSP servers should also be present (merged from defaults)
         assert!(

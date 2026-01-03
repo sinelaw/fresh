@@ -77,7 +77,9 @@ impl ProcessLimits {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(extend("x-display-field" = "/command"))]
 pub struct LspServerConfig {
-    /// Command to spawn the server
+    /// Command to spawn the server.
+    /// Required when enabled=true, ignored when enabled=false.
+    #[serde(default)]
     pub command: String,
 
     /// Arguments to pass to the server

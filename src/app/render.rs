@@ -1291,7 +1291,11 @@ impl Editor {
         // Get the server command for display
         let server_info = if let Some(lsp) = &self.lsp {
             if let Some(config) = lsp.get_config(language) {
-                format!("{} ({})", language, config.command)
+                if !config.command.is_empty() {
+                    format!("{} ({})", language, config.command)
+                } else {
+                    language.to_string()
+                }
             } else {
                 language.to_string()
             }

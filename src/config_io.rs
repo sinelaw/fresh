@@ -569,24 +569,72 @@ impl Config {
         serde_json::Value::Object(serde_json::Map::new())
     }
 
-    /// Save configuration to a JSON file, only saving fields that differ from defaults.
+    /// Save configuration to a JSON file, preserving existing settings.
     ///
-    /// This keeps user config files minimal and clean - only user customizations are saved.
+    /// This method:
+    /// 1. Reads existing file contents (if any)
+    /// 2. Computes what changed from defaults in the current config
+    /// 3. Merges those changes into the existing file contents
+    /// 4. Saves the result
+    ///
+    /// This preserves user settings that weren't modified, even if they match defaults.
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ConfigError> {
+        let path = path.as_ref();
+
+        // Read existing file contents (if any)
+        let existing: serde_json::Value = if path.exists() {
+            let contents =
+                std::fs::read_to_string(path).map_err(|e| ConfigError::IoError(e.to_string()))?;
+            serde_json::from_str(&contents).unwrap_or(serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+
+        // Get current config as JSON
         let current =
             serde_json::to_value(self).map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+
+        // Get defaults as JSON
         let defaults = serde_json::to_value(Self::default())
             .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
 
-        // Compute diff - only values that differ from defaults
-        let diff = json_diff(&defaults, &current);
+        // Compute what differs from defaults in the current config
+        let diff_from_defaults = json_diff(&defaults, &current);
 
-        let contents = serde_json::to_string_pretty(&diff)
+        // Merge the diff into the existing file contents
+        // This preserves existing settings while applying changes
+        let merged = json_merge(&existing, &diff_from_defaults);
+
+        let contents = serde_json::to_string_pretty(&merged)
             .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
 
-        std::fs::write(path.as_ref(), contents).map_err(|e| ConfigError::IoError(e.to_string()))?;
+        std::fs::write(path, contents).map_err(|e| ConfigError::IoError(e.to_string()))?;
 
         Ok(())
+    }
+}
+
+/// Deep merge two JSON objects. Values from `overlay` override values in `base`.
+/// For objects, merging is recursive. For other types, overlay replaces base.
+fn json_merge(base: &serde_json::Value, overlay: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+
+    match (base, overlay) {
+        (Value::Object(base_map), Value::Object(overlay_map)) => {
+            let mut result = base_map.clone();
+            for (key, overlay_val) in overlay_map {
+                if let Some(base_val) = base_map.get(key) {
+                    // Key exists in both - recursively merge
+                    result.insert(key.clone(), json_merge(base_val, overlay_val));
+                } else {
+                    // Key only in overlay - add it
+                    result.insert(key.clone(), overlay_val.clone());
+                }
+            }
+            Value::Object(result)
+        }
+        // For non-objects, overlay wins
+        (_, overlay) => overlay.clone(),
     }
 }
 
@@ -618,6 +666,12 @@ fn json_diff(defaults: &serde_json::Value, current: &serde_json::Value) -> serde
         }
         // For arrays and primitives, include if different
         _ => {
+            // Treat empty string as "not set" - don't include in diff
+            if let Value::String(s) = current {
+                if s.is_empty() {
+                    return Value::Object(serde_json::Map::new()); // No diff
+                }
+            }
             if defaults == current {
                 Value::Object(serde_json::Map::new()) // Empty object signals "no diff"
             } else {
@@ -1173,5 +1227,201 @@ mod tests {
         );
 
         drop(temp);
+    }
+
+    /// Issue #630 REPRODUCTION: save_to_file strips settings that match defaults.
+    ///
+    /// When user has a config file with explicit settings (even if they match defaults),
+    /// and then modifies one setting via UI, save_to_file() should preserve ALL
+    /// original settings - not strip those that happen to match defaults.
+    ///
+    /// THIS TEST FAILS - demonstrating the bug where settings are lost.
+    #[test]
+    fn issue_630_save_to_file_strips_settings_matching_defaults() {
+        let (_temp, resolver) = create_test_resolver();
+
+        // Create a config with explicit settings (some match defaults, some don't)
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{
+                "theme": "dracula",
+                "keymap": "default",
+                "editor": {
+                    "tab_size": 2,
+                    "line_numbers": true,
+                    "syntax_highlighting": true
+                },
+                "lsp": {
+                    "python": {
+                        "command": "pylsp",
+                        "enabled": true,
+                        "auto_start": true
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        // Load the config
+        let mut config = resolver.resolve().unwrap();
+
+        // User disables LSP via UI (this is what triggers save_config)
+        if let Some(lsp_config) = config.lsp.get_mut("python") {
+            lsp_config.enabled = false;
+        }
+
+        // Save using the same method the App uses
+        config.save_to_file(&user_config_path).unwrap();
+
+        // Read back the saved config
+        let content = std::fs::read_to_string(&user_config_path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        eprintln!(
+            "Saved config:\n{}",
+            serde_json::to_string_pretty(&json).unwrap()
+        );
+
+        // BUG: These settings are LOST because they match defaults
+        // The test expects them to be preserved since user explicitly set them
+
+        // keymap was explicitly set - should be preserved
+        assert!(
+            json.get("keymap").is_some(),
+            "BUG #630: 'keymap' was explicitly set but got stripped. Saved: {}",
+            content
+        );
+
+        // editor.line_numbers was explicitly set to true - should be preserved
+        assert!(
+            json.get("editor")
+                .and_then(|e| e.get("line_numbers"))
+                .is_some(),
+            "BUG #630: 'editor.line_numbers' was explicitly set but got stripped. Saved: {}",
+            content
+        );
+
+        // lsp.python.command is CRITICAL - should be preserved
+        assert!(
+            json.get("lsp")
+                .and_then(|l| l.get("python"))
+                .and_then(|p| p.get("command"))
+                .is_some(),
+            "BUG #630: 'lsp.python.command' was lost! This breaks the config. Saved: {}",
+            content
+        );
+
+        // lsp.python.auto_start was explicitly set - should be preserved
+        assert!(
+            json.get("lsp")
+                .and_then(|l| l.get("python"))
+                .and_then(|p| p.get("auto_start"))
+                .is_some(),
+            "BUG #630: 'lsp.python.auto_start' was explicitly set but got stripped. Saved: {}",
+            content
+        );
+    }
+
+    /// Test that toggling LSP enabled/disabled preserves the command field.
+    ///
+    /// 1. Start with config that has command set
+    /// 2. Disable LSP, save
+    /// 3. Load, enable LSP, save
+    /// 4. Load and verify command is unchanged
+    #[test]
+    fn toggle_lsp_preserves_command() {
+        let (_temp, resolver) = create_test_resolver();
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+
+        // Step 1: Config with command set
+        let original_command = "my-custom-pylsp";
+        std::fs::write(
+            &user_config_path,
+            format!(
+                r#"{{
+                    "lsp": {{
+                        "python": {{
+                            "command": "{}",
+                            "enabled": true
+                        }}
+                    }}
+                }}"#,
+                original_command
+            ),
+        )
+        .unwrap();
+
+        // Step 2: Load, disable LSP, save
+        let mut config = resolver.resolve().unwrap();
+        assert_eq!(config.lsp["python"].command, original_command);
+        config.lsp.get_mut("python").unwrap().enabled = false;
+        config.save_to_file(&user_config_path).unwrap();
+
+        // Step 3: Load again, enable LSP, save
+        let mut config = resolver.resolve().unwrap();
+        assert_eq!(config.lsp["python"].enabled, false);
+        config.lsp.get_mut("python").unwrap().enabled = true;
+        config.save_to_file(&user_config_path).unwrap();
+
+        // Step 4: Load and verify command is still the same
+        let config = resolver.resolve().unwrap();
+        assert_eq!(
+            config.lsp["python"].command, original_command,
+            "Command should be preserved after toggling enabled. Got: {}",
+            config.lsp["python"].command
+        );
+    }
+
+    /// Issue #631 REPRODUCTION: Config with disabled LSP (no command) should be valid.
+    ///
+    /// Users write configs like:
+    /// ```json
+    /// { "lsp": { "python": { "enabled": false } } }
+    /// ```
+    /// This SHOULD be valid - a disabled LSP doesn't need a command.
+    /// But currently it FAILS because `command` is required.
+    ///
+    /// THIS TEST WILL FAIL until the bug is fixed.
+    #[test]
+    fn issue_631_disabled_lsp_without_command_should_be_valid() {
+        let (_temp, resolver) = create_test_resolver();
+
+        // Create the exact config from issue #631 - disabled LSP without command field
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{
+                "lsp": {
+                    "json": { "enabled": false },
+                    "python": { "enabled": false },
+                    "toml": { "enabled": false }
+                },
+                "theme": "dracula"
+            }"#,
+        )
+        .unwrap();
+
+        // Try to load this config - it SHOULD succeed
+        let result = resolver.resolve();
+
+        // THIS ASSERTION FAILS - demonstrating bug #631
+        // A disabled LSP config should NOT require a command field
+        assert!(
+            result.is_ok(),
+            "BUG #631: Config with disabled LSP should be valid even without 'command' field. \
+             Got parse error: {:?}",
+            result.err()
+        );
+
+        // Verify the theme was loaded (config parsed correctly)
+        let config = result.unwrap();
+        assert_eq!(
+            config.theme.0, "dracula",
+            "Theme should be 'dracula' from config file"
+        );
     }
 }

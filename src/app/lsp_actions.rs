@@ -122,6 +122,7 @@ impl Editor {
                     .lsp
                     .as_ref()
                     .and_then(|lsp| lsp.get_config(lang))
+                    .filter(|c| !c.command.is_empty())
                     .map(|c| format!("Command: {}", c.command));
 
                 Suggestion {

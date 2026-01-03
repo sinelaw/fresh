@@ -211,6 +211,12 @@ impl LspManager {
             return None;
         }
 
+        // Check command is specified (required when enabled)
+        if config.command.is_empty() {
+            return None;
+        }
+        let command = &config.command;
+
         // Check we have runtime and bridge
         let runtime = self.runtime.as_ref()?;
         let async_bridge = self.async_bridge.as_ref()?;
@@ -220,7 +226,7 @@ impl LspManager {
 
         match LspHandle::spawn(
             runtime,
-            &config.command,
+            command,
             &config.args,
             language.to_string(),
             async_bridge,
@@ -602,12 +608,12 @@ mod tests {
 
         manager.set_runtime(rt.handle().clone(), async_bridge);
 
-        // Add disabled config
+        // Add disabled config (command is optional when disabled)
         manager.set_language_config(
             "rust".to_string(),
             LspServerConfig {
                 enabled: false,
-                command: "rust-analyzer".to_string(),
+                command: String::new(), // command not required when disabled
                 args: vec![],
                 process_limits: crate::services::process_limits::ProcessLimits::unlimited(),
                 auto_start: false,

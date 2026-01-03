@@ -677,8 +677,9 @@
       "type": "object",
       "properties": {
         "command": {
-          "description": "Command to spawn the server",
-          "type": "string"
+          "description": "Command to spawn the server.\nRequired when enabled=true, ignored when enabled=false.",
+          "type": "string",
+          "default": ""
         },
         "args": {
           "description": "Arguments to pass to the server",
@@ -712,9 +713,6 @@
           "default": null
         }
       },
-      "required": [
-        "command"
-      ],
       "x-display-field": "/command"
     },
     "ProcessLimits": {
