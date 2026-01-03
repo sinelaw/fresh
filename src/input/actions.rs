@@ -138,25 +138,14 @@ fn collect_line_starts(
     let buffer_len = buffer.len();
     let mut line_starts = Vec::new();
     let mut iter = buffer.line_iterator(start_pos, estimated_line_length);
-    let mut current_pos = iter.current_position();
-    line_starts.push(current_pos);
 
-    // Collect all line starts by iterating through lines
-    loop {
-        if let Some((_, content)) = iter.next() {
-            current_pos += content.len();
-            if current_pos > end_pos || current_pos > buffer_len {
-                break;
-            }
-            let next_iter = buffer.line_iterator(current_pos, estimated_line_length);
-            let next_start = next_iter.current_position();
-            if next_start != *line_starts.last().unwrap() {
-                line_starts.push(next_start);
-            }
-            iter = buffer.line_iterator(current_pos, estimated_line_length);
-        } else {
+    // Collect all line starts by iterating through lines using a single iterator
+    // The iterator naturally handles the trailing empty line case without infinite loops
+    while let Some((line_start, _)) = iter.next() {
+        if line_start > end_pos || line_start > buffer_len {
             break;
         }
+        line_starts.push(line_start);
     }
 
     line_starts
@@ -3582,5 +3571,168 @@ mod tests {
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "(bc)");
+    }
+}
+
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Generate text with some newlines
+    fn text_with_newlines() -> impl Strategy<Value = Vec<u8>> {
+        prop::collection::vec(
+            prop_oneof![(b'a'..=b'z').prop_map(|c| c), Just(b'\n'),],
+            0..200,
+        )
+    }
+
+    proptest! {
+        /// Test that collect_line_starts returns valid line start positions
+        #[test]
+        fn prop_collect_line_starts_returns_valid_positions(
+            text in text_with_newlines(),
+            start_frac in 0.0f64..=1.0,
+            end_frac in 0.0f64..=1.0,
+        ) {
+            if text.is_empty() {
+                return Ok(());
+            }
+
+            let mut buffer = Buffer::from_bytes(text.clone());
+            let buffer_len = buffer.len();
+
+            // Convert fractions to positions, ensuring start <= end
+            let start_pos = (start_frac * buffer_len as f64) as usize;
+            let end_pos = (end_frac * buffer_len as f64) as usize;
+            let (start_pos, end_pos) = if start_pos <= end_pos {
+                (start_pos, end_pos)
+            } else {
+                (end_pos, start_pos)
+            };
+
+            let line_starts = collect_line_starts(&mut buffer, start_pos, end_pos, 80);
+
+            // Property 1: All positions should be <= end_pos and <= buffer_len
+            for &pos in &line_starts {
+                prop_assert!(pos <= end_pos, "Position {} exceeds end_pos {}", pos, end_pos);
+                prop_assert!(pos <= buffer_len, "Position {} exceeds buffer_len {}", pos, buffer_len);
+            }
+
+            // Property 2: All positions should be valid line starts
+            // (either position 0, or the byte before is a newline)
+            for &pos in &line_starts {
+                if pos == 0 {
+                    continue; // Position 0 is always a valid line start
+                }
+                let prev_byte = buffer.get_text_range_mut(pos - 1, 1).unwrap();
+                prop_assert_eq!(
+                    prev_byte[0], b'\n',
+                    "Position {} is not a valid line start (preceded by {:?})",
+                    pos, prev_byte
+                );
+            }
+
+            // Property 3: Positions should be sorted and have no duplicates
+            for window in line_starts.windows(2) {
+                prop_assert!(
+                    window[0] < window[1],
+                    "Positions not strictly increasing: {} >= {}",
+                    window[0], window[1]
+                );
+            }
+
+            // Property 4: Should include all line starts in range
+            // Find all actual line starts in the text
+            let mut expected_line_starts: Vec<usize> = vec![0];
+            for (i, &byte) in text.iter().enumerate() {
+                if byte == b'\n' && i + 1 <= buffer_len {
+                    expected_line_starts.push(i + 1);
+                }
+            }
+            // Filter to those in range, considering that we start from the line containing start_pos
+            let first_line_start = expected_line_starts.iter()
+                .filter(|&&pos| pos <= start_pos)
+                .max()
+                .copied()
+                .unwrap_or(0);
+            let expected_in_range: Vec<usize> = expected_line_starts.iter()
+                .filter(|&&pos| pos >= first_line_start && pos <= end_pos)
+                .copied()
+                .collect();
+
+            prop_assert_eq!(
+                line_starts, expected_in_range,
+                "Line starts mismatch for text {:?} with start={} end={}",
+                String::from_utf8_lossy(&text), start_pos, end_pos
+            );
+        }
+
+        /// Test that collect_line_starts handles edge cases correctly
+        #[test]
+        fn prop_collect_line_starts_edge_cases(
+            text in text_with_newlines(),
+        ) {
+            if text.is_empty() {
+                return Ok(());
+            }
+
+            let mut buffer = Buffer::from_bytes(text.clone());
+            let buffer_len = buffer.len();
+
+            // Edge case 1: start_pos == end_pos (single position range)
+            let mid = buffer_len / 2;
+            let line_starts = collect_line_starts(&mut buffer, mid, mid, 80);
+            // Should return exactly one line start (the line containing mid)
+            prop_assert!(line_starts.len() <= 1, "Single position range should have at most 1 line start");
+
+            // Edge case 2: Full buffer range
+            let line_starts = collect_line_starts(&mut buffer, 0, buffer_len, 80);
+            // Should return at least position 0
+            prop_assert!(!line_starts.is_empty(), "Full range should have at least one line start");
+            prop_assert_eq!(line_starts[0], 0, "First line start should be 0 for full range starting at 0");
+
+            // Edge case 3: Range at the very end
+            if buffer_len > 0 {
+                let line_starts = collect_line_starts(&mut buffer, buffer_len - 1, buffer_len, 80);
+                // Should return the line start for the last line
+                prop_assert!(!line_starts.is_empty(), "End range should have at least one line start");
+            }
+        }
+
+        /// Test that trailing newlines produce the correct number of line starts
+        #[test]
+        fn prop_collect_line_starts_trailing_newline(
+            prefix in "[a-z]{0,20}",
+            num_trailing_newlines in 0usize..5,
+        ) {
+            let text = format!("{}{}", prefix, "\n".repeat(num_trailing_newlines));
+            if text.is_empty() {
+                return Ok(());
+            }
+
+            let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec());
+            let buffer_len = buffer.len();
+
+            let line_starts = collect_line_starts(&mut buffer, 0, buffer_len, 80);
+
+            // Expected: 1 (for position 0) + num_trailing_newlines (one for each \n creates a new line start)
+            // But we only count line starts that are <= end_pos
+            // If prefix is empty and we have N newlines, we should have positions: 0, 1, 2, ..., N
+            // But the last one at position N would be > buffer_len - 1 only if it's the synthetic empty line
+            let expected_count = if prefix.is_empty() {
+                // Just newlines: positions 0, 1, 2, ..., up to buffer_len
+                num_trailing_newlines.min(buffer_len) + 1
+            } else {
+                // prefix + newlines
+                1 + num_trailing_newlines
+            };
+
+            prop_assert_eq!(
+                line_starts.len(), expected_count,
+                "Text {:?} (len={}) should have {} line starts, got {:?}",
+                text, buffer_len, expected_count, line_starts
+            );
+        }
     }
 }
