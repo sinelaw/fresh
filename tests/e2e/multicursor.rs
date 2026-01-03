@@ -1239,6 +1239,119 @@ fn test_identical_lines_cursor_positions() {
     harness.assert_buffer_content("xyzabc\nxyzabc\nxyzabc\nxyzabc");
 }
 
+/// Test multi-cursor End key movement - all cursors should move to end of their respective lines
+/// Issue #632: When multiple cursors press End, they should all be at end of their lines
+/// and visible at the correct positions (not at start of line)
+#[test]
+fn test_multi_cursor_end_key_positioning() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new_no_wrap(80, 24).unwrap();
+
+    // Create multiple lines with different content
+    harness.type_text("Hello\nWorld\nTest").unwrap();
+    harness.assert_buffer_content("Hello\nWorld\nTest");
+
+    // Go to start of document
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Add cursors on all three lines
+    harness.editor_mut().add_cursor_below(); // Cursor on line 2
+    harness.editor_mut().add_cursor_below(); // Cursor on line 3
+    harness.render().unwrap();
+
+    // Should have 3 cursors
+    assert_eq!(harness.cursor_count(), 3);
+
+    // Print initial cursor positions
+    println!("Before End key:");
+    for (id, cursor) in harness.editor().active_state().cursors.iter() {
+        println!("  Cursor {:?}: position={}", id, cursor.position);
+    }
+
+    // Press End key to move all cursors to end of their lines
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Print cursor positions after End key
+    println!("\nAfter End key:");
+    for (id, cursor) in harness.editor().active_state().cursors.iter() {
+        println!("  Cursor {:?}: position={}", id, cursor.position);
+    }
+
+    // Verify cursor positions:
+    // Line 1: "Hello\n" (0-5), cursor should be at 5 (on \n)
+    // Line 2: "World\n" (6-11), cursor should be at 11 (on \n)
+    // Line 3: "Test" (12-15), cursor should be at 16 (after last char, no newline)
+    let positions: Vec<usize> = harness
+        .editor()
+        .active_state()
+        .cursors
+        .iter()
+        .map(|(_, c)| c.position)
+        .collect();
+
+    // Each cursor should be at the end of its respective line
+    assert!(
+        positions.contains(&5),
+        "Should have cursor at position 5 (end of 'Hello')"
+    );
+    assert!(
+        positions.contains(&11),
+        "Should have cursor at position 11 (end of 'World')"
+    );
+    assert!(
+        positions.contains(&16),
+        "Should have cursor at position 16 (end of 'Test')"
+    );
+
+    // Find all visible cursors
+    let visible_cursors = harness.find_all_cursors();
+    println!("\nVisible cursors on screen:");
+    for (x, y, char_at, is_primary) in &visible_cursors {
+        println!(
+            "  Screen ({}, {}): char='{}', primary={}",
+            x, y, char_at, is_primary
+        );
+    }
+
+    // Should have 3 visible cursors (1 primary + 2 secondary)
+    assert!(
+        visible_cursors.len() >= 3,
+        "Should have 3 visible cursors, found {}. Screen:\n{}",
+        visible_cursors.len(),
+        harness.screen_to_string()
+    );
+
+    // Verify cursors are at different y positions (different lines)
+    let y_positions: Vec<u16> = visible_cursors.iter().map(|(_, y, _, _)| *y).collect();
+    let unique_y_positions: std::collections::HashSet<_> = y_positions.iter().collect();
+    assert_eq!(
+        unique_y_positions.len(),
+        3,
+        "Cursors should be on 3 different lines. Y positions: {:?}",
+        y_positions
+    );
+
+    // Verify cursors are NOT at the start of lines (x should be > gutter width)
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
+    for (x, y, char_at, _) in &visible_cursors {
+        // Cursor at end of line should have x > gutter_width + 0 (i.e., not at column 0 of content)
+        // "Hello" is 5 chars, "World" is 5 chars, "Test" is 4 chars
+        // So cursors should be at x = gutter_width + 5, gutter_width + 5, gutter_width + 4
+        println!(
+            "Cursor at ({}, {}): char='{}', gutter_width={}",
+            x, y, char_at, gutter_width
+        );
+        assert!(
+            *x > gutter_width,
+            "Cursor at y={} should be past column 0 (x={} should be > gutter_width={}). This cursor is at the START of line instead of END!",
+            y, x, gutter_width
+        );
+    }
+}
+
 /// Test that pressing Esc returns to original cursor position, not last added cursor
 #[test]
 fn test_esc_returns_to_original_cursor_position() {

@@ -2592,6 +2592,9 @@ impl SplitRenderer {
                         let should_add_indicator =
                             if is_active { is_secondary_cursor } else { true };
                         if should_add_indicator {
+                            // Flush accumulated text before adding cursor indicator
+                            // so the indicator appears after the line content, not before
+                            span_acc.flush(&mut line_spans, &mut line_view_map);
                             let cursor_style = if is_active {
                                 Style::default()
                                     .fg(theme.editor_fg)
