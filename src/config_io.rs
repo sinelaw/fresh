@@ -1377,7 +1377,10 @@ mod tests {
             "Command should come from defaults when not in file. Got: '{}'",
             config.lsp["rust"].command
         );
-        assert!(!config.lsp["rust"].enabled, "enabled should be false from file");
+        assert!(
+            !config.lsp["rust"].enabled,
+            "enabled should be false from file"
+        );
     }
 
     /// Test simulating the Settings UI flow:
@@ -1400,7 +1403,10 @@ mod tests {
             config.lsp["rust"].command, "rust-analyzer",
             "Default rust command should be rust-analyzer"
         );
-        assert!(config.lsp["rust"].enabled, "Default rust enabled should be true");
+        assert!(
+            config.lsp["rust"].enabled,
+            "Default rust enabled should be true"
+        );
 
         // Step 2: Simulate Settings UI applying a change to disable rust LSP
         // (This mimics what SettingsState::apply_changes does)
@@ -1437,10 +1443,7 @@ mod tests {
             "Command should be preserved after save/reload (disabled). Got: '{}'",
             reloaded.lsp["rust"].command
         );
-        assert!(
-            !reloaded.lsp["rust"].enabled,
-            "rust should be disabled"
-        );
+        assert!(!reloaded.lsp["rust"].enabled, "rust should be disabled");
 
         // Step 5: Re-enable rust LSP (simulating Settings UI)
         let mut config_json = serde_json::to_value(&reloaded).unwrap();
@@ -1466,9 +1469,6 @@ mod tests {
             "Command should be preserved after toggle cycle. Got: '{}'",
             final_config.lsp["rust"].command
         );
-        assert!(
-            final_config.lsp["rust"].enabled,
-            "rust should be enabled"
-        );
+        assert!(final_config.lsp["rust"].enabled, "rust should be enabled");
     }
 }
