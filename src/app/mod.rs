@@ -73,7 +73,7 @@ use self::types::{
     DEFAULT_BACKGROUND_FILE,
 };
 use crate::config::Config;
-use crate::config_io::DirectoryContext;
+use crate::config_io::{ConfigLayer, ConfigResolver, DirectoryContext};
 use crate::input::actions::action_to_events as convert_action_to_events;
 use crate::input::buffer_mode::ModeRegistry;
 use crate::input::command_registry::CommandRegistry;

@@ -2553,14 +2553,16 @@ mod tests {
     }
 
     #[test]
-    fn test_config_save_load() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.json");
-
+    fn test_config_serialize_deserialize() {
+        // Test that Config can be serialized and deserialized correctly
         let config = Config::default();
-        config.save_to_file(&config_path).unwrap();
 
-        let loaded = Config::load_from_file(&config_path).unwrap();
+        // Serialize to JSON
+        let json = serde_json::to_string_pretty(&config).unwrap();
+
+        // Deserialize back
+        let loaded: Config = serde_json::from_str(&json).unwrap();
+
         assert_eq!(config.editor.tab_size, loaded.editor.tab_size);
         assert_eq!(config.theme, loaded.theme);
     }

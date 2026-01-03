@@ -1963,9 +1963,9 @@ impl Editor {
             return;
         }
 
-        // Save the config
-        let config_path = self.dir_context.config_path();
-        if let Err(e) = self.config.save_to_file(&config_path) {
+        // Save the config using the resolver
+        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        if let Err(e) = resolver.save_to_layer(&self.config, ConfigLayer::User) {
             tracing::warn!("Failed to save theme to config: {}", e);
         }
     }
@@ -2068,9 +2068,9 @@ impl Editor {
             return;
         }
 
-        // Save the config
-        let config_path = self.dir_context.config_path();
-        if let Err(e) = self.config.save_to_file(&config_path) {
+        // Save the config using the resolver
+        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        if let Err(e) = resolver.save_to_layer(&self.config, ConfigLayer::User) {
             tracing::warn!("Failed to save keybinding map to config: {}", e);
         }
     }
@@ -2160,9 +2160,9 @@ impl Editor {
             return;
         }
 
-        // Save the config
-        let config_path = self.dir_context.config_path();
-        if let Err(e) = self.config.save_to_file(&config_path) {
+        // Save the config using the resolver
+        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        if let Err(e) = resolver.save_to_layer(&self.config, ConfigLayer::User) {
             tracing::warn!("Failed to save cursor style to config: {}", e);
         }
     }
@@ -2271,9 +2271,9 @@ impl Editor {
             return;
         }
 
-        // Save the config
-        let config_path = self.dir_context.config_path();
-        if let Err(e) = self.config.save_to_file(&config_path) {
+        // Save the config using the resolver
+        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        if let Err(e) = resolver.save_to_layer(&self.config, ConfigLayer::User) {
             tracing::warn!("Failed to save locale to config: {}", e);
         }
     }

@@ -9,6 +9,7 @@
 use rust_i18n::t;
 
 use crate::config::Config;
+use crate::config_io::{ConfigLayer, ConfigResolver};
 use crate::input::keybindings::KeybindingResolver;
 use crate::services::lsp::manager::detect_language;
 
@@ -176,9 +177,10 @@ impl Editor {
         }
 
         let config_path = self.dir_context.config_path();
+        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
 
-        // Save the config
-        match self.config.save_to_file(&config_path) {
+        // Save the config to user layer
+        match resolver.save_to_layer(&self.config, ConfigLayer::User) {
             Ok(()) => {
                 // Open the saved config file in a new buffer
                 match self.open_file(&config_path) {
@@ -211,9 +213,9 @@ impl Editor {
         std::fs::create_dir_all(&self.dir_context.config_dir)
             .map_err(|e| format!("Failed to create config directory: {}", e))?;
 
-        let config_path = self.dir_context.config_path();
-        self.config
-            .save_to_file(&config_path)
+        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        resolver
+            .save_to_layer(&self.config, ConfigLayer::User)
             .map_err(|e| format!("Failed to save config: {}", e))
     }
 
