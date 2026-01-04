@@ -401,10 +401,8 @@ impl Editor {
                                             .cursor_row
                                             .saturating_sub(viewport_height - 1);
                                     }
-                                    // Reset horizontal scroll for new line
-                                    if let Some(viewport) =
-                                        view_state.pane_viewports.get_mut(view_state.focused_pane)
-                                    {
+                                    // Reset horizontal scroll for ALL panes
+                                    for viewport in &mut view_state.pane_viewports {
                                         viewport.left_column = 0;
                                     }
                                 }
@@ -424,11 +422,14 @@ impl Editor {
                     if new_col < view_state.cursor_column {
                         view_state.cursor_column = new_col;
                         view_state.sticky_column = new_col;
-                        // Update horizontal scroll to keep cursor visible
-                        if let Some(viewport) =
-                            view_state.pane_viewports.get_mut(view_state.focused_pane)
-                        {
-                            if view_state.cursor_column < viewport.left_column {
+                        // Update horizontal scroll for ALL panes to keep cursor visible
+                        let current_left = view_state
+                            .pane_viewports
+                            .get(view_state.focused_pane)
+                            .map(|v| v.left_column)
+                            .unwrap_or(0);
+                        if view_state.cursor_column < current_left {
+                            for viewport in &mut view_state.pane_viewports {
                                 viewport.left_column = view_state.cursor_column;
                             }
                         }
@@ -467,15 +468,21 @@ impl Editor {
                     if new_col > view_state.cursor_column {
                         view_state.cursor_column = new_col;
                         view_state.sticky_column = new_col;
-                        // Update horizontal scroll to keep cursor visible
-                        if let Some(viewport) =
-                            view_state.pane_viewports.get_mut(view_state.focused_pane)
+                        // Update horizontal scroll for ALL panes to keep cursor visible
+                        let visible_width = line_info.pane_width.saturating_sub(4);
+                        let current_left = view_state
+                            .pane_viewports
+                            .get(view_state.focused_pane)
+                            .map(|v| v.left_column)
+                            .unwrap_or(0);
+                        if visible_width > 0
+                            && view_state.cursor_column >= current_left + visible_width
                         {
-                            let visible_width = line_info.pane_width.saturating_sub(4);
-                            if view_state.cursor_column >= viewport.left_column + visible_width {
-                                viewport.left_column = view_state
-                                    .cursor_column
-                                    .saturating_sub(visible_width.saturating_sub(1));
+                            let new_left = view_state
+                                .cursor_column
+                                .saturating_sub(visible_width.saturating_sub(1));
+                            for viewport in &mut view_state.pane_viewports {
+                                viewport.left_column = new_left;
                             }
                         }
                     } else if view_state.cursor_row < max_row {
@@ -504,10 +511,8 @@ impl Editor {
                                             .cursor_row
                                             .saturating_sub(viewport_height - 1);
                                     }
-                                    // Reset horizontal scroll for new line
-                                    if let Some(viewport) =
-                                        view_state.pane_viewports.get_mut(view_state.focused_pane)
-                                    {
+                                    // Reset horizontal scroll for ALL panes
+                                    for viewport in &mut view_state.pane_viewports {
                                         viewport.left_column = 0;
                                     }
                                 }
@@ -533,6 +538,16 @@ impl Editor {
                     );
                     view_state.cursor_column = new_line_info.length;
                     view_state.sticky_column = new_line_info.length;
+                    // Scroll ALL panes horizontally to show cursor at end of line
+                    let visible_width = new_line_info.pane_width.saturating_sub(4);
+                    if visible_width > 0 && view_state.cursor_column >= visible_width {
+                        let new_left = view_state
+                            .cursor_column
+                            .saturating_sub(visible_width.saturating_sub(1));
+                        for viewport in &mut view_state.pane_viewports {
+                            viewport.left_column = new_left;
+                        }
+                    }
                 } else {
                     view_state.clamp_cursor_to_line(new_line_info.length);
                 }
@@ -563,11 +578,16 @@ impl Editor {
         movement: CursorMovement,
         extend_selection: bool,
     ) -> Option<bool> {
+        // Composite buffers have a header row showing pane labels (e.g., "OLD (HEAD)" / "NEW (Working)")
+        // Subtract header height from total viewport to get content area height
+        const COMPOSITE_HEADER_HEIGHT: u16 = 1;
+        const DEFAULT_VIEWPORT_HEIGHT: usize = 24;
+
         let viewport_height = self
             .split_view_states
             .get(&split_id)
-            .map(|vs| vs.viewport.height as usize)
-            .unwrap_or(24);
+            .map(|vs| vs.viewport.height.saturating_sub(COMPOSITE_HEADER_HEIGHT) as usize)
+            .unwrap_or(DEFAULT_VIEWPORT_HEIGHT);
 
         let line_info = self.get_cursor_line_info(split_id, buffer_id);
 

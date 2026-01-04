@@ -1498,9 +1498,7 @@ fn test_diff_horizontal_scroll_keeps_cursor_visible() {
     // We'll check that "MODIFIED" becomes visible as we scroll right
 
     // First, move to start of line
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Verify we're still on line 4 after pressing Home
@@ -1573,9 +1571,7 @@ fn test_diff_horizontal_scroll_keeps_cursor_visible() {
     );
 
     // Move back to start
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();

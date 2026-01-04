@@ -165,7 +165,9 @@ impl CompositeViewState {
                 .map(|v| v.left_column)
                 .unwrap_or(0);
             if visible_width > 0 && self.cursor_column >= current_left + visible_width {
-                let new_left = self.cursor_column.saturating_sub(visible_width.saturating_sub(1));
+                let new_left = self
+                    .cursor_column
+                    .saturating_sub(visible_width.saturating_sub(1));
                 for viewport in &mut self.pane_viewports {
                     viewport.left_column = new_left;
                 }
@@ -195,7 +197,9 @@ impl CompositeViewState {
             .map(|v| v.left_column)
             .unwrap_or(0);
         if visible_width > 0 && self.cursor_column >= current_left + visible_width {
-            let new_left = self.cursor_column.saturating_sub(visible_width.saturating_sub(1));
+            let new_left = self
+                .cursor_column
+                .saturating_sub(visible_width.saturating_sub(1));
             for viewport in &mut self.pane_viewports {
                 viewport.left_column = new_left;
             }
