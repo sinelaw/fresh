@@ -148,30 +148,6 @@ pub enum Language {
 }
 
 impl Language {
-    /// Detect language from markdown code fence language string
-    pub fn from_lang_string(lang: &str) -> Option<Self> {
-        match lang.to_lowercase().as_str() {
-            "rust" | "rs" => Some(Language::Rust),
-            "python" | "py" => Some(Language::Python),
-            "javascript" | "js" => Some(Language::JavaScript),
-            "typescript" | "ts" => Some(Language::TypeScript),
-            "html" => Some(Language::HTML),
-            "css" => Some(Language::CSS),
-            "c" => Some(Language::C),
-            "cpp" | "c++" | "cxx" => Some(Language::Cpp),
-            "go" | "golang" => Some(Language::Go),
-            "json" => Some(Language::Json),
-            "java" => Some(Language::Java),
-            "csharp" | "cs" | "c#" => Some(Language::CSharp),
-            "php" => Some(Language::Php),
-            "ruby" | "rb" => Some(Language::Ruby),
-            "bash" | "sh" | "shell" => Some(Language::Bash),
-            "lua" => Some(Language::Lua),
-            "pascal" | "pas" => Some(Language::Pascal),
-            _ => None,
-        }
-    }
-
     /// Detect language from file extension
     pub fn from_path(path: &std::path::Path) -> Option<Self> {
         match path.extension()?.to_str()? {
@@ -868,50 +844,6 @@ impl Highlighter {
     pub fn language(&self) -> &Language {
         &self.language
     }
-}
-
-/// Highlight a code string directly (for markdown code blocks, hover popups, etc.)
-/// Returns spans with byte ranges relative to the input string.
-pub fn highlight_code_string(code: &str, language: Language, theme: &Theme) -> Vec<HighlightSpan> {
-    let config = match language.highlight_config() {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
-
-    let mut highlighter = TSHighlighter::new();
-    let source = code.as_bytes();
-
-    let mut spans = Vec::new();
-    match highlighter.highlight(&config, source, None, |_| None) {
-        Ok(highlights) => {
-            let mut current_highlight: Option<usize> = None;
-
-            for event in highlights {
-                match event {
-                    Ok(HighlightEvent::Source { start, end }) => {
-                        if let Some(highlight_idx) = current_highlight {
-                            if let Some(category) = language.highlight_category(highlight_idx) {
-                                spans.push(HighlightSpan {
-                                    range: start..end,
-                                    color: category.color(theme),
-                                });
-                            }
-                        }
-                    }
-                    Ok(HighlightEvent::HighlightStart(s)) => {
-                        current_highlight = Some(s.0);
-                    }
-                    Ok(HighlightEvent::HighlightEnd) => {
-                        current_highlight = None;
-                    }
-                    Err(_) => break,
-                }
-            }
-        }
-        Err(_) => {}
-    }
-
-    spans
 }
 
 #[cfg(test)]

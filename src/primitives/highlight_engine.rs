@@ -717,6 +717,129 @@ impl Default for HighlightEngine {
     }
 }
 
+/// Highlight a code string using syntect (for markdown code blocks, hover popups, etc.)
+/// Returns spans with byte ranges relative to the input string.
+///
+/// This uses TextMate grammars via syntect which provides broader language coverage
+/// than tree-sitter (~150+ languages vs ~17).
+pub fn highlight_string(
+    code: &str,
+    lang_hint: &str,
+    registry: &GrammarRegistry,
+    theme: &Theme,
+) -> Vec<HighlightSpan> {
+    use syntect::parsing::{ParseState, ScopeStack};
+
+    // Find syntax by language token (handles aliases like "py" -> Python)
+    let syntax = match registry.syntax_set().find_syntax_by_token(lang_hint) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+
+    let syntax_set = registry.syntax_set();
+    let mut state = ParseState::new(syntax);
+    let mut spans = Vec::new();
+    let mut current_scopes = ScopeStack::new();
+    let mut current_offset = 0;
+
+    // Parse line by line
+    for line in code.split_inclusive('\n') {
+        let line_start = current_offset;
+        let line_len = line.len();
+
+        // Remove trailing newline for syntect, then add it back
+        let line_content = line.trim_end_matches(&['\r', '\n'][..]);
+        let line_for_syntect = if line.ends_with('\n') {
+            format!("{}\n", line_content)
+        } else {
+            line_content.to_string()
+        };
+
+        let ops = match state.parse_line(&line_for_syntect, syntax_set) {
+            Ok(ops) => ops,
+            Err(_) => {
+                current_offset += line_len;
+                continue;
+            }
+        };
+
+        let mut syntect_offset = 0;
+        let line_content_len = line_content.len();
+
+        for (op_offset, op) in ops {
+            let clamped_op_offset = op_offset.min(line_content_len);
+            if clamped_op_offset > syntect_offset {
+                if let Some(category) = scope_stack_to_category(&current_scopes) {
+                    let byte_start = line_start + syntect_offset;
+                    let byte_end = line_start + clamped_op_offset;
+                    if byte_start < byte_end {
+                        spans.push(HighlightSpan {
+                            range: byte_start..byte_end,
+                            color: category.color(theme),
+                        });
+                    }
+                }
+            }
+            syntect_offset = clamped_op_offset;
+            let _ = current_scopes.apply(&op);
+        }
+
+        // Handle remaining text on line
+        if syntect_offset < line_content_len {
+            if let Some(category) = scope_stack_to_category(&current_scopes) {
+                let byte_start = line_start + syntect_offset;
+                let byte_end = line_start + line_content_len;
+                if byte_start < byte_end {
+                    spans.push(HighlightSpan {
+                        range: byte_start..byte_end,
+                        color: category.color(theme),
+                    });
+                }
+            }
+        }
+
+        current_offset += line_len;
+    }
+
+    // Merge adjacent spans with same color
+    merge_adjacent_highlight_spans(&mut spans);
+
+    spans
+}
+
+/// Map scope stack to highlight category (for highlight_string)
+fn scope_stack_to_category(scopes: &syntect::parsing::ScopeStack) -> Option<HighlightCategory> {
+    for scope in scopes.as_slice().iter().rev() {
+        let scope_str = scope.build_string();
+        if let Some(cat) = scope_to_category(&scope_str) {
+            return Some(cat);
+        }
+    }
+    None
+}
+
+/// Merge adjacent spans with same color
+fn merge_adjacent_highlight_spans(spans: &mut Vec<HighlightSpan>) {
+    if spans.len() < 2 {
+        return;
+    }
+
+    let mut write_idx = 0;
+    for read_idx in 1..spans.len() {
+        if spans[write_idx].color == spans[read_idx].color
+            && spans[write_idx].range.end == spans[read_idx].range.start
+        {
+            spans[write_idx].range.end = spans[read_idx].range.end;
+        } else {
+            write_idx += 1;
+            if write_idx != read_idx {
+                spans[write_idx] = spans[read_idx].clone();
+            }
+        }
+    }
+    spans.truncate(write_idx + 1);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

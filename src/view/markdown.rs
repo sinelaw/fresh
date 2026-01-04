@@ -4,7 +4,9 @@
 //! hover documentation, and other UI elements. It also provides word
 //! wrapping utilities for styled text.
 
-use crate::primitives::highlighter::{highlight_code_string, HighlightSpan, Language};
+use crate::primitives::grammar_registry::GrammarRegistry;
+use crate::primitives::highlight_engine::highlight_string;
+use crate::primitives::highlighter::HighlightSpan;
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 
@@ -310,7 +312,14 @@ fn add_code_text_to_lines(lines: &mut Vec<StyledLine>, text: &str, style: Style)
 }
 
 /// Parse markdown text into styled lines for terminal rendering
-pub fn parse_markdown(text: &str, theme: &crate::view::theme::Theme) -> Vec<StyledLine> {
+///
+/// If `registry` is provided, uses syntect for syntax highlighting in code blocks,
+/// which supports ~150+ languages. If None, falls back to uniform code styling.
+pub fn parse_markdown(
+    text: &str,
+    theme: &crate::view::theme::Theme,
+    registry: Option<&GrammarRegistry>,
+) -> Vec<StyledLine> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
 
@@ -404,9 +413,30 @@ pub fn parse_markdown(text: &str, theme: &crate::view::theme::Theme) -> Vec<Styl
             }
             Event::Text(text) => {
                 if in_code_block {
-                    // Try syntax highlighting for code blocks
-                    if let Some(lang) = Language::from_lang_string(&code_block_lang) {
-                        let spans = highlight_code_string(&text, lang, theme);
+                    // Try syntax highlighting for code blocks using syntect
+                    let spans = if let Some(reg) = registry {
+                        if !code_block_lang.is_empty() {
+                            let s = highlight_string(&text, &code_block_lang, reg, theme);
+                            // Check coverage - if < 20% highlighted, content may not be valid code
+                            let highlighted_bytes: usize =
+                                s.iter().map(|span| span.range.end - span.range.start).sum();
+                            let non_ws_bytes =
+                                text.bytes().filter(|b| !b.is_ascii_whitespace()).count();
+                            let good_coverage =
+                                non_ws_bytes == 0 || highlighted_bytes * 5 >= non_ws_bytes;
+                            if good_coverage {
+                                s
+                            } else {
+                                Vec::new()
+                            }
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    };
+
+                    if !spans.is_empty() {
                         let highlighted_lines =
                             highlight_code_to_styled_lines(&text, &spans, theme);
                         for (i, styled_line) in highlighted_lines.into_iter().enumerate() {
@@ -508,7 +538,7 @@ mod tests {
     #[test]
     fn test_plain_text() {
         let theme = Theme::dark();
-        let lines = parse_markdown("Hello world", &theme);
+        let lines = parse_markdown("Hello world", &theme, None);
 
         assert_eq!(lines.len(), 1);
         assert_eq!(get_line_text(&lines[0]), "Hello world");
@@ -517,7 +547,7 @@ mod tests {
     #[test]
     fn test_bold_text() {
         let theme = Theme::dark();
-        let lines = parse_markdown("This is **bold** text", &theme);
+        let lines = parse_markdown("This is **bold** text", &theme, None);
 
         assert_eq!(lines.len(), 1);
         assert_eq!(get_line_text(&lines[0]), "This is bold text");
@@ -538,7 +568,7 @@ mod tests {
     #[test]
     fn test_italic_text() {
         let theme = Theme::dark();
-        let lines = parse_markdown("This is *italic* text", &theme);
+        let lines = parse_markdown("This is *italic* text", &theme, None);
 
         assert_eq!(lines.len(), 1);
         assert_eq!(get_line_text(&lines[0]), "This is italic text");
@@ -558,7 +588,7 @@ mod tests {
     #[test]
     fn test_strikethrough_text() {
         let theme = Theme::dark();
-        let lines = parse_markdown("This is ~~deleted~~ text", &theme);
+        let lines = parse_markdown("This is ~~deleted~~ text", &theme, None);
 
         assert_eq!(lines.len(), 1);
         assert_eq!(get_line_text(&lines[0]), "This is deleted text");
@@ -578,7 +608,7 @@ mod tests {
     #[test]
     fn test_inline_code() {
         let theme = Theme::dark();
-        let lines = parse_markdown("Use `println!` to print", &theme);
+        let lines = parse_markdown("Use `println!` to print", &theme, None);
 
         assert_eq!(lines.len(), 1);
         assert_eq!(get_line_text(&lines[0]), "Use `println!` to print");
@@ -595,7 +625,7 @@ mod tests {
     #[test]
     fn test_code_block() {
         let theme = Theme::dark();
-        let lines = parse_markdown("```rust\nfn main() {}\n```", &theme);
+        let lines = parse_markdown("```rust\nfn main() {}\n```", &theme, None);
 
         // Code block should have content with background
         let code_line = lines.iter().find(|l| get_line_text(l).contains("fn"));
@@ -614,9 +644,10 @@ mod tests {
     #[test]
     fn test_code_block_syntax_highlighting() {
         let theme = Theme::dark();
+        let registry = GrammarRegistry::load();
         // Rust code with keywords and strings that should get different colors
         let markdown = "```rust\nfn main() {\n    println!(\"Hello\");\n}\n```";
-        let lines = parse_markdown(markdown, &theme);
+        let lines = parse_markdown(markdown, &theme, Some(&registry));
 
         // Should have parsed lines with content
         assert!(!lines.is_empty(), "Should have parsed lines");
@@ -655,7 +686,7 @@ mod tests {
         let theme = Theme::dark();
         // Unknown language should fallback to uniform styling
         let markdown = "```unknownlang\nsome code here\n```";
-        let lines = parse_markdown(markdown, &theme);
+        let lines = parse_markdown(markdown, &theme, None);
 
         // Should have parsed lines
         assert!(!lines.is_empty(), "Should have parsed lines");
@@ -685,7 +716,7 @@ mod tests {
     #[test]
     fn test_heading() {
         let theme = Theme::dark();
-        let lines = parse_markdown("# Heading\n\nContent", &theme);
+        let lines = parse_markdown("# Heading\n\nContent", &theme, None);
 
         // Heading should be bold
         let heading_line = &lines[0];
@@ -699,7 +730,7 @@ mod tests {
     #[test]
     fn test_link() {
         let theme = Theme::dark();
-        let lines = parse_markdown("Click [here](https://example.com) for more", &theme);
+        let lines = parse_markdown("Click [here](https://example.com) for more", &theme, None);
 
         assert_eq!(lines.len(), 1);
         assert_eq!(get_line_text(&lines[0]), "Click here for more");
@@ -718,7 +749,7 @@ mod tests {
     #[test]
     fn test_unordered_list() {
         let theme = Theme::dark();
-        let lines = parse_markdown("- Item 1\n- Item 2\n- Item 3", &theme);
+        let lines = parse_markdown("- Item 1\n- Item 2\n- Item 3", &theme, None);
 
         // Each item should be on its own line
         assert!(lines.len() >= 3, "Should have at least 3 lines for 3 items");
@@ -732,7 +763,7 @@ mod tests {
     #[test]
     fn test_paragraph_separation() {
         let theme = Theme::dark();
-        let lines = parse_markdown("First paragraph.\n\nSecond paragraph.", &theme);
+        let lines = parse_markdown("First paragraph.\n\nSecond paragraph.", &theme, None);
 
         // Should have 3 lines: first para, blank line, second para
         assert_eq!(
@@ -754,7 +785,7 @@ mod tests {
     fn test_soft_break_becomes_space() {
         let theme = Theme::dark();
         // Single newline in markdown is a soft break
-        let lines = parse_markdown("Line one\nLine two", &theme);
+        let lines = parse_markdown("Line one\nLine two", &theme, None);
 
         // Soft break should become a space, keeping content on same paragraph
         let all_text: String = lines.iter().map(|l| get_line_text(l)).collect();
@@ -773,7 +804,7 @@ mod tests {
     fn test_hard_break() {
         let theme = Theme::dark();
         // Two spaces before newline creates a hard break
-        let lines = parse_markdown("Line one  \nLine two", &theme);
+        let lines = parse_markdown("Line one  \nLine two", &theme, None);
 
         // Hard break creates a new line within the same paragraph
         assert!(lines.len() >= 2, "Hard break should create multiple lines");
@@ -782,7 +813,7 @@ mod tests {
     #[test]
     fn test_horizontal_rule() {
         let theme = Theme::dark();
-        let lines = parse_markdown("Above\n\n---\n\nBelow", &theme);
+        let lines = parse_markdown("Above\n\n---\n\nBelow", &theme, None);
 
         // Should have a line with horizontal rule characters
         let has_rule = lines.iter().any(|l| get_line_text(l).contains("─"));
@@ -792,7 +823,7 @@ mod tests {
     #[test]
     fn test_nested_formatting() {
         let theme = Theme::dark();
-        let lines = parse_markdown("This is ***bold and italic*** text", &theme);
+        let lines = parse_markdown("This is ***bold and italic*** text", &theme, None);
 
         assert_eq!(lines.len(), 1);
 
@@ -817,7 +848,7 @@ mod tests {
         let theme = Theme::dark();
         let markdown = "```python\n(class) Path\n```\n\nPurePath subclass that can make system calls.\n\nPath represents a filesystem path.";
 
-        let lines = parse_markdown(markdown, &theme);
+        let lines = parse_markdown(markdown, &theme, None);
 
         // Should have code block, blank line, first paragraph, blank line, second paragraph
         assert!(lines.len() >= 3, "Should have multiple sections");
@@ -837,7 +868,7 @@ mod tests {
     #[test]
     fn test_empty_input() {
         let theme = Theme::dark();
-        let lines = parse_markdown("", &theme);
+        let lines = parse_markdown("", &theme, None);
 
         // Empty input should produce empty or minimal output
         assert!(
@@ -849,7 +880,7 @@ mod tests {
     #[test]
     fn test_only_whitespace() {
         let theme = Theme::dark();
-        let lines = parse_markdown("   \n\n   ", &theme);
+        let lines = parse_markdown("   \n\n   ", &theme, None);
 
         // Whitespace-only should produce empty or minimal output
         for line in &lines {
@@ -965,7 +996,7 @@ mod tests {
         let long_text = "def very_long_function_name(param1: str, param2: int, param3: float, param4: list, param5: dict) -> tuple[str, int, float]";
         let markdown = format!("```python\n{}\n```", long_text);
 
-        let lines = parse_markdown(&markdown, &theme);
+        let lines = parse_markdown(&markdown, &theme, None);
 
         // The code block should produce styled lines
         assert!(!lines.is_empty(), "Should have parsed lines");
@@ -1018,7 +1049,7 @@ mod tests {
     #[test]
     fn test_wrap_styled_lines_preserves_style() {
         let theme = Theme::dark();
-        let lines = parse_markdown("**bold text that is quite long**", &theme);
+        let lines = parse_markdown("**bold text that is quite long**", &theme, None);
 
         let wrapped = wrap_styled_lines(&lines, 15);
 

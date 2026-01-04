@@ -606,7 +606,7 @@ impl Editor {
 
         // Use markdown rendering if the content is markdown
         let mut popup = if is_markdown {
-            Popup::markdown(&contents, &self.theme)
+            Popup::markdown(&contents, &self.theme, Some(&self.grammar_registry))
         } else {
             // Plain text - split by lines
             let lines: Vec<String> = contents.lines().map(|s| s.to_string()).collect();

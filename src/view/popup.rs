@@ -8,6 +8,7 @@ use ratatui::{
 
 use super::markdown::{parse_markdown, wrap_styled_lines, wrap_text_lines, StyledLine};
 use super::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
+use crate::primitives::grammar_registry::GrammarRegistry;
 
 /// Clamp a rectangle to fit within bounds, preventing out-of-bounds rendering panics.
 /// Returns a rectangle that is guaranteed to be fully contained within `bounds`.
@@ -164,8 +165,15 @@ impl Popup {
     }
 
     /// Create a new popup with markdown content using theme colors
-    pub fn markdown(markdown_text: &str, theme: &crate::view::theme::Theme) -> Self {
-        let styled_lines = parse_markdown(markdown_text, theme);
+    ///
+    /// If `registry` is provided, code blocks will have syntax highlighting
+    /// for ~150+ languages via syntect.
+    pub fn markdown(
+        markdown_text: &str,
+        theme: &crate::view::theme::Theme,
+        registry: Option<&GrammarRegistry>,
+    ) -> Self {
+        let styled_lines = parse_markdown(markdown_text, theme, registry);
         Self {
             title: None,
             description: None,
