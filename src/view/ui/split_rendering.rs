@@ -1304,8 +1304,10 @@ impl SplitRenderer {
                     let gutter_width = 4usize;
                     let max_content_width = width.saturating_sub(gutter_width as u16) as usize;
 
-                    // Determine background
-                    let bg = if is_cursor_row {
+                    // Determine background - selection takes precedence over cursor row
+                    let bg = if is_selected {
+                        theme.selection_bg
+                    } else if is_cursor_row {
                         theme.current_line_bg
                     } else {
                         row_bg.unwrap_or(theme.editor_bg)
@@ -1376,7 +1378,10 @@ impl SplitRenderer {
                     frame.render_widget(para, pane_area);
                 } else {
                     // No content for this pane (padding/gap line)
-                    let bg = if is_cursor_row {
+                    // Selection takes precedence over cursor row
+                    let bg = if is_selected {
+                        theme.selection_bg
+                    } else if is_cursor_row {
                         theme.current_line_bg
                     } else {
                         row_bg.unwrap_or(theme.editor_bg)
