@@ -10,6 +10,64 @@ use crate::model::event::{BufferId, SplitId};
 use crate::view::composite_view::CompositeViewState;
 use unicode_segmentation::UnicodeSegmentation;
 
+/// Information about the current cursor line needed for movement operations
+struct CursorLineInfo {
+    content: String,
+    length: usize,
+    pane_width: usize,
+}
+
+/// Direction for cursor movement
+#[derive(Clone, Copy)]
+enum CursorMovement {
+    Up,
+    Down,
+    Left,
+    Right,
+    LineStart,
+    LineEnd,
+    WordLeft,
+    WordRight,
+}
+
+/// Find the previous word boundary position in a line
+fn find_word_boundary_left(line: &str, from_column: usize) -> usize {
+    let graphemes: Vec<&str> = line.graphemes(true).collect();
+    let mut pos = from_column;
+    // Skip spaces going left
+    while pos > 0
+        && graphemes
+            .get(pos.saturating_sub(1))
+            .map_or(false, |g| g.chars().all(|c| c.is_whitespace()))
+    {
+        pos -= 1;
+    }
+    // Skip word chars going left
+    while pos > 0
+        && graphemes
+            .get(pos.saturating_sub(1))
+            .map_or(false, |g| !g.chars().all(|c| c.is_whitespace()))
+    {
+        pos -= 1;
+    }
+    pos
+}
+
+/// Find the next word boundary position in a line
+fn find_word_boundary_right(line: &str, from_column: usize, line_length: usize) -> usize {
+    let graphemes: Vec<&str> = line.graphemes(true).collect();
+    let mut pos = from_column;
+    // Skip word chars going right
+    while pos < graphemes.len() && !graphemes[pos].chars().all(|c| c.is_whitespace()) {
+        pos += 1;
+    }
+    // Skip spaces going right
+    while pos < graphemes.len() && graphemes[pos].chars().all(|c| c.is_whitespace()) {
+        pos += 1;
+    }
+    pos.min(line_length)
+}
+
 impl Editor {
     // =========================================================================
     // Composite Buffer Methods
@@ -201,6 +259,173 @@ impl Editor {
     // Action Handling for Composite Buffers
     // =========================================================================
 
+    /// Get information about the line at the cursor position
+    fn get_cursor_line_info(
+        &self,
+        split_id: SplitId,
+        buffer_id: BufferId,
+    ) -> CursorLineInfo {
+        let composite = self.composite_buffers.get(&buffer_id);
+        let view_state = self.composite_view_states.get(&(split_id, buffer_id));
+
+        if let (Some(composite), Some(view_state)) = (composite, view_state) {
+            let line_bytes = composite
+                .alignment
+                .get_row(view_state.cursor_row)
+                .and_then(|row| row.get_pane_line(view_state.focused_pane))
+                .and_then(|line_ref| {
+                    let source = composite.sources.get(view_state.focused_pane)?;
+                    self.buffers
+                        .get(&source.buffer_id)?
+                        .buffer
+                        .get_line(line_ref.line)
+                });
+
+            let content = line_bytes
+                .as_ref()
+                .map(|b| String::from_utf8_lossy(b).to_string())
+                .unwrap_or_default();
+            let length = content.graphemes(true).count();
+            let pane_width = view_state
+                .pane_widths
+                .get(view_state.focused_pane)
+                .copied()
+                .unwrap_or(40) as usize;
+
+            CursorLineInfo { content, length, pane_width }
+        } else {
+            CursorLineInfo {
+                content: String::new(),
+                length: 0,
+                pane_width: 40,
+            }
+        }
+    }
+
+    /// Apply a cursor movement to a composite view state
+    fn apply_cursor_movement(
+        &mut self,
+        split_id: SplitId,
+        buffer_id: BufferId,
+        movement: CursorMovement,
+        line_info: &CursorLineInfo,
+        viewport_height: usize,
+    ) {
+        let max_row = self
+            .composite_buffers
+            .get(&buffer_id)
+            .map(|c| c.row_count().saturating_sub(1))
+            .unwrap_or(0);
+
+        let is_vertical = matches!(movement, CursorMovement::Up | CursorMovement::Down);
+
+        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+            match movement {
+                CursorMovement::Down => {
+                    view_state.move_cursor_down(max_row, viewport_height);
+                }
+                CursorMovement::Up => {
+                    view_state.move_cursor_up();
+                }
+                CursorMovement::Left => {
+                    view_state.move_cursor_left();
+                }
+                CursorMovement::Right => {
+                    view_state.move_cursor_right(line_info.length, line_info.pane_width);
+                }
+                CursorMovement::LineStart => {
+                    view_state.move_cursor_to_line_start();
+                }
+                CursorMovement::LineEnd => {
+                    view_state.move_cursor_to_line_end(line_info.length, line_info.pane_width);
+                }
+                CursorMovement::WordLeft => {
+                    let new_col = find_word_boundary_left(&line_info.content, view_state.cursor_column);
+                    view_state.cursor_column = new_col;
+                    view_state.sticky_column = new_col;
+                    // Update horizontal scroll to keep cursor visible
+                    if let Some(viewport) = view_state.pane_viewports.get_mut(view_state.focused_pane) {
+                        if view_state.cursor_column < viewport.left_column {
+                            viewport.left_column = view_state.cursor_column;
+                        }
+                    }
+                }
+                CursorMovement::WordRight => {
+                    let new_col = find_word_boundary_right(
+                        &line_info.content,
+                        view_state.cursor_column,
+                        line_info.length,
+                    );
+                    view_state.cursor_column = new_col;
+                    view_state.sticky_column = new_col;
+                    // Update horizontal scroll to keep cursor visible
+                    if let Some(viewport) = view_state.pane_viewports.get_mut(view_state.focused_pane) {
+                        let visible_width = line_info.pane_width.saturating_sub(4);
+                        if view_state.cursor_column >= viewport.left_column + visible_width {
+                            viewport.left_column = view_state
+                                .cursor_column
+                                .saturating_sub(visible_width.saturating_sub(1));
+                        }
+                    }
+                }
+            }
+        }
+
+        // For vertical movement, get line info for the NEW row and clamp cursor column
+        if is_vertical {
+            let new_line_info = self.get_cursor_line_info(split_id, buffer_id);
+            if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+                view_state.clamp_cursor_to_line(new_line_info.length);
+            }
+        }
+    }
+
+    /// Sync the EditorState cursor with CompositeViewState (for status bar display)
+    fn sync_editor_cursor_from_composite(&mut self, split_id: SplitId, buffer_id: BufferId) {
+        let (cursor_row, cursor_column) = self
+            .composite_view_states
+            .get(&(split_id, buffer_id))
+            .map(|vs| (vs.cursor_row, vs.cursor_column))
+            .unwrap_or((0, 0));
+
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.primary_cursor_line_number =
+                crate::model::buffer::LineNumber::Absolute(cursor_row);
+            state.cursors.primary_mut().position = cursor_column;
+        }
+    }
+
+    /// Handle cursor movement actions (both Move and Select variants)
+    fn handle_cursor_movement_action(
+        &mut self,
+        split_id: SplitId,
+        buffer_id: BufferId,
+        movement: CursorMovement,
+        extend_selection: bool,
+    ) -> Option<bool> {
+        let viewport_height = self
+            .split_view_states
+            .get(&split_id)
+            .map(|vs| vs.viewport.height as usize)
+            .unwrap_or(24);
+
+        let line_info = self.get_cursor_line_info(split_id, buffer_id);
+
+        // Start visual selection if extending
+        if extend_selection {
+            if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+                if !view_state.visual_mode {
+                    view_state.start_visual_selection();
+                }
+            }
+        }
+
+        self.apply_cursor_movement(split_id, buffer_id, movement, &line_info, viewport_height);
+        self.sync_editor_cursor_from_composite(split_id, buffer_id);
+
+        Some(true)
+    }
+
     /// Handle an action for a composite buffer.
     ///
     /// For navigation and selection actions, this forwards to the focused source buffer
@@ -215,232 +440,42 @@ impl Editor {
 
         let split_id = self.split_manager.active_split();
 
-        // Get the focused source buffer for forwarding actions
-        let (focused_buffer_id, focused_pane_idx, other_buffer_id) = {
-            let composite = self.composite_buffers.get(&buffer_id)?;
-            let view_state = self.composite_view_states.get(&(split_id, buffer_id))?;
-            let focused = composite.sources.get(view_state.focused_pane)?.buffer_id;
-            let other_pane = if view_state.focused_pane == 0 { 1 } else { 0 };
-            let other = composite.sources.get(other_pane).map(|s| s.buffer_id);
-            (focused, view_state.focused_pane, other)
-        };
-        let _ = focused_pane_idx; // Used for Copy action mapping
+        // Verify this is a valid composite buffer
+        let _composite = self.composite_buffers.get(&buffer_id)?;
+        let _view_state = self.composite_view_states.get(&(split_id, buffer_id))?;
 
-        // Actions that need special composite handling
         match action {
-            // Tab switches between panes in composite buffer
+            // Tab switches between panes
             Action::InsertTab => {
                 self.composite_focus_next(split_id, buffer_id);
                 Some(true)
             }
 
-            // Copy from the focused pane (need to map aligned rows to source lines)
+            // Copy from the focused pane
             Action::Copy => {
-                if let (Some(composite), Some(view_state)) = (
-                    self.composite_buffers.get(&buffer_id),
-                    self.composite_view_states.get(&(split_id, buffer_id)),
-                ) {
-                    if let Some((start_row, end_row)) = view_state.selection_row_range() {
-                        // Get the source buffer for the focused pane
-                        if let Some(source) = composite.sources.get(view_state.focused_pane) {
-                            if let Some(source_state) = self.buffers.get(&source.buffer_id) {
-                                // Collect text from selected rows
-                                let mut text = String::new();
-                                for row in start_row..=end_row {
-                                    // Map display row to source line
-                                    if let Some(aligned_row) = composite.alignment.rows.get(row) {
-                                        if let Some(line_ref) =
-                                            aligned_row.get_pane_line(view_state.focused_pane)
-                                        {
-                                            if let Some(line_bytes) =
-                                                source_state.buffer.get_line(line_ref.line)
-                                            {
-                                                if !text.is_empty() {
-                                                    text.push('\n');
-                                                }
-                                                text.push_str(&String::from_utf8_lossy(
-                                                    &line_bytes,
-                                                ));
-                                            }
-                                        }
-                                    }
-                                }
-                                // Copy to clipboard
-                                if !text.is_empty() {
-                                    self.clipboard.copy(text);
-                                }
-                            }
-                        }
-                        // Clear selection after copy
-                        if let Some(view_state) =
-                            self.composite_view_states.get_mut(&(split_id, buffer_id))
-                        {
-                            view_state.clear_selection();
-                        }
-                    }
-                }
+                self.handle_composite_copy(split_id, buffer_id);
                 Some(true)
             }
 
-            // Navigation: Update composite view's cursor/scroll position
-            // These operate on the aligned view, not the underlying source buffers
-            Action::MoveDown
-            | Action::MoveUp
-            | Action::MoveLeft
-            | Action::MoveRight
-            | Action::MoveLineStart
-            | Action::MoveLineEnd
-            | Action::MoveWordLeft
-            | Action::MoveWordRight => {
-                let viewport_height = self
-                    .split_view_states
-                    .get(&split_id)
-                    .map(|vs| vs.viewport.height as usize)
-                    .unwrap_or(24);
+            // Cursor movement (without selection)
+            Action::MoveDown => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Down, false),
+            Action::MoveUp => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Up, false),
+            Action::MoveLeft => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Left, false),
+            Action::MoveRight => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Right, false),
+            Action::MoveLineStart => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::LineStart, false),
+            Action::MoveLineEnd => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::LineEnd, false),
+            Action::MoveWordLeft => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::WordLeft, false),
+            Action::MoveWordRight => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::WordRight, false),
 
-                let new_cursor_row;
-                let new_cursor_column;
-
-                // Get line content, length and pane width for cursor bounds
-                let (line_content, line_length, pane_width) = {
-                    let composite = self.composite_buffers.get(&buffer_id);
-                    let view_state = self.composite_view_states.get(&(split_id, buffer_id));
-
-                    if let (Some(composite), Some(view_state)) = (composite, view_state) {
-                        // Get the source line for the focused pane at cursor row
-                        let line_bytes = composite
-                            .alignment
-                            .get_row(view_state.cursor_row)
-                            .and_then(|row| row.get_pane_line(view_state.focused_pane))
-                            .and_then(|line_ref| {
-                                let source = composite.sources.get(view_state.focused_pane)?;
-                                self.buffers
-                                    .get(&source.buffer_id)?
-                                    .buffer
-                                    .get_line(line_ref.line)
-                            });
-
-                        let line_str = line_bytes
-                            .as_ref()
-                            .map(|b| String::from_utf8_lossy(b).to_string())
-                            .unwrap_or_default();
-                        // Use grapheme count for proper unicode handling
-                        let line_len = line_str.graphemes(true).count();
-
-                        let width = view_state
-                            .pane_widths
-                            .get(view_state.focused_pane)
-                            .copied()
-                            .unwrap_or(40) as usize;
-
-                        (line_str, line_len, width)
-                    } else {
-                        (String::new(), 0, 40)
-                    }
-                };
-
-                if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id))
-                {
-                    match action {
-                        Action::MoveDown => {
-                            if let Some(composite) = self.composite_buffers.get(&buffer_id) {
-                                let max_row = composite.row_count().saturating_sub(1);
-                                view_state.move_cursor_down(max_row, viewport_height);
-                            }
-                        }
-                        Action::MoveUp => view_state.move_cursor_up(),
-                        Action::MoveLeft => {
-                            view_state.move_cursor_left();
-                        }
-                        Action::MoveRight => {
-                            view_state.move_cursor_right(line_length, pane_width);
-                        }
-                        Action::MoveLineStart => {
-                            view_state.move_cursor_to_line_start();
-                        }
-                        Action::MoveLineEnd => {
-                            view_state.move_cursor_to_line_end(line_length, pane_width);
-                        }
-                        Action::MoveWordLeft => {
-                            // Find previous word boundary using grapheme clusters
-                            let graphemes: Vec<&str> = line_content.graphemes(true).collect();
-                            let mut pos = view_state.cursor_column;
-                            // Skip spaces going left
-                            while pos > 0
-                                && graphemes
-                                    .get(pos.saturating_sub(1))
-                                    .map_or(false, |g| g.chars().all(|c| c.is_whitespace()))
-                            {
-                                pos -= 1;
-                            }
-                            // Skip word chars going left
-                            while pos > 0
-                                && graphemes
-                                    .get(pos.saturating_sub(1))
-                                    .map_or(false, |g| !g.chars().all(|c| c.is_whitespace()))
-                            {
-                                pos -= 1;
-                            }
-                            view_state.cursor_column = pos;
-                            // Update horizontal scroll
-                            if let Some(viewport) =
-                                view_state.pane_viewports.get_mut(view_state.focused_pane)
-                            {
-                                if view_state.cursor_column < viewport.left_column {
-                                    viewport.left_column = view_state.cursor_column;
-                                }
-                            }
-                        }
-                        Action::MoveWordRight => {
-                            // Find next word boundary using grapheme clusters
-                            let graphemes: Vec<&str> = line_content.graphemes(true).collect();
-                            let mut pos = view_state.cursor_column;
-                            // Skip word chars going right
-                            while pos < graphemes.len()
-                                && !graphemes[pos].chars().all(|c| c.is_whitespace())
-                            {
-                                pos += 1;
-                            }
-                            // Skip spaces going right
-                            while pos < graphemes.len()
-                                && graphemes[pos].chars().all(|c| c.is_whitespace())
-                            {
-                                pos += 1;
-                            }
-                            view_state.cursor_column = pos.min(line_length);
-                            // Update horizontal scroll
-                            if let Some(viewport) =
-                                view_state.pane_viewports.get_mut(view_state.focused_pane)
-                            {
-                                let visible_width = pane_width.saturating_sub(4);
-                                if view_state.cursor_column >= viewport.left_column + visible_width
-                                {
-                                    viewport.left_column = view_state
-                                        .cursor_column
-                                        .saturating_sub(visible_width.saturating_sub(1));
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                    new_cursor_row = view_state.cursor_row;
-                    new_cursor_column = view_state.cursor_column;
-                } else {
-                    new_cursor_row = 0;
-                    new_cursor_column = 0;
-                }
-
-                // Sync the fake EditorState's cursor with CompositeViewState
-                // This makes the status bar show the correct position
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    state.primary_cursor_line_number =
-                        crate::model::buffer::LineNumber::Absolute(new_cursor_row);
-                    state.cursors.primary_mut().position = new_cursor_column;
-                }
-
-                let _ = (focused_buffer_id, other_buffer_id);
-                Some(true)
-            }
+            // Cursor movement with selection
+            Action::SelectDown => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Down, true),
+            Action::SelectUp => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Up, true),
+            Action::SelectLeft => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Left, true),
+            Action::SelectRight => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Right, true),
+            Action::SelectLineStart => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::LineStart, true),
+            Action::SelectLineEnd => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::LineEnd, true),
+            Action::SelectWordLeft => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::WordLeft, true),
+            Action::SelectWordRight => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::WordRight, true),
 
             // Page navigation
             Action::MovePageDown | Action::MovePageUp => {
@@ -450,8 +485,7 @@ impl Editor {
                     .map(|vs| vs.viewport.height as usize)
                     .unwrap_or(24);
 
-                if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id))
-                {
+                if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
                     if matches!(action, Action::MovePageDown) {
                         if let Some(composite) = self.composite_buffers.get(&buffer_id) {
                             let max_row = composite.row_count().saturating_sub(1);
@@ -463,8 +497,6 @@ impl Editor {
                         view_state.cursor_row = view_state.scroll_row;
                     }
                 }
-
-                let _ = (focused_buffer_id, other_buffer_id);
                 Some(true)
             }
 
@@ -476,8 +508,7 @@ impl Editor {
                     .map(|vs| vs.viewport.height as usize)
                     .unwrap_or(24);
 
-                if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id))
-                {
+                if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
                     if matches!(action, Action::MoveDocumentStart) {
                         view_state.move_cursor_to_top();
                     } else if let Some(composite) = self.composite_buffers.get(&buffer_id) {
@@ -485,180 +516,72 @@ impl Editor {
                         view_state.move_cursor_to_bottom(max_row, viewport_height);
                     }
                 }
-
-                let _ = (focused_buffer_id, other_buffer_id);
                 Some(true)
             }
 
             // Scroll without moving cursor
             Action::ScrollDown | Action::ScrollUp => {
-                let delta = if matches!(action, Action::ScrollDown) {
-                    1
-                } else {
-                    -1
-                };
+                let delta = if matches!(action, Action::ScrollDown) { 1 } else { -1 };
                 self.composite_scroll(split_id, buffer_id, delta);
-
-                let _ = (focused_buffer_id, other_buffer_id);
-                Some(true)
-            }
-
-            // Selection: Start visual mode and extend
-            Action::SelectDown
-            | Action::SelectUp
-            | Action::SelectLeft
-            | Action::SelectRight
-            | Action::SelectLineStart
-            | Action::SelectLineEnd
-            | Action::SelectWordLeft
-            | Action::SelectWordRight => {
-                let viewport_height = self
-                    .split_view_states
-                    .get(&split_id)
-                    .map(|vs| vs.viewport.height as usize)
-                    .unwrap_or(24);
-
-                let new_cursor_row;
-                let new_cursor_column;
-
-                // Get line content, length and pane width for cursor bounds
-                let (line_content, line_length, pane_width) = {
-                    let composite = self.composite_buffers.get(&buffer_id);
-                    let view_state = self.composite_view_states.get(&(split_id, buffer_id));
-
-                    if let (Some(composite), Some(view_state)) = (composite, view_state) {
-                        let line_bytes = composite
-                            .alignment
-                            .get_row(view_state.cursor_row)
-                            .and_then(|row| row.get_pane_line(view_state.focused_pane))
-                            .and_then(|line_ref| {
-                                let source = composite.sources.get(view_state.focused_pane)?;
-                                self.buffers
-                                    .get(&source.buffer_id)?
-                                    .buffer
-                                    .get_line(line_ref.line)
-                            });
-
-                        let line_str = line_bytes
-                            .as_ref()
-                            .map(|b| String::from_utf8_lossy(b).to_string())
-                            .unwrap_or_default();
-                        // Use grapheme count for proper unicode handling
-                        let line_len = line_str.graphemes(true).count();
-
-                        let width = view_state
-                            .pane_widths
-                            .get(view_state.focused_pane)
-                            .copied()
-                            .unwrap_or(40) as usize;
-
-                        (line_str, line_len, width)
-                    } else {
-                        (String::new(), 0, 40)
-                    }
-                };
-
-                if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id))
-                {
-                    if !view_state.visual_mode {
-                        view_state.start_visual_selection();
-                    }
-                    match action {
-                        Action::SelectDown => {
-                            if let Some(composite) = self.composite_buffers.get(&buffer_id) {
-                                let max_row = composite.row_count().saturating_sub(1);
-                                view_state.move_cursor_down(max_row, viewport_height);
-                            }
-                        }
-                        Action::SelectUp => view_state.move_cursor_up(),
-                        Action::SelectLeft => {
-                            view_state.move_cursor_left();
-                        }
-                        Action::SelectRight => {
-                            view_state.move_cursor_right(line_length, pane_width);
-                        }
-                        Action::SelectLineStart => {
-                            view_state.move_cursor_to_line_start();
-                        }
-                        Action::SelectLineEnd => {
-                            view_state.move_cursor_to_line_end(line_length, pane_width);
-                        }
-                        Action::SelectWordLeft => {
-                            // Use grapheme clusters for proper unicode handling
-                            let graphemes: Vec<&str> = line_content.graphemes(true).collect();
-                            let mut pos = view_state.cursor_column;
-                            while pos > 0
-                                && graphemes
-                                    .get(pos.saturating_sub(1))
-                                    .map_or(false, |g| g.chars().all(|c| c.is_whitespace()))
-                            {
-                                pos -= 1;
-                            }
-                            while pos > 0
-                                && graphemes
-                                    .get(pos.saturating_sub(1))
-                                    .map_or(false, |g| !g.chars().all(|c| c.is_whitespace()))
-                            {
-                                pos -= 1;
-                            }
-                            view_state.cursor_column = pos;
-                            if let Some(viewport) =
-                                view_state.pane_viewports.get_mut(view_state.focused_pane)
-                            {
-                                if view_state.cursor_column < viewport.left_column {
-                                    viewport.left_column = view_state.cursor_column;
-                                }
-                            }
-                        }
-                        Action::SelectWordRight => {
-                            // Use grapheme clusters for proper unicode handling
-                            let graphemes: Vec<&str> = line_content.graphemes(true).collect();
-                            let mut pos = view_state.cursor_column;
-                            while pos < graphemes.len()
-                                && !graphemes[pos].chars().all(|c| c.is_whitespace())
-                            {
-                                pos += 1;
-                            }
-                            while pos < graphemes.len()
-                                && graphemes[pos].chars().all(|c| c.is_whitespace())
-                            {
-                                pos += 1;
-                            }
-                            view_state.cursor_column = pos.min(line_length);
-                            if let Some(viewport) =
-                                view_state.pane_viewports.get_mut(view_state.focused_pane)
-                            {
-                                let visible_width = pane_width.saturating_sub(4);
-                                if view_state.cursor_column >= viewport.left_column + visible_width
-                                {
-                                    viewport.left_column = view_state
-                                        .cursor_column
-                                        .saturating_sub(visible_width.saturating_sub(1));
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                    new_cursor_row = view_state.cursor_row;
-                    new_cursor_column = view_state.cursor_column;
-                } else {
-                    new_cursor_row = 0;
-                    new_cursor_column = 0;
-                }
-
-                // Sync the fake EditorState's cursor with CompositeViewState
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    state.primary_cursor_line_number =
-                        crate::model::buffer::LineNumber::Absolute(new_cursor_row);
-                    state.cursors.primary_mut().position = new_cursor_column;
-                }
-
-                let _ = (focused_buffer_id, other_buffer_id);
                 Some(true)
             }
 
             // For other actions, return None to fall through to normal handling
             _ => None,
+        }
+    }
+
+    /// Handle copy action for composite buffer
+    fn handle_composite_copy(&mut self, split_id: SplitId, buffer_id: BufferId) {
+        let text = {
+            let composite = match self.composite_buffers.get(&buffer_id) {
+                Some(c) => c,
+                None => return,
+            };
+            let view_state = match self.composite_view_states.get(&(split_id, buffer_id)) {
+                Some(vs) => vs,
+                None => return,
+            };
+
+            let (start_row, end_row) = match view_state.selection_row_range() {
+                Some(range) => range,
+                None => return,
+            };
+
+            let source = match composite.sources.get(view_state.focused_pane) {
+                Some(s) => s,
+                None => return,
+            };
+
+            let source_state = match self.buffers.get(&source.buffer_id) {
+                Some(s) => s,
+                None => return,
+            };
+
+            // Collect text from selected rows
+            let mut text = String::new();
+            for row in start_row..=end_row {
+                if let Some(aligned_row) = composite.alignment.rows.get(row) {
+                    if let Some(line_ref) = aligned_row.get_pane_line(view_state.focused_pane) {
+                        if let Some(line_bytes) = source_state.buffer.get_line(line_ref.line) {
+                            if !text.is_empty() {
+                                text.push('\n');
+                            }
+                            text.push_str(&String::from_utf8_lossy(&line_bytes));
+                        }
+                    }
+                }
+            }
+            text
+        };
+
+        if !text.is_empty() {
+            self.clipboard.copy(text);
+        }
+
+        // Clear selection after copy
+        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+            view_state.clear_selection();
         }
     }
 
@@ -884,6 +807,7 @@ impl Editor {
             view_state.focused_pane = pane_idx;
             view_state.cursor_row = display_row;
             view_state.cursor_column = clamped_col;
+            view_state.sticky_column = clamped_col;
 
             // Clear selection on click (will start fresh selection on drag)
             view_state.clear_selection();

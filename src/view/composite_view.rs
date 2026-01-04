@@ -28,6 +28,10 @@ pub struct CompositeViewState {
     /// Current cursor column within the focused pane
     pub cursor_column: usize,
 
+    /// Desired column for vertical navigation (sticky column)
+    /// When moving up/down, the cursor tries to return to this column
+    pub sticky_column: usize,
+
     /// Cursor positions per pane (for editing)
     pub pane_cursors: Vec<Cursors>,
 
@@ -54,6 +58,7 @@ impl CompositeViewState {
             scroll_row: 0,
             cursor_row: 0,
             cursor_column: 0,
+            sticky_column: 0,
             pane_cursors: (0..pane_count).map(|_| Cursors::new()).collect(),
             pane_widths: vec![0; pane_count],
             visual_mode: false,
@@ -132,6 +137,7 @@ impl CompositeViewState {
     pub fn move_cursor_left(&mut self) {
         if self.cursor_column > 0 {
             self.cursor_column -= 1;
+            self.sticky_column = self.cursor_column;
             // Auto-scroll horizontally if needed
             if let Some(viewport) = self.pane_viewports.get_mut(self.focused_pane) {
                 if self.cursor_column < viewport.left_column {
@@ -145,6 +151,7 @@ impl CompositeViewState {
     pub fn move_cursor_right(&mut self, max_column: usize, pane_width: usize) {
         if self.cursor_column < max_column {
             self.cursor_column += 1;
+            self.sticky_column = self.cursor_column;
             // Auto-scroll horizontally if needed
             if let Some(viewport) = self.pane_viewports.get_mut(self.focused_pane) {
                 let visible_width = pane_width.saturating_sub(4); // minus gutter
@@ -160,6 +167,7 @@ impl CompositeViewState {
     /// Move cursor to start of line
     pub fn move_cursor_to_line_start(&mut self) {
         self.cursor_column = 0;
+        self.sticky_column = 0;
         if let Some(viewport) = self.pane_viewports.get_mut(self.focused_pane) {
             viewport.left_column = 0;
         }
@@ -168,6 +176,7 @@ impl CompositeViewState {
     /// Move cursor to end of line
     pub fn move_cursor_to_line_end(&mut self, line_length: usize, pane_width: usize) {
         self.cursor_column = line_length;
+        self.sticky_column = line_length;
         // Auto-scroll to show cursor
         if let Some(viewport) = self.pane_viewports.get_mut(self.focused_pane) {
             let visible_width = pane_width.saturating_sub(4); // minus gutter
@@ -177,6 +186,13 @@ impl CompositeViewState {
                     .saturating_sub(visible_width.saturating_sub(1));
             }
         }
+    }
+
+    /// Clamp cursor column to line length, using sticky column if possible
+    /// Call this after vertical movement to adjust cursor to new line's length
+    pub fn clamp_cursor_to_line(&mut self, line_length: usize) {
+        // Try to use sticky column, but clamp to line length
+        self.cursor_column = self.sticky_column.min(line_length);
     }
 
     /// Scroll all panes together by delta lines
