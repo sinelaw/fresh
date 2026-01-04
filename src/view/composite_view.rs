@@ -138,9 +138,14 @@ impl CompositeViewState {
         if self.cursor_column > 0 {
             self.cursor_column -= 1;
             self.sticky_column = self.cursor_column;
-            // Auto-scroll horizontally if needed
-            if let Some(viewport) = self.pane_viewports.get_mut(self.focused_pane) {
-                if self.cursor_column < viewport.left_column {
+            // Auto-scroll horizontally all panes together
+            let current_left = self
+                .pane_viewports
+                .get(self.focused_pane)
+                .map(|v| v.left_column)
+                .unwrap_or(0);
+            if self.cursor_column < current_left {
+                for viewport in &mut self.pane_viewports {
                     viewport.left_column = self.cursor_column;
                 }
             }
@@ -152,13 +157,17 @@ impl CompositeViewState {
         if self.cursor_column < max_column {
             self.cursor_column += 1;
             self.sticky_column = self.cursor_column;
-            // Auto-scroll horizontally if needed
-            if let Some(viewport) = self.pane_viewports.get_mut(self.focused_pane) {
-                let visible_width = pane_width.saturating_sub(4); // minus gutter
-                if visible_width > 0 && self.cursor_column >= viewport.left_column + visible_width {
-                    viewport.left_column = self
-                        .cursor_column
-                        .saturating_sub(visible_width.saturating_sub(1));
+            // Auto-scroll horizontally all panes together
+            let visible_width = pane_width.saturating_sub(4); // minus gutter
+            let current_left = self
+                .pane_viewports
+                .get(self.focused_pane)
+                .map(|v| v.left_column)
+                .unwrap_or(0);
+            if visible_width > 0 && self.cursor_column >= current_left + visible_width {
+                let new_left = self.cursor_column.saturating_sub(visible_width.saturating_sub(1));
+                for viewport in &mut self.pane_viewports {
+                    viewport.left_column = new_left;
                 }
             }
         }
@@ -168,7 +177,8 @@ impl CompositeViewState {
     pub fn move_cursor_to_line_start(&mut self) {
         self.cursor_column = 0;
         self.sticky_column = 0;
-        if let Some(viewport) = self.pane_viewports.get_mut(self.focused_pane) {
+        // Reset horizontal scroll for all panes
+        for viewport in &mut self.pane_viewports {
             viewport.left_column = 0;
         }
     }
@@ -177,13 +187,17 @@ impl CompositeViewState {
     pub fn move_cursor_to_line_end(&mut self, line_length: usize, pane_width: usize) {
         self.cursor_column = line_length;
         self.sticky_column = line_length;
-        // Auto-scroll to show cursor
-        if let Some(viewport) = self.pane_viewports.get_mut(self.focused_pane) {
-            let visible_width = pane_width.saturating_sub(4); // minus gutter
-            if self.cursor_column >= viewport.left_column + visible_width {
-                viewport.left_column = self
-                    .cursor_column
-                    .saturating_sub(visible_width.saturating_sub(1));
+        // Auto-scroll all panes to show cursor
+        let visible_width = pane_width.saturating_sub(4); // minus gutter
+        let current_left = self
+            .pane_viewports
+            .get(self.focused_pane)
+            .map(|v| v.left_column)
+            .unwrap_or(0);
+        if visible_width > 0 && self.cursor_column >= current_left + visible_width {
+            let new_left = self.cursor_column.saturating_sub(visible_width.saturating_sub(1));
+            for viewport in &mut self.pane_viewports {
+                viewport.left_column = new_left;
             }
         }
     }

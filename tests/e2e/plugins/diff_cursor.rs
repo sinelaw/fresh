@@ -1437,3 +1437,152 @@ fn test_diff_cursor_word_wrap_at_boundaries() {
         screen
     );
 }
+
+// =============================================================================
+// Horizontal Scroll Tests - viewport should scroll to keep cursor visible
+// =============================================================================
+
+/// Test that moving character-by-character along a long line keeps cursor visible
+/// by scrolling the viewport horizontally
+#[test]
+fn test_diff_horizontal_scroll_keeps_cursor_visible() {
+    init_tracing_from_env();
+
+    let repo = GitTestRepo::new();
+    create_repo_with_varied_lines(&repo);
+    setup_audit_mode_plugin(&repo);
+
+    let file_path = repo.path.join("test.rs");
+
+    // Use narrow viewport (80 cols) to ensure scrolling is needed
+    // Each pane is roughly 40 columns wide minus gutter
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_side_by_side_diff(&mut harness);
+
+    // Navigate to the long line (line 4 in gutter = row 3 in display alignment)
+    // The line is: "this is a very long MODIFIED line that extends..."
+    // Content lines in original: empty, short, medium, long, empty, another short, medium
+    // So the long line is at source line 3 (0-indexed), displayed as line 4 (1-indexed)
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+
+    // After Ctrl+Home, cursor is on first content line (Ln 1, empty in old file)
+    // Content lines: Ln 1 (empty), Ln 2 (short), Ln 3 (medium), Ln 4 (long)
+    // Move down 3 times: Ln 1 -> Ln 2 -> Ln 3 -> Ln 4 (the long line)
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // Check we're on the right line by looking at the status bar
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 4,") || screen.contains("Ln 4 "),
+        "Should be on line 4 (the long line). Screen:\n{}",
+        screen
+    );
+
+    // Now move right character by character and verify cursor stays visible
+    // After moving past the visible width, the start of line should scroll off
+    // We'll check that "MODIFIED" becomes visible as we scroll right
+
+    // First, move to start of line
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify we're still on line 4 after pressing Home
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 4,") || screen.contains("Ln 4 "),
+        "After Home, should still be on line 4. Screen:\n{}",
+        screen
+    );
+
+    // Initial state: "this is a very long MODIFIED" - we can see "this" at start
+    assert!(
+        screen.contains("this"),
+        "At line start, should see 'this'. Screen:\n{}",
+        screen
+    );
+
+    // Move right past the visible portion - "MODIFIED" is around column 20+
+    // Moving right 40+ times should scroll the view
+    // Note: Use fewer iterations to stay on the same line (don't wrap to next line)
+    for _ in 0..40 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Verify we're still on line 4
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 4,"),
+        "After 40 right moves, should still be on line 4. Screen:\n{}",
+        screen
+    );
+
+    assert!(
+        is_in_diff_view(&screen),
+        "Should still be in diff view after right moves. Screen:\n{}",
+        screen
+    );
+
+    // After moving 50 chars right, "MODIFIED" should be visible
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("MODIFIED"),
+        "After scrolling right, should see 'MODIFIED'. Screen:\n{}",
+        screen
+    );
+
+    // The start of line "this" should have scrolled off
+    assert!(
+        !screen.contains("this is a very"),
+        "After scrolling right, 'this is a very' should have scrolled off. Screen:\n{}",
+        screen
+    );
+
+    // Move to end of line - this goes to end of focused pane's line (OLD pane)
+    // which is shorter than the NEW pane's line
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    // At end of OLD line (~216 chars), we should see content around that position
+    // The screen should show content from around position 180-216 (visible_width ~35)
+    // This includes "testing purposes" which appears in both lines around that position
+    assert!(
+        screen.contains("testing purposes") || screen.contains("testing"),
+        "At line end, should see 'testing purposes' (near end of line). Screen:\n{}",
+        screen
+    );
+
+    // Move back to start
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    // Back at start, should see "this" again
+    assert!(
+        screen.contains("this"),
+        "Back at line start, should see 'this'. Screen:\n{}",
+        screen
+    );
+}

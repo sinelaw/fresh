@@ -1026,7 +1026,7 @@ impl SplitRenderer {
         buffers: &mut HashMap<BufferId, EditorState>,
         theme: &crate::view::theme::Theme,
         _is_active: bool,
-        view_state: &crate::view::composite_view::CompositeViewState,
+        view_state: &mut crate::view::composite_view::CompositeViewState,
     ) {
         use crate::model::composite_buffer::{CompositeLayout, RowType};
 
@@ -1069,6 +1069,9 @@ impl SplitRenderer {
                 vec![pane_width; pane_count]
             }
         };
+
+        // Store computed pane widths in view state for cursor movement calculations
+        view_state.pane_widths = pane_widths.clone();
 
         // Render headers first
         let header_height = 1u16;
