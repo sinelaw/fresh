@@ -11,6 +11,8 @@
 
 use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::tracing::init_tracing_from_env;
+use tracing::info;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use fresh::config::Config;
 use std::fs;
@@ -23,18 +25,35 @@ fn setup_audit_mode_plugin(repo: &GitTestRepo) {
     copy_plugin_lib(&plugins_dir);
 }
 
+/// Check if we're in the diff view.
+/// We check for "*Diff:" in tab bar and "OLD (HEAD)" header which are visible
+/// at any viewport width. The "Side-by-side diff:" status message may be truncated
+/// in narrow viewports.
+fn is_in_diff_view(screen: &str) -> bool {
+    let has_diff_tab = screen.contains("*Diff:");
+    let has_old_header = screen.contains("OLD (HEAD)");
+    let has_full_status = screen.contains("Side-by-side diff:");
+    (has_diff_tab && has_old_header) || has_full_status
+}
+
 /// Helper to open the side-by-side diff view
 fn open_side_by_side_diff(harness: &mut EditorTestHarness) {
+    info!("open_side_by_side_diff: sending Ctrl+p");
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    info!("open_side_by_side_diff: waiting for prompt");
     harness.wait_for_prompt().unwrap();
+    info!("open_side_by_side_diff: typing 'Side-by-Side Diff'");
     harness.type_text("Side-by-Side Diff").unwrap();
     harness.render().unwrap();
+    info!("open_side_by_side_diff: sending Enter");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    info!("open_side_by_side_diff: waiting for prompt closed");
     harness.wait_for_prompt_closed().unwrap();
+    info!("open_side_by_side_diff: prompt closed, waiting for diff view to load");
 
     // Wait for side-by-side view to fully load
     harness
@@ -46,9 +65,11 @@ fn open_side_by_side_diff(harness: &mut EditorTestHarness) {
             {
                 panic!("Error loading side-by-side diff. Screen:\n{}", screen);
             }
-            screen.contains("Side-by-side diff:") && !screen.contains("Loading side-by-side diff")
+            let still_loading = screen.contains("Loading side-by-side diff");
+            !still_loading && is_in_diff_view(&screen)
         })
         .unwrap();
+    info!("open_side_by_side_diff: diff view loaded");
 }
 
 /// Create a repo with various line lengths for comprehensive testing
@@ -185,7 +206,7 @@ fn test_diff_cursor_empty_lines() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view after empty line navigation"
     );
 }
@@ -239,7 +260,7 @@ fn test_diff_cursor_at_line_start() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view"
     );
 }
@@ -291,7 +312,7 @@ fn test_diff_cursor_at_line_end() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view"
     );
 }
@@ -350,7 +371,7 @@ fn test_diff_cursor_at_line_middle() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view"
     );
 }
@@ -394,7 +415,7 @@ fn test_diff_cursor_at_buffer_start() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view"
     );
 }
@@ -439,7 +460,7 @@ fn test_diff_cursor_at_buffer_end() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view"
     );
 }
@@ -447,9 +468,15 @@ fn test_diff_cursor_at_buffer_end() {
 /// Test horizontal scroll on long lines (line > pane width)
 #[test]
 fn test_diff_horizontal_scroll_long_line() {
+    init_tracing_from_env();
+    info!("Starting test_diff_horizontal_scroll_long_line");
+
     let repo = GitTestRepo::new();
+    info!("Created git test repo");
     create_repo_with_varied_lines(&repo);
+    info!("Created repo with varied lines");
     setup_audit_mode_plugin(&repo);
+    info!("Set up audit_mode plugin");
 
     let file_path = repo.path.join("test.rs");
 
@@ -460,14 +487,19 @@ fn test_diff_horizontal_scroll_long_line() {
         repo.path.clone(),
     )
     .unwrap();
+    info!("Created editor test harness");
 
     harness.open_file(&file_path).unwrap();
+    info!("Opened file");
     harness.render().unwrap();
+    info!("Rendered");
     harness
         .wait_until(|h| h.screen_to_string().contains("long"))
         .unwrap();
+    info!("File content visible with 'long'");
 
     open_side_by_side_diff(&mut harness);
+    info!("Opened side-by-side diff");
 
     // Go to the very long line
     for _ in 0..3 {
@@ -504,7 +536,7 @@ fn test_diff_horizontal_scroll_long_line() {
     println!("Back at home:\n{}", screen_at_home);
 
     assert!(
-        screen_at_home.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen_at_home),
         "Should still be in diff view"
     );
 }
@@ -568,7 +600,7 @@ fn test_diff_vertical_scroll_long_file() {
     println!("Back at buffer start:\n{}", screen_at_start);
 
     assert!(
-        screen_at_start.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen_at_start),
         "Should still be in diff view"
     );
 }
@@ -626,7 +658,7 @@ fn test_diff_cursor_viewport_middle() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view"
     );
 }
@@ -701,7 +733,7 @@ fn test_diff_word_movement_comprehensive() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view"
     );
 }
@@ -755,7 +787,7 @@ fn test_diff_pane_switching_with_tab() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view"
     );
 }
@@ -864,7 +896,7 @@ fn test_diff_mouse_click_both_panes() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view"
     );
 }
@@ -944,7 +976,7 @@ fn test_diff_selection_comprehensive() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view"
     );
 }
@@ -999,7 +1031,7 @@ fn test_diff_combined_movement() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view"
     );
 }
@@ -1050,7 +1082,7 @@ fn test_diff_no_scroll_needed() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view"
     );
 }
@@ -1058,9 +1090,15 @@ fn test_diff_no_scroll_needed() {
 /// Test Home/End keys on each line type (empty, short, long)
 #[test]
 fn test_diff_home_end_all_line_types() {
+    init_tracing_from_env();
+    info!("Starting test_diff_home_end_all_line_types");
+
     let repo = GitTestRepo::new();
+    info!("Created git test repo");
     create_repo_with_varied_lines(&repo);
+    info!("Created repo with varied lines");
     setup_audit_mode_plugin(&repo);
+    info!("Set up audit_mode plugin");
 
     let file_path = repo.path.join("test.rs");
 
@@ -1071,11 +1109,15 @@ fn test_diff_home_end_all_line_types() {
         repo.path.clone(),
     )
     .unwrap();
+    info!("Created editor test harness");
 
     harness.open_file(&file_path).unwrap();
+    info!("Opened file");
     harness.render().unwrap();
+    info!("Rendered");
 
     open_side_by_side_diff(&mut harness);
+    info!("Opened side-by-side diff");
 
     // Test 1: Empty line (first line might be empty in our test file)
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
@@ -1142,7 +1184,7 @@ fn test_diff_home_end_all_line_types() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view"
     );
 }
@@ -1150,9 +1192,15 @@ fn test_diff_home_end_all_line_types() {
 /// Test cursor visibility: cursor should always be visible after movement
 #[test]
 fn test_diff_cursor_always_visible() {
+    init_tracing_from_env();
+    info!("Starting test_diff_cursor_always_visible");
+
     let repo = GitTestRepo::new();
+    info!("Created git test repo");
     create_repo_with_long_file(&repo);
+    info!("Created repo with long file");
     setup_audit_mode_plugin(&repo);
+    info!("Set up audit_mode plugin");
 
     let file_path = repo.path.join("long.rs");
 
@@ -1163,11 +1211,15 @@ fn test_diff_cursor_always_visible() {
         repo.path.clone(),
     )
     .unwrap();
+    info!("Created editor test harness");
 
     harness.open_file(&file_path).unwrap();
+    info!("Opened file");
     harness.render().unwrap();
+    info!("Rendered");
 
     open_side_by_side_diff(&mut harness);
+    info!("Opened side-by-side diff");
 
     // Go to end of buffer - cursor should be visible
     harness
@@ -1176,7 +1228,7 @@ fn test_diff_cursor_always_visible() {
     harness.render().unwrap();
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view at buffer end"
     );
 
@@ -1195,7 +1247,7 @@ fn test_diff_cursor_always_visible() {
     harness.render().unwrap();
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view after horizontal scroll"
     );
 
@@ -1205,7 +1257,7 @@ fn test_diff_cursor_always_visible() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Side-by-side diff:"),
+        is_in_diff_view(&screen),
         "Should still be in diff view"
     );
 }
