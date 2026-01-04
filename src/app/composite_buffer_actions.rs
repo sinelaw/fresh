@@ -283,7 +283,11 @@ impl Editor {
 
             let content = line_bytes
                 .as_ref()
-                .map(|b| String::from_utf8_lossy(b).to_string())
+                .map(|b| {
+                    let s = String::from_utf8_lossy(b).to_string();
+                    // Strip trailing newline - cursor shouldn't go past end of visible content
+                    s.trim_end_matches('\n').trim_end_matches('\r').to_string()
+                })
                 .unwrap_or_default();
             let length = content.graphemes(true).count();
             let pane_width = view_state
@@ -788,7 +792,12 @@ impl Editor {
                         .buffer
                         .get_line(line_ref.line)
                 })
-                .map(|bytes| String::from_utf8_lossy(&bytes).chars().count())
+                .map(|bytes| {
+                    let s = String::from_utf8_lossy(&bytes);
+                    // Strip trailing newline - cursor shouldn't go past end of visible content
+                    let trimmed = s.trim_end_matches('\n').trim_end_matches('\r');
+                    trimmed.graphemes(true).count()
+                })
                 .unwrap_or(0)
         } else {
             0
