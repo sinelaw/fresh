@@ -1217,20 +1217,16 @@ impl SplitRenderer {
 
             let aligned_row = &alignment.rows[display_row];
             let is_cursor_row = display_row == cursor_row;
-            let is_selected = view_state.is_row_selected(display_row);
+            // Get selection column range for this row (if any)
+            let selection_cols = view_state.selection_column_range(display_row);
 
-            // Determine row background based on type and selection
-            let row_bg = if is_selected {
-                // Selection background takes precedence
-                Some(theme.selection_bg)
-            } else {
-                match aligned_row.row_type {
-                    RowType::Addition => Some(theme.diff_add_bg),
-                    RowType::Deletion => Some(theme.diff_remove_bg),
-                    RowType::Modification => Some(theme.diff_modify_bg),
-                    RowType::HunkHeader => Some(theme.current_line_bg),
-                    RowType::Context => None,
-                }
+            // Determine row background based on type (selection is now character-level)
+            let row_bg = match aligned_row.row_type {
+                RowType::Addition => Some(theme.diff_add_bg),
+                RowType::Deletion => Some(theme.diff_remove_bg),
+                RowType::Modification => Some(theme.diff_modify_bg),
+                RowType::HunkHeader => Some(theme.current_line_bg),
+                RowType::Context => None,
             };
 
             // Compute inline diff for modified rows (to highlight changed words/characters)
@@ -1304,20 +1300,28 @@ impl SplitRenderer {
                     let gutter_width = 4usize;
                     let max_content_width = width.saturating_sub(gutter_width as u16) as usize;
 
-                    // Determine background - selection takes precedence over cursor row
-                    let bg = if is_selected {
-                        theme.selection_bg
-                    } else if is_cursor_row {
+                    let is_focused_pane = pane_idx == view_state.focused_pane;
+
+                    // Determine background - cursor row highlight only on focused pane
+                    // Selection is now character-level, handled in render_view_line_content
+                    let bg = if is_cursor_row && is_focused_pane {
                         theme.current_line_bg
                     } else {
                         row_bg.unwrap_or(theme.editor_bg)
+                    };
+
+                    // Selection range for this row (only for focused pane)
+                    let pane_selection_cols = if is_focused_pane {
+                        selection_cols
+                    } else {
+                        None
                     };
 
                     // Line number
                     let line_num = format!("{:>3} ", source_line_ref.line + 1);
                     let line_num_style = Style::default().fg(theme.line_number_fg).bg(bg);
 
-                    let is_cursor_pane = pane_idx == view_state.focused_pane;
+                    let is_cursor_pane = is_focused_pane;
                     let cursor_column = view_state.cursor_column;
 
                     // Get inline diff ranges for this pane
@@ -1354,6 +1358,7 @@ impl SplitRenderer {
                             cursor_column,
                             &inline_ranges,
                             highlight_bg,
+                            pane_selection_cols,
                         );
                     } else {
                         // This branch should be unreachable:
@@ -1378,10 +1383,16 @@ impl SplitRenderer {
                     frame.render_widget(para, pane_area);
                 } else {
                     // No content for this pane (padding/gap line)
-                    // Selection takes precedence over cursor row
-                    let bg = if is_selected {
+                    let is_focused_pane = pane_idx == view_state.focused_pane;
+                    // For empty lines in focused pane, show selection if entire line is selected
+                    let pane_has_selection = is_focused_pane
+                        && selection_cols
+                            .map(|(start, end)| start == 0 && end == usize::MAX)
+                            .unwrap_or(false);
+
+                    let bg = if pane_has_selection {
                         theme.selection_bg
-                    } else if is_cursor_row {
+                    } else if is_cursor_row && is_focused_pane {
                         theme.current_line_bg
                     } else {
                         row_bg.unwrap_or(theme.editor_bg)
@@ -1440,6 +1451,7 @@ impl SplitRenderer {
         cursor_column: usize,
         inline_ranges: &[Range<usize>],
         highlight_bg: Option<Color>,
+        selection_cols: Option<(usize, usize)>, // (start_col, end_col) for selection
     ) {
         let text = &view_line.text;
         let char_source_bytes = &view_line.char_source_bytes;
@@ -1479,8 +1491,15 @@ impl SplitRenderer {
             // Check if this character is in an inline diff range
             let in_inline_range = inline_ranges.iter().any(|r| r.contains(&char_idx));
 
-            // Determine background: use highlight_bg for inline diff ranges
-            let char_bg = if in_inline_range {
+            // Check if this character is in selection range
+            let in_selection = selection_cols
+                .map(|(start, end)| col >= start && col < end)
+                .unwrap_or(false);
+
+            // Determine background: selection > inline diff > normal
+            let char_bg = if in_selection {
+                theme.selection_bg
+            } else if in_inline_range {
                 highlight_bg.unwrap_or(bg)
             } else {
                 bg

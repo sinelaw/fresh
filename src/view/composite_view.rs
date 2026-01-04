@@ -99,6 +99,60 @@ impl CompositeViewState {
         row >= start && row <= end
     }
 
+    /// Get the column range that is selected for a given row
+    /// Returns (start_col, end_col) where end_col is exclusive
+    /// Returns None if row is not in selection
+    pub fn selection_column_range(&self, row: usize) -> Option<(usize, usize)> {
+        if !self.visual_mode {
+            return None;
+        }
+
+        let (start_row, end_row) = self.selection_row_range()?;
+        if row < start_row || row > end_row {
+            return None;
+        }
+
+        // Determine which position is "start" and which is "end"
+        let (sel_start_row, sel_start_col, sel_end_row, sel_end_col) = if self.selection_anchor_row
+            < self.cursor_row
+            || (self.selection_anchor_row == self.cursor_row
+                && self.selection_anchor_column <= self.cursor_column)
+        {
+            (
+                self.selection_anchor_row,
+                self.selection_anchor_column,
+                self.cursor_row,
+                self.cursor_column,
+            )
+        } else {
+            (
+                self.cursor_row,
+                self.cursor_column,
+                self.selection_anchor_row,
+                self.selection_anchor_column,
+            )
+        };
+
+        // For multi-row selection:
+        // - First row: from start_col to end of line (usize::MAX)
+        // - Middle rows: entire line (0 to usize::MAX)
+        // - Last row: from 0 to end_col
+        // For single-row selection: from start_col to end_col
+        if sel_start_row == sel_end_row {
+            // Single row selection
+            Some((sel_start_col, sel_end_col))
+        } else if row == sel_start_row {
+            // First row of multi-row selection
+            Some((sel_start_col, usize::MAX))
+        } else if row == sel_end_row {
+            // Last row of multi-row selection
+            Some((0, sel_end_col))
+        } else {
+            // Middle row - entire line selected
+            Some((0, usize::MAX))
+        }
+    }
+
     /// Move cursor down, auto-scrolling if needed
     pub fn move_cursor_down(&mut self, max_row: usize, viewport_height: usize) {
         if self.cursor_row < max_row {

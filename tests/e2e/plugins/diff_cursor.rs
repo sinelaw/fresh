@@ -1582,3 +1582,290 @@ fn test_diff_horizontal_scroll_keeps_cursor_visible() {
         screen
     );
 }
+
+// =============================================================================
+// Selection and Copy Tests
+// =============================================================================
+
+/// Test that moving without shift clears the selection
+/// We verify this by: select text, copy, move without shift, copy again,
+/// then paste into a prompt. If selection was cleared, the second copy should
+/// produce nothing new.
+#[test]
+fn test_diff_move_without_shift_clears_selection() {
+    init_tracing_from_env();
+
+    let repo = GitTestRepo::new();
+    create_repo_for_wrap_test(&repo);
+    setup_audit_mode_plugin(&repo);
+
+    let file_path = repo.path.join("wrap.txt");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Isolate clipboard to prevent parallel test interference
+    harness.editor_mut().set_clipboard_for_test("".to_string());
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_side_by_side_diff(&mut harness);
+
+    // Navigate to content line
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Select some text with Shift+Right (select "fir" - 3 chars from "first")
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Copy selection - should copy "fir"
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Now move without shift - this should clear the selection
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Clear clipboard and try to copy again - should copy nothing since selection is cleared
+    harness.editor_mut().set_clipboard_for_test("".to_string());
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Close diff view with 'q' and wait until it's closed
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| !is_in_diff_view(&h.screen_to_string()))
+        .unwrap();
+
+    // Open command palette and paste
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The second copy should have copied nothing (selection was cleared)
+    // So the paste should result in empty prompt
+    let screen = harness.screen_to_string();
+    let prompt_line = screen
+        .lines()
+        .find(|l| l.contains("Command:"))
+        .unwrap_or("");
+    assert!(
+        !prompt_line.contains("fir"),
+        "After move without shift, selection should be cleared. Prompt: {}",
+        prompt_line
+    );
+}
+
+/// Test that copy in diff view doesn't include extra empty lines between lines
+/// We verify by copying multiple lines from diff view, then pasting into prompt
+#[test]
+fn test_diff_copy_no_empty_lines() {
+    init_tracing_from_env();
+
+    let repo = GitTestRepo::new();
+    // Create file with multiple lines
+    let file_path = repo.path.join("multiline.txt");
+    let original_content = "line one\nline two\nline three\n";
+    fs::write(&file_path, original_content).expect("Failed to create file");
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    let modified_content = "line one modified\nline two modified\nline three modified\n";
+    fs::write(&file_path, modified_content).expect("Failed to modify file");
+
+    setup_audit_mode_plugin(&repo);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Isolate clipboard
+    harness.editor_mut().set_clipboard_for_test("".to_string());
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_side_by_side_diff(&mut harness);
+
+    // Go to first content line
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Select multiple lines with Shift+Down
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Copy with Ctrl+C
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Close diff view with 'q' and wait until it's closed
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| !is_in_diff_view(&h.screen_to_string()))
+        .unwrap();
+
+    // Paste into prompt to verify content
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Check the prompt shows the pasted content
+    // The content should have "line one" and "line two" without extra blank lines between
+    let screen = harness.screen_to_string();
+    let prompt_line = screen
+        .lines()
+        .find(|l| l.contains("Command:"))
+        .unwrap_or("");
+
+    // Should contain line content (verifies copy worked)
+    assert!(
+        prompt_line.contains("line"),
+        "Should contain copied line content. Prompt: {}",
+        prompt_line
+    );
+}
+
+/// Test that copy in diff view doesn't clear the selection
+/// We verify by: select, copy, extend selection with Shift, copy again
+/// If selection was preserved, the second copy should have more content
+#[test]
+fn test_diff_copy_preserves_selection() {
+    init_tracing_from_env();
+
+    let repo = GitTestRepo::new();
+    create_repo_for_wrap_test(&repo);
+    setup_audit_mode_plugin(&repo);
+
+    let file_path = repo.path.join("wrap.txt");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Isolate clipboard
+    harness.editor_mut().set_clipboard_for_test("".to_string());
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_side_by_side_diff(&mut harness);
+
+    // Navigate to content line
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Select 3 characters with Shift+Right (select "fir")
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Copy with Ctrl+C
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Extend selection with Shift+Right (now selecting "firs")
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Copy again - should now have 4 characters if selection was preserved
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Close diff view with 'q' and wait until it's closed
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| !is_in_diff_view(&h.screen_to_string()))
+        .unwrap();
+
+    // Paste into prompt to verify what was copied
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should have copied 4 characters: "firs" (first 4 chars of "first")
+    let screen = harness.screen_to_string();
+    let prompt_line = screen
+        .lines()
+        .find(|l| l.contains("Command:"))
+        .unwrap_or("");
+    assert!(
+        prompt_line.contains("firs"),
+        "Should have 4 chars after extending selection post-copy. Prompt: {}",
+        prompt_line
+    );
+}

@@ -2,6 +2,20 @@
 //!
 //! This module handles creating, managing, and closing composite buffers
 //! which display multiple source buffers in a single tab.
+//!
+//! ## Cursor and Selection Handling
+//!
+//! Composite buffers re-implement cursor movement and selection rather than routing
+//! to the underlying source buffers. This is a deliberate trade-off because:
+//!
+//! - Composite buffers use a display-row coordinate system with alignment rows that
+//!   may not have 1:1 mapping to source lines (e.g., padding rows for deleted lines)
+//! - The cursor position is shared across all panes but each pane may have different
+//!   content at the same display row
+//! - Horizontal scroll must sync across panes for side-by-side comparison
+//!
+//! Routing to underlying buffers was considered but would require complex coordinate
+//! translation and wouldn't handle padding rows or synced scrolling naturally.
 
 use crate::app::types::BufferMetadata;
 use crate::app::Editor;
@@ -591,11 +605,18 @@ impl Editor {
 
         let line_info = self.get_cursor_line_info(split_id, buffer_id);
 
-        // Start visual selection if extending
         if extend_selection {
+            // Start visual selection if extending and not already in visual mode
             if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
                 if !view_state.visual_mode {
                     view_state.start_visual_selection();
+                }
+            }
+        } else {
+            // Clear selection when moving without shift
+            if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+                if view_state.visual_mode {
+                    view_state.clear_selection();
                 }
             }
         }
@@ -812,7 +833,10 @@ impl Editor {
                             if !text.is_empty() {
                                 text.push('\n');
                             }
-                            text.push_str(&String::from_utf8_lossy(&line_bytes));
+                            // Strip trailing newline from line content to avoid double newlines
+                            let line_str = String::from_utf8_lossy(&line_bytes);
+                            let line_trimmed = line_str.trim_end_matches(&['\n', '\r'][..]);
+                            text.push_str(line_trimmed);
                         }
                     }
                 }
@@ -824,10 +848,7 @@ impl Editor {
             self.clipboard.copy(text);
         }
 
-        // Clear selection after copy
-        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
-            view_state.clear_selection();
-        }
+        // Don't clear selection after copy - user may want to continue working with it
     }
 
     // =========================================================================
