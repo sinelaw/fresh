@@ -171,8 +171,7 @@ fn test_shift_tab_dedents_single_line() {
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.open_file(&file_path).unwrap();
 
-    // Move to the indented line (no selection)
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    // Cursor starts on the indented line (line 0), no need to move
     harness.render().unwrap();
 
     // Press Shift+Tab to dedent
@@ -205,12 +204,10 @@ fn test_multiple_tabs_indent_multiple_levels() {
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.open_file(&file_path).unwrap();
 
-    // Select line 2
+    // Select line 2 (use End to select to end of line, not Down which would include synthetic EOF line)
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
-        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
     harness.render().unwrap();
 
     // Press Tab twice
