@@ -4,6 +4,7 @@
 //! hover documentation, and other UI elements. It also provides word
 //! wrapping utilities for styled text.
 
+use crate::primitives::highlighter::{highlight_code_string, HighlightSpan, Language};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 
@@ -246,6 +247,68 @@ impl Default for StyledLine {
     }
 }
 
+/// Convert highlight spans to styled lines for code blocks
+fn highlight_code_to_styled_lines(
+    code: &str,
+    spans: &[HighlightSpan],
+    theme: &crate::view::theme::Theme,
+) -> Vec<StyledLine> {
+    let mut result = vec![StyledLine::new()];
+    let code_bg = theme.inline_code_bg;
+    let default_fg = theme.help_key_fg;
+
+    let bytes = code.as_bytes();
+    let mut pos = 0;
+
+    for span in spans {
+        // Add unhighlighted text before this span
+        if span.range.start > pos {
+            let text = String::from_utf8_lossy(&bytes[pos..span.range.start]);
+            add_code_text_to_lines(
+                &mut result,
+                &text,
+                Style::default().fg(default_fg).bg(code_bg),
+            );
+        }
+
+        // Add highlighted text
+        let text = String::from_utf8_lossy(&bytes[span.range.start..span.range.end]);
+        add_code_text_to_lines(
+            &mut result,
+            &text,
+            Style::default().fg(span.color).bg(code_bg),
+        );
+
+        pos = span.range.end;
+    }
+
+    // Add remaining unhighlighted text
+    if pos < bytes.len() {
+        let text = String::from_utf8_lossy(&bytes[pos..]);
+        add_code_text_to_lines(
+            &mut result,
+            &text,
+            Style::default().fg(default_fg).bg(code_bg),
+        );
+    }
+
+    result
+}
+
+/// Helper to add code text to styled lines, handling newlines
+fn add_code_text_to_lines(lines: &mut Vec<StyledLine>, text: &str, style: Style) {
+    for (i, part) in text.split('\n').enumerate() {
+        if i > 0 {
+            lines.push(StyledLine::new());
+        }
+        if !part.is_empty() {
+            if let Some(line) = lines.last_mut() {
+                line.push(part.to_string(), style);
+            }
+        }
+    }
+}
+
 /// Parse markdown text into styled lines for terminal rendering
 pub fn parse_markdown(text: &str, theme: &crate::view::theme::Theme) -> Vec<StyledLine> {
     let mut options = Options::empty();
@@ -340,22 +403,47 @@ pub fn parse_markdown(text: &str, theme: &crate::view::theme::Theme) -> Vec<Styl
                 }
             }
             Event::Text(text) => {
-                let current_style = if in_code_block {
-                    Style::default()
-                        .fg(theme.help_key_fg)
-                        .bg(theme.inline_code_bg)
-                } else {
-                    *style_stack.last().unwrap_or(&Style::default())
-                };
-
-                // Split text by newlines and add to lines
-                for (i, part) in text.split('\n').enumerate() {
-                    if i > 0 {
-                        lines.push(StyledLine::new());
+                if in_code_block {
+                    // Try syntax highlighting for code blocks
+                    if let Some(lang) = Language::from_lang_string(&code_block_lang) {
+                        let spans = highlight_code_string(&text, lang, theme);
+                        let highlighted_lines =
+                            highlight_code_to_styled_lines(&text, &spans, theme);
+                        for styled_line in highlighted_lines {
+                            if !styled_line.spans.is_empty() {
+                                lines.push(styled_line);
+                            } else {
+                                // Empty line in code block
+                                lines.push(StyledLine::new());
+                            }
+                        }
+                    } else {
+                        // Fallback: uniform code style for unknown languages
+                        let code_style = Style::default()
+                            .fg(theme.help_key_fg)
+                            .bg(theme.inline_code_bg);
+                        for (i, part) in text.split('\n').enumerate() {
+                            if i > 0 {
+                                lines.push(StyledLine::new());
+                            }
+                            if !part.is_empty() {
+                                if let Some(line) = lines.last_mut() {
+                                    line.push(part.to_string(), code_style);
+                                }
+                            }
+                        }
                     }
-                    if !part.is_empty() {
-                        if let Some(line) = lines.last_mut() {
-                            line.push(part.to_string(), current_style);
+                } else {
+                    let current_style = *style_stack.last().unwrap_or(&Style::default());
+                    // Split text by newlines and add to lines
+                    for (i, part) in text.split('\n').enumerate() {
+                        if i > 0 {
+                            lines.push(StyledLine::new());
+                        }
+                        if !part.is_empty() {
+                            if let Some(line) = lines.last_mut() {
+                                line.push(part.to_string(), current_style);
+                            }
                         }
                     }
                 }
@@ -507,18 +595,88 @@ mod tests {
         let lines = parse_markdown("```rust\nfn main() {}\n```", &theme);
 
         // Code block should have content with background
-        let code_line = lines.iter().find(|l| get_line_text(l).contains("fn main"));
+        let code_line = lines.iter().find(|l| get_line_text(l).contains("fn"));
         assert!(code_line.is_some(), "Should have code block content");
 
-        let code_span = code_line
+        // With syntax highlighting, "fn" may be in its own span
+        // Check that at least one span has background color
+        let has_bg = code_line
             .unwrap()
             .spans
             .iter()
-            .find(|s| s.text.contains("fn main"));
+            .any(|s| s.style.bg.is_some());
+        assert!(has_bg, "Code block should have background color");
+    }
+
+    #[test]
+    fn test_code_block_syntax_highlighting() {
+        let theme = Theme::dark();
+        // Rust code with keywords and strings that should get different colors
+        let markdown = "```rust\nfn main() {\n    println!(\"Hello\");\n}\n```";
+        let lines = parse_markdown(markdown, &theme);
+
+        // Should have parsed lines with content
+        assert!(!lines.is_empty(), "Should have parsed lines");
+
+        // Collect all colors used in the code block
+        let mut colors_used = std::collections::HashSet::new();
+        for line in &lines {
+            for span in &line.spans {
+                if let Some(fg) = span.style.fg {
+                    colors_used.insert(format!("{:?}", fg));
+                }
+            }
+        }
+
+        // Should have multiple different colors (syntax highlighting)
+        // Not just a single uniform color
         assert!(
-            code_span.unwrap().style.bg.is_some(),
-            "Code block should have background color"
+            colors_used.len() > 1,
+            "Code block should have multiple colors for syntax highlighting, got: {:?}",
+            colors_used
         );
+
+        // Verify the code content is preserved
+        let all_text: String = lines
+            .iter()
+            .map(|l| get_line_text(l))
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(all_text.contains("fn"), "Should contain 'fn' keyword");
+        assert!(all_text.contains("main"), "Should contain 'main'");
+        assert!(all_text.contains("println"), "Should contain 'println'");
+    }
+
+    #[test]
+    fn test_code_block_unknown_language_fallback() {
+        let theme = Theme::dark();
+        // Unknown language should fallback to uniform styling
+        let markdown = "```unknownlang\nsome code here\n```";
+        let lines = parse_markdown(markdown, &theme);
+
+        // Should have parsed lines
+        assert!(!lines.is_empty(), "Should have parsed lines");
+
+        // Content should be preserved
+        let all_text: String = lines
+            .iter()
+            .map(|l| get_line_text(l))
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(
+            all_text.contains("some code here"),
+            "Should contain the code"
+        );
+
+        // All spans should have the fallback code style (uniform color)
+        let code_line = lines
+            .iter()
+            .find(|l| get_line_text(l).contains("some code"));
+        if let Some(line) = code_line {
+            for span in &line.spans {
+                assert!(span.style.bg.is_some(), "Code should have background color");
+            }
+        }
     }
 
     #[test]
