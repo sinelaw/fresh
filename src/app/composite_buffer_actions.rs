@@ -273,6 +273,18 @@ impl Editor {
     // Action Handling for Composite Buffers
     // =========================================================================
 
+    /// Get the effective viewport height for composite buffer scrolling.
+    /// This accounts for the composite header row showing pane labels (e.g., "OLD (HEAD)" / "NEW (Working)")
+    fn get_composite_viewport_height(&self, split_id: SplitId) -> usize {
+        const COMPOSITE_HEADER_HEIGHT: u16 = 1;
+        const DEFAULT_VIEWPORT_HEIGHT: usize = 24;
+
+        self.split_view_states
+            .get(&split_id)
+            .map(|vs| vs.viewport.height.saturating_sub(COMPOSITE_HEADER_HEIGHT) as usize)
+            .unwrap_or(DEFAULT_VIEWPORT_HEIGHT)
+    }
+
     /// Get information about the line at the cursor position
     fn get_cursor_line_info(&self, split_id: SplitId, buffer_id: BufferId) -> CursorLineInfo {
         let composite = self.composite_buffers.get(&buffer_id);
@@ -592,16 +604,7 @@ impl Editor {
         movement: CursorMovement,
         extend_selection: bool,
     ) -> Option<bool> {
-        // Composite buffers have a header row showing pane labels (e.g., "OLD (HEAD)" / "NEW (Working)")
-        // Subtract header height from total viewport to get content area height
-        const COMPOSITE_HEADER_HEIGHT: u16 = 1;
-        const DEFAULT_VIEWPORT_HEIGHT: usize = 24;
-
-        let viewport_height = self
-            .split_view_states
-            .get(&split_id)
-            .map(|vs| vs.viewport.height.saturating_sub(COMPOSITE_HEADER_HEIGHT) as usize)
-            .unwrap_or(DEFAULT_VIEWPORT_HEIGHT);
+        let viewport_height = self.get_composite_viewport_height(split_id);
 
         let line_info = self.get_cursor_line_info(split_id, buffer_id);
 
@@ -739,11 +742,7 @@ impl Editor {
 
             // Page navigation
             Action::MovePageDown | Action::MovePageUp => {
-                let viewport_height = self
-                    .split_view_states
-                    .get(&split_id)
-                    .map(|vs| vs.viewport.height as usize)
-                    .unwrap_or(24);
+                let viewport_height = self.get_composite_viewport_height(split_id);
 
                 if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id))
                 {
@@ -763,11 +762,7 @@ impl Editor {
 
             // Document start/end
             Action::MoveDocumentStart | Action::MoveDocumentEnd => {
-                let viewport_height = self
-                    .split_view_states
-                    .get(&split_id)
-                    .map(|vs| vs.viewport.height as usize)
-                    .unwrap_or(24);
+                let viewport_height = self.get_composite_viewport_height(split_id);
 
                 if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id))
                 {

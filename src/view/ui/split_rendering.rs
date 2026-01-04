@@ -826,6 +826,21 @@ impl SplitRenderer {
                 // Check if this is a composite buffer - render differently
                 if state.is_composite_buffer {
                     if let Some(composite) = composite_buffers.get(&buffer_id) {
+                        // Update SplitViewState viewport to match actual rendered area
+                        // This ensures cursor movement uses correct viewport height after resize
+                        if let Some(ref mut svs) = split_view_states {
+                            if let Some(split_vs) = svs.get_mut(&split_id) {
+                                if split_vs.viewport.width != layout.content_rect.width
+                                    || split_vs.viewport.height != layout.content_rect.height
+                                {
+                                    split_vs.viewport.resize(
+                                        layout.content_rect.width,
+                                        layout.content_rect.height,
+                                    );
+                                }
+                            }
+                        }
+
                         // Get or create composite view state
                         let pane_count = composite.pane_count();
                         let view_state = composite_view_states
