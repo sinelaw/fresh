@@ -1542,7 +1542,10 @@ impl SplitRenderer {
                 }
             } else {
                 // No cursor in padding - just fill with background
-                spans.push(Span::styled(" ".repeat(padding_len), Style::default().bg(bg)));
+                spans.push(Span::styled(
+                    " ".repeat(padding_len),
+                    Style::default().bg(bg),
+                ));
             }
         }
     }

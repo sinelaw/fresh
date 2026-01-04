@@ -260,11 +260,7 @@ impl Editor {
     // =========================================================================
 
     /// Get information about the line at the cursor position
-    fn get_cursor_line_info(
-        &self,
-        split_id: SplitId,
-        buffer_id: BufferId,
-    ) -> CursorLineInfo {
+    fn get_cursor_line_info(&self, split_id: SplitId, buffer_id: BufferId) -> CursorLineInfo {
         let composite = self.composite_buffers.get(&buffer_id);
         let view_state = self.composite_view_states.get(&(split_id, buffer_id));
 
@@ -282,12 +278,12 @@ impl Editor {
             );
 
             let line_bytes = pane_line.and_then(|line_ref| {
-                    let source = composite.sources.get(view_state.focused_pane)?;
-                    self.buffers
-                        .get(&source.buffer_id)?
-                        .buffer
-                        .get_line(line_ref.line)
-                });
+                let source = composite.sources.get(view_state.focused_pane)?;
+                self.buffers
+                    .get(&source.buffer_id)?
+                    .buffer
+                    .get_line(line_ref.line)
+            });
 
             let content = line_bytes
                 .as_ref()
@@ -304,7 +300,11 @@ impl Editor {
                 .copied()
                 .unwrap_or(40) as usize;
 
-            CursorLineInfo { content, length, pane_width }
+            CursorLineInfo {
+                content,
+                length,
+                pane_width,
+            }
         } else {
             CursorLineInfo {
                 content: String::new(),
@@ -394,11 +394,17 @@ impl Editor {
                                     view_state.cursor_row = target_row;
                                     view_state.cursor_column = 0;
                                     view_state.sticky_column = 0;
-                                    if view_state.cursor_row >= view_state.scroll_row + viewport_height {
-                                        view_state.scroll_row = view_state.cursor_row.saturating_sub(viewport_height - 1);
+                                    if view_state.cursor_row
+                                        >= view_state.scroll_row + viewport_height
+                                    {
+                                        view_state.scroll_row = view_state
+                                            .cursor_row
+                                            .saturating_sub(viewport_height - 1);
                                     }
                                     // Reset horizontal scroll for new line
-                                    if let Some(viewport) = view_state.pane_viewports.get_mut(view_state.focused_pane) {
+                                    if let Some(viewport) =
+                                        view_state.pane_viewports.get_mut(view_state.focused_pane)
+                                    {
                                         viewport.left_column = 0;
                                     }
                                 }
@@ -413,12 +419,15 @@ impl Editor {
                     view_state.move_cursor_to_line_end(line_info.length, line_info.pane_width);
                 }
                 CursorMovement::WordLeft => {
-                    let new_col = find_word_boundary_left(&line_info.content, view_state.cursor_column);
+                    let new_col =
+                        find_word_boundary_left(&line_info.content, view_state.cursor_column);
                     if new_col < view_state.cursor_column {
                         view_state.cursor_column = new_col;
                         view_state.sticky_column = new_col;
                         // Update horizontal scroll to keep cursor visible
-                        if let Some(viewport) = view_state.pane_viewports.get_mut(view_state.focused_pane) {
+                        if let Some(viewport) =
+                            view_state.pane_viewports.get_mut(view_state.focused_pane)
+                        {
                             if view_state.cursor_column < viewport.left_column {
                                 viewport.left_column = view_state.cursor_column;
                             }
@@ -459,7 +468,9 @@ impl Editor {
                         view_state.cursor_column = new_col;
                         view_state.sticky_column = new_col;
                         // Update horizontal scroll to keep cursor visible
-                        if let Some(viewport) = view_state.pane_viewports.get_mut(view_state.focused_pane) {
+                        if let Some(viewport) =
+                            view_state.pane_viewports.get_mut(view_state.focused_pane)
+                        {
                             let visible_width = line_info.pane_width.saturating_sub(4);
                             if view_state.cursor_column >= viewport.left_column + visible_width {
                                 viewport.left_column = view_state
@@ -486,11 +497,17 @@ impl Editor {
                                     view_state.cursor_row = target_row;
                                     view_state.cursor_column = 0;
                                     view_state.sticky_column = 0;
-                                    if view_state.cursor_row >= view_state.scroll_row + viewport_height {
-                                        view_state.scroll_row = view_state.cursor_row.saturating_sub(viewport_height - 1);
+                                    if view_state.cursor_row
+                                        >= view_state.scroll_row + viewport_height
+                                    {
+                                        view_state.scroll_row = view_state
+                                            .cursor_row
+                                            .saturating_sub(viewport_height - 1);
                                     }
                                     // Reset horizontal scroll for new line
-                                    if let Some(viewport) = view_state.pane_viewports.get_mut(view_state.focused_pane) {
+                                    if let Some(viewport) =
+                                        view_state.pane_viewports.get_mut(view_state.focused_pane)
+                                    {
                                         viewport.left_column = 0;
                                     }
                                 }
@@ -505,7 +522,9 @@ impl Editor {
         if is_vertical || wrapped_to_new_line {
             let new_line_info = self.get_cursor_line_info(split_id, buffer_id);
             if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
-                if wrapped_to_new_line && matches!(movement, CursorMovement::Left | CursorMovement::WordLeft) {
+                if wrapped_to_new_line
+                    && matches!(movement, CursorMovement::Left | CursorMovement::WordLeft)
+                {
                     // Wrapping left goes to end of previous line
                     tracing::debug!(
                         "Wrap left to row {}, setting column to line length {}",
@@ -599,24 +618,83 @@ impl Editor {
             }
 
             // Cursor movement (without selection)
-            Action::MoveDown => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Down, false),
-            Action::MoveUp => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Up, false),
-            Action::MoveLeft => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Left, false),
-            Action::MoveRight => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Right, false),
-            Action::MoveLineStart => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::LineStart, false),
-            Action::MoveLineEnd => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::LineEnd, false),
-            Action::MoveWordLeft => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::WordLeft, false),
-            Action::MoveWordRight => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::WordRight, false),
+            Action::MoveDown => {
+                self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Down, false)
+            }
+            Action::MoveUp => {
+                self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Up, false)
+            }
+            Action::MoveLeft => {
+                self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Left, false)
+            }
+            Action::MoveRight => self.handle_cursor_movement_action(
+                split_id,
+                buffer_id,
+                CursorMovement::Right,
+                false,
+            ),
+            Action::MoveLineStart => self.handle_cursor_movement_action(
+                split_id,
+                buffer_id,
+                CursorMovement::LineStart,
+                false,
+            ),
+            Action::MoveLineEnd => self.handle_cursor_movement_action(
+                split_id,
+                buffer_id,
+                CursorMovement::LineEnd,
+                false,
+            ),
+            Action::MoveWordLeft => self.handle_cursor_movement_action(
+                split_id,
+                buffer_id,
+                CursorMovement::WordLeft,
+                false,
+            ),
+            Action::MoveWordRight => self.handle_cursor_movement_action(
+                split_id,
+                buffer_id,
+                CursorMovement::WordRight,
+                false,
+            ),
 
             // Cursor movement with selection
-            Action::SelectDown => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Down, true),
-            Action::SelectUp => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Up, true),
-            Action::SelectLeft => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Left, true),
-            Action::SelectRight => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Right, true),
-            Action::SelectLineStart => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::LineStart, true),
-            Action::SelectLineEnd => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::LineEnd, true),
-            Action::SelectWordLeft => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::WordLeft, true),
-            Action::SelectWordRight => self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::WordRight, true),
+            Action::SelectDown => {
+                self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Down, true)
+            }
+            Action::SelectUp => {
+                self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Up, true)
+            }
+            Action::SelectLeft => {
+                self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Left, true)
+            }
+            Action::SelectRight => {
+                self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Right, true)
+            }
+            Action::SelectLineStart => self.handle_cursor_movement_action(
+                split_id,
+                buffer_id,
+                CursorMovement::LineStart,
+                true,
+            ),
+            Action::SelectLineEnd => self.handle_cursor_movement_action(
+                split_id,
+                buffer_id,
+                CursorMovement::LineEnd,
+                true,
+            ),
+            Action::SelectWordLeft => self.handle_cursor_movement_action(
+                split_id,
+                buffer_id,
+                CursorMovement::WordLeft,
+                true,
+            ),
+            Action::SelectWordRight => self.handle_cursor_movement_action(
+                split_id,
+                buffer_id,
+                CursorMovement::WordRight,
+                true,
+            ),
 
             // Page navigation
             Action::MovePageDown | Action::MovePageUp => {
@@ -626,7 +704,8 @@ impl Editor {
                     .map(|vs| vs.viewport.height as usize)
                     .unwrap_or(24);
 
-                if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+                if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id))
+                {
                     if matches!(action, Action::MovePageDown) {
                         if let Some(composite) = self.composite_buffers.get(&buffer_id) {
                             let max_row = composite.row_count().saturating_sub(1);
@@ -649,7 +728,8 @@ impl Editor {
                     .map(|vs| vs.viewport.height as usize)
                     .unwrap_or(24);
 
-                if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+                if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id))
+                {
                     if matches!(action, Action::MoveDocumentStart) {
                         view_state.move_cursor_to_top();
                     } else if let Some(composite) = self.composite_buffers.get(&buffer_id) {
@@ -662,7 +742,11 @@ impl Editor {
 
             // Scroll without moving cursor
             Action::ScrollDown | Action::ScrollUp => {
-                let delta = if matches!(action, Action::ScrollDown) { 1 } else { -1 };
+                let delta = if matches!(action, Action::ScrollDown) {
+                    1
+                } else {
+                    -1
+                };
                 self.composite_scroll(split_id, buffer_id, delta);
                 Some(true)
             }

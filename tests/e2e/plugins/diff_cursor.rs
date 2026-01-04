@@ -1336,9 +1336,7 @@ fn test_diff_cursor_wrap_left_to_prev_line() {
     harness.render().unwrap();
 
     // Go to start of line (column 1)
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Verify we're at line 3 (row 2 displays as Ln 3)
@@ -1350,9 +1348,7 @@ fn test_diff_cursor_wrap_left_to_prev_line() {
     );
 
     // Press Left - should wrap to end of line 2 (the "first" line, displayed as Ln 2)
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
@@ -1425,9 +1421,7 @@ fn test_diff_cursor_word_wrap_at_boundaries() {
     );
 
     // Go back to line 3 start
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Ctrl+Left at start of line should go to previous line (line 2)
