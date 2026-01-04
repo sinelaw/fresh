@@ -269,11 +269,19 @@ impl Editor {
         let view_state = self.composite_view_states.get(&(split_id, buffer_id));
 
         if let (Some(composite), Some(view_state)) = (composite, view_state) {
-            let line_bytes = composite
+            let pane_line = composite
                 .alignment
                 .get_row(view_state.cursor_row)
-                .and_then(|row| row.get_pane_line(view_state.focused_pane))
-                .and_then(|line_ref| {
+                .and_then(|row| row.get_pane_line(view_state.focused_pane));
+
+            tracing::debug!(
+                "get_cursor_line_info: cursor_row={}, focused_pane={}, pane_line={:?}",
+                view_state.cursor_row,
+                view_state.focused_pane,
+                pane_line
+            );
+
+            let line_bytes = pane_line.and_then(|line_ref| {
                     let source = composite.sources.get(view_state.focused_pane)?;
                     self.buffers
                         .get(&source.buffer_id)?
@@ -322,6 +330,10 @@ impl Editor {
             .unwrap_or(0);
 
         let is_vertical = matches!(movement, CursorMovement::Up | CursorMovement::Down);
+        let mut wrapped_to_new_line = false;
+
+        // Get alignment reference for wrap checks
+        let composite = self.composite_buffers.get(&buffer_id);
 
         if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
             match movement {
@@ -332,10 +344,67 @@ impl Editor {
                     view_state.move_cursor_up();
                 }
                 CursorMovement::Left => {
-                    view_state.move_cursor_left();
+                    if view_state.cursor_column > 0 {
+                        view_state.move_cursor_left();
+                    } else if view_state.cursor_row > 0 {
+                        // Try to wrap to end of previous line - find a row with content
+                        if let Some(composite) = composite {
+                            let focused_pane = view_state.focused_pane;
+                            let mut target_row = view_state.cursor_row - 1;
+                            while target_row > 0 {
+                                if let Some(row) = composite.alignment.get_row(target_row) {
+                                    if row.get_pane_line(focused_pane).is_some() {
+                                        break;
+                                    }
+                                }
+                                target_row -= 1;
+                            }
+                            // Only wrap if target row has content
+                            if let Some(row) = composite.alignment.get_row(target_row) {
+                                if row.get_pane_line(focused_pane).is_some() {
+                                    view_state.cursor_row = target_row;
+                                    if view_state.cursor_row < view_state.scroll_row {
+                                        view_state.scroll_row = view_state.cursor_row;
+                                    }
+                                    wrapped_to_new_line = true;
+                                }
+                            }
+                        }
+                    }
                 }
                 CursorMovement::Right => {
-                    view_state.move_cursor_right(line_info.length, line_info.pane_width);
+                    if view_state.cursor_column < line_info.length {
+                        view_state.move_cursor_right(line_info.length, line_info.pane_width);
+                    } else if view_state.cursor_row < max_row {
+                        // Try to wrap to start of next line - find a row with content
+                        if let Some(composite) = composite {
+                            let focused_pane = view_state.focused_pane;
+                            let mut target_row = view_state.cursor_row + 1;
+                            while target_row < max_row {
+                                if let Some(row) = composite.alignment.get_row(target_row) {
+                                    if row.get_pane_line(focused_pane).is_some() {
+                                        break;
+                                    }
+                                }
+                                target_row += 1;
+                            }
+                            // Only wrap if target row has content
+                            if let Some(row) = composite.alignment.get_row(target_row) {
+                                if row.get_pane_line(focused_pane).is_some() {
+                                    view_state.cursor_row = target_row;
+                                    view_state.cursor_column = 0;
+                                    view_state.sticky_column = 0;
+                                    if view_state.cursor_row >= view_state.scroll_row + viewport_height {
+                                        view_state.scroll_row = view_state.cursor_row.saturating_sub(viewport_height - 1);
+                                    }
+                                    // Reset horizontal scroll for new line
+                                    if let Some(viewport) = view_state.pane_viewports.get_mut(view_state.focused_pane) {
+                                        viewport.left_column = 0;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 CursorMovement::LineStart => {
                     view_state.move_cursor_to_line_start();
@@ -345,12 +414,38 @@ impl Editor {
                 }
                 CursorMovement::WordLeft => {
                     let new_col = find_word_boundary_left(&line_info.content, view_state.cursor_column);
-                    view_state.cursor_column = new_col;
-                    view_state.sticky_column = new_col;
-                    // Update horizontal scroll to keep cursor visible
-                    if let Some(viewport) = view_state.pane_viewports.get_mut(view_state.focused_pane) {
-                        if view_state.cursor_column < viewport.left_column {
-                            viewport.left_column = view_state.cursor_column;
+                    if new_col < view_state.cursor_column {
+                        view_state.cursor_column = new_col;
+                        view_state.sticky_column = new_col;
+                        // Update horizontal scroll to keep cursor visible
+                        if let Some(viewport) = view_state.pane_viewports.get_mut(view_state.focused_pane) {
+                            if view_state.cursor_column < viewport.left_column {
+                                viewport.left_column = view_state.cursor_column;
+                            }
+                        }
+                    } else if view_state.cursor_row > 0 {
+                        // At start of line, wrap to end of previous line - find a row with content
+                        if let Some(composite) = composite {
+                            let focused_pane = view_state.focused_pane;
+                            let mut target_row = view_state.cursor_row - 1;
+                            while target_row > 0 {
+                                if let Some(row) = composite.alignment.get_row(target_row) {
+                                    if row.get_pane_line(focused_pane).is_some() {
+                                        break;
+                                    }
+                                }
+                                target_row -= 1;
+                            }
+                            // Only wrap if target row has content
+                            if let Some(row) = composite.alignment.get_row(target_row) {
+                                if row.get_pane_line(focused_pane).is_some() {
+                                    view_state.cursor_row = target_row;
+                                    if view_state.cursor_row < view_state.scroll_row {
+                                        view_state.scroll_row = view_state.cursor_row;
+                                    }
+                                    wrapped_to_new_line = true;
+                                }
+                            }
                         }
                     }
                 }
@@ -360,26 +455,68 @@ impl Editor {
                         view_state.cursor_column,
                         line_info.length,
                     );
-                    view_state.cursor_column = new_col;
-                    view_state.sticky_column = new_col;
-                    // Update horizontal scroll to keep cursor visible
-                    if let Some(viewport) = view_state.pane_viewports.get_mut(view_state.focused_pane) {
-                        let visible_width = line_info.pane_width.saturating_sub(4);
-                        if view_state.cursor_column >= viewport.left_column + visible_width {
-                            viewport.left_column = view_state
-                                .cursor_column
-                                .saturating_sub(visible_width.saturating_sub(1));
+                    if new_col > view_state.cursor_column {
+                        view_state.cursor_column = new_col;
+                        view_state.sticky_column = new_col;
+                        // Update horizontal scroll to keep cursor visible
+                        if let Some(viewport) = view_state.pane_viewports.get_mut(view_state.focused_pane) {
+                            let visible_width = line_info.pane_width.saturating_sub(4);
+                            if view_state.cursor_column >= viewport.left_column + visible_width {
+                                viewport.left_column = view_state
+                                    .cursor_column
+                                    .saturating_sub(visible_width.saturating_sub(1));
+                            }
+                        }
+                    } else if view_state.cursor_row < max_row {
+                        // At end of line, wrap to start of next line - find a row with content
+                        if let Some(composite) = composite {
+                            let focused_pane = view_state.focused_pane;
+                            let mut target_row = view_state.cursor_row + 1;
+                            while target_row < max_row {
+                                if let Some(row) = composite.alignment.get_row(target_row) {
+                                    if row.get_pane_line(focused_pane).is_some() {
+                                        break;
+                                    }
+                                }
+                                target_row += 1;
+                            }
+                            // Only wrap if target row has content
+                            if let Some(row) = composite.alignment.get_row(target_row) {
+                                if row.get_pane_line(focused_pane).is_some() {
+                                    view_state.cursor_row = target_row;
+                                    view_state.cursor_column = 0;
+                                    view_state.sticky_column = 0;
+                                    if view_state.cursor_row >= view_state.scroll_row + viewport_height {
+                                        view_state.scroll_row = view_state.cursor_row.saturating_sub(viewport_height - 1);
+                                    }
+                                    // Reset horizontal scroll for new line
+                                    if let Some(viewport) = view_state.pane_viewports.get_mut(view_state.focused_pane) {
+                                        viewport.left_column = 0;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        // For vertical movement, get line info for the NEW row and clamp cursor column
-        if is_vertical {
+        // For vertical movement or line wrap, get line info for the NEW row and clamp/set cursor column
+        if is_vertical || wrapped_to_new_line {
             let new_line_info = self.get_cursor_line_info(split_id, buffer_id);
             if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
-                view_state.clamp_cursor_to_line(new_line_info.length);
+                if wrapped_to_new_line && matches!(movement, CursorMovement::Left | CursorMovement::WordLeft) {
+                    // Wrapping left goes to end of previous line
+                    tracing::debug!(
+                        "Wrap left to row {}, setting column to line length {}",
+                        view_state.cursor_row,
+                        new_line_info.length
+                    );
+                    view_state.cursor_column = new_line_info.length;
+                    view_state.sticky_column = new_line_info.length;
+                } else {
+                    view_state.clamp_cursor_to_line(new_line_info.length);
+                }
             }
         }
     }

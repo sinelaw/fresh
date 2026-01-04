@@ -1518,22 +1518,32 @@ impl SplitRenderer {
 
         // Pad to fill width
         if rendered < max_width {
-            let padding = " ".repeat(max_width - rendered);
+            let padding_len = max_width - rendered;
             // cursor_column is absolute, convert to visual position for padding check
             let cursor_visual = cursor_column.saturating_sub(left_column);
-            let pad_style = if show_cursor && cursor_visual >= rendered && cursor_visual < max_width
-            {
-                // Cursor is in padding area - show cursor at beginning of padding
-                // (past end of line content)
-                if cursor_visual == rendered {
-                    Style::default().fg(theme.editor_bg).bg(theme.editor_fg)
-                } else {
-                    Style::default().bg(bg)
+
+            // Check if cursor is in the padding area (past end of line content)
+            if show_cursor && cursor_visual >= rendered && cursor_visual < max_width {
+                // Cursor is in padding area - render cursor as single char
+                let cursor_offset = cursor_visual - rendered;
+                let cursor_style = Style::default().fg(theme.editor_bg).bg(theme.editor_fg);
+                let normal_style = Style::default().bg(bg);
+
+                // Pre-cursor padding (if cursor is not at start of padding)
+                if cursor_offset > 0 {
+                    spans.push(Span::styled(" ".repeat(cursor_offset), normal_style));
+                }
+                // Single-char cursor
+                spans.push(Span::styled(" ", cursor_style));
+                // Post-cursor padding
+                let remaining = padding_len.saturating_sub(cursor_offset + 1);
+                if remaining > 0 {
+                    spans.push(Span::styled(" ".repeat(remaining), normal_style));
                 }
             } else {
-                Style::default().bg(bg)
-            };
-            spans.push(Span::styled(padding, pad_style));
+                // No cursor in padding - just fill with background
+                spans.push(Span::styled(" ".repeat(padding_len), Style::default().bg(bg)));
+            }
         }
     }
 

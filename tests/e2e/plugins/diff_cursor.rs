@@ -1217,3 +1217,229 @@ fn test_diff_cursor_always_visible() {
     let screen = harness.screen_to_string();
     assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
+
+// =============================================================================
+// Line Wrap Tests - cursor should wrap to next/prev line at boundaries
+// =============================================================================
+
+/// Create a test repo with simple multi-line content for wrap testing
+fn create_repo_for_wrap_test(repo: &GitTestRepo) {
+    let file_path = repo.path.join("wrap.txt");
+    // OLD version: 3 lines with specific lengths
+    let old_content = "first\nsecond\nthird\n";
+    fs::write(&file_path, old_content).unwrap();
+
+    repo.git_add(&["wrap.txt"]);
+    repo.git_commit("Initial");
+
+    // NEW version: same lines but modified
+    let new_content = "first_mod\nsecond_mod\nthird_mod\n";
+    fs::write(&file_path, new_content).unwrap();
+}
+
+/// Test that pressing Right at end of line moves to start of next line
+#[test]
+fn test_diff_cursor_wrap_right_to_next_line() {
+    init_tracing_from_env();
+
+    let repo = GitTestRepo::new();
+    create_repo_for_wrap_test(&repo);
+    setup_audit_mode_plugin(&repo);
+
+    let file_path = repo.path.join("wrap.txt");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_side_by_side_diff(&mut harness);
+
+    // Go to first content line (row 0 is header, row 1 is "first")
+    // Ctrl+Home goes to row 0, Down goes to row 1 (first content)
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Go to end of first content line
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Verify we're at line 2 (row 1 displays as Ln 2)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 2,") || screen.contains("Ln 2 "),
+        "Should be on line 2, got: {}",
+        screen
+    );
+
+    // Press Right - should wrap to start of line 3 (row 2, "second")
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 3,") || screen.contains("Ln 3 "),
+        "Should be on line 3 after wrapping, got: {}",
+        screen
+    );
+
+    // Should be at column 1 (start of line)
+    assert!(
+        screen.contains("Col 1") || screen.contains(", Col 1"),
+        "Should be at column 1 after wrapping, got: {}",
+        screen
+    );
+}
+
+/// Test that pressing Left at start of line moves to end of previous line
+#[test]
+fn test_diff_cursor_wrap_left_to_prev_line() {
+    init_tracing_from_env();
+
+    let repo = GitTestRepo::new();
+    create_repo_for_wrap_test(&repo);
+    setup_audit_mode_plugin(&repo);
+
+    let file_path = repo.path.join("wrap.txt");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_side_by_side_diff(&mut harness);
+
+    // Go to third line (row 0 is header, row 1 is "first", row 2 is "second")
+    // We need to go Down twice to get to "second" content line
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Go to start of line (column 1)
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify we're at line 3 (row 2 displays as Ln 3)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 3,") || screen.contains("Ln 3 "),
+        "Should be on line 3, got: {}",
+        screen
+    );
+
+    // Press Left - should wrap to end of line 2 (the "first" line, displayed as Ln 2)
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 2,") || screen.contains("Ln 2 "),
+        "Should be on line 2 after wrapping, got: {}",
+        screen
+    );
+
+    // Should be at end of line 2 (column 6 for "first" which has 5 chars, cursor at end is col 6)
+    // Note: Column might be displayed as 5 or 6 depending on 0-indexed vs 1-indexed
+    assert!(
+        screen.contains("Col 5") || screen.contains("Col 6"),
+        "Should be at end of line (col 5 or 6), got: {}",
+        screen
+    );
+}
+
+/// Test that word movement (Ctrl+Right/Left) wraps at line boundaries
+#[test]
+fn test_diff_cursor_word_wrap_at_boundaries() {
+    init_tracing_from_env();
+
+    let repo = GitTestRepo::new();
+    create_repo_for_wrap_test(&repo);
+    setup_audit_mode_plugin(&repo);
+
+    let file_path = repo.path.join("wrap.txt");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_side_by_side_diff(&mut harness);
+
+    // Go to first content line (row 1), end
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Verify we're at line 2 (row 1 = Ln 2)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 2,") || screen.contains("Ln 2 "),
+        "Should be on line 2, got: {}",
+        screen
+    );
+
+    // Ctrl+Right at end of line should go to next line (line 3)
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 3,") || screen.contains("Ln 3 "),
+        "Ctrl+Right at end should go to line 3, got: {}",
+        screen
+    );
+
+    // Go back to line 3 start
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Ctrl+Left at start of line should go to previous line (line 2)
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 2,") || screen.contains("Ln 2 "),
+        "Ctrl+Left at start should go to line 2, got: {}",
+        screen
+    );
+}
