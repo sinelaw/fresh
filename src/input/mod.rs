@@ -9,6 +9,7 @@ pub mod commands;
 pub mod fuzzy;
 pub mod handler;
 pub mod input_history;
+pub mod key_translator;
 pub mod keybindings;
 pub mod multi_cursor;
 pub mod position_history;
