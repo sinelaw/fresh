@@ -1150,6 +1150,15 @@ pub fn get_all_commands() -> Vec<Command> {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
         },
+        // Input calibration
+        Command {
+            name: t!("cmd.calibrate_input").to_string(),
+            description: t!("cmd.calibrate_input_desc").to_string(),
+            action: Action::CalibrateInput,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
         // Terminal commands
         Command {
             name: t!("cmd.open_terminal").to_string(),

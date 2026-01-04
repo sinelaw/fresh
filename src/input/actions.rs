@@ -2272,7 +2272,8 @@ pub fn action_to_events(
         | Action::ToggleDebugHighlights
         | Action::ResetBufferSettings
         | Action::ShellCommand
-        | Action::ShellCommandReplace => return None,
+        | Action::ShellCommandReplace
+        | Action::CalibrateInput => return None,
 
         // Block/rectangular selection actions
         Action::BlockSelectLeft => {

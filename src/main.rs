@@ -64,6 +64,10 @@ struct Args {
     /// Print the directories used by Fresh and exit
     #[arg(long)]
     show_paths: bool,
+
+    /// Run input calibration wizard and exit
+    #[arg(long)]
+    calibrate: bool,
 }
 
 /// Parsed file location from CLI argument in file:line:col format
@@ -597,6 +601,9 @@ fn main() -> io::Result<()> {
         return Ok(());
     }
 
+    // Handle --calibrate flag (requires terminal setup, handled later)
+    // This flag is processed after terminal initialization
+
     // Handle --dump-config early (no terminal setup needed)
     if args.dump_config {
         let dir_context = fresh::config_io::DirectoryContext::from_system()?;
@@ -648,6 +655,21 @@ fn main() -> io::Result<()> {
 
     let mut current_working_dir = initial_working_dir;
     let (terminal_width, terminal_height) = terminal_size;
+
+    // Handle --calibrate flag: run the input calibration wizard and exit
+    if args.calibrate {
+        // TODO: Implement calibration wizard UI in Phase 3
+        // For now, just print a message and exit cleanly
+        let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
+        let _ = stdout().execute(DisableBracketedPaste);
+        let _ = stdout().execute(SetCursorStyle::DefaultUserShape);
+        let _ = stdout().execute(PopKeyboardEnhancementFlags);
+        disable_raw_mode()?;
+        stdout().execute(LeaveAlternateScreen)?;
+        eprintln!("Input calibration wizard is not yet implemented.");
+        eprintln!("This feature will be available in a future version.");
+        return Ok(());
+    }
 
     // Track whether this is the first run (for session restore, file open, etc.)
     let mut is_first_run = true;

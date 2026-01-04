@@ -1776,6 +1776,7 @@ impl KeybindingResolver {
             Action::ShellCommandReplace => t!("action.shell_command_replace"),
             Action::ToUpperCase => t!("action.to_uppercase"),
             Action::ToLowerCase => t!("action.to_lowercase"),
+            Action::CalibrateInput => t!("action.calibrate_input"),
             Action::None => t!("action.none"),
         }
         .to_string()
