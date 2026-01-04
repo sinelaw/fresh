@@ -919,9 +919,9 @@ impl Theme {
             line_number_bg: Color::Black,
 
             // Diff highlighting colors
-            diff_add_bg: Color::Rgb(0, 80, 0),      // Dark green
-            diff_remove_bg: Color::Rgb(100, 0, 0),  // Dark red
-            diff_modify_bg: Color::Rgb(25, 22, 0),  // Subtle yellow, close to black
+            diff_add_bg: Color::Rgb(0, 80, 0),     // Dark green
+            diff_remove_bg: Color::Rgb(100, 0, 0), // Dark red
+            diff_modify_bg: Color::Rgb(25, 22, 0), // Subtle yellow, close to black
             diff_add_highlight_bg: Color::Rgb(0, 140, 0), // Brighter green
             diff_remove_highlight_bg: Color::Rgb(180, 0, 0), // Brighter red
 
@@ -1100,8 +1100,8 @@ impl Theme {
             line_number_bg: Color::Rgb(0, 0, 170),
 
             // Diff highlighting colors
-            diff_add_bg: Color::Rgb(0, 100, 0),     // DOS green
-            diff_remove_bg: Color::Rgb(170, 0, 0),  // DOS red
+            diff_add_bg: Color::Rgb(0, 100, 0),      // DOS green
+            diff_remove_bg: Color::Rgb(170, 0, 0),   // DOS red
             diff_modify_bg: Color::Rgb(20, 20, 140), // Subtle purple-blue, close to DOS blue bg
             diff_add_highlight_bg: Color::Rgb(0, 170, 0), // Brighter DOS green
             diff_remove_highlight_bg: Color::Rgb(255, 0, 0), // Brighter DOS red
