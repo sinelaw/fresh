@@ -170,7 +170,7 @@ impl CompositeViewState {
         if let Some(viewport) = self.pane_viewports.get_mut(self.focused_pane) {
             let visible_width = pane_width.saturating_sub(4); // minus gutter
             if self.cursor_column >= viewport.left_column + visible_width {
-                viewport.left_column = self.cursor_column.saturating_sub(visible_width - 1);
+                viewport.left_column = self.cursor_column.saturating_sub(visible_width.saturating_sub(1));
             }
         }
     }

@@ -416,7 +416,7 @@ impl Editor {
                                 if view_state.cursor_column >= viewport.left_column + visible_width
                                 {
                                     viewport.left_column =
-                                        view_state.cursor_column.saturating_sub(visible_width - 1);
+                                        view_state.cursor_column.saturating_sub(visible_width.saturating_sub(1));
                                 }
                             }
                         }
@@ -631,7 +631,7 @@ impl Editor {
                                 if view_state.cursor_column >= viewport.left_column + visible_width
                                 {
                                     viewport.left_column =
-                                        view_state.cursor_column.saturating_sub(visible_width - 1);
+                                        view_state.cursor_column.saturating_sub(visible_width.saturating_sub(1));
                                 }
                             }
                         }
