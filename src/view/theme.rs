@@ -119,7 +119,7 @@ fn default_diff_remove_bg() -> ColorDef {
 }
 
 fn default_diff_modify_bg() -> ColorDef {
-    ColorDef::Rgb(70, 60, 30) // Dark yellow
+    ColorDef::Rgb(40, 38, 30) // Very subtle yellow tint, close to dark bg
 }
 
 fn default_inactive_cursor() -> ColorDef {
@@ -659,7 +659,7 @@ impl Theme {
             // Diff highlighting colors
             diff_add_bg: Color::Rgb(35, 60, 35),    // Dark green
             diff_remove_bg: Color::Rgb(70, 35, 35), // Dark red
-            diff_modify_bg: Color::Rgb(70, 60, 30), // Dark yellow/orange
+            diff_modify_bg: Color::Rgb(40, 38, 30), // Subtle yellow tint, close to editor_bg
             diff_add_highlight_bg: Color::Rgb(60, 110, 60), // Brighter green for inline
             diff_remove_highlight_bg: Color::Rgb(120, 50, 50), // Brighter red for inline
 
@@ -790,7 +790,7 @@ impl Theme {
             // Diff highlighting colors
             diff_add_bg: Color::Rgb(200, 255, 200), // Light green
             diff_remove_bg: Color::Rgb(255, 200, 200), // Light red
-            diff_modify_bg: Color::Rgb(255, 240, 180), // Light yellow
+            diff_modify_bg: Color::Rgb(255, 252, 240), // Subtle cream, close to white
             diff_add_highlight_bg: Color::Rgb(140, 220, 140), // Darker green for inline (contrast on light bg)
             diff_remove_highlight_bg: Color::Rgb(220, 140, 140), // Darker red for inline
 
@@ -921,7 +921,7 @@ impl Theme {
             // Diff highlighting colors
             diff_add_bg: Color::Rgb(0, 80, 0),      // Dark green
             diff_remove_bg: Color::Rgb(100, 0, 0),  // Dark red
-            diff_modify_bg: Color::Rgb(100, 80, 0), // Dark yellow
+            diff_modify_bg: Color::Rgb(25, 22, 0),  // Subtle yellow, close to black
             diff_add_highlight_bg: Color::Rgb(0, 140, 0), // Brighter green
             diff_remove_highlight_bg: Color::Rgb(180, 0, 0), // Brighter red
 
@@ -1102,7 +1102,7 @@ impl Theme {
             // Diff highlighting colors
             diff_add_bg: Color::Rgb(0, 100, 0),     // DOS green
             diff_remove_bg: Color::Rgb(170, 0, 0),  // DOS red
-            diff_modify_bg: Color::Rgb(170, 85, 0), // DOS orange
+            diff_modify_bg: Color::Rgb(20, 20, 140), // Subtle purple-blue, close to DOS blue bg
             diff_add_highlight_bg: Color::Rgb(0, 170, 0), // Brighter DOS green
             diff_remove_highlight_bg: Color::Rgb(255, 0, 0), // Brighter DOS red
 
