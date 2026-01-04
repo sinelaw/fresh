@@ -43,8 +43,10 @@ impl Editor {
             None => return InputResult::Ignored,
         };
 
-        // Handle the key based on current phase
-        let action = if wizard.is_verify_phase() {
+        // Handle the key based on current state
+        let action = if wizard.has_pending_confirmation() {
+            wizard.handle_confirmation_key(*event)
+        } else if wizard.is_verify_phase() {
             wizard.handle_verify_key(*event)
         } else {
             wizard.handle_capture_key(*event)
@@ -58,10 +60,12 @@ impl Editor {
         // Process the action, deciding what to do with the wizard
         match action {
             WizardAction::Continue
+            | WizardAction::GoBack
             | WizardAction::SkipGroup
             | WizardAction::KeyCaptured
             | WizardAction::KeyVerified
-            | WizardAction::ReservedKey => {
+            | WizardAction::ReservedKey
+            | WizardAction::ShowConfirmation => {
                 // Put wizard back and continue
                 self.calibration_wizard = Some(wizard);
             }
@@ -74,7 +78,7 @@ impl Editor {
                 self.save_calibration(wizard);
             }
             WizardAction::Restart => {
-                wizard.restart();
+                // Restart already called by handle_confirmation_key
                 self.calibration_wizard = Some(wizard);
             }
         }

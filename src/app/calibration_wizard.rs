@@ -10,6 +10,7 @@
 
 use crate::input::key_translator::{KeyEventKey, KeyTranslator};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use rust_i18n::t;
 use std::collections::{HashMap, HashSet};
 
 /// What the user's key SHOULD produce (the expected/normalized key)
@@ -224,6 +225,8 @@ pub enum KeyStatus {
 pub enum WizardAction {
     /// Continue to next key
     Continue,
+    /// Go back to previous key
+    GoBack,
     /// Skip to next group
     SkipGroup,
     /// Abort wizard (discard changes)
@@ -238,6 +241,19 @@ pub enum WizardAction {
     KeyCaptured,
     /// Key verified in verification phase
     KeyVerified,
+    /// Showing confirmation dialog
+    ShowConfirmation,
+}
+
+/// Pending confirmation for destructive actions
+#[derive(Debug, Clone, PartialEq)]
+pub enum PendingConfirmation {
+    /// No confirmation pending
+    None,
+    /// Confirming abort (discard all changes)
+    Abort,
+    /// Confirming restart (discard progress)
+    Restart,
 }
 
 /// The calibration wizard state machine
@@ -251,12 +267,16 @@ pub struct CalibrationWizard {
     pending_translations: HashMap<KeyEventKey, KeyEventKey>,
     /// Status of each key (flattened index)
     key_statuses: Vec<KeyStatus>,
+    /// Raw keys captured for each flat index (for undo when going back)
+    captured_raw_keys: HashMap<usize, KeyEventKey>,
     /// Groups that were skipped entirely
     skipped_groups: HashSet<usize>,
     /// Which keys have been verified in verification phase
     verified: HashSet<usize>,
     /// Status message to display
     pub status_message: Option<String>,
+    /// Pending confirmation dialog
+    pub pending_confirmation: PendingConfirmation,
 }
 
 impl CalibrationWizard {
@@ -273,9 +293,46 @@ impl CalibrationWizard {
             groups,
             pending_translations: HashMap::new(),
             key_statuses: vec![KeyStatus::Pending; total_keys],
+            captured_raw_keys: HashMap::new(),
             skipped_groups: HashSet::new(),
             verified: HashSet::new(),
             status_message: None,
+            pending_confirmation: PendingConfirmation::None,
+        }
+    }
+
+    /// Check if a confirmation dialog is pending
+    pub fn has_pending_confirmation(&self) -> bool {
+        self.pending_confirmation != PendingConfirmation::None
+    }
+
+    /// Handle key input when a confirmation dialog is showing
+    pub fn handle_confirmation_key(&mut self, key: KeyEvent) -> WizardAction {
+        if key.modifiers != KeyModifiers::NONE {
+            return WizardAction::Continue;
+        }
+
+        match key.code {
+            KeyCode::Char('y') => {
+                // Confirm the action
+                let confirmation =
+                    std::mem::replace(&mut self.pending_confirmation, PendingConfirmation::None);
+                match confirmation {
+                    PendingConfirmation::Abort => WizardAction::Abort,
+                    PendingConfirmation::Restart => {
+                        self.restart();
+                        WizardAction::Restart
+                    }
+                    PendingConfirmation::None => WizardAction::Continue,
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Esc => {
+                // Cancel the confirmation
+                self.pending_confirmation = PendingConfirmation::None;
+                self.status_message = Some(t!("calibration.cancelled").to_string());
+                WizardAction::Continue
+            }
+            _ => WizardAction::Continue,
         }
     }
 
@@ -362,9 +419,18 @@ impl CalibrationWizard {
                     // Skip this key
                     let flat_idx = self.flat_index(group_idx, key_idx);
                     self.key_statuses[flat_idx] = KeyStatus::Skipped;
-                    self.status_message = Some("Skipped (using default)".to_string());
+                    self.status_message = Some(t!("calibration.skipped_key").to_string());
                     self.advance_to_next();
                     return WizardAction::Continue;
+                }
+                KeyCode::Char('b') => {
+                    // Go back to previous key
+                    if self.go_back() {
+                        return WizardAction::GoBack;
+                    } else {
+                        self.status_message = Some(t!("calibration.at_first_key").to_string());
+                        return WizardAction::Continue;
+                    }
                 }
                 KeyCode::Char('g') => {
                     // Skip entire group
@@ -372,13 +438,13 @@ impl CalibrationWizard {
                     return WizardAction::SkipGroup;
                 }
                 KeyCode::Char('a') => {
-                    // Abort wizard
-                    return WizardAction::Abort;
+                    // Show confirmation before aborting
+                    self.pending_confirmation = PendingConfirmation::Abort;
+                    return WizardAction::ShowConfirmation;
                 }
                 KeyCode::Char('y') | KeyCode::Char('n') | KeyCode::Char('r') => {
                     // Reserved for verification phase
-                    self.status_message =
-                        Some("Reserved key. Press the target key or [s] to skip.".to_string());
+                    self.status_message = Some(t!("calibration.reserved_key").to_string());
                     return WizardAction::ReservedKey;
                 }
                 _ => {}
@@ -393,14 +459,24 @@ impl CalibrationWizard {
         // Check if the key is already what we expect (no translation needed)
         if key.code == expected.code && key.modifiers == expected.modifiers {
             self.key_statuses[flat_idx] = KeyStatus::Skipped;
-            self.status_message = Some("Key works correctly (no mapping needed)".to_string());
+            self.captured_raw_keys.remove(&flat_idx);
+            self.status_message = Some(t!("calibration.key_works").to_string());
         } else {
             // Record the translation: raw -> expected
             let raw_key = KeyEventKey::from_key_event(&key);
             let expected_key = KeyEventKey::from_key_event(&expected);
-            self.pending_translations.insert(raw_key, expected_key);
+            self.pending_translations
+                .insert(raw_key.clone(), expected_key);
+            self.captured_raw_keys.insert(flat_idx, raw_key);
             self.key_statuses[flat_idx] = KeyStatus::Captured;
-            self.status_message = Some(format!("Captured: {:?} -> {}", key.code, target.name));
+            self.status_message = Some(
+                t!(
+                    "calibration.captured",
+                    key = format!("{:?}", key.code),
+                    target = target.name
+                )
+                .to_string(),
+            );
         }
 
         self.advance_to_next();
@@ -416,10 +492,21 @@ impl CalibrationWizard {
                     return WizardAction::Save;
                 }
                 KeyCode::Char('r') => {
-                    return WizardAction::Restart;
+                    // Show confirmation before restarting
+                    self.pending_confirmation = PendingConfirmation::Restart;
+                    return WizardAction::ShowConfirmation;
                 }
                 KeyCode::Char('a') => {
-                    return WizardAction::Abort;
+                    // Show confirmation before aborting
+                    self.pending_confirmation = PendingConfirmation::Abort;
+                    return WizardAction::ShowConfirmation;
+                }
+                KeyCode::Char('b') => {
+                    // Go back to last capture key from verify phase
+                    if self.go_back() {
+                        return WizardAction::GoBack;
+                    }
+                    return WizardAction::Continue;
                 }
                 _ => {}
             }
@@ -440,13 +527,14 @@ impl CalibrationWizard {
                     let flat_idx = self.flat_index(group_idx, key_idx);
                     self.verified.insert(flat_idx);
                     self.key_statuses[flat_idx] = KeyStatus::Verified;
-                    self.status_message = Some(format!("{} verified!", target.name));
+                    self.status_message =
+                        Some(t!("calibration.key_verified", key = target.name).to_string());
                     return WizardAction::KeyVerified;
                 }
             }
         }
 
-        self.status_message = Some("Key not recognized".to_string());
+        self.status_message = Some(t!("calibration.key_not_recognized").to_string());
         WizardAction::Continue
     }
 
@@ -474,7 +562,8 @@ impl CalibrationWizard {
             }
 
             self.skipped_groups.insert(group_idx);
-            self.status_message = Some(format!("Skipped group: {}", group.name));
+            self.status_message =
+                Some(t!("calibration.skipped_group", group = group.name).to_string());
 
             // Advance to next group
             if group_idx + 1 < self.groups.len() {
@@ -510,10 +599,67 @@ impl CalibrationWizard {
             } else {
                 // All keys captured, move to verification
                 self.step = CalibrationStep::Verify;
-                self.status_message =
-                    Some("Capture complete! Test your keys or [y] to save.".to_string());
+                self.status_message = Some(t!("calibration.capture_complete").to_string());
             }
         }
+    }
+
+    /// Go back to the previous key, undoing any capture
+    /// Returns true if we went back, false if already at the first key
+    fn go_back(&mut self) -> bool {
+        let (group_idx, key_idx) = match &self.step {
+            CalibrationStep::Capture { group_idx, key_idx } => (*group_idx, *key_idx),
+            CalibrationStep::Verify => {
+                // Go back to the last key
+                let last_group = self.groups.len() - 1;
+                let last_key = self.groups[last_group].targets.len() - 1;
+                self.step = CalibrationStep::Capture {
+                    group_idx: last_group,
+                    key_idx: last_key,
+                };
+                self.undo_key_at(last_group, last_key);
+                self.status_message = Some(t!("calibration.went_back").to_string());
+                return true;
+            }
+        };
+
+        // Already at the first key?
+        if group_idx == 0 && key_idx == 0 {
+            return false;
+        }
+
+        // Calculate previous position
+        let (prev_group, prev_key) = if key_idx > 0 {
+            (group_idx, key_idx - 1)
+        } else {
+            // Go to last key of previous group
+            let prev_group = group_idx - 1;
+            let prev_key = self.groups[prev_group].targets.len() - 1;
+            // Un-skip the group if we're going back into it
+            self.skipped_groups.remove(&prev_group);
+            (prev_group, prev_key)
+        };
+
+        self.step = CalibrationStep::Capture {
+            group_idx: prev_group,
+            key_idx: prev_key,
+        };
+        self.undo_key_at(prev_group, prev_key);
+        self.status_message = Some(t!("calibration.went_back").to_string());
+        true
+    }
+
+    /// Undo the capture at the given position
+    fn undo_key_at(&mut self, group_idx: usize, key_idx: usize) {
+        let flat_idx = self.flat_index(group_idx, key_idx);
+
+        // Remove any translation we recorded for this key
+        if let Some(raw_key) = self.captured_raw_keys.remove(&flat_idx) {
+            self.pending_translations.remove(&raw_key);
+        }
+
+        // Reset status to pending
+        self.key_statuses[flat_idx] = KeyStatus::Pending;
     }
 
     /// Reset the wizard to start over
@@ -525,9 +671,10 @@ impl CalibrationWizard {
         };
         self.pending_translations.clear();
         self.key_statuses = vec![KeyStatus::Pending; total_keys];
+        self.captured_raw_keys.clear();
         self.skipped_groups.clear();
         self.verified.clear();
-        self.status_message = Some("Wizard restarted".to_string());
+        self.status_message = Some(t!("calibration.restarted").to_string());
     }
 
     /// Check if we're in verify phase
@@ -649,13 +796,99 @@ mod tests {
     }
 
     #[test]
-    fn test_abort() {
+    fn test_abort_with_confirmation() {
         let mut wizard = CalibrationWizard::new();
 
+        // Press 'a' to request abort
         let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
         let action = wizard.handle_capture_key(key);
 
+        // Should show confirmation first
+        assert!(matches!(action, WizardAction::ShowConfirmation));
+        assert!(wizard.has_pending_confirmation());
+        assert!(matches!(
+            wizard.pending_confirmation,
+            PendingConfirmation::Abort
+        ));
+
+        // Confirm with 'y'
+        let confirm_key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+        let action = wizard.handle_confirmation_key(confirm_key);
+
         assert!(matches!(action, WizardAction::Abort));
+    }
+
+    #[test]
+    fn test_abort_cancelled() {
+        let mut wizard = CalibrationWizard::new();
+
+        // Press 'a' to request abort
+        let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+        wizard.handle_capture_key(key);
+
+        // Cancel with 'n'
+        let cancel_key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+        let action = wizard.handle_confirmation_key(cancel_key);
+
+        assert!(matches!(action, WizardAction::Continue));
+        assert!(!wizard.has_pending_confirmation());
+    }
+
+    #[test]
+    fn test_go_back() {
+        let mut wizard = CalibrationWizard::new();
+
+        // Capture first key (Backspace)
+        let backspace = KeyEvent::new(KeyCode::Char('\x7f'), KeyModifiers::NONE);
+        wizard.handle_capture_key(backspace);
+
+        // We should be at key 1 now (DELETE)
+        assert!(matches!(
+            wizard.step,
+            CalibrationStep::Capture {
+                group_idx: 0,
+                key_idx: 1
+            }
+        ));
+        assert_eq!(wizard.translation_count(), 1);
+
+        // Press 'b' to go back
+        let go_back = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE);
+        let action = wizard.handle_capture_key(go_back);
+
+        assert!(matches!(action, WizardAction::GoBack));
+
+        // Should be back at key 0 (BACKSPACE)
+        assert!(matches!(
+            wizard.step,
+            CalibrationStep::Capture {
+                group_idx: 0,
+                key_idx: 0
+            }
+        ));
+
+        // Translation should be undone
+        assert_eq!(wizard.translation_count(), 0);
+        assert_eq!(*wizard.key_status(0), KeyStatus::Pending);
+    }
+
+    #[test]
+    fn test_go_back_at_first_key() {
+        let mut wizard = CalibrationWizard::new();
+
+        // Try to go back at first key
+        let go_back = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE);
+        let action = wizard.handle_capture_key(go_back);
+
+        // Should stay at first key
+        assert!(matches!(action, WizardAction::Continue));
+        assert!(matches!(
+            wizard.step,
+            CalibrationStep::Capture {
+                group_idx: 0,
+                key_idx: 0
+            }
+        ));
     }
 
     #[test]

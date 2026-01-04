@@ -2,7 +2,9 @@
 //!
 //! Renders the input calibration wizard modal overlay.
 
-use crate::app::calibration_wizard::{CalibrationStep, CalibrationWizard, KeyStatus};
+use crate::app::calibration_wizard::{
+    CalibrationStep, CalibrationWizard, KeyStatus, PendingConfirmation,
+};
 use crate::view::theme::Theme;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -43,6 +45,12 @@ pub fn render_calibration_wizard(
     // Clear the area behind the dialog
     frame.render_widget(Clear, dialog_area);
 
+    // Check if we need to show a confirmation dialog
+    if wizard.has_pending_confirmation() {
+        render_confirmation_dialog(frame, dialog_area, wizard, theme);
+        return;
+    }
+
     // Create the outer block
     let title = match &wizard.step {
         CalibrationStep::Capture { .. } => t!("calibration.title_capture").to_string(),
@@ -75,6 +83,60 @@ pub fn render_calibration_wizard(
             render_verify_phase(frame, &chunks, wizard, theme);
         }
     }
+}
+
+/// Render confirmation dialog for destructive actions
+fn render_confirmation_dialog(
+    frame: &mut Frame,
+    area: Rect,
+    wizard: &CalibrationWizard,
+    theme: &Theme,
+) {
+    let (title, message, confirm_action, cancel_action) = match wizard.pending_confirmation {
+        PendingConfirmation::Abort => (
+            t!("calibration.confirm_abort_title").to_string(),
+            t!("calibration.confirm_abort_message").to_string(),
+            t!("calibration.action_discard").to_string(),
+            t!("calibration.action_keep_editing").to_string(),
+        ),
+        PendingConfirmation::Restart => (
+            t!("calibration.confirm_restart_title").to_string(),
+            t!("calibration.confirm_restart_message").to_string(),
+            t!("calibration.action_restart").to_string(),
+            t!("calibration.action_keep_editing").to_string(),
+        ),
+        PendingConfirmation::None => return,
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow))
+        .style(Style::default().bg(theme.editor_bg).fg(theme.editor_fg));
+
+    let inner_area = block.inner(area);
+    frame.render_widget(block, area);
+
+    let content = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            message,
+            Style::default().add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("[y]", Style::default().fg(Color::Red)),
+            Span::raw(format!(" {} ", confirm_action)),
+            Span::styled("[n]", Style::default().fg(Color::Green)),
+            Span::raw(format!(" {}", cancel_action)),
+        ]),
+    ];
+
+    let para = Paragraph::new(content)
+        .style(Style::default().fg(theme.editor_fg))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(para, inner_area);
 }
 
 /// Render the capture phase UI
@@ -118,7 +180,7 @@ fn render_capture_phase(
         .wrap(Wrap { trim: true });
     frame.render_widget(instructions_para, chunks[0]);
 
-    // Progress - show current group's keys
+    // Progress - show current group's keys with scrolling
     let mut progress_lines: Vec<Line> = Vec::new();
     progress_lines.push(Line::from(vec![Span::raw(format!(
         "{} {}/{}",
@@ -161,14 +223,27 @@ fn render_capture_phase(
         ]));
     }
 
-    let progress_para = Paragraph::new(progress_lines).style(Style::default().fg(theme.editor_fg));
+    // Calculate scroll offset to keep current key visible
+    // Available height minus header lines (step info + blank line)
+    let available_height = chunks[1].height.saturating_sub(2) as usize;
+    let scroll_offset = if available_height > 0 && key_idx >= available_height {
+        (key_idx - available_height + 1) as u16
+    } else {
+        0
+    };
+
+    let progress_para = Paragraph::new(progress_lines)
+        .style(Style::default().fg(theme.editor_fg))
+        .scroll((scroll_offset, 0));
     frame.render_widget(progress_para, chunks[1]);
 
-    // Controls
+    // Controls - add [b] for back
     let controls = vec![
         Line::from(vec![
             Span::styled("[s]", Style::default().fg(Color::Cyan)),
             Span::raw(format!(" {} ", t!("calibration.skip"))),
+            Span::styled("[b]", Style::default().fg(Color::Cyan)),
+            Span::raw(format!(" {} ", t!("calibration.back"))),
             Span::styled("[g]", Style::default().fg(Color::Cyan)),
             Span::raw(format!(" {} ", t!("calibration.skip_group"))),
             Span::styled("[a]", Style::default().fg(Color::Red)),
@@ -248,6 +323,8 @@ fn render_verify_phase(
         Line::from(vec![
             Span::styled("[y]", Style::default().fg(Color::Green)),
             Span::raw(format!(" {} ", t!("calibration.save"))),
+            Span::styled("[b]", Style::default().fg(Color::Cyan)),
+            Span::raw(format!(" {} ", t!("calibration.back"))),
             Span::styled("[r]", Style::default().fg(Color::Yellow)),
             Span::raw(format!(" {} ", t!("calibration.restart"))),
             Span::styled("[a]", Style::default().fg(Color::Red)),
