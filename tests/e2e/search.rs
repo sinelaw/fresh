@@ -1,7 +1,8 @@
 //! E2E tests for search and replace functionality
 
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::Config;
 use tempfile::TempDir;
 
 /// Test basic forward search functionality
@@ -1715,5 +1716,225 @@ fn test_find_selection_keeps_search_term() {
         harness.cursor_position(),
         0,
         "Fourth Ctrl+F3 should wrap around to first 'test'"
+    );
+}
+
+/// Test search in a large file (issue #657)
+///
+/// This test reproduces the bug where searching in large files fails with
+/// "Buffer not fully loaded" error. The bug occurs because:
+/// 1. Large files use lazy loading - chunks are loaded on demand
+/// 2. The old perform_search() used buffer.to_string() which returns None
+///    for buffers with unloaded regions
+/// 3. This caused the search to fail instead of loading the needed data
+///
+/// The fix uses get_text_range_mut() which loads the buffer on demand.
+#[test]
+fn test_search_in_large_file() {
+    use std::io::Write;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("large_test.txt");
+
+    // Create a file that's large enough to have unloaded regions after viewport prep.
+    // The chunk size is 1MB, so we need a file > 2MB to ensure parts remain unloaded.
+    // Using 3MB to be safe.
+    let mut file = std::fs::File::create(&file_path).unwrap();
+
+    // Write 3MB of content - this ensures at least 1MB+ remains unloaded after
+    // the first 1MB chunk is loaded for viewport rendering.
+    // Each line is about 70 bytes, so we need ~45000 lines for 3MB.
+    for i in 0..45000 {
+        writeln!(
+            file,
+            "Line {:06}: This is padding content to make the file large enough",
+            i
+        )
+        .unwrap();
+    }
+    // Add a unique searchable string near the END of the file.
+    // This ensures the search target is in an UNLOADED region.
+    writeln!(file, "UNIQUE_SEARCH_TARGET_STRING_12345").unwrap();
+    // Add a few more lines after
+    for i in 0..100 {
+        writeln!(file, "Trailing line {:06}", i).unwrap();
+    }
+    file.flush().unwrap();
+    drop(file);
+
+    // Verify file is larger than 2MB to ensure we have unloaded regions
+    let file_size = std::fs::metadata(&file_path).unwrap().len();
+    assert!(
+        file_size > 2 * 1024 * 1024,
+        "File should be larger than 2MB to ensure unloaded regions, but is {} bytes",
+        file_size
+    );
+    eprintln!(
+        "Test file size: {} bytes ({:.2} MB)",
+        file_size,
+        file_size as f64 / 1024.0 / 1024.0
+    );
+
+    // Create harness and open the large file
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Verify the buffer is in large file mode
+    let is_large_file = harness.editor().active_state().buffer.is_large_file();
+    eprintln!("Buffer is_large_file: {}", is_large_file);
+    assert!(
+        is_large_file,
+        "Buffer should be in large file mode for 3MB file"
+    );
+
+    // REPRODUCE THE BUG: Check if the buffer has unloaded regions BEFORE search
+    // With a 3MB file and 1MB chunk size, at least 2MB should be unloaded.
+    // buffer.to_string() returns None when there are unloaded regions.
+    let buffer_content_before = harness.get_buffer_content();
+    eprintln!(
+        "Buffer content available before search (to_string returns Some): {}",
+        buffer_content_before.is_some()
+    );
+    // This assertion proves the bug exists - to_string() returns None for unloaded buffers
+    assert!(
+        buffer_content_before.is_none(),
+        "BUG REPRODUCED: Buffer should have unloaded regions (to_string() returns None). \
+         If this fails, the file might not be large enough or chunks got loaded unexpectedly."
+    );
+
+    // Now trigger search - this should work with the fix even though buffer has unloaded regions
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Check that the search prompt appeared
+    harness.assert_screen_contains("Search: ");
+
+    // Search for the unique string that's at the END of the file (in unloaded region)
+    harness.type_text("UNIQUE_SEARCH_TARGET").unwrap();
+    harness.render().unwrap();
+
+    // Confirm search - with the fix, this should load the buffer and find the match
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // VERIFY THE FIX: Search should succeed without "Buffer not fully loaded" error
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Buffer not fully loaded"),
+        "FIX VERIFIED: Search should work without 'Buffer not fully loaded' error.\nScreen: {}",
+        screen
+    );
+
+    // Verify cursor moved to the match (should be near the end, around byte 3MB)
+    let cursor_pos = harness.cursor_position();
+    // 45000 lines * ~70 bytes = ~3.15MB. Search target is around byte 3MB.
+    let expected_min_pos = 45000 * 60; // Conservative estimate (~2.7MB)
+    assert!(
+        cursor_pos > expected_min_pos,
+        "Cursor should have moved to the match position (at least byte {}), but is at {}",
+        expected_min_pos,
+        cursor_pos
+    );
+    eprintln!("Search found match at position: {}", cursor_pos);
+}
+
+/// Test search in large file with explicit low threshold
+/// This ensures the fix works for files that are considered "large" by configuration
+#[test]
+fn test_search_in_large_file_with_low_threshold() {
+    use std::io::Write;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("medium_test.txt");
+
+    // Create a file with known content - larger than 10KB but smaller than 1MB
+    let mut file = std::fs::File::create(&file_path).unwrap();
+
+    // Write ~50KB of content with searchable strings
+    for i in 0..600 {
+        writeln!(file, "Line {:04}: Some padding content here", i).unwrap();
+    }
+    // Add unique search target
+    writeln!(file, "FINDME_SPECIAL_STRING").unwrap();
+    for i in 0..100 {
+        writeln!(file, "Trailing {:04}", i).unwrap();
+    }
+    file.flush().unwrap();
+    drop(file);
+
+    // Verify file size is at least what we expect
+    let file_size = std::fs::metadata(&file_path).unwrap().len();
+    eprintln!("Test file size: {} bytes", file_size);
+
+    // Create config with very low large_file_threshold to force lazy loading
+    let mut config = Config::default();
+    config.editor.large_file_threshold_bytes = 1024; // 1KB threshold
+    eprintln!(
+        "Config large_file_threshold_bytes: {}",
+        config.editor.large_file_threshold_bytes
+    );
+
+    // Create harness with the custom config
+    let mut harness =
+        EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Verify the buffer is in large file mode (lazy loading)
+    let is_large_file = harness.editor().active_state().buffer.is_large_file();
+    eprintln!("Buffer is_large_file: {}", is_large_file);
+    assert!(
+        is_large_file,
+        "Buffer should be in large file mode with threshold of 1KB"
+    );
+
+    // Check buffer loading status
+    let buffer = &harness.editor().active_state().buffer;
+    eprintln!("Buffer total bytes: {}", buffer.len());
+    let buffer_content = harness.get_buffer_content();
+    eprintln!("Buffer content available: {}", buffer_content.is_some());
+
+    // If buffer content is available even though it's a large file,
+    // that means the entire file got loaded during open_file or render.
+    // This would mean the bug has been fixed (or isn't reproducible in tests).
+    // The fix should be in perform_search to load the buffer before searching.
+
+    // Trigger search with Ctrl+F
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for the unique string
+    harness.type_text("FINDME_SPECIAL").unwrap();
+    harness.render().unwrap();
+
+    // Confirm search
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // The search should succeed without errors
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Buffer not fully loaded"),
+        "Search should work with low threshold without 'Buffer not fully loaded' error"
+    );
+
+    // Verify cursor moved to find the match
+    let cursor_pos = harness.cursor_position();
+    // The match should be after the first 600 lines - actual position is around 22000-24000
+    // depending on exact line lengths, so we use a more conservative estimate
+    let expected_min_pos = 20000; // Conservative estimate (600 lines * ~35 bytes)
+    assert!(
+        cursor_pos > expected_min_pos,
+        "Cursor should have moved to the match position (at least byte {}), but is at {}",
+        expected_min_pos,
+        cursor_pos
     );
 }

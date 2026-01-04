@@ -1984,11 +1984,19 @@ impl Editor {
 
         let search_range = self.pending_search_range.take();
 
+        // For large files with lazy loading, we need to load the entire buffer
+        // before searching. This ensures the search can access all content.
+        // (Issue #657: Search on large plain text files)
         let buffer_content = {
-            let state = self.active_state();
-            match state.buffer.to_string() {
-                Some(t) => t,
-                None => {
+            let state = self.active_state_mut();
+            let total_bytes = state.buffer.len();
+
+            // Force-load the entire buffer if not already loaded
+            // get_text_range_mut() handles lazy loading and returns the content
+            match state.buffer.get_text_range_mut(0, total_bytes) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(e) => {
+                    tracing::warn!("Failed to load buffer for search: {}", e);
                     self.set_status_message(t!("error.buffer_not_loaded").to_string());
                     return;
                 }
