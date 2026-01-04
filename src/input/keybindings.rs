@@ -1962,6 +1962,12 @@ mod tests {
             Action::from_str("popup_cancel", &args),
             Some(Action::PopupCancel)
         );
+
+        // Test calibrate_input action
+        assert_eq!(
+            Action::from_str("calibrate_input", &args),
+            Some(Action::CalibrateInput)
+        );
     }
 
     #[test]
