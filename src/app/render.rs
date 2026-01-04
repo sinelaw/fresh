@@ -2165,7 +2165,10 @@ impl Editor {
                 .to_string(),
             );
         } else {
-            self.set_status_message(t!("search.no_active").to_string());
+            let find_key = self
+                .get_keybinding_for_action("find")
+                .unwrap_or_else(|| "Ctrl+F".to_string());
+            self.set_status_message(t!("search.no_active", find_key = find_key).to_string());
         }
     }
 
@@ -2214,7 +2217,10 @@ impl Editor {
                 .to_string(),
             );
         } else {
-            self.set_status_message(t!("search.no_active").to_string());
+            let find_key = self
+                .get_keybinding_for_action("find")
+                .unwrap_or_else(|| "Ctrl+F".to_string());
+            self.set_status_message(t!("search.no_active", find_key = find_key).to_string());
         }
     }
 
@@ -3241,7 +3247,40 @@ impl Editor {
             key,
             actions: Vec::new(),
         });
-        self.set_status_message(t!("macro.recording_with_hint", key = key).to_string());
+
+        // Build the stop hint dynamically from keybindings
+        let stop_hint = self.build_macro_stop_hint(key);
+        self.set_status_message(
+            t!(
+                "macro.recording_with_hint",
+                key = key,
+                stop_hint = stop_hint
+            )
+            .to_string(),
+        );
+    }
+
+    /// Build a hint message for how to stop macro recording
+    fn build_macro_stop_hint(&self, _key: char) -> String {
+        let mut hints = Vec::new();
+
+        // Check for F5 (stop_macro_recording)
+        if let Some(stop_key) = self.get_keybinding_for_action("stop_macro_recording") {
+            hints.push(stop_key);
+        }
+
+        // Get command palette keybinding
+        let palette_key = self
+            .get_keybinding_for_action("command_palette")
+            .unwrap_or_else(|| "Ctrl+P".to_string());
+
+        if hints.is_empty() {
+            // No keybindings found, just mention command palette
+            format!("{} → Stop Recording Macro", palette_key)
+        } else {
+            // Show keybindings and command palette
+            format!("{} or {} → Stop Recording", hints.join("/"), palette_key)
+        }
     }
 
     /// Stop recording and save the macro
@@ -3251,10 +3290,31 @@ impl Editor {
             let key = state.key;
             self.macros.insert(key, state.actions);
             self.last_macro_register = Some(key);
-            self.set_status_message(t!("macro.saved", key = key, count = action_count).to_string());
+
+            // Build play hint
+            let play_hint = self.build_macro_play_hint();
+            self.set_status_message(
+                t!(
+                    "macro.saved",
+                    key = key,
+                    count = action_count,
+                    play_hint = play_hint
+                )
+                .to_string(),
+            );
         } else {
             self.set_status_message(t!("macro.not_recording").to_string());
         }
+    }
+
+    /// Build a hint message for how to play a macro
+    fn build_macro_play_hint(&self) -> String {
+        // Get command palette keybinding
+        let palette_key = self
+            .get_keybinding_for_action("command_palette")
+            .unwrap_or_else(|| "Ctrl+P".to_string());
+
+        format!("{} → Play Macro", palette_key)
     }
 
     /// Play back a recorded macro

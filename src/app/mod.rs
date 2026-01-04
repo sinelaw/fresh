@@ -1019,6 +1019,13 @@ impl Editor {
         self.keybindings.get_all_bindings()
     }
 
+    /// Get the formatted keybinding for a specific action (for display in messages)
+    /// Returns None if no keybinding is found for the action
+    pub fn get_keybinding_for_action(&self, action_name: &str) -> Option<String> {
+        self.keybindings
+            .find_keybinding_for_action(action_name, self.key_context)
+    }
+
     /// Get mutable access to the mode registry
     pub fn mode_registry_mut(&mut self) -> &mut ModeRegistry {
         &mut self.mode_registry

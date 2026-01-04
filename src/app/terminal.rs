@@ -94,7 +94,17 @@ impl Editor {
                 // Resize terminal to match actual split content area
                 self.resize_visible_terminals();
 
-                self.set_status_message(t!("terminal.opened", id = terminal_id.0).to_string());
+                // Get the terminal escape keybinding dynamically
+                let exit_key = self
+                    .keybindings
+                    .find_keybinding_for_action(
+                        "terminal_escape",
+                        crate::input::keybindings::KeyContext::Terminal,
+                    )
+                    .unwrap_or_else(|| "Ctrl+Space".to_string());
+                self.set_status_message(
+                    t!("terminal.opened", id = terminal_id.0, exit_key = exit_key).to_string(),
+                );
                 tracing::info!(
                     "Opened terminal {:?} with buffer {:?}",
                     terminal_id,
