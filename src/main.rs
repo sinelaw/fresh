@@ -866,7 +866,7 @@ fn run_event_loop_common<F>(
     editor: &mut Editor,
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     session_enabled: bool,
-    key_translator: &KeyTranslator,
+    _key_translator: &KeyTranslator,
     mut poll_event: F,
 ) -> io::Result<()>
 where
