@@ -267,3 +267,95 @@ fn test_close_buffer_in_one_split_leaves_other_split() {
         "Terminal buffer should still exist after closing tab in one split"
     );
 }
+
+/// Test: Closing a different buffer resumes terminal mode correctly
+///
+/// Bug reproduction: When a terminal is open in a tab and you close a different buffer,
+/// the terminal should resume working correctly - content should be visible and
+/// terminal mode should resume so you can type commands.
+///
+/// Steps:
+/// 1. Create terminal, type "echo MARKER1"
+/// 2. Open new file buffer (without exiting terminal mode)
+/// 3. Close the new file buffer
+/// 4. "MARKER1" should be visible in the terminal
+/// 5. Typing "echo MARKER2" should work and "MARKER2" should be visible
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell commands
+fn test_closing_other_buffer_resumes_terminal_correctly() {
+    let mut harness = harness_or_return!(120, 30);
+
+    // Open terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    // Type a command with a unique marker
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo UNIQUEMARKER_ABC_123\n");
+
+    // Wait for the output to appear
+    harness
+        .wait_until(|h| h.screen_to_string().contains("UNIQUEMARKER_ABC_123"))
+        .expect("Should see MARKER1 output in terminal");
+
+    // Verify we're in terminal mode
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Should be in terminal mode"
+    );
+
+    let terminal_buffer = harness.editor().active_buffer_id();
+
+    // Open a new file (creates a new buffer) - this implicitly exits terminal mode
+    // and adds the terminal to terminal_mode_resume
+    let temp_file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(temp_file.path(), "test content\n").unwrap();
+    harness.editor_mut().open_file(temp_file.path()).unwrap();
+    harness.render().unwrap();
+
+    let file_buffer = harness.editor().active_buffer_id();
+    assert_ne!(
+        file_buffer, terminal_buffer,
+        "Should be on a different buffer after opening file"
+    );
+
+    // Terminal mode should be off now
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "Should NOT be in terminal mode after opening file"
+    );
+
+    // Close the file buffer - should switch back to terminal
+    run_command(&mut harness, "Close Buffer");
+
+    // Wait a moment for the buffer close to process
+    harness.render().unwrap();
+
+    // Now switch to the terminal buffer explicitly
+    harness.editor_mut().switch_buffer(terminal_buffer);
+    harness.render().unwrap();
+
+    // The original marker should still be visible
+    harness.assert_screen_contains("UNIQUEMARKER_ABC_123");
+
+    // Terminal mode should have resumed
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Terminal mode should resume after switching back to terminal buffer"
+    );
+
+    // Type a second command to verify terminal is fully working
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo SECONDMARKER_XYZ_789\n");
+
+    // Wait for the second output
+    harness
+        .wait_until(|h| h.screen_to_string().contains("SECONDMARKER_XYZ_789"))
+        .expect("Should see MARKER2 output after typing in resumed terminal");
+
+    // Both markers should be visible
+    harness.assert_screen_contains("UNIQUEMARKER_ABC_123");
+    harness.assert_screen_contains("SECONDMARKER_XYZ_789");
+}

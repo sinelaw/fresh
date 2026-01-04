@@ -1464,6 +1464,10 @@ impl Editor {
         if self.terminal_mode_resume.contains(&buffer_id) && self.is_terminal_buffer(buffer_id) {
             self.terminal_mode = true;
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
+        } else if self.is_terminal_buffer(buffer_id) {
+            // Switching to terminal in read-only mode - sync buffer to show current terminal content
+            // This ensures the backing file content and cursor position are up to date
+            self.sync_terminal_to_buffer(buffer_id);
         }
 
         // Add buffer to the active split's open_buffers (tabs) if not already there
