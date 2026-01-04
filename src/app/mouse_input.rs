@@ -60,6 +60,11 @@ impl Editor {
             return self.handle_settings_mouse(mouse_event, is_double_click);
         }
 
+        // When calibration wizard is active, ignore all mouse events
+        if self.calibration_wizard.is_some() {
+            return Ok(false);
+        }
+
         // Cancel LSP rename prompt on any mouse interaction
         let mut needs_render = false;
         if let Some(ref prompt) = self.prompt {

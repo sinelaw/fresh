@@ -502,8 +502,8 @@ fn test_command_palette_from_file_explorer() {
     // Should show the command palette
     harness.assert_screen_contains("Command:");
 
-    // Should show commands (Calibrate Input appears early alphabetically)
-    harness.assert_screen_contains("Calibrate Input");
+    // Should show commands (Calibrate Keyboard appears early alphabetically)
+    harness.assert_screen_contains("Calibrate Keyboard");
 
     // Should be able to execute a command
     harness.type_text("toggle hidden").unwrap();

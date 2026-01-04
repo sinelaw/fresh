@@ -307,27 +307,26 @@ impl CalibrationWizard {
     }
 
     /// Handle key input when a confirmation dialog is showing
+    /// Uses action-based keys: 'd' for discard, 'r' for restart, 'k' for keep editing
     pub fn handle_confirmation_key(&mut self, key: KeyEvent) -> WizardAction {
         if key.modifiers != KeyModifiers::NONE {
             return WizardAction::Continue;
         }
 
         match key.code {
-            KeyCode::Char('y') => {
-                // Confirm the action
-                let confirmation =
-                    std::mem::replace(&mut self.pending_confirmation, PendingConfirmation::None);
-                match confirmation {
-                    PendingConfirmation::Abort => WizardAction::Abort,
-                    PendingConfirmation::Restart => {
-                        self.restart();
-                        WizardAction::Restart
-                    }
-                    PendingConfirmation::None => WizardAction::Continue,
-                }
+            KeyCode::Char('d') if self.pending_confirmation == PendingConfirmation::Abort => {
+                // 'd' confirms discard/abort
+                self.pending_confirmation = PendingConfirmation::None;
+                WizardAction::Abort
             }
-            KeyCode::Char('n') | KeyCode::Esc => {
-                // Cancel the confirmation
+            KeyCode::Char('r') if self.pending_confirmation == PendingConfirmation::Restart => {
+                // 'r' confirms restart
+                self.pending_confirmation = PendingConfirmation::None;
+                self.restart();
+                WizardAction::Restart
+            }
+            KeyCode::Char('c') | KeyCode::Esc => {
+                // 'c' or Esc cancels (keeps editing)
                 self.pending_confirmation = PendingConfirmation::None;
                 self.status_message = Some(t!("calibration.cancelled").to_string());
                 WizardAction::Continue
@@ -811,8 +810,8 @@ mod tests {
             PendingConfirmation::Abort
         ));
 
-        // Confirm with 'y'
-        let confirm_key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+        // Confirm with 'd' for discard
+        let confirm_key = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE);
         let action = wizard.handle_confirmation_key(confirm_key);
 
         assert!(matches!(action, WizardAction::Abort));
@@ -826,8 +825,8 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
         wizard.handle_capture_key(key);
 
-        // Cancel with 'n'
-        let cancel_key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+        // Cancel with 'c'
+        let cancel_key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE);
         let action = wizard.handle_confirmation_key(cancel_key);
 
         assert!(matches!(action, WizardAction::Continue));

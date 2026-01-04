@@ -8,7 +8,7 @@ use crate::app::calibration_wizard::{
 use crate::view::theme::Theme;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
@@ -92,26 +92,29 @@ fn render_confirmation_dialog(
     wizard: &CalibrationWizard,
     theme: &Theme,
 ) {
-    let (title, message, confirm_action, cancel_action) = match wizard.pending_confirmation {
-        PendingConfirmation::Abort => (
-            t!("calibration.confirm_abort_title").to_string(),
-            t!("calibration.confirm_abort_message").to_string(),
-            t!("calibration.action_discard").to_string(),
-            t!("calibration.action_keep_editing").to_string(),
-        ),
-        PendingConfirmation::Restart => (
-            t!("calibration.confirm_restart_title").to_string(),
-            t!("calibration.confirm_restart_message").to_string(),
-            t!("calibration.action_restart").to_string(),
-            t!("calibration.action_keep_editing").to_string(),
-        ),
-        PendingConfirmation::None => return,
-    };
+    let (title, message, confirm_key, confirm_action, cancel_action) =
+        match wizard.pending_confirmation {
+            PendingConfirmation::Abort => (
+                t!("calibration.confirm_abort_title").to_string(),
+                t!("calibration.confirm_abort_message").to_string(),
+                "d",
+                t!("calibration.action_discard").to_string(),
+                t!("calibration.action_cancel").to_string(),
+            ),
+            PendingConfirmation::Restart => (
+                t!("calibration.confirm_restart_title").to_string(),
+                t!("calibration.confirm_restart_message").to_string(),
+                "r",
+                t!("calibration.action_restart").to_string(),
+                t!("calibration.action_cancel").to_string(),
+            ),
+            PendingConfirmation::None => return,
+        };
 
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow))
+        .border_style(Style::default().fg(theme.diagnostic_warning_fg))
         .style(Style::default().bg(theme.editor_bg).fg(theme.editor_fg));
 
     let inner_area = block.inner(area);
@@ -126,9 +129,12 @@ fn render_confirmation_dialog(
         Line::from(""),
         Line::from(""),
         Line::from(vec![
-            Span::styled("[y]", Style::default().fg(Color::Red)),
+            Span::styled(
+                format!("[{}]", confirm_key),
+                Style::default().fg(theme.diagnostic_error_fg),
+            ),
             Span::raw(format!(" {} ", confirm_action)),
-            Span::styled("[n]", Style::default().fg(Color::Green)),
+            Span::styled("[c]", Style::default().fg(theme.help_key_fg)),
             Span::raw(format!(" {}", cancel_action)),
         ]),
     ];
@@ -153,26 +159,23 @@ fn render_capture_phase(
     let target = &group.targets[key_idx];
     let (step, total) = wizard.current_step_info();
 
-    // Instructions
+    // Instructions - group info and prominent "press the key" instruction
     let instructions = vec![
+        Line::from(vec![
+            Span::raw(format!("{}: ", t!("calibration.group"))),
+            Span::styled(group.name, Style::default().fg(theme.help_key_fg)),
+        ]),
+        Line::from(""),
         Line::from(vec![Span::styled(
             t!("calibration.press_key").to_string(),
             Style::default().add_modifier(Modifier::BOLD),
         )]),
-        Line::from(""),
-        Line::from(vec![
-            Span::raw(format!("{}: ", t!("calibration.group"))),
-            Span::styled(group.name, Style::default().fg(Color::Cyan)),
-        ]),
-        Line::from(vec![
-            Span::raw(format!("{}: ", t!("calibration.key"))),
-            Span::styled(
-                target.name,
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
+        Line::from(vec![Span::styled(
+            format!("  {}", target.name),
+            Style::default()
+                .fg(theme.diagnostic_warning_fg)
+                .add_modifier(Modifier::BOLD),
+        )]),
     ];
 
     let instructions_para = Paragraph::new(instructions)
@@ -182,13 +185,6 @@ fn render_capture_phase(
 
     // Progress - show current group's keys with scrolling
     let mut progress_lines: Vec<Line> = Vec::new();
-    progress_lines.push(Line::from(vec![Span::raw(format!(
-        "{} {}/{}",
-        t!("calibration.step"),
-        step,
-        total
-    ))]));
-    progress_lines.push(Line::from(""));
 
     // Show keys in current group with their status
     let flat_base = groups[..group_idx]
@@ -205,16 +201,16 @@ fn render_capture_phase(
                     (
                         '>',
                         Style::default()
-                            .fg(Color::Yellow)
+                            .fg(theme.diagnostic_warning_fg)
                             .add_modifier(Modifier::BOLD),
                     )
                 } else {
                     (' ', Style::default().fg(theme.line_number_fg))
                 }
             }
-            KeyStatus::Captured => ('*', Style::default().fg(Color::Green)),
+            KeyStatus::Captured => ('*', Style::default().fg(theme.diagnostic_info_fg)),
             KeyStatus::Skipped => ('-', Style::default().fg(theme.line_number_fg)),
-            KeyStatus::Verified => ('v', Style::default().fg(Color::Cyan)),
+            KeyStatus::Verified => ('v', Style::default().fg(theme.help_key_fg)),
         };
 
         progress_lines.push(Line::from(vec![
@@ -223,8 +219,15 @@ fn render_capture_phase(
         ]));
     }
 
+    // Add step info at the bottom of progress, in gray
+    progress_lines.push(Line::from(""));
+    progress_lines.push(Line::from(vec![Span::styled(
+        format!("{} {}/{}", t!("calibration.step"), step, total),
+        Style::default().fg(theme.line_number_fg),
+    )]));
+
     // Calculate scroll offset to keep current key visible
-    // Available height minus header lines (step info + blank line)
+    // Available height minus footer lines (blank + step info)
     let available_height = chunks[1].height.saturating_sub(2) as usize;
     let scroll_offset = if available_height > 0 && key_idx >= available_height {
         (key_idx - available_height + 1) as u16
@@ -240,13 +243,13 @@ fn render_capture_phase(
     // Controls - add [b] for back
     let controls = vec![
         Line::from(vec![
-            Span::styled("[s]", Style::default().fg(Color::Cyan)),
+            Span::styled("[s]", Style::default().fg(theme.help_key_fg)),
             Span::raw(format!(" {} ", t!("calibration.skip"))),
-            Span::styled("[b]", Style::default().fg(Color::Cyan)),
+            Span::styled("[b]", Style::default().fg(theme.help_key_fg)),
             Span::raw(format!(" {} ", t!("calibration.back"))),
-            Span::styled("[g]", Style::default().fg(Color::Cyan)),
+            Span::styled("[g]", Style::default().fg(theme.help_key_fg)),
             Span::raw(format!(" {} ", t!("calibration.skip_group"))),
-            Span::styled("[a]", Style::default().fg(Color::Red)),
+            Span::styled("[a]", Style::default().fg(theme.diagnostic_error_fg)),
             Span::raw(format!(" {}", t!("calibration.abort"))),
         ]),
         Line::from(""),
@@ -264,8 +267,15 @@ fn render_verify_phase(
     wizard: &CalibrationWizard,
     theme: &Theme,
 ) {
-    let (verified, total) = wizard.verification_progress();
     let translation_count = wizard.translation_count();
+
+    // If no translations needed, show success message
+    if translation_count == 0 {
+        render_all_keys_ok(frame, chunks, wizard, theme);
+        return;
+    }
+
+    let (verified, total) = wizard.verification_progress();
 
     // Instructions
     let instructions = vec![
@@ -280,7 +290,7 @@ fn render_verify_phase(
             Span::raw(format!("{}: ", t!("calibration.translations"))),
             Span::styled(
                 translation_count.to_string(),
-                Style::default().fg(Color::Green),
+                Style::default().fg(theme.diagnostic_info_fg),
             ),
         ]),
     ];
@@ -304,8 +314,8 @@ fn render_verify_phase(
     for (_group_idx, _, target, status) in wizard.all_key_info() {
         if matches!(status, KeyStatus::Captured | KeyStatus::Verified) {
             let (status_char, style) = match status {
-                KeyStatus::Verified => ('v', Style::default().fg(Color::Green)),
-                KeyStatus::Captured => (' ', Style::default().fg(Color::Yellow)),
+                KeyStatus::Verified => ('v', Style::default().fg(theme.diagnostic_info_fg)),
+                KeyStatus::Captured => (' ', Style::default().fg(theme.diagnostic_warning_fg)),
                 _ => continue,
             };
             status_lines.push(Line::from(vec![
@@ -321,13 +331,60 @@ fn render_verify_phase(
     // Controls
     let controls = vec![
         Line::from(vec![
-            Span::styled("[y]", Style::default().fg(Color::Green)),
+            Span::styled("[y]", Style::default().fg(theme.diagnostic_info_fg)),
             Span::raw(format!(" {} ", t!("calibration.save"))),
-            Span::styled("[b]", Style::default().fg(Color::Cyan)),
+            Span::styled("[b]", Style::default().fg(theme.help_key_fg)),
             Span::raw(format!(" {} ", t!("calibration.back"))),
-            Span::styled("[r]", Style::default().fg(Color::Yellow)),
+            Span::styled("[r]", Style::default().fg(theme.diagnostic_warning_fg)),
             Span::raw(format!(" {} ", t!("calibration.restart"))),
-            Span::styled("[a]", Style::default().fg(Color::Red)),
+            Span::styled("[a]", Style::default().fg(theme.diagnostic_error_fg)),
+            Span::raw(format!(" {}", t!("calibration.abort"))),
+        ]),
+        Line::from(""),
+        Line::from(wizard.status_message.as_deref().unwrap_or("")),
+    ];
+
+    let controls_para = Paragraph::new(controls).style(Style::default().fg(theme.editor_fg));
+    frame.render_widget(controls_para, chunks[2]);
+}
+
+/// Render success message when all keys work correctly (no translations needed)
+fn render_all_keys_ok(
+    frame: &mut Frame,
+    chunks: &[Rect],
+    wizard: &CalibrationWizard,
+    theme: &Theme,
+) {
+    // Success message
+    let content = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            t!("calibration.all_keys_ok_title").to_string(),
+            Style::default()
+                .fg(theme.diagnostic_info_fg)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+        Line::from(t!("calibration.all_keys_ok_message").to_string()),
+    ];
+
+    let para = Paragraph::new(content)
+        .style(Style::default().fg(theme.editor_fg))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(para, chunks[0]);
+
+    // Empty middle section
+    frame.render_widget(
+        Paragraph::new("").style(Style::default().fg(theme.editor_fg)),
+        chunks[1],
+    );
+
+    // Controls - offer save to clear any previous stale translations
+    let controls = vec![
+        Line::from(vec![
+            Span::styled("[y]", Style::default().fg(theme.diagnostic_info_fg)),
+            Span::raw(format!(" {} ", t!("calibration.save"))),
+            Span::styled("[a]", Style::default().fg(theme.diagnostic_error_fg)),
             Span::raw(format!(" {}", t!("calibration.abort"))),
         ]),
         Line::from(""),
