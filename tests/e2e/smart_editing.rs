@@ -798,6 +798,77 @@ fn test_toggle_macro_recording() {
     );
 }
 
+/// Test that macro recording hint message shows incorrect keybinding (reproduces issue #659)
+/// The message says "press Ctrl+Shift+R 1 to stop" but Ctrl+Shift+R is not actually bound.
+/// This test verifies the bug exists by checking for the hardcoded incorrect hint.
+#[test]
+fn test_macro_recording_hint_shows_wrong_keybinding() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "test").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Start recording macro 1 using Alt+Shift+1
+    harness
+        .send_key(KeyCode::Char('1'), KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Get the status message
+    let status = harness
+        .editor()
+        .get_status_message()
+        .cloned()
+        .unwrap_or_default();
+
+    // BUG: The message incorrectly says "Ctrl+Shift+R" which is NOT bound
+    // The actual keybindings are:
+    // - Alt+Shift+{key} to toggle recording
+    // - F5 to stop recording
+    assert!(
+        status.contains("Recording macro") && status.contains("'1'"),
+        "Should show recording status, got: {}",
+        status
+    );
+
+    // This assertion documents the bug - the message mentions Ctrl+Shift+R which doesn't work
+    assert!(
+        status.contains("Ctrl+Shift+R"),
+        "BUG: Status message shows non-existent Ctrl+Shift+R keybinding, got: {}",
+        status
+    );
+
+    // Verify that Ctrl+Shift+R does NOT actually stop recording (proving the hint is wrong)
+    harness
+        .send_key(KeyCode::Char('R'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Check we're still recording - proving Ctrl+Shift+R doesn't work
+    let status_after = harness
+        .editor()
+        .get_status_message()
+        .cloned()
+        .unwrap_or_default();
+
+    // The status should NOT say "saved" or "Stopped" - proving we're still recording
+    // because Ctrl+Shift+R doesn't actually work
+    let recording_stopped = status_after.contains("saved") || status_after.contains("Stopped");
+    assert!(
+        !recording_stopped,
+        "BUG: Ctrl+Shift+R hint in message doesn't work - the keybinding didn't stop recording. Status: {}",
+        status_after
+    );
+
+    // Clean up - stop recording with F5 (which actually works)
+    harness.send_key(KeyCode::F(5), KeyModifiers::NONE).unwrap();
+}
+
 // =============================================================================
 // Jump to Next/Previous Error Tests
 // =============================================================================
