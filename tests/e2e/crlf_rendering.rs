@@ -488,6 +488,7 @@ fn test_crlf_cursor_visibility() {
     std::fs::write(&file_path, java_content).unwrap();
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.editor_mut().set_clipboard_for_test("".to_string());
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
