@@ -1485,8 +1485,8 @@ impl SplitRenderer {
                 Style::default().fg(theme.editor_fg).bg(char_bg)
             };
 
-            // Handle cursor
-            let final_style = if show_cursor && (col - left_column) == cursor_column {
+            // Handle cursor - cursor_column is absolute position, compare directly with col
+            let final_style = if show_cursor && col == cursor_column {
                 // Invert colors for cursor
                 Style::default().fg(theme.editor_bg).bg(theme.editor_fg)
             } else {
@@ -1519,18 +1519,20 @@ impl SplitRenderer {
         // Pad to fill width
         if rendered < max_width {
             let padding = " ".repeat(max_width - rendered);
-            let pad_style = if show_cursor && rendered <= cursor_column && cursor_column < max_width
-            {
-                // Cursor is in padding area
-                let cursor_pos = cursor_column - rendered;
-                if cursor_pos == 0 {
-                    Style::default().fg(theme.editor_bg).bg(theme.editor_fg)
+            // cursor_column is absolute, convert to visual position for padding check
+            let cursor_visual = cursor_column.saturating_sub(left_column);
+            let pad_style =
+                if show_cursor && cursor_visual >= rendered && cursor_visual < max_width {
+                    // Cursor is in padding area - show cursor at beginning of padding
+                    // (past end of line content)
+                    if cursor_visual == rendered {
+                        Style::default().fg(theme.editor_bg).bg(theme.editor_fg)
+                    } else {
+                        Style::default().bg(bg)
+                    }
                 } else {
                     Style::default().bg(bg)
-                }
-            } else {
-                Style::default().bg(bg)
-            };
+                };
             spans.push(Span::styled(padding, pad_style));
         }
     }
