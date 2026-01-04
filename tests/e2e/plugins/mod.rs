@@ -2,6 +2,7 @@
 //! These tests are only compiled when the "plugins" feature is enabled.
 
 pub mod audit_mode;
+pub mod diff_cursor;
 pub mod git;
 pub mod gutter;
 pub mod lsp_find_references;
