@@ -23,7 +23,8 @@ impl Editor {
         let in_modal = self.is_prompting()
             || self.active_state().popups.is_visible()
             || self.menu_state.active_menu.is_some()
-            || self.settings_state.as_ref().map_or(false, |s| s.visible);
+            || self.settings_state.as_ref().map_or(false, |s| s.visible)
+            || self.calibration_wizard.is_some();
 
         if in_modal {
             return None;
@@ -62,6 +63,12 @@ impl Editor {
                 self.process_deferred_actions(ctx);
                 return Some(result);
             }
+        }
+
+        // Calibration wizard is next (modal, blocks all other input)
+        if self.calibration_wizard.is_some() {
+            let result = self.handle_calibration_input(event);
+            return Some(result);
         }
 
         // Menu is next

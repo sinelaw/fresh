@@ -1,5 +1,7 @@
 mod async_messages;
 mod buffer_management;
+mod calibration_actions;
+pub mod calibration_wizard;
 mod clipboard;
 mod file_explorer;
 pub mod file_open;
@@ -519,6 +521,12 @@ pub struct Editor {
     /// Settings UI state (when settings modal is open)
     pub(crate) settings_state: Option<crate::view::settings::SettingsState>,
 
+    /// Calibration wizard state (when calibration modal is open)
+    pub(crate) calibration_wizard: Option<calibration_wizard::CalibrationWizard>,
+
+    /// Key translator for input calibration (loaded from config)
+    pub(crate) key_translator: crate::input::key_translator::KeyTranslator,
+
     /// Terminal color capability (true color, 256, or 16 colors)
     color_capability: crate::view::color_support::ColorCapability,
 
@@ -958,6 +966,9 @@ impl Editor {
             previous_click_time: None,
             previous_click_position: None,
             settings_state: None,
+            calibration_wizard: None,
+            key_translator: crate::input::key_translator::KeyTranslator::load_default()
+                .unwrap_or_default(),
             color_capability,
             stdin_streaming: None,
             review_hunks: Vec::new(),
@@ -978,6 +989,11 @@ impl Editor {
     /// Get a reference to the config
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// Get a reference to the key translator (for input calibration)
+    pub fn key_translator(&self) -> &crate::input::key_translator::KeyTranslator {
+        &self.key_translator
     }
 
     /// Get a reference to the time source

@@ -1058,6 +1058,9 @@ impl Editor {
             Action::SettingsDecrement => {
                 self.settings_decrement_current();
             }
+            Action::CalibrateInput => {
+                self.open_calibration_wizard();
+            }
             Action::PromptConfirm => {
                 if let Some((input, prompt_type, selected_index)) = self.confirm_prompt() {
                     use super::prompt_actions::PromptResult;

@@ -529,6 +529,9 @@ pub enum Action {
     ToUpperCase, // Convert selection to uppercase
     ToLowerCase, // Convert selection to lowercase
 
+    // Input calibration
+    CalibrateInput, // Open the input calibration wizard
+
     // No-op
     None,
 }
@@ -822,6 +825,9 @@ impl Action {
             // Case conversion
             "to_upper_case" => Self::ToUpperCase,
             "to_lower_case" => Self::ToLowerCase,
+
+            // Input calibration
+            "calibrate_input" => Self::CalibrateInput,
 
             // Settings actions
             "open_settings" => Self::OpenSettings,

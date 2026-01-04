@@ -2,6 +2,7 @@
 //!
 //! This module contains all presentation and rendering components.
 
+pub mod calibration_wizard;
 pub mod color_support;
 pub mod controls;
 pub mod dimming;

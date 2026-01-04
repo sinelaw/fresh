@@ -749,6 +749,18 @@ impl Editor {
             }
         }
 
+        // Render calibration wizard if active
+        if let Some(ref wizard) = self.calibration_wizard {
+            // Dim the editor content behind the wizard modal
+            crate::view::dimming::apply_dimming(frame, size);
+            crate::view::calibration_wizard::render_calibration_wizard(
+                frame,
+                size,
+                wizard,
+                &self.theme,
+            );
+        }
+
         if self.menu_bar_visible {
             crate::view::ui::MenuRenderer::render(
                 frame,
