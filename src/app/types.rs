@@ -261,13 +261,14 @@ impl BufferMetadata {
 
     /// Create metadata for a hidden virtual buffer (for composite source buffers)
     /// These buffers are not shown in tabs and are managed by their parent composite buffer.
-    pub fn hidden_virtual_buffer(name: String, mode: String, read_only: bool) -> Self {
+    /// Hidden buffers are always read-only to prevent accidental edits.
+    pub fn hidden_virtual_buffer(name: String, mode: String) -> Self {
         Self {
             kind: BufferKind::Virtual { mode },
             display_name: name,
             lsp_enabled: false,
             lsp_disabled_reason: Some(t!("lsp.disabled.virtual").to_string()),
-            read_only,
+            read_only: true, // Hidden buffers are always read-only
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: true,

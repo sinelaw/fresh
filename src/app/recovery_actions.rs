@@ -154,10 +154,21 @@ impl Editor {
 
         // Collect buffer info first to avoid borrow issues
         // Only include buffers that have pending recovery changes AND need auto-save
+        // Skip composite buffers and hidden buffers (they should not be saved for recovery)
         let buffer_info: Vec<_> = self
             .buffers
             .iter()
             .filter_map(|(buffer_id, state)| {
+                // Skip composite buffers - they are virtual views, not real content
+                if state.is_composite_buffer {
+                    return None;
+                }
+                // Skip hidden buffers - they are managed by other buffers (e.g., diff sources)
+                if let Some(meta) = self.buffer_metadata.get(buffer_id) {
+                    if meta.hidden_from_tabs || meta.is_virtual() {
+                        return None;
+                    }
+                }
                 let recovery_pending = state.buffer.is_recovery_pending();
                 if recovery_pending {
                     let path = state.buffer.file_path().map(|p| p.to_path_buf());

@@ -8,6 +8,7 @@ use crate::app::Editor;
 use crate::model::composite_buffer::{CompositeBuffer, CompositeLayout, LineAlignment, SourcePane};
 use crate::model::event::{BufferId, SplitId};
 use crate::view::composite_view::CompositeViewState;
+use unicode_segmentation::UnicodeSegmentation;
 
 impl Editor {
     // =========================================================================
@@ -323,7 +324,8 @@ impl Editor {
                             .as_ref()
                             .map(|b| String::from_utf8_lossy(b).to_string())
                             .unwrap_or_default();
-                        let line_len = line_str.chars().count();
+                        // Use grapheme count for proper unicode handling
+                        let line_len = line_str.graphemes(true).count();
 
                         let width = view_state
                             .pane_widths
@@ -360,22 +362,22 @@ impl Editor {
                             view_state.move_cursor_to_line_end(line_length, pane_width);
                         }
                         Action::MoveWordLeft => {
-                            // Find previous word boundary
-                            let chars: Vec<char> = line_content.chars().collect();
+                            // Find previous word boundary using grapheme clusters
+                            let graphemes: Vec<&str> = line_content.graphemes(true).collect();
                             let mut pos = view_state.cursor_column;
                             // Skip spaces going left
                             while pos > 0
-                                && chars
+                                && graphemes
                                     .get(pos.saturating_sub(1))
-                                    .map_or(false, |c| c.is_whitespace())
+                                    .map_or(false, |g| g.chars().all(|c| c.is_whitespace()))
                             {
                                 pos -= 1;
                             }
                             // Skip word chars going left
                             while pos > 0
-                                && chars
+                                && graphemes
                                     .get(pos.saturating_sub(1))
-                                    .map_or(false, |c| !c.is_whitespace())
+                                    .map_or(false, |g| !g.chars().all(|c| c.is_whitespace()))
                             {
                                 pos -= 1;
                             }
@@ -390,15 +392,19 @@ impl Editor {
                             }
                         }
                         Action::MoveWordRight => {
-                            // Find next word boundary
-                            let chars: Vec<char> = line_content.chars().collect();
+                            // Find next word boundary using grapheme clusters
+                            let graphemes: Vec<&str> = line_content.graphemes(true).collect();
                             let mut pos = view_state.cursor_column;
                             // Skip word chars going right
-                            while pos < chars.len() && !chars[pos].is_whitespace() {
+                            while pos < graphemes.len()
+                                && !graphemes[pos].chars().all(|c| c.is_whitespace())
+                            {
                                 pos += 1;
                             }
                             // Skip spaces going right
-                            while pos < chars.len() && chars[pos].is_whitespace() {
+                            while pos < graphemes.len()
+                                && graphemes[pos].chars().all(|c| c.is_whitespace())
+                            {
                                 pos += 1;
                             }
                             view_state.cursor_column = pos.min(line_length);
@@ -536,7 +542,8 @@ impl Editor {
                             .as_ref()
                             .map(|b| String::from_utf8_lossy(b).to_string())
                             .unwrap_or_default();
-                        let line_len = line_str.chars().count();
+                        // Use grapheme count for proper unicode handling
+                        let line_len = line_str.graphemes(true).count();
 
                         let width = view_state
                             .pane_widths
@@ -576,19 +583,20 @@ impl Editor {
                             view_state.move_cursor_to_line_end(line_length, pane_width);
                         }
                         Action::SelectWordLeft => {
-                            let chars: Vec<char> = line_content.chars().collect();
+                            // Use grapheme clusters for proper unicode handling
+                            let graphemes: Vec<&str> = line_content.graphemes(true).collect();
                             let mut pos = view_state.cursor_column;
                             while pos > 0
-                                && chars
+                                && graphemes
                                     .get(pos.saturating_sub(1))
-                                    .map_or(false, |c| c.is_whitespace())
+                                    .map_or(false, |g| g.chars().all(|c| c.is_whitespace()))
                             {
                                 pos -= 1;
                             }
                             while pos > 0
-                                && chars
+                                && graphemes
                                     .get(pos.saturating_sub(1))
-                                    .map_or(false, |c| !c.is_whitespace())
+                                    .map_or(false, |g| !g.chars().all(|c| c.is_whitespace()))
                             {
                                 pos -= 1;
                             }
@@ -602,12 +610,17 @@ impl Editor {
                             }
                         }
                         Action::SelectWordRight => {
-                            let chars: Vec<char> = line_content.chars().collect();
+                            // Use grapheme clusters for proper unicode handling
+                            let graphemes: Vec<&str> = line_content.graphemes(true).collect();
                             let mut pos = view_state.cursor_column;
-                            while pos < chars.len() && !chars[pos].is_whitespace() {
+                            while pos < graphemes.len()
+                                && !graphemes[pos].chars().all(|c| c.is_whitespace())
+                            {
                                 pos += 1;
                             }
-                            while pos < chars.len() && chars[pos].is_whitespace() {
+                            while pos < graphemes.len()
+                                && graphemes[pos].chars().all(|c| c.is_whitespace())
+                            {
                                 pos += 1;
                             }
                             view_state.cursor_column = pos.min(line_length);
