@@ -12,10 +12,10 @@
 use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
-use tracing::info;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use fresh::config::Config;
 use std::fs;
+use tracing::info;
 
 /// Helper to copy audit_mode plugin and its dependencies to the test repo
 fn setup_audit_mode_plugin(repo: &GitTestRepo) {
@@ -259,10 +259,7 @@ fn test_diff_cursor_at_line_start() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        is_in_diff_view(&screen),
-        "Should still be in diff view"
-    );
+    assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
 
 /// Test cursor at end of line - moving right should not move past end
@@ -311,10 +308,7 @@ fn test_diff_cursor_at_line_end() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        is_in_diff_view(&screen),
-        "Should still be in diff view"
-    );
+    assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
 
 /// Test cursor at middle of line - both directions should work
@@ -370,10 +364,7 @@ fn test_diff_cursor_at_line_middle() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        is_in_diff_view(&screen),
-        "Should still be in diff view"
-    );
+    assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
 
 /// Test cursor at first row of buffer - up should not crash
@@ -414,10 +405,7 @@ fn test_diff_cursor_at_buffer_start() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        is_in_diff_view(&screen),
-        "Should still be in diff view"
-    );
+    assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
 
 /// Test cursor at last row of buffer - down should not crash
@@ -459,10 +447,7 @@ fn test_diff_cursor_at_buffer_end() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        is_in_diff_view(&screen),
-        "Should still be in diff view"
-    );
+    assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
 
 /// Test horizontal scroll on long lines (line > pane width)
@@ -657,10 +642,7 @@ fn test_diff_cursor_viewport_middle() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        is_in_diff_view(&screen),
-        "Should still be in diff view"
-    );
+    assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
 
 /// Test word movement (Ctrl+Left/Right) with various line content
@@ -732,10 +714,7 @@ fn test_diff_word_movement_comprehensive() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        is_in_diff_view(&screen),
-        "Should still be in diff view"
-    );
+    assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
 
 /// Test Tab key switches between panes
@@ -786,10 +765,7 @@ fn test_diff_pane_switching_with_tab() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        is_in_diff_view(&screen),
-        "Should still be in diff view"
-    );
+    assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
 
 /// Test mouse click places cursor correctly in both panes
@@ -895,10 +871,7 @@ fn test_diff_mouse_click_both_panes() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        is_in_diff_view(&screen),
-        "Should still be in diff view"
-    );
+    assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
 
 /// Test selection with Shift+Arrow in various positions
@@ -963,9 +936,7 @@ fn test_diff_selection_comprehensive() {
     harness.render().unwrap();
 
     // Select to end of line
-    harness
-        .send_key(KeyCode::End, KeyModifiers::SHIFT)
-        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
     harness.render().unwrap();
 
     // Select to start of line
@@ -975,10 +946,7 @@ fn test_diff_selection_comprehensive() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        is_in_diff_view(&screen),
-        "Should still be in diff view"
-    );
+    assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
 
 /// Test combined movement: down then right, up then left, etc.
@@ -1030,10 +998,7 @@ fn test_diff_combined_movement() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        is_in_diff_view(&screen),
-        "Should still be in diff view"
-    );
+    assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
 
 /// Test no scroll needed (short file that fits in viewport)
@@ -1081,10 +1046,7 @@ fn test_diff_no_scroll_needed() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        is_in_diff_view(&screen),
-        "Should still be in diff view"
-    );
+    assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
 
 /// Test Home/End keys on each line type (empty, short, long)
@@ -1183,10 +1145,7 @@ fn test_diff_home_end_all_line_types() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        is_in_diff_view(&screen),
-        "Should still be in diff view"
-    );
+    assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
 
 /// Test cursor visibility: cursor should always be visible after movement
@@ -1256,8 +1215,5 @@ fn test_diff_cursor_always_visible() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    assert!(
-        is_in_diff_view(&screen),
-        "Should still be in diff view"
-    );
+    assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }

@@ -415,8 +415,9 @@ impl Editor {
                                 let visible_width = pane_width.saturating_sub(4);
                                 if view_state.cursor_column >= viewport.left_column + visible_width
                                 {
-                                    viewport.left_column =
-                                        view_state.cursor_column.saturating_sub(visible_width.saturating_sub(1));
+                                    viewport.left_column = view_state
+                                        .cursor_column
+                                        .saturating_sub(visible_width.saturating_sub(1));
                                 }
                             }
                         }
@@ -630,8 +631,9 @@ impl Editor {
                                 let visible_width = pane_width.saturating_sub(4);
                                 if view_state.cursor_column >= viewport.left_column + visible_width
                                 {
-                                    viewport.left_column =
-                                        view_state.cursor_column.saturating_sub(visible_width.saturating_sub(1));
+                                    viewport.left_column = view_state
+                                        .cursor_column
+                                        .saturating_sub(visible_width.saturating_sub(1));
                                 }
                             }
                         }
@@ -844,13 +846,12 @@ impl Editor {
         let click_col = left_column + visual_col;
 
         // Get line length to clamp cursor position
-        let display_row = if let Some(view_state) =
-            self.composite_view_states.get(&(split_id, buffer_id))
-        {
-            view_state.scroll_row + content_row
-        } else {
-            content_row
-        };
+        let display_row =
+            if let Some(view_state) = self.composite_view_states.get(&(split_id, buffer_id)) {
+                view_state.scroll_row + content_row
+            } else {
+                content_row
+            };
 
         let line_length = if let Some(composite) = self.composite_buffers.get(&buffer_id) {
             composite
@@ -859,7 +860,10 @@ impl Editor {
                 .and_then(|row| row.get_pane_line(pane_idx))
                 .and_then(|line_ref| {
                     let source = composite.sources.get(pane_idx)?;
-                    self.buffers.get(&source.buffer_id)?.buffer.get_line(line_ref.line)
+                    self.buffers
+                        .get(&source.buffer_id)?
+                        .buffer
+                        .get_line(line_ref.line)
                 })
                 .map(|bytes| String::from_utf8_lossy(&bytes).chars().count())
                 .unwrap_or(0)

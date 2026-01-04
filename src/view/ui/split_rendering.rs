@@ -1521,18 +1521,18 @@ impl SplitRenderer {
             let padding = " ".repeat(max_width - rendered);
             // cursor_column is absolute, convert to visual position for padding check
             let cursor_visual = cursor_column.saturating_sub(left_column);
-            let pad_style =
-                if show_cursor && cursor_visual >= rendered && cursor_visual < max_width {
-                    // Cursor is in padding area - show cursor at beginning of padding
-                    // (past end of line content)
-                    if cursor_visual == rendered {
-                        Style::default().fg(theme.editor_bg).bg(theme.editor_fg)
-                    } else {
-                        Style::default().bg(bg)
-                    }
+            let pad_style = if show_cursor && cursor_visual >= rendered && cursor_visual < max_width
+            {
+                // Cursor is in padding area - show cursor at beginning of padding
+                // (past end of line content)
+                if cursor_visual == rendered {
+                    Style::default().fg(theme.editor_bg).bg(theme.editor_fg)
                 } else {
                     Style::default().bg(bg)
-                };
+                }
+            } else {
+                Style::default().bg(bg)
+            };
             spans.push(Span::styled(padding, pad_style));
         }
     }
