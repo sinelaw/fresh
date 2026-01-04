@@ -1946,6 +1946,9 @@ impl Editor {
         if !theme_name.is_empty() {
             self.theme = crate::view::theme::Theme::from_name(theme_name);
 
+            // Set terminal cursor color to match theme
+            self.theme.set_terminal_cursor_color();
+
             // Update the config in memory
             self.config.theme = self.theme.name.clone().into();
 

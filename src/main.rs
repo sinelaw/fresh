@@ -416,6 +416,7 @@ fn initialize_app(args: &Args) -> io::Result<SetupState> {
         let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
         let _ = stdout().execute(DisableBracketedPaste);
         let _ = stdout().execute(SetCursorStyle::DefaultUserShape);
+        fresh::view::theme::Theme::reset_terminal_cursor_color();
         let _ = stdout().execute(PopKeyboardEnhancementFlags);
         let _ = disable_raw_mode();
         let _ = stdout().execute(LeaveAlternateScreen);
@@ -771,6 +772,7 @@ fn main() -> io::Result<()> {
     let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
     let _ = stdout().execute(DisableBracketedPaste);
     let _ = stdout().execute(SetCursorStyle::DefaultUserShape);
+    fresh::view::theme::Theme::reset_terminal_cursor_color();
     let _ = stdout().execute(PopKeyboardEnhancementFlags);
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;

@@ -657,6 +657,9 @@ impl Editor {
         // Load theme from config
         let theme = crate::view::theme::Theme::from_name(&config.theme);
 
+        // Set terminal cursor color to match theme
+        theme.set_terminal_cursor_color();
+
         tracing::info!(
             "Grammar registry has {} syntaxes",
             grammar_registry.available_syntaxes().len()

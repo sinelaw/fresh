@@ -2563,7 +2563,9 @@ impl SplitRenderer {
                     if !have_cursor {
                         if let Some(bp) = byte_pos {
                             if bp == primary_cursor_position && char_width(ch) == 0 {
-                                cursor_screen_x = gutter_width as u16 + visible_char_count as u16;
+                                // Account for horizontal scrolling by subtracting left_col
+                                cursor_screen_x = gutter_width as u16
+                                    + col_offset.saturating_sub(left_col) as u16;
                                 cursor_screen_y = lines.len() as u16;
                                 have_cursor = true;
                             }

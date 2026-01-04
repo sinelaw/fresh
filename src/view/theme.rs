@@ -2,6 +2,31 @@ use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// Convert a ratatui Color to RGB values.
+/// Returns None for Reset or Indexed colors.
+pub fn color_to_rgb(color: Color) -> Option<(u8, u8, u8)> {
+    match color {
+        Color::Rgb(r, g, b) => Some((r, g, b)),
+        Color::White => Some((255, 255, 255)),
+        Color::Black => Some((0, 0, 0)),
+        Color::Red => Some((205, 0, 0)),
+        Color::Green => Some((0, 205, 0)),
+        Color::Blue => Some((0, 0, 238)),
+        Color::Yellow => Some((205, 205, 0)),
+        Color::Magenta => Some((205, 0, 205)),
+        Color::Cyan => Some((0, 205, 205)),
+        Color::Gray => Some((229, 229, 229)),
+        Color::DarkGray => Some((127, 127, 127)),
+        Color::LightRed => Some((255, 0, 0)),
+        Color::LightGreen => Some((0, 255, 0)),
+        Color::LightBlue => Some((92, 92, 255)),
+        Color::LightYellow => Some((255, 255, 0)),
+        Color::LightMagenta => Some((255, 0, 255)),
+        Color::LightCyan => Some((0, 255, 255)),
+        Color::Reset | Color::Indexed(_) => None,
+    }
+}
+
 /// Serializable color representation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -577,7 +602,7 @@ impl Theme {
             // Editor colors
             editor_bg: Color::Rgb(30, 30, 30),
             editor_fg: Color::Rgb(212, 212, 212),
-            cursor: Color::Rgb(82, 139, 255),
+            cursor: Color::Rgb(255, 255, 255),
             inactive_cursor: Color::Rgb(100, 100, 100),
             selection_bg: Color::Rgb(38, 79, 120),
             current_line_bg: Color::Rgb(40, 40, 40),
@@ -701,7 +726,7 @@ impl Theme {
             // Editor colors
             editor_bg: Color::Rgb(255, 255, 255),
             editor_fg: Color::Rgb(0, 0, 0),
-            cursor: Color::Rgb(0, 0, 255),
+            cursor: Color::Rgb(0, 0, 0),
             inactive_cursor: Color::Rgb(180, 180, 180),
             selection_bg: Color::Rgb(173, 214, 255),
             current_line_bg: Color::Rgb(245, 245, 245),
@@ -825,7 +850,7 @@ impl Theme {
             // Editor colors
             editor_bg: Color::Black,
             editor_fg: Color::White,
-            cursor: Color::Yellow,
+            cursor: Color::White,
             inactive_cursor: Color::DarkGray,
             selection_bg: Color::Rgb(0, 100, 200),
             current_line_bg: Color::Rgb(20, 20, 20),
@@ -1113,6 +1138,31 @@ impl Theme {
             syntax_constant: Color::Rgb(255, 0, 255),  // Bright magenta constants
             syntax_operator: Color::Rgb(170, 170, 170), // Light gray operators
         }
+    }
+
+    /// Set the terminal cursor color using OSC 12 escape sequence.
+    /// This makes the hardware cursor visible on any background.
+    pub fn set_terminal_cursor_color(&self) {
+        use std::io::Write;
+        if let Some((r, g, b)) = color_to_rgb(self.cursor) {
+            // OSC 12 sets cursor color: \x1b]12;#RRGGBB\x07
+            let _ = write!(
+                std::io::stdout(),
+                "\x1b]12;#{:02x}{:02x}{:02x}\x07",
+                r,
+                g,
+                b
+            );
+            let _ = std::io::stdout().flush();
+        }
+    }
+
+    /// Reset the terminal cursor color to default.
+    pub fn reset_terminal_cursor_color() {
+        use std::io::Write;
+        // OSC 112 resets cursor color to default
+        let _ = write!(std::io::stdout(), "\x1b]112\x07");
+        let _ = std::io::stdout().flush();
     }
 }
 
