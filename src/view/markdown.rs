@@ -409,12 +409,15 @@ pub fn parse_markdown(text: &str, theme: &crate::view::theme::Theme) -> Vec<Styl
                         let spans = highlight_code_string(&text, lang, theme);
                         let highlighted_lines =
                             highlight_code_to_styled_lines(&text, &spans, theme);
-                        for styled_line in highlighted_lines {
-                            if !styled_line.spans.is_empty() {
-                                lines.push(styled_line);
-                            } else {
-                                // Empty line in code block
+                        for (i, styled_line) in highlighted_lines.into_iter().enumerate() {
+                            if i > 0 {
                                 lines.push(StyledLine::new());
+                            }
+                            // Merge spans into the current line
+                            if let Some(current_line) = lines.last_mut() {
+                                for span in styled_line.spans {
+                                    current_line.push(span.text, span.style);
+                                }
                             }
                         }
                     } else {
