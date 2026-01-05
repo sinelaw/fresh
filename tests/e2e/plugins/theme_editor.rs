@@ -1427,11 +1427,11 @@ fn test_theme_editor_color_values_no_internal_spaces() {
         .unwrap();
 
     // Wait for theme editor to load AND swatches to appear
-    // Swatches are indicated by the color block "██"
+    // Swatches are indicated by the color block "■" character
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("Theme Editor:") && screen.contains("██")
+            screen.contains("Theme Editor:") && screen.contains("■")
         })
         .unwrap();
 
@@ -2029,19 +2029,20 @@ fn test_color_swatches_displayed() {
         .unwrap();
 
     // Wait for theme editor to load with swatches
+    // Swatches are indicated by the color block "■" character
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("Theme Editor:") && screen.contains("██")
+            screen.contains("Theme Editor:") && screen.contains("■")
         })
         .unwrap();
 
     let screen = harness.screen_to_string();
 
-    // Color swatches should be displayed as "██" characters
+    // Color swatches should be displayed as "■" characters
     assert!(
-        screen.contains("██"),
-        "Color swatches (██) should be displayed next to color values. Screen:\n{}",
+        screen.contains("■"),
+        "Color swatches (■) should be displayed next to color values. Screen:\n{}",
         screen
     );
 
