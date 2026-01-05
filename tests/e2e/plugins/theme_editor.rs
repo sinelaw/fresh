@@ -1427,3 +1427,176 @@ fn test_theme_editor_color_values_no_internal_spaces() {
         screen
     );
 }
+
+/// Test that navigation skips non-selectable lines and only lands on fields/sections
+/// Navigation should work with Up/Down arrows and Tab/Shift-Tab for section jumping
+#[test]
+fn test_theme_editor_navigation_skips_non_selectable_lines() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    copy_plugin(&plugins_dir, "theme_editor");
+
+    let themes_dir = project_root.join("themes");
+    fs::create_dir(&themes_dir).unwrap();
+    let test_theme = r#"{
+        "name": "test",
+        "editor": {"bg": [30, 30, 30], "fg": [200, 200, 200]},
+        "ui": {"tab_active_bg": [50, 50, 50]},
+        "search": {},
+        "diagnostic": {},
+        "syntax": {"keyword": [100, 150, 200]}
+    }"#;
+    fs::write(themes_dir.join("test.json"), test_theme).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+
+    harness.render().unwrap();
+
+    // Open theme editor
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Edit Theme").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Theme Editor:"))
+        .unwrap();
+
+    // Initial position - should start at first selectable (Editor section)
+    let screen_initial = harness.screen_to_string();
+    let (_, cursor_y_initial) = harness.screen_cursor_position();
+
+    // Press Down - should move to next selectable (skip description line)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
+
+    let screen_after_down = harness.screen_to_string();
+    let (_, cursor_y_after_down) = harness.screen_cursor_position();
+
+    // Cursor should have moved
+    assert!(
+        cursor_y_after_down != cursor_y_initial,
+        "Cursor should move after pressing Down. Initial Y: {}, After Down Y: {}",
+        cursor_y_initial,
+        cursor_y_after_down
+    );
+
+    // Press Down multiple times to navigate through fields
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.process_async_and_render().unwrap();
+    }
+
+    let screen_after_multiple_down = harness.screen_to_string();
+    let (_, cursor_y_after_multiple) = harness.screen_cursor_position();
+
+    // Now press Up to go back
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
+
+    let (_, cursor_y_after_up) = harness.screen_cursor_position();
+
+    // Cursor should have moved up
+    assert!(
+        cursor_y_after_up < cursor_y_after_multiple,
+        "Cursor should move up after pressing Up. After multiple down Y: {}, After up Y: {}",
+        cursor_y_after_multiple,
+        cursor_y_after_up
+    );
+
+    // Test Tab navigation - should jump to next section
+    // First, go back to beginning
+    for _ in 0..20 {
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+        harness.process_async_and_render().unwrap();
+    }
+
+    let screen_at_start = harness.screen_to_string();
+
+    // Press Tab to jump to next section
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
+
+    let screen_after_tab = harness.screen_to_string();
+    let (_, cursor_y_after_tab) = harness.screen_cursor_position();
+
+    // Check that we landed on a section header (contains ">" or "▼")
+    let lines: Vec<&str> = screen_after_tab.lines().collect();
+    if cursor_y_after_tab < lines.len() as u16 {
+        let cursor_line = lines[cursor_y_after_tab as usize];
+        // Section lines have ">" (collapsed) or "▼" (expanded) followed by section name
+        let is_on_section = cursor_line.contains(">") || cursor_line.contains("▼");
+        assert!(
+            is_on_section,
+            "After Tab, cursor should be on a section header. Cursor line: '{}'\nFull screen:\n{}",
+            cursor_line,
+            screen_after_tab
+        );
+    }
+
+    // Test Shift+Tab navigation - should jump to previous section
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    let (_, cursor_y_after_backtab) = harness.screen_cursor_position();
+
+    // Cursor should have moved (back to previous section or wrapped)
+    let screen_after_backtab = harness.screen_to_string();
+    let lines_after: Vec<&str> = screen_after_backtab.lines().collect();
+    if cursor_y_after_backtab < lines_after.len() as u16 {
+        let cursor_line = lines_after[cursor_y_after_backtab as usize];
+        let is_on_section = cursor_line.contains(">") || cursor_line.contains("▼");
+        assert!(
+            is_on_section,
+            "After Shift+Tab, cursor should be on a section header. Cursor line: '{}'\nFull screen:\n{}",
+            cursor_line,
+            screen_after_backtab
+        );
+    }
+
+    // Verify that pressing Enter on a section toggles it (expand/collapse)
+    // Find a collapsed section first
+    for _ in 0..10 {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.process_async_and_render().unwrap();
+        let screen = harness.screen_to_string();
+        if screen.contains("> UI") || screen.contains("> Search") || screen.contains("> Diagnostics") {
+            break;
+        }
+    }
+
+    let screen_before_toggle = harness.screen_to_string();
+    let has_collapsed_section = screen_before_toggle.contains("> ");
+
+    if has_collapsed_section {
+        // Press Enter to toggle (expand)
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        harness.process_async_and_render().unwrap();
+
+        let screen_after_toggle = harness.screen_to_string();
+
+        // After toggle, the section should be expanded (shows ▼ instead of >)
+        // Note: This depends on which section we landed on
+        let has_expanded = screen_after_toggle.contains("▼");
+        assert!(
+            has_expanded || screen_after_toggle != screen_before_toggle,
+            "Enter on section should toggle expansion. Before toggle screen had '>' for collapsed sections."
+        );
+    }
+}

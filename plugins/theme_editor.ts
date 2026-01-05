@@ -282,12 +282,14 @@ editor.defineMode(
   [
     ["Return", "theme_editor_edit_color"],
     ["Space", "theme_editor_edit_color"],
-    ["Tab", "theme_editor_toggle_section"],
+    ["Tab", "theme_editor_nav_next_section"],
+    ["S-Tab", "theme_editor_nav_prev_section"],
     ["Up", "theme_editor_nav_up"],
     ["Down", "theme_editor_nav_down"],
     ["k", "theme_editor_nav_up"],
     ["j", "theme_editor_nav_down"],
     ["c", "theme_editor_copy_from_builtin"],
+    ["e", "theme_editor_edit_existing"],
     ["n", "theme_editor_set_name"],
     ["s", "theme_editor_save"],
     ["S", "theme_editor_save_as"],
@@ -455,7 +457,7 @@ async function loadBuiltinThemes(): Promise<string[]> {
 }
 
 /**
- * Load a theme file
+ * Load a theme file from built-in themes directory
  */
 async function loadThemeFile(name: string): Promise<Record<string, unknown> | null> {
   const themesDir = findThemesDir();
@@ -467,6 +469,37 @@ async function loadThemeFile(name: string): Promise<Record<string, unknown> | nu
   } catch {
     editor.debug(`Failed to load theme: ${name}`);
     return null;
+  }
+}
+
+/**
+ * Load a user theme file
+ */
+async function loadUserThemeFile(name: string): Promise<{ data: Record<string, unknown>; path: string } | null> {
+  const userThemesDir = getUserThemesDir();
+  const themePath = editor.pathJoin(userThemesDir, `${name}.json`);
+
+  try {
+    const content = await editor.readFile(themePath);
+    return { data: JSON.parse(content), path: themePath };
+  } catch {
+    editor.debug(`Failed to load user theme: ${name}`);
+    return null;
+  }
+}
+
+/**
+ * List available user themes
+ */
+function listUserThemes(): string[] {
+  const userThemesDir = getUserThemesDir();
+  try {
+    const entries = editor.readDir(userThemesDir);
+    return entries
+      .filter(e => e.is_file && e.name.endsWith(".json"))
+      .map(e => e.name.replace(".json", ""));
+  } catch {
+    return [];
   }
 }
 
@@ -999,6 +1032,34 @@ globalThis.onThemeCopyPromptConfirmed = async function(args: {
 };
 
 /**
+ * Handle edit existing theme prompt
+ */
+globalThis.onThemeEditExistingPromptConfirmed = async function(args: {
+  prompt_type: string;
+  selected_index: number | null;
+  input: string;
+}): Promise<boolean> {
+  if (args.prompt_type !== "theme-edit-existing") return true;
+
+  const themeName = args.input.trim();
+  const result = await loadUserThemeFile(themeName);
+
+  if (result) {
+    state.themeData = deepClone(result.data);
+    state.originalThemeData = deepClone(result.data);
+    state.themeName = themeName;
+    state.themePath = result.path;
+    state.hasChanges = false;
+    updateDisplay();
+    editor.setStatus(editor.t("status.loaded", { name: themeName }));
+  } else {
+    editor.setStatus(editor.t("status.load_failed", { name: themeName }));
+  }
+
+  return true;
+};
+
+/**
  * Handle save as prompt
  */
 globalThis.onThemeSaveAsPromptConfirmed = async function(args: {
@@ -1049,6 +1110,7 @@ globalThis.onThemePromptCancelled = function(args: { prompt_type: string }): boo
 editor.on("prompt_confirmed", "onThemeColorPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeNamePromptConfirmed");
 editor.on("prompt_confirmed", "onThemeCopyPromptConfirmed");
+editor.on("prompt_confirmed", "onThemeEditExistingPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeSaveAsPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeSetDefaultPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeDiscardPromptConfirmed");
@@ -1208,14 +1270,19 @@ editor.on("cursor_moved", "onThemeEditorCursorMoved");
 // Smart Navigation - Skip Non-Selectable Lines
 // =============================================================================
 
+interface SelectableEntry {
+  byteOffset: number;
+  index: number;
+  isSection: boolean;
+}
+
 /**
- * Get line numbers for all selectable entries (fields and sections)
- * Returns array of { lineNumber, index } for navigation
+ * Get byte offsets for all selectable entries (fields and sections)
  */
-function getSelectableLineNumbers(): Array<{ lineNumber: number; index: number }> {
+function getSelectableEntries(): SelectableEntry[] {
   const entries = buildDisplayEntries();
-  const selectableLines: Array<{ lineNumber: number; index: number }> = [];
-  let lineNumber = 1; // 1-indexed
+  const selectableEntries: SelectableEntry[] = [];
+  let byteOffset = 0;
 
   for (const entry of entries) {
     const props = entry.properties as Record<string, unknown>;
@@ -1223,15 +1290,30 @@ function getSelectableLineNumbers(): Array<{ lineNumber: number; index: number }
 
     // Only fields and sections are selectable (they have index property)
     if ((entryType === "field" || entryType === "section") && typeof props.index === "number") {
-      selectableLines.push({ lineNumber, index: props.index as number });
+      selectableEntries.push({
+        byteOffset,
+        index: props.index as number,
+        isSection: entryType === "section",
+      });
     }
 
-    // Count lines in this entry
-    const lines = entry.text.split("\n");
-    lineNumber += lines.length - 1; // -1 because split creates extra empty at end if trailing newline
+    byteOffset += getUtf8ByteLength(entry.text);
   }
 
-  return selectableLines;
+  return selectableEntries;
+}
+
+/**
+ * Get the current selectable entry index based on cursor position
+ */
+function getCurrentSelectableIndex(): number {
+  if (state.bufferId === null) return -1;
+
+  const props = editor.getTextPropertiesAtCursor(state.bufferId);
+  if (props.length > 0 && typeof props[0].index === "number") {
+    return props[0].index as number;
+  }
+  return -1;
 }
 
 /**
@@ -1240,22 +1322,19 @@ function getSelectableLineNumbers(): Array<{ lineNumber: number; index: number }
 globalThis.theme_editor_nav_down = function(): void {
   if (state.bufferId === null) return;
 
-  const currentLine = editor.getCursorLine(state.bufferId);
-  const selectableLines = getSelectableLineNumbers();
+  const selectableEntries = getSelectableEntries();
+  const currentIndex = getCurrentSelectableIndex();
 
-  // Find next selectable line after current
-  for (const sel of selectableLines) {
-    if (sel.lineNumber > currentLine) {
-      editor.setCursorLine(state.bufferId, sel.lineNumber);
+  // Find next selectable entry after current
+  for (const entry of selectableEntries) {
+    if (entry.index > currentIndex) {
+      editor.setBufferCursor(state.bufferId, entry.byteOffset);
       return;
     }
   }
 
-  // Already at last selectable, stay there or wrap to first
-  if (selectableLines.length > 0) {
-    // Stay at current position (don't wrap)
-    editor.setStatus(editor.t("status.at_last_field"));
-  }
+  // Already at last selectable, stay there
+  editor.setStatus(editor.t("status.at_last_field"));
 };
 
 /**
@@ -1264,20 +1343,66 @@ globalThis.theme_editor_nav_down = function(): void {
 globalThis.theme_editor_nav_up = function(): void {
   if (state.bufferId === null) return;
 
-  const currentLine = editor.getCursorLine(state.bufferId);
-  const selectableLines = getSelectableLineNumbers();
+  const selectableEntries = getSelectableEntries();
+  const currentIndex = getCurrentSelectableIndex();
 
-  // Find previous selectable line before current
-  for (let i = selectableLines.length - 1; i >= 0; i--) {
-    if (selectableLines[i].lineNumber < currentLine) {
-      editor.setCursorLine(state.bufferId, selectableLines[i].lineNumber);
+  // Find previous selectable entry before current
+  for (let i = selectableEntries.length - 1; i >= 0; i--) {
+    if (selectableEntries[i].index < currentIndex) {
+      editor.setBufferCursor(state.bufferId, selectableEntries[i].byteOffset);
       return;
     }
   }
 
   // Already at first selectable, stay there
-  if (selectableLines.length > 0) {
-    editor.setStatus(editor.t("status.at_first_field"));
+  editor.setStatus(editor.t("status.at_first_field"));
+};
+
+/**
+ * Navigate to next section (Tab)
+ */
+globalThis.theme_editor_nav_next_section = function(): void {
+  if (state.bufferId === null) return;
+
+  const selectableEntries = getSelectableEntries();
+  const currentIndex = getCurrentSelectableIndex();
+
+  // Find next section after current position
+  for (const entry of selectableEntries) {
+    if (entry.isSection && entry.index > currentIndex) {
+      editor.setBufferCursor(state.bufferId, entry.byteOffset);
+      return;
+    }
+  }
+
+  // Wrap to first section
+  const firstSection = selectableEntries.find(e => e.isSection);
+  if (firstSection) {
+    editor.setBufferCursor(state.bufferId, firstSection.byteOffset);
+  }
+};
+
+/**
+ * Navigate to previous section (Shift+Tab)
+ */
+globalThis.theme_editor_nav_prev_section = function(): void {
+  if (state.bufferId === null) return;
+
+  const selectableEntries = getSelectableEntries();
+  const currentIndex = getCurrentSelectableIndex();
+
+  // Find previous section before current position
+  for (let i = selectableEntries.length - 1; i >= 0; i--) {
+    if (selectableEntries[i].isSection && selectableEntries[i].index < currentIndex) {
+      editor.setBufferCursor(state.bufferId, selectableEntries[i].byteOffset);
+      return;
+    }
+  }
+
+  // Wrap to last section
+  const sections = selectableEntries.filter(e => e.isSection);
+  if (sections.length > 0) {
+    editor.setBufferCursor(state.bufferId, sections[sections.length - 1].byteOffset);
   }
 };
 
@@ -1447,6 +1572,28 @@ globalThis.theme_editor_copy_from_builtin = function(): void {
   const suggestions: PromptSuggestion[] = state.builtinThemes.map(name => ({
     text: name,
     description: editor.t("suggestion.builtin_theme"),
+    value: name,
+  }));
+
+  editor.setPromptSuggestions(suggestions);
+};
+
+/**
+ * Edit an existing user theme
+ */
+globalThis.theme_editor_edit_existing = function(): void {
+  const userThemes = listUserThemes();
+
+  if (userThemes.length === 0) {
+    editor.setStatus(editor.t("status.no_user_themes"));
+    return;
+  }
+
+  editor.startPrompt(editor.t("prompt.edit_theme"), "theme-edit-existing");
+
+  const suggestions: PromptSuggestion[] = userThemes.map(name => ({
+    text: name,
+    description: editor.t("suggestion.user_theme"),
     value: name,
   }));
 
@@ -1628,6 +1775,13 @@ editor.registerCommand(
   "%cmd.copy_builtin",
   "%cmd.copy_builtin_desc",
   "theme_editor_copy_from_builtin",
+  "normal,theme-editor"
+);
+
+editor.registerCommand(
+  "%cmd.edit_existing",
+  "%cmd.edit_existing_desc",
+  "theme_editor_edit_existing",
   "normal,theme-editor"
 );
 

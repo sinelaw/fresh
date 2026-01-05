@@ -10,6 +10,8 @@
     "cmd.toggle_section_desc": "Expand or collapse section",
     "cmd.copy_builtin": "Theme: Copy From Built-in",
     "cmd.copy_builtin_desc": "Copy colors from a built-in theme",
+    "cmd.edit_existing": "Theme: Edit Existing",
+    "cmd.edit_existing_desc": "Load and edit an existing user theme",
     "cmd.set_name": "Theme: Set Name",
     "cmd.set_name_desc": "Set the theme name",
     "cmd.save": "Theme: Save",
@@ -45,19 +47,22 @@
     "status.reloaded": "Theme reloaded from file",
     "status.reset": "Theme reset to defaults",
     "status.cancelled": "Cancelled",
-    "status.help": "Keys: up/down navigate | RET/SPC edit | TAB expand | c copy | n name | s save | S save-as | d default | q quit",
+    "status.help": "Keys: up/down navigate | TAB/S-TAB sections | RET/SPC edit | c copy | e edit | s save | S save-as | d default | q quit",
     "status.plugin_loaded": "Theme Editor plugin loaded",
     "status.at_first_field": "At first field",
     "status.at_last_field": "At last field",
+    "status.no_user_themes": "No user themes found. Create one first with 'c' (copy from built-in) then save.",
+    "status.loaded": "Loaded theme: %{name}",
 
     "panel.title": "Theme Editor: %{name}",
     "panel.modified": "[modified]",
     "panel.file": "File: %{path}",
     "panel.new_theme": "New theme (not yet saved)",
-    "panel.nav_hint": "up/down: navigate | RET/SPC: edit color | TAB: expand/collapse",
-    "panel.action_hint": "c: copy from builtin | n: set name | s: save | S: save as | d: set as default | q: quit",
+    "panel.nav_hint": "up/down: navigate | TAB/S-TAB: jump sections | RET/SPC: edit/toggle",
+    "panel.action_hint": "c: copy builtin | e: edit existing | s: save | S: save as | d: set default | q: quit",
 
     "prompt.copy_theme": "Copy from theme: ",
+    "prompt.edit_theme": "Edit user theme: ",
     "prompt.theme_name": "Theme name: ",
     "prompt.save_as": "Save theme as: ",
     "prompt.set_default": "Set default theme: ",
@@ -71,6 +76,7 @@
 
     "suggestion.current": "(current)",
     "suggestion.builtin_theme": "Built-in theme",
+    "suggestion.user_theme": "User theme",
     "suggestion.builtin": "Built-in",
     "suggestion.terminal_native": "Use terminal's native color",
 
@@ -254,6 +260,8 @@
     "cmd.toggle_section_desc": "Expandir o contraer seccion",
     "cmd.copy_builtin": "Tema: Copiar de predefinido",
     "cmd.copy_builtin_desc": "Copiar colores de un tema predefinido",
+    "cmd.edit_existing": "Tema: Editar existente",
+    "cmd.edit_existing_desc": "Cargar y editar un tema de usuario existente",
     "cmd.set_name": "Tema: Establecer nombre",
     "cmd.set_name_desc": "Establecer el nombre del tema",
     "cmd.save": "Tema: Guardar",
@@ -293,6 +301,8 @@
     "status.plugin_loaded": "Plugin de editor de temas cargado",
     "status.at_first_field": "En el primer campo",
     "status.at_last_field": "En el ultimo campo",
+    "status.no_user_themes": "No se encontraron temas de usuario. Cree uno primero con 'c' (copiar de predefinido) y guarde.",
+    "status.loaded": "Tema cargado: %{name}",
 
     "panel.title": "Editor de temas: %{name}",
     "panel.modified": "[modificado]",
@@ -302,6 +312,7 @@
     "panel.action_hint": "c: copiar de predefinido | n: nombre | s: guardar | S: guardar como | d: predeterminado | q: salir",
 
     "prompt.copy_theme": "Copiar de tema: ",
+    "prompt.edit_theme": "Editar tema de usuario: ",
     "prompt.theme_name": "Nombre del tema: ",
     "prompt.save_as": "Guardar tema como: ",
     "prompt.set_default": "Establecer tema predeterminado: ",
@@ -315,6 +326,7 @@
 
     "suggestion.current": "(actual)",
     "suggestion.builtin_theme": "Tema predefinido",
+    "suggestion.user_theme": "Tema de usuario",
     "suggestion.builtin": "Predefinido",
     "suggestion.terminal_native": "Usar color nativo de la terminal",
 
@@ -498,6 +510,8 @@
     "cmd.toggle_section_desc": "Abschnitt erweitern oder reduzieren",
     "cmd.copy_builtin": "Theme: Von eingebaut kopieren",
     "cmd.copy_builtin_desc": "Farben von eingebautem Theme kopieren",
+    "cmd.edit_existing": "Theme: Bestehendes bearbeiten",
+    "cmd.edit_existing_desc": "Bestehendes Benutzer-Theme laden und bearbeiten",
     "cmd.set_name": "Theme: Namen festlegen",
     "cmd.set_name_desc": "Theme-Namen festlegen",
     "cmd.save": "Theme: Speichern",
@@ -537,6 +551,8 @@
     "status.plugin_loaded": "Theme-Editor-Plugin geladen",
     "status.at_first_field": "Am ersten Feld",
     "status.at_last_field": "Am letzten Feld",
+    "status.no_user_themes": "Keine Benutzer-Themes gefunden. Erstellen Sie eines mit 'c' (von eingebaut kopieren) und speichern.",
+    "status.loaded": "Theme geladen: %{name}",
 
     "panel.title": "Theme-Editor: %{name}",
     "panel.modified": "[geaendert]",
@@ -546,6 +562,7 @@
     "panel.action_hint": "c: von eingebaut kopieren | n: Name festlegen | s: speichern | S: speichern unter | d: als Standard | q: beenden",
 
     "prompt.copy_theme": "Von Theme kopieren: ",
+    "prompt.edit_theme": "Benutzer-Theme bearbeiten: ",
     "prompt.theme_name": "Theme-Name: ",
     "prompt.save_as": "Theme speichern als: ",
     "prompt.set_default": "Standard-Theme festlegen: ",
