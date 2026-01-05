@@ -266,6 +266,7 @@ const colors = {
   modified: [255, 255, 100] as RGB,        // Yellow
   footer: [100, 100, 100] as RGB,          // Gray
   colorBlock: [200, 200, 200] as RGB,      // Light gray for color swatch outline
+  selectionBg: [50, 50, 80] as RGB,        // Dark blue-gray for selected field
 };
 
 // Color block character for swatches
@@ -650,7 +651,19 @@ function addColorOverlay(
   color: RGB,
   bold: boolean = false
 ): void {
-  editor.addOverlay(bufferId, "theme", start, end, color[0], color[1], color[2], false, bold, false);
+  editor.addOverlay(bufferId, "theme", start, end, color[0], color[1], color[2], -1, -1, -1, false, bold, false, false);
+}
+
+/**
+ * Helper to add a background highlight overlay
+ */
+function addBackgroundHighlight(
+  bufferId: number,
+  start: number,
+  end: number,
+  bgColor: RGB
+): void {
+  editor.addOverlay(bufferId, "theme-selection", start, end, -1, -1, -1, bgColor[0], bgColor[1], bgColor[2], false, false, false, true);
 }
 
 /**
@@ -741,15 +754,26 @@ function applyHighlighting(): void {
 
   const bufferId = state.bufferId;
   editor.clearNamespace(bufferId, "theme");
+  editor.clearNamespace(bufferId, "theme-selection");
 
   const entries = buildDisplayEntries();
   let byteOffset = 0;
+
+  // Get current field at cursor to highlight it
+  const currentField = getFieldAtCursor();
+  const currentFieldPath = currentField?.path;
 
   for (const entry of entries) {
     const text = entry.text;
     const textLen = getUtf8ByteLength(text);
     const props = entry.properties as Record<string, unknown>;
     const entryType = props.type as string;
+    const entryPath = props.path as string | undefined;
+
+    // Add selection highlight for current field/section
+    if (currentFieldPath && entryPath === currentFieldPath && (entryType === "field" || entryType === "section")) {
+      addBackgroundHighlight(bufferId, byteOffset, byteOffset + textLen, colors.selectionBg);
+    }
 
     if (entryType === "title") {
       addColorOverlay(bufferId, byteOffset, byteOffset + textLen, colors.sectionHeader, true);
@@ -1023,6 +1047,8 @@ editor.on("prompt_confirmed", "onThemeNamePromptConfirmed");
 editor.on("prompt_confirmed", "onThemeCopyPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeSaveAsPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeSetDefaultPromptConfirmed");
+editor.on("prompt_confirmed", "onThemeDiscardPromptConfirmed");
+editor.on("prompt_confirmed", "onThemeOverwritePromptConfirmed");
 editor.on("prompt_cancelled", "onThemePromptCancelled");
 
 // =============================================================================
@@ -1238,9 +1264,23 @@ globalThis.theme_editor_close = function(): void {
   if (!state.isOpen) return;
 
   if (state.hasChanges) {
-    editor.setStatus(editor.t("status.unsaved_discarded"));
+    // Show confirmation prompt before closing with unsaved changes
+    editor.startPrompt(editor.t("prompt.discard_confirm"), "theme-discard-confirm");
+    const suggestions: PromptSuggestion[] = [
+      { text: editor.t("prompt.discard_yes"), description: "", value: "discard" },
+      { text: editor.t("prompt.discard_no"), description: "", value: "keep" },
+    ];
+    editor.setPromptSuggestions(suggestions);
+    return;
   }
 
+  doCloseEditor();
+};
+
+/**
+ * Actually close the editor (called after confirmation or when no changes)
+ */
+function doCloseEditor(): void {
   editor.setContext("theme-editor", false);
 
   // Close the buffer (this will switch to another buffer in the same split)
@@ -1257,6 +1297,27 @@ globalThis.theme_editor_close = function(): void {
   state.hasChanges = false;
 
   editor.setStatus(editor.t("status.closed"));
+}
+
+/**
+ * Handle discard confirmation prompt
+ */
+globalThis.onThemeDiscardPromptConfirmed = function(args: {
+  prompt_type: string;
+  selected_index: number | null;
+  input: string;
+}): boolean {
+  if (args.prompt_type !== "theme-discard-confirm") return true;
+
+  const response = args.input.trim().toLowerCase();
+  if (response === "discard" || args.selected_index === 0) {
+    editor.setStatus(editor.t("status.unsaved_discarded"));
+    doCloseEditor();
+  } else {
+    editor.setStatus(editor.t("status.cancelled"));
+  }
+
+  return false;
 };
 
 /**
@@ -1328,12 +1389,53 @@ globalThis.theme_editor_set_name = function(): void {
  * Save theme
  */
 globalThis.theme_editor_save = async function(): Promise<void> {
-  if (!state.hasChanges && state.themePath) {
+  // If theme has never been saved (no path), trigger "Save As" instead
+  if (!state.themePath) {
+    theme_editor_save_as();
+    return;
+  }
+
+  if (!state.hasChanges) {
     editor.setStatus(editor.t("status.no_changes"));
     return;
   }
 
+  // Check for name collision if name has changed since last save
+  const userThemesDir = getUserThemesDir();
+  const targetPath = editor.pathJoin(userThemesDir, `${state.themeName}.json`);
+
+  if (state.themePath !== targetPath && editor.fileExists(targetPath)) {
+    // File exists with this name - ask for confirmation
+    editor.startPrompt(editor.t("prompt.overwrite_confirm", { name: state.themeName }), "theme-overwrite-confirm");
+    const suggestions: PromptSuggestion[] = [
+      { text: editor.t("prompt.overwrite_yes"), description: "", value: "overwrite" },
+      { text: editor.t("prompt.overwrite_no"), description: "", value: "cancel" },
+    ];
+    editor.setPromptSuggestions(suggestions);
+    return;
+  }
+
   await saveTheme();
+};
+
+/**
+ * Handle overwrite confirmation prompt
+ */
+globalThis.onThemeOverwritePromptConfirmed = async function(args: {
+  prompt_type: string;
+  selected_index: number | null;
+  input: string;
+}): Promise<boolean> {
+  if (args.prompt_type !== "theme-overwrite-confirm") return true;
+
+  const response = args.input.trim().toLowerCase();
+  if (response === "overwrite" || args.selected_index === 0) {
+    await saveTheme();
+  } else {
+    editor.setStatus(editor.t("status.cancelled"));
+  }
+
+  return false;
 };
 
 /**

@@ -1062,7 +1062,23 @@ impl Theme {
             "nostalgia".to_string(),
         ];
 
-        // Scan user themes directory
+        // Scan built-in themes directory (themes/*.json in the project)
+        if let Ok(entries) = std::fs::read_dir("themes") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|ext| ext == "json") {
+                    if let Some(stem) = path.file_stem() {
+                        let name = stem.to_string_lossy().to_string();
+                        // Avoid duplicates
+                        if !themes.iter().any(|t| t == &name) {
+                            themes.push(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Scan user themes directory (user themes can override built-ins)
         if let Some(config_dir) = dirs::config_dir() {
             let user_themes_dir = config_dir.join("fresh").join("themes");
             if let Ok(entries) = std::fs::read_dir(&user_themes_dir) {
