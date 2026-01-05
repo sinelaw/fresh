@@ -983,10 +983,31 @@ impl Editor {
         // Save file state before closing (for per-file session persistence)
         self.save_file_state_on_close(id);
 
-        // If closing a terminal buffer while in terminal mode, exit terminal mode
-        if self.terminal_mode && self.is_terminal_buffer(id) {
-            self.terminal_mode = false;
-            self.key_context = crate::input::keybindings::KeyContext::Normal;
+        // If closing a terminal buffer, clean up terminal-related data structures
+        if let Some(terminal_id) = self.terminal_buffers.remove(&id) {
+            // Close the terminal process
+            self.terminal_manager.close(terminal_id);
+
+            // Clean up backing/rendering file
+            let backing_file = self.terminal_backing_files.remove(&terminal_id);
+            if let Some(ref path) = backing_file {
+                let _ = std::fs::remove_file(path);
+            }
+            // Clean up raw log file
+            if let Some(log_file) = self.terminal_log_files.remove(&terminal_id) {
+                if backing_file.as_ref() != Some(&log_file) {
+                    let _ = std::fs::remove_file(&log_file);
+                }
+            }
+
+            // Remove from terminal_mode_resume to prevent stale entries
+            self.terminal_mode_resume.remove(&id);
+
+            // Exit terminal mode if we were in it
+            if self.terminal_mode {
+                self.terminal_mode = false;
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
+            }
         }
 
         // Find a visible (non-hidden) replacement buffer

@@ -373,3 +373,111 @@ fn test_closing_other_buffer_resumes_terminal_correctly() {
     harness.assert_screen_contains("UNIQUEMARKER_ABC_123");
     harness.assert_screen_contains("SECONDMARKER_XYZ_789");
 }
+
+/// Test: Closed terminal should not reappear after session restore
+///
+/// Bug reproduction: When a terminal is closed before quitting, then session is
+/// restored, closing a file should not bring back the closed terminal.
+///
+/// Steps:
+/// 1. Open file and terminal
+/// 2. Close the terminal
+/// 3. Save session and quit
+/// 4. Start new editor, restore session
+/// 5. Close the file
+/// 6. Verify closed terminal does NOT become focused
+#[test]
+fn test_closed_terminal_not_restored_from_session() {
+    use fresh::config::Config;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file = project_dir.join("test.txt");
+    std::fs::write(&file, "Test file content").unwrap();
+
+    // First session: open file, open terminal, close terminal, save session
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            120,
+            30,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // Open the file
+        harness.open_file(&file).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains("test.txt");
+
+        // Open terminal
+        harness.editor_mut().open_terminal();
+        harness.render().unwrap();
+        harness.assert_screen_contains("Terminal 0");
+
+        let terminal_buffer = harness.editor().active_buffer_id();
+        assert!(
+            harness.editor().is_terminal_buffer(terminal_buffer),
+            "Should be on terminal buffer"
+        );
+
+        // Close the terminal
+        run_command(&mut harness, "close buffer");
+        harness.render().unwrap();
+
+        // Terminal should be gone
+        harness.assert_screen_not_contains("Terminal");
+
+        // We should be on the file now
+        harness.assert_screen_contains("test.txt");
+        let active_after_close = harness.editor().active_buffer_id();
+        assert!(
+            !harness.editor().is_terminal_buffer(active_after_close),
+            "Should NOT be on terminal buffer after closing it"
+        );
+
+        // Save session
+        harness.editor_mut().save_session().unwrap();
+    }
+
+    // Second session: restore and verify terminal doesn't come back
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            120,
+            30,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // Restore session
+        let restored = harness.editor_mut().try_restore_session().unwrap();
+        assert!(restored, "Session should have been restored");
+        harness.render().unwrap();
+
+        // File should be restored
+        harness.assert_screen_contains("test.txt");
+
+        // Terminal should NOT be restored (it was closed before saving)
+        harness.assert_screen_not_contains("Terminal");
+
+        // Close the file - this should NOT bring back the terminal
+        run_command(&mut harness, "close buffer");
+        harness.render().unwrap();
+
+        // After closing the only file, should have a new [No Name] buffer
+        // NOT the old closed terminal
+        let active_buffer = harness.editor().active_buffer_id();
+        assert!(
+            !harness.editor().is_terminal_buffer(active_buffer),
+            "BUG: Closed terminal should NOT become focused after closing file. \
+             A closed terminal from a previous session was incorrectly restored."
+        );
+
+        // Double-check terminal is not visible anywhere
+        harness.assert_screen_not_contains("Terminal");
+    }
+}
