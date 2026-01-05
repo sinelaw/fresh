@@ -278,9 +278,6 @@ const colors = {
   selectionBg: [50, 50, 80] as RGB,        // Dark blue-gray for selected field
 };
 
-// Color block character for swatches
-const COLOR_BLOCK = "██";
-
 // =============================================================================
 // Keyboard Shortcuts (defined once, used in mode and i18n)
 // =============================================================================
@@ -744,70 +741,6 @@ function isBackgroundColorField(path: string): boolean {
  */
 function isSpecialColor(value: ColorValue): boolean {
   return typeof value === "string" && SPECIAL_COLORS.includes(value);
-}
-
-/**
- * Add color swatches using virtual text
- */
-function addColorSwatches(): void {
-  if (state.bufferId === null) return;
-
-  // Clear existing swatches
-  editor.removeVirtualTextsByPrefix(state.bufferId, "theme-swatch-");
-
-  const entries = buildDisplayEntries();
-  let byteOffset = 0;
-
-  for (const entry of entries) {
-    const props = entry.properties as Record<string, unknown>;
-
-    if (props.type === "field" && props.colorValue) {
-      const colorValue = props.colorValue as ColorValue;
-      const path = props.path as string;
-
-      // Find position after the field name colon
-      const colonIdx = entry.text.indexOf(":");
-      if (colonIdx >= 0) {
-        const swatchPos = byteOffset + getUtf8ByteLength(entry.text.substring(0, colonIdx + 2));
-        const swatchId = `theme-swatch-${path}`;
-
-        if (isSpecialColor(colorValue)) {
-          // For Default/Reset, show a placeholder indicator
-          editor.addVirtualText(
-            state.bufferId,
-            swatchId,
-            swatchPos,
-            "∅ ",  // Empty set symbol to indicate "use default"
-            150,   // Gray color for the indicator
-            150,
-            150,
-            true,
-            false
-          );
-        } else {
-          const rgb = parseColorToRgb(colorValue);
-          if (rgb) {
-            const useBg = isBackgroundColorField(path);
-
-            // Add swatch with a trailing space included in the text
-            editor.addVirtualText(
-              state.bufferId,
-              swatchId,
-              swatchPos,
-              useBg ? "   " : COLOR_BLOCK + " ",  // Include trailing space in swatch text
-              rgb[0],
-              rgb[1],
-              rgb[2],
-              true,
-              useBg  // use as background color
-            );
-          }
-        }
-      }
-    }
-
-    byteOffset += getUtf8ByteLength(entry.text);
-  }
 }
 
 /**
@@ -1329,7 +1262,7 @@ globalThis.onThemeEditorCursorMoved = function(data: {
 editor.on("cursor_moved", "onThemeEditorCursorMoved");
 
 /**
- * Handle lines_changed event to add color swatches
+ * Handle lines_changed event to add color swatches as virtual text
  * This is triggered during rendering when new lines become visible
  */
 globalThis.onThemeEditorLinesChanged = function(data: {
@@ -1355,7 +1288,7 @@ globalThis.onThemeEditorLinesChanged = function(data: {
       const colorStr = match[1];
       const colorStartIdx = line.content.lastIndexOf(colorStr);
       if (colorStartIdx >= 0) {
-        // Calculate byte position of the color value
+        // Position before the color value
         const swatchPos = line.byte_start + colorStartIdx;
         const swatchId = `theme-swatch-line-${line.line_number}`;
 
@@ -1382,19 +1315,18 @@ globalThis.onThemeEditorLinesChanged = function(data: {
         }
 
         if (rgb && !isNaN(rgb[0]) && !isNaN(rgb[1]) && !isNaN(rgb[2])) {
-          // Check if this is a background color field
-          const useBg = line.content.toLowerCase().includes("_bg:");
+          // Check if this is a background color field - show sample with bg color
+          const isBgField = line.content.toLowerCase().includes("_bg:");
 
+          // Add virtual text sample character before the hex value
           editor.addVirtualText(
             state.bufferId,
             swatchId,
             swatchPos,
-            useBg ? "   " : COLOR_BLOCK + " ",
-            rgb[0],
-            rgb[1],
-            rgb[2],
-            true,
-            useBg
+            isBgField ? " Ab " : "■ ",  // Sample text for bg, block for fg
+            rgb[0], rgb[1], rgb[2],
+            true,      // prepend before position
+            isBgField  // use as background color for bg fields
           );
         }
       }
