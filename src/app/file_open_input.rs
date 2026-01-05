@@ -6,6 +6,7 @@
 use super::file_open::{FileOpenSection, SortMode};
 use super::Editor;
 use crate::input::keybindings::Action;
+use crate::primitives::path_utils::expand_tilde;
 use crate::view::prompt::PromptType;
 use rust_i18n::t;
 
@@ -164,16 +165,10 @@ impl Editor {
 
         // If there's any prompt input, try to resolve it as a path
         if !prompt_input.is_empty() {
-            let expanded_path = if prompt_input.starts_with('~') {
-                // Path starting with ~
-                if let Some(home) = dirs::home_dir() {
-                    home.join(&prompt_input[1..].trim_start_matches('/'))
-                } else {
-                    std::path::PathBuf::from(&prompt_input)
-                }
-            } else if prompt_input.starts_with('/') {
-                // Absolute path
-                std::path::PathBuf::from(&prompt_input)
+            // Expand tilde and resolve path
+            let tilde_expanded = expand_tilde(&prompt_input);
+            let expanded_path = if tilde_expanded.is_absolute() {
+                tilde_expanded
             } else {
                 // Relative path (including plain filename) - resolve against current directory
                 current_dir.join(&prompt_input)
@@ -312,14 +307,10 @@ impl Editor {
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
             // Build the full path
-            let full_path = if filter.starts_with('/') {
-                std::path::PathBuf::from(&filter)
-            } else if filter.starts_with('~') {
-                if let Some(home) = dirs::home_dir() {
-                    home.join(&filter[1..].trim_start_matches('/'))
-                } else {
-                    current_dir.join(&filter)
-                }
+            // Expand tilde and resolve path
+            let tilde_expanded = expand_tilde(&filter);
+            let full_path = if tilde_expanded.is_absolute() {
+                tilde_expanded
             } else {
                 current_dir.join(&filter)
             };

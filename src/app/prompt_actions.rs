@@ -9,9 +9,9 @@ use super::BufferId;
 use super::BufferMetadata;
 use super::Editor;
 use crate::input::keybindings::Action;
+use crate::primitives::path_utils::expand_tilde;
 use crate::services::plugins::hooks::HookArgs;
 use crate::view::prompt::PromptType;
-use std::path::Path;
 
 /// Result of handling a prompt confirmation.
 pub enum PromptResult {
@@ -35,11 +35,12 @@ impl Editor {
     ) -> PromptResult {
         match prompt_type {
             PromptType::OpenFile => {
-                let input_path = Path::new(&input);
-                let resolved_path = if input_path.is_absolute() {
-                    normalize_path(input_path)
+                // Expand tilde to home directory first
+                let expanded_path = expand_tilde(&input);
+                let resolved_path = if expanded_path.is_absolute() {
+                    normalize_path(&expanded_path)
                 } else {
-                    normalize_path(&self.working_dir.join(input_path))
+                    normalize_path(&self.working_dir.join(&expanded_path))
                 };
 
                 if let Err(e) = self.open_file(&resolved_path) {
@@ -53,11 +54,12 @@ impl Editor {
                 }
             }
             PromptType::SwitchProject => {
-                let input_path = Path::new(&input);
-                let resolved_path = if input_path.is_absolute() {
-                    normalize_path(input_path)
+                // Expand tilde to home directory first
+                let expanded_path = expand_tilde(&input);
+                let resolved_path = if expanded_path.is_absolute() {
+                    normalize_path(&expanded_path)
                 } else {
-                    normalize_path(&self.working_dir.join(input_path))
+                    normalize_path(&self.working_dir.join(&expanded_path))
                 };
 
                 if resolved_path.is_dir() {
@@ -309,11 +311,12 @@ impl Editor {
 
     /// Handle SaveFileAs prompt confirmation.
     fn handle_save_file_as(&mut self, input: &str) {
-        let input_path = Path::new(input);
-        let full_path = if input_path.is_absolute() {
-            normalize_path(input_path)
+        // Expand tilde to home directory first
+        let expanded_path = expand_tilde(input);
+        let full_path = if expanded_path.is_absolute() {
+            normalize_path(&expanded_path)
         } else {
-            normalize_path(&self.working_dir.join(input_path))
+            normalize_path(&self.working_dir.join(&expanded_path))
         };
 
         // Check if we're saving to a different file that already exists

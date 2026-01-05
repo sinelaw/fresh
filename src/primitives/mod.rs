@@ -17,4 +17,5 @@ pub mod semantic_highlight;
 pub mod snippet;
 pub mod text_property;
 pub mod visual_layout;
+pub mod path_utils;
 pub mod word_navigation;
