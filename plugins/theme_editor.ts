@@ -1909,96 +1909,96 @@ editor.registerCommand(
   "normal"
 );
 
-// Context-specific commands
+// Context-specific commands (only available when theme editor buffer is active)
 editor.registerCommand(
   "%cmd.close_editor",
   "%cmd.close_editor_desc",
   "theme_editor_close",
-  "normal,theme-editor"
+  "theme-editor"
 );
 
 editor.registerCommand(
   "%cmd.edit_color",
   "%cmd.edit_color_desc",
   "theme_editor_edit_color",
-  "normal,theme-editor"
+  "theme-editor"
 );
 
 editor.registerCommand(
   "%cmd.toggle_section",
   "%cmd.toggle_section_desc",
   "theme_editor_toggle_section",
-  "normal,theme-editor"
+  "theme-editor"
 );
 
 editor.registerCommand(
   "%cmd.open_theme",
   "%cmd.open_theme_desc",
   "theme_editor_open",
-  "normal,theme-editor"
+  "theme-editor"
 );
 
 editor.registerCommand(
   "%cmd.save",
   "%cmd.save_desc",
   "theme_editor_save",
-  "normal,theme-editor"
+  "theme-editor"
 );
 
 editor.registerCommand(
   "%cmd.save_as",
   "%cmd.save_as_desc",
   "theme_editor_save_as",
-  "normal,theme-editor"
+  "theme-editor"
 );
 
 editor.registerCommand(
   "%cmd.reload",
   "%cmd.reload_desc",
   "theme_editor_reload",
-  "normal,theme-editor"
+  "theme-editor"
 );
 
 editor.registerCommand(
   "%cmd.show_help",
   "%cmd.show_help_desc",
   "theme_editor_show_help",
-  "normal,theme-editor"
+  "theme-editor"
 );
 
 editor.registerCommand(
   "%cmd.delete_theme",
   "%cmd.delete_theme_desc",
   "theme_editor_delete",
-  "normal,theme-editor"
+  "theme-editor"
 );
 
 editor.registerCommand(
   "%cmd.nav_up",
   "%cmd.nav_up_desc",
   "theme_editor_nav_up",
-  "normal,theme-editor"
+  "theme-editor"
 );
 
 editor.registerCommand(
   "%cmd.nav_down",
   "%cmd.nav_down_desc",
   "theme_editor_nav_down",
-  "normal,theme-editor"
+  "theme-editor"
 );
 
 editor.registerCommand(
   "%cmd.nav_next",
   "%cmd.nav_next_desc",
   "theme_editor_nav_next_section",
-  "normal,theme-editor"
+  "theme-editor"
 );
 
 editor.registerCommand(
   "%cmd.nav_prev",
   "%cmd.nav_prev_desc",
   "theme_editor_nav_prev_section",
-  "normal,theme-editor"
+  "theme-editor"
 );
 
 // =============================================================================
