@@ -71,9 +71,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Check build without plugins feature
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+      - name: Check build without plugins feature
         run: cargo check --no-default-features --features runtime --all-targets
 
   test:
