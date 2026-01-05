@@ -915,26 +915,44 @@ function editColorField(field: ThemeField): void {
   editor.setPromptSuggestions(suggestions);
 }
 
+interface ParseColorResult {
+  value?: ColorValue;
+  error?: string;
+}
+
 /**
- * Parse color input from user
+ * Parse color input from user with detailed error messages
  */
-function parseColorInput(input: string): ColorValue | null {
+function parseColorInput(input: string): ParseColorResult {
   input = input.trim();
+
+  if (!input) {
+    return { error: "empty" };
+  }
 
   // Check for special colors (Default/Reset - use terminal's native color)
   if (SPECIAL_COLORS.includes(input)) {
-    return input;
+    return { value: input };
   }
 
   // Check for named color
   if (input in NAMED_COLORS) {
-    return input;
+    return { value: input };
   }
 
   // Try to parse as hex color #RRGGBB
-  const hexResult = hexToRgb(input);
-  if (hexResult) {
-    return hexResult;
+  if (input.startsWith("#")) {
+    const hex = input.slice(1);
+    if (hex.length !== 6) {
+      return { error: "hex_length" };
+    }
+    if (!/^[0-9A-Fa-f]{6}$/.test(hex)) {
+      return { error: "hex_invalid" };
+    }
+    const hexResult = hexToRgb(input);
+    if (hexResult) {
+      return { value: hexResult };
+    }
   }
 
   // Try to parse as RGB array [r, g, b]
@@ -943,13 +961,14 @@ function parseColorInput(input: string): ColorValue | null {
     const r = parseInt(rgbMatch[1], 10);
     const g = parseInt(rgbMatch[2], 10);
     const b = parseInt(rgbMatch[3], 10);
-
-    if (r >= 0 && r <= 255 && g >= 0 && g <= 255 && b >= 0 && b <= 255) {
-      return [r, g, b];
+    if (r > 255 || g > 255 || b > 255) {
+      return { error: "rgb_range" };
     }
+    return { value: [r, g, b] };
   }
 
-  return null;
+  // Unknown format
+  return { error: "unknown" };
 }
 
 // =============================================================================
@@ -967,15 +986,18 @@ globalThis.onThemeColorPromptConfirmed = function(args: {
   if (!args.prompt_type.startsWith("theme-color-")) return true;
 
   const path = args.prompt_type.replace("theme-color-", "");
-  const newValue = parseColorInput(args.input);
+  const result = parseColorInput(args.input);
 
-  if (newValue !== null) {
-    setNestedValue(state.themeData, path, newValue);
+  if (result.value !== undefined) {
+    setNestedValue(state.themeData, path, result.value);
     state.hasChanges = !deepEqual(state.themeData, state.originalThemeData);
     updateDisplay();
     editor.setStatus(editor.t("status.updated", { path }));
   } else {
-    editor.setStatus(editor.t("status.invalid_color"));
+    // Show specific error message based on error type
+    const errorKey = `error.color_${result.error}`;
+    const errorMsg = editor.t(errorKey, { input: args.input });
+    editor.setStatus(errorMsg);
   }
 
   return true;

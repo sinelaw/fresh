@@ -54,6 +54,12 @@
     "status.no_user_themes": "No user themes found. Create one first with 'c' (copy from built-in) then save.",
     "status.loaded": "Loaded theme: %{name}",
 
+    "error.color_empty": "Please enter a color value",
+    "error.color_hex_length": "Hex color must be 6 characters: #RRGGBB (e.g., #FF0000)",
+    "error.color_hex_invalid": "Invalid hex characters in '%{input}': use only 0-9 and A-F",
+    "error.color_rgb_range": "RGB values must be 0-255. Got invalid values in '%{input}'",
+    "error.color_unknown": "Unknown color format '%{input}'. Use #RRGGBB, [r,g,b], or a color name",
+
     "panel.title": "Theme Editor: %{name}",
     "panel.modified": "[modified]",
     "panel.file": "File: %{path}",
