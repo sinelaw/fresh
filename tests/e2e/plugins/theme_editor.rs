@@ -968,7 +968,10 @@ fn test_theme_applied_immediately_after_save() {
 
     // Save the theme with Ctrl+Shift+S (Save As) since it's a builtin
     harness
-        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('s'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
@@ -976,7 +979,7 @@ fn test_theme_applied_immediately_after_save() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("Save as") || screen.contains("save as")
+            screen.contains("Save theme as") || screen.contains("save as")
         })
         .unwrap();
 
@@ -1120,11 +1123,15 @@ fn test_cursor_x_position_preserved_after_section_toggle() {
     );
     eprintln!("Screen:\n{}", screen_before);
 
-    // Press Tab to toggle the section (expand)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Press Enter to toggle the section (expand) - Enter toggles when on a section header
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
 
-    // Process async operations and render to ensure key is handled
-    harness.process_async_and_render().unwrap();
+    // Wait for the toggle to complete (> becomes ▼)
+    harness
+        .wait_until(|h| h.screen_to_string().contains("▼ UI Elements"))
+        .unwrap();
 
     let screen_after = harness.screen_to_string();
     let (cursor_x_after, cursor_y_after) = harness.screen_cursor_position();
@@ -1965,7 +1972,7 @@ fn test_builtin_theme_requires_save_as() {
 
     // Should show Save As prompt or message about requiring Save As
     let screen = harness.screen_to_string();
-    let requires_save_as = screen.contains("Save as") || screen.contains("save as");
+    let requires_save_as = screen.contains("Save theme as") || screen.contains("save as");
 
     assert!(
         requires_save_as,
