@@ -703,7 +703,8 @@ function buildDisplayEntries(): TextPropertyEntry[] {
 }
 
 /**
- * Helper to add a colored overlay
+ * Helper to add a colored overlay (foreground color)
+ * addOverlay signature: (bufferId, namespace, start, end, r, g, b, underline, bold, italic, bg_r, bg_g, bg_b, extend_to_line_end)
  */
 function addColorOverlay(
   bufferId: number,
@@ -712,11 +713,12 @@ function addColorOverlay(
   color: RGB,
   bold: boolean = false
 ): void {
-  editor.addOverlay(bufferId, "theme", start, end, color[0], color[1], color[2], -1, -1, -1, false, bold, false, false);
+  editor.addOverlay(bufferId, "theme", start, end, color[0], color[1], color[2], false, bold, false, -1, -1, -1, false);
 }
 
 /**
  * Helper to add a background highlight overlay
+ * addOverlay signature: (bufferId, namespace, start, end, r, g, b, underline, bold, italic, bg_r, bg_g, bg_b, extend_to_line_end)
  */
 function addBackgroundHighlight(
   bufferId: number,
@@ -724,7 +726,7 @@ function addBackgroundHighlight(
   end: number,
   bgColor: RGB
 ): void {
-  editor.addOverlay(bufferId, "theme-selection", start, end, -1, -1, -1, bgColor[0], bgColor[1], bgColor[2], false, false, false, true);
+  editor.addOverlay(bufferId, "theme-selection", start, end, -1, -1, -1, false, false, false, bgColor[0], bgColor[1], bgColor[2], true);
 }
 
 /**
