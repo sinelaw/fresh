@@ -570,6 +570,11 @@ impl Editor {
         self.terminal_mode
     }
 
+    /// Check if a buffer is in terminal_mode_resume set (for testing/debugging)
+    pub fn is_in_terminal_mode_resume(&self, buffer_id: BufferId) -> bool {
+        self.terminal_mode_resume.contains(&buffer_id)
+    }
+
     /// Check if keyboard capture is enabled in terminal mode (for testing)
     pub fn is_keyboard_capture(&self) -> bool {
         self.keyboard_capture

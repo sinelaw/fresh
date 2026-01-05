@@ -348,14 +348,12 @@ fn test_closing_other_buffer_resumes_terminal_correctly() {
         active_after_close, terminal_buffer
     );
 
-    // BUG: Terminal mode should have resumed automatically
-    // The terminal was added to terminal_mode_resume when we opened the file,
-    // so switching back to it should resume terminal mode.
+    // Terminal mode should have resumed automatically because the terminal
+    // was added to terminal_mode_resume when we opened the file.
     assert!(
         harness.editor().is_terminal_mode(),
-        "BUG: Terminal mode should automatically resume after closing file buffer \
-         and switching back to terminal. The terminal was in terminal_mode_resume \
-         but terminal_mode is still false."
+        "Terminal mode should automatically resume after closing file buffer \
+         and switching back to terminal."
     );
 
     // The original marker should still be visible (requires terminal content sync)

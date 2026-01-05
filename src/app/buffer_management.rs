@@ -1007,6 +1007,14 @@ impl Editor {
             *visible_replacement.unwrap()
         };
 
+        // Switch to replacement buffer BEFORE updating splits.
+        // This is important because set_active_buffer returns early if the buffer
+        // is already active, and updating splits changes what active_buffer() returns.
+        // We need set_active_buffer to run its terminal_mode_resume logic.
+        if self.active_buffer() == id {
+            self.set_active_buffer(replacement_buffer);
+        }
+
         // Update all splits that are showing this buffer to show the replacement
         let splits_to_update = self.split_manager.splits_for_buffer(id);
         for split_id in splits_to_update {
@@ -1027,11 +1035,6 @@ impl Editor {
         // Remove buffer from all splits' open_buffers lists
         for view_state in self.split_view_states.values_mut() {
             view_state.remove_buffer(id);
-        }
-
-        // Switch to another buffer if we closed the active one
-        if self.active_buffer() == id {
-            self.set_active_buffer(replacement_buffer);
         }
 
         // If this was the last visible buffer, focus file explorer
