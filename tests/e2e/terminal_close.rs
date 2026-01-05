@@ -289,6 +289,14 @@ fn test_closing_other_buffer_resumes_terminal_correctly() {
     harness.editor_mut().open_terminal();
     harness.render().unwrap();
 
+    // Close the initial [No Name] buffer so terminal is the only buffer
+    // This matches the user scenario: terminal is open, then open file, close file
+    run_command(&mut harness, "prev buffer");
+    run_command(&mut harness, "close buffer");
+    // Switch back to terminal
+    run_command(&mut harness, "next buffer");
+    harness.render().unwrap();
+
     // Type a command with a unique marker
     harness
         .editor_mut()
@@ -326,24 +334,32 @@ fn test_closing_other_buffer_resumes_terminal_correctly() {
         "Should NOT be in terminal mode after opening file"
     );
 
-    // Close the file buffer - should switch back to terminal
+    // Close the file buffer - should automatically switch back to terminal
+    // AND resume terminal mode (since terminal was in terminal_mode_resume)
     run_command(&mut harness, "Close Buffer");
-
-    // Wait a moment for the buffer close to process
     harness.render().unwrap();
 
-    // Now switch to the terminal buffer explicitly
-    harness.editor_mut().switch_buffer(terminal_buffer);
-    harness.render().unwrap();
+    // After closing, we should automatically be on the terminal buffer
+    let active_after_close = harness.editor().active_buffer_id();
+    assert_eq!(
+        active_after_close, terminal_buffer,
+        "Should automatically switch to terminal buffer after closing file. \
+         Got buffer {:?} instead of terminal {:?}",
+        active_after_close, terminal_buffer
+    );
 
-    // The original marker should still be visible
-    harness.assert_screen_contains("UNIQUEMARKER_ABC_123");
-
-    // Terminal mode should have resumed
+    // BUG: Terminal mode should have resumed automatically
+    // The terminal was added to terminal_mode_resume when we opened the file,
+    // so switching back to it should resume terminal mode.
     assert!(
         harness.editor().is_terminal_mode(),
-        "Terminal mode should resume after switching back to terminal buffer"
+        "BUG: Terminal mode should automatically resume after closing file buffer \
+         and switching back to terminal. The terminal was in terminal_mode_resume \
+         but terminal_mode is still false."
     );
+
+    // The original marker should still be visible (requires terminal content sync)
+    harness.assert_screen_contains("UNIQUEMARKER_ABC_123");
 
     // Type a second command to verify terminal is fully working
     harness
