@@ -55,8 +55,7 @@ This binds `Ctrl+Shift+T` to open the theme editor. You can choose any key combi
 2. Navigate with arrow keys to color fields
 3. Press `Enter` or `Space` to edit a color
 4. Input color as: `#FF0000` (hex), `[255,0,0]` (RGB), or `Red` (named)
-5. Press `s` to save (prompts for name if new theme)
-6. Press `d` to set as default theme
+5. Press `s` to save (prompts for name if new) - theme is automatically applied
 
 ### Key Bindings
 
@@ -68,9 +67,8 @@ This binds `Ctrl+Shift+T` to open the theme editor. You can choose any key combi
 | `Enter/Space` | Edit color field or toggle section expand/collapse |
 | `c` | Copy from built-in theme |
 | `e` | Edit existing user theme |
-| `s` | Save theme (prompts for name if new) |
-| `S` | Save as (new name) |
-| `d` | Set as default theme |
+| `s` | Save theme (prompts for name if new, auto-applies) |
+| `S` | Save as (new name, auto-applies) |
 | `x` | Delete current user theme |
 | `r` | Reload theme from file |
 | `?` | Show help |

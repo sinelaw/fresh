@@ -234,6 +234,8 @@ interface ThemeEditorState {
   hasChanges: boolean;
   /** Available built-in themes */
   builtinThemes: string[];
+  /** Pending save name for overwrite confirmation */
+  pendingSaveName: string | null;
 }
 
 const state: ThemeEditorState = {
@@ -251,6 +253,7 @@ const state: ThemeEditorState = {
   selectedIndex: 0,
   hasChanges: false,
   builtinThemes: [],
+  pendingSaveName: null,
 };
 
 // =============================================================================
@@ -292,7 +295,6 @@ editor.defineMode(
     ["e", "theme_editor_edit_existing"],
     ["s", "theme_editor_save"],
     ["S", "theme_editor_save_as"],
-    ["d", "theme_editor_set_as_default"],
     ["x", "theme_editor_delete"],
     ["q", "theme_editor_close"],
     ["Escape", "theme_editor_close"],
@@ -1071,27 +1073,25 @@ globalThis.onThemeSaveAsPromptConfirmed = async function(args: {
 
   const name = args.input.trim();
   if (name) {
+    // Check if theme already exists
+    const userThemesDir = getUserThemesDir();
+    const targetPath = editor.pathJoin(userThemesDir, `${name}.json`);
+
+    if (editor.fileExists(targetPath)) {
+      // Store pending save name for overwrite confirmation
+      state.pendingSaveName = name;
+      editor.startPrompt(editor.t("prompt.overwrite_confirm", { name }), "theme-overwrite-confirm");
+      const suggestions: PromptSuggestion[] = [
+        { text: editor.t("prompt.overwrite_yes"), description: "", value: "overwrite" },
+        { text: editor.t("prompt.overwrite_no"), description: "", value: "cancel" },
+      ];
+      editor.setPromptSuggestions(suggestions);
+      return true;
+    }
+
     state.themeName = name;
     state.themeData.name = name;
     await saveTheme(name);
-  }
-
-  return true;
-};
-
-/**
- * Handle set as default prompt
- */
-globalThis.onThemeSetDefaultPromptConfirmed = async function(args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): Promise<boolean> {
-  if (args.prompt_type !== "theme-set-default") return true;
-
-  const themeName = args.input.trim();
-  if (themeName) {
-    await setThemeAsDefault(themeName);
   }
 
   return true;
@@ -1111,7 +1111,6 @@ editor.on("prompt_confirmed", "onThemeColorPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeCopyPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeEditExistingPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeSaveAsPromptConfirmed");
-editor.on("prompt_confirmed", "onThemeSetDefaultPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeDiscardPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeOverwritePromptConfirmed");
 editor.on("prompt_confirmed", "onThemeDeletePromptConfirmed");
@@ -1152,24 +1151,13 @@ async function saveTheme(name?: string): Promise<boolean> {
     state.hasChanges = false;
     updateDisplay();
 
-    editor.setStatus(editor.t("status.saved", { path: themePath }));
+    // Automatically apply the saved theme
+    editor.applyTheme(themeName);
+    editor.setStatus(editor.t("status.saved_and_applied", { name: themeName }));
     return true;
   } catch (e) {
     editor.setStatus(editor.t("status.save_failed", { error: String(e) }));
     return false;
-  }
-}
-
-/**
- * Set a theme as the default in config and apply it immediately
- */
-async function setThemeAsDefault(themeName: string): Promise<void> {
-  try {
-    // Use the editor API to apply and persist the theme
-    editor.applyTheme(themeName);
-    editor.setStatus(editor.t("status.default_set", { name: themeName }));
-  } catch (e) {
-    editor.setStatus(editor.t("status.apply_failed", { error: String(e) }));
   }
 }
 
@@ -1643,8 +1631,14 @@ globalThis.onThemeOverwritePromptConfirmed = async function(args: {
 
   const response = args.input.trim().toLowerCase();
   if (response === "overwrite" || args.selected_index === 0) {
-    await saveTheme();
+    // Use pending name if set (from Save As), otherwise use current name
+    const nameToSave = state.pendingSaveName || state.themeName;
+    state.themeName = nameToSave;
+    state.themeData.name = nameToSave;
+    state.pendingSaveName = null;
+    await saveTheme(nameToSave);
   } else {
+    state.pendingSaveName = null;
     editor.setStatus(editor.t("status.cancelled"));
   }
 
@@ -1662,34 +1656,6 @@ globalThis.theme_editor_save_as = function(): void {
     description: editor.t("suggestion.current"),
     value: state.themeName,
   }]);
-};
-
-/**
- * Set current theme as default
- */
-globalThis.theme_editor_set_as_default = function(): void {
-  editor.startPrompt(editor.t("prompt.set_default"), "theme-set-default");
-
-  // Suggest current theme and all builtins
-  const suggestions: PromptSuggestion[] = [];
-
-  if (state.themeName && state.themePath) {
-    suggestions.push({
-      text: state.themeName,
-      description: editor.t("suggestion.current"),
-      value: state.themeName,
-    });
-  }
-
-  for (const name of state.builtinThemes) {
-    suggestions.push({
-      text: name,
-      description: editor.t("suggestion.builtin"),
-      value: name,
-    });
-  }
-
-  editor.setPromptSuggestions(suggestions);
 };
 
 /**
@@ -1838,13 +1804,6 @@ editor.registerCommand(
   "%cmd.save_as",
   "%cmd.save_as_desc",
   "theme_editor_save_as",
-  "normal,theme-editor"
-);
-
-editor.registerCommand(
-  "%cmd.set_default",
-  "%cmd.set_default_desc",
-  "theme_editor_set_as_default",
   "normal,theme-editor"
 );
 
