@@ -1395,10 +1395,14 @@ fn test_theme_editor_navigation_skips_non_selectable_lines() {
     // Initial position
     let (_, cursor_y_initial) = harness.screen_cursor_position();
 
-    // Press Down multiple times to navigate through fields
+    // Press Down multiple times to navigate through fields, waiting for screen to change each time
     for _ in 0..6 {
+        let screen_before = harness.screen_to_string();
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.process_async_and_render().unwrap();
+        // Wait for screen to change (semantic waiting - cursor movement changes highlighting)
+        harness
+            .wait_until(|h| h.screen_to_string() != screen_before)
+            .unwrap();
     }
 
     let (_, cursor_y_after_multiple) = harness.screen_cursor_position();
@@ -1412,9 +1416,12 @@ fn test_theme_editor_navigation_skips_non_selectable_lines() {
         cursor_y_after_multiple
     );
 
-    // Now press Up to go back
+    // Now press Up to go back - wait for screen to change
+    let screen_before_up = harness.screen_to_string();
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
-    harness.process_async_and_render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string() != screen_before_up)
+        .unwrap();
 
     let (_, cursor_y_after_up) = harness.screen_cursor_position();
 
