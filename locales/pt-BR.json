@@ -655,6 +655,7 @@
   "explorer.showing_hidden": "Exibindo arquivos ocultos",
   "file.cannot_close": "Não foi possível fechar o buffer: %{error}",
   "file.command_prompt": "Comando: ",
+  "file.created_new": "Novo arquivo: %{path}",
   "file.error_opening": "Erro ao abrir arquivo: %{error}",
   "file.error_saving": "Erro ao salvar arquivo: %{error}",
   "file.file_changed_prompt": "Arquivo modificado no disco. (s)obrescrever, (C)ancelar? ",

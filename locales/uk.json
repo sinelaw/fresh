@@ -662,6 +662,7 @@
   "file.not_directory": "Не є каталогом: %{path}",
   "file.open_prompt": "Відкрити: ",
   "file.opened": "Відкрито %{path}",
+  "file.created_new": "Новий файл: %{path}",
   "file.replace_prompt": "Заміна: ",
   "file.revert_failed": "Не вдалося відновити: %{error}",
   "file.save_as_prompt": "Зберегти як: ",

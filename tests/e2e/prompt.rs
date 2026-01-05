@@ -249,6 +249,60 @@ fn test_spawn_with_nonexistent_file() {
     assert_eq!(content, "fn main() {}\n");
 }
 
+/// Test creating a new file via the Open File dialog by typing a non-existent filename
+#[test]
+fn test_open_file_dialog_create_new_file() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use std::fs;
+
+    // Use harness with temp project
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    // Create an existing file for initial context
+    let existing_file = project_dir.join("existing.txt");
+    fs::write(&existing_file, "Existing content").unwrap();
+
+    // Open the existing file first
+    harness.open_file(&existing_file).unwrap();
+    harness.assert_screen_contains("existing.txt");
+
+    // Now use command palette to open a NEW file
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .unwrap();
+
+    // Type to search for Open File command
+    harness.type_text("Open File").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for the Open File prompt
+    harness.wait_for_screen_contains("Open file:").unwrap();
+
+    // Type a filename that doesn't exist (has extension so it's treated as a filename)
+    harness.type_text("brandnew.txt").unwrap();
+
+    // Confirm with Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show "New file" message
+    harness.assert_screen_contains("New file");
+
+    // Should show the new filename in the tab
+    harness.assert_screen_contains("brandnew.txt");
+
+    // Buffer should be empty (new unsaved buffer)
+    assert_eq!(harness.get_buffer_content().unwrap(), "");
+}
+
 /// Test Save As functionality
 #[test]
 fn test_save_as_functionality() {

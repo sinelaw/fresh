@@ -655,6 +655,7 @@
   "explorer.showing_hidden": "숨김 파일 표시",
   "file.cannot_close": "버퍼를 닫을 수 없습니다: %{error}",
   "file.command_prompt": "명령: ",
+  "file.created_new": "새 파일: %{path}",
   "file.error_opening": "파일 열기 오류: %{error}",
   "file.error_saving": "파일 저장 오류: %{error}",
   "file.file_changed_prompt": "디스크에서 파일 변경됨. (o)덮어쓰기, (C)취소? ",

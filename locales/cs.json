@@ -663,6 +663,7 @@
   "file.not_directory": "Není adresář: %{path}",
   "file.open_prompt": "Otevřít: ",
   "file.opened": "Otevřeno %{path}",
+  "file.created_new": "Nový soubor: %{path}",
   "file.replace_prompt": "Nahradit: ",
   "file.revert_failed": "Obnovení selhalo: %{error}",
   "file.save_as_prompt": "Uložit jako: ",

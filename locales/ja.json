@@ -655,6 +655,7 @@
   "explorer.showing_hidden": "隠しファイルを表示",
   "file.cannot_close": "バッファを閉じられません: %{error}",
   "file.command_prompt": "コマンド: ",
+  "file.created_new": "新規ファイル: %{path}",
   "file.error_opening": "ファイルを開くエラー: %{error}",
   "file.error_saving": "ファイルの保存エラー: %{error}",
   "file.file_changed_prompt": "ファイルがディスク上で変更されました。(o)上書き、(C)キャンセル？",

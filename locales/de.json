@@ -655,6 +655,7 @@
   "explorer.showing_hidden": "Versteckte Dateien anzeigen",
   "file.cannot_close": "Puffer kann nicht geschlossen werden: %{error}",
   "file.command_prompt": "Befehl: ",
+  "file.created_new": "Neue Datei: %{path}",
   "file.error_opening": "Fehler beim Öffnen: %{error}",
   "file.error_saving": "Fehler beim Speichern: %{error}",
   "file.file_changed_prompt": "Datei auf Festplatte geändert. (ü)berschreiben, (A)bbrechen? ",

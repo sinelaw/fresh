@@ -662,6 +662,7 @@
   "file.not_directory": "N'est pas un répertoire : %{path}",
   "file.open_prompt": "Ouvrir : ",
   "file.opened": "%{path} ouvert",
+  "file.created_new": "Nouveau fichier : %{path}",
   "file.replace_prompt": "Remplacer: ",
   "file.revert_failed": "Échec du rétablissement : %{error}",
   "file.save_as_prompt": "Enregistrer sous : ",

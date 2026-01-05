@@ -662,6 +662,7 @@
   "file.not_directory": "ไม่ใช่ไดเรกทอรี: %{path}",
   "file.open_prompt": "เปิดไฟล์: ",
   "file.opened": "เปิด %{path} แล้ว",
+  "file.created_new": "ไฟล์ใหม่: %{path}",
   "file.replace_prompt": "แทนที่: ",
   "file.revert_failed": "การย้อนกลับล้มเหลว: %{error}",
   "file.save_as_prompt": "บันทึกเป็น: ",

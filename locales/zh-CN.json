@@ -655,6 +655,7 @@
   "explorer.showing_hidden": "显示隐藏文件",
   "file.cannot_close": "无法关闭缓冲区: %{error}",
   "file.command_prompt": "命令：",
+  "file.created_new": "新文件：%{path}",
   "file.error_opening": "打开文件时出错: %{error}",
   "file.error_saving": "保存文件时出错: %{error}",
   "file.file_changed_prompt": "文件在磁盘上已更改。(o)覆盖，(C)取消？",

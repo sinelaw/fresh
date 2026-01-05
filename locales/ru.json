@@ -655,6 +655,7 @@
   "explorer.showing_hidden": "Показ скрытых файлов",
   "file.cannot_close": "Не удаётся закрыть буфер: %{error}",
   "file.command_prompt": "Команда: ",
+  "file.created_new": "Новый файл: %{path}",
   "file.error_opening": "Ошибка открытия файла: %{error}",
   "file.error_saving": "Ошибка сохранения файла: %{error}",
   "file.file_changed_prompt": "Файл изменён на диске. (п)ерезаписать, (О)тмена? ",

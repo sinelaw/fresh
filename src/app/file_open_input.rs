@@ -187,8 +187,14 @@ impl Editor {
                 // Only allowed in file mode, not folder mode
                 self.file_open_open_file(expanded_path);
                 return;
+            } else if !is_folder_mode && Self::should_create_new_file(&prompt_input) {
+                // File doesn't exist but input looks like a filename - create new file
+                // This handles cases like "newfile.txt" or "/path/to/newfile.txt"
+                self.file_open_create_new_file(expanded_path);
+                return;
             }
-            // File doesn't exist - fall through to use selected entry from file list
+            // File doesn't exist and doesn't look like a new filename -
+            // fall through to use selected entry from file list
             // This allows partial filters like "bar" to match "bar.txt"
         }
 
@@ -270,6 +276,38 @@ impl Editor {
                 t!("file.opened", path = path.display().to_string()).to_string(),
             );
         }
+    }
+
+    /// Create a new file (opens an unsaved buffer that will create the file on save)
+    fn file_open_create_new_file(&mut self, path: std::path::PathBuf) {
+        // Close the file browser
+        self.file_open_state = None;
+        self.prompt = None;
+
+        // Open the file - this will create an unsaved buffer with the path set
+        if let Err(e) = self.open_file(&path) {
+            self.set_status_message(t!("file.error_opening", error = e.to_string()).to_string());
+        } else {
+            self.set_status_message(
+                t!("file.created_new", path = path.display().to_string()).to_string(),
+            );
+        }
+    }
+
+    /// Check if the input looks like a filename that should be created
+    /// (has an extension or contains a path separator)
+    fn should_create_new_file(input: &str) -> bool {
+        // If input contains a dot with something after it (extension), or
+        // contains a path separator, treat it as a file to be created
+        let has_extension = input.rfind('.').map_or(false, |pos| {
+            // Check there's something after the dot that's not a path separator
+            let after_dot = &input[pos + 1..];
+            !after_dot.is_empty() && !after_dot.contains('/') && !after_dot.contains('\\')
+        });
+
+        let has_path_separator = input.contains('/') || input.contains('\\');
+
+        has_extension || has_path_separator
     }
 
     /// Navigate to parent directory
