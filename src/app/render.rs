@@ -2842,28 +2842,29 @@ impl Editor {
 
     /// Toggle comment on the current line or selection
     pub(super) fn toggle_comment(&mut self) {
-        // Determine comment prefix based on file extension
-        let comment_prefix = if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer())
-        {
-            if let Some(path) = metadata.file_path() {
-                match path.extension().and_then(|e| e.to_str()) {
-                    Some("rs") | Some("c") | Some("cpp") | Some("h") | Some("hpp") | Some("js")
-                    | Some("ts") | Some("jsx") | Some("tsx") | Some("java") | Some("go")
-                    | Some("swift") | Some("kt") | Some("scala") => "// ",
-                    Some("py") | Some("rb") | Some("sh") | Some("bash") | Some("zsh")
-                    | Some("pl") | Some("r") | Some("yml") | Some("yaml") | Some("toml") => "# ",
-                    Some("lua") | Some("sql") => "-- ",
-                    Some("html") | Some("xml") => "<!-- ",
-                    Some("css") | Some("scss") | Some("sass") => "/* ",
-                    Some("vim") => "\" ",
-                    Some("lisp") | Some("el") | Some("clj") => ";; ",
-                    _ => "// ",
+        // Determine comment prefix from language config
+        // If no language detected or no comment prefix configured, do nothing
+        let comment_prefix: String = match self
+            .buffer_metadata
+            .get(&self.active_buffer())
+            .and_then(|metadata| metadata.file_path())
+            .and_then(|path| {
+                detect_language(path, &self.config.languages).and_then(|lang_name| {
+                    self.config
+                        .languages
+                        .get(&lang_name)
+                        .and_then(|lang_config| lang_config.comment_prefix.clone())
+                })
+            }) {
+            Some(prefix) => {
+                // Ensure there's a trailing space for consistent formatting
+                if prefix.ends_with(' ') {
+                    prefix
+                } else {
+                    format!("{} ", prefix)
                 }
-            } else {
-                "// "
             }
-        } else {
-            "// "
+            None => return, // No comment prefix for this language, do nothing
         };
 
         let estimated_line_length = self.config.editor.estimated_line_length;
@@ -2871,6 +2872,11 @@ impl Editor {
         let state = self.active_state_mut();
         let cursor = state.cursors.primary().clone();
         let cursor_id = state.cursors.primary_id();
+
+        // Save original selection info to restore after edit
+        let original_anchor = cursor.anchor;
+        let original_position = cursor.position;
+        let had_selection = original_anchor.is_some();
 
         let (start_pos, end_pos) = if let Some(range) = cursor.selection_range() {
             (range.start, range.end)
@@ -2892,7 +2898,7 @@ impl Editor {
         loop {
             if let Some((_, content)) = iter.next() {
                 current_pos += content.len();
-                if current_pos > end_pos || current_pos > buffer_len {
+                if current_pos >= end_pos || current_pos >= buffer_len {
                     break;
                 }
                 let next_iter = state
@@ -2922,6 +2928,9 @@ impl Editor {
         });
 
         let mut events = Vec::new();
+        // Track (edit_position, byte_delta) for calculating new cursor positions
+        // delta is positive for insertions, negative for deletions
+        let mut position_deltas: Vec<(usize, isize)> = Vec::new();
 
         if all_commented {
             // Uncomment: remove comment prefix from each line
@@ -2940,7 +2949,7 @@ impl Editor {
                 let rest = &line_str[leading_ws..];
 
                 if rest.starts_with(comment_prefix.trim()) {
-                    let remove_len = if rest.starts_with(comment_prefix) {
+                    let remove_len = if rest.starts_with(&comment_prefix) {
                         comment_prefix.len()
                     } else {
                         comment_prefix.trim().len()
@@ -2954,16 +2963,19 @@ impl Editor {
                         deleted_text,
                         cursor_id,
                     });
+                    position_deltas.push((line_start, -(remove_len as isize)));
                 }
             }
         } else {
             // Comment: add comment prefix to each line
+            let prefix_len = comment_prefix.len();
             for &line_start in line_starts.iter().rev() {
                 events.push(Event::Insert {
                     position: line_start,
                     text: comment_prefix.to_string(),
                     cursor_id,
                 });
+                position_deltas.push((line_start, prefix_len as isize));
             }
         }
 
@@ -2976,6 +2988,39 @@ impl Editor {
         } else {
             "Comment"
         };
+
+        // If there was a selection, add a MoveCursor event to restore it
+        if had_selection {
+            // Sort deltas by position ascending for calculation
+            position_deltas.sort_by_key(|(pos, _)| *pos);
+
+            // Calculate cumulative shift for a position based on edits at or before that position
+            let calc_shift = |original_pos: usize| -> isize {
+                let mut shift: isize = 0;
+                for (edit_pos, delta) in &position_deltas {
+                    if *edit_pos < original_pos {
+                        shift += delta;
+                    }
+                }
+                shift
+            };
+
+            let anchor_shift = calc_shift(original_anchor.unwrap_or(0));
+            let position_shift = calc_shift(original_position);
+
+            let new_anchor = (original_anchor.unwrap_or(0) as isize + anchor_shift).max(0) as usize;
+            let new_position = (original_position as isize + position_shift).max(0) as usize;
+
+            events.push(Event::MoveCursor {
+                cursor_id,
+                old_position: original_position,
+                new_position,
+                old_anchor: original_anchor,
+                new_anchor: Some(new_anchor),
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            });
+        }
 
         // Use optimized bulk edit for multi-line comment toggle
         let description = format!("{} lines", action_desc);
