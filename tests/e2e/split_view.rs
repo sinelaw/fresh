@@ -401,7 +401,9 @@ fn test_close_last_buffer_in_split_closes_split() {
     assert_eq!(harness.editor().get_split_count(), 2);
 
     // The new split has 1 tab (file1) - same buffer as the other split
-    let tabs = harness.editor().get_split_tabs(harness.editor().get_active_split());
+    let tabs = harness
+        .editor()
+        .get_split_tabs(harness.editor().get_active_split());
     assert_eq!(tabs.len(), 1, "New split should have exactly 1 tab");
 
     // Now close the tab (Alt+W) - since this buffer is also in the other split,
