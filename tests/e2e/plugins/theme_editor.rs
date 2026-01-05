@@ -1650,12 +1650,10 @@ fn test_theme_editor_navigation_skips_non_selectable_lines() {
 #[test]
 fn test_cursor_position_preserved_after_color_edit() {
     init_tracing_from_env();
-    eprintln!("=== Starting test_cursor_position_preserved_after_color_edit ===");
 
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
-    eprintln!("Project root: {:?}", project_root);
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
@@ -1673,17 +1671,14 @@ fn test_cursor_position_preserved_after_color_edit() {
         "syntax": {}
     }"#;
     fs::write(themes_dir.join("test.json"), test_theme).unwrap();
-    eprintln!("Created test theme");
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
             .unwrap();
-    eprintln!("Harness created");
 
     harness.render().unwrap();
 
-    // Open theme editor
-    eprintln!("Opening theme editor via command palette...");
+    // Open theme editor via command palette
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -1694,32 +1689,23 @@ fn test_cursor_position_preserved_after_color_edit() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    eprintln!("Waiting for Theme Editor to open...");
     harness
         .wait_until(|h| h.screen_to_string().contains("Theme Editor:"))
         .unwrap();
-    eprintln!("Theme Editor opened");
 
     // Navigate to a color field
-    eprintln!("Navigating down 5 times...");
-    for i in 0..5 {
+    for _ in 0..5 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.process_async_and_render().unwrap();
-        eprintln!("  Down {}", i + 1);
     }
 
     // Record cursor position before editing
     let (cursor_x_before, cursor_y_before) = harness.screen_cursor_position();
-    eprintln!(
-        "Cursor position before: ({}, {})",
-        cursor_x_before, cursor_y_before
-    );
 
     // Open color prompt by pressing Enter
     // Keep trying until we land on a field that opens a prompt
     let mut prompt_opened = false;
-    for attempt in 0..10 {
-        eprintln!("Attempt {} to open color prompt...", attempt + 1);
+    for _ in 0..10 {
         harness
             .send_key(KeyCode::Enter, KeyModifiers::NONE)
             .unwrap();
@@ -1736,51 +1722,40 @@ fn test_cursor_position_preserved_after_color_edit() {
 
         if found {
             prompt_opened = true;
-            eprintln!("  Prompt opened on attempt {}", attempt + 1);
             break;
         }
 
-        eprintln!("  Not a color field, navigating down...");
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.process_async_and_render().unwrap();
     }
 
     if !prompt_opened {
-        eprintln!("ERROR: Could not open color prompt after 10 attempts");
-        let screen = harness.screen_to_string();
-        eprintln!("Final screen:\n{}", screen);
-        // Test may fail if we can't open a prompt, but we should try
-        return;
+        panic!("Could not open color prompt after 10 attempts");
     }
 
-    // Record the position just before confirming (after the prompt opened)
-    // We'll compare against this after confirming
-    let _screen_with_prompt = harness.screen_to_string();
+    // Clear the pre-filled value and type a new color value
+    // The prompt opens with the current value pre-filled, so we need to select all and replace
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
 
-    // Type a new color value
-    eprintln!("Typing '#FF0000'...");
     harness.type_text("#FF0000").unwrap();
     harness.render().unwrap();
 
     // Confirm the color change
-    eprintln!("Pressing Enter to confirm color...");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.process_async_and_render().unwrap();
 
     // Wait for the prompt to close and display to update
-    eprintln!("Waiting for prompt to close and #FF0000 to appear...");
-    let screen_before = harness.screen_to_string();
-    eprintln!("Screen before wait:\n{}", screen_before);
-
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
             !screen.contains("#RRGGBB") && screen.contains("#FF0000")
         })
         .unwrap();
-    eprintln!("Prompt closed and color updated");
 
     // Record cursor position after editing
     let (cursor_x_after, cursor_y_after) = harness.screen_cursor_position();
