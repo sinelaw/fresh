@@ -269,7 +269,7 @@ impl Editor {
             PromptType::StopLspServer => {
                 self.handle_stop_lsp_server(&input);
             }
-            PromptType::SelectTheme => {
+            PromptType::SelectTheme { .. } => {
                 self.apply_theme(input.trim());
             }
             PromptType::SelectKeybindingMap => {

@@ -128,6 +128,10 @@ impl InputHandler for Prompt {
             }
 
             // Suggestion navigation
+            // TODO: Refactor to use callbacks - the prompt creator (e.g. SelectTheme, SelectLocale)
+            // should be able to register a callback for selection changes instead of having
+            // hardcoded prompt type checks here. This would make the suggestion UI more flexible
+            // and allow custom handling for any prompt type without modifying this code.
             KeyCode::Up => {
                 if !self.suggestions.is_empty() {
                     // Don't wrap around - stay at 0 if already at the beginning
@@ -143,6 +147,13 @@ impl InputHandler for Prompt {
                                 self.input = suggestion.get_value().to_string();
                                 self.cursor_pos = self.input.len();
                             }
+                        }
+                        // For theme selection, trigger live preview
+                        if matches!(
+                            self.prompt_type,
+                            crate::view::prompt::PromptType::SelectTheme { .. }
+                        ) {
+                            ctx.defer(DeferredAction::PreviewThemeFromPrompt);
                         }
                     }
                 } else {
@@ -166,6 +177,13 @@ impl InputHandler for Prompt {
                                 self.input = suggestion.get_value().to_string();
                                 self.cursor_pos = self.input.len();
                             }
+                        }
+                        // For theme selection, trigger live preview
+                        if matches!(
+                            self.prompt_type,
+                            crate::view::prompt::PromptType::SelectTheme { .. }
+                        ) {
+                            ctx.defer(DeferredAction::PreviewThemeFromPrompt);
                         }
                     }
                 } else {

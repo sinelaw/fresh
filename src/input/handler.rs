@@ -115,6 +115,8 @@ pub enum DeferredAction {
     UpdatePromptSuggestions,
     PromptHistoryPrev,
     PromptHistoryNext,
+    /// Preview theme from the current prompt input (for SelectTheme)
+    PreviewThemeFromPrompt,
 
     // Popup actions
     ClosePopup,

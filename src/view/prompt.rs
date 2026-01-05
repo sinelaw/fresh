@@ -63,7 +63,8 @@ pub enum PromptType {
     /// Stop a running LSP server (select from list)
     StopLspServer,
     /// Select a theme (select from list)
-    SelectTheme,
+    /// Stores the original theme name for restoration on cancel
+    SelectTheme { original_theme: String },
     /// Select a keybinding map (select from list)
     SelectKeybindingMap,
     /// Select a cursor style (select from list)

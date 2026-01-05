@@ -220,6 +220,17 @@ impl Editor {
             DeferredAction::PromptHistoryNext => {
                 self.prompt_history_next();
             }
+            DeferredAction::PreviewThemeFromPrompt => {
+                if let Some(prompt) = &self.prompt {
+                    if matches!(
+                        prompt.prompt_type,
+                        crate::view::prompt::PromptType::SelectTheme { .. }
+                    ) {
+                        let theme_name = prompt.input.clone();
+                        self.preview_theme(&theme_name);
+                    }
+                }
+            }
 
             // Popup actions
             DeferredAction::ClosePopup => {

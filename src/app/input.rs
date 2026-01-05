@@ -1944,7 +1944,9 @@ impl Editor {
 
         self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Select theme: ".to_string(),
-            PromptType::SelectTheme,
+            PromptType::SelectTheme {
+                original_theme: current_theme_name.clone(),
+            },
             suggestions,
         ));
 
@@ -1975,6 +1977,15 @@ impl Editor {
             self.set_status_message(
                 t!("view.theme_changed", theme = self.theme.name.clone()).to_string(),
             );
+        }
+    }
+
+    /// Preview a theme by name (without persisting to config)
+    /// Used for live preview when navigating theme selection
+    pub(super) fn preview_theme(&mut self, theme_name: &str) {
+        if !theme_name.is_empty() && theme_name != self.theme.name {
+            self.theme = crate::view::theme::Theme::from_name(theme_name);
+            self.theme.set_terminal_cursor_color();
         }
     }
 

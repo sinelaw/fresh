@@ -2630,6 +2630,17 @@ impl Editor {
 
     /// Cancel the current prompt and return to normal mode
     pub fn cancel_prompt(&mut self) {
+        // Extract theme to restore if this is a SelectTheme prompt
+        let theme_to_restore = if let Some(ref prompt) = self.prompt {
+            if let PromptType::SelectTheme { original_theme } = &prompt.prompt_type {
+                Some(original_theme.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Determine prompt type and reset appropriate history navigation
         if let Some(ref prompt) = self.prompt {
             match &prompt.prompt_type {
@@ -2670,6 +2681,11 @@ impl Editor {
         self.prompt = None;
         self.pending_search_range = None;
         self.status_message = Some(t!("search.cancelled").to_string());
+
+        // Restore original theme if we were in SelectTheme prompt
+        if let Some(original_theme) = theme_to_restore {
+            self.preview_theme(&original_theme);
+        }
     }
 
     /// Get the confirmed input and prompt type, consuming the prompt
@@ -2687,7 +2703,7 @@ impl Editor {
                     | PromptType::SwitchProject
                     | PromptType::SaveFileAs
                     | PromptType::StopLspServer
-                    | PromptType::SelectTheme
+                    | PromptType::SelectTheme { .. }
                     | PromptType::SelectLocale
                     | PromptType::SwitchToTab
             ) {
@@ -2874,7 +2890,9 @@ impl Editor {
                     prompt.filter_suggestions(false);
                 }
             }
-            PromptType::SwitchToTab | PromptType::SelectTheme | PromptType::StopLspServer => {
+            PromptType::SwitchToTab
+            | PromptType::SelectTheme { .. }
+            | PromptType::StopLspServer => {
                 if let Some(prompt) = &mut self.prompt {
                     prompt.filter_suggestions(false);
                 }
