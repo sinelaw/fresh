@@ -304,7 +304,7 @@ pub struct SourceCoordinate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::composite_buffer::{CompositeLayout, LineAlignment, PaneStyle, SourcePane};
+    use crate::model::composite_buffer::{CompositeLayout, SourcePane};
 
     fn create_test_composite() -> (CompositeBuffer, CompositeViewState) {
         let sources = vec![

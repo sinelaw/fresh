@@ -513,7 +513,7 @@ fn test_cursor_position_preserved_after_section_toggle() {
     }
 
     // Get cursor position before toggle
-    let (_, cursor_y_before) = harness.screen_cursor_position();
+    let (_, _cursor_y_before) = harness.screen_cursor_position();
 
     // Press Enter to toggle the section
     harness
@@ -1433,20 +1433,20 @@ fn test_theme_editor_navigation_skips_non_selectable_lines() {
         harness.process_async_and_render().unwrap();
     }
 
-    let screen_at_start = harness.screen_to_string();
+    let _screen_at_start = harness.screen_to_string();
 
     // Press Tab to navigate to next selectable element (field or section)
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.process_async_and_render().unwrap();
 
-    let (_, cursor_y_after_tab) = harness.screen_cursor_position();
-    let (_, cursor_y_before_tab) = harness.screen_cursor_position();
+    let (_, _cursor_y_after_tab) = harness.screen_cursor_position();
+    let (_, _cursor_y_before_tab) = harness.screen_cursor_position();
 
     // Tab should move the cursor (it navigates through all fields and sections)
     // Note: With wrapping, it might wrap back to start if we're at the end
 
     // Press Tab multiple times to verify wrapping works
-    let (_, cursor_y_initial_for_wrap) = harness.screen_cursor_position();
+    let (_, _cursor_y_initial_for_wrap) = harness.screen_cursor_position();
     for _ in 0..50 {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
         harness.process_async_and_render().unwrap();
@@ -1456,13 +1456,13 @@ fn test_theme_editor_navigation_skips_non_selectable_lines() {
     // (We can't assert exact position, but it shouldn't crash)
 
     // Test Shift+Tab navigation - should navigate backwards with wrapping
-    let (_, cursor_y_before_backtab) = harness.screen_cursor_position();
+    let (_, _cursor_y_before_backtab) = harness.screen_cursor_position();
     harness
         .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
         .unwrap();
     harness.process_async_and_render().unwrap();
 
-    let (_, cursor_y_after_backtab) = harness.screen_cursor_position();
+    let (_, _cursor_y_after_backtab) = harness.screen_cursor_position();
 
     // Shift+Tab should also move the cursor
     // (exact behavior depends on current position due to wrapping)
