@@ -34,30 +34,49 @@ Fresh has a robust theming system with 5 color categories:
 2. Type "edit theme" and press Enter
 3. Theme Editor opens in current split
 
+**Optional: Add a keyboard shortcut**
+
+To open the theme editor with a single keystroke, add a custom keybinding in `~/.config/fresh/config.json`:
+
+```json
+{
+  "keybindings": {
+    "normal": [
+      ["C-S-t", "open_theme_editor"]
+    ]
+  }
+}
+```
+
+This binds `Ctrl+Shift+T` to open the theme editor. You can choose any key combination.
+
 ### Creating a New Theme
 1. Press `c` to copy from a built-in theme as starting point
-2. Press `n` to set a custom theme name
-3. Navigate with arrow keys to field lines (not comment lines)
-4. Press `Enter` or `Space` to edit a color
-5. Input color as: `#FF0000` (hex), `[255,0,0]` (RGB), or `Red` (named)
-6. Press `s` to save to `~/.config/fresh/themes/<name>.json`
-7. Press `d` to set as default theme
+2. Navigate with arrow keys to color fields
+3. Press `Enter` or `Space` to edit a color
+4. Input color as: `#FF0000` (hex), `[255,0,0]` (RGB), or `Red` (named)
+5. Press `s` to save (prompts for name if new theme)
+6. Press `d` to set as default theme
 
 ### Key Bindings
 
 | Key | Action |
 |-----|--------|
-| `Up/Down` | Navigate fields |
-| `Enter/Space` | Edit selected color |
-| `Tab` | Toggle section expand/collapse |
+| `Up/Down/j/k` | Navigate between selectable fields and sections |
+| `Tab` | Navigate to next field/section (with wrapping) |
+| `Shift+Tab` | Navigate to previous field/section (with wrapping) |
+| `Enter/Space` | Edit color field or toggle section expand/collapse |
 | `c` | Copy from built-in theme |
-| `n` | Set theme name |
-| `s` | Save theme |
+| `e` | Edit existing user theme |
+| `s` | Save theme (prompts for name if new) |
 | `S` | Save as (new name) |
 | `d` | Set as default theme |
+| `x` | Delete current user theme |
 | `r` | Reload theme from file |
 | `?` | Show help |
 | `q/Esc` | Close editor |
+
+All commands are also available via the command palette (`Ctrl+P`) when the theme editor is open.
 
 ### Color Input Formats
 - **Hex:** `#FF8000` or `#ff8000`

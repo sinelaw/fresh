@@ -290,7 +290,6 @@ editor.defineMode(
     ["j", "theme_editor_nav_down"],
     ["c", "theme_editor_copy_from_builtin"],
     ["e", "theme_editor_edit_existing"],
-    ["n", "theme_editor_set_name"],
     ["s", "theme_editor_save"],
     ["S", "theme_editor_save_as"],
     ["d", "theme_editor_set_as_default"],
@@ -1005,28 +1004,6 @@ globalThis.onThemeColorPromptConfirmed = function(args: {
 };
 
 /**
- * Handle theme name prompt
- */
-globalThis.onThemeNamePromptConfirmed = function(args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): boolean {
-  if (args.prompt_type !== "theme-name") return true;
-
-  const name = args.input.trim();
-  if (name) {
-    state.themeName = name;
-    state.themeData.name = name;
-    state.hasChanges = true;
-    updateDisplay();
-    editor.setStatus(editor.t("status.name_set", { name }));
-  }
-
-  return true;
-};
-
-/**
  * Handle copy from builtin prompt
  */
 globalThis.onThemeCopyPromptConfirmed = async function(args: {
@@ -1131,7 +1108,6 @@ globalThis.onThemePromptCancelled = function(args: { prompt_type: string }): boo
 
 // Register prompt handlers
 editor.on("prompt_confirmed", "onThemeColorPromptConfirmed");
-editor.on("prompt_confirmed", "onThemeNamePromptConfirmed");
 editor.on("prompt_confirmed", "onThemeCopyPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeEditExistingPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeSaveAsPromptConfirmed");
@@ -1623,19 +1599,6 @@ globalThis.theme_editor_edit_existing = function(): void {
 };
 
 /**
- * Set theme name
- */
-globalThis.theme_editor_set_name = function(): void {
-  editor.startPrompt(editor.t("prompt.theme_name"), "theme-name");
-
-  editor.setPromptSuggestions([{
-    text: state.themeName,
-    description: editor.t("suggestion.current"),
-    value: state.themeName,
-  }]);
-};
-
-/**
  * Save theme
  */
 globalThis.theme_editor_save = async function(): Promise<void> {
@@ -1861,13 +1824,6 @@ editor.registerCommand(
   "%cmd.edit_existing",
   "%cmd.edit_existing_desc",
   "theme_editor_edit_existing",
-  "normal,theme-editor"
-);
-
-editor.registerCommand(
-  "%cmd.set_name",
-  "%cmd.set_name_desc",
-  "theme_editor_set_name",
   "normal,theme-editor"
 );
 
