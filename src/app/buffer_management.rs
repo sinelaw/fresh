@@ -1112,6 +1112,35 @@ impl Editor {
         let is_last_viewport = buffer_in_other_splits == 0;
 
         if is_last_viewport {
+            // If this is the only buffer in this split AND there are other splits,
+            // close the split instead of the buffer (don't create an empty replacement)
+            let has_other_splits = self.split_manager.root().count_leaves() > 1;
+            if current_split_tabs.len() <= 1 && has_other_splits {
+                // Check for unsaved changes first
+                if self.active_state().buffer.is_modified() {
+                    let name = self.get_buffer_display_name(buffer_id);
+                    let save_key = t!("prompt.key.save").to_string();
+                    let discard_key = t!("prompt.key.discard").to_string();
+                    let cancel_key = t!("prompt.key.cancel").to_string();
+                    self.start_prompt(
+                        t!(
+                            "prompt.buffer_modified",
+                            name = name,
+                            save_key = save_key,
+                            discard_key = discard_key,
+                            cancel_key = cancel_key
+                        )
+                        .to_string(),
+                        PromptType::ConfirmCloseBuffer { buffer_id },
+                    );
+                    return;
+                }
+                // Close the buffer first, then the split
+                let _ = self.close_buffer(buffer_id);
+                self.close_active_split();
+                return;
+            }
+
             // Last viewport of this buffer - close the buffer entirely
             if self.active_state().buffer.is_modified() {
                 // Buffer has unsaved changes - prompt for confirmation
@@ -1139,6 +1168,11 @@ impl Editor {
             // There are other viewports of this buffer - just remove from current split's tabs
             if current_split_tabs.len() <= 1 {
                 // This is the only tab in this split - close the split
+                // If we're closing a terminal buffer while in terminal mode, exit terminal mode
+                if self.terminal_mode && self.is_terminal_buffer(buffer_id) {
+                    self.terminal_mode = false;
+                    self.key_context = crate::input::keybindings::KeyContext::Normal;
+                }
                 self.close_active_split();
                 return;
             }
@@ -1150,6 +1184,12 @@ impl Editor {
                 .unwrap_or(0);
             let replacement_idx = if current_idx > 0 { current_idx - 1 } else { 1 };
             let replacement_buffer = current_split_tabs[replacement_idx];
+
+            // If we're closing a terminal buffer while in terminal mode, exit terminal mode
+            if self.terminal_mode && self.is_terminal_buffer(buffer_id) {
+                self.terminal_mode = false;
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
+            }
 
             // Remove buffer from this split's tabs
             if let Some(view_state) = self.split_view_states.get_mut(&active_split) {

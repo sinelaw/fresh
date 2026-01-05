@@ -1,5 +1,6 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use portable_pty::{native_pty_system, PtySize};
 
 /// Test basic split view creation (horizontal)
 #[test]
@@ -362,4 +363,246 @@ fn test_cannot_toggle_maximize_single_split() {
 
     // Should see error message (may be truncated in status bar)
     harness.assert_screen_contains("Cannot maximize");
+}
+
+/// Test that closing the last buffer in a split closes the split (if other splits exist)
+#[test]
+fn test_close_last_buffer_in_split_closes_split() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+    let file1 = project_dir.join("file1.txt");
+
+    std::fs::write(&file1, "File 1 content").unwrap();
+
+    // Open first file
+    harness.open_file(&file1).unwrap();
+    harness.assert_buffer_content("File 1 content");
+
+    // Verify we have 1 split
+    assert_eq!(harness.editor().get_split_count(), 1);
+
+    // Create a vertical split via command palette
+    // This creates a new split showing the same buffer (Emacs-style)
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Split pane vertically"))
+        .unwrap();
+
+    // Verify we now have 2 splits (both showing file1)
+    assert_eq!(harness.editor().get_split_count(), 2);
+
+    // The new split has 1 tab (file1) - same buffer as the other split
+    let tabs = harness.editor().get_split_tabs(harness.editor().get_active_split());
+    assert_eq!(tabs.len(), 1, "New split should have exactly 1 tab");
+
+    // Now close the tab (Alt+W) - since this buffer is also in the other split,
+    // and this is the only tab in this split, the split should close
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should be back to 1 split (split was closed)
+    assert_eq!(
+        harness.editor().get_split_count(),
+        1,
+        "Expected split to be closed when closing last buffer"
+    );
+
+    // file1.txt should still be visible
+    harness.assert_screen_contains("file1.txt");
+}
+
+/// Test that closing a unique buffer in a split (not in other splits) closes the split
+#[test]
+fn test_close_unique_buffer_in_split_closes_split() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+    let file1 = project_dir.join("file1.txt");
+    let file2 = project_dir.join("file2.txt");
+
+    std::fs::write(&file1, "File 1 content").unwrap();
+    std::fs::write(&file2, "File 2 content").unwrap();
+
+    // Open first file
+    harness.open_file(&file1).unwrap();
+    harness.assert_buffer_content("File 1 content");
+
+    // Create a vertical split via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Split pane vertically"))
+        .unwrap();
+
+    // Verify we now have 2 splits (both showing file1)
+    assert_eq!(harness.editor().get_split_count(), 2);
+
+    // Open file2 in the new split - now tabs = [file1, file2], active is file2
+    harness.open_file(&file2).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("file2.txt"))
+        .unwrap();
+
+    // Switch to file1 tab (previous buffer) - now active is file1
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Close the file1 tab (which is also in split A, so it just removes from tabs)
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Now the second split should only have file2, which is NOT in the first split
+    let active_split = harness.editor().get_active_split();
+    let tabs = harness.editor().get_split_tabs(active_split);
+    assert_eq!(
+        tabs.len(),
+        1,
+        "Split should have exactly 1 tab (file2 only)"
+    );
+
+    // Both splits still exist
+    assert_eq!(harness.editor().get_split_count(), 2);
+
+    // Now close file2 - since it's the only buffer in this split and NOT in other splits,
+    // the split should close (this is the bug scenario)
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should be back to 1 split (the bug would leave 2 splits with an empty buffer)
+    assert_eq!(
+        harness.editor().get_split_count(),
+        1,
+        "Expected split to be closed when closing last unique buffer"
+    );
+
+    // file1.txt should still be visible
+    harness.assert_screen_contains("file1.txt");
+}
+
+/// Test that closing a terminal in a split closes the split
+///
+/// Scenario:
+/// 1. Open a file
+/// 2. Create a split
+/// 3. Open a terminal in that split
+/// 4. Close all buffers in the split (the terminal)
+/// 5. Split should disappear
+#[test]
+fn test_close_terminal_in_split_closes_split() {
+    // Skip if PTY not available
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal test: PTY not available in this environment");
+        return;
+    }
+
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+    let file1 = project_dir.join("file1.txt");
+
+    std::fs::write(&file1, "File 1 content").unwrap();
+
+    // Open file in the first split
+    harness.open_file(&file1).unwrap();
+    harness.assert_buffer_content("File 1 content");
+    assert_eq!(harness.editor().get_split_count(), 1);
+
+    // Create a vertical split
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Split pane vertically"))
+        .unwrap();
+
+    // Verify we now have 2 splits
+    assert_eq!(harness.editor().get_split_count(), 2);
+
+    // Disable jump_to_end_on_output so terminal output doesn't interfere
+    harness
+        .editor_mut()
+        .set_terminal_jump_to_end_on_output(false);
+
+    // Open terminal in the new split (this enters terminal mode)
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Terminal");
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Should be in terminal mode after opening terminal"
+    );
+
+    // Close the file1 tab in this split via API (terminal remains)
+    let active_split = harness.editor().get_active_split();
+    let tabs = harness.editor().get_split_tabs(active_split);
+    // Find the non-terminal buffer (file1)
+    let file1_buffer = tabs
+        .iter()
+        .find(|&&b| !harness.editor().is_terminal_buffer(b))
+        .copied()
+        .expect("Should have file1 buffer in tabs");
+    harness
+        .editor_mut()
+        .close_tab_in_split(file1_buffer, active_split);
+    harness.render().unwrap();
+
+    // Now terminal is the only buffer in this split
+    // Still have 2 splits
+    assert_eq!(harness.editor().get_split_count(), 2);
+
+    // Close the terminal buffer - split should close
+    // Use close_tab() which is what Action::Close calls
+    harness.editor_mut().close_tab();
+    harness.render().unwrap();
+
+    // Should be back to 1 split
+    assert_eq!(
+        harness.editor().get_split_count(),
+        1,
+        "Expected split to be closed when closing terminal (the last buffer in split)"
+    );
+
+    // file1.txt should still be visible in the remaining split
+    harness.assert_screen_contains("file1.txt");
+
+    // Terminal should be gone
+    harness.assert_screen_not_contains("Terminal");
 }

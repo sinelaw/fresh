@@ -275,34 +275,11 @@ impl Editor {
             Action::New => {
                 self.new_buffer();
             }
-            Action::Close => {
-                let buffer_id = self.active_buffer();
-                if self.active_state().buffer.is_modified() {
-                    // Buffer has unsaved changes - prompt for confirmation
-                    let name = self.get_buffer_display_name(buffer_id);
-                    let save_key = t!("prompt.key.save").to_string();
-                    let discard_key = t!("prompt.key.discard").to_string();
-                    let cancel_key = t!("prompt.key.cancel").to_string();
-                    self.start_prompt(
-                        t!(
-                            "prompt.buffer_modified",
-                            name = name,
-                            save_key = save_key,
-                            discard_key = discard_key,
-                            cancel_key = cancel_key
-                        )
-                        .to_string(),
-                        PromptType::ConfirmCloseBuffer { buffer_id },
-                    );
-                } else if let Err(e) = self.close_buffer(buffer_id) {
-                    self.set_status_message(
-                        t!("error.cannot_close_buffer", error = e.to_string()).to_string(),
-                    );
-                } else {
-                    self.set_status_message(t!("buffer.closed").to_string());
-                }
-            }
-            Action::CloseTab => {
+            Action::Close | Action::CloseTab => {
+                // Both Close and CloseTab use close_tab() which handles:
+                // - Closing the split if this is the last buffer and there are other splits
+                // - Prompting for unsaved changes
+                // - Properly closing the buffer
                 self.close_tab();
             }
             Action::Revert => {
