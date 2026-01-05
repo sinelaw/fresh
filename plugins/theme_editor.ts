@@ -294,6 +294,7 @@ editor.defineMode(
     ["s", "theme_editor_save"],
     ["S", "theme_editor_save_as"],
     ["d", "theme_editor_set_as_default"],
+    ["x", "theme_editor_delete"],
     ["q", "theme_editor_close"],
     ["Escape", "theme_editor_close"],
     ["r", "theme_editor_reload"],
@@ -1137,6 +1138,7 @@ editor.on("prompt_confirmed", "onThemeSaveAsPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeSetDefaultPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeDiscardPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeOverwritePromptConfirmed");
+editor.on("prompt_confirmed", "onThemeDeletePromptConfirmed");
 editor.on("prompt_cancelled", "onThemePromptCancelled");
 
 // =============================================================================
@@ -1757,6 +1759,63 @@ globalThis.theme_editor_show_help = function(): void {
   editor.setStatus(editor.t("status.help"));
 };
 
+/**
+ * Delete the current user theme
+ */
+globalThis.theme_editor_delete = function(): void {
+  // Can only delete saved user themes
+  if (!state.themePath) {
+    editor.setStatus(editor.t("status.cannot_delete_unsaved"));
+    return;
+  }
+
+  // Show confirmation dialog
+  editor.startPrompt(editor.t("prompt.delete_confirm", { name: state.themeName }), "theme-delete-confirm");
+  const suggestions: PromptSuggestion[] = [
+    { text: editor.t("prompt.delete_yes"), description: "", value: "delete" },
+    { text: editor.t("prompt.delete_no"), description: "", value: "cancel" },
+  ];
+  editor.setPromptSuggestions(suggestions);
+};
+
+/**
+ * Handle delete confirmation prompt
+ */
+globalThis.onThemeDeletePromptConfirmed = async function(args: {
+  prompt_type: string;
+  selected_index: number | null;
+  input: string;
+}): Promise<boolean> {
+  if (args.prompt_type !== "theme-delete-confirm") return true;
+
+  const value = args.input.trim();
+  if (value === "delete" || value === editor.t("prompt.delete_yes")) {
+    if (state.themePath) {
+      try {
+        // Delete the theme file
+        await editor.deleteFile(state.themePath);
+        const deletedName = state.themeName;
+
+        // Reset to default theme
+        state.themeData = createDefaultTheme();
+        state.originalThemeData = deepClone(state.themeData);
+        state.themeName = "custom";
+        state.themePath = null;
+        state.hasChanges = false;
+        updateDisplay();
+
+        editor.setStatus(editor.t("status.deleted", { name: deletedName }));
+      } catch (e) {
+        editor.setStatus(editor.t("status.delete_failed", { error: String(e) }));
+      }
+    }
+  } else {
+    editor.setStatus(editor.t("status.cancelled"));
+  }
+
+  return true;
+};
+
 // =============================================================================
 // Command Registration
 // =============================================================================
@@ -1844,6 +1903,41 @@ editor.registerCommand(
   "%cmd.show_help",
   "%cmd.show_help_desc",
   "theme_editor_show_help",
+  "normal,theme-editor"
+);
+
+editor.registerCommand(
+  "%cmd.delete_theme",
+  "%cmd.delete_theme_desc",
+  "theme_editor_delete",
+  "normal,theme-editor"
+);
+
+editor.registerCommand(
+  "%cmd.nav_up",
+  "%cmd.nav_up_desc",
+  "theme_editor_nav_up",
+  "normal,theme-editor"
+);
+
+editor.registerCommand(
+  "%cmd.nav_down",
+  "%cmd.nav_down_desc",
+  "theme_editor_nav_down",
+  "normal,theme-editor"
+);
+
+editor.registerCommand(
+  "%cmd.nav_next",
+  "%cmd.nav_next_desc",
+  "theme_editor_nav_next_section",
+  "normal,theme-editor"
+);
+
+editor.registerCommand(
+  "%cmd.nav_prev",
+  "%cmd.nav_prev_desc",
+  "theme_editor_nav_prev_section",
   "normal,theme-editor"
 );
 
