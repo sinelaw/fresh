@@ -47,6 +47,8 @@
     "status.cancelled": "Cancelled",
     "status.help": "Keys: up/down navigate | RET/SPC edit | TAB expand | c copy | n name | s save | S save-as | d default | q quit",
     "status.plugin_loaded": "Theme Editor plugin loaded",
+    "status.at_first_field": "At first field",
+    "status.at_last_field": "At last field",
 
     "panel.title": "Theme Editor: %{name}",
     "panel.modified": "[modified]",
@@ -289,6 +291,8 @@
     "status.cancelled": "Cancelado",
     "status.help": "Teclas: arriba/abajo navegar | RET/SPC editar | TAB expandir | c copiar | n nombre | s guardar | S guardar-como | d predeterminado | q salir",
     "status.plugin_loaded": "Plugin de editor de temas cargado",
+    "status.at_first_field": "En el primer campo",
+    "status.at_last_field": "En el ultimo campo",
 
     "panel.title": "Editor de temas: %{name}",
     "panel.modified": "[modificado]",
@@ -531,6 +535,8 @@
     "status.cancelled": "Abgebrochen",
     "status.help": "Tasten: Auf/Ab navigieren | RET/SPC bearbeiten | TAB erweitern | c kopieren | n Name | s speichern | S speichern-unter | d Standard | q beenden",
     "status.plugin_loaded": "Theme-Editor-Plugin geladen",
+    "status.at_first_field": "Am ersten Feld",
+    "status.at_last_field": "Am letzten Feld",
 
     "panel.title": "Theme-Editor: %{name}",
     "panel.modified": "[geaendert]",
@@ -773,6 +779,8 @@
     "status.cancelled": "Annule",
     "status.help": "Touches: haut/bas naviguer | RET/SPC modifier | TAB developper | c copier | n nom | s enregistrer | S enregistrer-sous | d defaut | q quitter",
     "status.plugin_loaded": "Plugin de l'editeur de themes charge",
+    "status.at_first_field": "Au premier champ",
+    "status.at_last_field": "Au dernier champ",
 
     "panel.title": "Editeur de themes: %{name}",
     "panel.modified": "[modifie]",
@@ -1015,6 +1023,8 @@
     "status.cancelled": "キャンセルしました",
     "status.help": "キー: 上/下で移動 | RET/SPCで編集 | TABで展開 | cでコピー | nで名前 | sで保存 | Sで別名保存 | dでデフォルト | qで終了",
     "status.plugin_loaded": "テーマエディタプラグインを読み込みました",
+    "status.at_first_field": "最初のフィールドにいます",
+    "status.at_last_field": "最後のフィールドにいます",
 
     "panel.title": "テーマエディタ: %{name}",
     "panel.modified": "[変更あり]",
@@ -1257,6 +1267,8 @@
     "status.cancelled": "已取消",
     "status.help": "按键: 上/下导航 | RET/SPC编辑 | TAB展开 | c复制 | n名称 | s保存 | S另存为 | d默认 | q退出",
     "status.plugin_loaded": "主题编辑器插件已加载",
+    "status.at_first_field": "已在第一个字段",
+    "status.at_last_field": "已在最后一个字段",
 
     "panel.title": "主题编辑器: %{name}",
     "panel.modified": "[已修改]",

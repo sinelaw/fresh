@@ -283,6 +283,10 @@ editor.defineMode(
     ["Return", "theme_editor_edit_color"],
     ["Space", "theme_editor_edit_color"],
     ["Tab", "theme_editor_toggle_section"],
+    ["Up", "theme_editor_nav_up"],
+    ["Down", "theme_editor_nav_down"],
+    ["k", "theme_editor_nav_up"],
+    ["j", "theme_editor_nav_down"],
     ["c", "theme_editor_copy_from_builtin"],
     ["n", "theme_editor_set_name"],
     ["s", "theme_editor_save"],
@@ -1199,6 +1203,83 @@ globalThis.onThemeEditorCursorMoved = function(data: {
 };
 
 editor.on("cursor_moved", "onThemeEditorCursorMoved");
+
+// =============================================================================
+// Smart Navigation - Skip Non-Selectable Lines
+// =============================================================================
+
+/**
+ * Get line numbers for all selectable entries (fields and sections)
+ * Returns array of { lineNumber, index } for navigation
+ */
+function getSelectableLineNumbers(): Array<{ lineNumber: number; index: number }> {
+  const entries = buildDisplayEntries();
+  const selectableLines: Array<{ lineNumber: number; index: number }> = [];
+  let lineNumber = 1; // 1-indexed
+
+  for (const entry of entries) {
+    const props = entry.properties as Record<string, unknown>;
+    const entryType = props.type as string;
+
+    // Only fields and sections are selectable (they have index property)
+    if ((entryType === "field" || entryType === "section") && typeof props.index === "number") {
+      selectableLines.push({ lineNumber, index: props.index as number });
+    }
+
+    // Count lines in this entry
+    const lines = entry.text.split("\n");
+    lineNumber += lines.length - 1; // -1 because split creates extra empty at end if trailing newline
+  }
+
+  return selectableLines;
+}
+
+/**
+ * Navigate to the next selectable field/section
+ */
+globalThis.theme_editor_nav_down = function(): void {
+  if (state.bufferId === null) return;
+
+  const currentLine = editor.getCursorLine(state.bufferId);
+  const selectableLines = getSelectableLineNumbers();
+
+  // Find next selectable line after current
+  for (const sel of selectableLines) {
+    if (sel.lineNumber > currentLine) {
+      editor.setCursorLine(state.bufferId, sel.lineNumber);
+      return;
+    }
+  }
+
+  // Already at last selectable, stay there or wrap to first
+  if (selectableLines.length > 0) {
+    // Stay at current position (don't wrap)
+    editor.setStatus(editor.t("status.at_last_field"));
+  }
+};
+
+/**
+ * Navigate to the previous selectable field/section
+ */
+globalThis.theme_editor_nav_up = function(): void {
+  if (state.bufferId === null) return;
+
+  const currentLine = editor.getCursorLine(state.bufferId);
+  const selectableLines = getSelectableLineNumbers();
+
+  // Find previous selectable line before current
+  for (let i = selectableLines.length - 1; i >= 0; i--) {
+    if (selectableLines[i].lineNumber < currentLine) {
+      editor.setCursorLine(state.bufferId, selectableLines[i].lineNumber);
+      return;
+    }
+  }
+
+  // Already at first selectable, stay there
+  if (selectableLines.length > 0) {
+    editor.setStatus(editor.t("status.at_first_field"));
+  }
+};
 
 // =============================================================================
 // Public Commands
