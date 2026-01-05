@@ -236,6 +236,8 @@ interface ThemeEditorState {
   builtinThemes: string[];
   /** Pending save name for overwrite confirmation */
   pendingSaveName: string | null;
+  /** Whether current theme is a built-in (requires Save As) */
+  isBuiltin: boolean;
 }
 
 const state: ThemeEditorState = {
@@ -254,6 +256,7 @@ const state: ThemeEditorState = {
   hasChanges: false,
   builtinThemes: [],
   pendingSaveName: null,
+  isBuiltin: false,
 };
 
 // =============================================================================
@@ -291,8 +294,7 @@ editor.defineMode(
     ["Down", "theme_editor_nav_down"],
     ["k", "theme_editor_nav_up"],
     ["j", "theme_editor_nav_down"],
-    ["c", "theme_editor_copy_from_builtin"],
-    ["e", "theme_editor_edit_existing"],
+    ["o", "theme_editor_open"],
     ["s", "theme_editor_save"],
     ["S", "theme_editor_save_as"],
     ["x", "theme_editor_delete"],
@@ -1006,56 +1008,62 @@ globalThis.onThemeColorPromptConfirmed = function(args: {
 };
 
 /**
- * Handle copy from builtin prompt
+ * Handle open theme prompt (both builtin and user themes)
  */
-globalThis.onThemeCopyPromptConfirmed = async function(args: {
+globalThis.onThemeOpenPromptConfirmed = async function(args: {
   prompt_type: string;
   selected_index: number | null;
   input: string;
 }): Promise<boolean> {
-  if (args.prompt_type !== "theme-copy-builtin") return true;
+  if (args.prompt_type !== "theme-open") return true;
 
-  const themeName = args.input.trim();
-  const themeData = await loadThemeFile(themeName);
+  const value = args.input.trim();
 
-  if (themeData) {
-    state.themeData = deepClone(themeData);
-    state.themeName = `${themeName}-custom`;
-    state.themeData.name = state.themeName;
-    state.themePath = null; // New theme, not saved yet
-    state.hasChanges = true;
-    updateDisplay();
-    editor.setStatus(editor.t("status.copied", { theme: themeName }));
+  // Parse the value to determine if it's user or builtin
+  let isBuiltin = false;
+  let themeName = value;
+
+  if (value.startsWith("user:")) {
+    themeName = value.slice(5);
+    isBuiltin = false;
+  } else if (value.startsWith("builtin:")) {
+    themeName = value.slice(8);
+    isBuiltin = true;
   } else {
-    editor.setStatus(editor.t("status.load_failed", { name: themeName }));
+    // Fallback: check if it's a builtin theme
+    isBuiltin = state.builtinThemes.includes(value);
   }
 
-  return true;
-};
-
-/**
- * Handle edit existing theme prompt
- */
-globalThis.onThemeEditExistingPromptConfirmed = async function(args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): Promise<boolean> {
-  if (args.prompt_type !== "theme-edit-existing") return true;
-
-  const themeName = args.input.trim();
-  const result = await loadUserThemeFile(themeName);
-
-  if (result) {
-    state.themeData = deepClone(result.data);
-    state.originalThemeData = deepClone(result.data);
-    state.themeName = themeName;
-    state.themePath = result.path;
-    state.hasChanges = false;
-    updateDisplay();
-    editor.setStatus(editor.t("status.loaded", { name: themeName }));
+  if (isBuiltin) {
+    // Load builtin theme
+    const themeData = await loadThemeFile(themeName);
+    if (themeData) {
+      state.themeData = deepClone(themeData);
+      state.originalThemeData = deepClone(themeData);
+      state.themeName = themeName;
+      state.themePath = null; // No user path for builtin
+      state.isBuiltin = true;
+      state.hasChanges = false;
+      updateDisplay();
+      editor.setStatus(editor.t("status.opened_builtin", { name: themeName }));
+    } else {
+      editor.setStatus(editor.t("status.load_failed", { name: themeName }));
+    }
   } else {
-    editor.setStatus(editor.t("status.load_failed", { name: themeName }));
+    // Load user theme
+    const result = await loadUserThemeFile(themeName);
+    if (result) {
+      state.themeData = deepClone(result.data);
+      state.originalThemeData = deepClone(result.data);
+      state.themeName = themeName;
+      state.themePath = result.path;
+      state.isBuiltin = false;
+      state.hasChanges = false;
+      updateDisplay();
+      editor.setStatus(editor.t("status.loaded", { name: themeName }));
+    } else {
+      editor.setStatus(editor.t("status.load_failed", { name: themeName }));
+    }
   }
 
   return true;
@@ -1108,8 +1116,7 @@ globalThis.onThemePromptCancelled = function(args: { prompt_type: string }): boo
 
 // Register prompt handlers
 editor.on("prompt_confirmed", "onThemeColorPromptConfirmed");
-editor.on("prompt_confirmed", "onThemeCopyPromptConfirmed");
-editor.on("prompt_confirmed", "onThemeEditExistingPromptConfirmed");
+editor.on("prompt_confirmed", "onThemeOpenPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeSaveAsPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeDiscardPromptConfirmed");
 editor.on("prompt_confirmed", "onThemeOverwritePromptConfirmed");
@@ -1550,38 +1557,31 @@ globalThis.theme_editor_toggle_section = function(): void {
 };
 
 /**
- * Copy from a built-in theme
+ * Open a theme (builtin or user) for editing
  */
-globalThis.theme_editor_copy_from_builtin = function(): void {
-  editor.startPrompt(editor.t("prompt.copy_theme"), "theme-copy-builtin");
+globalThis.theme_editor_open = function(): void {
+  editor.startPrompt(editor.t("prompt.open_theme"), "theme-open");
 
-  const suggestions: PromptSuggestion[] = state.builtinThemes.map(name => ({
-    text: name,
-    description: editor.t("suggestion.builtin_theme"),
-    value: name,
-  }));
+  const suggestions: PromptSuggestion[] = [];
 
-  editor.setPromptSuggestions(suggestions);
-};
-
-/**
- * Edit an existing user theme
- */
-globalThis.theme_editor_edit_existing = function(): void {
+  // Add user themes first
   const userThemes = listUserThemes();
-
-  if (userThemes.length === 0) {
-    editor.setStatus(editor.t("status.no_user_themes"));
-    return;
+  for (const name of userThemes) {
+    suggestions.push({
+      text: name,
+      description: editor.t("suggestion.user_theme"),
+      value: `user:${name}`,
+    });
   }
 
-  editor.startPrompt(editor.t("prompt.edit_theme"), "theme-edit-existing");
-
-  const suggestions: PromptSuggestion[] = userThemes.map(name => ({
-    text: name,
-    description: editor.t("suggestion.user_theme"),
-    value: name,
-  }));
+  // Add built-in themes
+  for (const name of state.builtinThemes) {
+    suggestions.push({
+      text: name,
+      description: editor.t("suggestion.builtin_theme"),
+      value: `builtin:${name}`,
+    });
+  }
 
   editor.setPromptSuggestions(suggestions);
 };
@@ -1590,6 +1590,13 @@ globalThis.theme_editor_edit_existing = function(): void {
  * Save theme
  */
 globalThis.theme_editor_save = async function(): Promise<void> {
+  // Built-in themes require Save As
+  if (state.isBuiltin) {
+    editor.setStatus(editor.t("status.builtin_requires_save_as"));
+    theme_editor_save_as();
+    return;
+  }
+
   // If theme has never been saved (no path), trigger "Save As" instead
   if (!state.themePath) {
     theme_editor_save_as();
@@ -1780,16 +1787,9 @@ editor.registerCommand(
 );
 
 editor.registerCommand(
-  "%cmd.copy_builtin",
-  "%cmd.copy_builtin_desc",
-  "theme_editor_copy_from_builtin",
-  "normal,theme-editor"
-);
-
-editor.registerCommand(
-  "%cmd.edit_existing",
-  "%cmd.edit_existing_desc",
-  "theme_editor_edit_existing",
+  "%cmd.open_theme",
+  "%cmd.open_theme_desc",
+  "theme_editor_open",
   "normal,theme-editor"
 );
 

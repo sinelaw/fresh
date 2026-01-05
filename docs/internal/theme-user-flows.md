@@ -51,11 +51,11 @@ To open the theme editor with a single keystroke, add a custom keybinding in `~/
 This binds `Ctrl+Shift+T` to open the theme editor. You can choose any key combination.
 
 ### Creating a New Theme
-1. Press `c` to copy from a built-in theme as starting point
+1. Press `o` to open a theme (built-in or user) as starting point
 2. Navigate with arrow keys to color fields
 3. Press `Enter` or `Space` to edit a color
 4. Input color as: `#FF0000` (hex), `[255,0,0]` (RGB), or `Red` (named)
-5. Press `s` to save (prompts for name if new) - theme is automatically applied
+5. Press `s` to save (prompts for name if built-in) - theme is automatically applied
 
 ### Key Bindings
 
@@ -65,9 +65,8 @@ This binds `Ctrl+Shift+T` to open the theme editor. You can choose any key combi
 | `Tab` | Navigate to next field/section (with wrapping) |
 | `Shift+Tab` | Navigate to previous field/section (with wrapping) |
 | `Enter/Space` | Edit color field or toggle section expand/collapse |
-| `c` | Copy from built-in theme |
-| `e` | Edit existing user theme |
-| `s` | Save theme (prompts for name if new, auto-applies) |
+| `o` | Open theme (built-in or user) |
+| `s` | Save theme (requires Save As for built-in, auto-applies) |
 | `S` | Save as (new name, auto-applies) |
 | `x` | Delete current user theme |
 | `r` | Reload theme from file |
