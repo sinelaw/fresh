@@ -63,7 +63,7 @@ impl Editor {
         let has_file_browser = self.prompt.as_ref().map_or(false, |p| {
             matches!(
                 p.prompt_type,
-                PromptType::OpenFile | PromptType::SwitchProject
+                PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
             )
         }) && self.file_open_state.is_some();
 
@@ -432,10 +432,10 @@ impl Editor {
         self.cached_layout.suggestions_area = None;
         self.file_browser_layout = None;
         if let Some(prompt) = &self.prompt {
-            // For OpenFile/SwitchProject prompt, render the file browser popup
+            // For OpenFile/SwitchProject/SaveFileAs prompt, render the file browser popup
             if matches!(
                 prompt.prompt_type,
-                PromptType::OpenFile | PromptType::SwitchProject
+                PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
             ) {
                 if let Some(file_open_state) = &self.file_open_state {
                     // Calculate popup area: position above prompt line, covering status bar

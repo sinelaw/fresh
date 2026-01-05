@@ -665,6 +665,7 @@
   "file.opened": "%{path} を開きました",
   "file.replace_prompt": "置換: ",
   "file.revert_failed": "元に戻せませんでした: %{error}",
+  "file.save_as_no_filename": "ファイル名を入力してください",
   "file.save_as_prompt": "名前を付けて保存: ",
   "file.save_failed": "保存に失敗しました: %{error}",
   "file.saved_as": "保存しました: %{path}",

@@ -665,6 +665,7 @@
   "file.opened": "%{path} geöffnet",
   "file.replace_prompt": "Ersetzen: ",
   "file.revert_failed": "Wiederherstellen fehlgeschlagen: %{error}",
+  "file.save_as_no_filename": "Bitte geben Sie einen Dateinamen ein",
   "file.save_as_prompt": "Speichern unter: ",
   "file.save_failed": "Speichern fehlgeschlagen: %{error}",
   "file.saved_as": "Gespeichert als: %{path}",

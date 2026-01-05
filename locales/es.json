@@ -666,6 +666,7 @@
   "file.opened": "Abierto %{path}",
   "file.replace_prompt": "Reemplazar: ",
   "file.revert_failed": "Error al revertir: %{error}",
+  "file.save_as_no_filename": "Por favor ingrese un nombre de archivo",
   "file.save_as_prompt": "Guardar como: ",
   "file.save_failed": "Error al guardar: %{error}",
   "file.saved_as": "Guardado como: %{path}",

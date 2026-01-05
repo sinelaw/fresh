@@ -665,6 +665,7 @@
   "file.opened": "%{path} 열림",
   "file.replace_prompt": "바꾸기: ",
   "file.revert_failed": "되돌리기 실패: %{error}",
+  "file.save_as_no_filename": "파일 이름을 입력하세요",
   "file.save_as_prompt": "다른 이름으로 저장: ",
   "file.save_failed": "저장 실패: %{error}",
   "file.saved_as": "저장됨: %{path}",

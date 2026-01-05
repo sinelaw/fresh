@@ -11,14 +11,14 @@ use crate::view::prompt::PromptType;
 use rust_i18n::t;
 
 impl Editor {
-    /// Check if the file open dialog is active (for both OpenFile and SwitchProject)
+    /// Check if the file open dialog is active (for OpenFile, SwitchProject, or SaveFileAs)
     pub fn is_file_open_active(&self) -> bool {
         self.prompt
             .as_ref()
             .map(|p| {
                 matches!(
                     p.prompt_type,
-                    PromptType::OpenFile | PromptType::SwitchProject
+                    PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
                 )
             })
             .unwrap_or(false)
@@ -30,6 +30,14 @@ impl Editor {
         self.prompt
             .as_ref()
             .map(|p| p.prompt_type == PromptType::SwitchProject)
+            .unwrap_or(false)
+    }
+
+    /// Check if we're in save mode (Save As)
+    fn is_save_mode(&self) -> bool {
+        self.prompt
+            .as_ref()
+            .map(|p| p.prompt_type == PromptType::SaveFileAs)
             .unwrap_or(false)
     }
 
@@ -150,6 +158,7 @@ impl Editor {
     /// Confirm selection in file open dialog
     fn file_open_confirm(&mut self) {
         let is_folder_mode = self.is_folder_open_mode();
+        let is_save_mode = self.is_save_mode();
         let prompt_input = self
             .prompt
             .as_ref()
@@ -181,6 +190,10 @@ impl Editor {
                 } else {
                     self.file_open_navigate_to(expanded_path);
                 }
+                return;
+            } else if is_save_mode {
+                // In save mode, save to the specified path
+                self.file_open_save_file(expanded_path);
                 return;
             } else if expanded_path.is_file() && !is_folder_mode {
                 // File exists - open it directly (handles pasted paths before async load completes)
@@ -214,6 +227,11 @@ impl Editor {
             let path = match state.get_selected_path() {
                 Some(p) => p,
                 None => {
+                    // In save mode with no input, we can't save
+                    if is_save_mode {
+                        self.set_status_message(t!("file.save_as_no_filename").to_string());
+                        return;
+                    }
                     // If no file is selected but we're in folder mode, use the current directory
                     if is_folder_mode {
                         self.file_open_select_folder(current_dir);
@@ -233,6 +251,9 @@ impl Editor {
                 // Navigate into directory
                 self.file_open_navigate_to(path);
             }
+        } else if is_save_mode {
+            // In save mode, save to the selected file
+            self.file_open_save_file(path);
         } else if !is_folder_mode {
             // Open the file (only in file mode)
             self.file_open_open_file(path);
@@ -292,6 +313,39 @@ impl Editor {
                 t!("file.created_new", path = path.display().to_string()).to_string(),
             );
         }
+    }
+
+    /// Save the current buffer to a file (for SaveFileAs mode)
+    fn file_open_save_file(&mut self, path: std::path::PathBuf) {
+        use crate::view::prompt::PromptType as PT;
+
+        // Close the file browser
+        self.file_open_state = None;
+        self.prompt = None;
+
+        // Check if file exists and is different from current file
+        let current_file_path = self
+            .active_state()
+            .buffer
+            .file_path()
+            .map(|p| p.to_path_buf());
+        let is_different_file = current_file_path.as_ref() != Some(&path);
+
+        if is_different_file && path.is_file() {
+            // File exists and is different from current - ask for confirmation
+            let filename = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.display().to_string());
+            self.start_prompt(
+                t!("buffer.overwrite_confirm", name = &filename).to_string(),
+                PT::ConfirmOverwriteFile { path },
+            );
+            return;
+        }
+
+        // Proceed with save
+        self.perform_save_file_as(path);
     }
 
     /// Check if the input looks like a filename that should be created

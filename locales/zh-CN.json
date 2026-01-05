@@ -665,6 +665,7 @@
   "file.opened": "已打开 %{path}",
   "file.replace_prompt": "替换：",
   "file.revert_failed": "还原失败: %{error}",
+  "file.save_as_no_filename": "请输入文件名",
   "file.save_as_prompt": "另存为: ",
   "file.save_failed": "保存失败: %{error}",
   "file.saved_as": "已保存为: %{path}",

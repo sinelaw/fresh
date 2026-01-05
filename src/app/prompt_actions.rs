@@ -345,7 +345,7 @@ impl Editor {
     }
 
     /// Perform the actual SaveFileAs operation (called after confirmation if needed).
-    fn perform_save_file_as(&mut self, full_path: std::path::PathBuf) {
+    pub(crate) fn perform_save_file_as(&mut self, full_path: std::path::PathBuf) {
         let before_idx = self.active_event_log().current_index();
         let before_len = self.active_event_log().len();
         tracing::debug!(

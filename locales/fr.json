@@ -665,6 +665,7 @@
   "file.created_new": "Nouveau fichier : %{path}",
   "file.replace_prompt": "Remplacer: ",
   "file.revert_failed": "Échec du rétablissement : %{error}",
+  "file.save_as_no_filename": "Veuillez entrer un nom de fichier",
   "file.save_as_prompt": "Enregistrer sous : ",
   "file.save_failed": "Échec de l'enregistrement : %{error}",
   "file.saved_as": "Enregistré sous : %{path}",

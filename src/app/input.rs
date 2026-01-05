@@ -226,6 +226,7 @@ impl Editor {
                         PromptType::SaveFileAs,
                         String::new(),
                     );
+                    self.init_file_open_state();
                 } else if self.check_save_conflict().is_some() {
                     // Check if file was modified externally since we opened/saved it
                     self.start_prompt(
@@ -255,6 +256,7 @@ impl Editor {
                     PromptType::SaveFileAs,
                     current_path,
                 );
+                self.init_file_open_state();
             }
             Action::Open => {
                 self.start_prompt(t!("file.open_prompt").to_string(), PromptType::OpenFile);

@@ -665,6 +665,7 @@
   "file.opened": "Открыто %{path}",
   "file.replace_prompt": "Замена: ",
   "file.revert_failed": "Не удалось откатить: %{error}",
+  "file.save_as_no_filename": "Пожалуйста, введите имя файла",
   "file.save_as_prompt": "Сохранить как: ",
   "file.save_failed": "Не удалось сохранить: %{error}",
   "file.saved_as": "Сохранено как: %{path}",

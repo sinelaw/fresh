@@ -665,6 +665,7 @@
   "file.created_new": "ไฟล์ใหม่: %{path}",
   "file.replace_prompt": "แทนที่: ",
   "file.revert_failed": "การย้อนกลับล้มเหลว: %{error}",
+  "file.save_as_no_filename": "กรุณาใส่ชื่อไฟล์",
   "file.save_as_prompt": "บันทึกเป็น: ",
   "file.save_failed": "การบันทึกล้มเหลว: %{error}",
   "file.saved_as": "บันทึกเป็น: %{path}",

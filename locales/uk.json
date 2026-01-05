@@ -665,6 +665,7 @@
   "file.created_new": "Новий файл: %{path}",
   "file.replace_prompt": "Заміна: ",
   "file.revert_failed": "Не вдалося відновити: %{error}",
+  "file.save_as_no_filename": "Будь ласка, введіть ім'я файлу",
   "file.save_as_prompt": "Зберегти як: ",
   "file.save_failed": "Не вдалося зберегти: %{error}",
   "file.saved_as": "Збережено як: %{path}",

@@ -2658,7 +2658,7 @@ impl Editor {
                     };
                     self.apply_event_to_active_buffer(&remove_overlay_event);
                 }
-                PromptType::OpenFile | PromptType::SwitchProject => {
+                PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs => {
                     // Clear file browser state
                     self.file_open_state = None;
                     self.file_browser_layout = None;
@@ -2855,23 +2855,9 @@ impl Editor {
                 // Reset history navigation when user types - allows Up to navigate history
                 self.replace_history.reset_navigation();
             }
-            PromptType::OpenFile | PromptType::SwitchProject => {
-                // For OpenFile/SwitchProject, update the file browser filter (native implementation)
+            PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs => {
+                // For OpenFile/SwitchProject/SaveFileAs, update the file browser filter (native implementation)
                 self.update_file_open_filter();
-            }
-            PromptType::SaveFileAs => {
-                // Fire plugin hook for file path completion.
-                // The hook is processed asynchronously by the plugin thread.
-                // Commands (SetPromptSuggestions) will be picked up by the main loop's
-                // process_async_messages() -> process_plugin_commands() on the next frame.
-                use crate::services::plugins::hooks::HookArgs;
-                self.plugin_manager.run_hook(
-                    "prompt_changed",
-                    HookArgs::PromptChanged {
-                        prompt_type: "save-file-as".to_string(),
-                        input,
-                    },
-                );
             }
             PromptType::Plugin { custom_type } => {
                 // Fire plugin hook for prompt input change

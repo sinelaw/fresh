@@ -665,6 +665,7 @@
   "file.created_new": "New file: %{path}",
   "file.replace_prompt": "Replace: ",
   "file.revert_failed": "Failed to revert: %{error}",
+  "file.save_as_no_filename": "Please enter a filename to save",
   "file.save_as_prompt": "Save as: ",
   "file.save_failed": "Failed to save: %{error}",
   "file.saved_as": "Saved as: %{path}",

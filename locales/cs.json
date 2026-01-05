@@ -666,6 +666,7 @@
   "file.created_new": "Nový soubor: %{path}",
   "file.replace_prompt": "Nahradit: ",
   "file.revert_failed": "Obnovení selhalo: %{error}",
+  "file.save_as_no_filename": "Zadejte prosím název souboru",
   "file.save_as_prompt": "Uložit jako: ",
   "file.save_failed": "Uložení selhalo: %{error}",
   "file.saved_as": "Uloženo jako: %{path}",
