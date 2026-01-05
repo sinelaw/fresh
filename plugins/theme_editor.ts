@@ -238,6 +238,8 @@ interface ThemeEditorState {
   pendingSaveName: string | null;
   /** Whether current theme is a built-in (requires Save As) */
   isBuiltin: boolean;
+  /** Saved cursor field path (for restoring after prompts) */
+  savedCursorPath: string | null;
 }
 
 const state: ThemeEditorState = {
@@ -257,6 +259,7 @@ const state: ThemeEditorState = {
   builtinThemes: [],
   pendingSaveName: null,
   isBuiltin: false,
+  savedCursorPath: null,
 };
 
 // =============================================================================
@@ -847,14 +850,22 @@ function applyHighlighting(): void {
 }
 
 /**
- * Update display
+ * Update display (preserves cursor position)
  */
 function updateDisplay(): void {
   if (state.bufferId === null) return;
 
+  // Save current field path before updating
+  const currentPath = getCurrentFieldPath();
+
   const entries = buildDisplayEntries();
   editor.setVirtualBufferContent(state.bufferId, entries);
   applyHighlighting();
+
+  // Restore cursor to the same field if possible
+  if (currentPath) {
+    moveCursorToField(currentPath);
+  }
 }
 
 // =============================================================================
@@ -995,13 +1006,26 @@ globalThis.onThemeColorPromptConfirmed = function(args: {
   if (result.value !== undefined) {
     setNestedValue(state.themeData, path, result.value);
     state.hasChanges = !deepEqual(state.themeData, state.originalThemeData);
-    updateDisplay();
+
+    // Update display (this will try to preserve current cursor position)
+    const entries = buildDisplayEntries();
+    if (state.bufferId !== null) {
+      editor.setVirtualBufferContent(state.bufferId, entries);
+      applyHighlighting();
+    }
+
+    // Explicitly restore cursor to the edited field
+    moveCursorToField(path);
+
     editor.setStatus(editor.t("status.updated", { path }));
   } else {
     // Show specific error message based on error type
     const errorKey = `error.color_${result.error}`;
     const errorMsg = editor.t(errorKey, { input: args.input });
     editor.setStatus(errorMsg);
+
+    // Restore cursor to the field even on error
+    moveCursorToField(path);
   }
 
   return true;
@@ -1099,7 +1123,11 @@ globalThis.onThemeSaveAsPromptConfirmed = async function(args: {
 
     state.themeName = name;
     state.themeData.name = name;
-    await saveTheme(name);
+    const restorePath = state.savedCursorPath;
+    state.savedCursorPath = null;
+    await saveTheme(name, restorePath);
+  } else {
+    state.savedCursorPath = null;
   }
 
   return true;
@@ -1110,6 +1138,11 @@ globalThis.onThemeSaveAsPromptConfirmed = async function(args: {
  */
 globalThis.onThemePromptCancelled = function(args: { prompt_type: string }): boolean {
   if (!args.prompt_type.startsWith("theme-")) return true;
+
+  // Clear saved cursor path on cancellation
+  state.savedCursorPath = null;
+  state.pendingSaveName = null;
+
   editor.setStatus(editor.t("status.cancelled"));
   return true;
 };
@@ -1129,8 +1162,10 @@ editor.on("prompt_cancelled", "onThemePromptCancelled");
 
 /**
  * Save theme to file
+ * @param name - Theme name to save as
+ * @param restorePath - Optional field path to restore cursor to after save
  */
-async function saveTheme(name?: string): Promise<boolean> {
+async function saveTheme(name?: string, restorePath?: string | null): Promise<boolean> {
   const themeName = name || state.themeName;
   const userThemesDir = getUserThemesDir();
 
@@ -1154,9 +1189,21 @@ async function saveTheme(name?: string): Promise<boolean> {
 
     state.themePath = themePath;
     state.themeName = themeName;
+    state.isBuiltin = false; // After saving, it's now a user theme
     state.originalThemeData = deepClone(state.themeData);
     state.hasChanges = false;
-    updateDisplay();
+
+    // Update display
+    const entries = buildDisplayEntries();
+    if (state.bufferId !== null) {
+      editor.setVirtualBufferContent(state.bufferId, entries);
+      applyHighlighting();
+    }
+
+    // Restore cursor position if provided
+    if (restorePath) {
+      moveCursorToField(restorePath);
+    }
 
     // Automatically apply the saved theme
     editor.applyTheme(themeName);
@@ -1267,8 +1314,10 @@ editor.on("cursor_moved", "onThemeEditorCursorMoved");
 
 interface SelectableEntry {
   byteOffset: number;
+  valueByteOffset: number; // Position at the value (after "field: ")
   index: number;
   isSection: boolean;
+  path: string;
 }
 
 /**
@@ -1282,13 +1331,26 @@ function getSelectableEntries(): SelectableEntry[] {
   for (const entry of entries) {
     const props = entry.properties as Record<string, unknown>;
     const entryType = props.type as string;
+    const path = (props.path as string) || "";
 
     // Only fields and sections are selectable (they have index property)
     if ((entryType === "field" || entryType === "section") && typeof props.index === "number") {
+      // For fields, calculate position at the value (after "FieldName: ")
+      let valueByteOffset = byteOffset;
+      if (entryType === "field") {
+        const colonIdx = entry.text.indexOf(":");
+        if (colonIdx >= 0) {
+          // Position after the colon and space
+          valueByteOffset = byteOffset + getUtf8ByteLength(entry.text.substring(0, colonIdx + 2));
+        }
+      }
+
       selectableEntries.push({
         byteOffset,
+        valueByteOffset,
         index: props.index as number,
         isSection: entryType === "section",
+        path,
       });
     }
 
@@ -1312,6 +1374,36 @@ function getCurrentSelectableIndex(): number {
 }
 
 /**
+ * Get the current field path at cursor
+ */
+function getCurrentFieldPath(): string | null {
+  if (state.bufferId === null) return null;
+
+  const props = editor.getTextPropertiesAtCursor(state.bufferId);
+  if (props.length > 0 && typeof props[0].path === "string") {
+    return props[0].path as string;
+  }
+  return null;
+}
+
+/**
+ * Move cursor to a field by path (positions at value for fields)
+ */
+function moveCursorToField(path: string): void {
+  if (state.bufferId === null) return;
+
+  const selectableEntries = getSelectableEntries();
+  for (const entry of selectableEntries) {
+    if (entry.path === path) {
+      // Use valueByteOffset for fields, byteOffset for sections
+      const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
+      editor.setBufferCursor(state.bufferId, targetOffset);
+      return;
+    }
+  }
+}
+
+/**
  * Navigate to the next selectable field/section
  */
 globalThis.theme_editor_nav_down = function(): void {
@@ -1323,7 +1415,9 @@ globalThis.theme_editor_nav_down = function(): void {
   // Find next selectable entry after current
   for (const entry of selectableEntries) {
     if (entry.index > currentIndex) {
-      editor.setBufferCursor(state.bufferId, entry.byteOffset);
+      // Use valueByteOffset for fields, byteOffset for sections
+      const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
+      editor.setBufferCursor(state.bufferId, targetOffset);
       return;
     }
   }
@@ -1343,8 +1437,11 @@ globalThis.theme_editor_nav_up = function(): void {
 
   // Find previous selectable entry before current
   for (let i = selectableEntries.length - 1; i >= 0; i--) {
-    if (selectableEntries[i].index < currentIndex) {
-      editor.setBufferCursor(state.bufferId, selectableEntries[i].byteOffset);
+    const entry = selectableEntries[i];
+    if (entry.index < currentIndex) {
+      // Use valueByteOffset for fields, byteOffset for sections
+      const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
+      editor.setBufferCursor(state.bufferId, targetOffset);
       return;
     }
   }
@@ -1365,14 +1462,18 @@ globalThis.theme_editor_nav_next_section = function(): void {
   // Find next selectable entry after current
   for (const entry of selectableEntries) {
     if (entry.index > currentIndex) {
-      editor.setBufferCursor(state.bufferId, entry.byteOffset);
+      // Use valueByteOffset for fields, byteOffset for sections
+      const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
+      editor.setBufferCursor(state.bufferId, targetOffset);
       return;
     }
   }
 
   // Wrap to first entry
   if (selectableEntries.length > 0) {
-    editor.setBufferCursor(state.bufferId, selectableEntries[0].byteOffset);
+    const entry = selectableEntries[0];
+    const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
+    editor.setBufferCursor(state.bufferId, targetOffset);
   }
 };
 
@@ -1387,15 +1488,20 @@ globalThis.theme_editor_nav_prev_section = function(): void {
 
   // Find previous selectable entry before current
   for (let i = selectableEntries.length - 1; i >= 0; i--) {
-    if (selectableEntries[i].index < currentIndex) {
-      editor.setBufferCursor(state.bufferId, selectableEntries[i].byteOffset);
+    const entry = selectableEntries[i];
+    if (entry.index < currentIndex) {
+      // Use valueByteOffset for fields, byteOffset for sections
+      const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
+      editor.setBufferCursor(state.bufferId, targetOffset);
       return;
     }
   }
 
   // Wrap to last entry
   if (selectableEntries.length > 0) {
-    editor.setBufferCursor(state.bufferId, selectableEntries[selectableEntries.length - 1].byteOffset);
+    const entry = selectableEntries[selectableEntries.length - 1];
+    const targetOffset = entry.isSection ? entry.byteOffset : entry.valueByteOffset;
+    editor.setBufferCursor(state.bufferId, targetOffset);
   }
 };
 
@@ -1590,6 +1696,9 @@ globalThis.theme_editor_open = function(): void {
  * Save theme
  */
 globalThis.theme_editor_save = async function(): Promise<void> {
+  // Save cursor path for restoration after save
+  state.savedCursorPath = getCurrentFieldPath();
+
   // Built-in themes require Save As
   if (state.isBuiltin) {
     editor.setStatus(editor.t("status.builtin_requires_save_as"));
@@ -1623,7 +1732,7 @@ globalThis.theme_editor_save = async function(): Promise<void> {
     return;
   }
 
-  await saveTheme();
+  await saveTheme(undefined, state.savedCursorPath);
 };
 
 /**
@@ -1643,9 +1752,12 @@ globalThis.onThemeOverwritePromptConfirmed = async function(args: {
     state.themeName = nameToSave;
     state.themeData.name = nameToSave;
     state.pendingSaveName = null;
-    await saveTheme(nameToSave);
+    const restorePath = state.savedCursorPath;
+    state.savedCursorPath = null;
+    await saveTheme(nameToSave, restorePath);
   } else {
     state.pendingSaveName = null;
+    state.savedCursorPath = null;
     editor.setStatus(editor.t("status.cancelled"));
   }
 
@@ -1656,6 +1768,11 @@ globalThis.onThemeOverwritePromptConfirmed = async function(args: {
  * Save theme as (new name)
  */
 globalThis.theme_editor_save_as = function(): void {
+  // Save cursor path for restoration after save (if not already saved by theme_editor_save)
+  if (!state.savedCursorPath) {
+    state.savedCursorPath = getCurrentFieldPath();
+  }
+
   editor.startPrompt(editor.t("prompt.save_as"), "theme-save-as");
 
   editor.setPromptSuggestions([{
