@@ -82,7 +82,7 @@
     "panel.file": "File: %{path}",
     "panel.new_theme": "New theme (not yet saved)",
     "panel.nav_hint": "up/down/TAB/S-TAB: navigate | RET/SPC: edit field or toggle section",
-    "panel.action_hint": "o: open theme | s: save | S: save as | x: delete | q: quit",
+    "panel.action_hint": "%{open}: open | %{save}: save | %{save_as}: save as | %{delete}: delete | %{close}: quit | %{help}: help",
 
     "prompt.open_theme": "Open theme: ",
     "prompt.theme_name": "Theme name: ",
@@ -328,7 +328,7 @@
     "panel.file": "Archivo: %{path}",
     "panel.new_theme": "Nuevo tema (aun no guardado)",
     "panel.nav_hint": "arriba/abajo: navegar | RET/SPC: editar color | TAB: expandir/contraer",
-    "panel.action_hint": "o: abrir tema | s: guardar | S: guardar como | x: eliminar | q: salir",
+    "panel.action_hint": "%{open}: abrir | %{save}: guardar | %{save_as}: guardar como | %{delete}: eliminar | %{close}: salir | %{help}: ayuda",
 
     "prompt.copy_theme": "Copiar de tema: ",
     "prompt.edit_theme": "Editar tema de usuario: ",
@@ -576,7 +576,7 @@
     "panel.file": "Datei: %{path}",
     "panel.new_theme": "Neues Theme (noch nicht gespeichert)",
     "panel.nav_hint": "Auf/Ab: navigieren | RET/SPC: Farbe bearbeiten | TAB: erweitern/reduzieren",
-    "panel.action_hint": "o: Theme oeffnen | s: speichern | S: speichern unter | x: loeschen | q: beenden",
+    "panel.action_hint": "%{open}: oeffnen | %{save}: speichern | %{save_as}: speichern unter | %{delete}: loeschen | %{close}: beenden | %{help}: Hilfe",
 
     "prompt.open_theme": "Theme oeffnen: ",
     "prompt.theme_name": "Theme-Name: ",
@@ -822,7 +822,7 @@
     "panel.file": "Fichier: %{path}",
     "panel.new_theme": "Nouveau theme (pas encore enregistre)",
     "panel.nav_hint": "haut/bas: naviguer | RET/SPC: modifier couleur | TAB: developper/reduire",
-    "panel.action_hint": "o: ouvrir theme | s: enregistrer | S: enregistrer sous | x: supprimer | q: quitter",
+    "panel.action_hint": "%{open}: ouvrir | %{save}: enregistrer | %{save_as}: enregistrer sous | %{delete}: supprimer | %{close}: quitter | %{help}: aide",
 
     "prompt.open_theme": "Ouvrir le theme: ",
     "prompt.theme_name": "Nom du theme: ",
@@ -1068,7 +1068,7 @@
     "panel.file": "ファイル: %{path}",
     "panel.new_theme": "新しいテーマ (未保存)",
     "panel.nav_hint": "上/下: 移動 | RET/SPC: 色を編集 | TAB: 展開/折りたたみ",
-    "panel.action_hint": "o: テーマを開く | s: 保存 | S: 別名保存 | x: 削除 | q: 終了",
+    "panel.action_hint": "%{open}: 開く | %{save}: 保存 | %{save_as}: 別名保存 | %{delete}: 削除 | %{close}: 終了 | %{help}: ヘルプ",
 
     "prompt.open_theme": "テーマを開く: ",
     "prompt.theme_name": "テーマ名: ",
@@ -1314,7 +1314,7 @@
     "panel.file": "文件: %{path}",
     "panel.new_theme": "新主题 (尚未保存)",
     "panel.nav_hint": "上/下: 导航 | RET/SPC: 编辑颜色 | TAB: 展开/折叠",
-    "panel.action_hint": "o: 打开主题 | s: 保存 | S: 另存为 | x: 删除 | q: 退出",
+    "panel.action_hint": "%{open}: 打开 | %{save}: 保存 | %{save_as}: 另存为 | %{delete}: 删除 | %{close}: 退出 | %{help}: 帮助",
 
     "prompt.open_theme": "打开主题: ",
     "prompt.theme_name": "主题名称: ",

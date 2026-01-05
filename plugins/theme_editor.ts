@@ -282,6 +282,24 @@ const colors = {
 const COLOR_BLOCK = "██";
 
 // =============================================================================
+// Keyboard Shortcuts (defined once, used in mode and i18n)
+// =============================================================================
+
+/**
+ * Keyboard shortcuts for the theme editor.
+ * These are defined once and used both in the mode definition and in the UI hints.
+ */
+const SHORTCUTS = {
+  open: "C-o",
+  save: "C-s",
+  save_as: "C-S-s",
+  delete: "C-d",
+  reload: "C-r",
+  close: "C-q",
+  help: "F1",
+};
+
+// =============================================================================
 // Mode Definition
 // =============================================================================
 
@@ -289,22 +307,24 @@ editor.defineMode(
   "theme-editor",
   "normal",
   [
+    // Navigation (standard keys that don't conflict with typing)
     ["Return", "theme_editor_edit_color"],
     ["Space", "theme_editor_edit_color"],
     ["Tab", "theme_editor_nav_next_section"],
     ["S-Tab", "theme_editor_nav_prev_section"],
     ["Up", "theme_editor_nav_up"],
     ["Down", "theme_editor_nav_down"],
-    ["k", "theme_editor_nav_up"],
-    ["j", "theme_editor_nav_down"],
-    ["o", "theme_editor_open"],
-    ["s", "theme_editor_save"],
-    ["S", "theme_editor_save_as"],
-    ["x", "theme_editor_delete"],
-    ["q", "theme_editor_close"],
     ["Escape", "theme_editor_close"],
-    ["r", "theme_editor_reload"],
-    ["?", "theme_editor_show_help"],
+    [SHORTCUTS.help, "theme_editor_show_help"],
+
+    // Ctrl+ shortcuts (match common editor conventions)
+    [SHORTCUTS.open, "theme_editor_open"],
+    [SHORTCUTS.save, "theme_editor_save"],
+    [SHORTCUTS.save_as, "theme_editor_save_as"],
+    [SHORTCUTS.delete, "theme_editor_delete"],
+    [SHORTCUTS.reload, "theme_editor_reload"],
+    [SHORTCUTS.close, "theme_editor_close"],
+    ["C-h", "theme_editor_show_help"],  // Alternative help key
   ],
   true // read-only
 );
@@ -678,7 +698,7 @@ function buildDisplayEntries(): TextPropertyEntry[] {
     properties: { type: "footer" },
   });
   entries.push({
-    text: editor.t("panel.action_hint") + "\n",
+    text: editor.t("panel.action_hint", SHORTCUTS) + "\n",
     properties: { type: "footer" },
   });
 
@@ -845,8 +865,8 @@ function applyHighlighting(): void {
     byteOffset += textLen;
   }
 
-  // Add color swatches
-  addColorSwatches();
+  // Color swatches are now added via the lines_changed hook (onThemeEditorLinesChanged)
+  // This ensures they are rendered correctly after buffer content is set
 }
 
 /**
@@ -1307,6 +1327,82 @@ globalThis.onThemeEditorCursorMoved = function(data: {
 };
 
 editor.on("cursor_moved", "onThemeEditorCursorMoved");
+
+/**
+ * Handle lines_changed event to add color swatches
+ * This is triggered during rendering when new lines become visible
+ */
+globalThis.onThemeEditorLinesChanged = function(data: {
+  buffer_id: number;
+  lines: Array<{
+    line_number: number;
+    byte_start: number;
+    byte_end: number;
+    content: string;
+  }>;
+}): void {
+  // Only process if this is the theme editor buffer
+  if (!state.isOpen || state.bufferId === null || data.buffer_id !== state.bufferId) {
+    return;
+  }
+
+  // Process each line to find and highlight color fields
+  for (const line of data.lines) {
+    // Find color value patterns in the line content
+    // Pattern: "FieldName: #RRGGBB" or "FieldName: ColorName"
+    const match = line.content.match(/:\s+(#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{3}|\w+)\s*$/);
+    if (match) {
+      const colorStr = match[1];
+      const colorStartIdx = line.content.lastIndexOf(colorStr);
+      if (colorStartIdx >= 0) {
+        // Calculate byte position of the color value
+        const swatchPos = line.byte_start + colorStartIdx;
+        const swatchId = `theme-swatch-line-${line.line_number}`;
+
+        // Parse the color to get RGB values
+        let rgb: RGB | null = null;
+        if (colorStr.startsWith("#")) {
+          // Hex color
+          const hex = colorStr.slice(1);
+          if (hex.length === 6) {
+            rgb = [
+              parseInt(hex.slice(0, 2), 16),
+              parseInt(hex.slice(2, 4), 16),
+              parseInt(hex.slice(4, 6), 16),
+            ];
+          } else if (hex.length === 3) {
+            rgb = [
+              parseInt(hex[0] + hex[0], 16),
+              parseInt(hex[1] + hex[1], 16),
+              parseInt(hex[2] + hex[2], 16),
+            ];
+          }
+        } else if (NAMED_COLORS[colorStr]) {
+          rgb = NAMED_COLORS[colorStr];
+        }
+
+        if (rgb && !isNaN(rgb[0]) && !isNaN(rgb[1]) && !isNaN(rgb[2])) {
+          // Check if this is a background color field
+          const useBg = line.content.toLowerCase().includes("_bg:");
+
+          editor.addVirtualText(
+            state.bufferId,
+            swatchId,
+            swatchPos,
+            useBg ? "   " : COLOR_BLOCK + " ",
+            rgb[0],
+            rgb[1],
+            rgb[2],
+            true,
+            useBg
+          );
+        }
+      }
+    }
+  }
+};
+
+editor.on("lines_changed", "onThemeEditorLinesChanged");
 
 // =============================================================================
 // Smart Navigation - Skip Non-Selectable Lines

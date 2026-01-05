@@ -289,9 +289,9 @@ fn test_theme_editor_open_builtin() {
         .wait_until(|h| h.screen_to_string().contains("Theme Editor:"))
         .unwrap();
 
-    // Press 'o' to open a theme (builtin or user)
+    // Press Ctrl+O to open a theme (builtin or user)
     harness
-        .send_key(KeyCode::Char('o'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
@@ -935,9 +935,9 @@ fn test_theme_applied_immediately_after_save() {
         .wait_until(|h| h.screen_to_string().contains("Theme Editor:"))
         .unwrap();
 
-    // Open the red-test theme using 'o' key
+    // Open the red-test theme using Ctrl+O
     harness
-        .send_key(KeyCode::Char('o'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
@@ -966,9 +966,9 @@ fn test_theme_applied_immediately_after_save() {
         })
         .unwrap();
 
-    // Save the theme with 'S' (Save As) since it's a builtin
+    // Save the theme with Ctrl+Shift+S (Save As) since it's a builtin
     harness
-        .send_key(KeyCode::Char('S'), KeyModifiers::SHIFT)
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
     harness.render().unwrap();
 
@@ -995,9 +995,9 @@ fn test_theme_applied_immediately_after_save() {
         })
         .unwrap();
 
-    // Close the theme editor
+    // Close the theme editor with Ctrl+Q
     harness
-        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
         .unwrap();
     harness.process_async_and_render().unwrap();
 
@@ -1605,7 +1605,10 @@ fn test_theme_editor_navigation_skips_non_selectable_lines() {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
         harness.process_async_and_render().unwrap();
         let screen = harness.screen_to_string();
-        if screen.contains("> UI") || screen.contains("> Search") || screen.contains("> Diagnostics") {
+        if screen.contains("> UI")
+            || screen.contains("> Search")
+            || screen.contains("> Diagnostics")
+        {
             break;
         }
     }
@@ -1889,9 +1892,9 @@ fn test_builtin_theme_requires_save_as() {
         .wait_until(|h| h.screen_to_string().contains("Theme Editor:"))
         .unwrap();
 
-    // Open the builtin theme
+    // Open the builtin theme with Ctrl+O
     harness
-        .send_key(KeyCode::Char('o'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
@@ -1954,9 +1957,9 @@ fn test_builtin_theme_requires_save_as() {
         .unwrap();
     harness.process_async_and_render().unwrap();
 
-    // Now try to save with 's' - should prompt for Save As since it's a builtin
+    // Now try to save with Ctrl+S - should prompt for Save As since it's a builtin
     harness
-        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
     harness.process_async_and_render().unwrap();
 
