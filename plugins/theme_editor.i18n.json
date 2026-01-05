@@ -47,7 +47,7 @@
     "status.reloaded": "Theme reloaded from file",
     "status.reset": "Theme reset to defaults",
     "status.cancelled": "Cancelled",
-    "status.help": "Keys: up/down navigate | TAB/S-TAB sections | RET/SPC edit | c copy | e edit | s save | S save-as | d default | q quit",
+    "status.help": "Keys: up/down/TAB navigate | RET/SPC edit/toggle | c copy | e edit | s save | d default | q quit",
     "status.plugin_loaded": "Theme Editor plugin loaded",
     "status.at_first_field": "At first field",
     "status.at_last_field": "At last field",
@@ -58,7 +58,7 @@
     "panel.modified": "[modified]",
     "panel.file": "File: %{path}",
     "panel.new_theme": "New theme (not yet saved)",
-    "panel.nav_hint": "up/down: navigate | TAB/S-TAB: jump sections | RET/SPC: edit/toggle",
+    "panel.nav_hint": "up/down/TAB/S-TAB: navigate | RET/SPC: edit field or toggle section",
     "panel.action_hint": "c: copy builtin | e: edit existing | s: save | S: save as | d: set default | q: quit",
 
     "prompt.copy_theme": "Copy from theme: ",

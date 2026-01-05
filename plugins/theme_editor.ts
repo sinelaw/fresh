@@ -1359,7 +1359,7 @@ globalThis.theme_editor_nav_up = function(): void {
 };
 
 /**
- * Navigate to next section (Tab)
+ * Navigate to next element (Tab) - includes both fields and sections
  */
 globalThis.theme_editor_nav_next_section = function(): void {
   if (state.bufferId === null) return;
@@ -1367,23 +1367,22 @@ globalThis.theme_editor_nav_next_section = function(): void {
   const selectableEntries = getSelectableEntries();
   const currentIndex = getCurrentSelectableIndex();
 
-  // Find next section after current position
+  // Find next selectable entry after current
   for (const entry of selectableEntries) {
-    if (entry.isSection && entry.index > currentIndex) {
+    if (entry.index > currentIndex) {
       editor.setBufferCursor(state.bufferId, entry.byteOffset);
       return;
     }
   }
 
-  // Wrap to first section
-  const firstSection = selectableEntries.find(e => e.isSection);
-  if (firstSection) {
-    editor.setBufferCursor(state.bufferId, firstSection.byteOffset);
+  // Wrap to first entry
+  if (selectableEntries.length > 0) {
+    editor.setBufferCursor(state.bufferId, selectableEntries[0].byteOffset);
   }
 };
 
 /**
- * Navigate to previous section (Shift+Tab)
+ * Navigate to previous element (Shift+Tab) - includes both fields and sections
  */
 globalThis.theme_editor_nav_prev_section = function(): void {
   if (state.bufferId === null) return;
@@ -1391,18 +1390,17 @@ globalThis.theme_editor_nav_prev_section = function(): void {
   const selectableEntries = getSelectableEntries();
   const currentIndex = getCurrentSelectableIndex();
 
-  // Find previous section before current position
+  // Find previous selectable entry before current
   for (let i = selectableEntries.length - 1; i >= 0; i--) {
-    if (selectableEntries[i].isSection && selectableEntries[i].index < currentIndex) {
+    if (selectableEntries[i].index < currentIndex) {
       editor.setBufferCursor(state.bufferId, selectableEntries[i].byteOffset);
       return;
     }
   }
 
-  // Wrap to last section
-  const sections = selectableEntries.filter(e => e.isSection);
-  if (sections.length > 0) {
-    editor.setBufferCursor(state.bufferId, sections[sections.length - 1].byteOffset);
+  // Wrap to last entry
+  if (selectableEntries.length > 0) {
+    editor.setBufferCursor(state.bufferId, selectableEntries[selectableEntries.length - 1].byteOffset);
   }
 };
 
