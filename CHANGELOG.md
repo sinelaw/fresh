@@ -1,5 +1,27 @@
 # Release Notes
 
+## 0.1.71
+
+### Features
+
+* **Side-by-Side Diff View**: Word-level highlighting, synchronized scrolling, cursor navigation.
+* **Theme Editor**: JSON Schema API, color swatches, command palette integration, delete theme.
+* **Create Files from Open Dialog**: Type non-existent filename to create new buffer.
+* **Tilde Expansion**: `~/path` works in Save As, Open File, Switch Project.
+
+### Bug Fixes
+
+* **Toggle Comment**: Use language config for comment prefixes, preserve selection, don't hang (#681).
+* **Split Close**: Close split when closing last buffer instead of empty buffer.
+* **Terminal**: Resume mode on buffer switch, sync content, clean up on close.
+* **Hidden Buffers**: Skip in next/prev buffer, fix tab click targets.
+
+### Internal
+
+* Plugin i18n completeness tests. Bumped libc, tokio, tree-sitter-lua.
+
+---
+
 ## 0.1.70
 
 ### Features
