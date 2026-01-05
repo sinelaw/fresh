@@ -24,10 +24,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: check formatting
-        run: cargo fmt -- --check
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+      - name: check formatting
+        run: cargo fmt -- --check
   clippy:
     name: clippy
     runs-on: ubuntu-latest
@@ -36,10 +36,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Run clippy action
-        uses: clechasseur/rs-clippy-check@v5
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+      - name: Run clippy action
+        uses: clechasseur/rs-clippy-check@v5
   doc:
     # run docs generation on nightly rather than stable. This enables features like
     # https://doc.rust-lang.org/beta/unstable-book/language-features/doc-cfg.html which allows an
@@ -72,9 +72,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Check build without plugins feature
-        run: cargo check --no-default-features --features runtime --all-targets
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+        run: cargo check --no-default-features --features runtime --all-targets
 
   test:
     runs-on: ${{ matrix.os }}
@@ -91,6 +91,8 @@ jobs:
       # - run: vcpkg install openssl:x64-windows-static-md
       #   if: runner.os == 'Windows'
       - uses: actions/checkout@v6
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:
@@ -101,5 +103,3 @@ jobs:
         run: cargo generate-lockfile
       - name: Run tests
         run: cargo nextest run -j=4 --no-fail-fast --locked --all-features --all-targets
-      - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
