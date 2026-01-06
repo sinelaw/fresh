@@ -2927,9 +2927,25 @@ impl Editor {
                 AsyncMessage::LspDiagnostics { uri, diagnostics } => {
                     self.handle_lsp_diagnostics(uri, diagnostics);
                 }
-                AsyncMessage::LspInitialized { language } => {
+                AsyncMessage::LspInitialized {
+                    language,
+                    completion_trigger_characters,
+                } => {
                     tracing::info!("LSP server initialized for language: {}", language);
+                    tracing::debug!(
+                        "LSP completion trigger characters for {}: {:?}",
+                        language,
+                        completion_trigger_characters
+                    );
                     self.status_message = Some(format!("LSP ({}) ready", language));
+
+                    // Store completion trigger characters
+                    if let Some(lsp) = &mut self.lsp {
+                        lsp.set_completion_trigger_characters(
+                            &language,
+                            completion_trigger_characters,
+                        );
+                    }
 
                     // Send didOpen for all open buffers of this language
                     self.resend_did_open_for_language(&language);

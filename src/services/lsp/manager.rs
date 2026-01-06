@@ -63,6 +63,9 @@ pub struct LspManager {
     /// Languages that have been explicitly disabled/stopped by the user
     /// These will not auto-restart until user manually restarts them
     disabled_languages: HashSet<String>,
+
+    /// Completion trigger characters per language (from server capabilities)
+    completion_trigger_characters: HashMap<String, Vec<String>>,
 }
 
 impl LspManager {
@@ -79,6 +82,7 @@ impl LspManager {
             pending_restarts: HashMap::new(),
             allowed_languages: HashSet::new(),
             disabled_languages: HashSet::new(),
+            completion_trigger_characters: HashMap::new(),
         }
     }
 
@@ -101,6 +105,26 @@ impl LspManager {
     /// Get the configuration for a specific language
     pub fn get_config(&self, language: &str) -> Option<&LspServerConfig> {
         self.config.get(language)
+    }
+
+    /// Set completion trigger characters for a language
+    pub fn set_completion_trigger_characters(&mut self, language: &str, chars: Vec<String>) {
+        self.completion_trigger_characters
+            .insert(language.to_string(), chars);
+    }
+
+    /// Get completion trigger characters for a language
+    pub fn get_completion_trigger_characters(&self, language: &str) -> Option<&Vec<String>> {
+        self.completion_trigger_characters.get(language)
+    }
+
+    /// Check if a character is a completion trigger for any running language server
+    pub fn is_completion_trigger_char(&self, ch: char, language: &str) -> bool {
+        let ch_str = ch.to_string();
+        self.completion_trigger_characters
+            .get(language)
+            .map(|chars| chars.contains(&ch_str))
+            .unwrap_or(false)
     }
 
     /// Try to spawn an LSP server, checking auto_start configuration

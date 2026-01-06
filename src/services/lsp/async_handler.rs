@@ -580,9 +580,18 @@ impl LspState {
 
         self.initialized = true;
 
+        // Extract completion trigger characters from server capabilities
+        let completion_trigger_characters = result
+            .capabilities
+            .completion_provider
+            .as_ref()
+            .and_then(|cp| cp.trigger_characters.clone())
+            .unwrap_or_default();
+
         // Notify main loop
         let _ = self.async_tx.send(AsyncMessage::LspInitialized {
             language: self.language.clone(),
+            completion_trigger_characters,
         });
 
         // Send running status
@@ -2229,9 +2238,18 @@ impl LspTask {
 
         self.initialized = true;
 
+        // Extract completion trigger characters from server capabilities
+        let completion_trigger_characters = result
+            .capabilities
+            .completion_provider
+            .as_ref()
+            .and_then(|cp| cp.trigger_characters.clone())
+            .unwrap_or_default();
+
         // Notify main loop
         let _ = self.async_tx.send(AsyncMessage::LspInitialized {
             language: self.language.clone(),
+            completion_trigger_characters,
         });
 
         // Send running status

@@ -28,7 +28,11 @@ pub enum AsyncMessage {
     },
 
     /// LSP server initialized successfully
-    LspInitialized { language: String },
+    LspInitialized {
+        language: String,
+        /// Completion trigger characters from server capabilities
+        completion_trigger_characters: Vec<String>,
+    },
 
     /// LSP server crashed or failed
     LspError {
@@ -323,6 +327,7 @@ mod tests {
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
+                completion_trigger_characters: vec![".".to_string()],
             })
             .unwrap();
 
@@ -331,8 +336,12 @@ mod tests {
         assert_eq!(messages.len(), 1);
 
         match &messages[0] {
-            AsyncMessage::LspInitialized { language } => {
+            AsyncMessage::LspInitialized {
+                language,
+                completion_trigger_characters,
+            } => {
                 assert_eq!(language, "rust");
+                assert_eq!(completion_trigger_characters, &vec![".".to_string()]);
             }
             _ => panic!("Wrong message type"),
         }
@@ -347,11 +356,13 @@ mod tests {
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
+                completion_trigger_characters: vec![],
             })
             .unwrap();
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "typescript".to_string(),
+                completion_trigger_characters: vec![],
             })
             .unwrap();
 
@@ -379,11 +390,13 @@ mod tests {
         sender1
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
+                completion_trigger_characters: vec![],
             })
             .unwrap();
         sender2
             .send(AsyncMessage::LspInitialized {
                 language: "typescript".to_string(),
+                completion_trigger_characters: vec![],
             })
             .unwrap();
 
@@ -481,6 +494,7 @@ mod tests {
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
+                completion_trigger_characters: vec![],
             })
             .unwrap();
 
@@ -497,6 +511,7 @@ mod tests {
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
+                completion_trigger_characters: vec![],
             })
             .unwrap();
 
@@ -518,16 +533,19 @@ mod tests {
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
+                completion_trigger_characters: vec![],
             })
             .unwrap();
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "typescript".to_string(),
+                completion_trigger_characters: vec![],
             })
             .unwrap();
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "python".to_string(),
+                completion_trigger_characters: vec![],
             })
             .unwrap();
 
@@ -537,9 +555,9 @@ mod tests {
 
         match (&messages[0], &messages[1], &messages[2]) {
             (
-                AsyncMessage::LspInitialized { language: l1 },
-                AsyncMessage::LspInitialized { language: l2 },
-                AsyncMessage::LspInitialized { language: l3 },
+                AsyncMessage::LspInitialized { language: l1, .. },
+                AsyncMessage::LspInitialized { language: l2, .. },
+                AsyncMessage::LspInitialized { language: l3, .. },
             ) => {
                 assert_eq!(l1, "rust");
                 assert_eq!(l2, "typescript");

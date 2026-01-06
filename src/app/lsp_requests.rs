@@ -397,6 +397,37 @@ impl Editor {
         Ok(())
     }
 
+    /// Check if the inserted character is a completion trigger character
+    /// and if so, request completion automatically
+    pub(crate) fn maybe_trigger_completion(&mut self, c: char) {
+        // Get the active buffer's file path and detect its language
+        let path = match self.active_state().buffer.file_path() {
+            Some(p) => p,
+            None => return, // No path, no language detection
+        };
+
+        let language = match detect_language(&path, &self.config.languages) {
+            Some(lang) => lang,
+            None => return, // Unknown language
+        };
+
+        // Check if this character is a trigger character for this language
+        let is_trigger = self
+            .lsp
+            .as_ref()
+            .map(|lsp| lsp.is_completion_trigger_char(c, &language))
+            .unwrap_or(false);
+
+        if is_trigger {
+            tracing::debug!(
+                "Character '{}' triggered completion for language {}",
+                c,
+                language
+            );
+            let _ = self.request_completion();
+        }
+    }
+
     /// Request LSP go-to-definition at current cursor position
     pub(crate) fn request_goto_definition(&mut self) -> io::Result<()> {
         // Get the current buffer and cursor position

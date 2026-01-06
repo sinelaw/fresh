@@ -2507,6 +2507,9 @@ impl Editor {
             let _ = self.request_signature_help();
         }
 
+        // Auto-trigger completion on trigger characters
+        self.maybe_trigger_completion(c);
+
         Ok(())
     }
 
