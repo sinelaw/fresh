@@ -514,13 +514,6 @@ pub struct EditorConfig {
     /// Default: true
     #[serde(default = "default_true")]
     pub quick_suggestions: bool,
-
-    /// Delay in milliseconds before quick suggestions are triggered.
-    /// Lower values show suggestions faster but may cause more LSP server load.
-    /// Only applies when quick_suggestions is enabled.
-    /// Default: 0ms (immediate, relying on request cancellation for debouncing)
-    #[serde(default)]
-    pub quick_suggestions_delay_ms: u64,
 }
 
 fn default_tab_size() -> usize {
@@ -610,7 +603,6 @@ impl Default for EditorConfig {
             default_line_ending: LineEndingOption::default(),
             cursor_style: CursorStyle::default(),
             quick_suggestions: true,
-            quick_suggestions_delay_ms: 0,
         }
     }
 }
