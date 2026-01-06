@@ -876,6 +876,8 @@
   "prompt.quit_modified_many": "%{count}個のバッファに未保存の変更があります。(%{discard_key})破棄して終了, (%{cancel_key})キャンセル? ",
   "prompt.quit_modified_one": "1つのバッファに未保存の変更があります。(%{discard_key})破棄して終了, (%{cancel_key})キャンセル? ",
   "prompt.revert_confirm": "バッファに未保存の変更があります。(%{revert_key})元に戻す, (%{cancel_key})キャンセル? ",
+  "prompt.sudo_save_confirm": "アクセスが拒否されました。sudo で保存しますか? (y)はい, (N)いいえ: ",
+  "prompt.sudo_save_failed": "sudo での保存に失敗しました: %{error}",
   "register.must_be_digit": "%{type} レジスタは0-9である必要があります",
   "register.not_specified": "レジスタが指定されていません",
   "replace.completed": "'%{search}' を %{count} 件置換しました",

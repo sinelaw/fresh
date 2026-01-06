@@ -877,6 +877,8 @@
   "prompt.quit_modified_many": "%{count} bufferů má neuložené změny. (%{discard_key})ahodit a ukončit, (%{cancel_key})rušit? ",
   "prompt.quit_modified_one": "1 buffer má neuložené změny. (%{discard_key})ahodit a ukončit, (%{cancel_key})rušit? ",
   "prompt.revert_confirm": "Buffer má neuložené změny. (%{revert_key})rátit, (%{cancel_key})rušit? ",
+  "prompt.sudo_save_confirm": "Přístup odepřen. Uložit pomocí sudo? (a)no, (N)e: ",
+  "prompt.sudo_save_failed": "Uložení pomocí sudo selhalo: %{error}",
   "register.must_be_digit": "Registr %{type} musí být 0-9",
   "register.not_specified": "Registr není zadán",
   "replace.completed": "Nahrazeno %{count} výskytů '%{search}'",

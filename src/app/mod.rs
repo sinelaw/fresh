@@ -463,6 +463,9 @@ pub struct Editor {
     /// Recovery service for auto-save and crash recovery
     recovery_service: RecoveryService,
 
+    /// Request a full terminal clear and redraw on the next frame
+    full_redraw_requested: bool,
+
     /// Time source for testable time operations
     time_source: SharedTimeSource,
 
@@ -962,6 +965,7 @@ impl Editor {
                 };
                 RecoveryService::with_config_and_dir(recovery_config, dir_context.recovery_dir())
             },
+            full_redraw_requested: false,
             time_source: time_source.clone(),
             last_auto_save: time_source.now(),
             active_custom_contexts: HashSet::new(),
@@ -2279,6 +2283,19 @@ impl Editor {
 
     /// Request the editor to restart with a new working directory
     /// This triggers a clean shutdown and restart with the new project root
+    /// Request a full hardware terminal clear and redraw on the next frame.
+    /// Used after external commands have messed up the terminal state.
+    pub fn request_full_redraw(&mut self) {
+        self.full_redraw_requested = true;
+    }
+
+    /// Check if a full redraw was requested, and clear the flag.
+    pub fn take_full_redraw_request(&mut self) -> bool {
+        let requested = self.full_redraw_requested;
+        self.full_redraw_requested = false;
+        requested
+    }
+
     pub fn request_restart(&mut self, new_working_dir: PathBuf) {
         tracing::info!(
             "Restart requested with new working directory: {}",

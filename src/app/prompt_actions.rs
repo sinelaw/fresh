@@ -222,6 +222,60 @@ impl Editor {
                     self.set_status_message(t!("buffer.save_cancelled").to_string());
                 }
             }
+            PromptType::ConfirmSudoSave { info } => {
+                let input_lower = input.trim().to_lowercase();
+                if input_lower == "y" || input_lower == "yes" {
+                    // Hide prompt before starting blocking command to clear the line
+                    self.cancel_prompt();
+
+                    // Build the sudo command
+                    // sh -c "cp '{temp}' '{dest}' && chmod {mode} '{dest}' && chown {uid}:{gid} '{dest}' && rm '{temp}'"
+                    let cmd = format!(
+                        "sudo sh -c \"cp '{}' '{}' && chmod {:o} '{}' && chown {}:{} '{}' && rm '{}'\"",
+                        info.temp_path.display(),
+                        info.dest_path.display(),
+                        info.mode,
+                        info.dest_path.display(),
+                        info.uid,
+                        info.gid,
+                        info.dest_path.display(),
+                        info.temp_path.display()
+                    );
+
+                    match self.run_shell_command_blocking(&cmd) {
+                        Ok(_) => {
+                            if let Err(e) = self
+                                .active_state_mut()
+                                .buffer
+                                .finalize_external_save(info.dest_path.clone())
+                            {
+                                self.set_status_message(
+                                    t!("prompt.sudo_save_failed", error = e.to_string())
+                                        .to_string(),
+                                );
+                            } else {
+                                if let Err(e) = self.finalize_save(Some(info.dest_path)) {
+                                    self.set_status_message(
+                                        t!("prompt.sudo_save_failed", error = e.to_string())
+                                            .to_string(),
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            self.set_status_message(
+                                t!("prompt.sudo_save_failed", error = e.to_string()).to_string(),
+                            );
+                            // Clean up temp file on failure
+                            let _ = std::fs::remove_file(&info.temp_path);
+                        }
+                    }
+                } else {
+                    self.set_status_message(t!("buffer.save_cancelled").to_string());
+                    // Clean up temp file
+                    let _ = std::fs::remove_file(&info.temp_path);
+                }
+            }
             PromptType::ConfirmOverwriteFile { path } => {
                 let input_lower = input.trim().to_lowercase();
                 if input_lower == "o" || input_lower == "overwrite" {

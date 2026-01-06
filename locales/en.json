@@ -876,6 +876,8 @@
   "prompt.quit_modified_many": "%{count} buffers have unsaved changes. (%{discard_key})iscard and quit, (%{cancel_key})ancel? ",
   "prompt.quit_modified_one": "1 buffer has unsaved changes. (%{discard_key})iscard and quit, (%{cancel_key})ancel? ",
   "prompt.revert_confirm": "Buffer has unsaved changes. (%{revert_key})evert, (%{cancel_key})ancel? ",
+  "prompt.sudo_save_confirm": "Permission denied. Save with sudo? (y)es, (N)o: ",
+  "prompt.sudo_save_failed": "Sudo save failed: %{error}",
   "register.must_be_digit": "%{type} register must be 0-9",
   "register.not_specified": "No register specified",
   "replace.completed": "Replaced %{count} occurrence(s) of '%{search}'",

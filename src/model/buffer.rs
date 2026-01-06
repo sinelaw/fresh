@@ -13,6 +13,39 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
+/// Error returned when a file save operation requires elevated privileges.
+///
+/// This error contains all the information needed to perform the save via sudo
+/// in a single operation, preserving original file ownership and permissions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SudoSaveRequired {
+    /// Path to the temporary file containing the new content
+    pub temp_path: PathBuf,
+    /// Destination path where the file should be saved
+    pub dest_path: PathBuf,
+    /// Original file owner (UID)
+    pub uid: u32,
+    /// Original file group (GID)
+    pub gid: u32,
+    /// Original file permissions (mode)
+    pub mode: u32,
+}
+
+impl std::fmt::Display for SudoSaveRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Permission denied saving to {}. Use sudo to complete the operation.",
+            self.dest_path.display()
+        )
+    }
+}
+
+impl std::error::Error for SudoSaveRequired {}
+
 // Large file support configuration
 /// Default threshold for considering a file "large" (100 MB)
 pub const DEFAULT_LARGE_FILE_THRESHOLD: usize = 100 * 1024 * 1024;
@@ -354,6 +387,39 @@ impl TextBuffer {
         }
     }
 
+    /// Create a temporary file for saving.
+    ///
+    /// Tries to create the file in the same directory as the destination file first
+    /// to allow for an atomic rename. If that fails (e.g., due to directory permissions),
+    /// falls back to the system temporary directory.
+    fn create_temp_file(dest_path: &Path) -> io::Result<(PathBuf, std::fs::File)> {
+        // Try creating in same directory first
+        let same_dir_temp = dest_path.with_extension("tmp");
+        match std::fs::File::create(&same_dir_temp) {
+            Ok(file) => Ok((same_dir_temp, file)),
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                // Fallback to system temp directory
+                let temp_dir = std::env::temp_dir();
+                let file_name = dest_path
+                    .file_name()
+                    .unwrap_or_else(|| std::ffi::OsStr::new("fresh-save"));
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                let temp_path = temp_dir.join(format!(
+                    "{}-{}-{}.tmp",
+                    file_name.to_string_lossy(),
+                    std::process::id(),
+                    timestamp
+                ));
+                let file = std::fs::File::create(&temp_path)?;
+                Ok((temp_path, file))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Save the buffer to a specific file
     ///
     /// This uses incremental saving for large files: instead of loading the entire
@@ -374,90 +440,79 @@ impl TextBuffer {
         let needs_conversion = self.line_ending != self.original_line_ending;
         let target_ending = self.line_ending;
 
-        if total == 0 {
-            // Empty file - just create it
-            std::fs::File::create(dest_path)?;
-            if let Some(ref meta) = original_metadata {
-                Self::restore_file_metadata(dest_path, meta)?;
-            }
-            self.file_path = Some(dest_path.to_path_buf());
-            self.mark_saved_snapshot();
-            self.saved_file_size = Some(0);
-            // Update original_line_ending to match the new format
-            self.original_line_ending = self.line_ending;
-            return Ok(());
-        }
+        // Stage A: Temporary File Creation
+        let (temp_path, mut out_file) = Self::create_temp_file(dest_path)?;
 
-        // Use a temp file to avoid corrupting the original if something goes wrong
-        let temp_path = dest_path.with_extension("tmp");
-        let mut out_file = std::fs::File::create(&temp_path)?;
+        if total > 0 {
+            // Cache for open source files (for streaming unloaded regions)
+            let mut source_file_cache: Option<(PathBuf, std::fs::File)> = None;
 
-        // Cache for open source files (for streaming unloaded regions)
-        let mut source_file_cache: Option<(PathBuf, std::fs::File)> = None;
+            // Iterate through all pieces and write them
+            for piece_view in self.piece_tree.iter_pieces_in_range(0, total) {
+                let buffer_id = piece_view.location.buffer_id();
+                let buffer = self.buffers.get(buffer_id).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Buffer {} not found", buffer_id),
+                    )
+                })?;
 
-        // Iterate through all pieces and write them
-        for piece_view in self.piece_tree.iter_pieces_in_range(0, total) {
-            let buffer_id = piece_view.location.buffer_id();
-            let buffer = self.buffers.get(buffer_id).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Buffer {} not found", buffer_id),
-                )
-            })?;
-
-            match &buffer.data {
-                BufferData::Loaded { data, .. } => {
-                    let start = piece_view.buffer_offset;
-                    let end = start + piece_view.bytes;
-                    let chunk = &data[start..end];
-
-                    if needs_conversion {
-                        // Convert line endings before writing
-                        let converted = Self::convert_line_endings_to(chunk, target_ending);
-                        out_file.write_all(&converted)?;
-                    } else {
-                        // Write directly without conversion
-                        out_file.write_all(chunk)?;
-                    }
-                }
-                BufferData::Unloaded {
-                    file_path,
-                    file_offset,
-                    ..
-                } => {
-                    // Stream from source file
-                    let source_file = match &mut source_file_cache {
-                        Some((cached_path, file)) if cached_path == file_path => file,
-                        _ => {
-                            let file = std::fs::File::open(file_path)?;
-                            source_file_cache = Some((file_path.clone(), file));
-                            &mut source_file_cache.as_mut().unwrap().1
-                        }
-                    };
-
-                    // Seek to the right position in source file
-                    let read_offset = *file_offset + piece_view.buffer_offset;
-                    source_file.seek(SeekFrom::Start(read_offset as u64))?;
-
-                    // Stream in chunks
-                    const STREAM_CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
-                    let mut remaining = piece_view.bytes;
-                    let mut chunk_buf = vec![0u8; STREAM_CHUNK_SIZE.min(remaining)];
-
-                    while remaining > 0 {
-                        let to_read = remaining.min(chunk_buf.len());
-                        source_file.read_exact(&mut chunk_buf[..to_read])?;
+                match &buffer.data {
+                    BufferData::Loaded { data, .. } => {
+                        let start = piece_view.buffer_offset;
+                        let end = start + piece_view.bytes;
+                        let chunk = &data[start..end];
 
                         if needs_conversion {
                             // Convert line endings before writing
-                            let converted =
-                                Self::convert_line_endings_to(&chunk_buf[..to_read], target_ending);
+                            let converted = Self::convert_line_endings_to(chunk, target_ending);
                             out_file.write_all(&converted)?;
                         } else {
                             // Write directly without conversion
-                            out_file.write_all(&chunk_buf[..to_read])?;
+                            out_file.write_all(chunk)?;
                         }
-                        remaining -= to_read;
+                    }
+                    BufferData::Unloaded {
+                        file_path,
+                        file_offset,
+                        ..
+                    } => {
+                        // Stream from source file
+                        let source_file = match &mut source_file_cache {
+                            Some((cached_path, file)) if cached_path == file_path => file,
+                            _ => {
+                                let file = std::fs::File::open(file_path)?;
+                                source_file_cache = Some((file_path.clone(), file));
+                                &mut source_file_cache.as_mut().unwrap().1
+                            }
+                        };
+
+                        // Seek to the right position in source file
+                        let read_offset = *file_offset + piece_view.buffer_offset;
+                        source_file.seek(SeekFrom::Start(read_offset as u64))?;
+
+                        // Stream in chunks
+                        const STREAM_CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
+                        let mut remaining = piece_view.bytes;
+                        let mut chunk_buf = vec![0u8; STREAM_CHUNK_SIZE.min(remaining)];
+
+                        while remaining > 0 {
+                            let to_read = remaining.min(chunk_buf.len());
+                            source_file.read_exact(&mut chunk_buf[..to_read])?;
+
+                            if needs_conversion {
+                                // Convert line endings before writing
+                                let converted = Self::convert_line_endings_to(
+                                    &chunk_buf[..to_read],
+                                    target_ending,
+                                );
+                                out_file.write_all(&converted)?;
+                            } else {
+                                // Write directly without conversion
+                                out_file.write_all(&chunk_buf[..to_read])?;
+                            }
+                            remaining -= to_read;
+                        }
                     }
                 }
             }
@@ -469,11 +524,38 @@ impl TextBuffer {
 
         // Restore original file permissions/owner before renaming
         if let Some(ref meta) = original_metadata {
-            Self::restore_file_metadata(&temp_path, meta)?;
+            // Best effort restore
+            let _ = Self::restore_file_metadata(&temp_path, meta);
         }
 
-        // Atomically replace the original file
-        std::fs::rename(&temp_path, dest_path)?;
+        // Stage C: Atomic Replacement or Sudo Fallback
+        if let Err(e) = std::fs::rename(&temp_path, dest_path) {
+            let is_permission_denied = e.kind() == io::ErrorKind::PermissionDenied;
+            let is_cross_device = cfg!(unix) && e.raw_os_error() == Some(18);
+
+            if is_cross_device {
+                #[cfg(unix)]
+                {
+                    match std::fs::copy(&temp_path, dest_path) {
+                        Ok(_) => {
+                            let _ = std::fs::remove_file(&temp_path);
+                        }
+                        Err(copy_err) if copy_err.kind() == io::ErrorKind::PermissionDenied => {
+                            return Err(self.make_sudo_error(
+                                temp_path,
+                                dest_path,
+                                original_metadata,
+                            ));
+                        }
+                        Err(copy_err) => return Err(copy_err.into()),
+                    }
+                }
+            } else if is_permission_denied {
+                return Err(self.make_sudo_error(temp_path, dest_path, original_metadata));
+            } else {
+                return Err(e.into());
+            }
+        }
 
         // Update saved file size to match the file on disk
         let new_size = std::fs::metadata(dest_path)?.len() as usize;
@@ -494,6 +576,45 @@ impl TextBuffer {
         Ok(())
     }
 
+    /// Finalize buffer state after an external save operation (e.g., via sudo).
+    ///
+    /// This updates the saved snapshot and file size to match the new state on disk.
+    pub fn finalize_external_save(&mut self, dest_path: PathBuf) -> anyhow::Result<()> {
+        let new_size = std::fs::metadata(&dest_path)?.len() as usize;
+        self.saved_file_size = Some(new_size);
+        self.file_path = Some(dest_path);
+        self.mark_saved_snapshot();
+        self.original_line_ending = self.line_ending;
+        Ok(())
+    }
+
+    /// Internal helper to create a SudoSaveRequired error.
+    fn make_sudo_error(
+        &self,
+        temp_path: PathBuf,
+        dest_path: &Path,
+        original_metadata: Option<std::fs::Metadata>,
+    ) -> anyhow::Error {
+        let (uid, gid, mode) = if let Some(meta) = original_metadata {
+            #[cfg(unix)]
+            {
+                (meta.uid(), meta.gid(), meta.mode() & 0o7777)
+            }
+            #[cfg(not(unix))]
+            (0, 0, 0)
+        } else {
+            (0, 0, 0)
+        };
+
+        anyhow::anyhow!(SudoSaveRequired {
+            temp_path,
+            dest_path: dest_path.to_path_buf(),
+            uid,
+            gid,
+            mode,
+        })
+    }
+
     /// Restore file metadata (permissions, owner/group) from original file
     fn restore_file_metadata(path: &Path, original_meta: &std::fs::Metadata) -> anyhow::Result<()> {
         // Restore permissions (works cross-platform)
@@ -502,7 +623,6 @@ impl TextBuffer {
         // On Unix, also restore owner and group
         #[cfg(unix)]
         {
-            use std::os::unix::fs::MetadataExt;
             let uid = original_meta.uid();
             let gid = original_meta.gid();
             // Use libc to set owner/group - ignore errors since we may not have permission
@@ -4004,6 +4124,82 @@ mod tests {
             // Read back and verify LF (no CRLF)
             let saved_bytes = std::fs::read(&file_path).unwrap();
             assert_eq!(&saved_bytes, b"Line 1\nLine 2\nLine 3\n");
+        }
+
+        #[test]
+        #[cfg(unix)]
+        fn test_save_to_unwritable_file() -> anyhow::Result<()> {
+            use std::fs::Permissions;
+            use std::os::unix::fs::PermissionsExt;
+            use tempfile::TempDir;
+
+            let temp_dir = TempDir::new().unwrap();
+            let unwritable_dir = temp_dir.path().join("unwritable_dir");
+            std::fs::create_dir(&unwritable_dir)?;
+
+            let file_path = unwritable_dir.join("unwritable.txt");
+            std::fs::write(&file_path, "original content")?;
+
+            // Make directory unwritable to prevent rename/temp file creation
+            std::fs::set_permissions(&unwritable_dir, Permissions::from_mode(0o555))?;
+
+            let mut buffer = TextBuffer::from_bytes(b"new content".to_vec());
+            let result = buffer.save_to_file(&file_path);
+
+            // Verify that it returns SudoSaveRequired
+            match result {
+                Err(e) => {
+                    if let Some(sudo_err) = e.downcast_ref::<SudoSaveRequired>() {
+                        assert_eq!(sudo_err.dest_path, file_path);
+                        assert!(sudo_err.temp_path.exists());
+                        // Cleanup temp file
+                        let _ = std::fs::remove_file(&sudo_err.temp_path);
+                    } else {
+                        panic!("Expected SudoSaveRequired error, got: {:?}", e);
+                    }
+                }
+                Ok(_) => panic!("Expected error, but save succeeded"),
+            }
+
+            Ok(())
+        }
+
+        #[test]
+        #[cfg(unix)]
+        fn test_save_to_unwritable_directory() -> anyhow::Result<()> {
+            use std::fs::Permissions;
+            use std::os::unix::fs::PermissionsExt;
+            use tempfile::TempDir;
+
+            let temp_dir = TempDir::new().unwrap();
+            let unwritable_dir = temp_dir.path().join("unwritable_dir");
+            std::fs::create_dir(&unwritable_dir)?;
+
+            let file_path = unwritable_dir.join("test.txt");
+
+            // Make directory unwritable (no write allowed)
+            std::fs::set_permissions(&unwritable_dir, Permissions::from_mode(0o555))?;
+
+            let mut buffer = TextBuffer::from_bytes(b"content".to_vec());
+            let result = buffer.save_to_file(&file_path);
+
+            match result {
+                Err(e) => {
+                    if let Some(sudo_err) = e.downcast_ref::<SudoSaveRequired>() {
+                        assert_eq!(sudo_err.dest_path, file_path);
+                        assert!(sudo_err.temp_path.exists());
+                        // It should be in /tmp because the directory was not writable
+                        assert!(sudo_err.temp_path.starts_with(std::env::temp_dir()));
+                        // Cleanup
+                        let _ = std::fs::remove_file(&sudo_err.temp_path);
+                    } else {
+                        panic!("Expected SudoSaveRequired error, got: {:?}", e);
+                    }
+                }
+                Ok(_) => panic!("Expected error, but save succeeded"),
+            }
+
+            Ok(())
         }
     }
 }

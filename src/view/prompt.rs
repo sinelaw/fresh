@@ -77,6 +77,10 @@ pub enum PromptType {
     ConfirmRevert,
     /// Confirm saving over a file that changed on disk
     ConfirmSaveConflict,
+    /// Confirm saving with sudo after permission denied
+    ConfirmSudoSave {
+        info: crate::model::buffer::SudoSaveRequired,
+    },
     /// Confirm overwriting an existing file during SaveAs
     ConfirmOverwriteFile { path: std::path::PathBuf },
     /// Confirm closing a modified buffer (save/discard/cancel)

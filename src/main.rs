@@ -901,6 +901,12 @@ where
             tracing::debug!("Auto-save error: {}", e);
         }
 
+        // Handle hard redraw requests (e.g. after returning from sudo)
+        if editor.take_full_redraw_request() {
+            terminal.clear()?;
+            needs_render = true;
+        }
+
         if editor.should_quit() {
             if session_enabled {
                 if let Err(e) = editor.save_session() {

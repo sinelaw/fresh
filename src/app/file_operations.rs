@@ -8,6 +8,8 @@
 //! - File modification time tracking
 //! - Save conflict detection
 
+use crate::model::buffer::SudoSaveRequired;
+use crate::view::prompt::PromptType;
 use std::path::{Path, PathBuf};
 
 use lsp_types::TextDocumentContentChangeEvent;
@@ -27,7 +29,26 @@ impl Editor {
             .buffer
             .file_path()
             .map(|p| p.to_path_buf());
-        self.active_state_mut().buffer.save()?;
+
+        match self.active_state_mut().buffer.save() {
+            Ok(()) => self.finalize_save(path),
+            Err(e) => {
+                if let Some(sudo_info) = e.downcast_ref::<SudoSaveRequired>() {
+                    let info = sudo_info.clone();
+                    self.start_prompt(
+                        t!("prompt.sudo_save_confirm").to_string(),
+                        PromptType::ConfirmSudoSave { info },
+                    );
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    /// Internal helper to finalize save state (mark as saved, notify LSP, etc.)
+    pub(crate) fn finalize_save(&mut self, path: Option<PathBuf>) -> anyhow::Result<()> {
         self.status_message = Some(t!("status.file_saved").to_string());
 
         // Mark the event log position as saved (for undo modified tracking)

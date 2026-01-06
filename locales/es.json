@@ -877,6 +877,8 @@
   "prompt.quit_modified_many": "%{count} buffers tienen cambios sin guardar. (%{discard_key})escartar y salir, (%{cancel_key})ancelar? ",
   "prompt.quit_modified_one": "1 buffer tiene cambios sin guardar. (%{discard_key})escartar y salir, (%{cancel_key})ancelar? ",
   "prompt.revert_confirm": "El buffer tiene cambios sin guardar. (%{revert_key})evertir, (%{cancel_key})ancelar? ",
+  "prompt.sudo_save_confirm": "Permiso denegado. ¿Guardar con sudo? (s)í, (N)o: ",
+  "prompt.sudo_save_failed": "Error al guardar con sudo: %{error}",
   "register.must_be_digit": "El registro %{type} debe ser 0-9",
   "register.not_specified": "No se especificó registro",
   "replace.completed": "Se reemplazaron %{count} ocurrencia(s) de '%{search}'",

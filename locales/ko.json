@@ -876,6 +876,8 @@
   "prompt.quit_modified_many": "%{count}개의 버퍼에 저장되지 않은 변경사항이 있습니다. (%{discard_key})삭제 후 종료, (%{cancel_key})취소? ",
   "prompt.quit_modified_one": "1개의 버퍼에 저장되지 않은 변경사항이 있습니다. (%{discard_key})삭제 후 종료, (%{cancel_key})취소? ",
   "prompt.revert_confirm": "버퍼에 저장되지 않은 변경사항이 있습니다. (%{revert_key})되돌리기, (%{cancel_key})취소? ",
+  "prompt.sudo_save_confirm": "권한이 거부되었습니다. sudo로 저장하시겠습니까? (y)예, (N)아니요: ",
+  "prompt.sudo_save_failed": "sudo 저장 실패: %{error}",
   "register.must_be_digit": "%{type} 레지스터는 0-9여야 합니다",
   "register.not_specified": "레지스터가 지정되지 않음",
   "replace.completed": "'%{search}'을(를) %{count}개 바꿨습니다",

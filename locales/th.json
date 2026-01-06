@@ -876,6 +876,8 @@
   "prompt.quit_modified_many": "มี %{count} บัฟเฟอร์ที่ยังไม่ได้บันทึก. (%{discard_key})ิ้งแล้วออก, (%{cancel_key})กเลิก? ",
   "prompt.quit_modified_one": "มี 1 บัฟเฟอร์ที่ยังไม่ได้บันทึก. (%{discard_key})ิ้งแล้วออก, (%{cancel_key})กเลิก? ",
   "prompt.revert_confirm": "บัฟเฟอร์มีการเปลี่ยนแปลงที่ยังไม่ได้บันทึก. (%{revert_key})้อนกลับ, (%{cancel_key})กเลิก? ",
+  "prompt.sudo_save_confirm": "การเข้าถึงถูกปฏิเสธ บันทึกด้วย sudo หรือไม่? (y)ใช่, (N)ไม่: ",
+  "prompt.sudo_save_failed": "บันทึกด้วย sudo ล้มเหลว: %{error}",
   "register.must_be_digit": "เรจิสเตอร์ %{type} ต้องเป็นตัวเลข 0-9",
   "register.not_specified": "ไม่ได้ระบุเรจิสเตอร์",
   "replace.completed": "แทนที่แล้ว %{count} จุด",

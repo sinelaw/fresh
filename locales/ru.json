@@ -876,6 +876,8 @@
   "prompt.quit_modified_many": "%{count} буферов имеют несохранённые изменения. (%{discard_key})тменить и выйти, (%{cancel_key})тмена? ",
   "prompt.quit_modified_one": "1 буфер имеет несохранённые изменения. (%{discard_key})тменить и выйти, (%{cancel_key})тмена? ",
   "prompt.revert_confirm": "Буфер имеет несохранённые изменения. (%{revert_key})осстановить, (%{cancel_key})тмена? ",
+  "prompt.sudo_save_confirm": "Доступ запрещен. Сохранить с помощью sudo? (д)а, (Н)ет: ",
+  "prompt.sudo_save_failed": "Ошибка сохранения через sudo: %{error}",
   "register.must_be_digit": "%{type} регистр должен быть 0-9",
   "register.not_specified": "Регистр не указан",
   "replace.completed": "Заменено %{count} вхождений '%{search}'",

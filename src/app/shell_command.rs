@@ -245,6 +245,43 @@ impl Editor {
 
         self.set_status_message(t!("shell.output_in", buffer = buffer_name).to_string());
     }
+
+    /// Execute a shell command blocking the UI.
+    /// This is used for commands like `sudo` where we might need to wait for completion.
+    pub(crate) fn run_shell_command_blocking(&mut self, command: &str) -> anyhow::Result<()> {
+        use crossterm::terminal::{
+            disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+        };
+        use crossterm::ExecutableCommand;
+        use std::io::stdout;
+
+        // Suspend TUI
+        let _ = disable_raw_mode();
+        let _ = stdout().execute(LeaveAlternateScreen);
+
+        let shell = detect_shell();
+        let mut child = Command::new(&shell)
+            .args(["-c", command])
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("Failed to spawn shell: {}", e))?;
+
+        let status = child
+            .wait()
+            .map_err(|e| anyhow::anyhow!("Failed to wait for command: {}", e))?;
+
+        // Resume TUI
+        let _ = stdout().execute(EnterAlternateScreen);
+        let _ = enable_raw_mode();
+
+        // Request a full hard redraw to clear any ghost text from the external command
+        self.request_full_redraw();
+
+        if status.success() {
+            Ok(())
+        } else {
+            anyhow::bail!("Command failed with exit code: {:?}", status.code())
+        }
+    }
 }
 
 /// Detect the shell to use for executing commands.
