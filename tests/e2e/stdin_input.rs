@@ -162,7 +162,7 @@ fn test_stdin_streaming_progress() {
     let temp_path_clone = temp_path.clone();
 
     // Spawn background thread that writes data progressively
-    let thread_handle = thread::spawn(move || -> std::io::Result<()> {
+    let thread_handle = thread::spawn(move || -> anyhow::Result<()> {
         let mut file = OpenOptions::new()
             .write(true)
             .append(true)

@@ -6,7 +6,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 
 /// Test that completion popup text is not mangled
 #[test]
-fn test_lsp_completion_popup_text_not_mangled() -> std::io::Result<()> {
+fn test_lsp_completion_popup_text_not_mangled() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -83,7 +83,7 @@ fn test_lsp_completion_popup_text_not_mangled() -> std::io::Result<()> {
 
 /// Test that completion replaces current word, not appends
 #[test]
-fn test_lsp_completion_replaces_word() -> std::io::Result<()> {
+fn test_lsp_completion_replaces_word() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -139,7 +139,7 @@ fn test_lsp_completion_replaces_word() -> std::io::Result<()> {
 
 /// Test LSP diagnostics display in the editor
 #[test]
-fn test_lsp_diagnostics_display() -> std::io::Result<()> {
+fn test_lsp_diagnostics_display() -> anyhow::Result<()> {
     use fresh::model::event::{Event, OverlayFace};
     use fresh::view::overlay::OverlayNamespace;
 
@@ -177,7 +177,7 @@ fn test_lsp_diagnostics_display() -> std::io::Result<()> {
 
 /// Test LSP completion popup display
 #[test]
-fn test_lsp_completion_popup() -> std::io::Result<()> {
+fn test_lsp_completion_popup() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -252,7 +252,7 @@ fn test_lsp_completion_popup() -> std::io::Result<()> {
 
 /// Test LSP diagnostics summary in status bar
 #[test]
-fn test_lsp_diagnostics_status_bar() -> std::io::Result<()> {
+fn test_lsp_diagnostics_status_bar() -> anyhow::Result<()> {
     use fresh::model::event::{Event, OverlayFace};
     use fresh::view::overlay::OverlayNamespace;
 
@@ -301,7 +301,7 @@ fn test_lsp_diagnostics_status_bar() -> std::io::Result<()> {
 
 /// Test that diagnostics are removed when cleared
 #[test]
-fn test_lsp_clear_diagnostics() -> std::io::Result<()> {
+fn test_lsp_clear_diagnostics() -> anyhow::Result<()> {
     use fresh::model::event::{Event, OverlayFace};
     use fresh::view::overlay::OverlayNamespace;
 
@@ -348,7 +348,7 @@ fn test_lsp_clear_diagnostics() -> std::io::Result<()> {
 
 /// Test multiple completion items navigation
 #[test]
-fn test_lsp_completion_navigation() -> std::io::Result<()> {
+fn test_lsp_completion_navigation() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -415,7 +415,7 @@ fn test_lsp_completion_navigation() -> std::io::Result<()> {
 
 /// Test popup cancel (Escape) doesn't insert anything
 #[test]
-fn test_lsp_completion_cancel() -> std::io::Result<()> {
+fn test_lsp_completion_cancel() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -471,7 +471,7 @@ fn test_lsp_completion_cancel() -> std::io::Result<()> {
 
 /// Test completion after a dot preserves the prefix
 #[test]
-fn test_lsp_completion_after_dot() -> std::io::Result<()> {
+fn test_lsp_completion_after_dot() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -535,7 +535,7 @@ fn test_lsp_completion_after_dot() -> std::io::Result<()> {
 
 /// Test completion after typing a partial identifier after dot
 #[test]
-fn test_lsp_completion_after_dot_with_partial() -> std::io::Result<()> {
+fn test_lsp_completion_after_dot_with_partial() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -587,7 +587,7 @@ fn test_lsp_completion_after_dot_with_partial() -> std::io::Result<()> {
 
 /// Test that completion filtering only shows matching items by prefix
 #[test]
-fn test_lsp_completion_filtering() -> std::io::Result<()> {
+fn test_lsp_completion_filtering() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -682,7 +682,7 @@ fn test_lsp_completion_filtering() -> std::io::Result<()> {
 
 /// Test that popup size is appropriate for the number of filtered items
 #[test]
-fn test_lsp_completion_popup_size() -> std::io::Result<()> {
+fn test_lsp_completion_popup_size() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -777,7 +777,7 @@ fn test_lsp_completion_popup_size() -> std::io::Result<()> {
 /// Test that LSP waiting indicator appears in status bar
 /// Uses a fake LSP server for robust testing
 #[test]
-fn test_lsp_waiting_indicator() -> std::io::Result<()> {
+fn test_lsp_waiting_indicator() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Spawn fake LSP server
@@ -840,7 +840,7 @@ fn test_lsp_waiting_indicator() -> std::io::Result<()> {
 
 /// Test that popup properly hides buffer text behind it
 #[test]
-fn test_lsp_completion_popup_hides_background() -> std::io::Result<()> {
+fn test_lsp_completion_popup_hides_background() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -952,7 +952,7 @@ fn test_lsp_completion_popup_hides_background() -> std::io::Result<()> {
 /// Test that LSP completion request is canceled when cursor moves
 /// Uses a fake LSP server for robust testing
 #[test]
-fn test_lsp_completion_canceled_on_cursor_move() -> std::io::Result<()> {
+fn test_lsp_completion_canceled_on_cursor_move() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Spawn fake LSP server
@@ -1017,7 +1017,7 @@ fn test_lsp_completion_canceled_on_cursor_move() -> std::io::Result<()> {
 /// Test that cursor shows waiting animation while LSP is pending
 /// Uses a fake LSP server for robust testing
 #[test]
-fn test_lsp_cursor_animation() -> std::io::Result<()> {
+fn test_lsp_cursor_animation() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Spawn fake LSP server
@@ -1083,7 +1083,7 @@ fn test_lsp_cursor_animation() -> std::io::Result<()> {
 /// Test that LSP completion request is canceled when text is edited
 /// Uses a fake LSP server for robust testing
 #[test]
-fn test_lsp_completion_canceled_on_text_edit() -> std::io::Result<()> {
+fn test_lsp_completion_canceled_on_text_edit() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Spawn fake LSP server
@@ -1151,7 +1151,7 @@ fn test_lsp_completion_canceled_on_text_edit() -> std::io::Result<()> {
 /// Skip if rust-analyzer is not installed
 #[test]
 #[ignore]
-fn test_rust_analyzer_rename_content_modified() -> std::io::Result<()> {
+fn test_rust_analyzer_rename_content_modified() -> anyhow::Result<()> {
     use std::io::Write;
     use std::process::Command;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -1410,7 +1410,7 @@ edition = "2021"
 /// with 100+ diagnostics active.
 #[test]
 #[ignore] // Run with: cargo test test_lsp_typing_performance_with_many_diagnostics -- --ignored --nocapture
-fn test_lsp_typing_performance_with_many_diagnostics() -> std::io::Result<()> {
+fn test_lsp_typing_performance_with_many_diagnostics() -> anyhow::Result<()> {
     use std::time::Instant;
 
     const DIAGNOSTIC_COUNT: usize = 200; // Simulate 200 diagnostics (100 lines)
@@ -1564,7 +1564,7 @@ fn test_lsp_typing_performance_with_many_diagnostics() -> std::io::Result<()> {
 /// Test that handle_rename_response correctly processes documentChanges
 /// (This tests the fix for rust-analyzer which sends documentChanges instead of changes)
 #[test]
-fn test_handle_rename_response_with_document_changes() -> std::io::Result<()> {
+fn test_handle_rename_response_with_document_changes() -> anyhow::Result<()> {
     use lsp_types::{
         DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, Position, Range,
         TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
@@ -1667,7 +1667,7 @@ fn test_handle_rename_response_with_document_changes() -> std::io::Result<()> {
 /// simulating a completely stuck language server. The test verifies that typing
 /// continues to work immediately without any delays.
 #[test]
-fn test_lsp_diagnostics_non_blocking() -> std::io::Result<()> {
+fn test_lsp_diagnostics_non_blocking() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Create a completely blocking fake LSP server that never responds
@@ -1776,7 +1776,7 @@ fn test_lsp_diagnostics_non_blocking() -> std::io::Result<()> {
 /// This should reproduce the ContentModified error with rust-analyzer
 #[test]
 #[ignore] // Run with: cargo test test_rust_analyzer_rename_real_scenario -- --ignored --nocapture
-fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
+fn test_rust_analyzer_rename_real_scenario() -> anyhow::Result<()> {
     use std::io::Write;
     use std::process::Command;
     use tracing_subscriber::EnvFilter;
@@ -2010,7 +2010,7 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
 /// This test reproduces a bug where the second rename fails because the LSP
 /// is not properly notified of buffer changes from the first rename.
 #[test]
-fn test_lsp_rename_consecutive_same_position() -> std::io::Result<()> {
+fn test_lsp_rename_consecutive_same_position() -> anyhow::Result<()> {
     use lsp_types::{
         DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, Position, Range,
         TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
@@ -2166,7 +2166,7 @@ fn test_lsp_rename_consecutive_same_position() -> std::io::Result<()> {
 /// 5. Repeat rename command with another new name
 #[test]
 #[ignore] // Run with: cargo test test_lsp_rename_twice_with_rust_analyzer -- --ignored --nocapture
-fn test_lsp_rename_twice_with_rust_analyzer() -> std::io::Result<()> {
+fn test_lsp_rename_twice_with_rust_analyzer() -> anyhow::Result<()> {
     use std::io::Write;
     use std::process::Command;
 
@@ -2432,7 +2432,7 @@ edition = "2021"
 /// which can be flaky in CI environments. Run with --ignored to execute.
 #[test]
 #[ignore]
-fn test_lsp_progress_status_display() -> std::io::Result<()> {
+fn test_lsp_progress_status_display() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Create a fake LSP server that sends progress notifications
@@ -2592,7 +2592,7 @@ fn test_lsp_progress_status_display() -> std::io::Result<()> {
 /// which can be flaky in CI environments. Run with --ignored to execute.
 #[test]
 #[ignore]
-fn test_lsp_crash_detection_and_restart() -> std::io::Result<()> {
+fn test_lsp_crash_detection_and_restart() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Create a fake LSP server that crashes after initialization
@@ -2743,7 +2743,7 @@ fn test_lsp_crash_detection_and_restart() -> std::io::Result<()> {
 
 /// Test that the Restart LSP Server command exists in the command palette
 #[test]
-fn test_lsp_restart_command_exists() -> std::io::Result<()> {
+fn test_lsp_restart_command_exists() -> anyhow::Result<()> {
     let mut harness = EditorTestHarness::new(80, 24)?;
 
     // Open command palette with Ctrl+Shift+P
@@ -2779,7 +2779,7 @@ fn test_lsp_restart_command_exists() -> std::io::Result<()> {
 /// Test that pull diagnostics infrastructure is set up correctly
 /// This test verifies that the LspPulledDiagnostics message can be processed
 #[test]
-fn test_pull_diagnostics_message_handling() -> std::io::Result<()> {
+fn test_pull_diagnostics_message_handling() -> anyhow::Result<()> {
     use fresh::services::async_bridge::AsyncMessage;
     use lsp_types::Diagnostic;
 
@@ -2851,7 +2851,7 @@ fn test_pull_diagnostics_message_handling() -> std::io::Result<()> {
 
 /// Test that pull diagnostics handles unchanged responses correctly
 #[test]
-fn test_pull_diagnostics_unchanged_response() -> std::io::Result<()> {
+fn test_pull_diagnostics_unchanged_response() -> anyhow::Result<()> {
     use fresh::services::async_bridge::AsyncMessage;
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -2893,7 +2893,7 @@ fn test_pull_diagnostics_unchanged_response() -> std::io::Result<()> {
 /// Test that pull diagnostics are auto-triggered after didOpen
 #[test]
 #[ignore]
-fn test_pull_diagnostics_auto_trigger_after_open() -> std::io::Result<()> {
+fn test_pull_diagnostics_auto_trigger_after_open() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Create fake LSP server with pull diagnostics support
@@ -2971,7 +2971,7 @@ fn test_pull_diagnostics_auto_trigger_after_open() -> std::io::Result<()> {
 /// Test that pull diagnostics result_id is used for incremental updates
 #[test]
 #[ignore]
-fn test_pull_diagnostics_result_id_tracking() -> std::io::Result<()> {
+fn test_pull_diagnostics_result_id_tracking() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Create fake LSP server with pull diagnostics support
@@ -3072,7 +3072,7 @@ fn test_pull_diagnostics_result_id_tracking() -> std::io::Result<()> {
 
 /// Test that inlay hints (virtual text) render correctly on screen
 #[test]
-fn test_inlay_hints_render_on_screen() -> std::io::Result<()> {
+fn test_inlay_hints_render_on_screen() -> anyhow::Result<()> {
     use fresh::view::virtual_text::VirtualTextPosition;
     use ratatui::style::{Color, Style};
 
@@ -3156,7 +3156,7 @@ fn test_inlay_hints_render_on_screen() -> std::io::Result<()> {
 
 /// Test that virtual text positions update when buffer is edited
 #[test]
-fn test_inlay_hints_position_tracking() -> std::io::Result<()> {
+fn test_inlay_hints_position_tracking() -> anyhow::Result<()> {
     use fresh::view::virtual_text::VirtualTextPosition;
     use ratatui::style::{Color, Style};
 
@@ -3225,7 +3225,7 @@ fn test_inlay_hints_position_tracking() -> std::io::Result<()> {
 /// normally trigger didChange notifications to the LSP). The LSP should only restart when
 /// the user explicitly uses the "restart lsp" command.
 #[test]
-fn test_stopped_lsp_does_not_auto_restart_on_edit() -> std::io::Result<()> {
+fn test_stopped_lsp_does_not_auto_restart_on_edit() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Create a fake LSP server
@@ -3348,7 +3348,7 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> std::io::Result<()> {
 /// 3. calculate_area() for Fixed position doesn't clamp x to ensure x + width <= terminal_width
 /// 4. render_with_hover() tries to render the popup at an out-of-bounds position
 #[test]
-fn test_hover_popup_at_right_edge_does_not_panic() -> std::io::Result<()> {
+fn test_hover_popup_at_right_edge_does_not_panic() -> anyhow::Result<()> {
     use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
 
     // Use the exact dimensions from the panic: width 199, height 44
@@ -3396,7 +3396,7 @@ fn test_hover_popup_at_right_edge_does_not_panic() -> std::io::Result<()> {
 /// 3. Focusing file explorer
 /// 4. Opening any prompt
 #[test]
-fn test_hover_popup_dismissed_on_focus_change() -> std::io::Result<()> {
+fn test_hover_popup_dismissed_on_focus_change() -> anyhow::Result<()> {
     use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -3541,7 +3541,7 @@ fn test_hover_popup_dismissed_on_focus_change() -> std::io::Result<()> {
     windows,
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
-fn test_hover_popup_persists_within_symbol_and_popup() -> std::io::Result<()> {
+fn test_hover_popup_persists_within_symbol_and_popup() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Spawn fake LSP server (has hover support)
@@ -3629,7 +3629,7 @@ fn test_hover_popup_persists_within_symbol_and_popup() -> std::io::Result<()> {
 /// When the hover documentation is longer than the popup's max_height,
 /// a scrollbar should be rendered to indicate more content is available.
 #[test]
-fn test_hover_popup_shows_scrollbar_for_long_content() -> std::io::Result<()> {
+fn test_hover_popup_shows_scrollbar_for_long_content() -> anyhow::Result<()> {
     use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
 
     let mut harness = EditorTestHarness::new(100, 30)?;
@@ -3702,7 +3702,7 @@ fn test_hover_popup_shows_scrollbar_for_long_content() -> std::io::Result<()> {
 /// - Have a minimum of 15 rows
 /// - Have a maximum of 40 rows
 #[test]
-fn test_hover_popup_dynamic_height() -> std::io::Result<()> {
+fn test_hover_popup_dynamic_height() -> anyhow::Result<()> {
     use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
 
     // Test with a tall terminal (60 rows)
@@ -3751,7 +3751,7 @@ fn test_hover_popup_dynamic_height() -> std::io::Result<()> {
 /// When the mouse is over a hover popup with scrollable content,
 /// scrolling should scroll the popup content instead of dismissing it.
 #[test]
-fn test_hover_popup_mouse_scroll() -> std::io::Result<()> {
+fn test_hover_popup_mouse_scroll() -> anyhow::Result<()> {
     use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
 
     let mut harness = EditorTestHarness::new(100, 30)?;
@@ -3824,7 +3824,7 @@ fn test_hover_popup_mouse_scroll() -> std::io::Result<()> {
 /// expand to show the wrapped content (up to max_height), not just
 /// count original lines.
 #[test]
-fn test_hover_popup_height_accounts_for_wrapped_lines() -> std::io::Result<()> {
+fn test_hover_popup_height_accounts_for_wrapped_lines() -> anyhow::Result<()> {
     use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
 
     let mut harness = EditorTestHarness::new(100, 40)?;
@@ -3883,7 +3883,7 @@ fn test_hover_popup_height_accounts_for_wrapped_lines() -> std::io::Result<()> {
 
 /// Test Home key jumps to first item in completion popup
 #[test]
-fn test_popup_home_key_selects_first_item() -> std::io::Result<()> {
+fn test_popup_home_key_selects_first_item() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -3942,7 +3942,7 @@ fn test_popup_home_key_selects_first_item() -> std::io::Result<()> {
 
 /// Test End key jumps to last item in completion popup
 #[test]
-fn test_popup_end_key_selects_last_item() -> std::io::Result<()> {
+fn test_popup_end_key_selects_last_item() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -3995,7 +3995,7 @@ fn test_popup_end_key_selects_last_item() -> std::io::Result<()> {
 
 /// Test mouse wheel scrolls popup instead of dismissing it
 #[test]
-fn test_popup_mouse_wheel_scrolls() -> std::io::Result<()> {
+fn test_popup_mouse_wheel_scrolls() -> anyhow::Result<()> {
     use crossterm::event::{MouseEvent, MouseEventKind};
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
@@ -4081,7 +4081,7 @@ fn test_popup_mouse_wheel_scrolls() -> std::io::Result<()> {
 
 /// Test scrollbar appears when popup content exceeds visible area
 #[test]
-fn test_popup_scrollbar_visible_for_long_list() -> std::io::Result<()> {
+fn test_popup_scrollbar_visible_for_long_list() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -4146,7 +4146,7 @@ fn test_popup_scrollbar_visible_for_long_list() -> std::io::Result<()> {
 
 /// Test scrollbar is not shown for short lists
 #[test]
-fn test_popup_no_scrollbar_for_short_list() -> std::io::Result<()> {
+fn test_popup_no_scrollbar_for_short_list() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -4198,7 +4198,7 @@ fn test_popup_no_scrollbar_for_short_list() -> std::io::Result<()> {
 
 /// Test mouse wheel scroll up in popup
 #[test]
-fn test_popup_mouse_wheel_scroll_up() -> std::io::Result<()> {
+fn test_popup_mouse_wheel_scroll_up() -> anyhow::Result<()> {
     use crossterm::event::{MouseEvent, MouseEventKind};
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
@@ -4289,7 +4289,7 @@ fn test_popup_mouse_wheel_scroll_up() -> std::io::Result<()> {
 
 /// Test type-to-filter: typing a character filters the completion list
 #[test]
-fn test_completion_type_to_filter_basic() -> std::io::Result<()> {
+fn test_completion_type_to_filter_basic() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -4416,7 +4416,7 @@ fn test_completion_type_to_filter_basic() -> std::io::Result<()> {
 
 /// Test type-to-filter: popup closes when no items match
 #[test]
-fn test_completion_type_to_filter_closes_on_no_match() -> std::io::Result<()> {
+fn test_completion_type_to_filter_closes_on_no_match() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -4487,7 +4487,7 @@ fn test_completion_type_to_filter_closes_on_no_match() -> std::io::Result<()> {
 
 /// Test type-to-filter: backspace in popup re-filters with shorter prefix
 #[test]
-fn test_completion_backspace_refilters() -> std::io::Result<()> {
+fn test_completion_backspace_refilters() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -4582,7 +4582,7 @@ fn test_completion_backspace_refilters() -> std::io::Result<()> {
 
 /// Test type-to-filter preserves selection when possible
 #[test]
-fn test_completion_type_to_filter_preserves_selection() -> std::io::Result<()> {
+fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -4697,7 +4697,7 @@ fn test_completion_type_to_filter_preserves_selection() -> std::io::Result<()> {
 
 /// Test LSP snippet expansion: function with $0 places cursor inside parens
 #[test]
-fn test_completion_snippet_cursor_position() -> std::io::Result<()> {
+fn test_completion_snippet_cursor_position() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -4751,7 +4751,7 @@ fn test_completion_snippet_cursor_position() -> std::io::Result<()> {
 
 /// Test LSP snippet expansion: tabstop with default text
 #[test]
-fn test_completion_snippet_with_default() -> std::io::Result<()> {
+fn test_completion_snippet_with_default() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -4808,7 +4808,7 @@ fn test_completion_snippet_with_default() -> std::io::Result<()> {
 
 /// Test LSP snippet expansion: plain text (non-snippet) still works
 #[test]
-fn test_completion_plain_text_no_snippet() -> std::io::Result<()> {
+fn test_completion_plain_text_no_snippet() -> anyhow::Result<()> {
     use fresh::model::event::{
         Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
     };
@@ -4868,7 +4868,7 @@ fn test_completion_plain_text_no_snippet() -> std::io::Result<()> {
 /// 1. auto_start is true and a file is opened, OR
 /// 2. The user manually starts the server (via command palette or menu)
 #[test]
-fn test_hover_does_not_autostart_lsp_when_disabled() -> std::io::Result<()> {
+fn test_hover_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
     // Spawn fake LSP server script (but we don't want it to actually be used)
@@ -4952,7 +4952,7 @@ fn test_hover_does_not_autostart_lsp_when_disabled() -> std::io::Result<()> {
 /// This is a regression test for the bug where typing in a buffer would
 /// start the LSP server even when auto_start was set to false in the config.
 #[test]
-fn test_typing_does_not_autostart_lsp_when_disabled() -> std::io::Result<()> {
+fn test_typing_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
     use crossterm::event::KeyCode;
 
@@ -5024,7 +5024,7 @@ fn test_typing_does_not_autostart_lsp_when_disabled() -> std::io::Result<()> {
 /// capabilities), a completion request is automatically sent.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
-fn test_completion_triggered_on_trigger_character() -> std::io::Result<()> {
+fn test_completion_triggered_on_trigger_character() -> anyhow::Result<()> {
     // Spawn fake LSP server with logging
     let _fake_server = FakeLspServer::spawn_with_logging()?;
 
@@ -5104,7 +5104,7 @@ fn test_completion_triggered_on_trigger_character() -> std::io::Result<()> {
 /// triggers completion automatically when quick_suggestions is enabled.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
-fn test_completion_triggered_on_word_char_with_quick_suggestions() -> std::io::Result<()> {
+fn test_completion_triggered_on_word_char_with_quick_suggestions() -> anyhow::Result<()> {
     // Spawn fake LSP server with logging
     let _fake_server = FakeLspServer::spawn_with_logging()?;
 
@@ -5183,7 +5183,7 @@ fn test_completion_triggered_on_word_char_with_quick_suggestions() -> std::io::R
 /// (like `.`) trigger completion, not regular word characters.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
-fn test_completion_not_triggered_on_word_char_without_quick_suggestions() -> std::io::Result<()> {
+fn test_completion_not_triggered_on_word_char_without_quick_suggestions() -> anyhow::Result<()> {
     // Spawn fake LSP server with logging
     let _fake_server = FakeLspServer::spawn_with_logging()?;
 
@@ -5264,7 +5264,7 @@ fn test_completion_not_triggered_on_word_char_without_quick_suggestions() -> std
 /// do not trigger completion, regardless of quick_suggestions setting.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
-fn test_completion_not_triggered_on_non_word_char() -> std::io::Result<()> {
+fn test_completion_not_triggered_on_non_word_char() -> anyhow::Result<()> {
     // Spawn fake LSP server with logging
     let _fake_server = FakeLspServer::spawn_with_logging()?;
 
@@ -5350,7 +5350,7 @@ fn test_completion_not_triggered_on_non_word_char() -> std::io::Result<()> {
     windows,
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
-fn test_hover_popup_follows_mouse_when_lsp_returns_no_range() -> std::io::Result<()> {
+fn test_hover_popup_follows_mouse_when_lsp_returns_no_range() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
     use std::time::Duration;
 
@@ -5492,7 +5492,7 @@ fn test_hover_popup_follows_mouse_when_lsp_returns_no_range() -> std::io::Result
 ///
 /// Expected behavior: Clicking on scrollbar should scroll the popup content.
 #[test]
-fn test_hover_popup_scrollbar_click_scrolls_content() -> std::io::Result<()> {
+fn test_hover_popup_scrollbar_click_scrolls_content() -> anyhow::Result<()> {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
 
@@ -5579,7 +5579,7 @@ fn test_hover_popup_scrollbar_click_scrolls_content() -> std::io::Result<()> {
     windows,
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
-fn test_hover_does_not_trigger_past_end_of_line() -> std::io::Result<()> {
+fn test_hover_does_not_trigger_past_end_of_line() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
     use std::time::Duration;
 
@@ -5675,7 +5675,7 @@ fn test_hover_does_not_trigger_past_end_of_line() -> std::io::Result<()> {
     windows,
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
-fn test_hover_does_not_trigger_on_empty_line() -> std::io::Result<()> {
+fn test_hover_does_not_trigger_on_empty_line() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
     use std::time::Duration;
 
@@ -5779,7 +5779,7 @@ fn test_hover_does_not_trigger_on_empty_line() -> std::io::Result<()> {
     windows,
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
-fn test_hover_no_duplicate_popup_when_moving_within_symbol() -> std::io::Result<()> {
+fn test_hover_no_duplicate_popup_when_moving_within_symbol() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
     use std::time::Duration;
 

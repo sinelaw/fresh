@@ -1,5 +1,6 @@
 use super::*;
 use crate::services::plugins::hooks::HookArgs;
+use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 impl Editor {
     /// Determine the current keybinding context based on UI state
@@ -27,7 +28,7 @@ impl Editor {
         &mut self,
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
-    ) -> std::io::Result<()> {
+    ) -> AnyhowResult<()> {
         use crate::input::keybindings::Action;
 
         let _t_total = std::time::Instant::now();
@@ -210,7 +211,7 @@ impl Editor {
     }
 
     /// Handle an action (for normal mode and command execution)
-    pub(super) fn handle_action(&mut self, action: Action) -> std::io::Result<()> {
+    pub(super) fn handle_action(&mut self, action: Action) -> AnyhowResult<()> {
         use crate::input::keybindings::Action;
 
         // Record action to macro if recording
@@ -1138,7 +1139,7 @@ impl Editor {
         col: u16,
         row: u16,
         delta: i32,
-    ) -> std::io::Result<()> {
+    ) -> AnyhowResult<()> {
         // Sync viewport from EditorState to SplitViewState before scrolling.
         // This is necessary because rendering updates EditorState.viewport via ensure_visible,
         // but that change isn't automatically synced to SplitViewState. Without this sync,
@@ -1262,7 +1263,7 @@ impl Editor {
         split_id: SplitId,
         buffer_id: BufferId,
         scrollbar_rect: ratatui::layout::Rect,
-    ) -> std::io::Result<()> {
+    ) -> AnyhowResult<()> {
         let drag_start_row = match self.mouse_state.drag_start_row {
             Some(r) => r,
             None => return Ok(()), // No drag start, shouldn't happen
@@ -1389,7 +1390,7 @@ impl Editor {
         split_id: SplitId,
         buffer_id: BufferId,
         scrollbar_rect: ratatui::layout::Rect,
-    ) -> std::io::Result<()> {
+    ) -> AnyhowResult<()> {
         // Calculate which line to scroll to based on mouse position
         let scrollbar_height = scrollbar_rect.height as usize;
         if scrollbar_height == 0 {
@@ -1683,7 +1684,7 @@ impl Editor {
         split_id: crate::model::event::SplitId,
         buffer_id: BufferId,
         content_rect: ratatui::layout::Rect,
-    ) -> std::io::Result<()> {
+    ) -> AnyhowResult<()> {
         use crate::model::event::Event;
 
         // Dispatch MouseClick hook to plugins
@@ -1811,7 +1812,7 @@ impl Editor {
         col: u16,
         row: u16,
         explorer_area: ratatui::layout::Rect,
-    ) -> std::io::Result<()> {
+    ) -> AnyhowResult<()> {
         // Check if click is on the title bar (first row)
         if row == explorer_area.y {
             // Check if click is on close button (× at right side of title bar)
@@ -2443,7 +2444,7 @@ impl Editor {
     }
 
     /// Handle character insertion in prompt mode.
-    fn handle_insert_char_prompt(&mut self, c: char) -> std::io::Result<()> {
+    fn handle_insert_char_prompt(&mut self, c: char) -> AnyhowResult<()> {
         // Check if this is the query-replace confirmation prompt
         if let Some(ref prompt) = self.prompt {
             if prompt.prompt_type == PromptType::QueryReplaceConfirm {
@@ -2475,7 +2476,7 @@ impl Editor {
     }
 
     /// Handle character insertion in normal editor mode.
-    fn handle_insert_char_editor(&mut self, c: char) -> std::io::Result<()> {
+    fn handle_insert_char_editor(&mut self, c: char) -> AnyhowResult<()> {
         // Check if editing is disabled (show_cursors = false)
         if self.is_editing_disabled() {
             self.set_status_message(t!("buffer.editing_disabled").to_string());
@@ -2518,7 +2519,7 @@ impl Editor {
     /// This is the catch-all handler for actions that can be converted to buffer events
     /// (cursor movements, text edits, etc.). It handles batching for multi-cursor,
     /// position history tracking, and editing permission checks.
-    fn apply_action_as_events(&mut self, action: Action) -> std::io::Result<()> {
+    fn apply_action_as_events(&mut self, action: Action) -> AnyhowResult<()> {
         // Check if active buffer is a composite buffer - handle scroll/movement specially
         let buffer_id = self.active_buffer();
         if self.is_composite_buffer(buffer_id) {

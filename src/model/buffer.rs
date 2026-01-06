@@ -237,7 +237,7 @@ impl TextBuffer {
     pub fn load_from_file<P: AsRef<Path>>(
         path: P,
         large_file_threshold: usize,
-    ) -> io::Result<Self> {
+    ) -> anyhow::Result<Self> {
         let path = path.as_ref();
 
         // Get file size to determine loading strategy
@@ -260,7 +260,7 @@ impl TextBuffer {
     }
 
     /// Load a small file with full eager loading and line indexing
-    fn load_small_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+    fn load_small_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let path = path.as_ref();
         let mut file = std::fs::File::open(path)?;
         let mut contents = Vec::new();
@@ -284,7 +284,7 @@ impl TextBuffer {
     }
 
     /// Load a large file with unloaded buffer (no line indexing, lazy loading)
-    fn load_large_file<P: AsRef<Path>>(path: P, file_size: usize) -> io::Result<Self> {
+    fn load_large_file<P: AsRef<Path>>(path: P, file_size: usize) -> anyhow::Result<Self> {
         use crate::model::piece_tree::{BufferData, BufferLocation};
 
         let path = path.as_ref();
@@ -343,11 +343,11 @@ impl TextBuffer {
     }
 
     /// Save the buffer to its associated file
-    pub fn save(&mut self) -> io::Result<()> {
+    pub fn save(&mut self) -> anyhow::Result<()> {
         if let Some(path) = &self.file_path {
             self.save_to_file(path.clone())
         } else {
-            Err(io::Error::new(
+            anyhow::bail!(io::Error::new(
                 io::ErrorKind::NotFound,
                 "No file path associated with buffer",
             ))
@@ -362,7 +362,7 @@ impl TextBuffer {
     ///
     /// If the line ending format has been changed (via set_line_ending), all content
     /// will be converted to the new format during save.
-    pub fn save_to_file<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
+    pub fn save_to_file<P: AsRef<Path>>(&mut self, path: P) -> anyhow::Result<()> {
         let dest_path = path.as_ref();
         let total = self.total_bytes();
 
@@ -495,7 +495,7 @@ impl TextBuffer {
     }
 
     /// Restore file metadata (permissions, owner/group) from original file
-    fn restore_file_metadata(path: &Path, original_meta: &std::fs::Metadata) -> io::Result<()> {
+    fn restore_file_metadata(path: &Path, original_meta: &std::fs::Metadata) -> anyhow::Result<()> {
         // Restore permissions (works cross-platform)
         std::fs::set_permissions(path, original_meta.permissions())?;
 

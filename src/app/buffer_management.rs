@@ -8,8 +8,8 @@
 //! - Navigate back/forward in position history
 //! - Buffer state persistence
 
+use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
-use std::io;
 use std::path::Path;
 
 use crate::app::warning_domains::WarningDomain;
@@ -27,7 +27,7 @@ impl Editor {
     ///
     /// If the file doesn't exist, creates an unsaved buffer with that filename.
     /// Saving the buffer will create the file.
-    pub fn open_file(&mut self, path: &Path) -> io::Result<BufferId> {
+    pub fn open_file(&mut self, path: &Path) -> anyhow::Result<BufferId> {
         let buffer_id = self.open_file_no_focus(path)?;
 
         // Check if this was an already-open buffer or a new one
@@ -80,7 +80,7 @@ impl Editor {
     /// but does not change the active buffer. Useful for opening files in background tabs.
     ///
     /// If the file doesn't exist, creates an unsaved buffer with that filename.
-    pub fn open_file_no_focus(&mut self, path: &Path) -> io::Result<BufferId> {
+    pub fn open_file_no_focus(&mut self, path: &Path) -> anyhow::Result<BufferId> {
         // Resolve relative paths against working_dir, not process current directory
         let resolved_path = if path.is_relative() {
             self.working_dir.join(path)
@@ -473,8 +473,8 @@ impl Editor {
     pub fn open_stdin_buffer(
         &mut self,
         temp_path: &Path,
-        thread_handle: Option<std::thread::JoinHandle<std::io::Result<()>>>,
-    ) -> io::Result<BufferId> {
+        thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
+    ) -> AnyhowResult<BufferId> {
         // Save current position before switching to new buffer
         self.position_history.commit_pending_movement();
 
@@ -962,11 +962,11 @@ impl Editor {
     }
 
     /// Close the given buffer
-    pub fn close_buffer(&mut self, id: BufferId) -> io::Result<()> {
+    pub fn close_buffer(&mut self, id: BufferId) -> anyhow::Result<()> {
         // Check for unsaved changes
         if let Some(state) = self.buffers.get(&id) {
             if state.buffer.is_modified() {
-                return Err(io::Error::other("Buffer has unsaved changes"));
+                return Err(anyhow::anyhow!("Buffer has unsaved changes"));
             }
         }
         self.close_buffer_internal(id)
@@ -974,12 +974,12 @@ impl Editor {
 
     /// Force close the given buffer without checking for unsaved changes
     /// Use this when the user has already confirmed they want to discard changes
-    pub fn force_close_buffer(&mut self, id: BufferId) -> io::Result<()> {
+    pub fn force_close_buffer(&mut self, id: BufferId) -> anyhow::Result<()> {
         self.close_buffer_internal(id)
     }
 
     /// Internal helper to close a buffer (shared by close_buffer and force_close_buffer)
-    fn close_buffer_internal(&mut self, id: BufferId) -> io::Result<()> {
+    fn close_buffer_internal(&mut self, id: BufferId) -> anyhow::Result<()> {
         // Save file state before closing (for per-file session persistence)
         self.save_file_state_on_close(id);
 

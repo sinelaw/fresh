@@ -15,7 +15,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 #[test]
 #[ignore = "Needs investigation: fake LSP and plugin loading issues"]
 #[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
-fn test_lsp_find_references() -> std::io::Result<()> {
+fn test_lsp_find_references() -> anyhow::Result<()> {
     // Create a temporary project directory
     let temp_dir = tempfile::TempDir::new()?;
     let project_root = temp_dir.path().to_path_buf();
@@ -175,7 +175,7 @@ done
 /// Requires rust-analyzer to be installed on the system.
 #[test]
 #[ignore] // Run with: cargo test test_find_references_with_rust_analyzer -- --ignored --nocapture
-fn test_find_references_with_rust_analyzer() -> std::io::Result<()> {
+fn test_find_references_with_rust_analyzer() -> anyhow::Result<()> {
     use std::process::Command;
 
     // Check if rust-analyzer is available

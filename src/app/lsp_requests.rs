@@ -10,6 +10,7 @@
 //! - Rename operations
 //! - Inlay hints
 
+use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 use std::io;
 
@@ -28,7 +29,7 @@ impl Editor {
         &mut self,
         request_id: u64,
         items: Vec<lsp_types::CompletionItem>,
-    ) -> io::Result<()> {
+    ) -> AnyhowResult<()> {
         // Check if this is the pending completion request
         if self.pending_completion_request != Some(request_id) {
             tracing::debug!(
@@ -169,7 +170,7 @@ impl Editor {
         &mut self,
         request_id: u64,
         locations: Vec<lsp_types::Location>,
-    ) -> io::Result<()> {
+    ) -> AnyhowResult<()> {
         // Check if this is the pending request
         if self.pending_goto_definition_request != Some(request_id) {
             tracing::debug!(
@@ -361,7 +362,7 @@ impl Editor {
     }
 
     /// Request LSP completion at current cursor position
-    pub(crate) fn request_completion(&mut self) -> io::Result<()> {
+    pub(crate) fn request_completion(&mut self) -> AnyhowResult<()> {
         // Get the current buffer and cursor position
         let state = self.active_state();
         let cursor_pos = state.cursors.primary().position;
@@ -447,7 +448,7 @@ impl Editor {
     }
 
     /// Request LSP go-to-definition at current cursor position
-    pub(crate) fn request_goto_definition(&mut self) -> io::Result<()> {
+    pub(crate) fn request_goto_definition(&mut self) -> AnyhowResult<()> {
         // Get the current buffer and cursor position
         let state = self.active_state();
         let cursor_pos = state.cursors.primary().position;
@@ -483,7 +484,7 @@ impl Editor {
     }
 
     /// Request LSP hover documentation at current cursor position
-    pub(crate) fn request_hover(&mut self) -> io::Result<()> {
+    pub(crate) fn request_hover(&mut self) -> AnyhowResult<()> {
         // Get the current buffer and cursor position
         let state = self.active_state();
         let cursor_pos = state.cursors.primary().position;
@@ -533,7 +534,7 @@ impl Editor {
 
     /// Request LSP hover documentation at a specific byte position
     /// Used for mouse-triggered hover
-    pub(crate) fn request_hover_at_position(&mut self, byte_pos: usize) -> io::Result<()> {
+    pub(crate) fn request_hover_at_position(&mut self, byte_pos: usize) -> AnyhowResult<()> {
         // Get the current buffer
         let state = self.active_state();
 
@@ -767,7 +768,7 @@ impl Editor {
     }
 
     /// Request LSP find references at current cursor position
-    pub(crate) fn request_references(&mut self) -> io::Result<()> {
+    pub(crate) fn request_references(&mut self) -> AnyhowResult<()> {
         // Get the current buffer and cursor position
         let state = self.active_state();
         let cursor_pos = state.cursors.primary().position;
@@ -866,7 +867,7 @@ impl Editor {
     }
 
     /// Request LSP signature help at current cursor position
-    pub(crate) fn request_signature_help(&mut self) -> io::Result<()> {
+    pub(crate) fn request_signature_help(&mut self) -> AnyhowResult<()> {
         // Get the current buffer and cursor position
         let state = self.active_state();
         let cursor_pos = state.cursors.primary().position;
@@ -1020,7 +1021,7 @@ impl Editor {
     }
 
     /// Request LSP code actions at current cursor position
-    pub(crate) fn request_code_actions(&mut self) -> io::Result<()> {
+    pub(crate) fn request_code_actions(&mut self) -> AnyhowResult<()> {
         // Get the current buffer and cursor position
         let state = self.active_state();
         let cursor_pos = state.cursors.primary().position;
@@ -1146,7 +1147,7 @@ impl Editor {
         &mut self,
         request_id: u64,
         locations: Vec<lsp_types::Location>,
-    ) -> io::Result<()> {
+    ) -> AnyhowResult<()> {
         tracing::info!(
             "handle_references_response: received {} locations for request_id={}",
             locations.len(),
@@ -1217,7 +1218,7 @@ impl Editor {
         &mut self,
         buffer_id: BufferId,
         mut edits: Vec<lsp_types::TextEdit>,
-    ) -> io::Result<usize> {
+    ) -> AnyhowResult<usize> {
         if edits.is_empty() {
             return Ok(0);
         }
@@ -1314,7 +1315,7 @@ impl Editor {
         &mut self,
         _request_id: u64,
         result: Result<lsp_types::WorkspaceEdit, String>,
-    ) -> io::Result<()> {
+    ) -> AnyhowResult<()> {
         self.lsp_status.clear();
 
         match result {
@@ -1434,7 +1435,7 @@ impl Editor {
         buffer_id: BufferId,
         events: Vec<Event>,
         description: String,
-    ) -> io::Result<()> {
+    ) -> AnyhowResult<()> {
         use crate::model::event::CursorId;
 
         if events.is_empty() {
@@ -1705,7 +1706,7 @@ impl Editor {
     }
 
     /// Start rename mode - select the symbol at cursor and allow inline editing
-    pub(crate) fn start_rename(&mut self) -> io::Result<()> {
+    pub(crate) fn start_rename(&mut self) -> AnyhowResult<()> {
         use crate::primitives::word_navigation::{find_word_end, find_word_start};
 
         // Get the current buffer and cursor position

@@ -1,3 +1,4 @@
+use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
 use super::*;
@@ -304,7 +305,7 @@ impl Editor {
         }
     }
 
-    pub fn file_explorer_open_file(&mut self) -> io::Result<()> {
+    pub fn file_explorer_open_file(&mut self) -> AnyhowResult<()> {
         let entry_type = self
             .file_explorer
             .as_ref()

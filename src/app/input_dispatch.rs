@@ -10,6 +10,7 @@ use crate::input::keybindings::Action;
 use crate::view::file_browser_input::FileBrowserInputHandler;
 use crate::view::query_replace_input::QueryReplaceConfirmInputHandler;
 use crate::view::ui::MenuInputHandler;
+use anyhow::Result as AnyhowResult;
 use crossterm::event::KeyEvent;
 use rust_i18n::t;
 
@@ -169,7 +170,7 @@ impl Editor {
     }
 
     /// Execute a single deferred action.
-    fn execute_deferred_action(&mut self, action: DeferredAction) -> std::io::Result<()> {
+    fn execute_deferred_action(&mut self, action: DeferredAction) -> AnyhowResult<()> {
         match action {
             // Settings actions
             DeferredAction::CloseSettings { save } => {

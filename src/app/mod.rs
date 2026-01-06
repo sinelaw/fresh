@@ -35,6 +35,7 @@ mod undo_actions;
 mod view_actions;
 pub mod warning_domains;
 
+use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 use std::path::Component;
 
@@ -109,7 +110,6 @@ use ratatui::{
     Frame,
 };
 use std::collections::{HashMap, HashSet};
-use std::io;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -562,7 +562,7 @@ pub struct StdinStreamingState {
     /// Whether streaming is complete (background thread finished)
     pub complete: bool,
     /// Background thread handle (for checking completion)
-    pub thread_handle: Option<std::thread::JoinHandle<std::io::Result<()>>>,
+    pub thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
 }
 
 impl Editor {
@@ -574,7 +574,7 @@ impl Editor {
         height: u16,
         dir_context: DirectoryContext,
         color_capability: crate::view::color_support::ColorCapability,
-    ) -> io::Result<Self> {
+    ) -> AnyhowResult<Self> {
         Self::with_working_dir(
             config,
             width,
@@ -596,7 +596,7 @@ impl Editor {
         dir_context: DirectoryContext,
         plugins_enabled: bool,
         color_capability: crate::view::color_support::ColorCapability,
-    ) -> io::Result<Self> {
+    ) -> AnyhowResult<Self> {
         Self::with_options(
             config,
             width,
@@ -622,7 +622,7 @@ impl Editor {
         color_capability: crate::view::color_support::ColorCapability,
         fs_backend: Option<Arc<dyn FsBackend>>,
         time_source: Option<SharedTimeSource>,
-    ) -> io::Result<Self> {
+    ) -> AnyhowResult<Self> {
         Self::with_options(
             config,
             width,
@@ -651,7 +651,7 @@ impl Editor {
         time_source: Option<SharedTimeSource>,
         color_capability: crate::view::color_support::ColorCapability,
         grammar_registry: Arc<crate::primitives::grammar_registry::GrammarRegistry>,
-    ) -> io::Result<Self> {
+    ) -> AnyhowResult<Self> {
         // Use provided time_source or default to RealTimeSource
         let time_source = time_source.unwrap_or_else(RealTimeSource::shared);
         tracing::info!("Editor::new called with width={}, height={}", width, height);
@@ -1209,7 +1209,7 @@ impl Editor {
     }
 
     /// Enable event log streaming to a file
-    pub fn enable_event_streaming<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
+    pub fn enable_event_streaming<P: AsRef<Path>>(&mut self, path: P) -> AnyhowResult<()> {
         // Enable streaming for all existing event logs
         for event_log in self.event_logs.values_mut() {
             event_log.enable_streaming(&path)?;
@@ -1378,7 +1378,7 @@ impl Editor {
     }
 
     /// Load an ANSI background image from a user-provided path
-    fn load_ansi_background(&mut self, input: &str) -> io::Result<()> {
+    fn load_ansi_background(&mut self, input: &str) -> AnyhowResult<()> {
         let trimmed = input.trim();
 
         if trimmed.is_empty() {
@@ -3434,7 +3434,7 @@ impl Editor {
     }
 
     /// Handle a plugin command - dispatches to specialized handlers in plugin_commands module
-    pub fn handle_plugin_command(&mut self, command: PluginCommand) -> io::Result<()> {
+    pub fn handle_plugin_command(&mut self, command: PluginCommand) -> AnyhowResult<()> {
         match command {
             // ==================== Text Editing Commands ====================
             PluginCommand::InsertText {

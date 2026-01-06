@@ -201,7 +201,7 @@ impl EditorState {
         _height: u16,
         large_file_threshold: usize,
         registry: &GrammarRegistry,
-    ) -> std::io::Result<Self> {
+    ) -> anyhow::Result<Self> {
         let buffer = Buffer::load_from_file(path, large_file_threshold)?;
 
         // Create highlighter using HighlightEngine (tree-sitter preferred, TextMate fallback)
@@ -273,7 +273,7 @@ impl EditorState {
         large_file_threshold: usize,
         registry: &GrammarRegistry,
         languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
-    ) -> std::io::Result<Self> {
+    ) -> anyhow::Result<Self> {
         let buffer = Buffer::load_from_file(path, large_file_threshold)?;
 
         // Create highlighter using HighlightEngine with language config

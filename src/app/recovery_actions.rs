@@ -7,7 +7,7 @@
 //! - Auto-saving modified buffers
 //! - Cleaning up recovery files
 
-use std::io;
+use anyhow::Result as AnyhowResult;
 
 use crate::model::event::BufferId;
 
@@ -15,30 +15,30 @@ use super::Editor;
 
 impl Editor {
     /// Start the recovery session (call on editor startup after recovery check)
-    pub fn start_recovery_session(&mut self) -> io::Result<()> {
-        self.recovery_service.start_session()
+    pub fn start_recovery_session(&mut self) -> AnyhowResult<()> {
+        Ok(self.recovery_service.start_session()?)
     }
 
     /// End the recovery session cleanly (call on normal shutdown)
-    pub fn end_recovery_session(&mut self) -> io::Result<()> {
-        self.recovery_service.end_session()
+    pub fn end_recovery_session(&mut self) -> AnyhowResult<()> {
+        Ok(self.recovery_service.end_session()?)
     }
 
     /// Check if there are files to recover from a crash
-    pub fn has_recovery_files(&self) -> io::Result<bool> {
-        self.recovery_service.should_offer_recovery()
+    pub fn has_recovery_files(&self) -> AnyhowResult<bool> {
+        Ok(self.recovery_service.should_offer_recovery()?)
     }
 
     /// Get list of recoverable files
     pub fn list_recoverable_files(
         &self,
-    ) -> io::Result<Vec<crate::services::recovery::RecoveryEntry>> {
-        self.recovery_service.list_recoverable()
+    ) -> AnyhowResult<Vec<crate::services::recovery::RecoveryEntry>> {
+        Ok(self.recovery_service.list_recoverable()?)
     }
 
     /// Recover all buffers from recovery files
     /// Returns the number of buffers recovered
-    pub fn recover_all_buffers(&mut self) -> io::Result<usize> {
+    pub fn recover_all_buffers(&mut self) -> AnyhowResult<usize> {
         use crate::services::recovery::RecoveryResult;
 
         let entries = self.recovery_service.list_recoverable()?;
@@ -126,9 +126,10 @@ impl Editor {
         Ok(recovered_count)
     }
 
-    /// Discard all recovery files without recovering
-    pub fn discard_all_recovery(&mut self) -> io::Result<usize> {
-        self.recovery_service.discard_all_recovery()
+    /// Discard all recovery files (user decided not to recover)
+    /// Returns the number of recovery files deleted
+    pub fn discard_all_recovery(&mut self) -> AnyhowResult<usize> {
+        Ok(self.recovery_service.discard_all_recovery()?)
     }
 
     /// Perform auto-save for all modified buffers if needed
@@ -139,7 +140,7 @@ impl Editor {
     /// - Return immediately if the auto-save interval hasn't passed
     /// - Return immediately if no buffers are modified
     /// - Only save buffers that are marked as needing a save
-    pub fn auto_save_dirty_buffers(&mut self) -> io::Result<usize> {
+    pub fn auto_save_dirty_buffers(&mut self) -> AnyhowResult<usize> {
         // Early exit if disabled
         if !self.recovery_service.is_enabled() {
             return Ok(0);
@@ -293,7 +294,7 @@ impl Editor {
     }
 
     /// Delete recovery for a buffer (call after saving or closing)
-    pub fn delete_buffer_recovery(&mut self, buffer_id: BufferId) -> io::Result<()> {
+    pub fn delete_buffer_recovery(&mut self, buffer_id: BufferId) -> AnyhowResult<()> {
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let path = state.buffer.file_path().map(|p| p.to_path_buf());
             let recovery_id = self.recovery_service.get_buffer_id(path.as_deref());

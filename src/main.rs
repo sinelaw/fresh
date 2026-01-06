@@ -1,3 +1,4 @@
+use anyhow::{Context, Result as AnyhowResult};
 use clap::Parser;
 use crossterm::{
     cursor::SetCursorStyle,
@@ -76,7 +77,7 @@ struct FileLocation {
 }
 
 struct IterationOutcome {
-    loop_result: io::Result<()>,
+    loop_result: AnyhowResult<()>,
     update_result: Option<release_checker::ReleaseCheckResult>,
     restart_dir: Option<PathBuf>,
 }
@@ -107,14 +108,14 @@ pub struct StdinStreamState {
     /// Path to temp file where stdin is being written
     pub temp_path: PathBuf,
     /// Handle to background thread (None if completed)
-    pub thread_handle: Option<std::thread::JoinHandle<io::Result<()>>>,
+    pub thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
 }
 
 /// Start streaming stdin to temp file in background.
 /// Returns immediately with streaming state. Editor can start while data streams in.
 /// Must be called BEFORE enabling raw terminal mode.
 #[cfg(unix)]
-fn start_stdin_streaming() -> io::Result<StdinStreamState> {
+fn start_stdin_streaming() -> AnyhowResult<StdinStreamState> {
     use std::fs::File;
     use std::os::unix::io::{AsRawFd, FromRawFd};
 
@@ -123,7 +124,7 @@ fn start_stdin_streaming() -> io::Result<StdinStreamState> {
     let stdin_fd = io::stdin().as_raw_fd();
     let pipe_fd = unsafe { libc::dup(stdin_fd) };
     if pipe_fd == -1 {
-        return Err(io::Error::last_os_error());
+        anyhow::bail!("Failed to dup stdin: {}", io::Error::last_os_error());
     }
 
     // Create empty temp file
@@ -173,7 +174,7 @@ fn start_stdin_streaming() -> io::Result<StdinStreamState> {
 #[cfg(windows)]
 pub struct StdinStreamState {
     pub temp_path: PathBuf,
-    pub thread_handle: Option<std::thread::JoinHandle<io::Result<()>>>,
+    pub thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
 }
 
 // TODO(windows): Implement stdin streaming for Windows
@@ -182,8 +183,8 @@ pub struct StdinStreamState {
 // - Spawn background thread to read from duplicated handle and write to temp file
 // - Use SetStdHandle or reopen CONIN$ as stdin for keyboard input
 #[cfg(windows)]
-fn start_stdin_streaming() -> io::Result<StdinStreamState> {
-    Err(io::Error::new(
+fn start_stdin_streaming() -> AnyhowResult<StdinStreamState> {
+    anyhow::bail!(io::Error::new(
         io::ErrorKind::Unsupported,
         "Reading from stdin is not yet supported on Windows",
     ))
@@ -199,7 +200,7 @@ fn stdin_has_data() -> bool {
 /// This allows crossterm to use the terminal for keyboard input
 /// even though the original stdin was a pipe.
 #[cfg(unix)]
-fn reopen_stdin_from_tty() -> io::Result<()> {
+fn reopen_stdin_from_tty() -> AnyhowResult<()> {
     use std::fs::File;
     use std::os::unix::io::AsRawFd;
 
@@ -211,7 +212,7 @@ fn reopen_stdin_from_tty() -> io::Result<()> {
     let result = unsafe { libc::dup2(tty.as_raw_fd(), libc::STDIN_FILENO) };
 
     if result == -1 {
-        return Err(io::Error::last_os_error());
+        anyhow::bail!(io::Error::last_os_error());
     }
 
     Ok(())
@@ -222,8 +223,8 @@ fn reopen_stdin_from_tty() -> io::Result<()> {
 // - Use SetStdHandle(STD_INPUT_HANDLE, conin_handle) to replace stdin
 // - This allows crossterm to receive keyboard events after stdin was a pipe
 #[cfg(windows)]
-fn reopen_stdin_from_tty() -> io::Result<()> {
-    Err(io::Error::new(
+fn reopen_stdin_from_tty() -> AnyhowResult<()> {
+    anyhow::bail!(io::Error::new(
         io::ErrorKind::Unsupported,
         "Reading from stdin is not yet supported on Windows",
     ))
@@ -237,7 +238,7 @@ fn handle_first_run_setup(
     stdin_stream: &mut Option<StdinStreamState>,
     warning_log_handle: &mut Option<WarningLogHandle>,
     session_enabled: bool,
-) -> io::Result<()> {
+) -> AnyhowResult<()> {
     if let Some(log_path) = &args.event_log {
         tracing::trace!("Event logging enabled: {}", log_path.display());
         editor.enable_event_streaming(log_path)?;
@@ -396,7 +397,7 @@ fn parse_file_location(input: &str) -> FileLocation {
     }
 }
 
-fn initialize_app(args: &Args) -> io::Result<SetupState> {
+fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     let log_file = args
         .log_file
         .clone()
@@ -448,7 +449,7 @@ fn initialize_app(args: &Args) -> io::Result<SetupState> {
             }
         } else {
             eprintln!("Error: --stdin or \"-\" specified but stdin is a terminal (no piped data)");
-            return Err(io::Error::new(
+            anyhow::bail!(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "No data piped to stdin",
             ));
@@ -497,7 +498,7 @@ fn initialize_app(args: &Args) -> io::Result<SetupState> {
                     config_path.display(),
                     e
                 );
-                return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
+                anyhow::bail!(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
             }
         }
     } else {
@@ -582,7 +583,7 @@ fn run_editor_iteration(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     key_translator: &KeyTranslator,
     #[cfg(target_os = "linux")] gpm_client: &Option<GpmClient>,
-) -> io::Result<IterationOutcome> {
+) -> AnyhowResult<IterationOutcome> {
     #[cfg(target_os = "linux")]
     let loop_result = run_event_loop(
         editor,
@@ -608,7 +609,7 @@ fn run_editor_iteration(
     })
 }
 
-fn main() -> io::Result<()> {
+fn main() -> AnyhowResult<()> {
     // Parse command-line arguments
     let args = Args::parse();
 
@@ -631,7 +632,11 @@ fn main() -> io::Result<()> {
                         config_path.display(),
                         e
                     );
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
+                    anyhow::bail!(
+                        "Failed to load config from {}: {}",
+                        config_path.display(),
+                        e
+                    );
                 }
             }
         } else {
@@ -646,7 +651,7 @@ fn main() -> io::Result<()> {
             }
             Err(e) => {
                 eprintln!("Error: Failed to serialize config: {}", e);
-                return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
+                anyhow::bail!("Failed to serialize config: {}", e);
             }
         }
     }
@@ -666,7 +671,7 @@ fn main() -> io::Result<()> {
         gpm_client,
         #[cfg(not(target_os = "linux"))]
         gpm_client,
-    } = initialize_app(&args)?;
+    } = initialize_app(&args).context("Failed to initialize application")?;
 
     let mut current_working_dir = initial_working_dir;
     let (terminal_width, terminal_height) = terminal_size;
@@ -694,7 +699,8 @@ fn main() -> io::Result<()> {
             dir_context.clone(),
             !args.no_plugins,
             color_capability,
-        )?;
+        )
+        .context("Failed to create editor instance")?;
 
         #[cfg(target_os = "linux")]
         if gpm_client.is_some() {
@@ -710,7 +716,8 @@ fn main() -> io::Result<()> {
                 &mut stdin_stream,
                 &mut warning_log_handle,
                 session_enabled,
-            )?;
+            )
+            .context("Failed first run setup")?;
         } else {
             if restore_session_on_restart {
                 match editor.try_restore_session() {
@@ -745,7 +752,8 @@ fn main() -> io::Result<()> {
             &key_translator,
             #[cfg(target_os = "linux")]
             &gpm_client,
-        )?;
+        )
+        .context("Editor iteration failed")?;
 
         let update_result = iteration.update_result;
         let restart_dir = iteration.restart_dir;
@@ -761,7 +769,9 @@ fn main() -> io::Result<()> {
             current_working_dir = Some(new_dir);
             is_first_run = false;
             restore_session_on_restart = true; // Restore session for the new project
-            terminal.clear()?;
+            terminal
+                .clear()
+                .context("Failed to clear terminal for restart")?;
             continue;
         }
 
@@ -774,8 +784,10 @@ fn main() -> io::Result<()> {
     let _ = stdout().execute(SetCursorStyle::DefaultUserShape);
     fresh::view::theme::Theme::reset_terminal_cursor_color();
     let _ = stdout().execute(PopKeyboardEnhancementFlags);
-    disable_raw_mode()?;
-    stdout().execute(LeaveAlternateScreen)?;
+    disable_raw_mode().context("Failed to disable raw mode")?;
+    stdout()
+        .execute(LeaveAlternateScreen)
+        .context("Failed to leave alternate screen")?;
 
     // Check for updates after terminal is restored (using cached result)
     if let Some(update_result) = last_update_result {
@@ -798,7 +810,7 @@ fn main() -> io::Result<()> {
         }
     }
 
-    result
+    result.context("Editor loop returned an error")
 }
 
 /// Main event loop
@@ -809,7 +821,7 @@ fn run_event_loop(
     session_enabled: bool,
     key_translator: &KeyTranslator,
     gpm_client: &Option<GpmClient>,
-) -> io::Result<()> {
+) -> AnyhowResult<()> {
     run_event_loop_common(
         editor,
         terminal,
@@ -826,7 +838,7 @@ fn run_event_loop(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     session_enabled: bool,
     key_translator: &KeyTranslator,
-) -> io::Result<()> {
+) -> AnyhowResult<()> {
     run_event_loop_common(
         editor,
         terminal,
@@ -848,9 +860,9 @@ fn run_event_loop_common<F>(
     session_enabled: bool,
     _key_translator: &KeyTranslator,
     mut poll_event: F,
-) -> io::Result<()>
+) -> AnyhowResult<()>
 where
-    F: FnMut(Duration) -> io::Result<Option<CrosstermEvent>>,
+    F: FnMut(Duration) -> AnyhowResult<Option<CrosstermEvent>>,
 {
     use std::time::Instant;
 
@@ -959,7 +971,7 @@ where
 fn poll_with_gpm(
     gpm_client: Option<&GpmClient>,
     timeout: Duration,
-) -> io::Result<Option<CrosstermEvent>> {
+) -> AnyhowResult<Option<CrosstermEvent>> {
     use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
     use std::os::unix::io::{AsRawFd, BorrowedFd};
 
@@ -1044,7 +1056,7 @@ fn poll_with_gpm(
 }
 
 /// Handle a keyboard event
-fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> io::Result<()> {
+fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> AnyhowResult<()> {
     // Trace the full key event
     tracing::trace!(
         "Key event received: code={:?}, modifiers={:?}, kind={:?}, state={:?}",
@@ -1067,7 +1079,7 @@ fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> io::Result<()> 
 
 /// Handle a mouse event
 /// Returns true if a re-render is needed
-fn handle_mouse_event(editor: &mut Editor, mouse_event: MouseEvent) -> io::Result<bool> {
+fn handle_mouse_event(editor: &mut Editor, mouse_event: MouseEvent) -> AnyhowResult<bool> {
     tracing::trace!(
         "Mouse event received: kind={:?}, column={}, row={}, modifiers={:?}",
         mouse_event.kind,
@@ -1077,14 +1089,16 @@ fn handle_mouse_event(editor: &mut Editor, mouse_event: MouseEvent) -> io::Resul
     );
 
     // Delegate to the editor's handle_mouse method
-    editor.handle_mouse(mouse_event)
+    editor
+        .handle_mouse(mouse_event)
+        .context("Failed to handle mouse event")
 }
 
 /// Skip stale mouse move events, return the latest one.
 /// If we read a non-move event while draining, return it as pending.
 fn coalesce_mouse_moves(
     event: CrosstermEvent,
-) -> io::Result<(CrosstermEvent, Option<CrosstermEvent>)> {
+) -> AnyhowResult<(CrosstermEvent, Option<CrosstermEvent>)> {
     use crossterm::event::MouseEventKind;
 
     // Only coalesce mouse moves

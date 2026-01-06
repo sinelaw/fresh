@@ -4,6 +4,7 @@
 //! including clicks, scrolling, and drag operations.
 
 use crate::app::Editor;
+use anyhow::Result as AnyhowResult;
 
 use super::items::SettingControl;
 use super::{FocusPanel, SettingsHit, SettingsLayout};
@@ -73,7 +74,7 @@ impl Editor {
         &mut self,
         mouse_event: crossterm::event::MouseEvent,
         is_double_click: bool,
-    ) -> std::io::Result<bool> {
+    ) -> AnyhowResult<bool> {
         use crossterm::event::{MouseButton, MouseEventKind};
 
         let col = mouse_event.column;
@@ -423,7 +424,7 @@ impl Editor {
         col: u16,
         row: u16,
         _is_double_click: bool,
-    ) -> std::io::Result<bool> {
+    ) -> AnyhowResult<bool> {
         let Some(layout) = self.entry_dialog_layout() else {
             return Ok(false);
         };
@@ -449,7 +450,7 @@ impl Editor {
         &mut self,
         col: u16,
         layout: &EntryDialogLayout,
-    ) -> std::io::Result<bool> {
+    ) -> AnyhowResult<bool> {
         let Some(ref mut state) = self.settings_state else {
             return Ok(false);
         };
@@ -481,7 +482,7 @@ impl Editor {
         &mut self,
         row: u16,
         layout: &EntryDialogLayout,
-    ) -> std::io::Result<bool> {
+    ) -> AnyhowResult<bool> {
         let Some(ref mut state) = self.settings_state else {
             return Ok(false);
         };
@@ -508,7 +509,7 @@ impl Editor {
         Ok(false)
     }
 
-    fn settings_entry_dialog_activate_button(&mut self) -> std::io::Result<bool> {
+    fn settings_entry_dialog_activate_button(&mut self) -> AnyhowResult<bool> {
         let Some(ref mut state) = self.settings_state else {
             return Ok(false);
         };

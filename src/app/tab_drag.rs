@@ -9,11 +9,12 @@
 use super::types::TabDropZone;
 use super::Editor;
 use crate::model::event::{BufferId, SplitDirection, SplitId};
+use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
 impl Editor {
     /// Handle tab drag - update position and compute drop zone
-    pub(super) fn handle_tab_drag(&mut self, col: u16, row: u16) -> std::io::Result<()> {
+    pub(super) fn handle_tab_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         // Update current position and check if we're dragging
         let (is_dragging, source_split_id) =
             if let Some(ref mut drag_state) = self.mouse_state.dragging_tab {

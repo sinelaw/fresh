@@ -535,7 +535,7 @@ pub fn get_session_path(working_dir: &Path) -> io::Result<PathBuf> {
 /// Session error types
 #[derive(Debug)]
 pub enum SessionError {
-    Io(io::Error),
+    Io(anyhow::Error),
     Json(serde_json::Error),
     WorkdirMismatch { expected: PathBuf, found: PathBuf },
     VersionTooNew { version: u32, max_supported: u32 },
@@ -544,7 +544,7 @@ pub enum SessionError {
 impl std::fmt::Display for SessionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io(e) => write!(f, "IO error: {}", e),
+            Self::Io(e) => write!(f, "Session error: {}", e),
             Self::Json(e) => write!(f, "JSON error: {}", e),
             Self::WorkdirMismatch { expected, found } => {
                 write!(
@@ -570,7 +570,7 @@ impl std::fmt::Display for SessionError {
 impl std::error::Error for SessionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Io(e) => Some(e),
+            Self::Io(e) => e.source(),
             Self::Json(e) => Some(e),
             _ => None,
         }
@@ -579,6 +579,12 @@ impl std::error::Error for SessionError {
 
 impl From<io::Error> for SessionError {
     fn from(e: io::Error) -> Self {
+        SessionError::Io(e.into())
+    }
+}
+
+impl From<anyhow::Error> for SessionError {
+    fn from(e: anyhow::Error) -> Self {
         SessionError::Io(e)
     }
 }

@@ -15,7 +15,7 @@ pub struct TestFixture {
 
 impl TestFixture {
     /// Create a new temporary file with given content
-    pub fn new(filename: &str, content: &str) -> std::io::Result<Self> {
+    pub fn new(filename: &str, content: &str) -> anyhow::Result<Self> {
         let temp_dir = tempfile::tempdir()?;
         let path = temp_dir.path().join(filename);
 
@@ -30,13 +30,13 @@ impl TestFixture {
     }
 
     /// Create an empty temporary file
-    pub fn empty(filename: &str) -> std::io::Result<Self> {
+    pub fn empty(filename: &str) -> anyhow::Result<Self> {
         Self::new(filename, "")
     }
 
     /// Read the current content of the file
-    pub fn read_content(&self) -> std::io::Result<String> {
-        fs::read_to_string(&self.path)
+    pub fn read_content(&self) -> anyhow::Result<String> {
+        Ok(fs::read_to_string(&self.path)?)
     }
 
     /// Get or create a shared large file (61MB) for all tests.
@@ -48,7 +48,7 @@ impl TestFixture {
     ///
     /// Note: The test_name parameter is kept for API compatibility but is no longer used
     /// since all tests share the same file.
-    pub fn big_txt_for_test(_test_name: &str) -> std::io::Result<PathBuf> {
+    pub fn big_txt_for_test(_test_name: &str) -> anyhow::Result<PathBuf> {
         // Global lock and path storage for thread-safe initialization
         static BIG_TXT_INIT: OnceLock<Mutex<PathBuf>> = OnceLock::new();
 
@@ -93,7 +93,7 @@ impl TestFixture {
 
 /// Create a consistent temporary directory for a test
 /// This ensures snapshot tests use the same paths on each run
-pub fn test_temp_dir(test_name: &str) -> std::io::Result<PathBuf> {
+pub fn test_temp_dir(test_name: &str) -> anyhow::Result<PathBuf> {
     let path = std::env::temp_dir().join(format!("editor-test-{test_name}"));
     if path.exists() {
         fs::remove_dir_all(&path)?;

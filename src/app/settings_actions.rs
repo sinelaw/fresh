@@ -9,6 +9,7 @@
 
 use crate::config_io::{ConfigLayer, ConfigResolver};
 use crate::input::keybindings::KeybindingResolver;
+use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
 use super::Editor;
@@ -147,7 +148,7 @@ impl Editor {
     /// Open the config file for the specified layer in the editor.
     /// Creates the file with default template if it doesn't exist.
     /// If there are pending changes in the Settings UI, warns the user and doesn't proceed.
-    pub fn open_config_file(&mut self, layer: ConfigLayer) -> std::io::Result<()> {
+    pub fn open_config_file(&mut self, layer: ConfigLayer) -> AnyhowResult<()> {
         // Check for pending changes before opening config file
         if let Some(ref state) = self.settings_state {
             if state.has_changes() {

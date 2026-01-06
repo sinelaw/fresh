@@ -8,7 +8,7 @@ use crate::services::plugins::api::{
 };
 use crate::view::overlay::{OverlayHandle, OverlayNamespace};
 use crate::view::split::SplitViewState;
-use std::io;
+use anyhow::Result as AnyhowResult;
 
 use super::Editor;
 
@@ -760,7 +760,7 @@ impl Editor {
         path: std::path::PathBuf,
         line: Option<usize>,
         column: Option<usize>,
-    ) -> io::Result<()> {
+    ) -> AnyhowResult<()> {
         // Open the file
         if let Err(e) = self.open_file(&path) {
             tracing::error!("Failed to open file from plugin: {}", e);
@@ -781,7 +781,7 @@ impl Editor {
         path: std::path::PathBuf,
         line: Option<usize>,
         column: Option<usize>,
-    ) -> io::Result<()> {
+    ) -> AnyhowResult<()> {
         // Save current split's view state before switching
         self.save_current_split_view_state();
 

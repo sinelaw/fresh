@@ -23,7 +23,7 @@ enum EditOp {
 
 impl EditOp {
     /// Apply this operation to the test harness
-    fn apply(&self, harness: &mut EditorTestHarness) -> std::io::Result<()> {
+    fn apply(&self, harness: &mut EditorTestHarness) -> anyhow::Result<()> {
         match self {
             Self::TypeChar(ch) => harness.type_text(&ch.to_string()),
             Self::TypeString(s) => harness.type_text(s),

@@ -12,6 +12,7 @@ use crate::input::keybindings::Action;
 use crate::model::event::{SplitDirection, SplitId};
 use crate::services::plugins::hooks::HookArgs;
 use crate::view::prompt::PromptType;
+use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
 impl Editor {
@@ -20,7 +21,7 @@ impl Editor {
     pub fn handle_mouse(
         &mut self,
         mouse_event: crossterm::event::MouseEvent,
-    ) -> std::io::Result<bool> {
+    ) -> AnyhowResult<bool> {
         use crossterm::event::{MouseButton, MouseEventKind};
 
         let col = mouse_event.column;
@@ -809,7 +810,7 @@ impl Editor {
 
     /// Handle mouse double click (down event)
     /// Double-click in editor area selects the word under the cursor.
-    pub(super) fn handle_mouse_double_click(&mut self, col: u16, row: u16) -> std::io::Result<()> {
+    pub(super) fn handle_mouse_double_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         tracing::debug!("handle_mouse_double_click at col={}, row={}", col, row);
 
         // Is it in the file open dialog?
@@ -853,7 +854,7 @@ impl Editor {
         split_id: crate::model::event::SplitId,
         buffer_id: BufferId,
         content_rect: ratatui::layout::Rect,
-    ) -> std::io::Result<()> {
+    ) -> AnyhowResult<()> {
         use crate::model::event::Event;
 
         // Focus this split
@@ -913,7 +914,7 @@ impl Editor {
         Ok(())
     }
     /// Handle mouse click (down event)
-    pub(super) fn handle_mouse_click(&mut self, col: u16, row: u16) -> std::io::Result<()> {
+    pub(super) fn handle_mouse_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         // Check if click is on tab context menu first
         if self.tab_context_menu.is_some() {
             if let Some(result) = self.handle_tab_context_menu_click(col, row) {
@@ -1349,7 +1350,7 @@ impl Editor {
     }
 
     /// Handle mouse drag event
-    pub(super) fn handle_mouse_drag(&mut self, col: u16, row: u16) -> std::io::Result<()> {
+    pub(super) fn handle_mouse_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         // If dragging scrollbar, update scroll position
         if let Some(dragging_split_id) = self.mouse_state.dragging_scrollbar {
             // Find the buffer and scrollbar rect for this split
@@ -1443,7 +1444,7 @@ impl Editor {
     }
 
     /// Handle text selection drag - extends selection from anchor to current position
-    fn handle_text_selection_drag(&mut self, col: u16, row: u16) -> std::io::Result<()> {
+    fn handle_text_selection_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         use crate::model::event::Event;
 
         let Some(split_id) = self.mouse_state.drag_selection_split else {
@@ -1529,7 +1530,7 @@ impl Editor {
     }
 
     /// Handle file explorer border drag for resizing
-    pub(super) fn handle_file_explorer_border_drag(&mut self, col: u16) -> std::io::Result<()> {
+    pub(super) fn handle_file_explorer_border_drag(&mut self, col: u16) -> AnyhowResult<()> {
         let Some((start_col, _start_row)) = self.mouse_state.drag_start_position else {
             return Ok(());
         };
@@ -1559,7 +1560,7 @@ impl Editor {
         row: u16,
         split_id: SplitId,
         direction: SplitDirection,
-    ) -> std::io::Result<()> {
+    ) -> AnyhowResult<()> {
         let Some((start_col, start_row)) = self.mouse_state.drag_start_position else {
             return Ok(());
         };
@@ -1600,7 +1601,7 @@ impl Editor {
     }
 
     /// Handle right-click event
-    pub(super) fn handle_right_click(&mut self, col: u16, row: u16) -> std::io::Result<()> {
+    pub(super) fn handle_right_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         // First check if a tab context menu is open and the click is on a menu item
         if let Some(ref menu) = self.tab_context_menu {
             let menu_x = menu.position.0;
@@ -1646,7 +1647,7 @@ impl Editor {
         &mut self,
         col: u16,
         row: u16,
-    ) -> Option<std::io::Result<()>> {
+    ) -> Option<AnyhowResult<()>> {
         let menu = self.tab_context_menu.as_ref()?;
         let menu_x = menu.position.0;
         let menu_y = menu.position.1;
@@ -1691,7 +1692,7 @@ impl Editor {
         item: super::types::TabContextMenuItem,
         buffer_id: BufferId,
         split_id: SplitId,
-    ) -> std::io::Result<()> {
+    ) -> AnyhowResult<()> {
         use super::types::TabContextMenuItem;
 
         match item {

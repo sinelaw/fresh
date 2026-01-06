@@ -22,6 +22,7 @@ use crate::app::Editor;
 use crate::model::composite_buffer::{CompositeBuffer, CompositeLayout, LineAlignment, SourcePane};
 use crate::model::event::{BufferId, SplitId};
 use crate::view::composite_view::CompositeViewState;
+use anyhow::Result as AnyhowResult;
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Information about the current cursor line needed for movement operations
@@ -982,7 +983,7 @@ impl Editor {
         split_id: SplitId,
         buffer_id: BufferId,
         content_rect: ratatui::layout::Rect,
-    ) -> std::io::Result<()> {
+    ) -> AnyhowResult<()> {
         // Calculate which pane was clicked based on x coordinate
         let pane_idx =
             if let Some(view_state) = self.composite_view_states.get(&(split_id, buffer_id)) {

@@ -7,6 +7,7 @@ use crate::app::types::HoverTarget;
 use crate::config::{Menu, MenuItem};
 use crate::input::keybindings::Action;
 use crate::primitives::display_width::str_width;
+use anyhow::Result as AnyhowResult;
 
 impl Editor {
     /// Get all menus (built-in menus + plugin menus) with DynamicSubmenus expanded.
@@ -237,7 +238,7 @@ impl Editor {
         menu: &Menu,
         menu_index: usize,
         all_menus: &[Menu],
-    ) -> std::io::Result<Option<std::io::Result<()>>> {
+    ) -> AnyhowResult<Option<AnyhowResult<()>>> {
         // Calculate dropdown positions for the entire chain
         // Similar to render_dropdown_chain but for hit testing
 

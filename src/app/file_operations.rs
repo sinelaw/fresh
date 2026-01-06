@@ -8,7 +8,6 @@
 //! - File modification time tracking
 //! - Save conflict detection
 
-use std::io;
 use std::path::{Path, PathBuf};
 
 use lsp_types::TextDocumentContentChangeEvent;
@@ -22,7 +21,7 @@ use super::{BufferMetadata, Editor};
 
 impl Editor {
     /// Save the active buffer
-    pub fn save(&mut self) -> io::Result<()> {
+    pub fn save(&mut self) -> anyhow::Result<()> {
         let path = self
             .active_state()
             .buffer
@@ -95,7 +94,7 @@ impl Editor {
 
     /// Revert the active buffer to the last saved version on disk
     /// Returns Ok(true) if reverted, Ok(false) if no file path, Err on failure
-    pub fn revert_file(&mut self) -> io::Result<bool> {
+    pub fn revert_file(&mut self) -> anyhow::Result<bool> {
         let path = match self.active_state().buffer.file_path() {
             Some(p) => p.to_path_buf(),
             None => {
@@ -576,7 +575,7 @@ impl Editor {
     /// This is used for auto-reverting background buffers that aren't currently
     /// visible in the active split. It reloads the buffer content and updates
     /// cursors (clamped to valid positions), but does NOT touch any viewport state.
-    fn revert_buffer_by_id(&mut self, buffer_id: BufferId, path: &Path) -> io::Result<()> {
+    fn revert_buffer_by_id(&mut self, buffer_id: BufferId, path: &Path) -> anyhow::Result<()> {
         // Load the file content fresh from disk
         let new_state = EditorState::from_file_with_languages(
             path,

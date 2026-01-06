@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
 impl Editor {
@@ -2535,7 +2536,7 @@ impl Editor {
     }
 
     /// Handle interactive replace key press (y/n/a/c)
-    pub(super) fn handle_interactive_replace_key(&mut self, c: char) -> std::io::Result<()> {
+    pub(super) fn handle_interactive_replace_key(&mut self, c: char) -> AnyhowResult<()> {
         let state = self.interactive_replace_state.clone();
         let Some(mut ir_state) = state else {
             return Ok(());
@@ -2712,7 +2713,7 @@ impl Editor {
     pub(super) fn replace_current_match(
         &mut self,
         ir_state: &InteractiveReplaceState,
-    ) -> std::io::Result<()> {
+    ) -> AnyhowResult<()> {
         let match_pos = ir_state.current_match_pos;
         let search_len = ir_state.search.len();
         let range = match_pos..(match_pos + search_len);

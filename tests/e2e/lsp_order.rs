@@ -13,7 +13,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 /// the LSP client sends textDocument/didOpen before textDocument/hover.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
-fn test_did_open_sent_before_hover() -> std::io::Result<()> {
+fn test_did_open_sent_before_hover() -> anyhow::Result<()> {
     // Initialize tracing for debugging
     let _ = tracing_subscriber::fmt()
         .with_env_filter("fresh=debug")

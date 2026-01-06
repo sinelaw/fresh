@@ -21,7 +21,7 @@ impl FakeLspServer {
     ///
     /// The server will listen on stdin/stdout and respond to LSP requests.
     /// It uses a Bash script that acts as a simple JSON-RPC server.
-    pub fn spawn() -> std::io::Result<Self> {
+    pub fn spawn() -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that acts as a fake LSP server
@@ -161,7 +161,7 @@ done
     /// but then blocks forever on all other requests without responding.
     /// This is useful for testing that the editor UI remains responsive even
     /// when the LSP server is completely stuck.
-    pub fn spawn_blocking() -> std::io::Result<Self> {
+    pub fn spawn_blocking() -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that acts as a fake LSP server that blocks forever
@@ -258,7 +258,7 @@ done
     ///
     /// This version responds to didChange notifications with a large number of diagnostics
     /// across many lines. This is useful for testing performance with many diagnostics.
-    pub fn spawn_many_diagnostics(diagnostic_count: usize) -> std::io::Result<Self> {
+    pub fn spawn_many_diagnostics(diagnostic_count: usize) -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Generate JSON for many diagnostics
@@ -374,7 +374,7 @@ done
     ///
     /// This version sends progress notifications (begin, report, end) after initialization.
     /// This is useful for testing LSP progress display in the status bar.
-    pub fn spawn_with_progress() -> std::io::Result<Self> {
+    pub fn spawn_with_progress() -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that sends progress notifications
@@ -492,7 +492,7 @@ done
     /// This version initializes successfully but then crashes (exits with non-zero)
     /// after receiving any subsequent request. This is useful for testing LSP server
     /// crash detection and auto-restart functionality.
-    pub fn spawn_crashing() -> std::io::Result<Self> {
+    pub fn spawn_crashing() -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that crashes after init
@@ -598,7 +598,7 @@ done
     /// It also tracks result_id for incremental updates and returns "unchanged" responses
     /// when the same result_id is passed. This is useful for testing LSP 3.17+ pull
     /// diagnostics functionality.
-    pub fn spawn_with_pull_diagnostics() -> std::io::Result<Self> {
+    pub fn spawn_with_pull_diagnostics() -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that supports pull diagnostics
@@ -730,7 +730,7 @@ done
     ///
     /// This version responds to textDocument/inlayHint requests with sample hints.
     /// This is useful for testing LSP 3.17+ inlay hints functionality.
-    pub fn spawn_with_inlay_hints() -> std::io::Result<Self> {
+    pub fn spawn_with_inlay_hints() -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that supports inlay hints
@@ -833,7 +833,7 @@ done
     ///
     /// This variant logs each method name to a log file, which can be used
     /// to verify the order of LSP messages (e.g., that didOpen is sent before hover).
-    pub fn spawn_with_logging() -> std::io::Result<Self> {
+    pub fn spawn_with_logging() -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that logs all methods to a file
@@ -964,7 +964,7 @@ done
     /// This simulates LSP servers like pyrefly that don't return the hover range.
     /// Used to test that hover popup doesn't move/duplicate when LSP doesn't
     /// provide symbol range information.
-    pub fn spawn_without_range() -> std::io::Result<Self> {
+    pub fn spawn_without_range() -> anyhow::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel();
 
         // Create a Bash script that acts as a fake LSP server WITHOUT hover range

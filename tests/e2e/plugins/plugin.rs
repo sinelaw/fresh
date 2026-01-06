@@ -1521,7 +1521,7 @@ fn test_color_highlighter_toggle() {
 /// Ensure the clangd plugin reacts to file-status notifications
 #[test]
 #[ignore]
-fn test_clangd_plugin_file_status_notification() -> std::io::Result<()> {
+fn test_clangd_plugin_file_status_notification() -> anyhow::Result<()> {
     init_tracing_from_env();
     let _fake_server = FakeLspServer::spawn()?;
 
@@ -1588,7 +1588,7 @@ fn test_clangd_plugin_file_status_notification() -> std::io::Result<()> {
 /// Ensure the clangd plugin uses editor.sendLspRequest successfully
 #[test]
 #[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
-fn test_clangd_plugin_switch_source_header() -> std::io::Result<()> {
+fn test_clangd_plugin_switch_source_header() -> anyhow::Result<()> {
     init_tracing_from_env();
     let _fake_server = FakeLspServer::spawn()?;
 
@@ -1780,7 +1780,7 @@ editor.setStatus("Test source plugin loaded!");
 /// Test that diagnostics from fake LSP are stored and accessible via getAllDiagnostics API
 #[test]
 #[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
-fn test_diagnostics_api_with_fake_lsp() -> std::io::Result<()> {
+fn test_diagnostics_api_with_fake_lsp() -> anyhow::Result<()> {
     init_tracing_from_env();
     let _fake_server = FakeLspServer::spawn()?;
 

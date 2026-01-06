@@ -1,6 +1,8 @@
 #![cfg(test)]
 // EditorTestHarness - Virtual terminal environment for E2E testing
 
+use anyhow::{Context, Result as AnyhowResult};
+
 // Initialize V8 early - must happen before any Editor/JsRuntime is created
 // and only once per process. Using ctor ensures this runs at test startup.
 // Only needed when the plugins feature is enabled.
@@ -311,7 +313,7 @@ impl EditorTestHarness {
     ///     .with_config(my_config)
     /// )?;
     /// ```
-    pub fn create(width: u16, height: u16, options: HarnessOptions) -> io::Result<Self> {
+    pub fn create(width: u16, height: u16, options: HarnessOptions) -> anyhow::Result<Self> {
         // Create temp directory if we don't have a shared dir_context
         let temp_dir = if options.dir_context.is_none() || options.create_project_root {
             Some(TempDir::new()?)
@@ -434,19 +436,19 @@ impl EditorTestHarness {
 
     /// Create new test harness with virtual terminal.
     /// Uses a temporary directory and prevents embedded plugin loading.
-    pub fn new(width: u16, height: u16) -> io::Result<Self> {
+    pub fn new(width: u16, height: u16) -> anyhow::Result<Self> {
         Self::create(width, height, HarnessOptions::new())
     }
 
     /// Create with custom config.
-    pub fn with_config(width: u16, height: u16, config: Config) -> io::Result<Self> {
+    pub fn with_config(width: u16, height: u16, config: Config) -> anyhow::Result<Self> {
         Self::create(width, height, HarnessOptions::new().with_config(config))
     }
 
     /// Create harness with an isolated temporary project directory.
     /// Creates a "project_root" subdirectory for deterministic paths in snapshots.
     /// Does NOT create a plugins directory inside project_root (use `.with_empty_plugins_dir()` if needed).
-    pub fn with_temp_project(width: u16, height: u16) -> io::Result<Self> {
+    pub fn with_temp_project(width: u16, height: u16) -> anyhow::Result<Self> {
         Self::create(width, height, HarnessOptions::new().with_project_root())
     }
 
@@ -455,7 +457,7 @@ impl EditorTestHarness {
         width: u16,
         height: u16,
         config: Config,
-    ) -> io::Result<Self> {
+    ) -> anyhow::Result<Self> {
         Self::create(
             width,
             height,
@@ -466,7 +468,7 @@ impl EditorTestHarness {
     }
 
     /// Create with explicit working directory, using default config.
-    pub fn with_working_dir(width: u16, height: u16, working_dir: PathBuf) -> io::Result<Self> {
+    pub fn with_working_dir(width: u16, height: u16, working_dir: PathBuf) -> anyhow::Result<Self> {
         let config = Config::default();
         Self::with_config_and_working_dir(width, height, config, working_dir)
     }
@@ -477,7 +479,7 @@ impl EditorTestHarness {
         height: u16,
         config: Config,
         working_dir: PathBuf,
-    ) -> io::Result<Self> {
+    ) -> anyhow::Result<Self> {
         Self::create(
             width,
             height,
@@ -489,7 +491,7 @@ impl EditorTestHarness {
     }
 
     /// Create new test harness with line wrapping disabled.
-    pub fn new_no_wrap(width: u16, height: u16) -> io::Result<Self> {
+    pub fn new_no_wrap(width: u16, height: u16) -> anyhow::Result<Self> {
         let mut config = Config::default();
         config.editor.line_wrap = false;
         Self::with_config(width, height, config)
@@ -503,7 +505,7 @@ impl EditorTestHarness {
         config: Config,
         working_dir: PathBuf,
         dir_context: DirectoryContext,
-    ) -> io::Result<Self> {
+    ) -> anyhow::Result<Self> {
         Self::create(
             width,
             height,
@@ -516,7 +518,11 @@ impl EditorTestHarness {
     }
 
     /// Create a test harness with a slow filesystem backend for performance testing.
-    pub fn with_slow_fs(width: u16, height: u16, slow_config: SlowFsConfig) -> io::Result<Self> {
+    pub fn with_slow_fs(
+        width: u16,
+        height: u16,
+        slow_config: SlowFsConfig,
+    ) -> anyhow::Result<Self> {
         Self::create(
             width,
             height,
@@ -601,7 +607,7 @@ impl EditorTestHarness {
     }
 
     /// Open a file in the editor
-    pub fn open_file(&mut self, path: &Path) -> io::Result<()> {
+    pub fn open_file(&mut self, path: &Path) -> anyhow::Result<()> {
         self.editor.open_file(path)?;
         self.render()?;
 
@@ -619,21 +625,21 @@ impl EditorTestHarness {
     pub fn load_buffer_from_text(
         &mut self,
         content: &str,
-    ) -> io::Result<crate::common::fixtures::TestFixture> {
+    ) -> anyhow::Result<crate::common::fixtures::TestFixture> {
         let fixture = crate::common::fixtures::TestFixture::new("test_buffer.txt", content)?;
         self.open_file(&fixture.path)?;
         Ok(fixture)
     }
 
     /// Create a new empty buffer
-    pub fn new_buffer(&mut self) -> io::Result<()> {
+    pub fn new_buffer(&mut self) -> anyhow::Result<()> {
         self.editor.new_buffer();
         self.render()?;
         Ok(())
     }
 
     /// Simulate a key press
-    pub fn send_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> io::Result<()> {
+    pub fn send_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> AnyhowResult<()> {
         // Update shadow string to mirror the operation (only if validation is enabled)
         if self.enable_shadow_validation {
             self.update_shadow_for_key(code, modifiers);
@@ -658,7 +664,7 @@ impl EditorTestHarness {
         code: KeyCode,
         modifiers: KeyModifiers,
         count: usize,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         for _ in 0..count {
             // Call handle_key directly without rendering (unlike send_key which renders every time)
             self.editor.handle_key(code, modifiers)?;
@@ -672,7 +678,7 @@ impl EditorTestHarness {
 
     /// Simulate typing a string of text
     /// Optimized to avoid rendering after each character - only renders once at the end
-    pub fn type_text(&mut self, text: &str) -> io::Result<()> {
+    pub fn type_text(&mut self, text: &str) -> anyhow::Result<()> {
         for ch in text.chars() {
             // Update shadow string (only if validation is enabled)
             if self.enable_shadow_validation {
@@ -692,14 +698,14 @@ impl EditorTestHarness {
     }
 
     /// Simulate a mouse event
-    pub fn send_mouse(&mut self, mouse_event: MouseEvent) -> io::Result<()> {
+    pub fn send_mouse(&mut self, mouse_event: MouseEvent) -> anyhow::Result<()> {
         // Delegate to the editor's handle_mouse method (just like main.rs does)
         self.editor.handle_mouse(mouse_event)?;
         Ok(())
     }
 
     /// Simulate a mouse click at specific coordinates
-    pub fn mouse_click(&mut self, col: u16, row: u16) -> io::Result<()> {
+    pub fn mouse_click(&mut self, col: u16, row: u16) -> anyhow::Result<()> {
         let mouse_event = MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: col,
@@ -721,7 +727,7 @@ impl EditorTestHarness {
     }
 
     /// Simulate a mouse move (hover) at specific coordinates
-    pub fn mouse_move(&mut self, col: u16, row: u16) -> io::Result<()> {
+    pub fn mouse_move(&mut self, col: u16, row: u16) -> anyhow::Result<()> {
         let mouse_event = MouseEvent {
             kind: MouseEventKind::Moved,
             column: col,
@@ -734,7 +740,7 @@ impl EditorTestHarness {
     }
 
     /// Simulate a mouse scroll up at specific coordinates
-    pub fn mouse_scroll_up(&mut self, col: u16, row: u16) -> io::Result<()> {
+    pub fn mouse_scroll_up(&mut self, col: u16, row: u16) -> anyhow::Result<()> {
         let mouse_event = MouseEvent {
             kind: MouseEventKind::ScrollUp,
             column: col,
@@ -747,7 +753,7 @@ impl EditorTestHarness {
     }
 
     /// Simulate a mouse scroll down at specific coordinates
-    pub fn mouse_scroll_down(&mut self, col: u16, row: u16) -> io::Result<()> {
+    pub fn mouse_scroll_down(&mut self, col: u16, row: u16) -> anyhow::Result<()> {
         let mouse_event = MouseEvent {
             kind: MouseEventKind::ScrollDown,
             column: col,
@@ -766,7 +772,7 @@ impl EditorTestHarness {
         start_row: u16,
         end_col: u16,
         end_row: u16,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         // Send initial press
         let mouse_down = MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -807,13 +813,13 @@ impl EditorTestHarness {
     }
 
     /// Apply an event directly to the active buffer
-    pub fn apply_event(&mut self, event: fresh::model::event::Event) -> io::Result<()> {
+    pub fn apply_event(&mut self, event: fresh::model::event::Event) -> anyhow::Result<()> {
         self.editor.apply_event_to_active_buffer(&event);
         Ok(())
     }
 
     /// Force a render cycle and capture output
-    pub fn render(&mut self) -> io::Result<()> {
+    pub fn render(&mut self) -> anyhow::Result<()> {
         self.terminal.draw(|frame| {
             self.editor.render(frame);
         })?;
@@ -823,7 +829,7 @@ impl EditorTestHarness {
     /// Render through the real CrosstermBackend and parse with vt100
     /// This tests the actual ANSI escape sequences, not just the buffer contents
     /// Returns the screen content as parsed by a real terminal emulator
-    pub fn render_real(&mut self) -> io::Result<()> {
+    pub fn render_real(&mut self) -> anyhow::Result<()> {
         // Generate ANSI escape sequences manually
 
         // First render to TestBackend to get the buffer
@@ -859,7 +865,7 @@ impl EditorTestHarness {
 
     /// Alternative: Render using ratatui's diff-based rendering to capture incremental updates
     /// This more closely matches what happens in the real application
-    pub fn render_real_incremental(&mut self) -> io::Result<()> {
+    pub fn render_real_incremental(&mut self) -> anyhow::Result<()> {
         use ratatui::backend::CrosstermBackend;
 
         // Create a buffer to capture ANSI output
@@ -1479,7 +1485,7 @@ impl EditorTestHarness {
     /// Resize the terminal to new dimensions
     /// This simulates terminal resize events and updates both the virtual terminal
     /// backend and the editor's viewport
-    pub fn resize(&mut self, width: u16, height: u16) -> io::Result<()> {
+    pub fn resize(&mut self, width: u16, height: u16) -> anyhow::Result<()> {
         // Resize the virtual terminal backend
         self.terminal.backend_mut().resize(width, height);
         // Resize the editor's viewports
@@ -1491,7 +1497,7 @@ impl EditorTestHarness {
 
     /// Process pending async messages (including file polling) and render
     /// Useful for testing async features like git grep, file explorer, auto-revert, etc.
-    pub fn process_async_and_render(&mut self) -> io::Result<()> {
+    pub fn process_async_and_render(&mut self) -> anyhow::Result<()> {
         let _ = self.editor.process_async_messages();
         self.render()?;
         Ok(())
@@ -1499,7 +1505,7 @@ impl EditorTestHarness {
 
     /// Wait for async operations with timeout
     /// Repeatedly processes async messages until condition is met or timeout
-    pub fn wait_for_async<F>(&mut self, mut condition: F, timeout_ms: u64) -> io::Result<bool>
+    pub fn wait_for_async<F>(&mut self, mut condition: F, timeout_ms: u64) -> anyhow::Result<bool>
     where
         F: FnMut(&Self) -> bool,
     {
@@ -1523,7 +1529,7 @@ impl EditorTestHarness {
     ///
     /// Note: Uses a short real wall-clock sleep between iterations to allow
     /// async I/O operations (running on tokio runtime) time to complete.
-    pub fn wait_until<F>(&mut self, mut condition: F) -> io::Result<()>
+    pub fn wait_until<F>(&mut self, mut condition: F) -> anyhow::Result<()>
     where
         F: FnMut(&Self) -> bool,
     {
@@ -1543,14 +1549,14 @@ impl EditorTestHarness {
     // ===== File Explorer Wait Helpers =====
 
     /// Wait for file explorer to be initialized (has a view)
-    pub fn wait_for_file_explorer(&mut self) -> io::Result<()> {
+    pub fn wait_for_file_explorer(&mut self) -> anyhow::Result<()> {
         self.wait_until(|h| h.editor().file_explorer().is_some())
     }
 
     /// Wait for file explorer to show a specific item by name (in the tree, not tabs)
     /// The file explorer tree uses │ characters, so we check for lines containing both
     /// Also ensures the file_explorer object exists (not taken for async operation)
-    pub fn wait_for_file_explorer_item(&mut self, name: &str) -> io::Result<()> {
+    pub fn wait_for_file_explorer_item(&mut self, name: &str) -> anyhow::Result<()> {
         let name = name.to_string();
         self.wait_until(move |h| {
             // Ensure file_explorer exists (not None during async operation)
@@ -1568,24 +1574,24 @@ impl EditorTestHarness {
     }
 
     /// Wait for a prompt to become active
-    pub fn wait_for_prompt(&mut self) -> io::Result<()> {
+    pub fn wait_for_prompt(&mut self) -> anyhow::Result<()> {
         self.wait_until(|h| h.editor().is_prompting())
     }
 
     /// Wait for prompt to close (no longer prompting)
-    pub fn wait_for_prompt_closed(&mut self) -> io::Result<()> {
+    pub fn wait_for_prompt_closed(&mut self) -> anyhow::Result<()> {
         self.wait_until(|h| !h.editor().is_prompting())
     }
 
     /// Wait for screen to contain specific text
-    pub fn wait_for_screen_contains(&mut self, text: &str) -> io::Result<()> {
+    pub fn wait_for_screen_contains(&mut self, text: &str) -> anyhow::Result<()> {
         let text = text.to_string();
         self.wait_until(move |h| h.screen_to_string().contains(&text))
     }
 
     /// Wait for buffer content to match expected value
     /// Useful for async plugin operations that modify the buffer
-    pub fn wait_for_buffer_content(&mut self, expected: &str) -> io::Result<()> {
+    pub fn wait_for_buffer_content(&mut self, expected: &str) -> anyhow::Result<()> {
         let expected = expected.to_string();
         self.wait_until(move |h| h.get_buffer_content() == Some(expected.clone()))
     }
@@ -1597,7 +1603,7 @@ impl EditorTestHarness {
         flow: &mut crate::common::visual_testing::VisualFlow,
         step_name: &str,
         description: &str,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         self.render()?;
         let cursor_pos = self.screen_cursor_position();
         flow.step(self.buffer(), cursor_pos, step_name, description)?;
