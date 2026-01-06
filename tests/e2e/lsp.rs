@@ -1,5 +1,6 @@
 //! E2E tests for LSP features
 
+use crate::common::fake_lsp::FakeLspServer;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -1094,7 +1095,9 @@ fn test_lsp_completion_canceled_on_text_edit() -> std::io::Result<()> {
     std::fs::write(&test_file, "fn main() {\n    test_\n}\n")?;
 
     // Configure editor to use the fake LSP server
+    // Disable quick_suggestions so typing 'x' doesn't trigger a new completion request
     let mut config = fresh::config::Config::default();
+    config.editor.quick_suggestions = false;
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
@@ -5010,6 +5013,327 @@ fn test_typing_does_not_autostart_lsp_when_disabled() -> std::io::Result<()> {
         "LSP server should NOT be auto-started by typing when auto_start=false. \
          Running servers after typing: {:?}",
         running_after_typing
+    );
+
+    Ok(())
+}
+
+/// Test that completion is triggered on LSP trigger characters (like `.`)
+///
+/// This test verifies that when typing a trigger character (defined by the LSP server's
+/// capabilities), a completion request is automatically sent.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
+fn test_completion_triggered_on_trigger_character() -> std::io::Result<()> {
+    // Spawn fake LSP server with logging
+    let _fake_server = FakeLspServer::spawn_with_logging()?;
+
+    // Create temp dir and test file
+    let temp_dir = tempfile::tempdir()?;
+    let log_file = temp_dir.path().join("completion_trigger_test_log.txt");
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {\n    foo\n}\n")?;
+
+    // Configure editor with quick_suggestions disabled to isolate trigger char behavior
+    let mut config = fresh::config::Config::default();
+    config.editor.quick_suggestions = false; // Only trigger chars should work
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::logging_script_path()
+                .to_string_lossy()
+                .to_string(),
+            args: vec![log_file.to_string_lossy().to_string()],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+
+    // Create harness with config
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    // Open the test file (triggers didOpen)
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for LSP to initialize and didOpen to be sent
+    harness.wait_until(|_| {
+        let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log_content.contains("textDocument/didOpen")
+    })?;
+
+    // Clear the log to start fresh for completion tests
+    std::fs::write(&log_file, "")?;
+
+    // Move to end of "foo" on line 2
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Type a trigger character (`.` is a trigger character in the fake LSP server)
+    harness.send_key(KeyCode::Char('.'), KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Wait for completion request to be logged
+    harness.wait_until(|_| {
+        let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log_content.contains("textDocument/completion")
+    })?;
+
+    // Verify completion was triggered
+    let log_content = std::fs::read_to_string(&log_file)?;
+    assert!(
+        log_content.contains("textDocument/completion"),
+        "Expected completion request to be triggered by '.' character. Log: {}",
+        log_content
+    );
+
+    Ok(())
+}
+
+/// Test that completion is triggered on word characters when quick_suggestions is enabled
+///
+/// This test verifies VS Code-like behavior where typing word characters (letters, numbers, _)
+/// triggers completion automatically when quick_suggestions is enabled.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
+fn test_completion_triggered_on_word_char_with_quick_suggestions() -> std::io::Result<()> {
+    // Spawn fake LSP server with logging
+    let _fake_server = FakeLspServer::spawn_with_logging()?;
+
+    // Create temp dir and test file
+    let temp_dir = tempfile::tempdir()?;
+    let log_file = temp_dir.path().join("quick_suggestions_test_log.txt");
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {\n    \n}\n")?;
+
+    // Configure editor with quick_suggestions ENABLED
+    let mut config = fresh::config::Config::default();
+    config.editor.quick_suggestions = true;
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::logging_script_path()
+                .to_string_lossy()
+                .to_string(),
+            args: vec![log_file.to_string_lossy().to_string()],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+
+    // Create harness with config
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    // Open the test file
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for LSP to initialize
+    harness.wait_until(|_| {
+        let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log_content.contains("textDocument/didOpen")
+    })?;
+
+    // Clear the log
+    std::fs::write(&log_file, "")?;
+
+    // Move to the empty line
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Type a word character (letter)
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Wait for completion request
+    harness.wait_until(|_| {
+        let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log_content.contains("textDocument/completion")
+    })?;
+
+    let log_content = std::fs::read_to_string(&log_file)?;
+    assert!(
+        log_content.contains("textDocument/completion"),
+        "Expected completion to be triggered by word character 'p' when quick_suggestions=true. Log: {}",
+        log_content
+    );
+
+    Ok(())
+}
+
+/// Test that completion is NOT triggered on word characters when quick_suggestions is disabled
+///
+/// This test verifies that when quick_suggestions is disabled, only LSP trigger characters
+/// (like `.`) trigger completion, not regular word characters.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
+fn test_completion_not_triggered_on_word_char_without_quick_suggestions() -> std::io::Result<()> {
+    // Spawn fake LSP server with logging
+    let _fake_server = FakeLspServer::spawn_with_logging()?;
+
+    // Create temp dir and test file
+    let temp_dir = tempfile::tempdir()?;
+    let log_file = temp_dir.path().join("no_quick_suggestions_test_log.txt");
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {\n    \n}\n")?;
+
+    // Configure editor with quick_suggestions DISABLED
+    let mut config = fresh::config::Config::default();
+    config.editor.quick_suggestions = false;
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::logging_script_path()
+                .to_string_lossy()
+                .to_string(),
+            args: vec![log_file.to_string_lossy().to_string()],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+
+    // Create harness with config
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    // Open the test file
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for LSP to initialize
+    harness.wait_until(|_| {
+        let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log_content.contains("textDocument/didOpen")
+    })?;
+
+    // Clear the log
+    std::fs::write(&log_file, "")?;
+
+    // Move to the empty line
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Type multiple word characters
+    harness.type_text("print")?;
+    harness.render()?;
+
+    // Process async messages and give some time
+    for _ in 0..10 {
+        harness.process_async_and_render()?;
+        harness.sleep(std::time::Duration::from_millis(50));
+    }
+
+    // Verify NO completion was triggered
+    let log_content = std::fs::read_to_string(&log_file)?;
+    assert!(
+        !log_content.contains("textDocument/completion"),
+        "Expected NO completion request when typing word characters with quick_suggestions=false. \
+         But completion was triggered. Log: {}",
+        log_content
+    );
+
+    Ok(())
+}
+
+/// Test that completion is NOT triggered on non-word characters (like space)
+///
+/// This test verifies that non-word characters that are not trigger characters
+/// do not trigger completion, regardless of quick_suggestions setting.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
+fn test_completion_not_triggered_on_non_word_char() -> std::io::Result<()> {
+    // Spawn fake LSP server with logging
+    let _fake_server = FakeLspServer::spawn_with_logging()?;
+
+    // Create temp dir and test file
+    let temp_dir = tempfile::tempdir()?;
+    let log_file = temp_dir.path().join("non_word_char_test_log.txt");
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {\n    foo\n}\n")?;
+
+    // Configure editor with quick_suggestions enabled
+    let mut config = fresh::config::Config::default();
+    config.editor.quick_suggestions = true;
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::logging_script_path()
+                .to_string_lossy()
+                .to_string(),
+            args: vec![log_file.to_string_lossy().to_string()],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+
+    // Create harness with config
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    // Open the test file
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for LSP to initialize
+    harness.wait_until(|_| {
+        let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log_content.contains("textDocument/didOpen")
+    })?;
+
+    // Clear the log
+    std::fs::write(&log_file, "")?;
+
+    // Move to end of "foo"
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Type a space (non-word, non-trigger character)
+    harness.send_key(KeyCode::Char(' '), KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Process async messages and give some time
+    for _ in 0..10 {
+        harness.process_async_and_render()?;
+        harness.sleep(std::time::Duration::from_millis(50));
+    }
+
+    // Verify NO completion was triggered
+    let log_content = std::fs::read_to_string(&log_file)?;
+    assert!(
+        !log_content.contains("textDocument/completion"),
+        "Expected NO completion request when typing space character. \
+         But completion was triggered. Log: {}",
+        log_content
     );
 
     Ok(())
