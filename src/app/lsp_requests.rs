@@ -397,8 +397,14 @@ impl Editor {
         Ok(())
     }
 
-    /// Check if the inserted character is a completion trigger character
-    /// and if so, request completion automatically
+    /// Check if the inserted character should trigger completion
+    /// and if so, request completion automatically.
+    ///
+    /// Triggers completion in two cases:
+    /// 1. Always: when the character is an LSP trigger character (like `.`, `::`, etc.)
+    /// 2. When quick_suggestions is enabled: when the character is a word character (alphanumeric or `_`)
+    ///
+    /// This provides VS Code-like behavior where suggestions appear while typing.
     pub(crate) fn maybe_trigger_completion(&mut self, c: char) {
         // Get the active buffer's file path and detect its language
         let path = match self.active_state().buffer.file_path() {
@@ -412,17 +418,29 @@ impl Editor {
         };
 
         // Check if this character is a trigger character for this language
-        let is_trigger = self
+        let is_lsp_trigger = self
             .lsp
             .as_ref()
             .map(|lsp| lsp.is_completion_trigger_char(c, &language))
             .unwrap_or(false);
 
-        if is_trigger {
+        // Check if quick suggestions is enabled and this is a word character
+        let quick_suggestions_enabled = self.config.editor.quick_suggestions;
+        let is_word_char = c.is_alphanumeric() || c == '_';
+
+        // Trigger completion if:
+        // 1. It's an LSP trigger character (always), OR
+        // 2. Quick suggestions is enabled AND it's a word character
+        let should_trigger = is_lsp_trigger || (quick_suggestions_enabled && is_word_char);
+
+        if should_trigger {
             tracing::debug!(
-                "Character '{}' triggered completion for language {}",
+                "Character '{}' triggered completion for language {} (lsp_trigger={}, word_char={}, quick_suggestions={})",
                 c,
-                language
+                language,
+                is_lsp_trigger,
+                is_word_char,
+                quick_suggestions_enabled
             );
             let _ = self.request_completion();
         }

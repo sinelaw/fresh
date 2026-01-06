@@ -51,7 +51,9 @@
         "auto_revert_poll_interval_ms": 2000,
         "file_tree_poll_interval_ms": 3000,
         "default_line_ending": "lf",
-        "cursor_style": "default"
+        "cursor_style": "default",
+        "quick_suggestions": true,
+        "quick_suggestions_delay_ms": 0
       }
     },
     "file_explorer": {
@@ -290,6 +292,18 @@
           "description": "Cursor style for the terminal cursor.\nOptions: blinking_block, steady_block, blinking_bar, steady_bar, blinking_underline, steady_underline\nDefault: blinking_block",
           "$ref": "#/$defs/CursorStyle",
           "default": "default"
+        },
+        "quick_suggestions": {
+          "description": "Enable quick suggestions (VS Code-like behavior).\nWhen enabled, completion suggestions appear automatically while typing,\nnot just on trigger characters (like `.` or `::`).\nDefault: true",
+          "type": "boolean",
+          "default": true
+        },
+        "quick_suggestions_delay_ms": {
+          "description": "Delay in milliseconds before quick suggestions are triggered.\nLower values show suggestions faster but may cause more LSP server load.\nOnly applies when quick_suggestions is enabled.\nDefault: 0ms (immediate, relying on request cancellation for debouncing)",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
         }
       }
     },
