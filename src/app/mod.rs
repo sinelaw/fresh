@@ -2553,13 +2553,23 @@ impl Editor {
     /// directory loading.
     fn init_file_open_state(&mut self) {
         // Determine initial directory
-        let initial_dir = self
-            .active_state()
-            .buffer
-            .file_path()
-            .and_then(|path| path.parent())
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| self.working_dir.clone());
+        let buffer_id = self.active_buffer();
+
+        // For terminal buffers, use the terminal's initial CWD or fall back to project root
+        // This avoids showing the terminal backing file directory which is confusing for users
+        let initial_dir = if self.is_terminal_buffer(buffer_id) {
+            self.get_terminal_id(buffer_id)
+                .and_then(|tid| self.terminal_manager.get(tid))
+                .and_then(|handle| handle.cwd())
+                .unwrap_or_else(|| self.working_dir.clone())
+        } else {
+            self.active_state()
+                .buffer
+                .file_path()
+                .and_then(|path| path.parent())
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| self.working_dir.clone())
+        };
 
         // Create the file open state with config-based show_hidden setting
         let show_hidden = self.config.file_browser.show_hidden;

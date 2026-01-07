@@ -2552,3 +2552,65 @@ fn test_scrollback_stable_after_multiple_mode_toggles() {
         &final_content[..final_content.len().min(1000)]
     );
 }
+
+/// Test that Open File dialog uses terminal's initial CWD, not the backing file directory
+///
+/// When the user opens the file dialog from a terminal buffer, it should start in
+/// the terminal's working directory (project root by default), not the internal
+/// backing file directory (~/.local/share/fresh/terminals/).
+#[test]
+fn test_open_file_from_terminal_uses_correct_directory() {
+    // Skip if PTY is not available
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal test: PTY not available in this environment");
+        return;
+    }
+
+    // Create harness with temp project so we have a known project root
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Open a terminal - it should start in the project root
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+
+    // Exit terminal mode (Ctrl+])
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char(']'), KeyModifiers::CONTROL);
+    harness.render().unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    // Now open the file dialog (Ctrl+O)
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The file open dialog should show the project root directory, not the terminal
+    // backing file directory (which would be something like ~/.local/share/fresh/terminals/)
+    let screen = harness.screen_to_string();
+
+    // The dialog should show the project root path
+    assert!(
+        screen.contains(&project_root.to_string_lossy().to_string()),
+        "Open File dialog should show project root directory.\nScreen:\n{}",
+        screen
+    );
+
+    // It should NOT show the terminals data directory
+    assert!(
+        !screen.contains("terminals/"),
+        "Open File dialog should NOT show terminal backing file directory.\nScreen:\n{}",
+        screen
+    );
+}
