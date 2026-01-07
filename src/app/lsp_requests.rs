@@ -743,12 +743,19 @@ impl Editor {
                 }
             };
 
-            // Determine position based on hint kind
-            // Type hints go after, parameter hints go before
-            let position = match hint.kind {
-                Some(lsp_types::InlayHintKind::TYPE) => VirtualTextPosition::AfterChar,
-                Some(lsp_types::InlayHintKind::PARAMETER) => VirtualTextPosition::BeforeChar,
-                _ => VirtualTextPosition::AfterChar, // Default to after
+            // LSP inlay hint positions are insertion points between characters.
+            // Render them before the character at that byte offset so they appear at the
+            // correct location (e.g., before punctuation or newline).
+            let (byte_offset, position) = if state.buffer.len() == 0 {
+                continue;
+            } else if byte_offset >= state.buffer.len() {
+                // If hint is at EOF, anchor to last character and render after it.
+                (
+                    state.buffer.len().saturating_sub(1),
+                    VirtualTextPosition::AfterChar,
+                )
+            } else {
+                (byte_offset, VirtualTextPosition::BeforeChar)
             };
 
             // Use the hint text as-is - spacing is handled during rendering
@@ -1936,5 +1943,83 @@ impl Editor {
                 tracing::debug!("Failed to request semantic tokens: {}", e);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Editor;
+    use crate::model::buffer::Buffer;
+    use crate::state::EditorState;
+    use crate::view::virtual_text::VirtualTextPosition;
+    use lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, Position};
+
+    fn make_hint(line: u32, character: u32, label: &str, kind: Option<InlayHintKind>) -> InlayHint {
+        InlayHint {
+            position: Position { line, character },
+            label: InlayHintLabel::String(label.to_string()),
+            kind,
+            text_edits: None,
+            tooltip: None,
+            padding_left: None,
+            padding_right: None,
+            data: None,
+        }
+    }
+
+    #[test]
+    fn test_inlay_hint_inserts_before_character() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+        state.buffer = Buffer::from_str_test("ab");
+
+        if state.buffer.len() > 0 {
+            state.marker_list.adjust_for_insert(0, state.buffer.len());
+        }
+
+        let hints = vec![make_hint(0, 1, ": i32", Some(InlayHintKind::TYPE))];
+        Editor::apply_inlay_hints_to_state(&mut state, &hints);
+
+        let lookup = state
+            .virtual_texts
+            .build_lookup(&state.marker_list, 0, state.buffer.len());
+        let vtexts = lookup.get(&1).expect("expected hint at byte offset 1");
+        assert_eq!(vtexts.len(), 1);
+        assert_eq!(vtexts[0].text, ": i32");
+        assert_eq!(vtexts[0].position, VirtualTextPosition::BeforeChar);
+    }
+
+    #[test]
+    fn test_inlay_hint_at_eof_renders_after_last_char() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+        state.buffer = Buffer::from_str_test("ab");
+
+        if state.buffer.len() > 0 {
+            state.marker_list.adjust_for_insert(0, state.buffer.len());
+        }
+
+        let hints = vec![make_hint(0, 2, ": i32", Some(InlayHintKind::TYPE))];
+        Editor::apply_inlay_hints_to_state(&mut state, &hints);
+
+        let lookup = state
+            .virtual_texts
+            .build_lookup(&state.marker_list, 0, state.buffer.len());
+        let vtexts = lookup.get(&1).expect("expected hint anchored to last byte");
+        assert_eq!(vtexts.len(), 1);
+        assert_eq!(vtexts[0].text, ": i32");
+        assert_eq!(vtexts[0].position, VirtualTextPosition::AfterChar);
+    }
+
+    #[test]
+    fn test_inlay_hint_empty_buffer_is_ignored() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+        state.buffer = Buffer::from_str_test("");
+
+        let hints = vec![make_hint(0, 0, ": i32", Some(InlayHintKind::TYPE))];
+        Editor::apply_inlay_hints_to_state(&mut state, &hints);
+
+        assert!(state.virtual_texts.is_empty());
     }
 }
