@@ -308,6 +308,12 @@ pub struct Editor {
     /// Pending LSP inlay hints request ID (if any)
     pending_inlay_hints_request: Option<u64>,
 
+    /// Pending semantic token requests keyed by LSP request ID -> (buffer_id, buffer_version)
+    pending_semantic_token_requests: HashMap<u64, (BufferId, u64)>,
+
+    /// Track semantic token requests per buffer to prevent duplicate inflight requests
+    semantic_tokens_in_flight: HashMap<BufferId, (u64, u64)>,
+
     /// Hover symbol range (byte offsets) - for highlighting the symbol under hover
     /// Format: (start_byte_offset, end_byte_offset)
     hover_symbol_range: Option<(usize, usize)>,
@@ -887,6 +893,8 @@ impl Editor {
             pending_signature_help_request: None,
             pending_code_actions_request: None,
             pending_inlay_hints_request: None,
+            pending_semantic_token_requests: HashMap::new(),
+            semantic_tokens_in_flight: HashMap::new(),
             hover_symbol_range: None,
             hover_symbol_overlay: None,
             mouse_hover_screen_position: None,
@@ -1028,6 +1036,17 @@ impl Editor {
     /// Send a response to a plugin for an async operation
     fn send_plugin_response(&self, response: crate::services::plugins::api::PluginResponse) {
         self.plugin_manager.deliver_response(response);
+    }
+
+    /// Remove a pending semantic token request from tracking maps.
+    fn take_pending_semantic_token_request(&mut self, request_id: u64) -> Option<(BufferId, u64)> {
+        if let Some((buffer_id, version)) = self.pending_semantic_token_requests.remove(&request_id)
+        {
+            self.semantic_tokens_in_flight.remove(&buffer_id);
+            Some((buffer_id, version))
+        } else {
+            None
+        }
     }
 
     /// Get all keybindings as (key, action) pairs
@@ -1372,7 +1391,7 @@ impl Editor {
     pub fn check_semantic_highlight_timer(&self) -> bool {
         // Check all buffers for pending semantic highlight redraws
         for state in self.buffers.values() {
-            if let Some(remaining) = state.semantic_highlight_cache.needs_redraw() {
+            if let Some(remaining) = state.reference_highlight_cache.needs_redraw() {
                 if remaining.is_zero() {
                     return true;
                 }
@@ -2947,6 +2966,8 @@ impl Editor {
                 AsyncMessage::LspInitialized {
                     language,
                     completion_trigger_characters,
+                    semantic_tokens_legend,
+                    semantic_tokens_full,
                 } => {
                     tracing::info!("LSP server initialized for language: {}", language);
                     tracing::debug!(
@@ -2962,10 +2983,16 @@ impl Editor {
                             &language,
                             completion_trigger_characters,
                         );
+                        lsp.set_semantic_tokens_capabilities(
+                            &language,
+                            semantic_tokens_legend,
+                            semantic_tokens_full,
+                        );
                     }
 
                     // Send didOpen for all open buffers of this language
                     self.resend_did_open_for_language(&language);
+                    self.request_semantic_tokens_for_language(&language);
                 }
                 AsyncMessage::LspError {
                     language,
@@ -3095,6 +3122,13 @@ impl Editor {
                     hints,
                 } => {
                     self.handle_lsp_inlay_hints(request_id, uri, hints);
+                }
+                AsyncMessage::LspSemanticTokens {
+                    request_id,
+                    uri,
+                    result,
+                } => {
+                    self.handle_lsp_semantic_tokens(request_id, uri, result);
                 }
                 AsyncMessage::LspServerQuiescent { language } => {
                     self.handle_lsp_server_quiescent(language);

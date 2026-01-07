@@ -9,7 +9,7 @@
 use crate::services::async_bridge::AsyncBridge;
 use crate::services::lsp::async_handler::LspHandle;
 use crate::types::LspServerConfig;
-use lsp_types::Uri;
+use lsp_types::{SemanticTokensLegend, Uri};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -66,6 +66,12 @@ pub struct LspManager {
 
     /// Completion trigger characters per language (from server capabilities)
     completion_trigger_characters: HashMap<String, Vec<String>>,
+
+    /// Semantic token legends per language (from server capabilities)
+    semantic_token_legends: HashMap<String, SemanticTokensLegend>,
+
+    /// Whether a language supports full document semantic tokens
+    semantic_tokens_full_support: HashMap<String, bool>,
 }
 
 impl LspManager {
@@ -83,6 +89,8 @@ impl LspManager {
             allowed_languages: HashSet::new(),
             disabled_languages: HashSet::new(),
             completion_trigger_characters: HashMap::new(),
+            semantic_token_legends: HashMap::new(),
+            semantic_tokens_full_support: HashMap::new(),
         }
     }
 
@@ -116,6 +124,36 @@ impl LspManager {
     /// Get completion trigger characters for a language
     pub fn get_completion_trigger_characters(&self, language: &str) -> Option<&Vec<String>> {
         self.completion_trigger_characters.get(language)
+    }
+
+    /// Store semantic token capability information for a language
+    pub fn set_semantic_tokens_capabilities(
+        &mut self,
+        language: &str,
+        legend: Option<SemanticTokensLegend>,
+        full_support: bool,
+    ) {
+        if let Some(legend) = legend {
+            self.semantic_token_legends
+                .insert(language.to_string(), legend);
+        } else {
+            self.semantic_token_legends.remove(language);
+        }
+        self.semantic_tokens_full_support
+            .insert(language.to_string(), full_support);
+    }
+
+    /// Get the semantic token legend for a language (if provided by server)
+    pub fn semantic_tokens_legend(&self, language: &str) -> Option<&SemanticTokensLegend> {
+        self.semantic_token_legends.get(language)
+    }
+
+    /// Check if the language supports full semantic tokens
+    pub fn semantic_tokens_full_supported(&self, language: &str) -> bool {
+        *self
+            .semantic_tokens_full_support
+            .get(language)
+            .unwrap_or(&false)
     }
 
     /// Check if a character is a completion trigger for any running language server

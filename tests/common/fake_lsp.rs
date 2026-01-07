@@ -73,7 +73,7 @@ while true; do
 case "$method" in
     "initialize")
         # Send initialize response
-        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1}}}'
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1,"semanticTokensProvider":{"legend":{"tokenTypes":["keyword","function","variable"],"tokenModifiers":["declaration","deprecated"]},"full":true}}}}}'
         ;;
     "textDocument/hover")
         # Send hover response with range
@@ -92,6 +92,9 @@ case "$method" in
         # Send definition response (points to line 0, col 0)
         uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"uri":"'$uri'","range":{"start":{"line":0,"character":0},"end":{"line":0,"character":10}}}}'
+        ;;
+    "textDocument/semanticTokens/full")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"data":[0,0,2,0,0,0,3,4,1,0]}}'
         ;;
     "textDocument/didSave")
         # Send diagnostics after save
@@ -147,6 +150,128 @@ done
         }));
 
         Ok(Self { handle, stop_tx })
+    }
+
+    /// Spawn a fake LSP server that delays semantic token responses.
+    pub fn spawn_with_semantic_tokens_delay(delay_ms: u64) -> anyhow::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let delay_secs = (delay_ms as f64) / 1000.0;
+
+        let script = format!(
+            r#"#!/bin/bash
+
+DELAY={delay}
+
+# Function to read a message
+read_message() {{
+    # Read headers
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        # Empty line marks end of headers
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+
+    # Read content
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}}
+
+# Function to send a message
+send_message() {{
+    local message="$1"
+    local length=${{#message}}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}}
+
+# Main loop
+while true; do
+    # Read incoming message
+    msg=$(read_message)
+
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    # Extract method from JSON
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+case "$method" in
+    "initialize")
+        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"capabilities":{{"completionProvider":{{"triggerCharacters":[".",":",":"]}},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1,"semanticTokensProvider":{{"legend":{{"tokenTypes":["keyword","function","variable"],"tokenModifiers":["declaration","deprecated"]}},"full":true}}}}}}}}'
+        ;;
+    "textDocument/hover")
+        line=$(echo "$msg" | grep -o '"line":[0-9]*' | head -1 | cut -d':' -f2)
+        char=$(echo "$msg" | grep -o '"character":[0-9]*' | head -1 | cut -d':' -f2)
+        end_char=$((char + 10))
+        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"contents":{{"kind":"markdown","value":"Test hover content"}},"range":{{"start":{{"line":'$line',"character":'$char'}},"end":{{"line":'$line',"character":'$end_char'}}}}}}}}'
+        ;;
+    "textDocument/completion")
+        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"items":[{{"label":"test_function","kind":3,"detail":"fn test_function()","insertText":"test_function"}},{{"label":"test_variable","kind":6,"detail":"let test_variable","insertText":"test_variable"}},{{"label":"test_struct","kind":22,"detail":"struct TestStruct","insertText":"test_struct"}}]}}}}'
+        ;;
+    "textDocument/definition")
+        uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"uri":"'$uri'","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":10}}}}}}}}'
+        ;;
+    "textDocument/semanticTokens/full")
+        sleep $DELAY
+        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"data":[0,0,2,0,0,0,3,4,1,0]}}}}'
+        ;;
+    "textDocument/didSave")
+        uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+        send_message '{{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{{"uri":"'$uri'","diagnostics":[{{"range":{{"start":{{"line":0,"character":4}},"end":{{"line":0,"character":5}}}},"severity":1,"message":"Test error from fake LSP"}}]}}}}'
+        ;;
+    "textDocument/didOpen")
+        uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+        send_message '{{"jsonrpc":"2.0","method":"textDocument/clangd.fileStatus","params":{{"uri":"'$uri'","status":"ready"}}}}'
+        ;;
+    "textDocument/diagnostic")
+        uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"uri":"'$uri'","items":[],"resultId":null}}}}'
+        ;;
+    "textDocument/inlayHint")
+        uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":[]}}'
+        ;;
+    "shutdown")
+        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":null}}'
+        break
+        ;;
+esac
+done
+"#,
+            delay = delay_secs
+        );
+
+        let script_path = Self::semantic_tokens_delay_script_path();
+        std::fs::write(&script_path, script)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Path to the semantic tokens delay script.
+    pub fn semantic_tokens_delay_script_path() -> std::path::PathBuf {
+        std::env::temp_dir().join("fake_lsp_server_semantic_tokens_delay.sh")
     }
 
     /// Get the path to the fake LSP server script

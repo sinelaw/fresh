@@ -13,7 +13,8 @@
 use crate::services::terminal::TerminalId;
 use crate::view::file_tree::{FileTreeView, NodeId};
 use lsp_types::{
-    CodeActionOrCommand, CompletionItem, Diagnostic, InlayHint, Location, SignatureHelp,
+    CodeActionOrCommand, CompletionItem, Diagnostic, InlayHint, Location, SemanticTokensLegend,
+    SemanticTokensResult, SignatureHelp,
 };
 use serde_json::Value;
 use std::sync::mpsc;
@@ -32,6 +33,10 @@ pub enum AsyncMessage {
         language: String,
         /// Completion trigger characters from server capabilities
         completion_trigger_characters: Vec<String>,
+        /// Legend describing semantic token types supported by the server
+        semantic_tokens_legend: Option<SemanticTokensLegend>,
+        /// Whether the server supports full document semantic tokens
+        semantic_tokens_full: bool,
     },
 
     /// LSP server crashed or failed
@@ -108,6 +113,13 @@ pub enum AsyncMessage {
         uri: String,
         /// Inlay hints for the requested range
         hints: Vec<InlayHint>,
+    },
+
+    /// LSP semantic tokens response (textDocument/semanticTokens/full)
+    LspSemanticTokens {
+        request_id: u64,
+        uri: String,
+        result: Result<Option<SemanticTokensResult>, String>,
     },
 
     /// LSP server status became quiescent (project fully loaded)
@@ -328,6 +340,8 @@ mod tests {
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
                 completion_trigger_characters: vec![".".to_string()],
+                semantic_tokens_legend: None,
+                semantic_tokens_full: false,
             })
             .unwrap();
 
@@ -339,6 +353,7 @@ mod tests {
             AsyncMessage::LspInitialized {
                 language,
                 completion_trigger_characters,
+                ..
             } => {
                 assert_eq!(language, "rust");
                 assert_eq!(completion_trigger_characters, &vec![".".to_string()]);
@@ -357,12 +372,16 @@ mod tests {
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
                 completion_trigger_characters: vec![],
+                semantic_tokens_legend: None,
+                semantic_tokens_full: false,
             })
             .unwrap();
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "typescript".to_string(),
                 completion_trigger_characters: vec![],
+                semantic_tokens_legend: None,
+                semantic_tokens_full: false,
             })
             .unwrap();
 
@@ -391,12 +410,16 @@ mod tests {
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
                 completion_trigger_characters: vec![],
+                semantic_tokens_legend: None,
+                semantic_tokens_full: false,
             })
             .unwrap();
         sender2
             .send(AsyncMessage::LspInitialized {
                 language: "typescript".to_string(),
                 completion_trigger_characters: vec![],
+                semantic_tokens_legend: None,
+                semantic_tokens_full: false,
             })
             .unwrap();
 
@@ -495,6 +518,8 @@ mod tests {
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
                 completion_trigger_characters: vec![],
+                semantic_tokens_legend: None,
+                semantic_tokens_full: false,
             })
             .unwrap();
 
@@ -512,6 +537,8 @@ mod tests {
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
                 completion_trigger_characters: vec![],
+                semantic_tokens_legend: None,
+                semantic_tokens_full: false,
             })
             .unwrap();
 
@@ -534,18 +561,24 @@ mod tests {
             .send(AsyncMessage::LspInitialized {
                 language: "rust".to_string(),
                 completion_trigger_characters: vec![],
+                semantic_tokens_legend: None,
+                semantic_tokens_full: false,
             })
             .unwrap();
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "typescript".to_string(),
                 completion_trigger_characters: vec![],
+                semantic_tokens_legend: None,
+                semantic_tokens_full: false,
             })
             .unwrap();
         sender
             .send(AsyncMessage::LspInitialized {
                 language: "python".to_string(),
                 completion_trigger_characters: vec![],
+                semantic_tokens_legend: None,
+                semantic_tokens_full: false,
             })
             .unwrap();
 

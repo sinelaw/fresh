@@ -24,6 +24,19 @@ impl Editor {
 
         // Prepare all buffers for rendering (pre-load viewport data for lazy loading)
         // Each split may have a different viewport position on the same buffer
+        let mut semantic_targets = std::collections::HashSet::new();
+        let mut buffers_to_request = Vec::new();
+        for split_id in self.split_view_states.keys() {
+            if let Some(buffer_id) = self.split_manager.get_buffer_id(*split_id) {
+                if semantic_targets.insert(buffer_id) {
+                    buffers_to_request.push(buffer_id);
+                }
+            }
+        }
+        for buffer_id in buffers_to_request {
+            self.maybe_request_semantic_tokens(buffer_id);
+        }
+
         for (split_id, view_state) in &self.split_view_states {
             if let Some(buffer_id) = self.split_manager.get_buffer_id(*split_id) {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {

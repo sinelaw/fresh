@@ -181,6 +181,9 @@ pub struct TextBuffer {
     /// Used for chunked recovery to know the original file size for reconstruction.
     /// Updated when loading from file or after saving.
     saved_file_size: Option<usize>,
+
+    /// Monotonic version counter for change tracking.
+    version: u64,
 }
 
 impl TextBuffer {
@@ -202,7 +205,25 @@ impl TextBuffer {
             line_ending,
             original_line_ending: line_ending,
             saved_file_size: None,
+            version: 0,
         }
+    }
+
+    /// Current buffer version (monotonic, wraps on overflow)
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    #[inline]
+    fn bump_version(&mut self) {
+        self.version = self.version.wrapping_add(1);
+    }
+
+    #[inline]
+    fn mark_content_modified(&mut self) {
+        self.modified = true;
+        self.recovery_pending = true;
+        self.bump_version();
     }
 
     /// Create a text buffer from initial content
@@ -237,6 +258,7 @@ impl TextBuffer {
             large_file: false,
             is_binary: false,
             saved_file_size: Some(bytes), // Treat initial content as "saved" state
+            version: 0,
         }
     }
 
@@ -263,6 +285,7 @@ impl TextBuffer {
             line_ending,
             original_line_ending: line_ending,
             saved_file_size: None,
+            version: 0,
         }
     }
 
@@ -372,6 +395,7 @@ impl TextBuffer {
             line_ending,
             original_line_ending: line_ending,
             saved_file_size: Some(file_size),
+            version: 0,
         })
     }
 
@@ -884,9 +908,8 @@ impl TextBuffer {
             return self.piece_tree.cursor_at_offset(offset);
         }
 
-        // Mark as modified and needing recovery
-        self.modified = true;
-        self.recovery_pending = true;
+        // Mark as modified (updates version)
+        self.mark_content_modified();
 
         // Count line feeds in the text to insert
         let line_feed_cnt = Some(text.iter().filter(|&&b| b == b'\n').count());
@@ -926,10 +949,6 @@ impl TextBuffer {
         if text.is_empty() || offset == 0 {
             return None;
         }
-
-        // Mark as modified and needing recovery
-        self.modified = true;
-        self.recovery_pending = true;
 
         // Find the piece containing the byte just before the insertion point
         // This avoids the saturating_sub issue
@@ -978,9 +997,7 @@ impl TextBuffer {
             return self.piece_tree.cursor_at_offset(offset);
         }
 
-        // Mark as modified and needing recovery
-        self.modified = true;
-        self.recovery_pending = true;
+        self.mark_content_modified();
 
         // Count line feeds in the text to insert
         let line_feed_cnt = text.iter().filter(|&&b| b == b'\n').count();
@@ -1012,9 +1029,7 @@ impl TextBuffer {
         // Update piece tree
         self.piece_tree.delete(offset, bytes, &self.buffers);
 
-        // Mark as modified and needing recovery
-        self.modified = true;
-        self.recovery_pending = true;
+        self.mark_content_modified();
     }
 
     /// Delete text in a range
@@ -1035,9 +1050,7 @@ impl TextBuffer {
             end.column,
             &self.buffers,
         );
-        // Mark as modified and needing recovery
-        self.modified = true;
-        self.recovery_pending = true;
+        self.mark_content_modified();
     }
 
     /// Replace the entire buffer content with new content
@@ -1071,17 +1084,14 @@ impl TextBuffer {
             self.piece_tree = PieceTree::empty();
         }
 
-        // Mark as modified and needing recovery
-        self.modified = true;
-        self.recovery_pending = true;
+        self.mark_content_modified();
     }
 
     /// Restore a previously saved piece tree (for undo of BulkEdit)
     /// This is O(1) because PieceTree uses Arc internally
     pub fn restore_piece_tree(&mut self, tree: &Arc<PieceTree>) {
         self.piece_tree = (**tree).clone();
-        self.modified = true;
-        self.recovery_pending = true;
+        self.mark_content_modified();
     }
 
     /// Get the current piece tree as an Arc (for saving before BulkEdit)
@@ -1123,8 +1133,7 @@ impl TextBuffer {
                 info
             });
 
-        self.modified = true;
-        self.recovery_pending = true;
+        self.mark_content_modified();
         delta
     }
 
@@ -1576,9 +1585,7 @@ impl TextBuffer {
     /// On save, the buffer content will be converted to the new format.
     pub fn set_line_ending(&mut self, line_ending: LineEnding) {
         self.line_ending = line_ending;
-        // Changing line endings marks buffer as modified and needing recovery
-        self.modified = true;
-        self.recovery_pending = true;
+        self.mark_content_modified();
     }
 
     /// Set the default line ending format for a new/empty buffer

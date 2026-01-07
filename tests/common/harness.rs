@@ -1,7 +1,7 @@
 #![cfg(test)]
 // EditorTestHarness - Virtual terminal environment for E2E testing
 
-use anyhow::{Context, Result as AnyhowResult};
+use anyhow::Result as AnyhowResult;
 
 // Initialize V8 early - must happen before any Editor/JsRuntime is created
 // and only once per process. Using ctor ensures this runs at test startup.

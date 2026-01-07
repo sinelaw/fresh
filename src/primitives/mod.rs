@@ -14,7 +14,7 @@ pub mod indent;
 pub mod line_iterator;
 pub mod line_wrapping;
 pub mod path_utils;
-pub mod semantic_highlight;
+pub mod reference_highlighter;
 pub mod snippet;
 pub mod text_property;
 pub mod visual_layout;

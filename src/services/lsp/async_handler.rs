@@ -23,8 +23,11 @@ use lsp_types::{
     request::{Initialize, Request, Shutdown},
     ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
     DidSaveTextDocumentParams, InitializeParams, InitializeResult, InitializedParams,
-    PublishDiagnosticsParams, ServerCapabilities, TextDocumentContentChangeEvent,
-    TextDocumentIdentifier, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
+    PublishDiagnosticsParams, SemanticTokenModifier, SemanticTokenType,
+    SemanticTokensClientCapabilities, SemanticTokensClientCapabilitiesRequests,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensParams, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, TextDocumentContentChangeEvent,
+    TextDocumentIdentifier, TextDocumentItem, TokenFormat, Uri, VersionedTextDocumentIdentifier,
     WindowClientCapabilities, WorkspaceFolder,
 };
 use serde::{Deserialize, Serialize};
@@ -220,6 +223,55 @@ fn create_client_capabilities() -> ClientCapabilities {
                 honors_change_annotations: Some(true),
                 ..Default::default()
             }),
+            semantic_tokens: Some(SemanticTokensClientCapabilities {
+                dynamic_registration: Some(true),
+                requests: SemanticTokensClientCapabilitiesRequests {
+                    range: Some(true),
+                    full: Some(SemanticTokensFullOptions::Bool(true)),
+                },
+                token_types: vec![
+                    SemanticTokenType::NAMESPACE,
+                    SemanticTokenType::TYPE,
+                    SemanticTokenType::CLASS,
+                    SemanticTokenType::ENUM,
+                    SemanticTokenType::INTERFACE,
+                    SemanticTokenType::STRUCT,
+                    SemanticTokenType::TYPE_PARAMETER,
+                    SemanticTokenType::PARAMETER,
+                    SemanticTokenType::VARIABLE,
+                    SemanticTokenType::PROPERTY,
+                    SemanticTokenType::ENUM_MEMBER,
+                    SemanticTokenType::EVENT,
+                    SemanticTokenType::FUNCTION,
+                    SemanticTokenType::METHOD,
+                    SemanticTokenType::MACRO,
+                    SemanticTokenType::KEYWORD,
+                    SemanticTokenType::MODIFIER,
+                    SemanticTokenType::COMMENT,
+                    SemanticTokenType::STRING,
+                    SemanticTokenType::NUMBER,
+                    SemanticTokenType::REGEXP,
+                    SemanticTokenType::OPERATOR,
+                    SemanticTokenType::DECORATOR,
+                ],
+                token_modifiers: vec![
+                    SemanticTokenModifier::DECLARATION,
+                    SemanticTokenModifier::DEFINITION,
+                    SemanticTokenModifier::READONLY,
+                    SemanticTokenModifier::STATIC,
+                    SemanticTokenModifier::DEPRECATED,
+                    SemanticTokenModifier::ABSTRACT,
+                    SemanticTokenModifier::ASYNC,
+                    SemanticTokenModifier::MODIFICATION,
+                    SemanticTokenModifier::DOCUMENTATION,
+                    SemanticTokenModifier::DEFAULT_LIBRARY,
+                ],
+                formats: vec![TokenFormat::RELATIVE],
+                overlapping_token_support: Some(true),
+                multiline_token_support: Some(true),
+                server_cancel_support: Some(true),
+                augments_syntax_tokens: Some(true),
+            }),
             ..Default::default()
         }),
         general: Some(GeneralClientCapabilities {
@@ -230,6 +282,34 @@ fn create_client_capabilities() -> ClientCapabilities {
             "serverStatusNotification": true
         })),
         ..Default::default()
+    }
+}
+
+fn extract_semantic_token_capability(
+    capabilities: &ServerCapabilities,
+) -> (Option<SemanticTokensLegend>, bool) {
+    capabilities
+        .semantic_tokens_provider
+        .as_ref()
+        .map(|provider| match provider {
+            SemanticTokensServerCapabilities::SemanticTokensOptions(options) => (
+                Some(options.legend.clone()),
+                semantic_tokens_full_supported(&options.full),
+            ),
+            SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(options) => {
+                let legend = options.semantic_tokens_options.legend.clone();
+                let full = semantic_tokens_full_supported(&options.semantic_tokens_options.full);
+                (Some(legend), full)
+            }
+        })
+        .unwrap_or((None, false))
+}
+
+fn semantic_tokens_full_supported(full: &Option<SemanticTokensFullOptions>) -> bool {
+    match full {
+        Some(SemanticTokensFullOptions::Bool(v)) => *v,
+        Some(SemanticTokensFullOptions::Delta { .. }) => true,
+        None => false,
     }
 }
 
@@ -338,6 +418,9 @@ enum LspCommand {
         end_char: u32,
     },
 
+    /// Request semantic tokens for the entire document
+    SemanticTokensFull { request_id: u64, uri: Uri },
+
     /// Cancel a pending request
     CancelRequest {
         /// Editor's request ID to cancel
@@ -425,6 +508,12 @@ impl LspState {
                 LspCommand::DidSave { uri, text } => {
                     tracing::info!("Replaying DidSave for {}", uri.as_str());
                     let _ = self.handle_did_save(uri, text).await;
+                }
+                LspCommand::SemanticTokensFull { request_id, uri } => {
+                    tracing::info!("Replaying semantic tokens request for {}", uri.as_str());
+                    let _ = self
+                        .handle_semantic_tokens_full(request_id, uri, pending)
+                        .await;
                 }
                 _ => {}
             }
@@ -588,10 +677,15 @@ impl LspState {
             .and_then(|cp| cp.trigger_characters.clone())
             .unwrap_or_default();
 
+        let (semantic_tokens_legend, semantic_tokens_full) =
+            extract_semantic_token_capability(&result.capabilities);
+
         // Notify main loop
         let _ = self.async_tx.send(AsyncMessage::LspInitialized {
             language: self.language.clone(),
             completion_trigger_characters,
+            semantic_tokens_legend,
+            semantic_tokens_full,
         });
 
         // Send running status
@@ -1474,6 +1568,54 @@ impl LspState {
         }
     }
 
+    async fn handle_semantic_tokens_full(
+        &mut self,
+        request_id: u64,
+        uri: Uri,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        use lsp_types::{
+            request::SemanticTokensFullRequest, PartialResultParams, TextDocumentIdentifier,
+            WorkDoneProgressParams,
+        };
+
+        tracing::trace!("LSP: semanticTokens/full request for {}", uri.as_str());
+
+        let params = SemanticTokensParams {
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+        };
+
+        match self
+            .send_request_sequential_tracked::<_, Option<SemanticTokensResult>>(
+                SemanticTokensFullRequest::METHOD,
+                Some(params),
+                pending,
+                Some(request_id),
+            )
+            .await
+        {
+            Ok(result) => {
+                let _ = self.async_tx.send(AsyncMessage::LspSemanticTokens {
+                    request_id,
+                    uri: uri.as_str().to_string(),
+                    result: Ok(result),
+                });
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Semantic tokens request failed: {}", e);
+                let _ = self.async_tx.send(AsyncMessage::LspSemanticTokens {
+                    request_id,
+                    uri: uri.as_str().to_string(),
+                    result: Err(e.clone()),
+                });
+                Err(e)
+            }
+        }
+    }
+
     /// Handle a plugin-initiated request by forwarding it to the server
     async fn handle_plugin_request(
         &mut self,
@@ -2134,6 +2276,26 @@ impl LspTask {
                                 });
                             }
                         }
+                        LspCommand::SemanticTokensFull { request_id, uri } => {
+                            if state.initialized {
+                                tracing::info!(
+                                    "Processing SemanticTokens request for {}",
+                                    uri.as_str()
+                                );
+                                let _ = state
+                                    .handle_semantic_tokens_full(request_id, uri, &pending)
+                                    .await;
+                            } else {
+                                tracing::trace!(
+                                    "LSP not initialized, cannot get semantic tokens"
+                                );
+                                let _ = state.async_tx.send(AsyncMessage::LspSemanticTokens {
+                                    request_id,
+                                    uri: uri.as_str().to_string(),
+                                    result: Err("LSP not initialized".to_string()),
+                                });
+                            }
+                        }
                         LspCommand::CancelRequest { request_id } => {
                             tracing::info!(
                                 "Processing CancelRequest for editor_id={}",
@@ -2246,10 +2408,15 @@ impl LspTask {
             .and_then(|cp| cp.trigger_characters.clone())
             .unwrap_or_default();
 
+        let (semantic_tokens_legend, semantic_tokens_full) =
+            extract_semantic_token_capability(&result.capabilities);
+
         // Notify main loop
         let _ = self.async_tx.send(AsyncMessage::LspInitialized {
             language: self.language.clone(),
             completion_trigger_characters,
+            semantic_tokens_legend,
+            semantic_tokens_full,
         });
 
         // Send running status
@@ -3563,6 +3730,13 @@ impl LspHandle {
                 end_char,
             })
             .map_err(|_| "Failed to send inlay_hints command".to_string())
+    }
+
+    /// Request semantic tokens for an entire document
+    pub fn semantic_tokens_full(&self, request_id: u64, uri: Uri) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::SemanticTokensFull { request_id, uri })
+            .map_err(|_| "Failed to send semantic_tokens command".to_string())
     }
 
     /// Cancel a pending request by its editor request_id

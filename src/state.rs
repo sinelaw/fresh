@@ -12,16 +12,17 @@ use crate::primitives::grammar_registry::GrammarRegistry;
 use crate::primitives::highlight_engine::HighlightEngine;
 use crate::primitives::highlighter::Language;
 use crate::primitives::indent::IndentCalculator;
-use crate::primitives::semantic_highlight::SemanticHighlighter;
+use crate::primitives::reference_highlighter::ReferenceHighlighter;
 use crate::primitives::text_property::TextPropertyManager;
 use crate::view::margin::{MarginAnnotation, MarginContent, MarginManager, MarginPosition};
 use crate::view::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
 use crate::view::popup::{Popup, PopupContent, PopupListItem, PopupManager, PopupPosition};
-use crate::view::semantic_highlight_cache::SemanticHighlightCache;
+use crate::view::reference_highlight_cache::ReferenceHighlightCache;
 use crate::view::virtual_text::VirtualTextManager;
 use anyhow::Result;
 use ratatui::style::{Color, Style};
 use std::cell::RefCell;
+use std::ops::Range;
 
 /// Display mode for a buffer
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,7 +104,7 @@ pub struct EditorState {
     pub tab_size: usize,
 
     /// Semantic highlighter for word occurrence highlighting
-    pub semantic_highlighter: SemanticHighlighter,
+    pub reference_highlighter: ReferenceHighlighter,
 
     /// View mode for this buffer (Source or Compose)
     pub view_mode: ViewMode,
@@ -125,7 +126,10 @@ pub struct EditorState {
     pub view_transform: Option<crate::services::plugins::api::ViewTransformPayload>,
 
     /// Debounced semantic highlight cache
-    pub semantic_highlight_cache: SemanticHighlightCache,
+    pub reference_highlight_cache: ReferenceHighlightCache,
+
+    /// Cached LSP semantic tokens (converted to buffer byte ranges)
+    pub semantic_tokens: Option<SemanticTokenStore>,
 }
 
 impl EditorState {
@@ -153,14 +157,15 @@ impl EditorState {
             show_whitespace_tabs: true,
             use_tabs: false,
             tab_size: 4, // Default tab size
-            semantic_highlighter: SemanticHighlighter::new(),
+            reference_highlighter: ReferenceHighlighter::new(),
             view_mode: ViewMode::Source,
             debug_highlight_mode: false,
             compose_width: None,
             compose_prev_line_numbers: None,
             compose_column_guides: None,
             view_transform: None,
-            semantic_highlight_cache: SemanticHighlightCache::new(),
+            reference_highlight_cache: ReferenceHighlightCache::new(),
+            semantic_tokens: None,
         }
     }
 
@@ -181,7 +186,7 @@ impl EditorState {
         let path = std::path::Path::new(filename);
         self.highlighter = HighlightEngine::for_file(path, registry);
         if let Some(language) = Language::from_path(path) {
-            self.semantic_highlighter.set_language(&language);
+            self.reference_highlighter.set_language(&language);
         }
         tracing::debug!(
             "Set highlighter for virtual buffer based on name: {} -> {} (backend: {})",
@@ -214,9 +219,9 @@ impl EditorState {
 
         // Initialize semantic highlighter with language if available
         let language = Language::from_path(path);
-        let mut semantic_highlighter = SemanticHighlighter::new();
+        let mut reference_highlighter = ReferenceHighlighter::new();
         if let Some(lang) = language {
-            semantic_highlighter.set_language(&lang);
+            reference_highlighter.set_language(&lang);
         }
 
         // Initialize marker list with buffer size
@@ -248,14 +253,15 @@ impl EditorState {
             show_whitespace_tabs: true,
             use_tabs: false,
             tab_size: 4, // Default tab size
-            semantic_highlighter,
+            reference_highlighter,
             view_mode: ViewMode::Source,
             debug_highlight_mode: false,
             compose_width: None,
             compose_prev_line_numbers: None,
             compose_column_guides: None,
             view_transform: None,
-            semantic_highlight_cache: SemanticHighlightCache::new(),
+            reference_highlight_cache: ReferenceHighlightCache::new(),
+            semantic_tokens: None,
         })
     }
 
@@ -286,9 +292,9 @@ impl EditorState {
 
         // Initialize semantic highlighter with language if available
         let language = Language::from_path(path);
-        let mut semantic_highlighter = SemanticHighlighter::new();
+        let mut reference_highlighter = ReferenceHighlighter::new();
         if let Some(lang) = language {
-            semantic_highlighter.set_language(&lang);
+            reference_highlighter.set_language(&lang);
         }
 
         // Initialize marker list with buffer size
@@ -320,14 +326,15 @@ impl EditorState {
             show_whitespace_tabs: true,
             use_tabs: false,
             tab_size: 4, // Default tab size
-            semantic_highlighter,
+            reference_highlighter,
             view_mode: ViewMode::Source,
             debug_highlight_mode: false,
             compose_width: None,
             compose_prev_line_numbers: None,
             compose_column_guides: None,
             view_transform: None,
-            semantic_highlight_cache: SemanticHighlightCache::new(),
+            reference_highlight_cache: ReferenceHighlightCache::new(),
+            semantic_tokens: None,
         })
     }
 
@@ -966,6 +973,23 @@ impl EditorState {
             Ok(String::new())
         }
     }
+
+    /// Replace cached semantic tokens with a new store.
+    pub fn set_semantic_tokens(&mut self, store: SemanticTokenStore) {
+        self.semantic_tokens = Some(store);
+    }
+
+    /// Clear cached semantic tokens (e.g., when tokens are invalidated).
+    pub fn clear_semantic_tokens(&mut self) {
+        self.semantic_tokens = None;
+    }
+
+    /// Get the server-provided semantic token result_id if available.
+    pub fn semantic_tokens_result_id(&self) -> Option<&str> {
+        self.semantic_tokens
+            .as_ref()
+            .and_then(|store| store.result_id.as_deref())
+    }
 }
 
 /// Implement DocumentModel trait for EditorState
@@ -1157,6 +1181,25 @@ impl DocumentModel for EditorState {
 
         Ok(matches)
     }
+}
+
+/// Cached semantic tokens for a buffer.
+#[derive(Clone, Debug)]
+pub struct SemanticTokenStore {
+    /// Buffer version the tokens correspond to.
+    pub version: u64,
+    /// Server-provided result identifier (if any).
+    pub result_id: Option<String>,
+    /// All semantic token spans resolved to byte ranges.
+    pub tokens: Vec<SemanticTokenSpan>,
+}
+
+/// A semantic token span resolved to buffer byte offsets.
+#[derive(Clone, Debug)]
+pub struct SemanticTokenSpan {
+    pub range: Range<usize>,
+    pub token_type: String,
+    pub modifiers: Vec<String>,
 }
 
 #[cfg(test)]

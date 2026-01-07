@@ -1867,4 +1867,74 @@ impl Editor {
             self.pending_inlay_hints_request = Some(request_id);
         }
     }
+
+    /// Request semantic tokens for a specific buffer if supported and needed.
+    pub(crate) fn maybe_request_semantic_tokens(&mut self, buffer_id: BufferId) {
+        // Avoid duplicate in-flight requests per buffer
+        if self.semantic_tokens_in_flight.contains_key(&buffer_id) {
+            return;
+        }
+
+        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+            return;
+        };
+        if !metadata.lsp_enabled {
+            return;
+        }
+        let Some(uri) = metadata.file_uri().cloned() else {
+            return;
+        };
+        let Some(path) = metadata.file_path() else {
+            return;
+        };
+        let Some(language) = detect_language(path, &self.config.languages) else {
+            return;
+        };
+
+        let Some(lsp) = self.lsp.as_mut() else {
+            return;
+        };
+
+        if !lsp.semantic_tokens_full_supported(&language) {
+            return;
+        }
+        if lsp.semantic_tokens_legend(&language).is_none() {
+            return;
+        }
+
+        // Ensure there is a running server
+        use crate::services::lsp::manager::LspSpawnResult;
+        if lsp.try_spawn(&language) != LspSpawnResult::Spawned {
+            return;
+        }
+
+        let Some(handle) = lsp.get_handle_mut(&language) else {
+            return;
+        };
+
+        let Some(state) = self.buffers.get(&buffer_id) else {
+            return;
+        };
+        let buffer_version = state.buffer.version();
+        if let Some(store) = state.semantic_tokens.as_ref() {
+            if store.version == buffer_version {
+                return; // Already up to date
+            }
+        }
+
+        let request_id = self.next_lsp_request_id;
+        self.next_lsp_request_id += 1;
+
+        match handle.semantic_tokens_full(request_id, uri) {
+            Ok(_) => {
+                self.pending_semantic_token_requests
+                    .insert(request_id, (buffer_id, buffer_version));
+                self.semantic_tokens_in_flight
+                    .insert(buffer_id, (request_id, buffer_version));
+            }
+            Err(e) => {
+                tracing::debug!("Failed to request semantic tokens: {}", e);
+            }
+        }
+    }
 }

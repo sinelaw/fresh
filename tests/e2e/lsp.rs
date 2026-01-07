@@ -838,6 +838,100 @@ fn test_lsp_waiting_indicator() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Ensure semantic tokens respect buffer versions.
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_semantic_tokens_version_gating() -> anyhow::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+
+    let _fake_server = FakeLspServer::spawn_with_semantic_tokens_delay(150)?;
+
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("semantic.rs");
+    std::fs::write(&test_file, "fn main() {}\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::semantic_tokens_delay_script_path()
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        100,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    harness.wait_until(|h| {
+        let state = h.editor().active_state();
+        state
+            .semantic_tokens
+            .as_ref()
+            .map(|store| store.version == state.buffer.version())
+            .unwrap_or(false)
+    })?;
+
+    // Make consecutive edits while a semantic token request is pending.
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.type_text("\nlet value = 1;")?;
+    harness.type_text("// comment")?;
+
+    {
+        let state = harness.editor().active_state();
+        if let Some(store) = &state.semantic_tokens {
+            assert_ne!(
+                store.version,
+                state.buffer.version(),
+                "Semantic tokens should be stale immediately after edits"
+            );
+        }
+    }
+
+    harness.wait_until(|h| {
+        let state = h.editor().active_state();
+        state
+            .semantic_tokens
+            .as_ref()
+            .map(|store| store.version == state.buffer.version())
+            .unwrap_or(false)
+    })?;
+
+    {
+        let state = harness.editor().active_state();
+        let store = state
+            .semantic_tokens
+            .as_ref()
+            .expect("Semantic tokens should be present after refresh");
+        assert!(
+            !store.tokens.is_empty(),
+            "Semantic tokens should decode to highlight spans"
+        );
+        assert_eq!(
+            store.version,
+            state.buffer.version(),
+            "Semantic tokens must match the buffer version"
+        );
+    }
+
+    Ok(())
+}
+
 /// Test that popup properly hides buffer text behind it
 #[test]
 fn test_lsp_completion_popup_hides_background() -> anyhow::Result<()> {

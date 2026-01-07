@@ -33,7 +33,7 @@ use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 pub const DEFAULT_HIGHLIGHT_COLOR: Color = Color::Rgb(60, 60, 80);
 
 /// Semantic highlighter for word occurrences
-pub struct SemanticHighlighter {
+pub struct ReferenceHighlighter {
     /// Color for occurrence highlights
     pub highlight_color: Color,
     /// Minimum word length to trigger highlighting
@@ -172,7 +172,7 @@ const C_LOCALS_QUERY: &str = r#"
 (identifier) @local.reference
 "#;
 
-impl SemanticHighlighter {
+impl ReferenceHighlighter {
     /// Create a new semantic highlighter with default settings
     pub fn new() -> Self {
         Self {
@@ -835,7 +835,7 @@ impl SemanticHighlighter {
     }
 }
 
-impl Default for SemanticHighlighter {
+impl Default for ReferenceHighlighter {
     fn default() -> Self {
         Self::new()
     }
@@ -848,7 +848,7 @@ mod tests {
     #[test]
     fn test_get_word_at_position() {
         let buffer = Buffer::from_str_test("hello world test");
-        let highlighter = SemanticHighlighter::new();
+        let highlighter = ReferenceHighlighter::new();
 
         // Middle of "hello"
         let range = highlighter.get_word_at_position(&buffer, 2).unwrap();
@@ -866,7 +866,7 @@ mod tests {
     #[test]
     fn test_find_occurrences() {
         let buffer = Buffer::from_str_test("foo bar foo baz foo");
-        let highlighter = SemanticHighlighter::new();
+        let highlighter = ReferenceHighlighter::new();
 
         let occurrences = highlighter.find_occurrences_in_range(&buffer, "foo", 0, buffer.len());
         assert_eq!(occurrences.len(), 3);
@@ -878,7 +878,7 @@ mod tests {
     #[test]
     fn test_whole_word_only() {
         let buffer = Buffer::from_str_test("foobar foo foobaz");
-        let highlighter = SemanticHighlighter::new();
+        let highlighter = ReferenceHighlighter::new();
 
         let occurrences = highlighter.find_occurrences_in_range(&buffer, "foo", 0, buffer.len());
         // Should only find the standalone "foo", not "foobar" or "foobaz"
@@ -889,7 +889,7 @@ mod tests {
     #[test]
     fn test_highlight_occurrences() {
         let buffer = Buffer::from_str_test("let foo = 1;\nlet bar = foo;\nlet baz = foo;");
-        let mut highlighter = SemanticHighlighter::new();
+        let mut highlighter = ReferenceHighlighter::new();
 
         // Cursor on first 'foo' at position 4
         let spans = highlighter.highlight_occurrences(&buffer, 4, 0, buffer.len(), 100_000);
@@ -901,7 +901,7 @@ mod tests {
     #[test]
     fn test_min_word_length() {
         let buffer = Buffer::from_str_test("a b c a b c");
-        let mut highlighter = SemanticHighlighter::new().with_min_length(2);
+        let mut highlighter = ReferenceHighlighter::new().with_min_length(2);
 
         // Single character 'a' at position 0 should not be highlighted
         let spans = highlighter.highlight_occurrences(&buffer, 0, 0, buffer.len(), 100_000);
@@ -911,7 +911,7 @@ mod tests {
     #[test]
     fn test_disabled() {
         let buffer = Buffer::from_str_test("hello hello hello");
-        let mut highlighter = SemanticHighlighter::new();
+        let mut highlighter = ReferenceHighlighter::new();
         highlighter.enabled = false;
 
         let spans = highlighter.highlight_occurrences(&buffer, 0, 0, buffer.len(), 100_000);
@@ -921,7 +921,7 @@ mod tests {
     #[test]
     fn test_cursor_at_end_of_buffer() {
         let buffer = Buffer::from_str_test("foo bar foo");
-        let mut highlighter = SemanticHighlighter::new();
+        let mut highlighter = ReferenceHighlighter::new();
 
         // Cursor at end of buffer (after last "foo")
         let spans =
@@ -933,7 +933,7 @@ mod tests {
     #[test]
     fn test_cursor_on_word() {
         let buffer = Buffer::from_str_test("foo bar foo");
-        let mut highlighter = SemanticHighlighter::new();
+        let mut highlighter = ReferenceHighlighter::new();
 
         // Cursor on first character of "foo"
         let spans = highlighter.highlight_occurrences(&buffer, 0, 0, buffer.len(), 100_000);
@@ -944,7 +944,7 @@ mod tests {
     #[test]
     fn test_viewport_limiting() {
         let buffer = Buffer::from_str_test("foo bar foo baz foo");
-        let mut highlighter = SemanticHighlighter::new();
+        let mut highlighter = ReferenceHighlighter::new();
 
         // Only search in viewport 4..12 (should find middle "foo" only)
         let spans = highlighter.highlight_occurrences(&buffer, 8, 4, 12, 100_000);
@@ -957,7 +957,7 @@ mod tests {
         use crate::primitives::highlighter::Language;
 
         let buffer = Buffer::from_str_test("fn main() {\n    let foo = 1;\n    let bar = foo;\n}");
-        let mut highlighter = SemanticHighlighter::new();
+        let mut highlighter = ReferenceHighlighter::new();
 
         // Enable tree-sitter mode for Rust
         highlighter.set_language(&Language::Rust);
@@ -979,7 +979,7 @@ mod tests {
         // Test that tree-sitter mode works for finding identifiers
         // Using longer identifier names to pass min_word_length filter
         let buffer = Buffer::from_str_test("let foo = 1;\nlet bar = foo;");
-        let mut highlighter = SemanticHighlighter::new();
+        let mut highlighter = ReferenceHighlighter::new();
 
         // Enable tree-sitter mode for Rust
         highlighter.set_language(&Language::Rust);
@@ -995,7 +995,7 @@ mod tests {
     fn test_locals_mode_enabled() {
         use crate::primitives::highlighter::Language;
 
-        let mut highlighter = SemanticHighlighter::new();
+        let mut highlighter = ReferenceHighlighter::new();
         highlighter.set_language(&Language::Rust);
 
         // Rust should have locals support
@@ -1020,7 +1020,7 @@ fn second() {
 }
 "#;
         let buffer = Buffer::from_str_test(code);
-        let mut highlighter = SemanticHighlighter::new();
+        let mut highlighter = ReferenceHighlighter::new();
         highlighter.set_language(&Language::Rust);
 
         // Find position of first "foo" definition (in first function)
@@ -1054,7 +1054,7 @@ fn main() {
 }
 "#;
         let buffer = Buffer::from_str_test(code);
-        let mut highlighter = SemanticHighlighter::new();
+        let mut highlighter = ReferenceHighlighter::new();
         highlighter.set_language(&Language::Rust);
 
         // Find position of outer "foo" definition
@@ -1084,7 +1084,7 @@ fn greet(name: &str) {
 }
 "#;
         let buffer = Buffer::from_str_test(code);
-        let mut highlighter = SemanticHighlighter::new();
+        let mut highlighter = ReferenceHighlighter::new();
         highlighter.set_language(&Language::Rust);
 
         // Find position of "name" parameter

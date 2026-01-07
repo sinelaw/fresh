@@ -7,7 +7,7 @@
 
 use crate::model::buffer::Buffer;
 use crate::primitives::highlighter::HighlightSpan;
-use crate::primitives::semantic_highlight::SemanticHighlighter;
+use crate::primitives::reference_highlighter::ReferenceHighlighter;
 use ratatui::style::Color;
 use std::time::{Duration, Instant};
 
@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 pub const DEFAULT_DEBOUNCE_MS: u64 = 150;
 
 /// Debounced cache for semantic highlight spans
-pub struct SemanticHighlightCache {
+pub struct ReferenceHighlightCache {
     /// Cached highlight spans from the last computation
     cached_spans: Vec<HighlightSpan>,
     /// Cursor position when cache was computed
@@ -28,7 +28,7 @@ pub struct SemanticHighlightCache {
     debounce_delay: Duration,
 }
 
-impl SemanticHighlightCache {
+impl ReferenceHighlightCache {
     /// Create a new cache with default debounce delay
     pub fn new() -> Self {
         Self {
@@ -67,7 +67,7 @@ impl SemanticHighlightCache {
     /// the caller should schedule a redraw after debounce_delay.
     pub fn get_highlights(
         &mut self,
-        highlighter: &mut SemanticHighlighter,
+        highlighter: &mut ReferenceHighlighter,
         buffer: &Buffer,
         cursor_position: usize,
         viewport_start: usize,
@@ -183,7 +183,7 @@ impl SemanticHighlightCache {
     }
 }
 
-impl Default for SemanticHighlightCache {
+impl Default for ReferenceHighlightCache {
     fn default() -> Self {
         Self::new()
     }
@@ -193,13 +193,13 @@ impl Default for SemanticHighlightCache {
 mod tests {
     use super::*;
     use crate::model::buffer::Buffer;
-    use crate::primitives::semantic_highlight::SemanticHighlighter;
+    use crate::primitives::reference_highlighter::ReferenceHighlighter;
     use std::thread::sleep;
 
     #[test]
     fn test_raw_highlighter_works() {
         // Verify the underlying highlighter works without cache
-        let mut highlighter = SemanticHighlighter::new();
+        let mut highlighter = ReferenceHighlighter::new();
         let buffer = Buffer::from_str_test("hello world hello");
 
         let spans = highlighter.highlight_occurrences(&buffer, 0, 0, 17, 1000);
@@ -211,8 +211,8 @@ mod tests {
 
     #[test]
     fn test_cache_computes_on_first_call() {
-        let mut cache = SemanticHighlightCache::with_debounce(100);
-        let mut highlighter = SemanticHighlighter::new();
+        let mut cache = ReferenceHighlightCache::with_debounce(100);
+        let mut highlighter = ReferenceHighlighter::new();
         let buffer = Buffer::from_str_test("hello world hello");
         let color = Color::Rgb(60, 60, 80);
 
@@ -223,8 +223,8 @@ mod tests {
 
     #[test]
     fn test_cache_returns_stale_during_debounce() {
-        let mut cache = SemanticHighlightCache::with_debounce(100);
-        let mut highlighter = SemanticHighlighter::new();
+        let mut cache = ReferenceHighlightCache::with_debounce(100);
+        let mut highlighter = ReferenceHighlighter::new();
         let buffer = Buffer::from_str_test("hello world hello");
         let color = Color::Rgb(60, 60, 80);
 
@@ -250,8 +250,8 @@ mod tests {
 
     #[test]
     fn test_cache_computes_after_debounce() {
-        let mut cache = SemanticHighlightCache::with_debounce(10); // 10ms for fast test
-        let mut highlighter = SemanticHighlighter::new();
+        let mut cache = ReferenceHighlightCache::with_debounce(10); // 10ms for fast test
+        let mut highlighter = ReferenceHighlighter::new();
         let buffer = Buffer::from_str_test("hello world hello");
         let color = Color::Rgb(60, 60, 80);
 
@@ -278,8 +278,8 @@ mod tests {
 
     #[test]
     fn test_cache_invalidation() {
-        let mut cache = SemanticHighlightCache::with_debounce(10);
-        let mut highlighter = SemanticHighlighter::new();
+        let mut cache = ReferenceHighlightCache::with_debounce(10);
+        let mut highlighter = ReferenceHighlighter::new();
         let buffer = Buffer::from_str_test("hello world hello");
         let color = Color::Rgb(60, 60, 80);
 
@@ -297,8 +297,8 @@ mod tests {
 
     #[test]
     fn test_needs_redraw() {
-        let mut cache = SemanticHighlightCache::with_debounce(50);
-        let mut highlighter = SemanticHighlighter::new();
+        let mut cache = ReferenceHighlightCache::with_debounce(50);
+        let mut highlighter = ReferenceHighlighter::new();
         let buffer = Buffer::from_str_test("hello world");
         let color = Color::Rgb(60, 60, 80);
 

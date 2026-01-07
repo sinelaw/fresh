@@ -7,10 +7,13 @@
 //! - File explorer events
 //! - Plugin events
 
+use crate::model::buffer::Buffer;
 use crate::model::event::BufferId;
 use crate::services::async_bridge::{LspMessageType, LspProgressValue, LspServerStatus};
+use crate::services::lsp::manager::detect_language;
+use crate::state::{SemanticTokenSpan, SemanticTokenStore};
 use crate::view::file_tree::{FileTreeView, NodeId};
-use lsp_types::{Diagnostic, InlayHint};
+use lsp_types::{Diagnostic, InlayHint, SemanticToken, SemanticTokensLegend, SemanticTokensResult};
 use rust_i18n::t;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -171,6 +174,97 @@ impl Editor {
             }
         } else {
             tracing::warn!("No buffer found for inlay hints URI: {}", uri);
+        }
+    }
+
+    /// Handle LSP semantic tokens response
+    pub(super) fn handle_lsp_semantic_tokens(
+        &mut self,
+        request_id: u64,
+        uri: String,
+        result: Result<Option<SemanticTokensResult>, String>,
+    ) {
+        let Some((buffer_id, target_version)) =
+            self.take_pending_semantic_token_request(request_id)
+        else {
+            tracing::debug!(
+                "Semantic tokens response {} for {} without pending entry",
+                request_id,
+                uri
+            );
+            return;
+        };
+
+        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+            return;
+        };
+        let Some(path) = metadata.file_path() else {
+            return;
+        };
+        let Some(language) = detect_language(path, &self.config.languages) else {
+            return;
+        };
+
+        let legend = match self
+            .lsp
+            .as_ref()
+            .and_then(|manager| manager.semantic_tokens_legend(&language).cloned())
+        {
+            Some(legend) => legend,
+            None => {
+                tracing::debug!("Semantic tokens legend missing for language {}", language);
+                return;
+            }
+        };
+
+        let current_version = match self.buffers.get(&buffer_id) {
+            Some(state) => state.buffer.version(),
+            None => return,
+        };
+
+        match result {
+            Err(e) => {
+                tracing::warn!(
+                    "Semantic tokens request {} for {} failed: {}",
+                    request_id,
+                    uri,
+                    e
+                );
+                if current_version != target_version {
+                    self.maybe_request_semantic_tokens(buffer_id);
+                }
+            }
+            Ok(tokens_opt) => {
+                if current_version != target_version {
+                    // Stale response - request fresh tokens for newest version
+                    self.maybe_request_semantic_tokens(buffer_id);
+                    return;
+                }
+
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    let (result_id, spans) = match tokens_opt {
+                        Some(SemanticTokensResult::Tokens(tokens)) => {
+                            let spans =
+                                decode_semantic_token_data(&state.buffer, &legend, &tokens.data);
+                            (tokens.result_id.clone(), spans)
+                        }
+                        Some(SemanticTokensResult::Partial(partial)) => {
+                            let spans =
+                                decode_semantic_token_data(&state.buffer, &legend, &partial.data);
+                            (None, spans)
+                        }
+                        None => (None, Vec::new()),
+                    };
+
+                    state.set_semantic_tokens(SemanticTokenStore {
+                        version: current_version,
+                        result_id,
+                        tokens: spans,
+                    });
+                }
+
+                self.full_redraw_requested = true;
+            }
         }
     }
 
@@ -716,4 +810,70 @@ impl Editor {
             }
         }
     }
+
+    /// Request semantic tokens for all open buffers matching a language.
+    pub(super) fn request_semantic_tokens_for_language(&mut self, language: &str) {
+        let buffer_ids: Vec<_> = self
+            .buffer_metadata
+            .iter()
+            .filter_map(|(buffer_id, meta)| {
+                meta.file_path().and_then(|path| {
+                    if detect_language(path, &self.config.languages).as_deref() == Some(language) {
+                        Some(*buffer_id)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        for buffer_id in buffer_ids {
+            self.maybe_request_semantic_tokens(buffer_id);
+        }
+    }
+}
+
+fn decode_semantic_token_data(
+    buffer: &Buffer,
+    legend: &SemanticTokensLegend,
+    data: &[SemanticToken],
+) -> Vec<SemanticTokenSpan> {
+    let mut result = Vec::with_capacity(data.len());
+    let mut current_line = 0u32;
+    let mut current_start = 0u32;
+
+    for token in data {
+        current_line += token.delta_line;
+        if token.delta_line == 0 {
+            current_start += token.delta_start;
+        } else {
+            current_start = token.delta_start;
+        }
+
+        let start_utf16 = current_start as usize;
+        let end_utf16 = start_utf16 + token.length as usize;
+        let start_byte = buffer.lsp_position_to_byte(current_line as usize, start_utf16);
+        let end_byte = buffer.lsp_position_to_byte(current_line as usize, end_utf16);
+
+        let token_type = legend
+            .token_types
+            .get(token.token_type as usize)
+            .map(|ty| ty.as_str().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let mut modifiers = Vec::new();
+        for (idx, modifier) in legend.token_modifiers.iter().enumerate() {
+            if (token.token_modifiers_bitset >> idx) & 1 == 1 {
+                modifiers.push(modifier.as_str().to_string());
+            }
+        }
+
+        result.push(SemanticTokenSpan {
+            range: start_byte..end_byte,
+            token_type,
+            modifiers,
+        });
+    }
+
+    result
 }

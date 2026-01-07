@@ -320,7 +320,8 @@ struct SelectionContext {
 
 struct DecorationContext {
     highlight_spans: Vec<crate::primitives::highlighter::HighlightSpan>,
-    semantic_spans: Vec<crate::primitives::highlighter::HighlightSpan>,
+    reference_spans: Vec<crate::primitives::highlighter::HighlightSpan>,
+    semantic_token_spans: Vec<crate::primitives::highlighter::HighlightSpan>,
     viewport_overlays: Vec<(crate::view::overlay::Overlay, Range<usize>)>,
     virtual_text_lookup: HashMap<usize, Vec<crate::view::virtual_text::VirtualText>>,
     diagnostic_lines: HashSet<usize>,
@@ -385,7 +386,8 @@ struct CharStyleContext<'a> {
     is_selected: bool,
     theme: &'a crate::view::theme::Theme,
     highlight_spans: &'a [crate::primitives::highlighter::HighlightSpan],
-    semantic_spans: &'a [crate::primitives::highlighter::HighlightSpan],
+    reference_spans: &'a [crate::primitives::highlighter::HighlightSpan],
+    semantic_token_spans: &'a [crate::primitives::highlighter::HighlightSpan],
     viewport_overlays: &'a [(crate::view::overlay::Overlay, Range<usize>)],
     primary_cursor_position: usize,
     is_active: bool,
@@ -596,14 +598,27 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         style = style.fg(highlight_color.unwrap());
     }
 
-    // Apply semantic highlighting
+    // Apply reference highlighting (word under cursor)
     if let Some(bp) = ctx.byte_pos {
-        if let Some(semantic_span) = ctx
-            .semantic_spans
+        if let Some(reference_span) = ctx
+            .reference_spans
             .iter()
             .find(|span| span.range.contains(&bp))
         {
-            style = style.bg(semantic_span.color);
+            style = style.bg(reference_span.color);
+        }
+    }
+
+    // Apply LSP semantic token foreground color when no custom token style is set.
+    if ctx.token_style.is_none() {
+        if let Some(bp) = ctx.byte_pos {
+            if let Some(token_span) = ctx
+                .semantic_token_spans
+                .iter()
+                .find(|span| span.range.contains(&bp))
+            {
+                style = style.fg(token_span.color);
+            }
         }
     }
 
@@ -2809,11 +2824,11 @@ impl SplitRenderer {
             highlight_context_bytes,
         );
 
-        // Get semantic highlights through debounced cache
-        let semantic_spans = state
-            .semantic_highlight_cache
+        // Get reference highlights through debounced cache
+        let reference_spans = state
+            .reference_highlight_cache
             .get_highlights(
-                &mut state.semantic_highlighter,
+                &mut state.reference_highlighter,
                 &state.buffer,
                 primary_cursor_position,
                 viewport_start,
@@ -2822,6 +2837,17 @@ impl SplitRenderer {
                 theme.semantic_highlight_bg,
             )
             .to_vec();
+
+        // Resolve semantic tokens for this viewport (if version matches)
+        let semantic_token_spans = if let Some(store) = &state.semantic_tokens {
+            if store.version == state.buffer.version() {
+                Self::collect_semantic_token_spans(store, viewport_start, viewport_end, theme)
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
 
         let viewport_overlays = state
             .overlays
@@ -2859,11 +2885,56 @@ impl SplitRenderer {
 
         DecorationContext {
             highlight_spans,
-            semantic_spans,
+            reference_spans,
+            semantic_token_spans,
             viewport_overlays,
             virtual_text_lookup,
             diagnostic_lines,
             line_indicators,
+        }
+    }
+
+    fn collect_semantic_token_spans(
+        store: &crate::state::SemanticTokenStore,
+        viewport_start: usize,
+        viewport_end: usize,
+        theme: &crate::view::theme::Theme,
+    ) -> Vec<crate::primitives::highlighter::HighlightSpan> {
+        store
+            .tokens
+            .iter()
+            .filter(|span| span.range.end > viewport_start && span.range.start < viewport_end)
+            .map(|span| crate::primitives::highlighter::HighlightSpan {
+                range: span.range.clone(),
+                color: Self::color_for_semantic_token(&span.token_type, &span.modifiers, theme),
+            })
+            .collect()
+    }
+
+    fn color_for_semantic_token(
+        token_type: &str,
+        modifiers: &[String],
+        theme: &crate::view::theme::Theme,
+    ) -> Color {
+        if modifiers.iter().any(|m| m == "deprecated") {
+            return theme.diagnostic_warning_fg;
+        }
+
+        match token_type {
+            "keyword" | "modifier" => theme.syntax_keyword,
+            "function" | "method" | "macro" => theme.syntax_function,
+            "parameter" | "variable" | "property" | "enumMember" | "event" | "label" => {
+                theme.syntax_variable
+            }
+            "type" | "class" | "interface" | "struct" | "typeParameter" | "namespace" | "enum" => {
+                theme.syntax_type
+            }
+            "number" => theme.syntax_constant,
+            "string" | "regexp" => theme.syntax_string,
+            "operator" => theme.syntax_operator,
+            "comment" => theme.syntax_comment,
+            "decorator" => theme.syntax_function,
+            _ => theme.syntax_variable,
         }
     }
 
@@ -2916,7 +2987,8 @@ impl SplitRenderer {
         let cursor_line = state.buffer.get_line_number(primary_cursor_position);
 
         let highlight_spans = &decorations.highlight_spans;
-        let semantic_spans = &decorations.semantic_spans;
+        let reference_spans = &decorations.reference_spans;
+        let semantic_token_spans = &decorations.semantic_token_spans;
         let viewport_overlays = &decorations.viewport_overlays;
         let virtual_text_lookup = &decorations.virtual_text_lookup;
         let diagnostic_lines = &decorations.diagnostic_lines;
@@ -3197,7 +3269,8 @@ impl SplitRenderer {
                         is_selected,
                         theme,
                         highlight_spans,
-                        semantic_spans,
+                        reference_spans,
+                        semantic_token_spans,
                         viewport_overlays,
                         primary_cursor_position,
                         is_active,
