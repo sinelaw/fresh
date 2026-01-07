@@ -117,6 +117,7 @@
 pub mod async_handler;
 pub mod diagnostics;
 pub mod manager;
+pub mod semantic_tokens;
 
 // Re-export for public API (used by tests)
 pub use crate::types::LspServerConfig;

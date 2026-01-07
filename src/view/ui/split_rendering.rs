@@ -2842,23 +2842,27 @@ impl SplitRenderer {
             theme.semantic_highlight_bg,
         );
 
-        // Resolve semantic tokens for this viewport (if version matches)
-        let semantic_token_spans = if let Some(store) = &state.semantic_tokens {
-            if store.version == state.buffer.version() {
-                Self::collect_semantic_token_spans(store, viewport_start, viewport_end, theme)
-            } else {
-                Vec::new()
+        // Semantic tokens are stored as overlays so their ranges track edits.
+        // Convert them into highlight spans for the render pipeline.
+        let mut semantic_token_spans = Vec::new();
+        let mut viewport_overlays = Vec::new();
+        for (overlay, range) in
+            state
+                .overlays
+                .query_viewport(viewport_start, viewport_end, &state.marker_list)
+        {
+            if crate::services::lsp::semantic_tokens::is_semantic_token_overlay(overlay) {
+                if let crate::view::overlay::OverlayFace::Foreground { color } = &overlay.face {
+                    semantic_token_spans.push(crate::primitives::highlighter::HighlightSpan {
+                        range,
+                        color: *color,
+                    });
+                }
+                continue;
             }
-        } else {
-            Vec::new()
-        };
 
-        let viewport_overlays = state
-            .overlays
-            .query_viewport(viewport_start, viewport_end, &state.marker_list)
-            .into_iter()
-            .map(|(overlay, range)| (overlay.clone(), range))
-            .collect::<Vec<_>>();
+            viewport_overlays.push((overlay.clone(), range));
+        }
 
         // Use the lsp-diagnostic namespace to identify diagnostic overlays
         let diagnostic_ns = crate::services::lsp::diagnostics::lsp_diagnostic_namespace();
@@ -2897,49 +2901,7 @@ impl SplitRenderer {
         }
     }
 
-    fn collect_semantic_token_spans(
-        store: &crate::state::SemanticTokenStore,
-        viewport_start: usize,
-        viewport_end: usize,
-        theme: &crate::view::theme::Theme,
-    ) -> Vec<crate::primitives::highlighter::HighlightSpan> {
-        store
-            .tokens
-            .iter()
-            .filter(|span| span.range.end > viewport_start && span.range.start < viewport_end)
-            .map(|span| crate::primitives::highlighter::HighlightSpan {
-                range: span.range.clone(),
-                color: Self::color_for_semantic_token(&span.token_type, &span.modifiers, theme),
-            })
-            .collect()
-    }
-
-    fn color_for_semantic_token(
-        token_type: &str,
-        modifiers: &[String],
-        theme: &crate::view::theme::Theme,
-    ) -> Color {
-        if modifiers.iter().any(|m| m == "deprecated") {
-            return theme.diagnostic_warning_fg;
-        }
-
-        match token_type {
-            "keyword" | "modifier" => theme.syntax_keyword,
-            "function" | "method" | "macro" => theme.syntax_function,
-            "parameter" | "variable" | "property" | "enumMember" | "event" | "label" => {
-                theme.syntax_variable
-            }
-            "type" | "class" | "interface" | "struct" | "typeParameter" | "namespace" | "enum" => {
-                theme.syntax_type
-            }
-            "number" => theme.syntax_constant,
-            "string" | "regexp" => theme.syntax_string,
-            "operator" => theme.syntax_operator,
-            "comment" => theme.syntax_comment,
-            "decorator" => theme.syntax_function,
-            _ => theme.syntax_variable,
-        }
-    }
+    // semantic token colors are mapped when overlays are created
 
     fn calculate_viewport_end(
         state: &mut EditorState,

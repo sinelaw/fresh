@@ -256,6 +256,12 @@ impl Editor {
                         None => (None, Vec::new()),
                     };
 
+                    crate::services::lsp::semantic_tokens::apply_semantic_tokens_to_state(
+                        state,
+                        &spans,
+                        &self.theme,
+                    );
+
                     state.set_semantic_tokens(SemanticTokenStore {
                         version: current_version,
                         result_id,
