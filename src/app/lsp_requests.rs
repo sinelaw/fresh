@@ -744,8 +744,10 @@ impl Editor {
             };
 
             // LSP inlay hint positions are insertion points between characters.
-            // Render them before the character at that byte offset so they appear at the
-            // correct location (e.g., before punctuation or newline).
+            // For positions within the buffer, render hints before the character at the
+            // byte offset so they appear at the correct location (e.g., before punctuation
+            // or newline). Hints at or beyond EOF are anchored to the last character and
+            // rendered after it.
             if state.buffer.len() == 0 {
                 continue;
             }
