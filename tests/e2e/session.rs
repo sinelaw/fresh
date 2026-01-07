@@ -1103,3 +1103,81 @@ fn test_session_restores_splits() {
         harness.assert_buffer_content("Left split content");
     }
 }
+
+/// Test that session saves and restores files outside the project directory
+#[test]
+fn test_session_restores_external_files() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let external_dir = temp_dir.path().join("external");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::create_dir(&external_dir).unwrap();
+
+    // Create files - one in project, one external
+    let project_file = project_dir.join("project_file.txt");
+    let external_file = external_dir.join("external_file.txt");
+    std::fs::write(&project_file, "Content inside project").unwrap();
+    std::fs::write(&external_file, "Content outside project").unwrap();
+
+    // First session: open both files and save
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // Open project file
+        harness.open_file(&project_file).unwrap();
+        harness.assert_buffer_content("Content inside project");
+
+        // Open external file (outside project directory)
+        harness.open_file(&external_file).unwrap();
+        harness.assert_buffer_content("Content outside project");
+
+        // Verify session captures external files
+        let session = harness.editor().capture_session();
+        assert!(
+            !session.external_files.is_empty(),
+            "external_files should contain the external file"
+        );
+        assert!(
+            session
+                .external_files
+                .iter()
+                .any(|p| p.to_string_lossy().contains("external_file.txt")),
+            "external_file.txt should be in external_files: {:?}",
+            session.external_files
+        );
+
+        harness.editor_mut().save_session().unwrap();
+    }
+
+    // Second session: restore and verify both files are available
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // Before restore, should be empty buffer
+        harness.assert_buffer_content("");
+
+        // Restore session
+        let restored = harness.editor_mut().try_restore_session().unwrap();
+        assert!(restored, "Session should have been restored");
+
+        // External file should be restorable
+        harness.open_file(&external_file).unwrap();
+        harness.assert_buffer_content("Content outside project");
+
+        // Project file should also be restorable
+        harness.open_file(&project_file).unwrap();
+        harness.assert_buffer_content("Content inside project");
+    }
+}

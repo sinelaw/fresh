@@ -248,6 +248,19 @@ impl Editor {
         let bookmarks =
             serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.working_dir);
 
+        // Capture external files (files outside working_dir)
+        // These are stored as absolute paths since they can't be made relative
+        let external_files: Vec<PathBuf> = self
+            .buffer_metadata
+            .values()
+            .filter_map(|meta| meta.file_path())
+            .filter(|abs_path| abs_path.strip_prefix(&self.working_dir).is_err())
+            .cloned()
+            .collect();
+        if !external_files.is_empty() {
+            tracing::debug!("Captured {} external files", external_files.len());
+        }
+
         Session {
             version: SESSION_VERSION,
             working_dir: self.working_dir.clone(),
@@ -260,6 +273,7 @@ impl Editor {
             search_options,
             bookmarks,
             terminals,
+            external_files,
             saved_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -495,6 +509,34 @@ impl Editor {
         }
 
         tracing::debug!("Opened {} files from session", path_to_buffer.len());
+
+        // 5b. Restore external files (files outside the working directory)
+        // These are stored as absolute paths
+        if !session.external_files.is_empty() {
+            tracing::debug!(
+                "Restoring {} external files: {:?}",
+                session.external_files.len(),
+                session.external_files
+            );
+            for abs_path in &session.external_files {
+                if abs_path.exists() {
+                    match self.open_file_internal(abs_path) {
+                        Ok(buffer_id) => {
+                            tracing::debug!(
+                                "Restored external file {:?} as buffer {:?}",
+                                abs_path,
+                                buffer_id
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to restore external file {:?}: {}", abs_path, e);
+                        }
+                    }
+                } else {
+                    tracing::debug!("Skipping non-existent external file: {:?}", abs_path);
+                }
+            }
+        }
 
         // Restore terminals and build index -> buffer map
         let mut terminal_buffer_map: HashMap<usize, BufferId> = HashMap::new();

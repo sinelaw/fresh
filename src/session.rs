@@ -78,6 +78,11 @@ pub struct Session {
     #[serde(default)]
     pub terminals: Vec<SerializedTerminalSession>,
 
+    /// External files open in the session (files outside working_dir)
+    /// These are stored as absolute paths since they can't be made relative
+    #[serde(default)]
+    pub external_files: Vec<PathBuf>,
+
     /// Timestamp when session was saved (Unix epoch seconds)
     pub saved_at: u64,
 }
@@ -713,6 +718,7 @@ impl Session {
             search_options: SearchOptions::default(),
             bookmarks: HashMap::new(),
             terminals: Vec::new(),
+            external_files: Vec::new(),
             saved_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
