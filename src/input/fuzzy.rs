@@ -18,6 +18,10 @@ mod score {
     pub const GAP_PENALTY: i32 = -3;
     /// Penalty for starting a gap (first unmatched char after a match)
     pub const GAP_START_PENALTY: i32 = -5;
+    /// Bonus for exact match (query matches entire target)
+    pub const EXACT_MATCH: i32 = 100;
+    /// Bonus for exact base name match (query matches filename without extension)
+    pub const EXACT_BASENAME_MATCH: i32 = 80;
 }
 
 /// Result of a fuzzy match, containing match status and quality score
@@ -105,10 +109,38 @@ pub fn fuzzy_match(query: &str, target: &str) -> FuzzyMatch {
     // that considers bonuses at each step
     let result = find_best_match(&query_lower, &target_chars, &target_lower);
 
-    if let Some((positions, score)) = result {
+    if let Some((positions, mut final_score)) = result {
+        // Apply exact match bonuses to prioritize exact matches
+        let query_len = query_lower.len();
+        let target_len = target_lower.len();
+
+        // Exact match bonus: query matches entire target
+        if query_len == target_len {
+            final_score += score::EXACT_MATCH;
+        } else if target_len > query_len {
+            // Check if the query is a prefix match (all consecutive from start)
+            let is_prefix_match = positions.len() == query_len
+                && positions.iter().enumerate().all(|(i, &pos)| pos == i);
+
+            if is_prefix_match {
+                let next_char = target_chars[query_len];
+
+                // Highest priority: exact basename match (before extension)
+                // This handles "config" matching "config.rs" better than "config_manager.rs"
+                if next_char == '.' {
+                    final_score += score::EXACT_MATCH; // Full exact match bonus for extension case
+                }
+                // Second priority: match before word separator (hyphen, underscore, space)
+                // This handles "fresh" matching "fresh-editor" better than "freshness"
+                else if next_char == '-' || next_char == '_' || next_char == ' ' {
+                    final_score += score::EXACT_BASENAME_MATCH;
+                }
+            }
+        }
+
         FuzzyMatch {
             matched: true,
-            score,
+            score: final_score,
             match_positions: positions,
         }
     } else {
@@ -430,5 +462,53 @@ mod tests {
         assert!(fuzzy_match("main", "src/main.rs").matched);
         assert!(fuzzy_match("mod", "src/input/mod.rs").matched);
         assert!(fuzzy_match("cmdreg", "command_registry.rs").matched);
+    }
+
+    #[test]
+    fn test_exact_match_scores_highest() {
+        // "fresh" should score higher against "fresh" than against "fresh-editor"
+        let exact = fuzzy_match("fresh", "fresh");
+        let longer = fuzzy_match("fresh", "fresh-editor");
+
+        assert!(exact.matched);
+        assert!(longer.matched);
+        assert!(
+            exact.score > longer.score,
+            "exact: {}, longer: {}",
+            exact.score,
+            longer.score
+        );
+    }
+
+    #[test]
+    fn test_exact_basename_match_scores_high() {
+        // "fresh" matching "fresh-editor" should score higher than "fresh" matching "freshness"
+        let basename_match = fuzzy_match("fresh", "fresh-editor");
+        let substring_match = fuzzy_match("fresh", "freshness");
+
+        assert!(basename_match.matched);
+        assert!(substring_match.matched);
+        assert!(
+            basename_match.score > substring_match.score,
+            "basename: {}, substring: {}",
+            basename_match.score,
+            substring_match.score
+        );
+    }
+
+    #[test]
+    fn test_exact_match_with_extension() {
+        // "config" should score higher against "config.rs" than "config_manager.rs"
+        let exact_base = fuzzy_match("config", "config.rs");
+        let longer_name = fuzzy_match("config", "config_manager.rs");
+
+        assert!(exact_base.matched);
+        assert!(longer_name.matched);
+        assert!(
+            exact_base.score > longer_name.score,
+            "exact_base: {}, longer: {}",
+            exact_base.score,
+            longer_name.score
+        );
     }
 }

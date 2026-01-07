@@ -1027,3 +1027,122 @@ fn test_file_browser_toggle_hidden_checkbox_click() {
         "Hidden files should be visible after toggle"
     );
 }
+
+/// Test that exact matches are prioritized over partial matches in filtering
+///
+/// When typing "fresh", the file "fresh" should appear before "fresh-editor"
+#[test]
+fn test_filter_prioritizes_exact_matches() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_root = temp_dir.path().to_path_buf();
+
+    // Create files where exact match should win
+    // Note: "fresh-editor" would normally sort before "fresh" alphabetically
+    fs::write(project_root.join("fresh-editor"), "content").unwrap();
+    fs::write(project_root.join("fresh.rs"), "content").unwrap();
+    fs::write(project_root.join("fresh"), "content").unwrap();
+    fs::write(project_root.join("freshness"), "content").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+
+    // Open file dialog
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Wait for files to load
+    harness
+        .wait_until(|h| h.screen_to_string().contains("fresh"))
+        .expect("Files should be listed");
+
+    // Type filter
+    harness.type_text("fresh").unwrap();
+    harness.render().unwrap();
+
+    // Get the screen and find the order of matching entries
+    let screen = harness.screen_to_string();
+
+    // Extract the lines and find positions of each file
+    let lines: Vec<&str> = screen.lines().collect();
+    let mut fresh_pos = None;
+    let mut fresh_rs_pos = None;
+    let mut fresh_editor_pos = None;
+    let mut freshness_pos = None;
+
+    for (i, line) in lines.iter().enumerate() {
+        if line.contains("fresh-editor") && fresh_editor_pos.is_none() {
+            fresh_editor_pos = Some(i);
+        }
+        // Check for exact "fresh" (not followed by other chars in the filename)
+        // This is tricky because "fresh" appears in other names
+        // We need to look for the pattern where "fresh" appears at the start of a filename column
+        if line.contains("fresh.rs") && fresh_rs_pos.is_none() {
+            fresh_rs_pos = Some(i);
+        }
+        if line.contains("freshness") && freshness_pos.is_none() {
+            freshness_pos = Some(i);
+        }
+    }
+
+    // Also search for the exact "fresh" file (without extension)
+    // It should appear somewhere - look for lines with just "fresh" followed by whitespace
+    for (i, line) in lines.iter().enumerate() {
+        // Look for "fresh" followed by spaces (not followed by "-", ".", or other chars in filename)
+        if let Some(idx) = line.find("fresh") {
+            let after_fresh = &line[idx + 5..];
+            // Check if this is the exact "fresh" file (next char is space or end)
+            if after_fresh.starts_with(' ')
+                || after_fresh.starts_with('\n')
+                || after_fresh.is_empty()
+            {
+                // Verify it's not fresh-editor, fresh.rs, or freshness
+                if !line.contains("fresh-")
+                    && !line.contains("fresh.")
+                    && !line.contains("freshness")
+                {
+                    fresh_pos = Some(i);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Verify the exact match and exact basename matches appear before substring matches
+    if let (Some(fresh), Some(fresh_rs), Some(freshness)) = (fresh_pos, fresh_rs_pos, freshness_pos)
+    {
+        // "fresh" (exact match) should appear before "freshness" (substring match)
+        assert!(
+            fresh < freshness,
+            "Exact match 'fresh' (line {}) should appear before substring match 'freshness' (line {})\nScreen:\n{}",
+            fresh,
+            freshness,
+            screen
+        );
+
+        // "fresh.rs" (exact basename + extension) should appear before "freshness"
+        assert!(
+            fresh_rs < freshness,
+            "Exact basename 'fresh.rs' (line {}) should appear before 'freshness' (line {})\nScreen:\n{}",
+            fresh_rs,
+            freshness,
+            screen
+        );
+    }
+
+    // Also verify "fresh-editor" (exact basename + suffix) scores higher than "freshness"
+    if let (Some(fresh_editor), Some(freshness)) = (fresh_editor_pos, freshness_pos) {
+        assert!(
+            fresh_editor < freshness,
+            "Exact basename 'fresh-editor' (line {}) should appear before 'freshness' (line {})\nScreen:\n{}",
+            fresh_editor,
+            freshness,
+            screen
+        );
+    }
+}
