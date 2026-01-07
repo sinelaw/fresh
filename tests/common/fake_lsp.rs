@@ -73,7 +73,7 @@ while true; do
 case "$method" in
     "initialize")
         # Send initialize response
-        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1,"semanticTokensProvider":{"legend":{"tokenTypes":["keyword","function","variable"],"tokenModifiers":["declaration","deprecated"]},"full":true}}}}}'
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1,"semanticTokensProvider":{"legend":{"tokenTypes":["keyword","function","variable"],"tokenModifiers":["declaration","deprecated"]},"full":true}}}}'
         ;;
     "textDocument/hover")
         # Send hover response with range
