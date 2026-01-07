@@ -746,9 +746,11 @@ impl Editor {
             // LSP inlay hint positions are insertion points between characters.
             // Render them before the character at that byte offset so they appear at the
             // correct location (e.g., before punctuation or newline).
-            let (byte_offset, position) = if state.buffer.len() == 0 {
+            if state.buffer.len() == 0 {
                 continue;
-            } else if byte_offset >= state.buffer.len() {
+            }
+
+            let (byte_offset, position) = if byte_offset >= state.buffer.len() {
                 // If hint is at EOF, anchor to last character and render after it.
                 (
                     state.buffer.len().saturating_sub(1),
