@@ -1005,7 +1005,7 @@ fn test_expand_selection_from_middle_of_word() {
 }
 
 /// Test select word left (Ctrl+Shift+Left) when cursor is on a non-word character
-/// Should select backward from cursor through the previous word
+/// Should select backward from cursor through non-word chars, then to start of previous word
 #[test]
 fn test_select_word_left_on_non_word_char() {
     use crossterm::event::{KeyCode, KeyModifiers};
@@ -1015,6 +1015,7 @@ fn test_select_word_left_on_non_word_char() {
     // Cursor is at end after typing (after the '-')
 
     // Press Ctrl+Shift+Left to select backward
+    // First step: should select punctuation "**-"
     harness
         .send_key(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
@@ -1022,7 +1023,6 @@ fn test_select_word_left_on_non_word_char() {
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range();
 
-    // Should select backward from cursor through "word"
     assert!(
         range.is_some(),
         "Should have a selection after Ctrl+Shift+Left"
@@ -1033,12 +1033,28 @@ fn test_select_word_left_on_non_word_char() {
             .editor_mut()
             .active_state_mut()
             .get_text_range(range.start, range.end);
-        // Should select backward from cursor through non-word chars to start of previous word
         assert_eq!(
-            selected_text, "word**-",
-            "Should select backward from cursor to start of previous word"
+            selected_text, "**-",
+            "Should select backward from cursor through non-word chars"
         );
     }
+
+    // Press Ctrl+Shift+Left again to select the word "word"
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness
+        .editor_mut()
+        .active_state_mut()
+        .get_text_range(range.start, range.end);
+
+    assert_eq!(
+        selected_text, "word**-",
+        "Should extend selection to include 'word' after second step"
+    );
 }
 
 /// Test select previous word with non-alphanumeric characters

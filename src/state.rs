@@ -130,6 +130,9 @@ pub struct EditorState {
 
     /// Cached LSP semantic tokens (converted to buffer byte ranges)
     pub semantic_tokens: Option<SemanticTokenStore>,
+
+    /// The detected language for this buffer (e.g., "rust", "python", "text")
+    pub language: String,
 }
 
 impl EditorState {
@@ -166,6 +169,7 @@ impl EditorState {
             view_transform: None,
             reference_highlight_cache: ReferenceHighlightCache::new(),
             semantic_tokens: None,
+            language: "text".to_string(), // Default to plain text
         }
     }
 
@@ -187,12 +191,16 @@ impl EditorState {
         self.highlighter = HighlightEngine::for_file(path, registry);
         if let Some(language) = Language::from_path(path) {
             self.reference_highlighter.set_language(&language);
+            self.language = language.to_string();
+        } else {
+            self.language = "text".to_string();
         }
         tracing::debug!(
-            "Set highlighter for virtual buffer based on name: {} -> {} (backend: {})",
+            "Set highlighter for virtual buffer based on name: {} -> {} (backend: {}, language: {})",
             name,
             filename,
-            self.highlighter.backend_name()
+            self.highlighter.backend_name(),
+            self.language
         );
     }
 
@@ -220,9 +228,12 @@ impl EditorState {
         // Initialize semantic highlighter with language if available
         let language = Language::from_path(path);
         let mut reference_highlighter = ReferenceHighlighter::new();
-        if let Some(lang) = language {
-            reference_highlighter.set_language(&lang);
-        }
+        let language_name = if let Some(lang) = &language {
+            reference_highlighter.set_language(lang);
+            lang.to_string()
+        } else {
+            "text".to_string()
+        };
 
         // Initialize marker list with buffer size
         let mut marker_list = MarkerList::new();
@@ -262,6 +273,7 @@ impl EditorState {
             view_transform: None,
             reference_highlight_cache: ReferenceHighlightCache::new(),
             semantic_tokens: None,
+            language: language_name,
         })
     }
 
@@ -293,9 +305,12 @@ impl EditorState {
         // Initialize semantic highlighter with language if available
         let language = Language::from_path(path);
         let mut reference_highlighter = ReferenceHighlighter::new();
-        if let Some(lang) = language {
-            reference_highlighter.set_language(&lang);
-        }
+        let language_name = if let Some(lang) = &language {
+            reference_highlighter.set_language(lang);
+            lang.to_string()
+        } else {
+            "text".to_string()
+        };
 
         // Initialize marker list with buffer size
         let mut marker_list = MarkerList::new();
@@ -335,6 +350,7 @@ impl EditorState {
             view_transform: None,
             reference_highlight_cache: ReferenceHighlightCache::new(),
             semantic_tokens: None,
+            language: language_name,
         })
     }
 

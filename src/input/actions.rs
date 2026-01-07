@@ -308,8 +308,12 @@ pub fn clear_block_selection_if_active(state: &mut EditorState) {
 }
 
 /// Get the matching close character for auto-pairing.
-fn get_auto_close_char(ch: char, auto_indent: bool) -> Option<char> {
+pub fn get_auto_close_char(ch: char, auto_indent: bool, language: &str) -> Option<char> {
     if !auto_indent {
+        return None;
+    }
+    // Disable auto-closing quotes in plain text files
+    if language == "text" && matches!(ch, '"' | '\'' | '`') {
         return None;
     }
     match ch {
@@ -578,7 +582,7 @@ fn insert_char_events(
     auto_indent: bool,
 ) {
     let is_closing_delimiter = matches!(ch, '}' | ')' | ']');
-    let auto_close_char = get_auto_close_char(ch, auto_indent);
+    let auto_close_char = get_auto_close_char(ch, auto_indent, &state.language);
     let cursor_data = collect_insert_cursor_data(state);
 
     for data in cursor_data {
@@ -3250,6 +3254,7 @@ mod tests {
     fn test_bracket_auto_close_double_quote() {
         let mut state =
             EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+        state.language = "rust".to_string();
 
         // Insert double quote
         let events =

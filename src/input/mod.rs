@@ -14,3 +14,6 @@ pub mod key_translator;
 pub mod keybindings;
 pub mod multi_cursor;
 pub mod position_history;
+
+#[cfg(test)]
+pub mod tests_language_features;

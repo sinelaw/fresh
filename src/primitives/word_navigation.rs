@@ -201,6 +201,25 @@ pub fn find_word_end(buffer: &Buffer, pos: usize) -> usize {
     start + result
 }
 
+use crate::primitives::grapheme::{next_grapheme_boundary, prev_grapheme_boundary};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CharClass {
+    Word,
+    Whitespace,
+    Punctuation,
+}
+
+fn get_grapheme_class(g: &str) -> CharClass {
+    if g.chars().any(|c| c.is_alphanumeric() || c == '_') {
+        CharClass::Word
+    } else if g.chars().all(|c| c.is_whitespace()) {
+        CharClass::Whitespace
+    } else {
+        CharClass::Punctuation
+    }
+}
+
 /// Find the start of the word to the left of the given position
 pub fn find_word_start_left(buffer: &Buffer, pos: usize) -> usize {
     if pos == 0 {
@@ -211,34 +230,55 @@ pub fn find_word_start_left(buffer: &Buffer, pos: usize) -> usize {
     let actual_pos = pos.min(buf_len);
 
     // Only read a small window around the position for efficiency
+    // We grab a bit more to ensure we have context
     let start = actual_pos.saturating_sub(1000);
     let end = actual_pos;
     let bytes = buffer.slice_bytes(start..end);
 
-    let mut new_pos = bytes.len().saturating_sub(1);
+    // Convert to string safely (replacing invalid sequences which might happen at the start boundary)
+    let text = String::from_utf8_lossy(&bytes);
 
-    // Skip non-word characters (whitespace and punctuation)
-    while new_pos > 0 && bytes.get(new_pos).is_some_and(|&b| !is_word_char(b)) {
-        new_pos = new_pos.saturating_sub(1);
-    }
+    // The end of the string corresponds to `pos`
+    let mut current_idx = text.len();
 
-    // Find start of word
-    while new_pos > 0 {
-        let prev_byte = bytes.get(new_pos.saturating_sub(1));
-        let curr_byte = bytes.get(new_pos);
-
-        match (prev_byte, curr_byte) {
-            (Some(&prev), Some(&curr)) => {
-                if is_word_char(prev) != is_word_char(curr) {
-                    break;
-                }
-                new_pos = new_pos.saturating_sub(1);
-            }
-            _ => break,
+    // 1. Consume whitespace to the left
+    while current_idx > 0 {
+        let prev = prev_grapheme_boundary(&text, current_idx);
+        let g = &text[prev..current_idx];
+        if get_grapheme_class(g) == CharClass::Whitespace {
+            current_idx = prev;
+        } else {
+            break;
         }
     }
 
-    start + new_pos
+    if current_idx == 0 {
+        // We consumed everything up to the start of our chunk
+        // Best we can do is return the start of the chunk
+        // (In reality, words > 1000 chars are rare)
+        // We calculate absolute position:
+        // logic: bytes.len() - current_idx is the delta we moved back
+        let delta = text.len() - current_idx;
+        return actual_pos.saturating_sub(delta);
+    }
+
+    // 2. Identify class of the token we hit
+    let prev = prev_grapheme_boundary(&text, current_idx);
+    let target_class = get_grapheme_class(&text[prev..current_idx]);
+
+    // 3. Consume all characters of the same class
+    while current_idx > 0 {
+        let prev = prev_grapheme_boundary(&text, current_idx);
+        let g = &text[prev..current_idx];
+        if get_grapheme_class(g) == target_class {
+            current_idx = prev;
+        } else {
+            break;
+        }
+    }
+
+    let delta = text.len() - current_idx;
+    actual_pos.saturating_sub(delta)
 }
 
 /// Find the start of the word to the right of the given position
@@ -252,20 +292,54 @@ pub fn find_word_start_right(buffer: &Buffer, pos: usize) -> usize {
     let start = pos;
     let end = (pos + 1000).min(buf_len);
     let bytes = buffer.slice_bytes(start..end);
+    let text = String::from_utf8_lossy(&bytes);
 
-    let mut new_pos = 0;
-
-    // Skip current word
-    while new_pos < bytes.len() && bytes.get(new_pos).is_some_and(|&b| is_word_char(b)) {
-        new_pos += 1;
+    let mut current_idx = 0;
+    if current_idx >= text.len() {
+        return start;
     }
 
-    // Skip non-word characters (whitespace and punctuation)
-    while new_pos < bytes.len() && bytes.get(new_pos).is_some_and(|&b| !is_word_char(b)) {
-        new_pos += 1;
+    // Look at the grapheme at current position
+    let next_bound = next_grapheme_boundary(&text, current_idx);
+    let start_class = get_grapheme_class(&text[current_idx..next_bound]);
+
+    // 1. If starting on whitespace, just consume it and stop
+    if start_class == CharClass::Whitespace {
+        while current_idx < text.len() {
+            let next = next_grapheme_boundary(&text, current_idx);
+            let g = &text[current_idx..next];
+            if get_grapheme_class(g) == CharClass::Whitespace {
+                current_idx = next;
+            } else {
+                break;
+            }
+        }
+        return start + current_idx;
     }
 
-    start + new_pos
+    // 2. Otherwise (Word or Punctuation), consume all characters of same class
+    while current_idx < text.len() {
+        let next = next_grapheme_boundary(&text, current_idx);
+        let g = &text[current_idx..next];
+        if get_grapheme_class(g) == start_class {
+            current_idx = next;
+        } else {
+            break;
+        }
+    }
+
+    // 3. Then consume subsequent whitespace to land at start of next token
+    while current_idx < text.len() {
+        let next = next_grapheme_boundary(&text, current_idx);
+        let g = &text[current_idx..next];
+        if get_grapheme_class(g) == CharClass::Whitespace {
+            current_idx = next;
+        } else {
+            break;
+        }
+    }
+
+    start + current_idx
 }
 
 #[cfg(test)]

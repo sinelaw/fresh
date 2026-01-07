@@ -49,6 +49,18 @@ impl Editor {
 
     /// Internal helper to finalize save state (mark as saved, notify LSP, etc.)
     pub(crate) fn finalize_save(&mut self, path: Option<PathBuf>) -> anyhow::Result<()> {
+        // Auto-detect language if it's currently "text" and we have a path
+        if let Some(ref p) = path {
+            let buffer_id = self.active_buffer();
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                if state.language == "text" {
+                    if let Some(filename) = p.file_name().and_then(|n| n.to_str()) {
+                        state.set_language_from_name(filename, &self.grammar_registry);
+                    }
+                }
+            }
+        }
+
         self.status_message = Some(t!("status.file_saved").to_string());
 
         // Mark the event log position as saved (for undo modified tracking)

@@ -421,6 +421,16 @@ impl Editor {
                 let metadata = BufferMetadata::with_file(full_path.clone(), &self.working_dir);
                 self.buffer_metadata.insert(self.active_buffer(), metadata);
 
+                // Auto-detect language if it's currently "text"
+                // This ensures syntax highlighting works immediately after "Save As"
+                if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+                    if state.language == "text" {
+                        if let Some(filename) = full_path.file_name().and_then(|n| n.to_str()) {
+                            state.set_language_from_name(filename, &self.grammar_registry);
+                        }
+                    }
+                }
+
                 self.active_event_log_mut().mark_saved();
                 tracing::debug!(
                     "SaveFileAs AFTER mark_saved: event_log index={}, len={}",

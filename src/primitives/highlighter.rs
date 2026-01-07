@@ -667,6 +667,31 @@ impl Language {
     }
 }
 
+impl std::fmt::Display for Language {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Rust => "rust",
+            Self::Python => "python",
+            Self::JavaScript => "javascript",
+            Self::TypeScript => "typescript",
+            Self::HTML => "html",
+            Self::CSS => "css",
+            Self::C => "c",
+            Self::Cpp => "cpp",
+            Self::Go => "go",
+            Self::Json => "json",
+            Self::Java => "java",
+            Self::CSharp => "c_sharp",
+            Self::Php => "php",
+            Self::Ruby => "ruby",
+            Self::Bash => "bash",
+            Self::Lua => "lua",
+            Self::Pascal => "pascal",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 /// Cache of highlighted spans for a specific byte range
 #[derive(Debug, Clone)]
 struct HighlightCache {

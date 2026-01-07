@@ -2875,18 +2875,15 @@ impl Editor {
     pub(super) fn toggle_comment(&mut self) {
         // Determine comment prefix from language config
         // If no language detected or no comment prefix configured, do nothing
-        let comment_prefix: String = match self
-            .buffer_metadata
-            .get(&self.active_buffer())
-            .and_then(|metadata| metadata.file_path())
-            .and_then(|path| {
-                detect_language(path, &self.config.languages).and_then(|lang_name| {
-                    self.config
-                        .languages
-                        .get(&lang_name)
-                        .and_then(|lang_config| lang_config.comment_prefix.clone())
-                })
-            }) {
+        // Determine comment prefix from language config
+        let language = &self.active_state().language;
+        let comment_prefix = self
+            .config
+            .languages
+            .get(language)
+            .and_then(|lang_config| lang_config.comment_prefix.clone());
+
+        let comment_prefix: String = match comment_prefix {
             Some(prefix) => {
                 // Ensure there's a trailing space for consistent formatting
                 if prefix.ends_with(' ') {

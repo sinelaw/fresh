@@ -5035,7 +5035,9 @@ mod tests {
         }
 
         // Create runtime with state
-        let mut runtime = TypeScriptRuntime::with_state(state_snapshot.clone(), tx).unwrap();
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
+        let mut runtime =
+            TypeScriptRuntime::with_state(state_snapshot.clone(), tx, dir_context).unwrap();
 
         // Test querying state from TypeScript
         let result = runtime
@@ -5232,7 +5234,9 @@ mod tests {
         }
 
         // Create runtime with state
-        let mut runtime = TypeScriptRuntime::with_state(state_snapshot.clone(), tx).unwrap();
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
+        let mut runtime =
+            TypeScriptRuntime::with_state(state_snapshot.clone(), tx, dir_context).unwrap();
 
         // Test new ops from TypeScript
         let result = runtime
@@ -5326,7 +5330,8 @@ mod tests {
     async fn test_register_command_empty_contexts() {
         let (tx, rx) = std::sync::mpsc::channel();
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx).unwrap();
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx, dir_context).unwrap();
 
         // Register command with empty contexts (available everywhere)
         let result = runtime
@@ -5359,7 +5364,8 @@ mod tests {
     async fn test_register_command_all_contexts() {
         let (tx, rx) = std::sync::mpsc::channel();
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx).unwrap();
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx, dir_context).unwrap();
 
         // Test all valid context types
         let result = runtime
@@ -5409,7 +5415,8 @@ mod tests {
     async fn test_register_command_invalid_contexts_ignored() {
         let (tx, rx) = std::sync::mpsc::channel();
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx).unwrap();
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx, dir_context).unwrap();
 
         // Invalid contexts should be silently ignored
         let result = runtime
@@ -5448,7 +5455,8 @@ mod tests {
     async fn test_open_file_with_zero_values() {
         let (tx, rx) = std::sync::mpsc::channel();
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx).unwrap();
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx, dir_context).unwrap();
 
         // Zero values should translate to None (file opening without positioning)
         let result = runtime
@@ -5477,7 +5485,8 @@ mod tests {
     async fn test_open_file_with_default_params() {
         let (tx, rx) = std::sync::mpsc::channel();
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx).unwrap();
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx, dir_context).unwrap();
 
         // Test that JavaScript default parameters work
         let result = runtime
@@ -5507,7 +5516,8 @@ mod tests {
     async fn test_open_file_with_line_only() {
         let (tx, rx) = std::sync::mpsc::channel();
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx).unwrap();
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx, dir_context).unwrap();
 
         // Open file at specific line but no column
         let result = runtime
@@ -5535,7 +5545,8 @@ mod tests {
     async fn test_register_command_case_insensitive_contexts() {
         let (tx, rx) = std::sync::mpsc::channel();
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx).unwrap();
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx, dir_context).unwrap();
 
         // Context names should be case-insensitive
         let result = runtime
@@ -6694,8 +6705,10 @@ mod tests {
 
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
 
+        // Create dir context
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
         // Spawn the plugin thread
-        let mut handle = PluginThreadHandle::spawn(commands).unwrap();
+        let mut handle = PluginThreadHandle::spawn(commands, dir_context).unwrap();
 
         // Use the actual plugins directory which has the lib folder
         let plugins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins");
@@ -6754,8 +6767,10 @@ mod tests {
 
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
 
+        // Create dir context
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
         // Spawn the plugin thread
-        let mut handle = PluginThreadHandle::spawn(commands).unwrap();
+        let mut handle = PluginThreadHandle::spawn(commands, dir_context).unwrap();
 
         // Load the actual git_log.ts plugin
         let plugins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins");
@@ -6793,8 +6808,10 @@ mod tests {
 
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
 
+        // Create dir context
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
         // Spawn the plugin thread
-        let mut handle = PluginThreadHandle::spawn(commands).unwrap();
+        let mut handle = PluginThreadHandle::spawn(commands, dir_context).unwrap();
 
         // Load the vi_mode.ts plugin
         let plugins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins");
@@ -6837,8 +6854,10 @@ mod tests {
 
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
 
+        // Create dir context
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
         // Spawn the plugin thread
-        let mut handle = PluginThreadHandle::spawn(commands).unwrap();
+        let mut handle = PluginThreadHandle::spawn(commands, dir_context).unwrap();
 
         // Load the actual git_log.ts plugin
         let plugins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins");
@@ -6930,8 +6949,10 @@ mod tests {
 
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
 
+        // Create dir context
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
         // Spawn the plugin thread
-        let mut handle = PluginThreadHandle::spawn(commands).unwrap();
+        let mut handle = PluginThreadHandle::spawn(commands, dir_context).unwrap();
 
         // Create a simple plugin that spawns a process
         let temp_dir = TempDir::new().unwrap();
@@ -7013,8 +7034,10 @@ mod tests {
 
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
 
+        // Create dir context
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
         // Spawn the plugin thread
-        let mut handle = PluginThreadHandle::spawn(commands).unwrap();
+        let mut handle = PluginThreadHandle::spawn(commands, dir_context).unwrap();
 
         // Create a plugin that runs git log like the git_log plugin does
         let temp_dir = TempDir::new().unwrap();
@@ -7100,8 +7123,10 @@ mod tests {
 
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
 
+        // Create dir context
+        let dir_context = crate::config_io::DirectoryContext::from_system().unwrap();
         // Spawn the plugin thread
-        let mut handle = PluginThreadHandle::spawn(commands).unwrap();
+        let mut handle = PluginThreadHandle::spawn(commands, dir_context).unwrap();
 
         // Create a plugin that mimics git_log with debug logs
         let temp_dir = TempDir::new().unwrap();
