@@ -146,7 +146,10 @@ pub struct PluginThreadHandle {
 
 impl PluginThreadHandle {
     /// Create a new plugin thread and return its handle
-    pub fn spawn(commands: Arc<RwLock<CommandRegistry>>) -> Result<Self> {
+    pub fn spawn(
+        commands: Arc<RwLock<CommandRegistry>>,
+        dir_context: crate::config_io::DirectoryContext,
+    ) -> Result<Self> {
         tracing::debug!("PluginThreadHandle::spawn: starting plugin thread creation");
 
         // Create channel for plugin commands
@@ -192,6 +195,7 @@ impl PluginThreadHandle {
                 Arc::clone(&thread_state_snapshot),
                 command_sender,
                 thread_pending_responses,
+                dir_context,
             ) {
                 Ok(rt) => {
                     tracing::debug!("Plugin thread: TypeScript runtime created successfully");

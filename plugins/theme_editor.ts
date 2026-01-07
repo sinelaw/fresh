@@ -515,9 +515,15 @@ function listUserThemes(): string[] {
 
 /**
  * Get user themes directory
- * Uses XDG_CONFIG_HOME if set, otherwise falls back to $HOME/.config
+ * Uses the API to get the correct path
  */
 function getUserThemesDir(): string {
+  // Use the API if available (new method)
+  if (typeof editor.getThemesDir === "function") {
+    return editor.getThemesDir();
+  }
+
+  // Fallback for older versions (deprecated)
   // Check XDG_CONFIG_HOME first (standard on Linux)
   const xdgConfig = editor.getEnv("XDG_CONFIG_HOME");
   if (xdgConfig) {

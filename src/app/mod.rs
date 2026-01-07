@@ -757,7 +757,11 @@ impl Editor {
         let command_registry = Arc::new(RwLock::new(CommandRegistry::new()));
 
         // Initialize plugin manager (handles both enabled and disabled cases internally)
-        let plugin_manager = PluginManager::new(enable_plugins, Arc::clone(&command_registry));
+        let plugin_manager = PluginManager::new(
+            enable_plugins,
+            Arc::clone(&command_registry),
+            dir_context.clone(),
+        );
 
         // Load TypeScript plugins from multiple directories:
         // 1. Next to the executable (for cargo-dist installations)

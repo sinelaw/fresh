@@ -28,11 +28,15 @@ impl PluginManager {
     ///
     /// When `plugins` feature is enabled and `enable` is true, spawns the plugin thread.
     /// Otherwise, creates a no-op manager.
-    pub fn new(enable: bool, command_registry: Arc<RwLock<CommandRegistry>>) -> Self {
+    pub fn new(
+        enable: bool,
+        command_registry: Arc<RwLock<CommandRegistry>>,
+        dir_context: crate::config_io::DirectoryContext,
+    ) -> Self {
         #[cfg(feature = "plugins")]
         {
             if enable {
-                match PluginThreadHandle::spawn(command_registry) {
+                match PluginThreadHandle::spawn(command_registry, dir_context) {
                     Ok(handle) => {
                         return Self {
                             inner: Some(handle),
@@ -53,6 +57,7 @@ impl PluginManager {
         #[cfg(not(feature = "plugins"))]
         {
             let _ = command_registry; // Suppress unused warning
+            let _ = dir_context; // Suppress unused warning
             if enable {
                 tracing::warn!("Plugins requested but compiled without plugin support");
             }

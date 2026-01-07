@@ -579,6 +579,26 @@ Use this with getConfig() to determine which values are defaults.
 getUserConfig(): unknown
 ```
 
+#### `getConfigDir`
+
+Get the user configuration directory path
+Returns the absolute path to the directory where user config and themes are stored.
+e.g. ~/.config/fresh/ on Linux or ~/Library/Application Support/fresh/ on macOS.
+
+```typescript
+getConfigDir(): string
+```
+
+#### `getThemesDir`
+
+Get the user themes directory path
+Returns the absolute path to the directory where user themes are stored.
+e.g. ~/.config/fresh/themes/
+
+```typescript
+getThemesDir(): string
+```
+
 #### `getActiveBufferId`
 
 Get the buffer ID of the focused editor pane

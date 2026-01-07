@@ -433,6 +433,20 @@ interface EditorAPI {
    */
   getUserConfig(): unknown;
   /**
+   * Get the user configuration directory path
+   *
+   * Returns the absolute path to the directory where user config and themes are stored.
+   * e.g. ~/.config/fresh/ on Linux or ~/Library/Application Support/fresh/ on macOS.
+   */
+  getConfigDir(): string;
+  /**
+   * Get the user themes directory path
+   *
+   * Returns the absolute path to the directory where user themes are stored.
+   * e.g. ~/.config/fresh/themes/
+   */
+  getThemesDir(): string;
+  /**
    * Get the buffer ID of the focused editor pane
    *
    * Returns 0 if no buffer is active (rare edge case).
