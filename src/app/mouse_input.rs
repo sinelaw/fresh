@@ -192,6 +192,12 @@ impl Editor {
                     self.scroll_popup(-3);
                     needs_render = true;
                 } else {
+                    // If in terminal mode, exit to scrollback mode first so scrolling works
+                    if self.terminal_mode && self.is_terminal_buffer(self.active_buffer()) {
+                        self.sync_terminal_to_buffer(self.active_buffer());
+                        self.terminal_mode = false;
+                        self.key_context = crate::input::keybindings::KeyContext::Normal;
+                    }
                     // Dismiss hover/signature help popups on scroll
                     self.dismiss_transient_popups();
                     self.handle_mouse_scroll(col, row, -3)?;
@@ -209,6 +215,12 @@ impl Editor {
                     self.scroll_popup(3);
                     needs_render = true;
                 } else {
+                    // If in terminal mode, exit to scrollback mode first so scrolling works
+                    if self.terminal_mode && self.is_terminal_buffer(self.active_buffer()) {
+                        self.sync_terminal_to_buffer(self.active_buffer());
+                        self.terminal_mode = false;
+                        self.key_context = crate::input::keybindings::KeyContext::Normal;
+                    }
                     // Dismiss hover/signature help popups on scroll
                     self.dismiss_transient_popups();
                     self.handle_mouse_scroll(col, row, 3)?;
