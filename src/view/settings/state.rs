@@ -978,12 +978,7 @@ impl SettingsState {
         if is_nested {
             // Nested dialog - update the parent dialog's Map item
             // Extract the map field name from the path (last segment of map_path)
-            let map_field = dialog
-                .map_path
-                .rsplit('/')
-                .next()
-                .unwrap_or("")
-                .to_string();
+            let map_field = dialog.map_path.rsplit('/').next().unwrap_or("").to_string();
             let item_path = format!("/{}", map_field);
 
             // Find and update the Map in the parent dialog
