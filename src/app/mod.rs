@@ -113,6 +113,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 // Re-export BufferId from event module for backward compatibility
 pub use self::types::{BufferKind, BufferMetadata, HoverTarget};
@@ -129,6 +130,15 @@ fn uri_to_path(uri: &lsp_types::Uri) -> Result<PathBuf, String> {
         .map_err(|e| format!("Failed to parse URI: {}", e))?
         .to_file_path()
         .map_err(|_| "URI is not a file path".to_string())
+}
+
+/// Track an in-flight semantic token range request.
+#[derive(Clone, Debug)]
+struct SemanticTokenRangeRequest {
+    buffer_id: BufferId,
+    version: u64,
+    range: Range<usize>,
+    start_line: usize,
 }
 
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
@@ -322,6 +332,18 @@ pub struct Editor {
 
     /// Track semantic token requests per buffer to prevent duplicate inflight requests
     semantic_tokens_in_flight: HashMap<BufferId, (u64, u64)>,
+
+    /// Pending semantic token range requests keyed by LSP request ID
+    pending_semantic_token_range_requests: HashMap<u64, SemanticTokenRangeRequest>,
+
+    /// Track semantic token range requests per buffer (request_id, range, version)
+    semantic_tokens_range_in_flight: HashMap<BufferId, (u64, Range<usize>, u64)>,
+
+    /// Track last semantic token range request per buffer (range, version, time)
+    semantic_tokens_range_last_request: HashMap<BufferId, (Range<usize>, u64, Instant)>,
+
+    /// Next time a full semantic token refresh is allowed for a buffer
+    semantic_tokens_full_debounce: HashMap<BufferId, Instant>,
 
     /// Hover symbol range (byte offsets) - for highlighting the symbol under hover
     /// Format: (start_byte_offset, end_byte_offset)
@@ -922,6 +944,10 @@ impl Editor {
             pending_inlay_hints_request: None,
             pending_semantic_token_requests: HashMap::new(),
             semantic_tokens_in_flight: HashMap::new(),
+            pending_semantic_token_range_requests: HashMap::new(),
+            semantic_tokens_range_in_flight: HashMap::new(),
+            semantic_tokens_range_last_request: HashMap::new(),
+            semantic_tokens_full_debounce: HashMap::new(),
             hover_symbol_range: None,
             hover_symbol_overlay: None,
             mouse_hover_screen_position: None,
@@ -1065,6 +1091,23 @@ impl Editor {
         {
             self.semantic_tokens_in_flight.remove(&buffer_id);
             Some((buffer_id, version))
+        } else {
+            None
+        }
+    }
+
+    /// Remove a pending semantic token range request from tracking maps.
+    fn take_pending_semantic_token_range_request(
+        &mut self,
+        request_id: u64,
+    ) -> Option<SemanticTokenRangeRequest> {
+        if let Some(request) = self
+            .pending_semantic_token_range_requests
+            .remove(&request_id)
+        {
+            self.semantic_tokens_range_in_flight
+                .remove(&request.buffer_id);
+            Some(request)
         } else {
             None
         }
@@ -1695,6 +1738,7 @@ impl Editor {
         match event {
             Event::Insert { .. } | Event::Delete { .. } | Event::BulkEdit { .. } => {
                 self.invalidate_layouts_for_buffer(self.active_buffer());
+                self.schedule_semantic_tokens_full_refresh(self.active_buffer());
             }
             Event::Batch { events, .. } => {
                 let has_edits = events
@@ -1702,6 +1746,7 @@ impl Editor {
                     .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
                 if has_edits {
                     self.invalidate_layouts_for_buffer(self.active_buffer());
+                    self.schedule_semantic_tokens_full_refresh(self.active_buffer());
                 }
             }
             _ => {}
@@ -3056,6 +3101,7 @@ impl Editor {
                     completion_trigger_characters,
                     semantic_tokens_legend,
                     semantic_tokens_full,
+                    semantic_tokens_range,
                 } => {
                     tracing::info!("LSP server initialized for language: {}", language);
                     tracing::debug!(
@@ -3075,6 +3121,7 @@ impl Editor {
                             &language,
                             semantic_tokens_legend,
                             semantic_tokens_full,
+                            semantic_tokens_range,
                         );
                     }
 

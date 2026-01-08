@@ -1051,6 +1051,12 @@ impl Editor {
         if let Some((request_id, _)) = self.semantic_tokens_in_flight.remove(&id) {
             self.pending_semantic_token_requests.remove(&request_id);
         }
+        if let Some((request_id, _, _)) = self.semantic_tokens_range_in_flight.remove(&id) {
+            self.pending_semantic_token_range_requests
+                .remove(&request_id);
+        }
+        self.semantic_tokens_range_last_request.remove(&id);
+        self.semantic_tokens_full_debounce.remove(&id);
 
         // Remove buffer from panel_ids mapping if it was a panel buffer
         // This prevents stale entries when the same panel_id is reused later

@@ -73,7 +73,7 @@ while true; do
 case "$method" in
     "initialize")
         # Send initialize response
-        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1,"semanticTokensProvider":{"legend":{"tokenTypes":["keyword","function","variable"],"tokenModifiers":["declaration","deprecated"]},"full":true}}}}'
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1,"semanticTokensProvider":{"legend":{"tokenTypes":["keyword","function","variable"],"tokenModifiers":["declaration","deprecated"]},"full":true,"range":true}}}}'
         ;;
     "textDocument/hover")
         # Send hover response with range
@@ -94,6 +94,9 @@ case "$method" in
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"uri":"'$uri'","range":{"start":{"line":0,"character":0},"end":{"line":0,"character":10}}}}'
         ;;
     "textDocument/semanticTokens/full")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"data":[0,0,2,0,0,0,3,4,1,0]}}'
+        ;;
+    "textDocument/semanticTokens/range")
         send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"data":[0,0,2,0,0,0,3,4,1,0]}}'
         ;;
     "textDocument/didSave")
@@ -206,7 +209,7 @@ while true; do
 
 case "$method" in
     "initialize")
-        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"capabilities":{{"completionProvider":{{"triggerCharacters":[".",":",":"]}},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1,"semanticTokensProvider":{{"legend":{{"tokenTypes":["keyword","function","variable"],"tokenModifiers":["declaration","deprecated"]}},"full":true}}}}}}}}'
+        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"capabilities":{{"completionProvider":{{"triggerCharacters":[".",":",":"]}},"definitionProvider":true,"hoverProvider":true,"textDocumentSync":1,"semanticTokensProvider":{{"legend":{{"tokenTypes":["keyword","function","variable"],"tokenModifiers":["declaration","deprecated"]}},"full":true,"range":true}}}}}}}}'
         ;;
     "textDocument/hover")
         line=$(echo "$msg" | grep -o '"line":[0-9]*' | head -1 | cut -d':' -f2)
@@ -222,6 +225,10 @@ case "$method" in
         send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"uri":"'$uri'","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":10}}}}}}}}'
         ;;
     "textDocument/semanticTokens/full")
+        sleep $DELAY
+        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"data":[0,0,2,0,0,0,3,4,1,0]}}}}'
+        ;;
+    "textDocument/semanticTokens/range")
         sleep $DELAY
         send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"data":[0,0,2,0,0,0,3,4,1,0]}}}}'
         ;;

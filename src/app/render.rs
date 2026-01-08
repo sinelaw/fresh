@@ -24,17 +24,27 @@ impl Editor {
 
         // Prepare all buffers for rendering (pre-load viewport data for lazy loading)
         // Each split may have a different viewport position on the same buffer
-        let mut semantic_targets = std::collections::HashSet::new();
-        let mut buffers_to_request = Vec::new();
-        for split_id in self.split_view_states.keys() {
+        let mut semantic_ranges: std::collections::HashMap<BufferId, (usize, usize)> =
+            std::collections::HashMap::new();
+        for (split_id, view_state) in &self.split_view_states {
             if let Some(buffer_id) = self.split_manager.get_buffer_id(*split_id) {
-                if semantic_targets.insert(buffer_id) {
-                    buffers_to_request.push(buffer_id);
+                if let Some(state) = self.buffers.get(&buffer_id) {
+                    let start_line = state.buffer.get_line_number(view_state.viewport.top_byte);
+                    let visible_lines = view_state.viewport.visible_line_count().saturating_sub(1);
+                    let end_line = start_line.saturating_add(visible_lines);
+                    semantic_ranges
+                        .entry(buffer_id)
+                        .and_modify(|(min_start, max_end)| {
+                            *min_start = (*min_start).min(start_line);
+                            *max_end = (*max_end).max(end_line);
+                        })
+                        .or_insert((start_line, end_line));
                 }
             }
         }
-        for buffer_id in buffers_to_request {
-            self.maybe_request_semantic_tokens(buffer_id);
+        for (buffer_id, (start_line, end_line)) in semantic_ranges {
+            self.maybe_request_semantic_tokens_range(buffer_id, start_line, end_line);
+            self.maybe_request_semantic_tokens_full_debounced(buffer_id);
         }
 
         for (split_id, view_state) in &self.split_view_states {

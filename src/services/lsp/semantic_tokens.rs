@@ -32,13 +32,18 @@ pub fn semantic_token_color(
     match token_type {
         "keyword" | "modifier" => theme.syntax_keyword,
         "function" | "method" | "macro" => theme.syntax_function,
-        "variable" | "parameter" | "property" => theme.syntax_variable,
-        "type" | "class" | "struct" | "interface" | "enum" | "typeParameter" => theme.syntax_type,
-        "comment" => theme.syntax_comment,
-        "string" => theme.syntax_string,
+        "parameter" | "variable" | "property" | "enumMember" | "event" | "label" => {
+            theme.syntax_variable
+        }
+        "type" | "class" | "interface" | "struct" | "typeParameter" | "namespace" | "enum" => {
+            theme.syntax_type
+        }
         "number" => theme.syntax_constant,
+        "string" | "regexp" => theme.syntax_string,
         "operator" => theme.syntax_operator,
-        _ => theme.editor_fg,
+        "comment" => theme.syntax_comment,
+        "decorator" => theme.syntax_function,
+        _ => theme.syntax_variable,
     }
 }
 
@@ -48,21 +53,41 @@ pub fn apply_semantic_tokens_to_state(
     tokens: &[SemanticTokenSpan],
     theme: &crate::view::theme::Theme,
 ) {
+    let full_range = 0..state.buffer.len();
+    apply_semantic_tokens_range_to_state(state, full_range, 0, tokens, theme);
+}
+
+/// Apply semantic tokens for a specific buffer range.
+pub fn apply_semantic_tokens_range_to_state(
+    state: &mut EditorState,
+    range: std::ops::Range<usize>,
+    start_line: usize,
+    tokens: &[SemanticTokenSpan],
+    theme: &crate::view::theme::Theme,
+) {
     let ns = lsp_semantic_tokens_namespace();
-    state.overlays.clear_namespace(&ns, &mut state.marker_list);
+    let mut new_overlays = Vec::with_capacity(tokens.len());
+    let start_line_offset = state.buffer.line_start_offset(start_line).unwrap_or(0);
 
     for token in tokens {
+        let adjusted_range =
+            (start_line_offset + token.range.start)..(start_line_offset + token.range.end);
+
         let color = semantic_token_color(&token.token_type, &token.modifiers, theme);
         let overlay = Overlay::with_namespace(
             &mut state.marker_list,
-            token.range.clone(),
+            adjusted_range,
             OverlayFace::Foreground { color },
             ns.clone(),
         )
         .with_priority_value(SEMANTIC_TOKENS_PRIORITY);
 
-        state.overlays.add(overlay);
+        new_overlays.push(overlay);
     }
+
+    state
+        .overlays
+        .replace_range_in_namespace(&ns, &range, new_overlays, &mut state.marker_list);
 }
 
 #[cfg(test)]

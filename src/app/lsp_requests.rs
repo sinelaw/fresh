@@ -13,6 +13,7 @@
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 use std::io;
+use std::time::{Duration, Instant};
 
 use lsp_types::TextDocumentContentChangeEvent;
 
@@ -21,7 +22,11 @@ use crate::primitives::word_navigation::{find_word_end, find_word_start};
 use crate::services::lsp::manager::detect_language;
 use crate::view::prompt::{Prompt, PromptType};
 
-use super::{uri_to_path, Editor};
+use super::{uri_to_path, Editor, SemanticTokenRangeRequest};
+
+const SEMANTIC_TOKENS_FULL_DEBOUNCE_MS: u64 = 500;
+const SEMANTIC_TOKENS_RANGE_DEBOUNCE_MS: u64 = 50;
+const SEMANTIC_TOKENS_RANGE_PADDING_LINES: usize = 10;
 
 impl Editor {
     /// Handle LSP completion response
@@ -1881,8 +1886,6 @@ impl Editor {
 
     /// Request semantic tokens for a specific buffer if supported and needed.
     pub(crate) fn maybe_request_semantic_tokens(&mut self, buffer_id: BufferId) {
-        return; // TODO: Re-enable semantic tokens
-
         // Avoid duplicate in-flight requests per buffer
         if self.semantic_tokens_in_flight.contains_key(&buffer_id) {
             return;
@@ -1947,6 +1950,163 @@ impl Editor {
             }
             Err(e) => {
                 tracing::debug!("Failed to request semantic tokens: {}", e);
+            }
+        }
+    }
+
+    /// Schedule a full semantic token refresh for a buffer (debounced).
+    pub(crate) fn schedule_semantic_tokens_full_refresh(&mut self, buffer_id: BufferId) {
+        let next_time = Instant::now() + Duration::from_millis(SEMANTIC_TOKENS_FULL_DEBOUNCE_MS);
+        self.semantic_tokens_full_debounce
+            .insert(buffer_id, next_time);
+    }
+
+    /// Issue a debounced full semantic token request if the timer has elapsed.
+    pub(crate) fn maybe_request_semantic_tokens_full_debounced(&mut self, buffer_id: BufferId) {
+        let Some(ready_at) = self.semantic_tokens_full_debounce.get(&buffer_id).copied() else {
+            return;
+        };
+        if Instant::now() < ready_at {
+            return;
+        }
+
+        self.semantic_tokens_full_debounce.remove(&buffer_id);
+        self.maybe_request_semantic_tokens(buffer_id);
+    }
+
+    /// Request semantic tokens for a viewport range (with padding).
+    pub(crate) fn maybe_request_semantic_tokens_range(
+        &mut self,
+        buffer_id: BufferId,
+        start_line: usize,
+        end_line: usize,
+    ) {
+        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+            return;
+        };
+        if !metadata.lsp_enabled {
+            return;
+        }
+        let Some(uri) = metadata.file_uri().cloned() else {
+            return;
+        };
+        let Some(path) = metadata.file_path() else {
+            return;
+        };
+        let Some(language) = detect_language(path, &self.config.languages) else {
+            return;
+        };
+
+        let Some(lsp) = self.lsp.as_mut() else {
+            return;
+        };
+
+        if !lsp.semantic_tokens_range_supported(&language) {
+            // Fall back to full document tokens if range not supported.
+            self.maybe_request_semantic_tokens(buffer_id);
+            return;
+        }
+        if lsp.semantic_tokens_legend(&language).is_none() {
+            return;
+        }
+
+        // Ensure there is a running server
+        use crate::services::lsp::manager::LspSpawnResult;
+        if lsp.try_spawn(&language) != LspSpawnResult::Spawned {
+            return;
+        }
+
+        let Some(handle) = lsp.get_handle_mut(&language) else {
+            return;
+        };
+        let Some(state) = self.buffers.get(&buffer_id) else {
+            return;
+        };
+
+        let buffer_version = state.buffer.version();
+        let mut padded_start = start_line.saturating_sub(SEMANTIC_TOKENS_RANGE_PADDING_LINES);
+        let mut padded_end = end_line.saturating_add(SEMANTIC_TOKENS_RANGE_PADDING_LINES);
+
+        if let Some(line_count) = state.buffer.line_count() {
+            if line_count == 0 {
+                return;
+            }
+            let max_line = line_count.saturating_sub(1);
+            padded_start = padded_start.min(max_line);
+            padded_end = padded_end.min(max_line);
+        }
+
+        let start_byte = state.buffer.line_start_offset(padded_start).unwrap_or(0);
+        let end_char = state
+            .buffer
+            .get_line(padded_end)
+            .map(|line| String::from_utf8_lossy(&line).encode_utf16().count())
+            .unwrap_or(0);
+        let end_byte = if state.buffer.line_start_offset(padded_end).is_some() {
+            state.buffer.lsp_position_to_byte(padded_end, end_char)
+        } else {
+            state.buffer.len()
+        };
+
+        if start_byte >= end_byte {
+            return;
+        }
+
+        let range = start_byte..end_byte;
+        let now = Instant::now();
+        if let Some((last_range, last_version, last_time)) =
+            self.semantic_tokens_range_last_request.get(&buffer_id)
+        {
+            if *last_range == range
+                && *last_version == buffer_version
+                && now.duration_since(*last_time)
+                    < Duration::from_millis(SEMANTIC_TOKENS_RANGE_DEBOUNCE_MS)
+            {
+                return;
+            }
+        }
+
+        if let Some((request_id, _, _)) = self.semantic_tokens_range_in_flight.get(&buffer_id) {
+            if let Err(e) = handle.cancel_request(*request_id) {
+                tracing::debug!("Failed to cancel semantic token range request: {}", e);
+            }
+            self.pending_semantic_token_range_requests
+                .remove(request_id);
+            self.semantic_tokens_range_in_flight.remove(&buffer_id);
+        }
+
+        let lsp_range = lsp_types::Range {
+            start: lsp_types::Position {
+                line: padded_start as u32,
+                character: 0,
+            },
+            end: lsp_types::Position {
+                line: padded_end as u32,
+                character: end_char as u32,
+            },
+        };
+
+        let request_id = self.next_lsp_request_id;
+        self.next_lsp_request_id += 1;
+
+        match handle.semantic_tokens_range(request_id, uri, lsp_range) {
+            Ok(_) => {
+                self.pending_semantic_token_range_requests.insert(
+                    request_id,
+                    SemanticTokenRangeRequest {
+                        buffer_id,
+                        version: buffer_version,
+                        range: range.clone(),
+                        start_line: padded_start,
+                    },
+                );
+                self.semantic_tokens_range_in_flight
+                    .insert(buffer_id, (request_id, range.clone(), buffer_version));
+                self.semantic_tokens_range_last_request
+                    .insert(buffer_id, (range, buffer_version, now));
+            }
+            Err(e) => {
+                tracing::debug!("Failed to request semantic token range: {}", e);
             }
         }
     }

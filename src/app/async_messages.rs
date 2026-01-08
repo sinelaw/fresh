@@ -184,16 +184,27 @@ impl Editor {
         uri: String,
         result: Result<Option<SemanticTokensResult>, String>,
     ) {
-        let Some((buffer_id, target_version)) =
-            self.take_pending_semantic_token_request(request_id)
-        else {
-            tracing::debug!(
-                "Semantic tokens response {} for {} without pending entry",
-                request_id,
-                uri
-            );
-            return;
-        };
+        let (buffer_id, target_version, requested_range, requested_start_line) =
+            if let Some(range_request) = self.take_pending_semantic_token_range_request(request_id)
+            {
+                (
+                    range_request.buffer_id,
+                    range_request.version,
+                    Some(range_request.range),
+                    Some(range_request.start_line),
+                )
+            } else if let Some((buffer_id, target_version)) =
+                self.take_pending_semantic_token_request(request_id)
+            {
+                (buffer_id, target_version, None, None)
+            } else {
+                tracing::debug!(
+                    "Semantic tokens response {} for {} without pending entry",
+                    request_id,
+                    uri
+                );
+                return;
+            };
 
         let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
             return;
@@ -230,14 +241,10 @@ impl Editor {
                     uri,
                     e
                 );
-                if current_version != target_version {
-                    self.maybe_request_semantic_tokens(buffer_id);
-                }
             }
             Ok(tokens_opt) => {
                 if current_version != target_version {
-                    // Stale response - request fresh tokens for newest version
-                    self.maybe_request_semantic_tokens(buffer_id);
+                    // Stale response - ignore; next render will request fresh tokens.
                     return;
                 }
 
@@ -256,17 +263,28 @@ impl Editor {
                         None => (None, Vec::new()),
                     };
 
-                    crate::services::lsp::semantic_tokens::apply_semantic_tokens_to_state(
-                        state,
-                        &spans,
-                        &self.theme,
-                    );
+                    if let (Some(range), Some(start_line)) = (requested_range, requested_start_line)
+                    {
+                        crate::services::lsp::semantic_tokens::apply_semantic_tokens_range_to_state(
+                            state,
+                            range,
+                            start_line,
+                            &spans,
+                            &self.theme,
+                        );
+                    } else {
+                        crate::services::lsp::semantic_tokens::apply_semantic_tokens_to_state(
+                            state,
+                            &spans,
+                            &self.theme,
+                        );
 
-                    state.set_semantic_tokens(SemanticTokenStore {
-                        version: current_version,
-                        result_id,
-                        tokens: spans,
-                    });
+                        state.set_semantic_tokens(SemanticTokenStore {
+                            version: current_version,
+                            result_id,
+                            tokens: spans,
+                        });
+                    }
                 }
 
                 self.full_redraw_requested = true;
@@ -851,7 +869,7 @@ impl Editor {
             .collect();
 
         for buffer_id in buffer_ids {
-            self.maybe_request_semantic_tokens(buffer_id);
+            self.schedule_semantic_tokens_full_refresh(buffer_id);
         }
     }
 }

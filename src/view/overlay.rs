@@ -282,6 +282,40 @@ impl OverlayManager {
         }
     }
 
+    /// Replace overlays in a namespace that overlap a range with new overlays.
+    ///
+    /// This preserves overlays outside the range, which helps avoid flicker and
+    /// unnecessary marker churn during viewport-only updates.
+    pub fn replace_range_in_namespace(
+        &mut self,
+        namespace: &OverlayNamespace,
+        range: &Range<usize>,
+        mut new_overlays: Vec<Overlay>,
+        marker_list: &mut MarkerList,
+    ) {
+        let mut markers_to_delete = Vec::new();
+
+        self.overlays.retain(|overlay| {
+            let in_namespace = overlay.namespace.as_ref() == Some(namespace);
+            if in_namespace && overlay.overlaps(range, marker_list) {
+                markers_to_delete.push(overlay.start_marker);
+                markers_to_delete.push(overlay.end_marker);
+                false
+            } else {
+                true
+            }
+        });
+
+        for marker_id in markers_to_delete {
+            marker_list.delete(marker_id);
+        }
+
+        if !new_overlays.is_empty() {
+            self.overlays.append(&mut new_overlays);
+            self.overlays.sort_by_key(|o| o.priority);
+        }
+    }
+
     /// Remove all overlays in a range and clean up their markers
     pub fn remove_in_range(&mut self, range: &Range<usize>, marker_list: &mut MarkerList) {
         // Collect markers to delete

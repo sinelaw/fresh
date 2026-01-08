@@ -37,6 +37,8 @@ pub enum AsyncMessage {
         semantic_tokens_legend: Option<SemanticTokensLegend>,
         /// Whether the server supports full document semantic tokens
         semantic_tokens_full: bool,
+        /// Whether the server supports range semantic tokens
+        semantic_tokens_range: bool,
     },
 
     /// LSP server crashed or failed
@@ -342,6 +344,7 @@ mod tests {
                 completion_trigger_characters: vec![".".to_string()],
                 semantic_tokens_legend: None,
                 semantic_tokens_full: false,
+                semantic_tokens_range: false,
             })
             .unwrap();
 
@@ -374,6 +377,7 @@ mod tests {
                 completion_trigger_characters: vec![],
                 semantic_tokens_legend: None,
                 semantic_tokens_full: false,
+                semantic_tokens_range: false,
             })
             .unwrap();
         sender
@@ -382,6 +386,7 @@ mod tests {
                 completion_trigger_characters: vec![],
                 semantic_tokens_legend: None,
                 semantic_tokens_full: false,
+                semantic_tokens_range: false,
             })
             .unwrap();
 
@@ -412,6 +417,7 @@ mod tests {
                 completion_trigger_characters: vec![],
                 semantic_tokens_legend: None,
                 semantic_tokens_full: false,
+                semantic_tokens_range: false,
             })
             .unwrap();
         sender2
@@ -420,6 +426,7 @@ mod tests {
                 completion_trigger_characters: vec![],
                 semantic_tokens_legend: None,
                 semantic_tokens_full: false,
+                semantic_tokens_range: false,
             })
             .unwrap();
 
@@ -520,6 +527,7 @@ mod tests {
                 completion_trigger_characters: vec![],
                 semantic_tokens_legend: None,
                 semantic_tokens_full: false,
+                semantic_tokens_range: false,
             })
             .unwrap();
 
@@ -539,6 +547,7 @@ mod tests {
                 completion_trigger_characters: vec![],
                 semantic_tokens_legend: None,
                 semantic_tokens_full: false,
+                semantic_tokens_range: false,
             })
             .unwrap();
 
@@ -563,6 +572,7 @@ mod tests {
                 completion_trigger_characters: vec![],
                 semantic_tokens_legend: None,
                 semantic_tokens_full: false,
+                semantic_tokens_range: false,
             })
             .unwrap();
         sender
@@ -571,6 +581,7 @@ mod tests {
                 completion_trigger_characters: vec![],
                 semantic_tokens_legend: None,
                 semantic_tokens_full: false,
+                semantic_tokens_range: false,
             })
             .unwrap();
         sender
@@ -579,6 +590,7 @@ mod tests {
                 completion_trigger_characters: vec![],
                 semantic_tokens_legend: None,
                 semantic_tokens_full: false,
+                semantic_tokens_range: false,
             })
             .unwrap();
 
