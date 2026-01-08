@@ -391,6 +391,20 @@ impl Editor {
                                 self.set_status_message(
                                     t!("explorer.created_file", name = &filename).to_string(),
                                 );
+
+                                // Open the file in the buffer
+                                let _ = self.open_file(&path_clone);
+
+                                // Enter rename mode for the new file
+                                let prompt = crate::view::prompt::Prompt::with_initial_text(
+                                    t!("explorer.rename_prompt").to_string(),
+                                    crate::view::prompt::PromptType::FileExplorerRename {
+                                        original_path: path_clone,
+                                        original_name: filename.clone(),
+                                    },
+                                    filename,
+                                );
+                                self.prompt = Some(prompt);
                             }
                             Err(e) => {
                                 self.set_status_message(

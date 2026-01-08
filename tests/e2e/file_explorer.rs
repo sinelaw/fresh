@@ -1852,3 +1852,63 @@ fn test_folder_modified_indicator_cleared_after_save() {
         mydir_line_after
     );
 }
+
+/// Test that creating a new file from file explorer opens a rename prompt
+/// and opens the file in the buffer
+#[test]
+fn test_file_explorer_new_file_opens_rename_prompt_and_buffer() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Open file explorer
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    let screen_before = harness.screen_to_string();
+    println!("Screen before new file:\n{}", screen_before);
+
+    // Create new file using the 'n' key
+    harness.send_key(KeyCode::Char('n'), KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen_after = harness.screen_to_string();
+    println!("Screen after new file:\n{}", screen_after);
+
+    // A rename prompt should be visible (asking for the new file name)
+    assert!(
+        screen_after.contains("Rename:") || screen_after.contains("untitled_"),
+        "A rename prompt should appear after creating new file. Screen:\n{}",
+        screen_after
+    );
+
+    // The prompt should contain the default filename (untitled_XXX.txt)
+    assert!(
+        screen_after.contains("untitled_") && screen_after.contains(".txt"),
+        "Prompt should show the default filename. Screen:\n{}",
+        screen_after
+    );
+
+    // Type a new name and confirm
+    // First clear the default text
+    harness.send_key(KeyCode::Char('a'), KeyModifiers::CONTROL).unwrap(); // Select all
+    harness.type_text("my_new_file.rs").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    let screen_final = harness.screen_to_string();
+    println!("Screen after rename:\n{}", screen_final);
+
+    // The file should be open in the buffer (shown in tabs)
+    assert!(
+        screen_final.contains("my_new_file.rs"),
+        "The new file should be visible in tabs after renaming. Screen:\n{}",
+        screen_final
+    );
+
+    // The file should exist on disk
+    assert!(
+        project_root.join("my_new_file.rs").exists(),
+        "The renamed file should exist on disk"
+    );
+}
