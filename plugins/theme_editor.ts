@@ -2001,10 +2001,10 @@ globalThis.onThemeDeletePromptConfirmed = async function(args: {
 
   const value = args.input.trim();
   if (value === "delete" || value === editor.t("prompt.delete_yes")) {
-    if (state.themePath) {
+    if (state.themeName) {
       try {
-        // Delete the theme file
-        await editor.deleteFile(state.themePath);
+        // Delete the theme file by name
+        await editor.deleteTheme(state.themeName);
         const deletedName = state.themeName;
 
         // Reset to default theme

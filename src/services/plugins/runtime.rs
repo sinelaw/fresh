@@ -2228,10 +2228,10 @@ async fn op_fresh_read_file(#[string] path: String) -> Result<String, JsErrorBox
         .map_err(|e| JsErrorBox::generic(format!("Failed to read file {}: {}", path, e)))
 }
 
-/// Write string content to a file, creating or overwriting
+/// Write string content to a NEW file (fails if file exists)
 ///
-/// Creates parent directories if they don't exist (behavior may vary).
-/// Replaces file contents entirely; use readFile + modify + writeFile for edits.
+/// Creates a new file with the given content. Fails if the file already exists
+/// to prevent plugins from accidentally overwriting user data.
 /// @param path - Destination path (absolute or relative to cwd)
 /// @param content - UTF-8 string to write
 #[op2(async)]
@@ -2239,9 +2239,95 @@ async fn op_fresh_write_file(
     #[string] path: String,
     #[string] content: String,
 ) -> Result<(), JsErrorBox> {
-    tokio::fs::write(&path, content)
+    use tokio::fs::OpenOptions;
+    use tokio::io::AsyncWriteExt;
+
+    // Check if file already exists
+    if std::path::Path::new(&path).exists() {
+        return Err(JsErrorBox::generic(format!(
+            "File already exists: {}. Use a different path or delete the file first.",
+            path
+        )));
+    }
+
+    // Create parent directories if needed
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.exists() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                JsErrorBox::generic(format!("Failed to create parent directories: {}", e))
+            })?;
+        }
+    }
+
+    // Create and write the file (create_new ensures atomic check)
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .await
+        .map_err(|e| JsErrorBox::generic(format!("Failed to create file {}: {}", path, e)))?;
+
+    file.write_all(content.as_bytes())
         .await
         .map_err(|e| JsErrorBox::generic(format!("Failed to write file {}: {}", path, e)))
+}
+
+/// Delete a theme file by name
+///
+/// Only deletes files from the user's themes directory.
+/// This is a safe operation that prevents plugins from deleting arbitrary files.
+/// @param name - Theme name (without .json extension)
+#[op2(async)]
+async fn op_fresh_delete_theme(
+    state: Rc<RefCell<OpState>>,
+    #[string] name: String,
+) -> Result<(), JsErrorBox> {
+    // Get the themes directory from runtime state
+    let themes_dir = {
+        let state = state.borrow();
+        if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+            let runtime_state = runtime_state.borrow();
+            runtime_state.dir_context.themes_dir()
+        } else {
+            return Err(JsErrorBox::generic("Failed to get themes directory"));
+        }
+    };
+
+    // Construct the theme file path
+    let theme_path = themes_dir.join(format!("{}.json", name));
+
+    // Check if theme file exists first
+    if !theme_path.exists() {
+        return Err(JsErrorBox::generic(format!(
+            "Theme '{}' does not exist",
+            name
+        )));
+    }
+
+    // Security check: ensure the resolved path is actually inside the themes directory
+    let canonical_themes_dir = themes_dir
+        .canonicalize()
+        .map_err(|e| JsErrorBox::generic(format!("Failed to resolve themes directory: {}", e)))?;
+
+    let canonical_theme_path = theme_path
+        .canonicalize()
+        .map_err(|e| JsErrorBox::generic(format!("Failed to resolve theme path: {}", e)))?;
+
+    if !canonical_theme_path.starts_with(&canonical_themes_dir) {
+        return Err(JsErrorBox::generic(
+            "Security error: theme path is outside themes directory".to_string(),
+        ));
+    }
+
+    // Move the theme file to trash (safer than permanent deletion)
+    let theme_name = name.clone();
+    tokio::task::spawn_blocking(move || {
+        trash::delete(&canonical_theme_path).map_err(|e| {
+            JsErrorBox::generic(format!("Failed to delete theme '{}': {}", theme_name, e))
+        })
+    })
+    .await
+    .map_err(|e| JsErrorBox::generic(format!("Failed to delete theme '{}': {}", name, e)))?
 }
 
 /// Check if a path exists (file, directory, or symlink)
@@ -3754,6 +3840,7 @@ extension!(
         op_fresh_set_prompt_suggestions,
         op_fresh_read_file,
         op_fresh_write_file,
+        op_fresh_delete_theme,
         op_fresh_file_exists,
         op_fresh_file_stat,
         op_fresh_get_env,
@@ -4133,6 +4220,9 @@ impl TypeScriptRuntime {
                     },
                     writeFile(path, content) {
                         return core.ops.op_fresh_write_file(path, content);
+                    },
+                    deleteTheme(name) {
+                        return core.ops.op_fresh_delete_theme(name);
                     },
                     fileExists(path) {
                         return core.ops.op_fresh_file_exists(path);

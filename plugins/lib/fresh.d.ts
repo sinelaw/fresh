@@ -821,6 +821,14 @@ interface EditorAPI {
    */
   startPromptWithInitial(label: string, prompt_type: string, initial_value: string): boolean;
   /**
+   * Delete a theme file by name
+   *
+   * Only deletes files from the user's themes directory.
+   * This is a safe operation that prevents plugins from deleting arbitrary files.
+   * @param name - Theme name (without .json extension)
+   */
+  deleteTheme(name: string): Promise<[]>;
+  /**
    * Create a composite buffer that displays multiple source buffers
    *
    * Composite buffers allow displaying multiple underlying buffers in a single
@@ -1061,10 +1069,10 @@ interface EditorAPI {
    */
   readFile(path: string): Promise<string>;
   /**
-   * Write string content to a file, creating or overwriting
+   * Write string content to a NEW file (fails if file exists)
    *
-   * Creates parent directories if they don't exist (behavior may vary).
-   * Replaces file contents entirely; use readFile + modify + writeFile for edits.
+   * Creates a new file with the given content. Fails if the file already exists
+   * to prevent plugins from accidentally overwriting user data.
    * @param path - Destination path (absolute or relative to cwd)
    * @param content - UTF-8 string to write
    */

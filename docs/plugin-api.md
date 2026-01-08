@@ -1349,6 +1349,22 @@ startPromptWithInitial(label: string, prompt_type: string, initial_value: string
 | `prompt_type` | `string` | Type identifier (e.g., "git-grep") |
 | `initial_value` | `string` | Initial text to pre-fill in the prompt |
 
+#### `deleteTheme`
+
+Delete a theme file by name
+Only deletes files from the user's themes directory.
+This is a safe operation that prevents plugins from deleting arbitrary files.
+
+```typescript
+deleteTheme(name: string): Promise<[]>
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `name` | `string` | Theme name (without .json extension) |
+
 #### `createCompositeBuffer`
 
 Create a composite buffer that displays multiple source buffers
@@ -1790,9 +1806,9 @@ readFile(path: string): Promise<string>
 
 #### `writeFile`
 
-Write string content to a file, creating or overwriting
-Creates parent directories if they don't exist (behavior may vary).
-Replaces file contents entirely; use readFile + modify + writeFile for edits.
+Write string content to a NEW file (fails if file exists)
+Creates a new file with the given content. Fails if the file already exists
+to prevent plugins from accidentally overwriting user data.
 
 ```typescript
 writeFile(path: string, content: string): Promise<[]>

@@ -1,4 +1,4 @@
-use crate::common::harness::{copy_plugin, EditorTestHarness};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config_io::DirectoryContext;
@@ -2283,5 +2283,145 @@ fn test_theme_editor_select_nostalgia_from_dropdown() {
         !screen.contains("#1E1E1E"),
         "Should NOT show Dark theme's background #1E1E1E. Screen:\n{}",
         screen
+    );
+}
+
+/// Test that deleteTheme API correctly deletes a user theme
+/// This tests the full lifecycle: create theme, verify it exists, delete it, verify it's gone
+#[test]
+fn test_delete_theme_api() {
+    // Create isolated directory context for proper test isolation
+    let context_temp = tempfile::TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(context_temp.path());
+
+    // Create user themes directory
+    fs::create_dir_all(dir_context.themes_dir()).unwrap();
+
+    // Create a test theme that we'll delete
+    let test_theme = r#"{
+        "name": "to-be-deleted",
+        "editor": {"bg": [100, 100, 100], "fg": [200, 200, 200]},
+        "ui": {},
+        "search": {},
+        "diagnostic": {},
+        "syntax": {}
+    }"#;
+    let theme_path = dir_context.themes_dir().join("to-be-deleted.json");
+    fs::write(&theme_path, test_theme).unwrap();
+
+    // Verify the theme file exists
+    assert!(
+        theme_path.exists(),
+        "Theme file should exist before deletion"
+    );
+
+    // Create project directory with a test plugin that calls deleteTheme
+    let project_temp = tempfile::TempDir::new().unwrap();
+    let project_root = project_temp.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    // Create a test plugin that will delete the theme
+    let delete_plugin = r#"
+const editor = getEditor();
+
+// Global state to track deletion result
+let deleteResult: string = "not_run";
+
+globalThis.test_delete_theme = async function(): Promise<void> {
+    try {
+        await editor.deleteTheme("to-be-deleted");
+        deleteResult = "success";
+        editor.setStatus("Theme deleted successfully");
+    } catch (e) {
+        deleteResult = "error: " + String(e);
+        editor.setStatus("Delete failed: " + String(e));
+    }
+};
+
+globalThis.test_check_result = function(): void {
+    editor.setStatus("Result: " + deleteResult);
+};
+
+editor.registerCommand(
+    "Test: Delete Theme",
+    "Delete the to-be-deleted theme",
+    "test_delete_theme",
+    "normal",
+    "test"
+);
+
+editor.registerCommand(
+    "Test: Check Result",
+    "Check delete result",
+    "test_check_result",
+    "normal",
+    "test"
+);
+
+editor.setStatus("Delete theme test plugin loaded");
+"#;
+    fs::write(plugins_dir.join("delete_test.ts"), delete_plugin).unwrap();
+
+    // Copy plugin lib for TypeScript support
+    copy_plugin_lib(&plugins_dir);
+
+    // Create harness with isolated directory context
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        120,
+        40,
+        Default::default(),
+        project_root.clone(),
+        dir_context.clone(),
+    )
+    .unwrap();
+
+    harness.render().unwrap();
+
+    // Wait for plugin to load
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Delete theme test plugin loaded")
+        })
+        .unwrap();
+
+    // Run the delete command via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.type_text("Test: Delete Theme").unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Wait for deletion to complete
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("deleted successfully") || screen.contains("Delete failed")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // Verify deletion was successful
+    assert!(
+        screen.contains("deleted successfully"),
+        "Theme deletion should succeed. Screen:\n{}",
+        screen
+    );
+
+    // Verify the theme file no longer exists
+    assert!(
+        !theme_path.exists(),
+        "Theme file should be deleted (moved to trash)"
     );
 }
