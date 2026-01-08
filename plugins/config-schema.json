@@ -42,6 +42,7 @@
         "large_file_threshold_bytes": 1048576,
         "estimated_line_length": 80,
         "enable_inlay_hints": true,
+        "enable_semantic_tokens_full": false,
         "recovery_enabled": true,
         "auto_save_interval_secs": 2,
         "highlight_context_bytes": 10000,
@@ -242,6 +243,11 @@
           "description": "Whether to enable LSP inlay hints (type hints, parameter hints, etc.)",
           "type": "boolean",
           "default": true
+        },
+        "enable_semantic_tokens_full": {
+          "description": "Whether to request full-document LSP semantic tokens.\nRange requests are still used when supported.\nDefault: false (range-only to avoid heavy full refreshes).",
+          "type": "boolean",
+          "default": false
         },
         "recovery_enabled": {
           "description": "Whether to enable file recovery (Emacs-style auto-save)\nWhen enabled, buffers are periodically saved to recovery files\nso they can be recovered if the editor crashes.",

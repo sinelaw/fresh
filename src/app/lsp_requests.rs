@@ -1886,6 +1886,10 @@ impl Editor {
 
     /// Request semantic tokens for a specific buffer if supported and needed.
     pub(crate) fn maybe_request_semantic_tokens(&mut self, buffer_id: BufferId) {
+        if !self.config.editor.enable_semantic_tokens_full {
+            return;
+        }
+
         // Avoid duplicate in-flight requests per buffer
         if self.semantic_tokens_in_flight.contains_key(&buffer_id) {
             return;
@@ -1924,10 +1928,6 @@ impl Editor {
             return;
         }
 
-        let Some(handle) = lsp.get_handle_mut(&language) else {
-            return;
-        };
-
         let Some(state) = self.buffers.get(&buffer_id) else {
             return;
         };
@@ -1938,15 +1938,44 @@ impl Editor {
             }
         }
 
+        let previous_result_id = state
+            .semantic_tokens
+            .as_ref()
+            .and_then(|store| store.result_id.clone());
+        let supports_delta = lsp.semantic_tokens_full_delta_supported(&language);
+        let use_delta = previous_result_id.is_some() && supports_delta;
+
+        let Some(handle) = lsp.get_handle_mut(&language) else {
+            return;
+        };
+
         let request_id = self.next_lsp_request_id;
         self.next_lsp_request_id += 1;
 
-        match handle.semantic_tokens_full(request_id, uri) {
+        let request_kind = if use_delta {
+            super::SemanticTokensFullRequestKind::FullDelta
+        } else {
+            super::SemanticTokensFullRequestKind::Full
+        };
+
+        let request_result = if use_delta {
+            handle.semantic_tokens_full_delta(request_id, uri, previous_result_id.unwrap())
+        } else {
+            handle.semantic_tokens_full(request_id, uri)
+        };
+
+        match request_result {
             Ok(_) => {
-                self.pending_semantic_token_requests
-                    .insert(request_id, (buffer_id, buffer_version));
+                self.pending_semantic_token_requests.insert(
+                    request_id,
+                    super::SemanticTokenFullRequest {
+                        buffer_id,
+                        version: buffer_version,
+                        kind: request_kind,
+                    },
+                );
                 self.semantic_tokens_in_flight
-                    .insert(buffer_id, (request_id, buffer_version));
+                    .insert(buffer_id, (request_id, buffer_version, request_kind));
             }
             Err(e) => {
                 tracing::debug!("Failed to request semantic tokens: {}", e);
@@ -1956,6 +1985,10 @@ impl Editor {
 
     /// Schedule a full semantic token refresh for a buffer (debounced).
     pub(crate) fn schedule_semantic_tokens_full_refresh(&mut self, buffer_id: BufferId) {
+        if !self.config.editor.enable_semantic_tokens_full {
+            return;
+        }
+
         let next_time = Instant::now() + Duration::from_millis(SEMANTIC_TOKENS_FULL_DEBOUNCE_MS);
         self.semantic_tokens_full_debounce
             .insert(buffer_id, next_time);
@@ -1963,6 +1996,11 @@ impl Editor {
 
     /// Issue a debounced full semantic token request if the timer has elapsed.
     pub(crate) fn maybe_request_semantic_tokens_full_debounced(&mut self, buffer_id: BufferId) {
+        if !self.config.editor.enable_semantic_tokens_full {
+            self.semantic_tokens_full_debounce.remove(&buffer_id);
+            return;
+        }
+
         let Some(ready_at) = self.semantic_tokens_full_debounce.get(&buffer_id).copied() else {
             return;
         };
@@ -2053,26 +2091,46 @@ impl Editor {
         }
 
         let range = start_byte..end_byte;
+        if let Some((in_flight_id, in_flight_start, in_flight_end, in_flight_version)) =
+            self.semantic_tokens_range_in_flight.get(&buffer_id)
+        {
+            if *in_flight_start == padded_start
+                && *in_flight_end == padded_end
+                && *in_flight_version == buffer_version
+            {
+                return;
+            }
+            if let Err(e) = handle.cancel_request(*in_flight_id) {
+                tracing::debug!("Failed to cancel semantic token range request: {}", e);
+            }
+            self.pending_semantic_token_range_requests
+                .remove(in_flight_id);
+            self.semantic_tokens_range_in_flight.remove(&buffer_id);
+        }
+
+        if let Some((applied_start, applied_end, applied_version)) =
+            self.semantic_tokens_range_applied.get(&buffer_id)
+        {
+            if *applied_start == padded_start
+                && *applied_end == padded_end
+                && *applied_version == buffer_version
+            {
+                return;
+            }
+        }
+
         let now = Instant::now();
-        if let Some((last_range, last_version, last_time)) =
+        if let Some((last_start, last_end, last_version, last_time)) =
             self.semantic_tokens_range_last_request.get(&buffer_id)
         {
-            if *last_range == range
+            if *last_start == padded_start
+                && *last_end == padded_end
                 && *last_version == buffer_version
                 && now.duration_since(*last_time)
                     < Duration::from_millis(SEMANTIC_TOKENS_RANGE_DEBOUNCE_MS)
             {
                 return;
             }
-        }
-
-        if let Some((request_id, _, _)) = self.semantic_tokens_range_in_flight.get(&buffer_id) {
-            if let Err(e) = handle.cancel_request(*request_id) {
-                tracing::debug!("Failed to cancel semantic token range request: {}", e);
-            }
-            self.pending_semantic_token_range_requests
-                .remove(request_id);
-            self.semantic_tokens_range_in_flight.remove(&buffer_id);
         }
 
         let lsp_range = lsp_types::Range {
@@ -2098,12 +2156,15 @@ impl Editor {
                         version: buffer_version,
                         range: range.clone(),
                         start_line: padded_start,
+                        end_line: padded_end,
                     },
                 );
-                self.semantic_tokens_range_in_flight
-                    .insert(buffer_id, (request_id, range.clone(), buffer_version));
+                self.semantic_tokens_range_in_flight.insert(
+                    buffer_id,
+                    (request_id, padded_start, padded_end, buffer_version),
+                );
                 self.semantic_tokens_range_last_request
-                    .insert(buffer_id, (range, buffer_version, now));
+                    .insert(buffer_id, (padded_start, padded_end, buffer_version, now));
             }
             Err(e) => {
                 tracing::debug!("Failed to request semantic token range: {}", e);

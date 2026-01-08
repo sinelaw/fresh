@@ -73,6 +73,9 @@ pub struct LspManager {
     /// Whether a language supports full document semantic tokens
     semantic_tokens_full_support: HashMap<String, bool>,
 
+    /// Whether a language supports full document semantic token deltas
+    semantic_tokens_full_delta_support: HashMap<String, bool>,
+
     /// Whether a language supports range semantic tokens
     semantic_tokens_range_support: HashMap<String, bool>,
 }
@@ -94,6 +97,7 @@ impl LspManager {
             completion_trigger_characters: HashMap::new(),
             semantic_token_legends: HashMap::new(),
             semantic_tokens_full_support: HashMap::new(),
+            semantic_tokens_full_delta_support: HashMap::new(),
             semantic_tokens_range_support: HashMap::new(),
         }
     }
@@ -136,6 +140,7 @@ impl LspManager {
         language: &str,
         legend: Option<SemanticTokensLegend>,
         full_support: bool,
+        full_delta_support: bool,
         range_support: bool,
     ) {
         if let Some(legend) = legend {
@@ -146,6 +151,8 @@ impl LspManager {
         }
         self.semantic_tokens_full_support
             .insert(language.to_string(), full_support);
+        self.semantic_tokens_full_delta_support
+            .insert(language.to_string(), full_delta_support);
         self.semantic_tokens_range_support
             .insert(language.to_string(), range_support);
     }
@@ -159,6 +166,14 @@ impl LspManager {
     pub fn semantic_tokens_full_supported(&self, language: &str) -> bool {
         *self
             .semantic_tokens_full_support
+            .get(language)
+            .unwrap_or(&false)
+    }
+
+    /// Check if the language supports full semantic token deltas
+    pub fn semantic_tokens_full_delta_supported(&self, language: &str) -> bool {
+        *self
+            .semantic_tokens_full_delta_support
             .get(language)
             .unwrap_or(&false)
     }

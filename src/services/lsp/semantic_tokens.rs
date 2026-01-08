@@ -54,29 +54,24 @@ pub fn apply_semantic_tokens_to_state(
     theme: &crate::view::theme::Theme,
 ) {
     let full_range = 0..state.buffer.len();
-    apply_semantic_tokens_range_to_state(state, full_range, 0, tokens, theme);
+    apply_semantic_tokens_range_to_state(state, full_range, tokens, theme);
 }
 
 /// Apply semantic tokens for a specific buffer range.
 pub fn apply_semantic_tokens_range_to_state(
     state: &mut EditorState,
     range: std::ops::Range<usize>,
-    start_line: usize,
     tokens: &[SemanticTokenSpan],
     theme: &crate::view::theme::Theme,
 ) {
     let ns = lsp_semantic_tokens_namespace();
     let mut new_overlays = Vec::with_capacity(tokens.len());
-    let start_line_offset = state.buffer.line_start_offset(start_line).unwrap_or(0);
 
     for token in tokens {
-        let adjusted_range =
-            (start_line_offset + token.range.start)..(start_line_offset + token.range.end);
-
         let color = semantic_token_color(&token.token_type, &token.modifiers, theme);
         let overlay = Overlay::with_namespace(
             &mut state.marker_list,
-            adjusted_range,
+            token.range.clone(),
             OverlayFace::Foreground { color },
             ns.clone(),
         )
@@ -96,7 +91,7 @@ mod tests {
     use crate::config::LARGE_FILE_THRESHOLD_BYTES;
     use crate::model::event::{CursorId, Event};
     use crate::state::SemanticTokenSpan;
-    use crate::view::theme::Theme;
+    use crate::view::theme::{Theme, THEME_DARK};
 
     #[test]
     fn semantic_token_overlays_shift_on_insert() {
@@ -113,7 +108,8 @@ mod tests {
             modifiers: Vec::new(),
         };
 
-        apply_semantic_tokens_to_state(&mut state, &[span], &Theme::dark());
+        let theme = Theme::from_name(THEME_DARK).expect("dark theme must exist");
+        apply_semantic_tokens_to_state(&mut state, &[span], &theme);
 
         let ns = lsp_semantic_tokens_namespace();
         let overlay_handle = state

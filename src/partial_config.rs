@@ -143,6 +143,7 @@ pub struct PartialEditorConfig {
     pub large_file_threshold_bytes: Option<u64>,
     pub estimated_line_length: Option<usize>,
     pub enable_inlay_hints: Option<bool>,
+    pub enable_semantic_tokens_full: Option<bool>,
     pub recovery_enabled: Option<bool>,
     pub auto_save_interval_secs: Option<u32>,
     pub highlight_context_bytes: Option<usize>,
@@ -178,6 +179,8 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.estimated_line_length);
         self.enable_inlay_hints
             .merge_from(&other.enable_inlay_hints);
+        self.enable_semantic_tokens_full
+            .merge_from(&other.enable_semantic_tokens_full);
         self.recovery_enabled.merge_from(&other.recovery_enabled);
         self.auto_save_interval_secs
             .merge_from(&other.auto_save_interval_secs);
@@ -356,6 +359,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             large_file_threshold_bytes: Some(cfg.large_file_threshold_bytes),
             estimated_line_length: Some(cfg.estimated_line_length),
             enable_inlay_hints: Some(cfg.enable_inlay_hints),
+            enable_semantic_tokens_full: Some(cfg.enable_semantic_tokens_full),
             recovery_enabled: Some(cfg.recovery_enabled),
             auto_save_interval_secs: Some(cfg.auto_save_interval_secs),
             highlight_context_bytes: Some(cfg.highlight_context_bytes),
@@ -401,6 +405,9 @@ impl PartialEditorConfig {
             enable_inlay_hints: self
                 .enable_inlay_hints
                 .unwrap_or(defaults.enable_inlay_hints),
+            enable_semantic_tokens_full: self
+                .enable_semantic_tokens_full
+                .unwrap_or(defaults.enable_semantic_tokens_full),
             recovery_enabled: self.recovery_enabled.unwrap_or(defaults.recovery_enabled),
             auto_save_interval_secs: self
                 .auto_save_interval_secs

@@ -1212,6 +1212,8 @@ pub struct SemanticTokenStore {
     pub version: u64,
     /// Server-provided result identifier (if any).
     pub result_id: Option<String>,
+    /// Raw semantic token data (u32 array, 5 integers per token).
+    pub data: Vec<u32>,
     /// All semantic token spans resolved to byte ranges.
     pub tokens: Vec<SemanticTokenSpan>,
 }

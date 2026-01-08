@@ -139,6 +139,20 @@ struct SemanticTokenRangeRequest {
     version: u64,
     range: Range<usize>,
     start_line: usize,
+    end_line: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SemanticTokensFullRequestKind {
+    Full,
+    FullDelta,
+}
+
+#[derive(Clone, Debug)]
+struct SemanticTokenFullRequest {
+    buffer_id: BufferId,
+    version: u64,
+    kind: SemanticTokensFullRequestKind,
 }
 
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
@@ -327,20 +341,23 @@ pub struct Editor {
     /// Pending LSP inlay hints request ID (if any)
     pending_inlay_hints_request: Option<u64>,
 
-    /// Pending semantic token requests keyed by LSP request ID -> (buffer_id, buffer_version)
-    pending_semantic_token_requests: HashMap<u64, (BufferId, u64)>,
+    /// Pending semantic token requests keyed by LSP request ID
+    pending_semantic_token_requests: HashMap<u64, SemanticTokenFullRequest>,
 
     /// Track semantic token requests per buffer to prevent duplicate inflight requests
-    semantic_tokens_in_flight: HashMap<BufferId, (u64, u64)>,
+    semantic_tokens_in_flight: HashMap<BufferId, (u64, u64, SemanticTokensFullRequestKind)>,
 
     /// Pending semantic token range requests keyed by LSP request ID
     pending_semantic_token_range_requests: HashMap<u64, SemanticTokenRangeRequest>,
 
-    /// Track semantic token range requests per buffer (request_id, range, version)
-    semantic_tokens_range_in_flight: HashMap<BufferId, (u64, Range<usize>, u64)>,
+    /// Track semantic token range requests per buffer (request_id, start_line, end_line, version)
+    semantic_tokens_range_in_flight: HashMap<BufferId, (u64, usize, usize, u64)>,
 
-    /// Track last semantic token range request per buffer (range, version, time)
-    semantic_tokens_range_last_request: HashMap<BufferId, (Range<usize>, u64, Instant)>,
+    /// Track last semantic token range request per buffer (start_line, end_line, version, time)
+    semantic_tokens_range_last_request: HashMap<BufferId, (usize, usize, u64, Instant)>,
+
+    /// Track last applied semantic token range per buffer (start_line, end_line, version)
+    semantic_tokens_range_applied: HashMap<BufferId, (usize, usize, u64)>,
 
     /// Next time a full semantic token refresh is allowed for a buffer
     semantic_tokens_full_debounce: HashMap<BufferId, Instant>,
@@ -947,6 +964,7 @@ impl Editor {
             pending_semantic_token_range_requests: HashMap::new(),
             semantic_tokens_range_in_flight: HashMap::new(),
             semantic_tokens_range_last_request: HashMap::new(),
+            semantic_tokens_range_applied: HashMap::new(),
             semantic_tokens_full_debounce: HashMap::new(),
             hover_symbol_range: None,
             hover_symbol_overlay: None,
@@ -1086,11 +1104,13 @@ impl Editor {
     }
 
     /// Remove a pending semantic token request from tracking maps.
-    fn take_pending_semantic_token_request(&mut self, request_id: u64) -> Option<(BufferId, u64)> {
-        if let Some((buffer_id, version)) = self.pending_semantic_token_requests.remove(&request_id)
-        {
-            self.semantic_tokens_in_flight.remove(&buffer_id);
-            Some((buffer_id, version))
+    fn take_pending_semantic_token_request(
+        &mut self,
+        request_id: u64,
+    ) -> Option<SemanticTokenFullRequest> {
+        if let Some(request) = self.pending_semantic_token_requests.remove(&request_id) {
+            self.semantic_tokens_in_flight.remove(&request.buffer_id);
+            Some(request)
         } else {
             None
         }
@@ -3101,6 +3121,7 @@ impl Editor {
                     completion_trigger_characters,
                     semantic_tokens_legend,
                     semantic_tokens_full,
+                    semantic_tokens_full_delta,
                     semantic_tokens_range,
                 } => {
                     tracing::info!("LSP server initialized for language: {}", language);
@@ -3121,6 +3142,7 @@ impl Editor {
                             &language,
                             semantic_tokens_legend,
                             semantic_tokens_full,
+                            semantic_tokens_full_delta,
                             semantic_tokens_range,
                         );
                     }
@@ -3261,9 +3283,9 @@ impl Editor {
                 AsyncMessage::LspSemanticTokens {
                     request_id,
                     uri,
-                    result,
+                    response,
                 } => {
-                    self.handle_lsp_semantic_tokens(request_id, uri, result);
+                    self.handle_lsp_semantic_tokens(request_id, uri, response);
                 }
                 AsyncMessage::LspServerQuiescent { language } => {
                     self.handle_lsp_server_quiescent(language);

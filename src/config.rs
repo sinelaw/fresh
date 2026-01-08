@@ -451,6 +451,12 @@ pub struct EditorConfig {
     #[serde(default = "default_true")]
     pub enable_inlay_hints: bool,
 
+    /// Whether to request full-document LSP semantic tokens.
+    /// Range requests are still used when supported.
+    /// Default: false (range-only to avoid heavy full refreshes).
+    #[serde(default = "default_false")]
+    pub enable_semantic_tokens_full: bool,
+
     /// Whether to enable file recovery (Emacs-style auto-save)
     /// When enabled, buffers are periodically saved to recovery files
     /// so they can be recovered if the editor crashes.
@@ -614,6 +620,7 @@ impl Default for EditorConfig {
             large_file_threshold_bytes: default_large_file_threshold(),
             estimated_line_length: default_estimated_line_length(),
             enable_inlay_hints: true,
+            enable_semantic_tokens_full: false,
             recovery_enabled: true,
             auto_save_interval_secs: default_auto_save_interval(),
             highlight_context_bytes: default_highlight_context_bytes(),

@@ -14,6 +14,7 @@
     "large_file_threshold_bytes": 1048576,
     "estimated_line_length": 80,
     "enable_inlay_hints": true,
+    "enable_semantic_tokens_full": false,
     "recovery_enabled": true,
     "auto_save_interval_secs": 2,
     "highlight_context_bytes": 10000,

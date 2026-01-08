@@ -9,11 +9,16 @@
 
 use crate::model::buffer::Buffer;
 use crate::model::event::BufferId;
-use crate::services::async_bridge::{LspMessageType, LspProgressValue, LspServerStatus};
+use crate::services::async_bridge::{
+    LspMessageType, LspProgressValue, LspSemanticTokensResponse, LspServerStatus,
+};
 use crate::services::lsp::manager::detect_language;
 use crate::state::{SemanticTokenSpan, SemanticTokenStore};
 use crate::view::file_tree::{FileTreeView, NodeId};
-use lsp_types::{Diagnostic, InlayHint, SemanticToken, SemanticTokensLegend, SemanticTokensResult};
+use lsp_types::{
+    Diagnostic, InlayHint, SemanticToken, SemanticTokensEdit, SemanticTokensFullDeltaResult,
+    SemanticTokensLegend, SemanticTokensRangeResult, SemanticTokensResult,
+};
 use rust_i18n::t;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -182,29 +187,42 @@ impl Editor {
         &mut self,
         request_id: u64,
         uri: String,
-        result: Result<Option<SemanticTokensResult>, String>,
+        response: LspSemanticTokensResponse,
     ) {
-        let (buffer_id, target_version, requested_range, requested_start_line) =
-            if let Some(range_request) = self.take_pending_semantic_token_range_request(request_id)
-            {
-                (
-                    range_request.buffer_id,
-                    range_request.version,
-                    Some(range_request.range),
-                    Some(range_request.start_line),
-                )
-            } else if let Some((buffer_id, target_version)) =
-                self.take_pending_semantic_token_request(request_id)
-            {
-                (buffer_id, target_version, None, None)
-            } else {
-                tracing::debug!(
-                    "Semantic tokens response {} for {} without pending entry",
-                    request_id,
-                    uri
-                );
-                return;
-            };
+        let (
+            buffer_id,
+            target_version,
+            full_request_kind,
+            requested_range,
+            requested_start_line,
+            requested_end_line,
+        ) = if let Some(range_request) = self.take_pending_semantic_token_range_request(request_id)
+        {
+            (
+                range_request.buffer_id,
+                range_request.version,
+                None,
+                Some(range_request.range),
+                Some(range_request.start_line),
+                Some(range_request.end_line),
+            )
+        } else if let Some(full_request) = self.take_pending_semantic_token_request(request_id) {
+            (
+                full_request.buffer_id,
+                full_request.version,
+                Some(full_request.kind),
+                None,
+                None,
+                None,
+            )
+        } else {
+            tracing::debug!(
+                "Semantic tokens response {} for {} without pending entry",
+                request_id,
+                uri
+            );
+            return;
+        };
 
         let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
             return;
@@ -228,51 +246,124 @@ impl Editor {
             }
         };
 
-        let current_version = match self.buffers.get(&buffer_id) {
-            Some(state) => state.buffer.version(),
-            None => return,
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
         };
 
-        match result {
-            Err(e) => {
-                tracing::warn!(
-                    "Semantic tokens request {} for {} failed: {}",
-                    request_id,
-                    uri,
-                    e
-                );
-            }
-            Ok(tokens_opt) => {
-                if current_version != target_version {
-                    // Stale response - ignore; next render will request fresh tokens.
-                    return;
-                }
+        let current_version = state.buffer.version();
+        if current_version != target_version {
+            // Stale response - ignore; next render will request fresh tokens.
+            return;
+        }
 
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    let (result_id, spans) = match tokens_opt {
-                        Some(SemanticTokensResult::Tokens(tokens)) => {
-                            let spans =
-                                decode_semantic_token_data(&state.buffer, &legend, &tokens.data);
-                            (tokens.result_id.clone(), spans)
-                        }
-                        Some(SemanticTokensResult::Partial(partial)) => {
-                            let spans =
-                                decode_semantic_token_data(&state.buffer, &legend, &partial.data);
-                            (None, spans)
-                        }
-                        None => (None, Vec::new()),
-                    };
+        match (requested_range, full_request_kind) {
+            (Some(range), None) => {
+                let result = match response {
+                    LspSemanticTokensResponse::Range(result) => result,
+                    _ => {
+                        tracing::warn!(
+                            "Semantic tokens range response {} for {} had mismatched type",
+                            request_id,
+                            uri
+                        );
+                        return;
+                    }
+                };
 
-                    if let (Some(range), Some(start_line)) = (requested_range, requested_start_line)
-                    {
+                match result {
+                    Err(e) => {
+                        tracing::warn!(
+                            "Semantic tokens range request {} for {} failed: {}",
+                            request_id,
+                            uri,
+                            e
+                        );
+                    }
+                    Ok(tokens_opt) => {
+                        let spans = match tokens_opt {
+                            Some(SemanticTokensRangeResult::Tokens(tokens)) => {
+                                let (_, spans) = decode_semantic_token_data(
+                                    &state.buffer,
+                                    &legend,
+                                    &tokens.data,
+                                    requested_start_line.unwrap_or(0),
+                                );
+                                spans
+                            }
+                            Some(SemanticTokensRangeResult::Partial(partial)) => {
+                                let (_, spans) = decode_semantic_token_data(
+                                    &state.buffer,
+                                    &legend,
+                                    &partial.data,
+                                    requested_start_line.unwrap_or(0),
+                                );
+                                spans
+                            }
+                            None => Vec::new(),
+                        };
+
                         crate::services::lsp::semantic_tokens::apply_semantic_tokens_range_to_state(
                             state,
-                            range,
-                            start_line,
+                            range.clone(),
                             &spans,
                             &self.theme,
                         );
-                    } else {
+                        self.semantic_tokens_range_applied.insert(
+                            buffer_id,
+                            (
+                                requested_start_line.unwrap_or(0),
+                                requested_end_line.unwrap_or(0),
+                                current_version,
+                            ),
+                        );
+                    }
+                }
+            }
+            (None, Some(super::SemanticTokensFullRequestKind::Full)) => {
+                let result = match response {
+                    LspSemanticTokensResponse::Full(result) => result,
+                    _ => {
+                        tracing::warn!(
+                            "Semantic tokens response {} for {} had mismatched type",
+                            request_id,
+                            uri
+                        );
+                        return;
+                    }
+                };
+
+                match result {
+                    Err(e) => {
+                        tracing::warn!(
+                            "Semantic tokens request {} for {} failed: {}",
+                            request_id,
+                            uri,
+                            e
+                        );
+                    }
+                    Ok(tokens_opt) => {
+                        let (result_id, raw_data, spans) = match tokens_opt {
+                            Some(SemanticTokensResult::Tokens(tokens)) => {
+                                let (raw, spans) = decode_semantic_token_data(
+                                    &state.buffer,
+                                    &legend,
+                                    &tokens.data,
+                                    0,
+                                );
+                                (tokens.result_id.clone(), raw, spans)
+                            }
+                            Some(SemanticTokensResult::Partial(partial)) => {
+                                let (raw, spans) = decode_semantic_token_data(
+                                    &state.buffer,
+                                    &legend,
+                                    &partial.data,
+                                    0,
+                                );
+                                (None, raw, spans)
+                            }
+                            None => (None, Vec::new(), Vec::new()),
+                        };
+
                         crate::services::lsp::semantic_tokens::apply_semantic_tokens_to_state(
                             state,
                             &spans,
@@ -282,12 +373,119 @@ impl Editor {
                         state.set_semantic_tokens(SemanticTokenStore {
                             version: current_version,
                             result_id,
+                            data: raw_data,
                             tokens: spans,
                         });
                     }
                 }
+            }
+            (None, Some(super::SemanticTokensFullRequestKind::FullDelta)) => {
+                let result = match response {
+                    LspSemanticTokensResponse::FullDelta(result) => result,
+                    _ => {
+                        tracing::warn!(
+                            "Semantic tokens delta response {} for {} had mismatched type",
+                            request_id,
+                            uri
+                        );
+                        return;
+                    }
+                };
 
-                self.full_redraw_requested = true;
+                match result {
+                    Err(e) => {
+                        tracing::warn!(
+                            "Semantic tokens delta request {} for {} failed: {}",
+                            request_id,
+                            uri,
+                            e
+                        );
+                    }
+                    Ok(tokens_opt) => {
+                        let existing_store = state.semantic_tokens.as_ref();
+                        let existing_result_id =
+                            existing_store.and_then(|store| store.result_id.clone());
+                        let existing_data = existing_store.map(|store| store.data.clone());
+
+                        let (result_id, raw_data) = match tokens_opt {
+                            Some(SemanticTokensFullDeltaResult::Tokens(tokens)) => (
+                                tokens.result_id.clone(),
+                                semantic_tokens_to_raw(&tokens.data),
+                            ),
+                            Some(SemanticTokensFullDeltaResult::TokensDelta(delta)) => {
+                                let Some(existing) = existing_data else {
+                                    tracing::warn!(
+                                        "Semantic tokens delta response {} for {} missing baseline",
+                                        request_id,
+                                        uri
+                                    );
+                                    return;
+                                };
+                                let updated = match apply_semantic_token_edits(
+                                    existing,
+                                    &delta.edits,
+                                ) {
+                                    Some(data) => data,
+                                    None => {
+                                        tracing::warn!(
+                                            "Semantic tokens delta response {} for {} had invalid edits",
+                                            request_id,
+                                            uri
+                                        );
+                                        return;
+                                    }
+                                };
+                                (delta.result_id.clone().or(existing_result_id), updated)
+                            }
+                            Some(SemanticTokensFullDeltaResult::PartialTokensDelta { edits }) => {
+                                let Some(existing) = existing_data else {
+                                    tracing::warn!(
+                                        "Semantic tokens delta response {} for {} missing baseline",
+                                        request_id,
+                                        uri
+                                    );
+                                    return;
+                                };
+                                let updated = match apply_semantic_token_edits(existing, &edits) {
+                                    Some(data) => data,
+                                    None => {
+                                        tracing::warn!(
+                                            "Semantic tokens delta response {} for {} had invalid edits",
+                                            request_id,
+                                            uri
+                                        );
+                                        return;
+                                    }
+                                };
+                                (existing_result_id, updated)
+                            }
+                            None => (None, Vec::new()),
+                        };
+
+                        let spans =
+                            decode_semantic_token_raw_data(&state.buffer, &legend, &raw_data, 0);
+
+                        crate::services::lsp::semantic_tokens::apply_semantic_tokens_to_state(
+                            state,
+                            &spans,
+                            &self.theme,
+                        );
+
+                        state.set_semantic_tokens(SemanticTokenStore {
+                            version: current_version,
+                            result_id,
+                            data: raw_data,
+                            tokens: spans,
+                        });
+                    }
+                }
+            }
+            _ => {
+                tracing::warn!(
+                    "Semantic tokens response {} for {} had mismatched pending state",
+                    request_id,
+                    uri
+                );
             }
         }
     }
@@ -874,47 +1072,137 @@ impl Editor {
     }
 }
 
-fn decode_semantic_token_data(
+fn semantic_tokens_to_raw(tokens: &[SemanticToken]) -> Vec<u32> {
+    let mut raw = Vec::with_capacity(tokens.len().saturating_mul(5));
+    for token in tokens {
+        raw.push(token.delta_line);
+        raw.push(token.delta_start);
+        raw.push(token.length);
+        raw.push(token.token_type);
+        raw.push(token.token_modifiers_bitset);
+    }
+    raw
+}
+
+fn decode_semantic_token_raw_data(
     buffer: &Buffer,
     legend: &SemanticTokensLegend,
-    data: &[SemanticToken],
+    data: &[u32],
+    base_line: usize,
 ) -> Vec<SemanticTokenSpan> {
-    let mut result = Vec::with_capacity(data.len());
-    let mut current_line = 0u32;
+    if data.len() % 5 != 0 {
+        tracing::warn!(
+            "Semantic token data length {} is not divisible by 5",
+            data.len()
+        );
+        return Vec::new();
+    }
+
+    let mut result = Vec::with_capacity(data.len() / 5);
+    let mut current_line = base_line as u32;
     let mut current_start = 0u32;
 
-    for token in data {
-        current_line += token.delta_line;
-        if token.delta_line == 0 {
-            current_start += token.delta_start;
+    for chunk in data.chunks_exact(5) {
+        let delta_line = chunk[0];
+        let delta_start = chunk[1];
+        let length = chunk[2];
+        let token_type = chunk[3];
+        let token_modifiers_bitset = chunk[4];
+
+        current_line += delta_line;
+        if delta_line == 0 {
+            current_start += delta_start;
         } else {
-            current_start = token.delta_start;
+            current_start = delta_start;
         }
 
         let start_utf16 = current_start as usize;
-        let end_utf16 = start_utf16 + token.length as usize;
+        let end_utf16 = start_utf16 + length as usize;
         let start_byte = buffer.lsp_position_to_byte(current_line as usize, start_utf16);
         let end_byte = buffer.lsp_position_to_byte(current_line as usize, end_utf16);
 
-        let token_type = legend
+        let token_type_name = legend
             .token_types
-            .get(token.token_type as usize)
+            .get(token_type as usize)
             .map(|ty| ty.as_str().to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
         let mut modifiers = Vec::new();
         for (idx, modifier) in legend.token_modifiers.iter().enumerate() {
-            if (token.token_modifiers_bitset >> idx) & 1 == 1 {
+            if (token_modifiers_bitset >> idx) & 1 == 1 {
                 modifiers.push(modifier.as_str().to_string());
             }
         }
 
         result.push(SemanticTokenSpan {
             range: start_byte..end_byte,
-            token_type,
+            token_type: token_type_name,
             modifiers,
         });
     }
 
     result
+}
+
+fn decode_semantic_token_data(
+    buffer: &Buffer,
+    legend: &SemanticTokensLegend,
+    data: &[SemanticToken],
+    base_line: usize,
+) -> (Vec<u32>, Vec<SemanticTokenSpan>) {
+    let raw = semantic_tokens_to_raw(data);
+    let spans = decode_semantic_token_raw_data(buffer, legend, &raw, base_line);
+    (raw, spans)
+}
+
+fn apply_semantic_token_edits(
+    mut data: Vec<u32>,
+    edits: &[SemanticTokensEdit],
+) -> Option<Vec<u32>> {
+    if edits.is_empty() {
+        return Some(data);
+    }
+
+    for edit in edits.iter().rev() {
+        let start = edit.start as usize;
+        let delete_count = edit.delete_count as usize;
+        if start > data.len() || start.saturating_add(delete_count) > data.len() {
+            return None;
+        }
+
+        let insert = edit
+            .data
+            .as_ref()
+            .map(|tokens| semantic_tokens_to_raw(tokens))
+            .unwrap_or_default();
+
+        data.splice(start..start + delete_count, insert);
+    }
+
+    Some(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn semantic_token_delta_edits_apply() {
+        let base = vec![0, 0, 2, 0, 0, 0, 3, 4, 1, 0];
+        let edit = SemanticTokensEdit {
+            start: 5,
+            delete_count: 5,
+            data: Some(vec![SemanticToken {
+                delta_line: 0,
+                delta_start: 5,
+                length: 1,
+                token_type: 2,
+                token_modifiers_bitset: 0,
+            }]),
+        };
+
+        let updated = apply_semantic_token_edits(base, &[edit]).expect("edit should apply");
+        assert_eq!(updated.len(), 10);
+        assert_eq!(&updated[5..10], &[0, 5, 1, 2, 0]);
+    }
 }

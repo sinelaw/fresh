@@ -793,6 +793,7 @@ fn test_lsp_waiting_indicator() -> anyhow::Result<()> {
 
     // Configure editor to use the fake LSP server
     let mut config = fresh::config::Config::default();
+    config.editor.enable_semantic_tokens_full = true;
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
@@ -1023,6 +1024,61 @@ fn test_semantic_tokens_range_preserves_overlays_on_edit() -> anyhow::Result<()>
         !handles_before.is_disjoint(&handles_after),
         "Expected semantic token overlays to persist while range response is pending"
     );
+
+    Ok(())
+}
+
+/// Ensure range-only semantic tokens render in the viewport without full refreshes.
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_semantic_tokens_range_only_viewport_highlighting() -> anyhow::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+
+    let _fake_server = FakeLspServer::spawn_with_semantic_tokens_range_only()?;
+
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("semantic_range_only.rs");
+    std::fs::write(&test_file, "fn main() { let value = 1; }\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.editor.enable_semantic_tokens_full = false;
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::semantic_tokens_range_only_script_path()
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        100,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    let ns = fresh::services::lsp::semantic_tokens::lsp_semantic_tokens_namespace();
+    harness.wait_until(|h| {
+        let state = h.editor().active_state();
+        let has_overlays = state
+            .overlays
+            .all()
+            .iter()
+            .any(|o| o.namespace.as_ref() == Some(&ns));
+        has_overlays && state.semantic_tokens.is_none()
+    })?;
 
     Ok(())
 }
