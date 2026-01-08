@@ -650,7 +650,9 @@ fn test_file_explorer_focus_after_delete() {
 
     // Confirm deletion with 'y'
     harness.type_text("y").unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
@@ -1958,7 +1960,9 @@ fn test_file_explorer_new_file_opens_rename_prompt_and_buffer() {
     println!("Screen before new file:\n{}", screen_before);
 
     // Create new file using the 'n' key
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     let screen_after = harness.screen_to_string();
@@ -1980,9 +1984,13 @@ fn test_file_explorer_new_file_opens_rename_prompt_and_buffer() {
 
     // Type a new name and confirm
     // First clear the default text
-    harness.send_key(KeyCode::Char('a'), KeyModifiers::CONTROL).unwrap(); // Select all
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap(); // Select all
     harness.type_text("my_new_file.rs").unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 

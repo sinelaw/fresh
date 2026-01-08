@@ -3375,6 +3375,87 @@ mod tests {
     }
 
     #[test]
+    fn test_bracket_auto_close_multiple_cursors_with_skip_over() {
+        // Test case: type 'foo()' with multiple cursors - the closing paren should skip over
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Start with two empty lines
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "\n".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Primary cursor at position 0 (start of first line)
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 1,
+            new_position: 0,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Add a second cursor at position 1 (start of second line)
+        state.apply(&Event::AddCursor {
+            position: 1,
+            cursor_id: CursorId(1),
+            anchor: None,
+        });
+
+        // Type 'f'
+        let events =
+            action_to_events(&mut state, Action::InsertChar('f'), 4, true, 80, 24).unwrap();
+        for event in events {
+            state.apply(&event);
+        }
+
+        // Type 'o'
+        let events =
+            action_to_events(&mut state, Action::InsertChar('o'), 4, true, 80, 24).unwrap();
+        for event in events {
+            state.apply(&event);
+        }
+
+        // Type 'o'
+        let events =
+            action_to_events(&mut state, Action::InsertChar('o'), 4, true, 80, 24).unwrap();
+        for event in events {
+            state.apply(&event);
+        }
+
+        // Type '(' - should auto-close to '()'
+        let events =
+            action_to_events(&mut state, Action::InsertChar('('), 4, true, 80, 24).unwrap();
+        for event in events {
+            state.apply(&event);
+        }
+
+        // At this point we should have "foo()\nfoo()" with cursors between ( and )
+        assert_eq!(
+            state.buffer.to_string().unwrap(),
+            "foo()\nfoo()",
+            "After typing 'foo(' with auto-close"
+        );
+
+        // Type ')' - should skip over the existing ')', not add another
+        let events =
+            action_to_events(&mut state, Action::InsertChar(')'), 4, true, 80, 24).unwrap();
+        for event in events {
+            state.apply(&event);
+        }
+
+        // Should still be "foo()\nfoo()" - the ')' should have skipped over, not doubled
+        assert_eq!(
+            state.buffer.to_string().unwrap(),
+            "foo()\nfoo()",
+            "Closing paren should skip over existing paren, not create 'foo())'"
+        );
+    }
+
+    #[test]
     fn test_auto_pair_deletion_parenthesis() {
         let mut state =
             EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
