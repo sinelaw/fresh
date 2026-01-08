@@ -50,11 +50,19 @@ impl Editor {
             }
         }
 
-        // Refresh search highlights for the current viewport if we have an active search
-        // This ensures highlights update when scrolling to show matches in the new viewport
-        if let Some(ref search_state) = self.search_state {
-            let query = search_state.query.clone();
-            self.update_search_highlights(&query);
+        // Refresh search highlights only during incremental search (when prompt is active)
+        // After search is confirmed, overlays exist for ALL matches and shouldn't be overwritten
+        let is_search_prompt_active = self.prompt.as_ref().map_or(false, |p| {
+            matches!(
+                p.prompt_type,
+                PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch
+            )
+        });
+        if is_search_prompt_active {
+            if let Some(ref search_state) = self.search_state {
+                let query = search_state.query.clone();
+                self.update_search_highlights(&query);
+            }
         }
 
         // Determine if we need to show search options bar
@@ -2084,14 +2092,14 @@ impl Editor {
             }
         };
 
-        // Find all matches within the search range
+        // Find all matches within the search range (store position and length for overlays)
         let search_slice = &buffer_content[search_start..search_end];
-        let matches: Vec<usize> = regex
+        let match_ranges: Vec<(usize, usize)> = regex
             .find_iter(search_slice)
-            .map(|m| search_start + m.start())
+            .map(|m| (search_start + m.start(), m.end() - m.start()))
             .collect();
 
-        if matches.is_empty() {
+        if match_ranges.is_empty() {
             self.search_state = None;
             let msg = if search_range.is_some() {
                 format!("No matches found for '{}' in selection", query)
@@ -2100,6 +2108,36 @@ impl Editor {
             };
             self.set_status_message(msg);
             return;
+        }
+
+        // Extract just positions for search_state.matches
+        let matches: Vec<usize> = match_ranges.iter().map(|(pos, _)| *pos).collect();
+
+        // Create overlays for ALL matches (not just visible ones)
+        // This ensures F3 can find matches outside viewport and markers track through edits
+        {
+            let search_bg = self.theme.search_match_bg;
+            let search_fg = self.theme.search_match_fg;
+            let ns = self.search_namespace.clone();
+            let state = self.active_state_mut();
+
+            // Clear existing (visible-only) overlays from incremental search
+            state.overlays.clear_namespace(&ns, &mut state.marker_list);
+
+            // Create overlays for all matches
+            for &(match_pos, match_len) in &match_ranges {
+                let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
+                let overlay = crate::view::overlay::Overlay::with_namespace(
+                    &mut state.marker_list,
+                    match_pos..(match_pos + match_len),
+                    crate::view::overlay::OverlayFace::Style {
+                        style: search_style,
+                    },
+                    ns.clone(),
+                )
+                .with_priority_value(10);
+                state.overlays.add(overlay);
+            }
         }
 
         // Find the first match at or after the current cursor position
@@ -2182,14 +2220,13 @@ impl Editor {
 
     /// Find the next match
     pub(super) fn find_next(&mut self) {
-        // Get current positions from overlay markers first (auto-updated with buffer edits)
+        // Get current positions from overlay markers (auto-updated with buffer edits)
         // Fall back to search_state.matches if no overlays exist (e.g., find_selection_next)
         let overlay_positions = self.get_search_match_positions();
 
         if let Some(ref mut search_state) = self.search_state {
-            // Use overlay positions if:
-            // 1. They exist (overlays were created)
-            // 2. There's no search_range (selection-based search uses cached matches to respect range)
+            // Use overlay positions if they exist and there's no search_range
+            // (selection-based search uses cached matches to respect range)
             let match_positions =
                 if !overlay_positions.is_empty() && search_state.search_range.is_none() {
                     overlay_positions

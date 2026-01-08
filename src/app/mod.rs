@@ -1691,25 +1691,12 @@ impl Editor {
         // EXCEPT during interactive replace where we want to keep highlights visible
         let in_interactive_replace = self.interactive_replace_state.is_some();
 
-        if !in_interactive_replace {
-            match event {
-                Event::Insert { .. } | Event::Delete { .. } | Event::BulkEdit { .. } => {
-                    // Only clear visual highlights, preserve search state so F3/Shift+F3 still work
-                    self.clear_search_overlays();
-                }
-                Event::Batch { events, .. } => {
-                    // Check if batch contains any Insert/Delete events
-                    let has_edits = events
-                        .iter()
-                        .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
-                    if has_edits {
-                        // Only clear visual highlights, preserve search state so F3/Shift+F3 still work
-                        self.clear_search_overlays();
-                    }
-                }
-                _ => {}
-            }
-        }
+        // Note: We intentionally do NOT clear search overlays on buffer modification.
+        // Overlays have markers that automatically track position changes through edits,
+        // which allows F3/Shift+F3 to find matches at their updated positions.
+        // The visual highlights may be on text that no longer matches the query,
+        // but that's acceptable - user can see where original matches were.
+        let _ = in_interactive_replace; // silence unused warning
 
         // 3. Trigger plugin hooks for this event (with pre-calculated line info)
         self.trigger_plugin_hooks_for_event(event, line_info);
@@ -1896,8 +1883,7 @@ impl Editor {
         self.sync_editor_state_to_split_view_state();
         self.invalidate_layouts_for_buffer(self.active_buffer());
         self.adjust_other_split_cursors_for_event(&bulk_edit);
-        // Only clear visual highlights, preserve search state so F3/Shift+F3 still work
-        self.clear_search_overlays();
+        // Note: Do NOT clear search overlays - markers track through edits for F3/Shift+F3
 
         Some(bulk_edit)
     }
