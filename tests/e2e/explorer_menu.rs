@@ -75,7 +75,7 @@ fn test_explorer_menu_checkbox_states() {
     );
 }
 
-/// Test that toggling hidden files via keybinding updates checkbox state
+/// Test that toggling hidden files via menu updates checkbox state
 #[test]
 fn test_explorer_menu_checkbox_updates_on_toggle() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
@@ -84,12 +84,23 @@ fn test_explorer_menu_checkbox_updates_on_toggle() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
-    // Press 'h' to toggle hidden files while in file explorer
+    // Open Explorer menu and click on Show Hidden Files
     harness
-        .send_key(KeyCode::Char('h'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('x'), KeyModifiers::ALT)
         .unwrap();
+    harness.render().unwrap();
 
-    // Now open Explorer menu to check checkbox state
+    // Navigate to Show Hidden Files and select it
+    // Menu items: New File, New Folder, Rename, Delete, Refresh, --separator--, Show Hidden Files
+    for _ in 0..6 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Now open Explorer menu again to check checkbox state
     harness
         .send_key(KeyCode::Char('x'), KeyModifiers::ALT)
         .unwrap();
@@ -199,12 +210,12 @@ fn test_explorer_n_keybinding_creates_file() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
-    // Press 'n' to create new file (new file does not enter rename mode, unlike new folder)
+    // Press Ctrl+n to create new file (opens rename prompt for naming)
     harness
-        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
         .unwrap();
-    // Wait for the status message to show the file was created
-    harness.wait_for_screen_contains("Created").unwrap();
+    // Wait for the rename prompt to appear (file is created and opened)
+    harness.wait_for_screen_contains("Rename to:").unwrap();
 
     // Check status bar for confirmation
     let screen = harness.screen_to_string();
@@ -220,30 +231,7 @@ fn test_explorer_n_keybinding_creates_file() {
     );
 }
 
-/// Test that 'h' keybinding toggles hidden files in file explorer
-#[test]
-fn test_explorer_h_keybinding_toggles_hidden() {
-    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
-
-    // Open and focus file explorer
-    harness.editor_mut().focus_file_explorer();
-    harness.wait_for_file_explorer().unwrap();
-
-    // Press 'h' to toggle hidden files
-    harness
-        .send_key(KeyCode::Char('h'), KeyModifiers::NONE)
-        .unwrap();
-
-    // Check status bar for confirmation message
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("hidden") || screen.contains("Hidden"),
-        "Status bar should show hidden files toggle message. Screen:\n{}",
-        screen
-    );
-}
-
-/// Test that 'i' keybinding toggles gitignored files in file explorer
+/// Test that Ctrl+i keybinding toggles gitignored files in file explorer
 #[test]
 fn test_explorer_i_keybinding_toggles_gitignored() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
@@ -252,9 +240,9 @@ fn test_explorer_i_keybinding_toggles_gitignored() {
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
 
-    // Press 'i' to toggle gitignored files
+    // Press Ctrl+i to toggle gitignored files
     harness
-        .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('i'), KeyModifiers::CONTROL)
         .unwrap();
 
     // Check status bar for confirmation message

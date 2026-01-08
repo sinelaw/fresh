@@ -1547,14 +1547,14 @@
     },
     {
       "key": "n",
-      "modifiers": [],
+      "modifiers": ["ctrl"],
       "action": "file_explorer_new_file",
       "args": {},
       "when": "file_explorer"
     },
     {
       "key": "n",
-      "modifiers": ["shift"],
+      "modifiers": ["ctrl", "shift"],
       "action": "file_explorer_new_directory",
       "args": {},
       "when": "file_explorer"
@@ -1574,22 +1574,8 @@
       "when": "file_explorer"
     },
     {
-      "key": "d",
-      "modifiers": [],
-      "action": "file_explorer_delete",
-      "args": {},
-      "when": "file_explorer"
-    },
-    {
-      "key": "h",
-      "modifiers": [],
-      "action": "file_explorer_toggle_hidden",
-      "args": {},
-      "when": "file_explorer"
-    },
-    {
       "key": "i",
-      "modifiers": [],
+      "modifiers": ["ctrl"],
       "action": "file_explorer_toggle_gitignored",
       "args": {},
       "when": "file_explorer"

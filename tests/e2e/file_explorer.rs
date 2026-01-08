@@ -1963,9 +1963,9 @@ fn test_file_explorer_new_file_opens_rename_prompt_and_buffer() {
     let screen_before = harness.screen_to_string();
     println!("Screen before new file:\n{}", screen_before);
 
-    // Create new file using the 'n' key
+    // Create new file using Ctrl+n
     harness
-        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
