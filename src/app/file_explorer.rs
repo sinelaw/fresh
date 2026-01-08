@@ -402,6 +402,7 @@ impl Editor {
                                     crate::view::prompt::PromptType::FileExplorerRename {
                                         original_path: path_clone,
                                         original_name: filename.clone(),
+                                        is_new_file: true,
                                     },
                                 );
                                 self.prompt = Some(prompt);
@@ -451,6 +452,7 @@ impl Editor {
                                     crate::view::prompt::PromptType::FileExplorerRename {
                                         original_path: path_clone,
                                         original_name: dirname_clone,
+                                        is_new_file: true,
                                     },
                                     dirname,
                                 );
@@ -568,6 +570,7 @@ impl Editor {
                         crate::view::prompt::PromptType::FileExplorerRename {
                             original_path: old_path,
                             original_name: old_name.clone(),
+                            is_new_file: false,
                         },
                         old_name,
                     );
@@ -583,6 +586,7 @@ impl Editor {
         original_path: std::path::PathBuf,
         original_name: String,
         new_name: String,
+        is_new_file: bool,
     ) {
         if new_name.is_empty() || new_name == original_name {
             self.set_status_message(t!("explorer.rename_cancelled").to_string());
@@ -644,9 +648,11 @@ impl Editor {
                             );
                         }
 
-                        // Switch focus to the renamed buffer
-                        self.set_active_buffer(buffer_id);
-                        self.key_context = KeyContext::Normal;
+                        // Only switch focus to the buffer if this is a new file being created
+                        // For renaming existing files from the explorer, keep focus in explorer.
+                        if is_new_file {
+                            self.key_context = KeyContext::Normal;
+                        }
                     }
 
                     self.set_status_message(

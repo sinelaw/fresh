@@ -2059,3 +2059,117 @@ fn test_file_explorer_new_file_opens_rename_prompt_and_buffer() {
         untitled_files
     );
 }
+
+/// Test that renaming an existing file from file explorer updates buffer metadata
+/// but keeps focus in file explorer (not switching to editor)
+#[test]
+fn test_file_explorer_rename_existing_file_keeps_focus() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create a test file
+    fs::write(project_root.join("original.txt"), "file content").unwrap();
+
+    // Open the file in the editor
+    harness
+        .editor_mut()
+        .open_file(&project_root.join("original.txt"))
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify file is open with correct name in tab
+    let screen_with_file = harness.screen_to_string();
+    assert!(
+        screen_with_file.contains("original.txt"),
+        "File should be open in editor. Screen:\n{}",
+        screen_with_file
+    );
+
+    // Open file explorer and navigate to the file
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("original.txt").unwrap();
+
+    // Navigate down to select the file
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Verify we're in FileExplorer context
+    let key_context_before = harness.editor().get_key_context();
+    assert!(
+        matches!(
+            key_context_before,
+            fresh::input::keybindings::KeyContext::FileExplorer
+        ),
+        "Should be in FileExplorer context before rename. Got: {:?}",
+        key_context_before
+    );
+
+    // Trigger rename on the existing file (using the file_explorer_rename method)
+    harness.editor_mut().file_explorer_rename();
+    harness.render().unwrap();
+
+    let screen_rename_prompt = harness.screen_to_string();
+    println!("Screen with rename prompt:\n{}", screen_rename_prompt);
+
+    // Rename prompt should appear with the old name pre-filled
+    assert!(
+        screen_rename_prompt.contains("Rename to:"),
+        "Rename prompt should appear. Screen:\n{}",
+        screen_rename_prompt
+    );
+    assert!(
+        screen_rename_prompt.contains("original.txt"),
+        "Rename prompt should show old name. Screen:\n{}",
+        screen_rename_prompt
+    );
+
+    // Type new name (clear old name first with Ctrl+A, then type)
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("renamed.txt").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    let screen_after_rename = harness.screen_to_string();
+    println!("Screen after rename:\n{}", screen_after_rename);
+
+    // Verify 1: Buffer tab should show new name
+    assert!(
+        screen_after_rename.contains("renamed.txt"),
+        "Buffer tab should show new name. Screen:\n{}",
+        screen_after_rename
+    );
+
+    // Verify 2: Focus should STILL be on file explorer (not switched to editor)
+    let key_context_after = harness.editor().get_key_context();
+    assert!(
+        matches!(
+            key_context_after,
+            fresh::input::keybindings::KeyContext::FileExplorer
+        ),
+        "Focus should stay on FileExplorer after renaming existing file. Got: {:?}",
+        key_context_after
+    );
+
+    // Verify 3: File explorer should still be visible
+    assert!(
+        screen_after_rename.contains("File Explorer"),
+        "File explorer should still be visible. Screen:\n{}",
+        screen_after_rename
+    );
+
+    // Verify 4: File on disk was renamed
+    assert!(
+        project_root.join("renamed.txt").exists(),
+        "File should be renamed on disk"
+    );
+    assert!(
+        !project_root.join("original.txt").exists(),
+        "Old file should not exist on disk"
+    );
+}
