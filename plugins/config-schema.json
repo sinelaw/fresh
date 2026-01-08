@@ -44,7 +44,7 @@
         "enable_inlay_hints": true,
         "recovery_enabled": true,
         "auto_save_interval_secs": 2,
-        "highlight_context_bytes": 100000,
+        "highlight_context_bytes": 10000,
         "mouse_hover_enabled": true,
         "mouse_hover_delay_ms": 500,
         "double_click_time_ms": 500,
@@ -248,7 +248,7 @@
           "type": "integer",
           "format": "uint",
           "minimum": 0,
-          "default": 100000
+          "default": 10000
         },
         "mouse_hover_enabled": {
           "description": "Whether mouse hover triggers LSP hover requests.\nWhen enabled, hovering over code with the mouse will show documentation.\nDefault: true",
