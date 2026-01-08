@@ -512,11 +512,33 @@ impl Editor {
                         if let Some(node) = explorer.tree().get_node_by_path(&path) {
                             let node_id = node.id;
                             let parent_id = get_parent_node_id(explorer.tree(), node_id, false);
+
+                            // Remember the index of the deleted node in the visible list
+                            let deleted_index = explorer.get_selected_index();
+
                             let _ = runtime.block_on(explorer.tree_mut().refresh_node(parent_id));
+
+                            // After refresh, select the next best node:
+                            // Try to stay at the same index, or select the last visible item
+                            let visible = explorer.tree().get_visible_nodes();
+                            if !visible.is_empty() {
+                                let new_index = if let Some(idx) = deleted_index {
+                                    idx.min(visible.len().saturating_sub(1))
+                                } else {
+                                    0
+                                };
+                                explorer.set_selected(Some(visible[new_index]));
+                            } else {
+                                // No visible nodes, select parent
+                                explorer.set_selected(Some(parent_id));
+                            }
                         }
                     }
                 }
                 self.set_status_message(t!("explorer.moved_to_trash", name = &name).to_string());
+
+                // Ensure focus remains on file explorer
+                self.key_context = KeyContext::FileExplorer;
             }
             Err(e) => {
                 self.set_status_message(

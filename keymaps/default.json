@@ -1567,6 +1567,20 @@
       "when": "file_explorer"
     },
     {
+      "key": "Delete",
+      "modifiers": [],
+      "action": "file_explorer_delete",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "d",
+      "modifiers": [],
+      "action": "file_explorer_delete",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
       "key": "h",
       "modifiers": [],
       "action": "file_explorer_toggle_hidden",

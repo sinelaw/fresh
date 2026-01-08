@@ -601,6 +601,96 @@ fn test_file_explorer_delete_smoke() {
     // Test passes if no panic occurs
 }
 
+/// Test that focus returns to file explorer after confirming file deletion
+#[test]
+fn test_file_explorer_focus_after_delete() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create multiple test files
+    fs::write(project_root.join("file1.txt"), "content 1").unwrap();
+    fs::write(project_root.join("file2.txt"), "content 2").unwrap();
+
+    // Open and focus file explorer
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("file1.txt").unwrap();
+
+    // Verify we're in file explorer context
+    let key_context_before = harness.editor().get_key_context();
+    println!("Key context before deletion: {:?}", key_context_before);
+    assert!(
+        matches!(
+            key_context_before,
+            fresh::input::keybindings::KeyContext::FileExplorer
+        ),
+        "Should be in FileExplorer context before deletion"
+    );
+
+    // Navigate to file1.txt
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen_before = harness.screen_to_string();
+    println!("Screen before deletion:\n{}", screen_before);
+
+    // Initiate deletion using the method directly (since Delete key isn't bound by default)
+    harness.editor_mut().file_explorer_delete();
+    harness.render().unwrap();
+
+    let screen_prompt = harness.screen_to_string();
+    println!("Screen with delete prompt:\n{}", screen_prompt);
+
+    // Should see confirmation prompt
+    assert!(
+        screen_prompt.contains("Delete") || screen_prompt.contains("delete"),
+        "Should show delete confirmation prompt. Screen:\n{}",
+        screen_prompt
+    );
+
+    // Confirm deletion with 'y'
+    harness.type_text("y").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    let screen_after = harness.screen_to_string();
+    println!("Screen after deletion:\n{}", screen_after);
+
+    // Check that focus is back to file explorer
+    let key_context_after = harness.editor().get_key_context();
+    println!("Key context after deletion: {:?}", key_context_after);
+
+    // The critical assertion: focus should be on file explorer after deletion
+    assert!(
+        matches!(
+            key_context_after,
+            fresh::input::keybindings::KeyContext::FileExplorer
+        ),
+        "Should be in FileExplorer context after deletion. Got: {:?}",
+        key_context_after
+    );
+
+    // Verify file explorer is still visible
+    assert!(
+        screen_after.contains("File Explorer"),
+        "File Explorer should still be visible after deletion"
+    );
+
+    // Verify the deleted file is gone from the file explorer tree
+    // (but it may appear in status messages like "Moved to trash: file1.txt")
+    // Check that the file explorer tree shows "1 item" (only file2.txt remains)
+    assert!(
+        screen_after.contains("1 item"),
+        "File explorer should show only 1 item remaining after deletion"
+    );
+
+    // Verify arrow keys work in file explorer (not captured by editor)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    // If we can navigate without error, the focus is correctly on file explorer
+}
+
 /// Test Feature 1: Enter key on directory toggles expand/collapse
 #[test]
 fn test_enter_toggles_directory() {
