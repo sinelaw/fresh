@@ -17,7 +17,7 @@ use crate::primitives::text_property::TextPropertyManager;
 use crate::view::margin::{MarginAnnotation, MarginContent, MarginManager, MarginPosition};
 use crate::view::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
 use crate::view::popup::{Popup, PopupContent, PopupListItem, PopupManager, PopupPosition};
-use crate::view::reference_highlight_cache::ReferenceHighlightCache;
+use crate::view::reference_highlight_overlay::ReferenceHighlightOverlay;
 use crate::view::virtual_text::VirtualTextManager;
 use anyhow::Result;
 use ratatui::style::{Color, Style};
@@ -126,7 +126,7 @@ pub struct EditorState {
     pub view_transform: Option<crate::services::plugins::api::ViewTransformPayload>,
 
     /// Debounced semantic highlight cache
-    pub reference_highlight_cache: ReferenceHighlightCache,
+    pub reference_highlight_overlay: ReferenceHighlightOverlay,
 
     /// Cached LSP semantic tokens (converted to buffer byte ranges)
     pub semantic_tokens: Option<SemanticTokenStore>,
@@ -167,7 +167,7 @@ impl EditorState {
             compose_prev_line_numbers: None,
             compose_column_guides: None,
             view_transform: None,
-            reference_highlight_cache: ReferenceHighlightCache::new(),
+            reference_highlight_overlay: ReferenceHighlightOverlay::new(),
             semantic_tokens: None,
             language: "text".to_string(), // Default to plain text
         }
@@ -271,7 +271,7 @@ impl EditorState {
             compose_prev_line_numbers: None,
             compose_column_guides: None,
             view_transform: None,
-            reference_highlight_cache: ReferenceHighlightCache::new(),
+            reference_highlight_overlay: ReferenceHighlightOverlay::new(),
             semantic_tokens: None,
             language: language_name,
         })
@@ -348,7 +348,7 @@ impl EditorState {
             compose_prev_line_numbers: None,
             compose_column_guides: None,
             view_transform: None,
-            reference_highlight_cache: ReferenceHighlightCache::new(),
+            reference_highlight_overlay: ReferenceHighlightOverlay::new(),
             semantic_tokens: None,
             language: language_name,
         })
@@ -373,6 +373,9 @@ impl EditorState {
         // Invalidate highlight cache for edited range
         self.highlighter
             .invalidate_range(position..position + text.len());
+
+        // Note: reference_highlight_overlay uses markers that auto-adjust,
+        // so no manual invalidation needed
 
         // Adjust all cursors after the edit
         self.cursors.adjust_for_edit(position, 0, text.len());
@@ -417,6 +420,9 @@ impl EditorState {
 
         // Invalidate highlight cache for edited range
         self.highlighter.invalidate_range(range.clone());
+
+        // Note: reference_highlight_overlay uses markers that auto-adjust,
+        // so no manual invalidation needed
 
         // Adjust all cursors after the edit
         self.cursors.adjust_for_edit(range.start, len, 0);

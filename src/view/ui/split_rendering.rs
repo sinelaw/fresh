@@ -320,7 +320,6 @@ struct SelectionContext {
 
 struct DecorationContext {
     highlight_spans: Vec<crate::primitives::highlighter::HighlightSpan>,
-    reference_spans: Vec<crate::primitives::highlighter::HighlightSpan>,
     semantic_token_spans: Vec<crate::primitives::highlighter::HighlightSpan>,
     viewport_overlays: Vec<(crate::view::overlay::Overlay, Range<usize>)>,
     virtual_text_lookup: HashMap<usize, Vec<crate::view::virtual_text::VirtualText>>,
@@ -387,7 +386,6 @@ struct CharStyleContext<'a> {
     is_selected: bool,
     theme: &'a crate::view::theme::Theme,
     highlight_spans: &'a [crate::primitives::highlighter::HighlightSpan],
-    reference_spans: &'a [crate::primitives::highlighter::HighlightSpan],
     semantic_token_spans: &'a [crate::primitives::highlighter::HighlightSpan],
     viewport_overlays: &'a [(crate::view::overlay::Overlay, Range<usize>)],
     primary_cursor_position: usize,
@@ -599,16 +597,8 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         style = style.fg(highlight_color.unwrap());
     }
 
-    // Apply reference highlighting (word under cursor)
-    if let Some(bp) = ctx.byte_pos {
-        if let Some(reference_span) = ctx
-            .reference_spans
-            .iter()
-            .find(|span| span.range.contains(&bp))
-        {
-            style = style.bg(reference_span.color);
-        }
-    }
+    // Note: Reference highlighting (word under cursor) is now handled via overlays
+    // in the "Apply overlay styles" section below
 
     // Apply LSP semantic token foreground color when no custom token style is set.
     if ctx.token_style.is_none() {
@@ -2828,19 +2818,18 @@ impl SplitRenderer {
             highlight_context_bytes,
         );
 
-        // Get reference highlights through debounced cache
-        let reference_spans = state
-            .reference_highlight_cache
-            .get_highlights(
-                &mut state.reference_highlighter,
-                &state.buffer,
-                primary_cursor_position,
-                viewport_start,
-                viewport_end,
-                highlight_context_bytes,
-                theme.semantic_highlight_bg,
-            )
-            .to_vec();
+        // Update reference highlight overlays (debounced, creates overlays that auto-adjust)
+        state.reference_highlight_overlay.update(
+            &state.buffer,
+            &mut state.overlays,
+            &mut state.marker_list,
+            &mut state.reference_highlighter,
+            primary_cursor_position,
+            viewport_start,
+            viewport_end,
+            highlight_context_bytes,
+            theme.semantic_highlight_bg,
+        );
 
         // Resolve semantic tokens for this viewport (if version matches)
         let semantic_token_spans = if let Some(store) = &state.semantic_tokens {
@@ -2889,7 +2878,6 @@ impl SplitRenderer {
 
         DecorationContext {
             highlight_spans,
-            reference_spans,
             semantic_token_spans,
             viewport_overlays,
             virtual_text_lookup,
@@ -2991,7 +2979,6 @@ impl SplitRenderer {
         let cursor_line = state.buffer.get_line_number(primary_cursor_position);
 
         let highlight_spans = &decorations.highlight_spans;
-        let reference_spans = &decorations.reference_spans;
         let semantic_token_spans = &decorations.semantic_token_spans;
         let viewport_overlays = &decorations.viewport_overlays;
         let virtual_text_lookup = &decorations.virtual_text_lookup;
@@ -3274,7 +3261,6 @@ impl SplitRenderer {
                         is_selected,
                         theme,
                         highlight_spans,
-                        reference_spans,
                         semantic_token_spans,
                         viewport_overlays,
                         primary_cursor_position,

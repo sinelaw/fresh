@@ -1388,7 +1388,7 @@ impl Editor {
     pub fn check_semantic_highlight_timer(&self) -> bool {
         // Check all buffers for pending semantic highlight redraws
         for state in self.buffers.values() {
-            if let Some(remaining) = state.reference_highlight_cache.needs_redraw() {
+            if let Some(remaining) = state.reference_highlight_overlay.needs_redraw() {
                 if remaining.is_zero() {
                     return true;
                 }
