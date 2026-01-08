@@ -2614,3 +2614,205 @@ fn test_open_file_from_terminal_uses_correct_directory() {
         screen
     );
 }
+
+/// BUG: Re-entering scrollback mode after scrolling up jumps to old scroll position
+///
+/// When:
+/// 1. Enter scrollback mode
+/// 2. Scroll up to view history
+/// 3. Exit scrollback (re-enter terminal mode)
+/// 4. Enter scrollback mode again
+///
+/// Expected: Viewport should be at the bottom (showing cursor/prompt)
+/// Actual: Viewport jumps to the previous scroll position from step 2
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_scrollback_viewport_resets_on_reentry() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Disable jump_to_end_on_output so terminal output doesn't affect our test
+    harness
+        .editor_mut()
+        .set_terminal_jump_to_end_on_output(false);
+
+    // Generate enough output to create scrollback history
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo 'HISTORY_START_MARKER'\n");
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("HISTORY_START_MARKER"))
+        .unwrap();
+
+    // Generate many lines to push the start marker into scrollback
+    harness
+        .editor_mut()
+        .send_terminal_input(b"for i in $(seq 1 50); do echo \"History line $i\"; done\n");
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("History line 50"))
+        .unwrap();
+
+    // Add an end marker that will be visible at the bottom
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo 'BOTTOM_MARKER_XYZ'\n");
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("BOTTOM_MARKER_XYZ"))
+        .unwrap();
+
+    // === First scrollback entry ===
+    // Exit terminal mode to enter scrollback
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    // Should see the bottom marker (viewport at end)
+    harness.assert_screen_contains("BOTTOM_MARKER_XYZ");
+
+    // Scroll up significantly to view history
+    for _ in 0..15 {
+        harness
+            .editor_mut()
+            .handle_key(KeyCode::PageUp, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // After scrolling up, bottom marker should NOT be visible
+    harness.assert_screen_not_contains("BOTTOM_MARKER_XYZ");
+    // But history start marker should be visible
+    harness.assert_screen_contains("HISTORY_START_MARKER");
+
+    // === Exit scrollback, re-enter terminal mode ===
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // === Second scrollback entry - this is where the bug manifests ===
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    // BUG: The viewport should be at the bottom again, showing BOTTOM_MARKER_XYZ
+    // But with the bug, it jumps to the old scroll position (showing HISTORY_START_MARKER)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("BOTTOM_MARKER_XYZ"),
+        "BUG: After re-entering scrollback mode, viewport should be at the bottom.\n\
+         Expected to see BOTTOM_MARKER_XYZ but got:\n{}",
+        screen
+    );
+}
+
+/// Same as test_scrollback_viewport_resets_on_reentry but using mouse scroll
+///
+/// This test uses mouse scroll which sets the skip_ensure_visible flag differently
+/// than keyboard scrolling, which is the actual bug trigger in real usage.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_scrollback_viewport_resets_on_reentry_mouse_scroll() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Disable jump_to_end_on_output so terminal output doesn't affect our test
+    harness
+        .editor_mut()
+        .set_terminal_jump_to_end_on_output(false);
+
+    // Generate enough output to create scrollback history
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo 'HISTORY_START_MARKER'\n");
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("HISTORY_START_MARKER"))
+        .unwrap();
+
+    // Generate many lines to push the start marker into scrollback
+    harness
+        .editor_mut()
+        .send_terminal_input(b"for i in $(seq 1 50); do echo \"History line $i\"; done\n");
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("History line 50"))
+        .unwrap();
+
+    // Add an end marker that will be visible at the bottom
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo 'BOTTOM_MARKER_XYZ'\n");
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("BOTTOM_MARKER_XYZ"))
+        .unwrap();
+
+    // === First scrollback entry ===
+    // Exit terminal mode to enter scrollback
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    // Should see the bottom marker (viewport at end)
+    harness.assert_screen_contains("BOTTOM_MARKER_XYZ");
+
+    // Scroll up using MOUSE SCROLL (this sets skip_ensure_visible flag)
+    // Mouse scroll at position in the content area (col 40, row 12)
+    for _ in 0..50 {
+        harness.mouse_scroll_up(40, 12).unwrap();
+    }
+    harness.render().unwrap();
+
+    // After scrolling up, bottom marker should NOT be visible
+    harness.assert_screen_not_contains("BOTTOM_MARKER_XYZ");
+    // But history start marker should be visible
+    harness.assert_screen_contains("HISTORY_START_MARKER");
+
+    // === Exit scrollback, re-enter terminal mode ===
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // === Second scrollback entry - this is where the bug manifests ===
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    // BUG: The viewport should be at the bottom again, showing BOTTOM_MARKER_XYZ
+    // But with the bug, it jumps to the old scroll position (showing HISTORY_START_MARKER)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("BOTTOM_MARKER_XYZ"),
+        "BUG: After re-entering scrollback mode, viewport should be at the bottom.\n\
+         Expected to see BOTTOM_MARKER_XYZ but got:\n{}",
+        screen
+    );
+}

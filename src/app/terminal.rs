@@ -473,6 +473,11 @@ impl Editor {
             {
                 view_state.viewport.line_wrap_enabled = false;
 
+                // Clear skip_ensure_visible flag so the viewport scrolls to cursor
+                // This fixes the bug where re-entering scrollback mode would jump to the
+                // previous scroll position because the flag was still set from scrolling
+                view_state.viewport.clear_skip_ensure_visible();
+
                 // Scroll viewport to make cursor visible at the end of buffer
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     let cursor = *state.cursors.primary();

@@ -680,6 +680,12 @@ impl Editor {
         }
 
         for buffer_id in buffer_ids {
+            // Skip terminal buffers - they manage their own content via PTY streaming
+            // and should not be auto-reverted (which would reset editing_disabled and line_numbers)
+            if self.terminal_buffers.contains_key(&buffer_id) {
+                continue;
+            }
+
             let state = match self.buffers.get(&buffer_id) {
                 Some(s) => s,
                 None => continue,
