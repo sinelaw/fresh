@@ -1694,7 +1694,8 @@ impl Editor {
         if !in_interactive_replace {
             match event {
                 Event::Insert { .. } | Event::Delete { .. } | Event::BulkEdit { .. } => {
-                    self.clear_search_highlights();
+                    // Only clear visual highlights, preserve search state so F3/Shift+F3 still work
+                    self.clear_search_overlays();
                 }
                 Event::Batch { events, .. } => {
                     // Check if batch contains any Insert/Delete events
@@ -1702,7 +1703,8 @@ impl Editor {
                         .iter()
                         .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
                     if has_edits {
-                        self.clear_search_highlights();
+                        // Only clear visual highlights, preserve search state so F3/Shift+F3 still work
+                        self.clear_search_overlays();
                     }
                 }
                 _ => {}
@@ -1894,7 +1896,8 @@ impl Editor {
         self.sync_editor_state_to_split_view_state();
         self.invalidate_layouts_for_buffer(self.active_buffer());
         self.adjust_other_split_cursors_for_event(&bulk_edit);
-        self.clear_search_highlights();
+        // Only clear visual highlights, preserve search state so F3/Shift+F3 still work
+        self.clear_search_overlays();
 
         Some(bulk_edit)
     }

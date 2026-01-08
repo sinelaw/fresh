@@ -1889,14 +1889,19 @@ impl Editor {
 
     // === Search and Replace Methods ===
 
-    /// Clear all search highlights from the active buffer
+    /// Clear all search highlights from the active buffer and reset search state
     pub(super) fn clear_search_highlights(&mut self) {
+        self.clear_search_overlays();
+        // Also clear search state
+        self.search_state = None;
+    }
+
+    /// Clear only the visual search overlays, preserving search state for F3/Shift+F3
+    /// This is used when the buffer is modified - highlights become stale but F3 should still work
+    pub(super) fn clear_search_overlays(&mut self) {
         let ns = self.search_namespace.clone();
         let state = self.active_state_mut();
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
-
-        // Also clear search state
-        self.search_state = None;
     }
 
     /// Update search highlights in visible viewport only (for incremental search)
