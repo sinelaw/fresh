@@ -7,18 +7,20 @@ use crate::state::EditorState;
 use crate::view::overlay::{Overlay, OverlayFace, OverlayNamespace};
 use lsp_types::{Diagnostic, DiagnosticSeverity};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 /// Namespace for all LSP diagnostic overlays
 pub fn lsp_diagnostic_namespace() -> OverlayNamespace {
     OverlayNamespace::from_string("lsp-diagnostic".to_string())
 }
 
-/// Cache for diagnostic hash to avoid redundant updates
-/// Using a global static with Mutex for simplicity - could be moved to EditorState later
-static DIAGNOSTIC_CACHE: Mutex<Option<u64>> = Mutex::new(None);
+/// Cache for diagnostic hash to avoid redundant updates, keyed by file path.
+/// This prevents diagnostics from one buffer from invalidating another buffer's cache.
+static DIAGNOSTIC_CACHE: LazyLock<Mutex<HashMap<String, u64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Compute a hash for a slice of diagnostics
 /// This hash is used to quickly detect if diagnostics have changed
@@ -68,14 +70,20 @@ pub fn apply_diagnostics_to_state_cached(
     diagnostics: &[Diagnostic],
     theme: &crate::view::theme::Theme,
 ) {
+    // Get cache key from buffer's file path
+    let cache_key = match state.buffer.file_path() {
+        Some(path) => path.to_string_lossy().to_string(),
+        None => return apply_diagnostics_to_state(state, diagnostics, theme),
+    };
+
     // Compute hash of incoming diagnostics
     let new_hash = compute_diagnostic_hash(diagnostics);
 
-    // Check if this is the same as last time
+    // Check if this is the same as last time for this specific buffer
     if let Ok(cache) = DIAGNOSTIC_CACHE.lock() {
-        if let Some(cached_hash) = *cache {
+        if let Some(&cached_hash) = cache.get(&cache_key) {
             if cached_hash == new_hash {
-                // Diagnostics haven't changed, skip all work
+                // Diagnostics haven't changed for this buffer, skip all work
                 return;
             }
         }
@@ -84,9 +92,9 @@ pub fn apply_diagnostics_to_state_cached(
     // Diagnostics have changed, do the expensive update
     apply_diagnostics_to_state(state, diagnostics, theme);
 
-    // Update cache
+    // Update cache for this buffer
     if let Ok(mut cache) = DIAGNOSTIC_CACHE.lock() {
-        *cache = Some(new_hash);
+        cache.insert(cache_key, new_hash);
     }
 }
 
