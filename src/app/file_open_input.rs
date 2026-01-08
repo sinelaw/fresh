@@ -289,6 +289,10 @@ impl Editor {
         self.file_open_state = None;
         self.prompt = None;
 
+        // Reset key context to Normal so editor gets focus
+        // This is important when the file explorer was focused before opening the file browser
+        self.key_context = crate::input::keybindings::KeyContext::Normal;
+
         // Open the file
         if let Err(e) = self.open_file(&path) {
             self.set_status_message(t!("file.error_opening", error = e.to_string()).to_string());
@@ -304,6 +308,10 @@ impl Editor {
         // Close the file browser
         self.file_open_state = None;
         self.prompt = None;
+
+        // Reset key context to Normal so editor gets focus
+        // This is important when the file explorer was focused before opening the file browser
+        self.key_context = crate::input::keybindings::KeyContext::Normal;
 
         // Open the file - this will create an unsaved buffer with the path set
         if let Err(e) = self.open_file(&path) {

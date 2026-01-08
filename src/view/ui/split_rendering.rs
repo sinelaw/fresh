@@ -3172,8 +3172,9 @@ impl SplitRenderer {
                             // IMPORTANT: If the cursor is on this ANSI byte, track it
                             if let Some(bp) = byte_pos {
                                 if bp == primary_cursor_position && !have_cursor {
-                                    cursor_screen_x =
-                                        gutter_width as u16 + visible_char_count as u16;
+                                    // Account for horizontal scrolling by using col_offset - left_col
+                                    cursor_screen_x = gutter_width as u16
+                                        + col_offset.saturating_sub(left_col) as u16;
                                     cursor_screen_y = lines_rendered.saturating_sub(1) as u16;
                                     have_cursor = true;
                                 }
@@ -3477,11 +3478,15 @@ impl SplitRenderer {
                     if is_primary_at_end && last_seg_y.is_some() {
                         // Cursor position now includes gutter width (consistent with main cursor tracking)
                         // For empty lines, cursor is at gutter width (right after gutter)
-                        // For non-empty lines without newline, cursor is after the last character
+                        // For non-empty lines without newline, cursor is after the last visible character
+                        // Account for horizontal scrolling by using col_offset - left_col
                         cursor_screen_x = if line_len_chars == 0 {
                             gutter_width as u16
                         } else {
-                            gutter_width as u16 + line_len_chars as u16
+                            // col_offset is the visual column after the last character
+                            // Subtract left_col to get the screen position after horizontal scroll
+                            gutter_width as u16
+                                + col_offset.saturating_sub(left_col) as u16
                         };
                         cursor_screen_y = last_seg_y.unwrap();
                         have_cursor = true;
