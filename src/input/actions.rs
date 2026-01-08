@@ -3426,6 +3426,13 @@ mod tests {
             state.apply(&event);
         }
 
+        // Verify we have "foo\nfoo" before typing '('
+        assert_eq!(
+            state.buffer.to_string().unwrap(),
+            "foo\nfoo",
+            "Before typing '(' we should have just 'foo' on each line"
+        );
+
         // Type '(' - should auto-close to '()'
         let events =
             action_to_events(&mut state, Action::InsertChar('('), 4, true, 80, 24).unwrap();
@@ -3433,11 +3440,23 @@ mod tests {
             state.apply(&event);
         }
 
-        // At this point we should have "foo()\nfoo()" with cursors between ( and )
+        // Verify auto-close happened: we typed '(' but got '()' on each line
+        // This confirms the auto-close feature is working with multiple cursors
         assert_eq!(
             state.buffer.to_string().unwrap(),
             "foo()\nfoo()",
-            "After typing 'foo(' with auto-close"
+            "Auto-close should add closing paren: typing '(' should produce '()'"
+        );
+
+        // Verify cursors are positioned between ( and ) for skip-over to work
+        // Buffer is "foo()\nfoo()" - positions: f(0)o(1)o(2)((3))(4)\n(5)f(6)o(7)o(8)((9))(10)
+        // After auto-close, cursor should be at position 4 (after '(' at 3, before ')' at 4)
+        // and at position 10 (after '(' at 9, before ')' at 10)
+        let cursor_positions: Vec<_> = state.cursors.iter().map(|(_, c)| c.position).collect();
+        assert!(
+            cursor_positions.contains(&4) && cursor_positions.contains(&10),
+            "Cursors should be between parens at positions 4 and 10, got: {:?}",
+            cursor_positions
         );
 
         // Type ')' - should skip over the existing ')', not add another
