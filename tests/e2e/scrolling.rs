@@ -2414,3 +2414,83 @@ fn test_cursor_never_on_status_bar_when_scrolling() {
 
     println!("\n✓ All tests passed: cursor never jumped to status bar");
 }
+
+/// Test that pressing Enter resets horizontal scroll when cursor moves to column 0
+/// Bug: When at the end of a long horizontally-scrolled line, pressing Enter
+/// moves the cursor to the start of the new line (column 0) but the horizontal
+/// scroll is not reset, so the screen stays scrolled right showing empty space.
+/// Typing any character after Enter does reset the scroll.
+#[test]
+fn test_enter_resets_horizontal_scroll() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::config::Config;
+
+    let mut config = Config::default();
+    config.editor.line_wrap = false;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.render().unwrap();
+
+    println!("\n=== Testing Enter resets horizontal scroll ===");
+
+    // Create a long line (100 chars) - no trailing newline since it's the only line
+    let long_line = "a".repeat(100);
+    harness.type_text(&long_line).unwrap();
+    harness.render().unwrap();
+
+    // Verify cursor is at position 100 and horizontal scroll occurred
+    let cursor_pos = harness.cursor_position();
+    let left_col_before = harness.editor().active_viewport().left_column;
+
+    println!("After typing 100 chars:");
+    println!("  Cursor position: {}", cursor_pos);
+    println!("  Horizontal scroll (left_column): {}", left_col_before);
+
+    assert_eq!(cursor_pos, 100, "Cursor should be at position 100");
+    assert!(
+        left_col_before > 0,
+        "Viewport should be scrolled right (left_column={}, expected > 0)",
+        left_col_before
+    );
+
+    // Now press Enter - cursor should move to column 0 of new line
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Check the state after Enter
+    let cursor_pos_after = harness.cursor_position();
+    let left_col_after = harness.editor().active_viewport().left_column;
+    let (screen_x, screen_y) = harness.screen_cursor_position();
+
+    println!("\nAfter pressing Enter:");
+    println!("  Cursor position: {}", cursor_pos_after);
+    println!("  Horizontal scroll (left_column): {}", left_col_after);
+    println!("  Screen cursor: ({}, {})", screen_x, screen_y);
+
+    // Cursor should now be at position 101 (after the newline)
+    // which is column 0 of the new line
+    assert_eq!(
+        cursor_pos_after, 101,
+        "Cursor should be at position 101 (after newline)"
+    );
+
+    // The horizontal scroll should be reset to 0 since cursor is at column 0
+    assert_eq!(
+        left_col_after, 0,
+        "BUG: Horizontal scroll should be reset to 0 after Enter (cursor is at column 0), \
+         but left_column={}",
+        left_col_after
+    );
+
+    // Screen cursor X should be at the gutter width (start of content)
+    // Gutter is typically 4-5 chars for line numbers
+    assert!(
+        screen_x < 10,
+        "BUG: Screen cursor X ({}) should be near the left side (< 10) after Enter",
+        screen_x
+    );
+
+    println!("\n✓ Enter correctly reset horizontal scroll");
+}

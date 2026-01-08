@@ -376,23 +376,50 @@ impl Viewport {
             // Get the byte position of the first character in this line
             // Then calculate cursor column as visual width from line start
             let line_start = line.char_source_bytes.iter().find_map(|m| *m).unwrap_or(0);
-            let cursor_byte_offset = cursor.position.saturating_sub(line_start);
 
-            // Calculate visual column by walking through characters and summing widths
-            // until we've consumed cursor_byte_offset bytes
-            let line_text = line.text.trim_end_matches('\n');
-            let mut bytes_consumed = 0usize;
-            let mut cursor_visual_col = 0usize;
-            for ch in line_text.chars() {
-                if bytes_consumed >= cursor_byte_offset {
-                    break;
+            // Calculate the byte position where this line ends (start of next line or end of view)
+            // If cursor is beyond this line's content, skip horizontal scroll - the cursor
+            // is on a line not in view_lines (e.g., a newly inserted line)
+            let line_end_byte = if cursor_view_line + 1 < view_lines.len() {
+                // Next line exists, use its start as this line's end
+                view_lines[cursor_view_line + 1]
+                    .char_source_bytes
+                    .iter()
+                    .find_map(|m| *m)
+                    .unwrap_or(usize::MAX)
+            } else {
+                // This is the last view line - check if cursor is beyond line content
+                // The line's content length (including newline) determines the end
+                let content_bytes = line.text.len();
+                line_start.saturating_add(content_bytes)
+            };
+
+            // Only handle horizontal scroll if cursor is actually within this line
+            if cursor.position < line_end_byte {
+                let cursor_byte_offset = cursor.position.saturating_sub(line_start);
+
+                // Calculate visual column by walking through characters and summing widths
+                // until we've consumed cursor_byte_offset bytes
+                let line_text = line.text.trim_end_matches('\n');
+                let mut bytes_consumed = 0usize;
+                let mut cursor_visual_col = 0usize;
+                for ch in line_text.chars() {
+                    if bytes_consumed >= cursor_byte_offset {
+                        break;
+                    }
+                    cursor_visual_col += char_width(ch);
+                    bytes_consumed += ch.len_utf8();
                 }
-                cursor_visual_col += char_width(ch);
-                bytes_consumed += ch.len_utf8();
-            }
 
-            let line_visual_width = str_width(line_text);
-            self.ensure_column_visible_simple(cursor_visual_col, line_visual_width, gutter_width);
+                let line_visual_width = str_width(line_text);
+                self.ensure_column_visible_simple(
+                    cursor_visual_col,
+                    line_visual_width,
+                    gutter_width,
+                );
+            }
+            // If cursor.position >= line_end_byte, cursor is on a line not in view_lines
+            // Skip horizontal scroll handling - ensure_visible already handled it correctly
         }
 
         false
@@ -1268,6 +1295,48 @@ mod tests {
             "Cursor should be centered in viewport when jumping down, expected around {}, got {}",
             expected_center,
             lines_from_top
+        );
+    }
+
+    #[test]
+    fn test_ensure_column_visible_resets_to_zero() {
+        // Test that horizontal scroll is reset when cursor moves to column 0
+        // This simulates what happens after pressing Enter on a long line
+        let mut buffer = Buffer::from_str_test("a".repeat(100).as_str());
+        let mut vp = Viewport::new(80, 24);
+        vp.line_wrap_enabled = false;
+
+        // First, scroll right by moving cursor to end of line
+        let cursor_at_end = Cursor::new(100);
+        vp.ensure_visible(&mut buffer, &cursor_at_end);
+
+        println!("After moving to position 100:");
+        println!("  left_column = {}", vp.left_column);
+
+        // Verify we've scrolled right
+        assert!(
+            vp.left_column > 0,
+            "Should have scrolled right, but left_column = {}",
+            vp.left_column
+        );
+        let initial_left_col = vp.left_column;
+
+        // Now simulate pressing Enter: newline is added, cursor moves to start of new line
+        // Add the newline to the buffer
+        // Note: In real usage the buffer would be modified, but for this test we just
+        // need to test ensure_column_visible with cursor at column 0
+
+        // Test ensure_column_visible directly with column=0 and the current left_column
+        // This simulates what should happen when cursor is at column 0 on a new line
+        vp.ensure_column_visible(0, 0, &mut buffer); // column=0, line_length=0 (empty new line)
+
+        println!("After ensure_column_visible(0, 0):");
+        println!("  left_column = {}", vp.left_column);
+
+        assert_eq!(
+            vp.left_column, 0,
+            "left_column should be reset to 0 when cursor is at column 0, but got {}",
+            vp.left_column
         );
     }
 }

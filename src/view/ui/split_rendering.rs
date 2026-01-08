@@ -3485,8 +3485,7 @@ impl SplitRenderer {
                         } else {
                             // col_offset is the visual column after the last character
                             // Subtract left_col to get the screen position after horizontal scroll
-                            gutter_width as u16
-                                + col_offset.saturating_sub(left_col) as u16
+                            gutter_width as u16 + col_offset.saturating_sub(left_col) as u16
                         };
                         cursor_screen_y = last_seg_y.unwrap();
                         have_cursor = true;
