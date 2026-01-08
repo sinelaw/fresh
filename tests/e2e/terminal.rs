@@ -2806,13 +2806,91 @@ fn test_scrollback_viewport_resets_on_reentry_mouse_scroll() {
     harness.render().unwrap();
     assert!(!harness.editor().is_terminal_mode());
 
-    // BUG: The viewport should be at the bottom again, showing BOTTOM_MARKER_XYZ
-    // But with the bug, it jumps to the old scroll position (showing HISTORY_START_MARKER)
+    // The viewport should be at the bottom again, showing BOTTOM_MARKER_XYZ
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("BOTTOM_MARKER_XYZ"),
-        "BUG: After re-entering scrollback mode, viewport should be at the bottom.\n\
+        "After re-entering scrollback mode, viewport should be at the bottom.\n\
          Expected to see BOTTOM_MARKER_XYZ but got:\n{}",
         screen
     );
+}
+
+/// Test that terminal process exit keeps buffer open with exit message
+///
+/// When a terminal process exits (e.g., via 'exit' command):
+/// 1. The final screen state should be preserved in the buffer
+/// 2. An "[Terminal process exited]" message should be appended
+/// 3. The buffer should remain open in read-only scrollback mode
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_exit_keeps_buffer_with_message() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    let buffer_id = harness.editor().active_buffer_id();
+
+    // Generate some output before exiting
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo 'BEFORE_EXIT_MARKER'\n");
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("BEFORE_EXIT_MARKER"))
+        .unwrap();
+
+    // Exit the terminal by typing 'exit'
+    harness.editor_mut().send_terminal_input(b"exit\n");
+
+    // Wait for terminal to exit and buffer to show the exit message
+    harness
+        .wait_until(|h| {
+            let content = h.editor().get_buffer_content(buffer_id).unwrap_or_default();
+            content.contains("[Terminal process exited]")
+        })
+        .unwrap();
+
+    harness.render().unwrap();
+
+    // Buffer should still be open - we can verify by checking active_buffer_id matches
+    assert_eq!(
+        harness.editor().active_buffer_id(),
+        buffer_id,
+        "Buffer should still be the active buffer after terminal exit"
+    );
+
+    // Should no longer be in terminal mode
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "Should not be in terminal mode after terminal exit"
+    );
+
+    // Buffer should be read-only (editing disabled) - verify via is_editing_disabled
+    assert!(
+        harness.editor().is_editing_disabled(),
+        "Buffer should be read-only after terminal exit"
+    );
+
+    // Buffer content should contain the exit marker and exit message
+    let content = harness
+        .editor()
+        .get_buffer_content(buffer_id)
+        .unwrap_or_default();
+    assert!(
+        content.contains("BEFORE_EXIT_MARKER"),
+        "Buffer should preserve content from before exit.\nContent:\n{}",
+        content
+    );
+    assert!(
+        content.contains("[Terminal process exited]"),
+        "Buffer should contain exit message.\nContent:\n{}",
+        content
+    );
+
+    // Screen should show the exit message
+    harness.assert_screen_contains("[Terminal process exited]");
 }

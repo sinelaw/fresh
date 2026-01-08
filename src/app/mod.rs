@@ -3295,13 +3295,38 @@ impl Editor {
                 }
                 AsyncMessage::TerminalExited { terminal_id } => {
                     tracing::info!("Terminal {:?} exited", terminal_id);
-                    // Find and close the buffer associated with this terminal
+                    // Find the buffer associated with this terminal
                     if let Some((&buffer_id, _)) = self
                         .terminal_buffers
                         .iter()
                         .find(|(_, &tid)| tid == terminal_id)
                     {
+                        // Exit terminal mode if this is the active buffer
+                        if self.active_buffer() == buffer_id && self.terminal_mode {
+                            self.terminal_mode = false;
+                            self.key_context = crate::input::keybindings::KeyContext::Normal;
+                        }
+
+                        // Sync terminal content to buffer (final screen state)
+                        self.sync_terminal_to_buffer(buffer_id);
+
+                        // Append exit message to the buffer
+                        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                            let exit_msg = "\n[Terminal process exited]\n";
+                            let insert_pos = state.buffer.len();
+                            state.buffer.insert(insert_pos, exit_msg);
+                            // Move cursor to end
+                            state.primary_cursor_mut().position = state.buffer.len();
+                            // Keep buffer read-only
+                            state.editing_disabled = true;
+                            state.margins.set_line_numbers(false);
+                            // Mark as not modified (it's just terminal output)
+                            state.buffer.set_modified(false);
+                        }
+
+                        // Remove from terminal_buffers so it's no longer treated as a terminal
                         self.terminal_buffers.remove(&buffer_id);
+
                         self.set_status_message(
                             t!("terminal.exited", id = terminal_id.0).to_string(),
                         );
