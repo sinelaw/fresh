@@ -395,14 +395,14 @@ impl Editor {
                                 // Open the file in the buffer
                                 let _ = self.open_file(&path_clone);
 
-                                // Enter rename mode for the new file
-                                let prompt = crate::view::prompt::Prompt::with_initial_text(
+                                // Enter rename mode for the new file with empty prompt
+                                // so user can type the desired filename from scratch
+                                let prompt = crate::view::prompt::Prompt::new(
                                     t!("explorer.rename_prompt").to_string(),
                                     crate::view::prompt::PromptType::FileExplorerRename {
                                         original_path: path_clone,
                                         original_name: filename.clone(),
                                     },
-                                    filename,
                                 );
                                 self.prompt = Some(prompt);
                             }
@@ -610,6 +610,45 @@ impl Editor {
                         // Navigate to the renamed file to restore selection
                         explorer.navigate_to_path(&new_path);
                     }
+
+                    // Update buffer metadata if this file is open in a buffer
+                    let buffer_to_update = self
+                        .buffers
+                        .iter()
+                        .find(|(_, state)| state.buffer.file_path() == Some(&original_path))
+                        .map(|(id, _)| *id);
+
+                    if let Some(buffer_id) = buffer_to_update {
+                        // Update the buffer's file path
+                        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                            state.buffer.set_file_path(new_path.clone());
+                        }
+
+                        // Update the buffer metadata
+                        if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+                            // Compute new URI
+                            let file_uri = url::Url::from_file_path(&new_path)
+                                .ok()
+                                .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok());
+
+                            // Update kind with new path and URI
+                            metadata.kind = super::BufferKind::File {
+                                path: new_path.clone(),
+                                uri: file_uri,
+                            };
+
+                            // Update display name
+                            metadata.display_name = super::BufferMetadata::display_name_for_path(
+                                &new_path,
+                                &self.working_dir,
+                            );
+                        }
+
+                        // Switch focus to the renamed buffer
+                        self.set_active_buffer(buffer_id);
+                        self.key_context = KeyContext::Normal;
+                    }
+
                     self.set_status_message(
                         t!("explorer.renamed", old = &original_name, new = &new_name).to_string(),
                     );

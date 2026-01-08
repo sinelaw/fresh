@@ -211,7 +211,7 @@ impl BufferMetadata {
     }
 
     /// Compute display name relative to working_dir when possible, otherwise absolute
-    fn display_name_for_path(path: &Path, working_dir: &Path) -> String {
+    pub fn display_name_for_path(path: &Path, working_dir: &Path) -> String {
         // Canonicalize working_dir to normalize platform-specific prefixes
         let canonical_working_dir = working_dir
             .canonicalize()

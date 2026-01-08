@@ -1947,6 +1947,10 @@ fn test_folder_modified_indicator_cleared_after_save() {
 
 /// Test that creating a new file from file explorer opens a rename prompt
 /// and opens the file in the buffer
+/// Tests:
+/// 1. Prompt starts empty (not showing the randomly generated name)
+/// 2. After renaming, focus switches to the editor buffer
+/// 3. Buffer tab name is synced with the renamed file name
 #[test]
 fn test_file_explorer_new_file_opens_rename_prompt_and_buffer() {
     let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
@@ -1970,24 +1974,37 @@ fn test_file_explorer_new_file_opens_rename_prompt_and_buffer() {
 
     // A rename prompt should be visible (asking for the new file name)
     assert!(
-        screen_after.contains("Rename:") || screen_after.contains("untitled_"),
+        screen_after.contains("Rename to:"),
         "A rename prompt should appear after creating new file. Screen:\n{}",
         screen_after
     );
 
-    // The prompt should contain the default filename (untitled_XXX.txt)
+    // The prompt should start EMPTY (not showing the generated filename)
+    // The generated filename (untitled_XXX.txt) should NOT appear in the prompt input area
+    // Note: the file IS created on disk with the generated name, but the prompt is empty
+    // so user can type the desired name from scratch
+    let prompt_line = screen_after
+        .lines()
+        .find(|l| l.contains("Rename to:"))
+        .unwrap_or("");
+    println!("Prompt line: '{}'", prompt_line);
+
+    // Verify prompt is empty (just "Rename to:" without any filename after)
+    // The prompt line should end with "Rename to:" followed by only whitespace
     assert!(
-        screen_after.contains("untitled_") && screen_after.contains(".txt"),
-        "Prompt should show the default filename. Screen:\n{}",
-        screen_after
+        prompt_line.trim() == "Rename to:" || prompt_line.trim().ends_with("Rename to:"),
+        "Prompt should start empty (no pre-filled filename). Got: '{}'",
+        prompt_line
     );
 
-    // Type a new name and confirm
-    // First clear the default text
-    harness
-        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
-        .unwrap(); // Select all
+    // Type the new name (prompt starts empty, so just type directly)
     harness.type_text("my_new_file.rs").unwrap();
+    harness.render().unwrap();
+
+    let screen_typing = harness.screen_to_string();
+    println!("Screen while typing:\n{}", screen_typing);
+
+    // Confirm the rename
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -1997,16 +2014,48 @@ fn test_file_explorer_new_file_opens_rename_prompt_and_buffer() {
     let screen_final = harness.screen_to_string();
     println!("Screen after rename:\n{}", screen_final);
 
-    // The file should be open in the buffer (shown in tabs)
+    // Verify 1: The file should be open in the buffer (shown in tabs)
     assert!(
         screen_final.contains("my_new_file.rs"),
         "The new file should be visible in tabs after renaming. Screen:\n{}",
         screen_final
     );
 
-    // The file should exist on disk
+    // Verify 2: Focus should be on the editor (Normal key context), not file explorer
+    let key_context = harness.editor().get_key_context();
+    assert!(
+        matches!(key_context, fresh::input::keybindings::KeyContext::Normal),
+        "Focus should be on editor (Normal context) after rename. Got: {:?}",
+        key_context
+    );
+
+    // Verify 3: The file should exist on disk with the new name
     assert!(
         project_root.join("my_new_file.rs").exists(),
         "The renamed file should exist on disk"
+    );
+
+    // Verify 4: Typing should work in the buffer (proves focus is on editor)
+    harness.type_text("fn main() {}").unwrap();
+    harness.render().unwrap();
+
+    let buffer_content = harness.get_buffer_content().unwrap_or_default();
+    assert!(
+        buffer_content.contains("fn main() {}"),
+        "Should be able to type in the buffer after rename. Content: '{}'",
+        buffer_content
+    );
+
+    // Verify 5: The old generated filename should NOT exist on disk
+    // (it was renamed to my_new_file.rs)
+    let untitled_files: Vec<_> = std::fs::read_dir(&project_root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("untitled_"))
+        .collect();
+    assert!(
+        untitled_files.is_empty(),
+        "The old generated filename should not exist on disk. Found: {:?}",
+        untitled_files
     );
 }
