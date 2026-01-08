@@ -2559,6 +2559,7 @@ fn test_scrollback_stable_after_multiple_mode_toggles() {
 /// the terminal's working directory (project root by default), not the internal
 /// backing file directory (~/.local/share/fresh/terminals/).
 #[test]
+#[cfg(not(windows))] // Uses Unix shell
 fn test_open_file_from_terminal_uses_correct_directory() {
     // Skip if PTY is not available
     if native_pty_system()
