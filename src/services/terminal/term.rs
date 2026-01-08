@@ -318,8 +318,25 @@ impl TerminalState {
     /// Call this when exiting terminal mode to add the current screen
     /// to the backing file. The visible screen is the "rewritable tail"
     /// that gets overwritten each time we exit terminal mode.
+    ///
+    /// Only writes up to and including the last non-empty line to avoid
+    /// padding the scrollback with empty lines.
     pub fn append_visible_screen<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        let grid = self.term.grid();
+
+        // Find the last non-empty row
+        let mut last_non_empty_row: i32 = -1;
         for row in 0..self.rows as i32 {
+            let row_data = &grid[Line(row)];
+            let is_empty = (0..self.cols as usize)
+                .all(|col| row_data[Column(col)].c == ' ' || row_data[Column(col)].c == '\0');
+            if !is_empty {
+                last_non_empty_row = row;
+            }
+        }
+
+        // Write rows up to and including the last non-empty row
+        for row in 0..=last_non_empty_row {
             self.write_grid_line(writer, Line(row))?;
         }
         Ok(())

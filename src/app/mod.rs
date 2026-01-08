@@ -3310,17 +3310,27 @@ impl Editor {
                         // Sync terminal content to buffer (final screen state)
                         self.sync_terminal_to_buffer(buffer_id);
 
-                        // Append exit message to the buffer
+                        // Append exit message to the backing file and reload
+                        let exit_msg = "\n[Terminal process exited]\n";
+
+                        if let Some(backing_path) =
+                            self.terminal_backing_files.get(&terminal_id).cloned()
+                        {
+                            if let Ok(mut file) =
+                                std::fs::OpenOptions::new().append(true).open(&backing_path)
+                            {
+                                use std::io::Write;
+                                let _ = file.write_all(exit_msg.as_bytes());
+                            }
+
+                            // Force reload buffer from file to pick up the exit message
+                            let _ = self.revert_buffer_by_id(buffer_id, &backing_path);
+                        }
+
+                        // Ensure buffer remains read-only with no line numbers
                         if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                            let exit_msg = "\n[Terminal process exited]\n";
-                            let insert_pos = state.buffer.len();
-                            state.buffer.insert(insert_pos, exit_msg);
-                            // Move cursor to end
-                            state.primary_cursor_mut().position = state.buffer.len();
-                            // Keep buffer read-only
                             state.editing_disabled = true;
                             state.margins.set_line_numbers(false);
-                            // Mark as not modified (it's just terminal output)
                             state.buffer.set_modified(false);
                         }
 
