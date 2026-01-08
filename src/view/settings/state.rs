@@ -965,6 +965,9 @@ impl SettingsState {
 
     /// Delete the entry from the map and close the dialog
     pub fn delete_entry_dialog(&mut self) {
+        // Check if this is a nested dialog BEFORE popping
+        let is_nested = self.entry_dialog_stack.len() > 1;
+
         let Some(dialog) = self.entry_dialog_stack.pop() else {
             return;
         };
@@ -972,14 +975,42 @@ impl SettingsState {
         let path = format!("{}/{}", dialog.map_path, dialog.entry_key);
 
         // Remove from the map control
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Map(map_state) = &mut item.control {
-                if let Some(idx) = map_state
-                    .entries
-                    .iter()
-                    .position(|(k, _)| k == &dialog.entry_key)
-                {
-                    map_state.remove_entry(idx);
+        if is_nested {
+            // Nested dialog - update the parent dialog's Map item
+            // Extract the map field name from the path (last segment of map_path)
+            let map_field = dialog
+                .map_path
+                .rsplit('/')
+                .next()
+                .unwrap_or("")
+                .to_string();
+            let item_path = format!("/{}", map_field);
+
+            // Find and update the Map in the parent dialog
+            if let Some(parent) = self.entry_dialog_stack.last_mut() {
+                if let Some(item) = parent.items.iter_mut().find(|i| i.path == item_path) {
+                    if let SettingControl::Map(map_state) = &mut item.control {
+                        if let Some(idx) = map_state
+                            .entries
+                            .iter()
+                            .position(|(k, _)| k == &dialog.entry_key)
+                        {
+                            map_state.remove_entry(idx);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Top-level dialog - remove from the main settings page item
+            if let Some(item) = self.current_item_mut() {
+                if let SettingControl::Map(map_state) = &mut item.control {
+                    if let Some(idx) = map_state
+                        .entries
+                        .iter()
+                        .position(|(k, _)| k == &dialog.entry_key)
+                    {
+                        map_state.remove_entry(idx);
+                    }
                 }
             }
         }

@@ -342,17 +342,120 @@ impl TerminalState {
         Ok(())
     }
 
-    /// Write a single grid line to the writer, trimming trailing whitespace.
+    /// Write a single grid line to the writer with ANSI color codes, trimming trailing whitespace.
+    ///
+    /// Note: The ANSI codes enable terminal scrollback colors to be preserved in the backing file.
+    /// For colors to display correctly in scrollback mode, the buffer renderer must interpret
+    /// these ANSI escape sequences. See src/view/buffer.rs for rendering logic.
     fn write_grid_line<W: Write>(&self, writer: &mut W, line: Line) -> io::Result<()> {
+        use alacritty_terminal::term::cell::Flags;
+
         let grid = self.term.grid();
         let row_data = &grid[line];
 
-        let mut line_str = String::with_capacity(self.cols as usize);
+        let mut line_str = String::with_capacity(self.cols as usize * 2);
+        let mut current_fg: Option<(u8, u8, u8)> = None;
+        let mut current_bg: Option<(u8, u8, u8)> = None;
+        let mut current_bold = false;
+        let mut current_italic = false;
+        let mut current_underline = false;
+
         for col in 0..self.cols as usize {
-            line_str.push(row_data[Column(col)].c);
+            let cell = &row_data[Column(col)];
+            let fg = color_to_rgb(&cell.fg);
+            let bg = color_to_rgb(&cell.bg);
+            let flags = cell.flags;
+            let bold = flags.contains(Flags::BOLD);
+            let italic = flags.contains(Flags::ITALIC);
+            let underline = flags.contains(Flags::UNDERLINE);
+
+            // Check if we need to emit style codes
+            let fg_changed = fg != current_fg;
+            let bg_changed = bg != current_bg;
+            let bold_changed = bold != current_bold;
+            let italic_changed = italic != current_italic;
+            let underline_changed = underline != current_underline;
+
+            if fg_changed || bg_changed || bold_changed || italic_changed || underline_changed {
+                // Build SGR (Select Graphic Rendition) sequence
+                let mut codes: Vec<String> = Vec::new();
+
+                // Reset first if we're turning off attributes
+                if (current_bold && !bold)
+                    || (current_italic && !italic)
+                    || (current_underline && !underline)
+                {
+                    codes.push("0".to_string());
+                    // After reset, we need to reapply colors and active attributes
+                    if bold {
+                        codes.push("1".to_string());
+                    }
+                    if italic {
+                        codes.push("3".to_string());
+                    }
+                    if underline {
+                        codes.push("4".to_string());
+                    }
+                    if let Some((r, g, b)) = fg {
+                        codes.push(format!("38;2;{};{};{}", r, g, b));
+                    }
+                    if let Some((r, g, b)) = bg {
+                        codes.push(format!("48;2;{};{};{}", r, g, b));
+                    }
+                } else {
+                    // Apply incremental changes
+                    if bold_changed && bold {
+                        codes.push("1".to_string());
+                    }
+                    if italic_changed && italic {
+                        codes.push("3".to_string());
+                    }
+                    if underline_changed && underline {
+                        codes.push("4".to_string());
+                    }
+                    if fg_changed {
+                        if let Some((r, g, b)) = fg {
+                            codes.push(format!("38;2;{};{};{}", r, g, b));
+                        } else {
+                            codes.push("39".to_string()); // Default foreground
+                        }
+                    }
+                    if bg_changed {
+                        if let Some((r, g, b)) = bg {
+                            codes.push(format!("48;2;{};{};{}", r, g, b));
+                        } else {
+                            codes.push("49".to_string()); // Default background
+                        }
+                    }
+                }
+
+                if !codes.is_empty() {
+                    line_str.push_str(&format!("\x1b[{}m", codes.join(";")));
+                }
+
+                current_fg = fg;
+                current_bg = bg;
+                current_bold = bold;
+                current_italic = italic;
+                current_underline = underline;
+            }
+
+            line_str.push(cell.c);
         }
 
-        writeln!(writer, "{}", line_str.trim_end())
+        // Reset at end of line if we have any active styles
+        if current_fg.is_some()
+            || current_bg.is_some()
+            || current_bold
+            || current_italic
+            || current_underline
+        {
+            line_str.push_str("\x1b[0m");
+        }
+
+        // Trim trailing whitespace but preserve color codes
+        let trimmed = line_str.trim_end_matches(|c: char| c == ' ' || c == '\0');
+        writeln!(writer, "{}", trimmed)
     }
 
     /// Get the byte offset where scrollback history ends in the backing file.
