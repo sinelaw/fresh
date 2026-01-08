@@ -2158,15 +2158,51 @@ impl Editor {
         self.set_status_message(msg);
     }
 
+    /// Get current match positions from search overlays (which use markers that track edits)
+    /// This ensures positions are always up-to-date even after buffer modifications
+    fn get_search_match_positions(&self) -> Vec<usize> {
+        let ns = &self.search_namespace;
+        let state = self.active_state();
+
+        // Get positions from search overlay markers
+        let mut positions: Vec<usize> = state
+            .overlays
+            .all()
+            .iter()
+            .filter(|o| o.namespace.as_ref() == Some(ns))
+            .filter_map(|o| state.marker_list.get_position(o.start_marker))
+            .collect();
+
+        // Sort positions for consistent ordering
+        positions.sort_unstable();
+        positions.dedup(); // Remove any duplicates
+
+        positions
+    }
+
     /// Find the next match
     pub(super) fn find_next(&mut self) {
+        // Get current positions from overlay markers first (auto-updated with buffer edits)
+        // Fall back to search_state.matches if no overlays exist (e.g., find_selection_next)
+        let overlay_positions = self.get_search_match_positions();
+
         if let Some(ref mut search_state) = self.search_state {
-            if search_state.matches.is_empty() {
+            // Use overlay positions if:
+            // 1. They exist (overlays were created)
+            // 2. There's no search_range (selection-based search uses cached matches to respect range)
+            let match_positions =
+                if !overlay_positions.is_empty() && search_state.search_range.is_none() {
+                    overlay_positions
+                } else {
+                    search_state.matches.clone()
+                };
+
+            if match_positions.is_empty() {
                 return;
             }
 
             let current_index = search_state.current_match_index.unwrap_or(0);
-            let next_index = if current_index + 1 < search_state.matches.len() {
+            let next_index = if current_index + 1 < match_positions.len() {
                 current_index + 1
             } else if search_state.wrap_search {
                 0 // Wrap to beginning
@@ -2176,8 +2212,8 @@ impl Editor {
             };
 
             search_state.current_match_index = Some(next_index);
-            let match_pos = search_state.matches[next_index];
-            let matches_len = search_state.matches.len();
+            let match_pos = match_positions[next_index];
+            let matches_len = match_positions.len();
 
             {
                 let active_split = self.split_manager.active_split();
@@ -2212,8 +2248,22 @@ impl Editor {
 
     /// Find the previous match
     pub(super) fn find_previous(&mut self) {
+        // Get current positions from overlay markers first (auto-updated with buffer edits)
+        // Fall back to search_state.matches if no overlays exist (e.g., find_selection_previous)
+        let overlay_positions = self.get_search_match_positions();
+
         if let Some(ref mut search_state) = self.search_state {
-            if search_state.matches.is_empty() {
+            // Use overlay positions if:
+            // 1. They exist (overlays were created)
+            // 2. There's no search_range (selection-based search uses cached matches to respect range)
+            let match_positions =
+                if !overlay_positions.is_empty() && search_state.search_range.is_none() {
+                    overlay_positions
+                } else {
+                    search_state.matches.clone()
+                };
+
+            if match_positions.is_empty() {
                 return;
             }
 
@@ -2221,15 +2271,15 @@ impl Editor {
             let prev_index = if current_index > 0 {
                 current_index - 1
             } else if search_state.wrap_search {
-                search_state.matches.len() - 1 // Wrap to end
+                match_positions.len() - 1 // Wrap to end
             } else {
                 self.set_status_message(t!("search.no_matches").to_string());
                 return;
             };
 
             search_state.current_match_index = Some(prev_index);
-            let match_pos = search_state.matches[prev_index];
-            let matches_len = search_state.matches.len();
+            let match_pos = match_positions[prev_index];
+            let matches_len = match_positions.len();
 
             {
                 let active_split = self.split_manager.active_split();
