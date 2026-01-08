@@ -558,7 +558,7 @@ fn default_auto_save_interval() -> u32 {
 }
 
 fn default_highlight_context_bytes() -> usize {
-    10_000 // 10KB context for accurate syntax highlighting
+    100_000 // 100KB context for accurate syntax highlighting of multi-line constructs
 }
 
 fn default_mouse_hover_delay() -> u64 {
