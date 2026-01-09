@@ -232,13 +232,15 @@ impl Editor {
                 }
             }
             SettingsHit::ControlMapRow(idx, row_idx) => {
-                if let Some(ref mut state) = self.settings_state {
+                let is_add_new_row = if let Some(ref mut state) = self.settings_state {
                     state.focus_panel = FocusPanel::Settings;
                     state.selected_item = idx;
 
+                    let mut is_add_new = false;
                     if let Some(page) = state.pages.get_mut(state.selected_category) {
                         if let Some(item) = page.items.get_mut(idx) {
                             if let SettingControl::Map(map_state) = &mut item.control {
+                                is_add_new = row_idx >= map_state.entries.len();
                                 map_state.focused_entry = if row_idx < map_state.entries.len() {
                                     Some(row_idx)
                                 } else {
@@ -247,8 +249,12 @@ impl Editor {
                             }
                         }
                     }
-                }
-                if is_double_click {
+                    is_add_new
+                } else {
+                    false
+                };
+                // "Add new" row activates on single click (#604), entries require double-click
+                if is_add_new_row || is_double_click {
                     self.settings_activate_current();
                 }
             }
