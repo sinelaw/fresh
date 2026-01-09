@@ -62,6 +62,22 @@ impl Editor {
         self.set_status_message(status.to_string());
     }
 
+    /// Toggle tab bar visibility
+    pub fn toggle_tab_bar(&mut self) {
+        self.tab_bar_visible = !self.tab_bar_visible;
+        let status = if self.tab_bar_visible {
+            t!("toggle.tab_bar_shown")
+        } else {
+            t!("toggle.tab_bar_hidden")
+        };
+        self.set_status_message(status.to_string());
+    }
+
+    /// Get tab bar visibility
+    pub fn tab_bar_visible(&self) -> bool {
+        self.tab_bar_visible
+    }
+
     /// Reset buffer settings (tab_size, use_tabs, show_whitespace_tabs) to config defaults
     pub fn reset_buffer_settings(&mut self) {
         let buffer_id = self.active_buffer();

@@ -2193,6 +2193,7 @@ pub fn action_to_events(
         | Action::PopupCancel
         | Action::ToggleFileExplorer
         | Action::ToggleMenuBar
+        | Action::ToggleTabBar
         | Action::FocusFileExplorer
         | Action::FocusEditor
         | Action::SetBackground

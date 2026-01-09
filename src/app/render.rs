@@ -371,6 +371,7 @@ impl Editor {
                 hovered_maximize_split,
                 is_maximized,
                 self.config.editor.relative_line_numbers,
+                self.tab_bar_visible,
             );
 
         // Detect viewport changes and fire hooks

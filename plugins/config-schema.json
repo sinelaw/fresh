@@ -52,7 +52,9 @@
         "file_tree_poll_interval_ms": 3000,
         "default_line_ending": "lf",
         "cursor_style": "default",
-        "quick_suggestions": true
+        "quick_suggestions": true,
+        "show_menu_bar": true,
+        "show_tab_bar": true
       }
     },
     "file_explorer": {
@@ -295,6 +297,16 @@
         },
         "quick_suggestions": {
           "description": "Enable quick suggestions (VS Code-like behavior).\nWhen enabled, completion suggestions appear automatically while typing,\nnot just on trigger characters (like `.` or `::`).\nDefault: true",
+          "type": "boolean",
+          "default": true
+        },
+        "show_menu_bar": {
+          "description": "Whether the menu bar is visible by default.\nThe menu bar provides access to menus (File, Edit, View, etc.) at the top of the screen.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
+          "type": "boolean",
+          "default": true
+        },
+        "show_tab_bar": {
+          "description": "Whether the tab bar is visible by default.\nThe tab bar shows open files in each split pane.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
           "type": "boolean",
           "default": true
         }

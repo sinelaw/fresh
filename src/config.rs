@@ -514,6 +514,20 @@ pub struct EditorConfig {
     /// Default: true
     #[serde(default = "default_true")]
     pub quick_suggestions: bool,
+
+    /// Whether the menu bar is visible by default.
+    /// The menu bar provides access to menus (File, Edit, View, etc.) at the top of the screen.
+    /// Can be toggled at runtime via command palette or keybinding.
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub show_menu_bar: bool,
+
+    /// Whether the tab bar is visible by default.
+    /// The tab bar shows open files in each split pane.
+    /// Can be toggled at runtime via command palette or keybinding.
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub show_tab_bar: bool,
 }
 
 fn default_tab_size() -> usize {
@@ -603,6 +617,8 @@ impl Default for EditorConfig {
             default_line_ending: LineEndingOption::default(),
             cursor_style: CursorStyle::default(),
             quick_suggestions: true,
+            show_menu_bar: true,
+            show_tab_bar: true,
         }
     }
 }

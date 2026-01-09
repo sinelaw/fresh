@@ -601,6 +601,7 @@ impl Editor {
             Action::ToggleMaximizeSplit => self.toggle_maximize_split(),
             Action::ToggleFileExplorer => self.toggle_file_explorer(),
             Action::ToggleMenuBar => self.toggle_menu_bar(),
+            Action::ToggleTabBar => self.toggle_tab_bar(),
             Action::ToggleLineNumbers => self.toggle_line_numbers(),
             Action::ToggleMouseCapture => self.toggle_mouse_capture(),
             Action::ToggleMouseHover => self.toggle_mouse_hover(),

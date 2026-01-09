@@ -70,6 +70,7 @@ pub mod terminal_close;
 pub mod terminal_resize;
 pub mod test_scrollbar_keybinds_cursor;
 pub mod theme;
+pub mod toggle_bars;
 pub mod toggle_comment;
 pub mod undo_redo;
 pub mod unicode_cursor;

@@ -152,6 +152,8 @@ pub struct PartialEditorConfig {
     pub default_line_ending: Option<LineEndingOption>,
     pub cursor_style: Option<CursorStyle>,
     pub quick_suggestions: Option<bool>,
+    pub show_menu_bar: Option<bool>,
+    pub show_tab_bar: Option<bool>,
 }
 
 impl Merge for PartialEditorConfig {
@@ -193,6 +195,8 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.default_line_ending);
         self.cursor_style.merge_from(&other.cursor_style);
         self.quick_suggestions.merge_from(&other.quick_suggestions);
+        self.show_menu_bar.merge_from(&other.show_menu_bar);
+        self.show_tab_bar.merge_from(&other.show_tab_bar);
     }
 }
 
@@ -344,6 +348,8 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             default_line_ending: Some(cfg.default_line_ending.clone()),
             cursor_style: Some(cfg.cursor_style),
             quick_suggestions: Some(cfg.quick_suggestions),
+            show_menu_bar: Some(cfg.show_menu_bar),
+            show_tab_bar: Some(cfg.show_tab_bar),
         }
     }
 }
@@ -403,6 +409,8 @@ impl PartialEditorConfig {
                 .unwrap_or(defaults.default_line_ending.clone()),
             cursor_style: self.cursor_style.unwrap_or(defaults.cursor_style),
             quick_suggestions: self.quick_suggestions.unwrap_or(defaults.quick_suggestions),
+            show_menu_bar: self.show_menu_bar.unwrap_or(defaults.show_menu_bar),
+            show_tab_bar: self.show_tab_bar.unwrap_or(defaults.show_tab_bar),
         }
     }
 }

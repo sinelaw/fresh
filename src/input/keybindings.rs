@@ -428,6 +428,8 @@ pub enum Action {
     ToggleFileExplorer,
     // Menu bar visibility
     ToggleMenuBar,
+    // Tab bar visibility
+    ToggleTabBar,
     FocusFileExplorer,
     FocusEditor,
     FileExplorerUp,
@@ -737,6 +739,7 @@ impl Action {
 
             "toggle_file_explorer" => Self::ToggleFileExplorer,
             "toggle_menu_bar" => Self::ToggleMenuBar,
+            "toggle_tab_bar" => Self::ToggleTabBar,
             "focus_file_explorer" => Self::FocusFileExplorer,
             "focus_editor" => Self::FocusEditor,
             "file_explorer_up" => Self::FileExplorerUp,
@@ -1698,6 +1701,7 @@ impl KeybindingResolver {
             Action::PopupCancel => t!("action.popup_cancel"),
             Action::ToggleFileExplorer => t!("action.toggle_file_explorer"),
             Action::ToggleMenuBar => t!("action.toggle_menu_bar"),
+            Action::ToggleTabBar => t!("action.toggle_tab_bar"),
             Action::FocusFileExplorer => t!("action.focus_file_explorer"),
             Action::FocusEditor => t!("action.focus_editor"),
             Action::FileExplorerUp => t!("action.file_explorer_up"),

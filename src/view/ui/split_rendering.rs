@@ -715,6 +715,7 @@ impl SplitRenderer {
         hovered_maximize_split: Option<crate::model::event::SplitId>,
         is_maximized: bool,
         relative_line_numbers: bool,
+        tab_bar_visible: bool,
     ) -> (
         Vec<(
             crate::model::event::SplitId,
@@ -748,7 +749,7 @@ impl SplitRenderer {
         for (split_id, buffer_id, split_area) in visible_buffers {
             let is_active = split_id == active_split_id;
 
-            let layout = Self::split_layout(split_area);
+            let layout = Self::split_layout(split_area, tab_bar_visible);
             let (split_buffers, tab_scroll_offset) =
                 Self::split_buffers_for_tabs(split_view_states.as_deref(), split_id, buffer_id);
 
@@ -761,69 +762,79 @@ impl SplitRenderer {
                 }
             });
 
-            // Render tabs for this split and collect hit areas
-            let tab_hit_areas = TabsRenderer::render_for_split(
-                frame,
-                layout.tabs_rect,
-                &split_buffers,
-                buffers,
-                buffer_metadata,
-                composite_buffers,
-                buffer_id, // The currently displayed buffer in this split
-                theme,
-                is_active,
-                tab_scroll_offset,
-                tab_hover_for_split,
-            );
+            // Only render tabs and split control buttons when tab bar is visible
+            if tab_bar_visible {
+                // Render tabs for this split and collect hit areas
+                let tab_hit_areas = TabsRenderer::render_for_split(
+                    frame,
+                    layout.tabs_rect,
+                    &split_buffers,
+                    buffers,
+                    buffer_metadata,
+                    composite_buffers,
+                    buffer_id, // The currently displayed buffer in this split
+                    theme,
+                    is_active,
+                    tab_scroll_offset,
+                    tab_hover_for_split,
+                );
 
-            // Add tab row to hit areas (all tabs share the same row)
-            let tab_row = layout.tabs_rect.y;
-            for (buf_id, start_col, end_col, close_start) in tab_hit_areas {
-                all_tab_areas.push((split_id, buf_id, tab_row, start_col, end_col, close_start));
-            }
-
-            // Render split control buttons at the right side of tabs row
-            // Show maximize/unmaximize button when: multiple splits exist OR we're currently maximized
-            // Show close button when: multiple splits exist AND we're not maximized
-            let show_maximize_btn = has_multiple_splits || is_maximized;
-            let show_close_btn = has_multiple_splits && !is_maximized;
-
-            if show_maximize_btn || show_close_btn {
-                // Calculate button positions from right edge
-                // Layout: [maximize] [space] [close] |
-                let mut btn_x = layout.tabs_rect.x + layout.tabs_rect.width.saturating_sub(2);
-
-                // Render close button first (rightmost) if visible
-                if show_close_btn {
-                    let is_hovered = hovered_close_split == Some(split_id);
-                    let close_fg = if is_hovered {
-                        theme.tab_close_hover_fg
-                    } else {
-                        theme.line_number_fg
-                    };
-                    let close_button = Paragraph::new("×")
-                        .style(Style::default().fg(close_fg).bg(theme.tab_separator_bg));
-                    let close_area = Rect::new(btn_x, tab_row, 1, 1);
-                    frame.render_widget(close_button, close_area);
-                    close_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
-                    btn_x = btn_x.saturating_sub(2); // Move left with 1 space for next button
+                // Add tab row to hit areas (all tabs share the same row)
+                let tab_row = layout.tabs_rect.y;
+                for (buf_id, start_col, end_col, close_start) in tab_hit_areas {
+                    all_tab_areas.push((
+                        split_id,
+                        buf_id,
+                        tab_row,
+                        start_col,
+                        end_col,
+                        close_start,
+                    ));
                 }
 
-                // Render maximize/unmaximize button
-                if show_maximize_btn {
-                    let is_hovered = hovered_maximize_split == Some(split_id);
-                    let max_fg = if is_hovered {
-                        theme.tab_close_hover_fg
-                    } else {
-                        theme.line_number_fg
-                    };
-                    // Use □ for maximize, ⧉ for unmaximize (restore)
-                    let icon = if is_maximized { "⧉" } else { "□" };
-                    let max_button = Paragraph::new(icon)
-                        .style(Style::default().fg(max_fg).bg(theme.tab_separator_bg));
-                    let max_area = Rect::new(btn_x, tab_row, 1, 1);
-                    frame.render_widget(max_button, max_area);
-                    maximize_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
+                // Render split control buttons at the right side of tabs row
+                // Show maximize/unmaximize button when: multiple splits exist OR we're currently maximized
+                // Show close button when: multiple splits exist AND we're not maximized
+                let show_maximize_btn = has_multiple_splits || is_maximized;
+                let show_close_btn = has_multiple_splits && !is_maximized;
+
+                if show_maximize_btn || show_close_btn {
+                    // Calculate button positions from right edge
+                    // Layout: [maximize] [space] [close] |
+                    let mut btn_x = layout.tabs_rect.x + layout.tabs_rect.width.saturating_sub(2);
+
+                    // Render close button first (rightmost) if visible
+                    if show_close_btn {
+                        let is_hovered = hovered_close_split == Some(split_id);
+                        let close_fg = if is_hovered {
+                            theme.tab_close_hover_fg
+                        } else {
+                            theme.line_number_fg
+                        };
+                        let close_button = Paragraph::new("×")
+                            .style(Style::default().fg(close_fg).bg(theme.tab_separator_bg));
+                        let close_area = Rect::new(btn_x, tab_row, 1, 1);
+                        frame.render_widget(close_button, close_area);
+                        close_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
+                        btn_x = btn_x.saturating_sub(2); // Move left with 1 space for next button
+                    }
+
+                    // Render maximize/unmaximize button
+                    if show_maximize_btn {
+                        let is_hovered = hovered_maximize_split == Some(split_id);
+                        let max_fg = if is_hovered {
+                            theme.tab_close_hover_fg
+                        } else {
+                            theme.line_number_fg
+                        };
+                        // Use □ for maximize, ⧉ for unmaximize (restore)
+                        let icon = if is_maximized { "⧉" } else { "□" };
+                        let max_button = Paragraph::new(icon)
+                            .style(Style::default().fg(max_fg).bg(theme.tab_separator_bg));
+                        let max_area = Rect::new(btn_x, tab_row, 1, 1);
+                        frame.render_widget(max_button, max_area);
+                        maximize_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
+                    }
                 }
             }
 
@@ -1672,8 +1683,8 @@ impl SplitRenderer {
         }
     }
 
-    fn split_layout(split_area: Rect) -> SplitLayout {
-        let tabs_height = 1u16;
+    fn split_layout(split_area: Rect, tab_bar_visible: bool) -> SplitLayout {
+        let tabs_height = if tab_bar_visible { 1u16 } else { 0u16 };
         let scrollbar_width = 1u16;
 
         let tabs_rect = Rect::new(split_area.x, split_area.y, split_area.width, tabs_height);

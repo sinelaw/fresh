@@ -248,6 +248,9 @@ pub struct Editor {
     /// When true, the menu bar will be hidden again when the menu is closed
     menu_bar_auto_shown: bool,
 
+    /// Whether tab bar is visible
+    tab_bar_visible: bool,
+
     /// Whether mouse capture is enabled
     mouse_enabled: bool,
 
@@ -827,6 +830,8 @@ impl Editor {
         let recovery_enabled = config.editor.recovery_enabled;
         let auto_save_interval_secs = config.editor.auto_save_interval_secs;
         let check_for_updates = config.check_for_updates;
+        let show_menu_bar = config.editor.show_menu_bar;
+        let show_tab_bar = config.editor.show_tab_bar;
 
         // Start periodic update checker if enabled
         let update_checker = if check_for_updates {
@@ -875,8 +880,9 @@ impl Editor {
             file_explorer_visible: false,
             file_explorer_sync_in_progress: false,
             file_explorer_width_percent: file_explorer_width,
-            menu_bar_visible: true,
+            menu_bar_visible: show_menu_bar,
             menu_bar_auto_shown: false,
+            tab_bar_visible: show_tab_bar,
             mouse_enabled: true,
             mouse_cursor_position: None,
             gpm_active: false,
