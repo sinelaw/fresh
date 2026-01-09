@@ -1181,3 +1181,108 @@ fn test_session_restores_external_files() {
         harness.assert_buffer_content("Content inside project");
     }
 }
+
+/// Test that session saves and restores file explorer show_hidden and show_gitignored settings
+/// Reproduces issue #569: UI preferences not persisting across sessions
+#[test]
+fn test_session_restores_file_explorer_hidden_and_gitignored_settings() {
+    use crate::common::harness::HarnessOptions;
+    use fresh::config_io::DirectoryContext;
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    // Create a test file so the file explorer has something to display
+    let regular_file = project_dir.join("regular.txt");
+    std::fs::write(&regular_file, "regular content").unwrap();
+
+    // Create shared DirectoryContext so both sessions use the same state directories
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // First session: toggle show_hidden and show_gitignored to true and save
+    {
+        let mut harness = EditorTestHarness::create(
+            100,
+            30,
+            HarnessOptions::new()
+                .with_config(Config::default())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        // Focus file explorer (this internally calls init_file_explorer if needed)
+        harness.editor_mut().focus_file_explorer();
+        harness.wait_for_file_explorer().unwrap();
+
+        // Verify initial state: show_hidden and show_gitignored should be false
+        {
+            let explorer = harness.editor().file_explorer().unwrap();
+            assert!(
+                !explorer.ignore_patterns().show_hidden(),
+                "show_hidden should start as false"
+            );
+            assert!(
+                !explorer.ignore_patterns().show_gitignored(),
+                "show_gitignored should start as false"
+            );
+        }
+
+        // Toggle both settings to true
+        harness.editor_mut().file_explorer_toggle_hidden();
+        harness.editor_mut().file_explorer_toggle_gitignored();
+
+        // Verify the toggles worked
+        {
+            let explorer = harness.editor().file_explorer().unwrap();
+            assert!(
+                explorer.ignore_patterns().show_hidden(),
+                "show_hidden should be true after toggle"
+            );
+            assert!(
+                explorer.ignore_patterns().show_gitignored(),
+                "show_gitignored should be true after toggle"
+            );
+        }
+
+        // Save session
+        harness.editor_mut().save_session().unwrap();
+    }
+
+    // Second session: restore and verify show_hidden and show_gitignored are still true
+    {
+        let mut harness = EditorTestHarness::create(
+            100,
+            30,
+            HarnessOptions::new()
+                .with_config(Config::default())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        // Restore session
+        let restored = harness.editor_mut().try_restore_session().unwrap();
+        assert!(restored, "Session should have been restored");
+
+        // Wait for file explorer to be initialized (it's async)
+        harness.wait_for_file_explorer().unwrap();
+        harness.render().unwrap();
+
+        // File explorer should be visible and settings should be restored
+        let explorer = harness.editor().file_explorer().expect(
+            "File explorer should be visible after session restore (it was visible when saved)",
+        );
+        assert!(
+            explorer.ignore_patterns().show_hidden(),
+            "show_hidden should be true after session restore"
+        );
+        assert!(
+            explorer.ignore_patterns().show_gitignored(),
+            "show_gitignored should be true after session restore"
+        );
+    }
+}

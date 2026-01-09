@@ -226,6 +226,12 @@ pub struct FileExplorerState {
     /// Scroll offset
     #[serde(default)]
     pub scroll_offset: usize,
+    /// Show hidden files (fixes #569)
+    #[serde(default)]
+    pub show_hidden: bool,
+    /// Show gitignored files (fixes #569)
+    #[serde(default)]
+    pub show_gitignored: bool,
 }
 
 impl Default for FileExplorerState {
@@ -235,6 +241,8 @@ impl Default for FileExplorerState {
             width_percent: 0.3,
             expanded_dirs: Vec::new(),
             scroll_offset: 0,
+            show_hidden: false,
+            show_gitignored: false,
         }
     }
 }

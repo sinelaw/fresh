@@ -199,6 +199,8 @@ impl Editor {
                 width_percent: self.file_explorer_width_percent,
                 expanded_dirs,
                 scroll_offset: explorer.get_scroll_offset(),
+                show_hidden: explorer.ignore_patterns().show_hidden(),
+                show_gitignored: explorer.ignore_patterns().show_gitignored(),
             }
         } else {
             FileExplorerState {
@@ -206,6 +208,8 @@ impl Editor {
                 width_percent: self.file_explorer_width_percent,
                 expanded_dirs: Vec::new(),
                 scroll_offset: 0,
+                show_hidden: false,
+                show_gitignored: false,
             }
         };
 
@@ -485,6 +489,15 @@ impl Editor {
         // 4. Restore file explorer state
         self.file_explorer_visible = session.file_explorer.visible;
         self.file_explorer_width_percent = session.file_explorer.width_percent;
+
+        // Store pending show_hidden and show_gitignored settings (fixes #569)
+        // These will be applied when the file explorer is initialized (async)
+        if session.file_explorer.show_hidden {
+            self.pending_file_explorer_show_hidden = Some(true);
+        }
+        if session.file_explorer.show_gitignored {
+            self.pending_file_explorer_show_gitignored = Some(true);
+        }
 
         // Initialize file explorer if it was visible in the session
         // Note: We keep key_context as Normal so the editor has focus, not the explorer
