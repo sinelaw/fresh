@@ -46,6 +46,31 @@ fn test_margin_empty_buffer() {
     harness.assert_screen_contains("   1 │");
 }
 
+/// Test that line_numbers config is respected when launching without a file
+/// Reproduces issue #539: Line Numbers won't turn off if you launch Fresh
+/// without designating a file to edit.
+#[test]
+fn test_initial_buffer_respects_line_numbers_config() {
+    // Create config with line_numbers disabled
+    let mut config = fresh::config::Config::default();
+    config.editor.line_numbers = false;
+
+    // Create harness with this config - no file opened, just the initial empty buffer
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Empty buffer screen (line_numbers=false):\n{screen}");
+
+    // Line numbers should NOT be shown because config has line_numbers=false
+    // The line number separator pattern " │ " should not appear
+    harness.assert_screen_not_contains(" │ ");
+
+    // Content should still be editable
+    harness.type_text("Hello").unwrap();
+    harness.assert_screen_contains("Hello");
+}
+
 /// Test that line numbers adjust width for large files
 #[test]
 fn test_margin_large_file_line_numbers() {
