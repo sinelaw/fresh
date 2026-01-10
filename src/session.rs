@@ -1094,6 +1094,8 @@ mod tests {
                 PathBuf::from("tests"),
             ],
             scroll_offset: 5,
+            show_hidden: true,
+            show_gitignored: false,
         };
 
         let json = serde_json::to_string(&state).unwrap();
@@ -1103,5 +1105,7 @@ mod tests {
         assert_eq!(restored.width_percent, 0.25);
         assert_eq!(restored.expanded_dirs.len(), 3);
         assert_eq!(restored.scroll_offset, 5);
+        assert!(restored.show_hidden);
+        assert!(!restored.show_gitignored);
     }
 }
