@@ -1628,11 +1628,15 @@ fn test_clangd_plugin_switch_source_header() -> anyhow::Result<()> {
 
     harness.open_file(&source_file)?;
     harness.render()?;
-    for _ in 0..10 {
-        harness.sleep(Duration::from_millis(100));
-        let _ = harness.editor_mut().process_async_messages();
-        harness.render()?;
-    }
+
+    // Wait for the clangd plugin to load and register its commands
+    // The plugin sets a status message when it loads
+    harness.wait_until(|h| {
+        h.editor()
+            .get_status_message()
+            .map(|msg| msg.contains("Clangd") || msg.contains("clangd"))
+            .unwrap_or(false)
+    })?;
 
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -1642,24 +1646,29 @@ fn test_clangd_plugin_switch_source_header() -> anyhow::Result<()> {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait until the header file content is visible (logical event)
-    harness.wait_until(|h| h.screen_to_string().contains("header content"))?;
+    // Wait until both the header file content is visible AND the status message is set
+    harness.wait_until(|h| {
+        let has_header_content = h.screen_to_string().contains("header content");
+        let has_status_msg = h
+            .editor()
+            .get_status_message()
+            .map(|msg| msg.as_str() == "Clangd: opened corresponding file")
+            .unwrap_or(false);
+        has_header_content && has_status_msg
+    })?;
 
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("header content"),
         "Expected header file to be visible"
     );
-    assert!(
-        screen.contains("Clangd: opened corresponding file"),
-        "Expected clangd status message"
-    );
     assert_eq!(
         harness
             .editor()
             .get_status_message()
             .map(|msg| msg.as_str()),
-        Some("Clangd: opened corresponding file")
+        Some("Clangd: opened corresponding file"),
+        "Expected clangd status message"
     );
 
     Ok(())
