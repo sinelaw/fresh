@@ -2819,13 +2819,13 @@ fn test_map_add_new_button_clickable_with_mouse() {
     let add_new_pos = screen
         .lines()
         .enumerate()
-        .find_map(|(row, line)| {
-            line.find("[+] Add new").map(|col| (col as u16, row as u16))
-        })
+        .find_map(|(row, line)| line.find("[+] Add new").map(|col| (col as u16, row as u16)))
         .expect("Should find [+] Add new on screen");
 
     // Single click should activate the add-new functionality (this is the fix for #604)
-    harness.mouse_click(add_new_pos.0 + 2, add_new_pos.1).unwrap();
+    harness
+        .mouse_click(add_new_pos.0 + 2, add_new_pos.1)
+        .unwrap();
     harness.render().unwrap();
 
     // After clicking, the entry dialog should open (for Map with schema) or input mode should start

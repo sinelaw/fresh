@@ -641,10 +641,14 @@ impl Editor {
         // Apply pending session restore settings (fixes #569)
         if let Some(show_hidden) = self.pending_file_explorer_show_hidden.take() {
             view.ignore_patterns_mut().set_show_hidden(show_hidden);
-            tracing::debug!("Applied pending show_hidden={} from session restore", show_hidden);
+            tracing::debug!(
+                "Applied pending show_hidden={} from session restore",
+                show_hidden
+            );
         }
         if let Some(show_gitignored) = self.pending_file_explorer_show_gitignored.take() {
-            view.ignore_patterns_mut().set_show_gitignored(show_gitignored);
+            view.ignore_patterns_mut()
+                .set_show_gitignored(show_gitignored);
             tracing::debug!(
                 "Applied pending show_gitignored={} from session restore",
                 show_gitignored

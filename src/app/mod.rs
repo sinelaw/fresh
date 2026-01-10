@@ -705,9 +705,7 @@ impl Editor {
             config.editor.large_file_threshold_bytes as usize,
         );
         // Apply line_numbers default from config (fixes #539)
-        state
-            .margins
-            .set_line_numbers(config.editor.line_numbers);
+        state.margins.set_line_numbers(config.editor.line_numbers);
         // Note: line_wrap_enabled is now stored in SplitViewState.viewport
         tracing::info!("EditorState created for buffer {:?}", buffer_id);
         buffers.insert(buffer_id, state);
