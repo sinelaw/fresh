@@ -46,11 +46,79 @@
  * and define buffer-local keybindings. Virtual buffers typically use custom modes.
  */
 
-declare global {
+/**
+ * Global editor API object available to all TypeScript plugins
+ */
+declare const editor: EditorAPI;
+
+/**
+ * Get the editor API instance
+ * @returns The global editor API object
+ */
+declare function getEditor(): EditorAPI;
+
+/**
+ * Plugin-specific methods added by the JavaScript runtime wrapper.
+ * These extend the base EditorAPI with i18n and command registration helpers.
+ */
+interface EditorAPI {
   /**
-   * Global editor API object available to all TypeScript plugins
+   * Translate a string using the plugin's i18n file
+   * @param key - Translation key (e.g., "status.ready")
+   * @param args - Optional interpolation arguments
+   * @returns Translated string
    */
-  const editor: EditorAPI;
+  t(key: string, args?: Record<string, string>): string;
+
+  /**
+   * Get the i18n helper object (for compatibility)
+   * @returns Object with t() method bound to this plugin
+   */
+  getL10n(): { t: (key: string, args?: Record<string, string>) => string };
+
+  /**
+   * Register a custom command (plugin wrapper - source is added automatically)
+   * @param name - Command name (use %key for i18n)
+   * @param description - Command description (use %key for i18n)
+   * @param action - Global function name to call
+   * @param contexts - Comma-separated contexts (default: "")
+   * @returns true if command was registered
+   */
+  registerCommand(name: string, description: string, action: string, contexts?: string): boolean;
+
+  /**
+   * Copy text to system clipboard (alias for setClipboard)
+   * @param text - Text to copy
+   */
+  copyToClipboard(text: string): void;
+
+  /**
+   * Join path segments into a single path (variadic version)
+   * @param parts - Path segments to join
+   * @returns Joined path string
+   */
+  pathJoin(...parts: string[]): string;
+
+  /**
+   * Add a visual overlay to buffer text (with optional parameters)
+   * Most parameters have defaults: bold=false, italic=false, bg=-1 (transparent), extend=false
+   */
+  addOverlay(
+    buffer_id: number,
+    namespace: string,
+    start: number,
+    end: number,
+    r: number,
+    g: number,
+    b: number,
+    underline: boolean,
+    bold?: boolean,
+    italic?: boolean,
+    bg_r?: number,
+    bg_g?: number,
+    bg_b?: number,
+    extend_to_line_end?: boolean
+  ): boolean;
 }
 
 /**

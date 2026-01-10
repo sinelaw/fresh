@@ -217,7 +217,7 @@ export class DebouncedSearch {
   async search(
     query: string,
     executor: () => ProcessHandle,
-    onResults: (result: ProcessResult) => void
+    onResults: (result: SpawnResult) => void
   ): Promise<void> {
     const thisVersion = ++this.searchVersion;
 

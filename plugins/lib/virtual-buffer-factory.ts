@@ -1,4 +1,4 @@
-/// <reference path="../../types/fresh.d.ts" />
+/// <reference path="./fresh.d.ts" />
 
 /**
  * Options for creating a virtual buffer
@@ -108,7 +108,7 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         readOnly = true,
       } = options;
 
-      return await editor.createVirtualBufferInSplit({
+      const result = await editor.createVirtualBufferInSplit({
         name,
         mode,
         read_only: readOnly,
@@ -118,6 +118,7 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         show_line_numbers: showLineNumbers,
         editing_disabled: editingDisabled,
       });
+      return result.buffer_id;
     },
 
     /**

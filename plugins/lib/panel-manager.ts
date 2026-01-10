@@ -1,4 +1,4 @@
-/// <reference path="../../types/fresh.d.ts" />
+/// <reference path="./fresh.d.ts" />
 
 import type { PanelOptions, PanelState } from "./types.ts";
 
@@ -107,7 +107,7 @@ export class PanelManager {
     this.state.sourceBufferId = this.editor.getActiveBufferId();
 
     // Create virtual buffer in split
-    const bufferId = await this.editor.createVirtualBufferInSplit({
+    const result = await this.editor.createVirtualBufferInSplit({
       name: this.panelName,
       mode: this.modeName,
       read_only: true,
@@ -119,11 +119,11 @@ export class PanelManager {
     });
 
     // Track state
-    this.state.bufferId = bufferId;
-    this.state.splitId = this.editor.getActiveSplitId();
+    this.state.bufferId = result.buffer_id;
+    this.state.splitId = result.split_id ?? this.editor.getActiveSplitId();
     this.state.isOpen = true;
 
-    return bufferId;
+    return result.buffer_id;
   }
 
   /**
@@ -204,15 +204,9 @@ export class PanelManager {
       return;
     }
 
-    // Focus source split and open file
+    // Focus source split and open file at location
     this.editor.focusSplit(this.state.sourceSplitId);
-    await this.editor.openFile(filePath);
-
-    // Jump to location
-    this.editor.gotoLine(line);
-    if (column > 1) {
-      this.editor.gotoColumn(column);
-    }
+    this.editor.openFile(filePath, line, column);
 
     // Focus back on panel
     this.focusPanel();

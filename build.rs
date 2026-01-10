@@ -285,6 +285,17 @@ fn extract_doc_comments(lines: &[&str], target_line: usize) -> String {
     docs.join("\n")
 }
 
+// TODO: Rewrite TypeScript type generation to use a more structured approach
+// instead of manually parsing Rust source code. Consider using:
+// - ts-rs crate for automatic TypeScript type generation from Rust structs
+// - A proper Rust parser (syn) instead of line-by-line text parsing
+// - Or a schema-first approach with shared type definitions
+//
+// Current issues with manual parsing:
+// - Fragile: breaks when code formatting changes
+// - Incomplete: misses JavaScript wrapper methods (t, getL10n, etc.)
+// - Hard to maintain: type mappings scattered across multiple functions
+
 /// Extract op definitions from Rust source
 fn extract_ops(rust_source: &str) -> Vec<OpInfo> {
     let mut ops = Vec::new();
@@ -818,9 +829,6 @@ interface EditorAPI {
 
     output.push_str(
         r#"}
-
-// Export for module compatibility
-export {};
 "#,
     );
 

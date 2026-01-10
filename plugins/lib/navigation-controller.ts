@@ -1,4 +1,4 @@
-/// <reference path="../../types/fresh.d.ts" />
+/// <reference path="./fresh.d.ts" />
 
 import type { NavigationOptions } from "./types.ts";
 
