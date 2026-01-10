@@ -1,5 +1,5 @@
 use crate::common::fixtures::TestFixture;
-use crate::common::harness::{copy_plugin, EditorTestHarness};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
 
@@ -16,6 +16,7 @@ fn test_live_grep_basic_search() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "live_grep");
 
     // Create test files with searchable content
@@ -100,6 +101,7 @@ fn test_live_grep_select_result() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "live_grep");
 
     // Create a test file with unique content
@@ -168,6 +170,7 @@ fn test_live_grep_preview_split() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "live_grep");
 
     // Create a test file with content to search
@@ -230,6 +233,7 @@ fn test_live_grep_input_preserved() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "live_grep");
 
     // Create multiple files with matching content
@@ -325,6 +329,7 @@ fn test_live_grep_uses_working_dir() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "live_grep");
 
     // Create a test file with a unique marker that only exists in our temp project

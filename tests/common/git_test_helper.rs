@@ -1,7 +1,7 @@
 #![cfg(test)]
 //! Git test helper - creates hermetic git repositories for testing
 
-use super::harness::copy_plugin;
+use super::harness::{copy_plugin, copy_plugin_lib};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -257,6 +257,7 @@ A sample project for testing.
     pub fn setup_git_plugins(&self) {
         let plugins_dir = self.path.join("plugins");
         fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
+        copy_plugin_lib(&plugins_dir);
         copy_plugin(&plugins_dir, "git_grep");
         copy_plugin(&plugins_dir, "git_find_file");
     }
@@ -265,6 +266,7 @@ A sample project for testing.
     pub fn setup_git_log_plugin(&self) {
         let plugins_dir = self.path.join("plugins");
         fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
+        copy_plugin_lib(&plugins_dir);
         copy_plugin(&plugins_dir, "git_log");
     }
 
@@ -272,6 +274,7 @@ A sample project for testing.
     pub fn setup_git_blame_plugin(&self) {
         let plugins_dir = self.path.join("plugins");
         fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
+        copy_plugin_lib(&plugins_dir);
         copy_plugin(&plugins_dir, "git_blame");
     }
 
@@ -280,6 +283,7 @@ A sample project for testing.
         // Create plugins directory in the test repo
         let plugins_dir = self.path.join("plugins");
         fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
+        copy_plugin_lib(&plugins_dir);
 
         // Get the project root
         let project_root = std::env::var("CARGO_MANIFEST_DIR")
@@ -297,6 +301,7 @@ A sample project for testing.
     pub fn setup_git_gutter_plugin(&self) {
         let plugins_dir = self.path.join("plugins");
         fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
+        copy_plugin_lib(&plugins_dir);
         copy_plugin(&plugins_dir, "git_gutter");
     }
 
@@ -304,6 +309,7 @@ A sample project for testing.
     pub fn setup_buffer_modified_plugin(&self) {
         let plugins_dir = self.path.join("plugins");
         fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
+        copy_plugin_lib(&plugins_dir);
         copy_plugin(&plugins_dir, "buffer_modified");
     }
 
