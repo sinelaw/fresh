@@ -2,8 +2,9 @@
 # TypeScript type checker for Fresh plugins
 # Usage: ./check-types.sh [files...]
 # If no files specified, checks all plugin files
-
-set -e
+#
+# Each file is checked individually because plugins run in separate
+# global scopes at runtime, so variables like `editor` don't conflict.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -17,13 +18,24 @@ fi
 
 echo "Checking TypeScript types for ${#FILES[@]} files..."
 
-npx -p typescript tsc \
-  --noEmit \
-  --target esnext \
-  --moduleResolution node \
-  --lib esnext,dom \
-  --skipLibCheck \
-  --allowImportingTsExtensions \
-  "${FILES[@]}"
+ERRORS=0
+for file in "${FILES[@]}"; do
+  if ! npx -p typescript tsc \
+    --noEmit \
+    --target esnext \
+    --moduleResolution node \
+    --lib esnext,dom \
+    --skipLibCheck \
+    --allowImportingTsExtensions \
+    "$file" 2>&1; then
+    ERRORS=$((ERRORS + 1))
+  fi
+done
 
-echo "All type checks passed!"
+if [ $ERRORS -eq 0 ]; then
+  echo "All type checks passed!"
+else
+  echo ""
+  echo "$ERRORS file(s) had type errors"
+  exit 1
+fi

@@ -1,3 +1,5 @@
+/// <reference path="./lib/fresh.d.ts" />
+
 // TypeScript Color Highlighter Plugin
 // Highlights color codes in source code with a colored swatch
 // Supports: #RGB, #RRGGBB, rgb(), rgba(), hsl(), hsla(), Color::Rgb()
@@ -187,7 +189,8 @@ function highlightLine(
           color[0],
           color[1],
           color[2],
-          true // before the character
+          true, // before the character
+          false // use_bg - use foreground color for the block character
         );
       }
     }

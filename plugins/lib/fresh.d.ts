@@ -47,13 +47,11 @@
  */
 
 /**
- * Global editor API object available to all TypeScript plugins
- */
-declare const editor: EditorAPI;
-
-/**
- * Get the editor API instance
- * @returns The global editor API object
+ * Get the editor API instance.
+ * Plugins must call this at the top of their file to get a scoped editor object.
+ * @returns The editor API object for this plugin
+ * @example
+ * const editor = getEditor();
  */
 declare function getEditor(): EditorAPI;
 
