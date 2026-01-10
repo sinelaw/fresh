@@ -1,16 +1,21 @@
 /// <reference path="./lib/fresh.d.ts" />
-const editor = getEditor();
-
 
 /**
  * Live Grep Plugin
  *
  * Project-wide search with ripgrep and live preview.
+ * Uses the Finder abstraction for unified search UX.
+ *
  * - Type to search across all files
  * - Navigate results with Up/Down to see preview
  * - Press Enter to open file at location
  */
 
+import { Finder, parseGrepOutput } from "./lib/finder.ts";
+
+const editor = getEditor();
+
+// Result type from ripgrep
 interface GrepMatch {
   file: string;
   line: number;
@@ -18,397 +23,69 @@ interface GrepMatch {
   content: string;
 }
 
-// State management
-let grepResults: GrepMatch[] = [];
-let previewBufferId: number | null = null;
-let previewSplitId: number | null = null;
-let originalSplitId: number | null = null;
-let lastQuery: string = "";
-let previewCreated: boolean = false;
-let currentSearch: ProcessHandle | null = null;
-let pendingKill: Promise<boolean> | null = null;  // Track pending kill globally
-let searchVersion = 0;  // Incremented on each input change for debouncing
+// Create the finder instance
+const finder = new Finder<GrepMatch>(editor, {
+  id: "live-grep",
+  format: (match) => ({
+    label: `${match.file}:${match.line}`,
+    description:
+      match.content.length > 60
+        ? match.content.substring(0, 57).trim() + "..."
+        : match.content.trim(),
+    location: {
+      file: match.file,
+      line: match.line,
+      column: match.column,
+    },
+  }),
+  preview: true,
+  maxResults: 100,
+});
 
-const DEBOUNCE_MS = 150;  // Wait 150ms after last keystroke before searching
-
-// Parse ripgrep output line
-// Format: file:line:column:content
-function parseRipgrepLine(line: string): GrepMatch | null {
-  const match = line.match(/^([^:]+):(\d+):(\d+):(.*)$/);
-  if (match) {
-    return {
-      file: match[1],
-      line: parseInt(match[2], 10),
-      column: parseInt(match[3], 10),
-      content: match[4],
-    };
-  }
-  return null;
-}
-
-// Parse ripgrep output into suggestions
-function parseRipgrepOutput(stdout: string): {
-  results: GrepMatch[];
-  suggestions: PromptSuggestion[];
-} {
-  const results: GrepMatch[] = [];
-  const suggestions: PromptSuggestion[] = [];
-
-  for (const line of stdout.split("\n")) {
-    if (!line.trim()) continue;
-    const match = parseRipgrepLine(line);
-    if (match) {
-      results.push(match);
-
-      // Truncate long content for display
-      const displayContent =
-        match.content.length > 60
-          ? match.content.substring(0, 57) + "..."
-          : match.content;
-
-      suggestions.push({
-        text: `${match.file}:${match.line}`,
-        description: displayContent.trim(),
-        value: `${results.length - 1}`, // Store index as value
-        disabled: false,
-      });
-
-      // Limit to 100 results for performance
-      if (results.length >= 100) {
-        break;
-      }
-    }
-  }
-
-  return { results, suggestions };
-}
-
-// Create or update preview buffer with file content
-async function updatePreview(match: GrepMatch): Promise<void> {
-  try {
-    // Read the file content
-    const content = await editor.readFile(match.file);
-    const lines = content.split("\n");
-
-    // Calculate context window (5 lines before and after)
-    const contextBefore = 5;
-    const contextAfter = 5;
-    const startLine = Math.max(0, match.line - 1 - contextBefore);
-    const endLine = Math.min(lines.length, match.line + contextAfter);
-
-    // Build preview entries with highlighting
-    const entries: TextPropertyEntry[] = [];
-
-    // Header
-    entries.push({
-      text: `  ${match.file}:${match.line}:${match.column}\n`,
-      properties: { type: "header" },
-    });
-    entries.push({
-      text: "─".repeat(60) + "\n",
-      properties: { type: "separator" },
-    });
-
-    // Content lines with line numbers
-    for (let i = startLine; i < endLine; i++) {
-      const lineNum = i + 1;
-      const lineContent = lines[i] || "";
-      const isMatchLine = lineNum === match.line;
-      const prefix = isMatchLine ? "> " : "  ";
-      const lineNumStr = String(lineNum).padStart(4, " ");
-
-      entries.push({
-        text: `${prefix}${lineNumStr} │ ${lineContent}\n`,
-        properties: {
-          type: isMatchLine ? "match" : "context",
-          line: lineNum,
-        },
-      });
-    }
-
-    // Create or update the preview buffer
-    if (previewBufferId === null) {
-      // Define mode for preview buffer
-      editor.defineMode("live-grep-preview", "special", [["q", "close_buffer"]], true);
-
-      // Create preview in a split on the right
-      const result = await editor.createVirtualBufferInSplit({
-        name: "*Preview*",
-        mode: "live-grep-preview",
-        read_only: true,
-        entries,
-        ratio: 0.5,
-        direction: "vertical",
-        panel_id: "live-grep-preview",
-        show_line_numbers: false,
-        editing_disabled: true,
-      });
-
-      // Extract buffer and split IDs from result
-      previewBufferId = result.buffer_id;
-      previewSplitId = result.split_id ?? null;
-
-      // Return focus to original split so prompt stays active
-      if (originalSplitId !== null) {
-        editor.focusSplit(originalSplitId);
-      }
-    } else {
-      // Update existing buffer content
-      editor.setVirtualBufferContent(previewBufferId, entries);
-    }
-  } catch (e) {
-    editor.debug(`Failed to update preview: ${e}`);
-  }
-}
-
-// Close preview buffer and its split
-function closePreview(): void {
-  // Close the buffer first
-  if (previewBufferId !== null) {
-    editor.closeBuffer(previewBufferId);
-    previewBufferId = null;
-  }
-  // Then close the split
-  if (previewSplitId !== null) {
-    editor.closeSplit(previewSplitId);
-    previewSplitId = null;
-  }
-}
-
-// Run ripgrep search with debouncing
-async function runSearch(query: string): Promise<void> {
-  // Increment version to invalidate any pending debounced search
-  const thisVersion = ++searchVersion;
-  editor.debug(`[live_grep] runSearch called: query="${query}", version=${thisVersion}`);
-
-  // Kill any existing search immediately (don't wait) to stop wasting CPU
-  // Store the kill promise globally so ALL pending searches wait for it
-  if (currentSearch) {
-    editor.debug(`[live_grep] killing existing search immediately`);
-    pendingKill = currentSearch.kill();
-    currentSearch = null;
-  }
-
-  if (!query || query.trim().length < 2) {
-    // Wait for any pending kill to complete before returning
-    if (pendingKill) {
-      await pendingKill;
-      pendingKill = null;
-    }
-    editor.debug(`[live_grep] query too short, clearing`);
-    editor.setPromptSuggestions([]);
-    grepResults = [];
-    return;
-  }
-
-  // Debounce: wait a bit to see if user is still typing
-  editor.debug(`[live_grep] debouncing for ${DEBOUNCE_MS}ms...`);
-  await editor.delay(DEBOUNCE_MS);
-
-  // Always await any pending kill before continuing - ensures old process is dead
-  if (pendingKill) {
-    editor.debug(`[live_grep] waiting for previous search to terminate`);
-    await pendingKill;
-    pendingKill = null;
-    editor.debug(`[live_grep] previous search terminated`);
-  }
-
-  // If version changed during delay, a newer search was triggered - abort this one
-  if (searchVersion !== thisVersion) {
-    editor.debug(`[live_grep] version mismatch after debounce (${thisVersion} vs ${searchVersion}), aborting`);
-    return;
-  }
-
-  // Avoid duplicate searches
-  if (query === lastQuery) {
-    editor.debug(`[live_grep] duplicate query, skipping`);
-    return;
-  }
-  lastQuery = query;
-
-  try {
-    const cwd = editor.getCwd();
-    editor.debug(`[live_grep] spawning rg for query="${query}" in cwd="${cwd}"`);
-    const searchStartTime = Date.now();
-    const search = editor.spawnProcess("rg", [
+// Search function that parses ripgrep output
+async function searchWithRipgrep(query: string): Promise<GrepMatch[]> {
+  const cwd = editor.getCwd();
+  const result = await editor.spawnProcess(
+    "rg",
+    [
       "--line-number",
       "--column",
       "--no-heading",
       "--color=never",
       "--smart-case",
       "--max-count=100",
-      "-g", "!.git",
-      "-g", "!node_modules",
-      "-g", "!target",
-      "-g", "!*.lock",
+      "-g",
+      "!.git",
+      "-g",
+      "!node_modules",
+      "-g",
+      "!target",
+      "-g",
+      "!*.lock",
       "--",
       query,
-    ], cwd);
+    ],
+    cwd
+  );
 
-    currentSearch = search;
-    editor.debug(`[live_grep] awaiting search result...`);
-    const result = await search;
-    const searchDuration = Date.now() - searchStartTime;
-    editor.debug(`[live_grep] rg completed in ${searchDuration}ms, exit_code=${result.exit_code}, stdout_len=${result.stdout.length}`);
-
-    // Check if this search was cancelled (a new search started)
-    if (currentSearch !== search) {
-      editor.debug(`[live_grep] search was superseded, discarding results`);
-      return; // Discard stale results
-    }
-    currentSearch = null;
-
-    if (result.exit_code === 0) {
-      const parseStart = Date.now();
-      const { results, suggestions } = parseRipgrepOutput(result.stdout);
-      editor.debug(`[live_grep] parsed ${results.length} results in ${Date.now() - parseStart}ms`);
-      grepResults = results;
-      editor.setPromptSuggestions(suggestions);
-
-      if (results.length > 0) {
-        editor.setStatus(editor.t("status.found_matches", { count: String(results.length) }));
-        // Show preview of first result
-        await updatePreview(results[0]);
-      } else {
-        editor.setStatus(editor.t("status.no_matches"));
-      }
-    } else if (result.exit_code === 1) {
-      // No matches
-      editor.debug(`[live_grep] no matches (exit_code=1)`);
-      grepResults = [];
-      editor.setPromptSuggestions([]);
-      editor.setStatus(editor.t("status.no_matches"));
-    } else if (result.exit_code === -1) {
-      // Process was killed, ignore
-      editor.debug(`[live_grep] process was killed`);
-    } else {
-      editor.debug(`[live_grep] search error: ${result.stderr}`);
-      editor.setStatus(editor.t("status.search_error", { error: result.stderr }));
-    }
-  } catch (e) {
-    // Ignore errors from killed processes
-    const errorMsg = String(e);
-    editor.debug(`[live_grep] caught error: ${errorMsg}`);
-    if (!errorMsg.includes("killed") && !errorMsg.includes("not found")) {
-      editor.setStatus(editor.t("status.search_error", { error: String(e) }));
-    }
+  if (result.exit_code === 0) {
+    return parseGrepOutput(result.stdout, 100) as GrepMatch[];
   }
+  return [];
 }
 
 // Start live grep
 globalThis.start_live_grep = function (): void {
-  // Clear previous state
-  grepResults = [];
-  lastQuery = "";
-  previewBufferId = null;
-
-  // Remember original split to keep focus
-  originalSplitId = editor.getActiveSplitId();
-
-  // Start the prompt
-  editor.startPrompt(editor.t("prompt.live_grep"), "live-grep");
-  editor.setStatus(editor.t("status.type_to_search"));
+  finder.prompt({
+    title: editor.t("prompt.live_grep"),
+    source: {
+      mode: "search",
+      search: searchWithRipgrep,
+      debounceMs: 150,
+      minQueryLength: 2,
+    },
+  });
 };
-
-// Handle prompt input changes
-globalThis.onLiveGrepPromptChanged = function (args: {
-  prompt_type: string;
-  input: string;
-}): boolean {
-  if (args.prompt_type !== "live-grep") {
-    return true;
-  }
-
-  editor.debug(`[live_grep] onPromptChanged: input="${args.input}"`);
-
-  // runSearch handles debouncing internally
-  runSearch(args.input);
-
-  return true;
-};
-
-// Handle selection changes - update preview
-globalThis.onLiveGrepSelectionChanged = function (args: {
-  prompt_type: string;
-  selected_index: number;
-}): boolean {
-  if (args.prompt_type !== "live-grep") {
-    return true;
-  }
-
-  const match = grepResults[args.selected_index];
-  if (match) {
-    updatePreview(match);
-  }
-
-  return true;
-};
-
-// Handle prompt confirmation - open file
-globalThis.onLiveGrepPromptConfirmed = function (args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): boolean {
-  if (args.prompt_type !== "live-grep") {
-    return true;
-  }
-
-  // Kill any running search
-  if (currentSearch) {
-    currentSearch.kill();
-    currentSearch = null;
-  }
-
-  // Close preview first
-  closePreview();
-
-  // Open selected file
-  if (args.selected_index !== null && grepResults[args.selected_index]) {
-    const selected = grepResults[args.selected_index];
-    editor.openFile(selected.file, selected.line, selected.column);
-    editor.setStatus(editor.t("status.opened_file", { file: selected.file, line: String(selected.line) }));
-  } else {
-    editor.setStatus(editor.t("status.no_file_selected"));
-  }
-
-  // Clear state
-  grepResults = [];
-  originalSplitId = null;
-  previewSplitId = null;
-
-  return true;
-};
-
-// Handle prompt cancellation
-globalThis.onLiveGrepPromptCancelled = function (args: {
-  prompt_type: string;
-}): boolean {
-  if (args.prompt_type !== "live-grep") {
-    return true;
-  }
-
-  // Kill any running search
-  if (currentSearch) {
-    currentSearch.kill();
-    currentSearch = null;
-  }
-
-  // Close preview and cleanup
-  closePreview();
-  grepResults = [];
-  originalSplitId = null;
-  previewSplitId = null;
-  editor.setStatus(editor.t("status.cancelled"));
-
-  return true;
-};
-
-// Register event handlers
-editor.on("prompt_changed", "onLiveGrepPromptChanged");
-editor.on("prompt_selection_changed", "onLiveGrepSelectionChanged");
-editor.on("prompt_confirmed", "onLiveGrepPromptConfirmed");
-editor.on("prompt_cancelled", "onLiveGrepPromptCancelled");
 
 // Register command
 editor.registerCommand(
@@ -418,5 +95,5 @@ editor.registerCommand(
   "normal"
 );
 
-editor.debug("Live Grep plugin loaded");
+editor.debug("Live Grep plugin loaded (using Finder abstraction)");
 editor.setStatus(editor.t("status.ready"));

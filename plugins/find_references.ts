@@ -1,25 +1,20 @@
 /// <reference path="./lib/fresh.d.ts" />
 
-import {
-  ResultsPanel,
-  ResultItem,
-  createStaticProvider,
-  getRelativePath,
-} from "./lib/results-panel.ts";
-
-const editor = getEditor();
-
 /**
  * Find References Plugin
  *
- * Displays LSP find references results using the ResultsPanel abstraction
- * with VS Code-inspired Provider pattern.
+ * Displays LSP find references results using the Finder abstraction
+ * with panel mode for static data display.
  *
  * Key features:
- * - Provider pattern for live data channel
- * - syncWithEditor for bidirectional cursor sync
+ * - Panel mode for displaying reference results
  * - groupBy: "file" for organized display
+ * - syncWithEditor for bidirectional cursor sync
  */
+
+import { Finder, getRelativePath } from "./lib/finder.ts";
+
+const editor = getEditor();
 
 // Maximum number of results to display
 const MAX_RESULTS = 100;
@@ -34,30 +29,42 @@ interface ReferenceLocation {
 // Line text cache for previews
 const lineCache: Map<string, string[]> = new Map();
 
-// Create a static provider (Find References is a snapshot, not live data)
-const provider = createStaticProvider<ResultItem>();
+// Create the finder instance for panel mode
+const finder = new Finder<ReferenceLocation>(editor, {
+  id: "references",
+  format: (ref) => {
+    const displayPath = getRelativePath(editor, ref.file);
+    const key = `${ref.file}:${ref.line}:${ref.column}`;
+    const lineText = lineTexts.get(key) || "";
+    const trimmedLine = lineText.trim();
 
-// Create the panel with Provider pattern
-const panel = new ResultsPanel(editor, "references", provider, {
-  title: "References", // Will be updated when showing
-  syncWithEditor: true, // Enable bidirectional cursor sync!
-  groupBy: "file", // Group by file for better organization
-  ratio: 0.7,
-  onSelect: (item) => {
-    if (item.location) {
-      panel.openInSource(
-        item.location.file,
-        item.location.line,
-        item.location.column
-      );
-      const displayPath = getRelativePath(editor, item.location.file);
-      editor.setStatus(`Jumped to ${displayPath}:${item.location.line}`);
-    }
+    // Preview text
+    const maxPreviewLen = 60;
+    const preview =
+      trimmedLine.length > maxPreviewLen
+        ? trimmedLine.slice(0, maxPreviewLen - 3) + "..."
+        : trimmedLine;
+
+    return {
+      label: `${ref.line}:${ref.column}`,
+      description: preview,
+      location: {
+        file: ref.file,
+        line: ref.line,
+        column: ref.column,
+      },
+    };
   },
-  onClose: () => {
-    lineCache.clear();
+  groupBy: "file",
+  syncWithEditor: true,
+  onSelect: (ref) => {
+    const displayPath = getRelativePath(editor, ref.file);
+    editor.setStatus(`Jumped to ${displayPath}:${ref.line}`);
   },
 });
+
+// Global line texts map (populated before showing panel)
+let lineTexts = new Map<string, string>();
 
 /**
  * Load line text for references (for preview display)
@@ -65,7 +72,7 @@ const panel = new ResultsPanel(editor, "references", provider, {
 async function loadLineTexts(
   references: ReferenceLocation[]
 ): Promise<Map<string, string>> {
-  const lineTexts = new Map<string, string>();
+  const result = new Map<string, string>();
 
   // Group references by file
   const fileRefs: Map<string, ReferenceLocation[]> = new Map();
@@ -90,7 +97,7 @@ async function loadLineTexts(
         const lineIndex = ref.line - 1;
         if (lineIndex >= 0 && lineIndex < lines.length) {
           const key = `${ref.file}:${ref.line}:${ref.column}`;
-          lineTexts.set(key, lines[lineIndex]);
+          result.set(key, lines[lineIndex]);
         }
       }
     } catch {
@@ -98,44 +105,7 @@ async function loadLineTexts(
     }
   }
 
-  return lineTexts;
-}
-
-/**
- * Convert LSP references to ResultItems for display
- */
-function referencesToItems(
-  references: ReferenceLocation[],
-  lineTexts: Map<string, string>
-): ResultItem[] {
-  return references.map((ref, index) => {
-    const displayPath = getRelativePath(editor, ref.file);
-    const key = `${ref.file}:${ref.line}:${ref.column}`;
-    const lineText = lineTexts.get(key) || "";
-    const trimmedLine = lineText.trim();
-
-    // Format label as "line:col"
-    const label = `${ref.line}:${ref.column}`;
-
-    // Preview text
-    const maxPreviewLen = 60;
-    const preview =
-      trimmedLine.length > maxPreviewLen
-        ? trimmedLine.slice(0, maxPreviewLen - 3) + "..."
-        : trimmedLine;
-
-    return {
-      // Unique ID for reveal/sync
-      id: `ref-${index}-${ref.file}-${ref.line}-${ref.column}`,
-      label: label,
-      description: preview,
-      location: {
-        file: ref.file,
-        line: ref.line,
-        column: ref.column,
-      },
-    };
-  });
+  return result;
 }
 
 /**
@@ -150,24 +120,19 @@ async function showReferences(
 
   // Clear and reload line cache
   lineCache.clear();
-  const lineTexts = await loadLineTexts(limitedRefs);
+  lineTexts = await loadLineTexts(limitedRefs);
 
-  // Convert to ResultItems
-  const items = referencesToItems(limitedRefs, lineTexts);
-
-  // Update panel title dynamically
+  // Build title
   const count = references.length;
   const limitNote = count > MAX_RESULTS ? ` (first ${MAX_RESULTS})` : "";
-  (panel as { options: { title: string } }).options.title =
-    `References to '${symbol}': ${count}${limitNote}`;
+  const title = `References to '${symbol}': ${count}${limitNote}`;
 
-  // Update provider with new items (triggers panel refresh if open)
-  provider.updateItems(items);
-
-  // Show panel if not already open
-  if (!panel.isOpen) {
-    await panel.show();
-  }
+  // Show panel
+  await finder.panel({
+    title,
+    items: limitedRefs,
+    ratio: 0.3,
+  });
 }
 
 // Handle lsp_references hook
@@ -190,7 +155,8 @@ editor.on("lsp_references", "on_lsp_references");
 
 // Export close function for command palette
 globalThis.hide_references_panel = function (): void {
-  panel.close();
+  finder.close();
+  lineCache.clear();
 };
 
 // Register commands
@@ -210,4 +176,4 @@ editor.registerCommand(
 
 // Plugin initialization
 editor.setStatus("Find References plugin ready");
-editor.debug("Find References plugin initialized (Provider pattern v2)");
+editor.debug("Find References plugin initialized (using Finder abstraction)");

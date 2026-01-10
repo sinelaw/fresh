@@ -1,204 +1,166 @@
 /// <reference path="./lib/fresh.d.ts" />
 
-import {
-  ResultsPanel,
-  ResultItem,
-  ResultsProvider,
-  EventEmitter,
-  getRelativePath,
-} from "./lib/results-panel.ts";
-
-const editor = getEditor();
-
 /**
  * Diagnostics Panel Plugin
  *
- * Uses VS Code-inspired Provider pattern:
- * - DiagnosticsProvider emits events when diagnostics change
- * - ResultsPanel handles UI with syncWithEditor for bidirectional cursor sync
- * - Toggle between current file and all files
+ * Uses the Finder abstraction with livePanel mode for reactive diagnostics display.
+ * Supports toggling between current file and all files.
+ *
+ * Key features:
+ * - livePanel mode for reactive data updates
+ * - Toggle between current file and all files (press 'a')
+ * - groupBy: "file" for organized display
+ * - syncWithEditor for bidirectional cursor sync
  */
 
-// ============================================================================
-// Diagnostics Provider
-// ============================================================================
+import { Finder, createLiveProvider, getRelativePath, type FinderProvider } from "./lib/finder.ts";
 
-interface DiagnosticResultItem extends ResultItem {
-  diagnosticSeverity: number; // 1=error, 2=warning, 3=info, 4=hint
+const editor = getEditor();
+
+// Diagnostic item with severity
+interface DiagnosticItem {
+  uri: string;
+  file: string;
+  line: number;
+  column: number;
+  message: string;
+  severity: number; // 1=error, 2=warning, 3=info, 4=hint
+  source?: string;
 }
 
-class DiagnosticsProvider implements ResultsProvider<DiagnosticResultItem> {
-  private _onDidChangeResults = new EventEmitter<void>();
-  readonly onDidChangeResults = this._onDidChangeResults.event;
-
-  private showAllFiles = false;
-  private sourceBufferId: number | null = null;
-
-  setShowAllFiles(value: boolean): void {
-    this.showAllFiles = value;
-    this._onDidChangeResults.fireVoid();
-  }
-
-  getShowAllFiles(): boolean {
-    return this.showAllFiles;
-  }
-
-  setSourceBuffer(bufferId: number | null): void {
-    this.sourceBufferId = bufferId;
-    // Don't fire change event here - only when filter changes or diagnostics update
-  }
-
-  notifyDiagnosticsChanged(): void {
-    this._onDidChangeResults.fireVoid();
-  }
-
-  provideResults(): DiagnosticResultItem[] {
-    const diagnostics = editor.getAllDiagnostics();
-
-    // Get active file URI for filtering
-    let activeUri: string | null = null;
-    if (this.sourceBufferId !== null) {
-      const path = editor.getBufferPath(this.sourceBufferId);
-      if (path) {
-        activeUri = "file://" + path;
-      }
-    }
-
-    // Filter diagnostics
-    const filterUri = this.showAllFiles ? null : activeUri;
-    const filtered = filterUri
-      ? diagnostics.filter((d) => d.uri === filterUri)
-      : diagnostics;
-
-    // Sort by file, then line, then severity
-    filtered.sort((a, b) => {
-      // File comparison
-      if (a.uri !== b.uri) {
-        // Active file first
-        if (activeUri) {
-          if (a.uri === activeUri) return -1;
-          if (b.uri === activeUri) return 1;
-        }
-        return a.uri < b.uri ? -1 : 1;
-      }
-      // Line comparison
-      const lineDiff = a.range.start.line - b.range.start.line;
-      if (lineDiff !== 0) return lineDiff;
-      // Severity comparison
-      return a.severity - b.severity;
-    });
-
-    // Convert to ResultItems
-    return filtered.map((diag, index) => {
-      const filePath = this.uriToPath(diag.uri);
-      const line = diag.range.start.line + 1;
-      const col = diag.range.start.character + 1;
-      const message = diag.message.split("\n")[0]; // First line only
-
-      return {
-        id: `diag-${index}-${diag.uri}-${line}-${col}`,
-        label: `${line}:${col} ${message}`,
-        location: {
-          file: filePath,
-          line: line,
-          column: col,
-        },
-        severity: this.severityToString(diag.severity),
-        diagnosticSeverity: diag.severity,
-        metadata: { uri: diag.uri, message: diag.message },
-      };
-    });
-  }
-
-  private uriToPath(uri: string): string {
-    if (uri.startsWith("file://")) {
-      return uri.slice(7);
-    }
-    return uri;
-  }
-
-  private severityToString(
-    severity: number
-  ): "error" | "warning" | "info" | "hint" {
-    switch (severity) {
-      case 1:
-        return "error";
-      case 2:
-        return "warning";
-      case 3:
-        return "info";
-      case 4:
-        return "hint";
-      default:
-        return "info";
-    }
-  }
-}
-
-// ============================================================================
-// Panel State
-// ============================================================================
-
-const diagnosticsProvider = new DiagnosticsProvider();
-let panel: ResultsPanel<DiagnosticResultItem> | null = null;
+// State
+let showAllFiles = false;
+let sourceBufferId: number | null = null;
 let isOpen = false;
-let sourceSplitId: number | null = null;
 
+// Convert severity number to string
+function severityToString(severity: number): "error" | "warning" | "info" | "hint" {
+  switch (severity) {
+    case 1:
+      return "error";
+    case 2:
+      return "warning";
+    case 3:
+      return "info";
+    case 4:
+      return "hint";
+    default:
+      return "info";
+  }
+}
+
+// Convert URI to file path
+function uriToPath(uri: string): string {
+  if (uri.startsWith("file://")) {
+    return uri.slice(7);
+  }
+  return uri;
+}
+
+// Get diagnostics based on current filter
+function getDiagnostics(): DiagnosticItem[] {
+  const diagnostics = editor.getAllDiagnostics();
+
+  // Get active file URI for filtering
+  let activeUri: string | null = null;
+  if (sourceBufferId !== null) {
+    const path = editor.getBufferPath(sourceBufferId);
+    if (path) {
+      activeUri = "file://" + path;
+    }
+  }
+
+  // Filter diagnostics
+  const filterUri = showAllFiles ? null : activeUri;
+  const filtered = filterUri
+    ? diagnostics.filter((d) => d.uri === filterUri)
+    : diagnostics;
+
+  // Sort by file, then line, then severity
+  filtered.sort((a, b) => {
+    // File comparison
+    if (a.uri !== b.uri) {
+      // Active file first
+      if (activeUri) {
+        if (a.uri === activeUri) return -1;
+        if (b.uri === activeUri) return 1;
+      }
+      return a.uri < b.uri ? -1 : 1;
+    }
+    // Line comparison
+    const lineDiff = a.range.start.line - b.range.start.line;
+    if (lineDiff !== 0) return lineDiff;
+    // Severity comparison
+    return a.severity - b.severity;
+  });
+
+  // Convert to DiagnosticItem
+  return filtered.map((diag) => ({
+    uri: diag.uri,
+    file: uriToPath(diag.uri),
+    line: diag.range.start.line + 1,
+    column: diag.range.start.character + 1,
+    message: diag.message.split("\n")[0], // First line only
+    severity: diag.severity,
+    source: diag.source ?? undefined,
+  }));
+}
+
+// Create the live provider
+const provider = createLiveProvider(getDiagnostics);
+
+// Create the finder instance
+const finder = new Finder<DiagnosticItem>(editor, {
+  id: "diagnostics",
+  format: (d) => ({
+    label: `${d.line}:${d.column} ${d.message}`,
+    location: {
+      file: d.file,
+      line: d.line,
+      column: d.column,
+    },
+    severity: severityToString(d.severity),
+    metadata: { uri: d.uri, message: d.message },
+  }),
+  groupBy: "file",
+  syncWithEditor: true,
+  onSelect: (d) => {
+    const displayPath = getRelativePath(editor, d.file);
+    editor.setStatus(
+      editor.t("status.jumped_to", {
+        file: displayPath,
+        line: String(d.line),
+      })
+    );
+  },
+});
+
+// Get title based on current filter state
 function getTitle(): string {
-  const showAll = diagnosticsProvider.getShowAllFiles();
-  const filterLabel = showAll
+  const filterLabel = showAllFiles
     ? editor.t("panel.all_files")
     : editor.t("panel.current_file");
   return editor.t("panel.header", { filter: filterLabel });
 }
 
-// ============================================================================
 // Commands
-// ============================================================================
-
 globalThis.show_diagnostics_panel = async function (): Promise<void> {
-  if (isOpen && panel) {
-    // Already open - just focus the panel
-    panel.focusPanel();
+  if (isOpen) {
+    // Already open - just notify to refresh
+    provider.notify();
     return;
   }
 
   // Capture source context
-  sourceSplitId = editor.getActiveSplitId();
-  const sourceBufferId = editor.getActiveBufferId();
-  diagnosticsProvider.setSourceBuffer(sourceBufferId);
+  sourceBufferId = editor.getActiveBufferId();
 
-  // Create the panel
-  panel = new ResultsPanel(editor, "diagnostics", diagnosticsProvider, {
+  // Show the panel
+  await finder.livePanel({
     title: getTitle(),
-    syncWithEditor: true, // Bidirectional cursor sync
-    groupBy: "file", // Group diagnostics by file
-    ratio: 0.7,
-    onSelect: (item) => {
-      if (item.location) {
-        panel!.openInSource(
-          item.location.file,
-          item.location.line,
-          item.location.column
-        );
-        const displayPath = getRelativePath(editor, item.location.file);
-        editor.setStatus(
-          editor.t("status.jumped_to", {
-            file: displayPath,
-            line: String(item.location.line),
-          })
-        );
-      }
-    },
-    onClose: () => {
-      isOpen = false;
-      panel = null;
-      sourceSplitId = null;
-      editor.setStatus(editor.t("status.closed"));
-    },
+    provider: provider as FinderProvider<DiagnosticItem>,
+    ratio: 0.3,
   });
 
-  await panel.show();
   isOpen = true;
 
   // Show count
@@ -209,45 +171,22 @@ globalThis.show_diagnostics_panel = async function (): Promise<void> {
 };
 
 globalThis.diagnostics_close = function (): void {
-  if (panel) {
-    panel.close();
-  }
-};
-
-globalThis.diagnostics_goto = function (): void {
-  if (!panel || !isOpen) return;
-
-  const item = panel.getSelectedItem();
-  if (item && item.location) {
-    panel.openInSource(
-      item.location.file,
-      item.location.line,
-      item.location.column
-    );
-    const displayPath = getRelativePath(editor, item.location.file);
-    editor.setStatus(
-      editor.t("status.jumped_to", {
-        file: displayPath,
-        line: String(item.location.line),
-      })
-    );
-  } else {
-    editor.setStatus(editor.t("status.move_to_diagnostic"));
-  }
+  finder.close();
+  isOpen = false;
+  sourceBufferId = null;
+  editor.setStatus(editor.t("status.closed"));
 };
 
 globalThis.diagnostics_toggle_all = function (): void {
   if (!isOpen) return;
 
-  const newValue = !diagnosticsProvider.getShowAllFiles();
-  diagnosticsProvider.setShowAllFiles(newValue);
+  showAllFiles = !showAllFiles;
 
-  // Update panel title
-  if (panel) {
-    (panel as unknown as { options: { title: string } }).options.title = getTitle();
-  }
+  // Update and refresh
+  finder.updateTitle(getTitle());
+  provider.notify();
 
-  const label = newValue
+  const label = showAllFiles
     ? editor.t("panel.all_files")
     : editor.t("panel.current_file");
   editor.setStatus(editor.t("status.showing", { label }));
@@ -256,7 +195,7 @@ globalThis.diagnostics_toggle_all = function (): void {
 globalThis.diagnostics_refresh = function (): void {
   if (!isOpen) return;
 
-  diagnosticsProvider.notifyDiagnosticsChanged();
+  provider.notify();
   editor.setStatus(editor.t("status.refreshed"));
 };
 
@@ -268,9 +207,7 @@ globalThis.toggle_diagnostics_panel = function (): void {
   }
 };
 
-// ============================================================================
 // Event Handlers
-// ============================================================================
 
 // When diagnostics update, notify the provider
 globalThis.on_diagnostics_updated = function (_data: {
@@ -278,7 +215,7 @@ globalThis.on_diagnostics_updated = function (_data: {
   count: number;
 }): void {
   if (isOpen) {
-    diagnosticsProvider.notifyDiagnosticsChanged();
+    provider.notify();
   }
 };
 
@@ -286,19 +223,15 @@ globalThis.on_diagnostics_updated = function (_data: {
 globalThis.on_diagnostics_buffer_activated = function (data: {
   buffer_id: number;
 }): void {
-  if (!isOpen || !panel) return;
+  if (!isOpen) return;
 
-  // Ignore if the diagnostics panel itself became active
-  if (panel.bufferId === data.buffer_id) {
-    return;
-  }
+  // Update source buffer
+  sourceBufferId = data.buffer_id;
 
-  // Update source buffer and refresh if not showing all files
-  diagnosticsProvider.setSourceBuffer(data.buffer_id);
-  if (!diagnosticsProvider.getShowAllFiles()) {
-    diagnosticsProvider.notifyDiagnosticsChanged();
-    // Update title
-    (panel as unknown as { options: { title: string } }).options.title = getTitle();
+  // Refresh if not showing all files
+  if (!showAllFiles) {
+    provider.notify();
+    finder.updateTitle(getTitle());
   }
 };
 
@@ -306,27 +239,18 @@ globalThis.on_diagnostics_buffer_activated = function (data: {
 editor.on("diagnostics_updated", "on_diagnostics_updated");
 editor.on("buffer_activated", "on_diagnostics_buffer_activated");
 
-// ============================================================================
 // Mode Definition (for custom keybindings beyond Enter/Escape)
-// ============================================================================
-
-// Note: The ResultsPanel already defines a mode with Enter/Escape.
-// We define additional keybindings here.
 editor.defineMode(
   "diagnostics-extra",
-  "diagnostics-results", // Parent mode from ResultsPanel
+  "diagnostics-results",
   [
     ["a", "diagnostics_toggle_all"],
     ["r", "diagnostics_refresh"],
-    ["Tab", "diagnostics_goto"],
   ],
   true
 );
 
-// ============================================================================
 // Command Registration
-// ============================================================================
-
 editor.registerCommand(
   "%cmd.show_diagnostics_panel",
   "%cmd.show_diagnostics_panel_desc",
@@ -341,9 +265,6 @@ editor.registerCommand(
   "normal"
 );
 
-// ============================================================================
 // Initialization
-// ============================================================================
-
 editor.setStatus(editor.t("status.loaded"));
-editor.debug("Diagnostics Panel plugin initialized (Provider pattern v2)");
+editor.debug("Diagnostics Panel plugin initialized (using Finder abstraction)");
