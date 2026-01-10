@@ -380,7 +380,7 @@ interface TsCompositeLayoutConfig {
   layout_type: string;
   ratios?: number[] | null;
   show_separator?: boolean | null;
-  spacing?: u16 | null;
+  spacing?: number | null;
 }
 ```
 
@@ -717,14 +717,14 @@ getAllCursorPositions(): number[]
 Check if a background process is still running
 
 ```typescript
-isProcessRunning(#[bigint] process_id: number): boolean
+isProcessRunning(process_id: number): boolean
 ```
 
 **Parameters:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `#[bigint] process_id` | `number` | - |
+| `process_id` | `number` | ID returned from spawnBackgroundProcess |
 
 #### `getHighlights`
 
@@ -1034,7 +1034,7 @@ setLineNumbers(buffer_id: number, enabled: boolean): boolean
 Add a virtual line above or below a source line
 
 ```typescript
-addVirtualLine(buffer_id: number, position: number, text: string, fg_r: number, fg_g: number, fg_b: number, bg_r: i16, bg_g: i16, bg_b: i16, above: boolean, namespace: string, priority: number): boolean
+addVirtualLine(buffer_id: number, position: number, text: string, fg_r: number, fg_g: number, fg_b: number, bg_r: number, bg_g: number, bg_b: number, above: boolean, namespace: string, priority: number): boolean
 ```
 
 **Parameters:**
@@ -1047,9 +1047,9 @@ addVirtualLine(buffer_id: number, position: number, text: string, fg_r: number, 
 | `fg_r` | `number` | Foreground red color component (0-255) |
 | `fg_g` | `number` | Foreground green color component (0-255) |
 | `fg_b` | `number` | Foreground blue color component (0-255) |
-| `bg_r` | `i16` | Background red color component (0-255), -1 for transparent |
-| `bg_g` | `i16` | Background green color component (0-255), -1 for transparent |
-| `bg_b` | `i16` | Background blue color component (0-255), -1 for transparent |
+| `bg_r` | `number` | Background red color component (0-255), -1 for transparent |
+| `bg_g` | `number` | Background green color component (0-255), -1 for transparent |
+| `bg_b` | `number` | Background blue color component (0-255), -1 for transparent |
 | `above` | `boolean` | Whether to insert above (true) or below (false) the line |
 | `namespace` | `string` | Namespace for bulk removal (e.g., "git-blame") |
 | `priority` | `number` | Priority for ordering multiple lines at same position |
@@ -1274,28 +1274,28 @@ Sends SIGTERM to gracefully terminate the process.
 Returns true if the process was found and killed, false if not found.
 
 ```typescript
-killProcess(#[bigint] process_id: number): Promise<boolean>
+killProcess(process_id: number): Promise<boolean>
 ```
 
 **Parameters:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `#[bigint] process_id` | `number` | - |
+| `process_id` | `number` | ID returned from spawnBackgroundProcess or spawnProcessStart |
 
 #### `spawnProcessWait`
 
 Wait for a cancellable process to complete and get its result
 
 ```typescript
-spawnProcessWait(#[bigint] process_id: number): Promise<SpawnResult>
+spawnProcessWait(process_id: number): Promise<SpawnResult>
 ```
 
 **Parameters:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `#[bigint] process_id` | `number` | - |
+| `process_id` | `number` | ID returned from spawnProcessStart |
 
 #### `delay`
 
@@ -1304,14 +1304,14 @@ Useful for debouncing user input or adding delays between operations.
 await editor.delay(100);  // Wait 100ms
 
 ```typescript
-delay(#[bigint] ms: number): Promise<[]>
+delay(ms: number): Promise<void>
 ```
 
 **Parameters:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `#[bigint] ms` | `number` | - |
+| `ms` | `number` | Number of milliseconds to delay |
 
 **Example:**
 
@@ -1356,7 +1356,7 @@ Only deletes files from the user's themes directory.
 This is a safe operation that prevents plugins from deleting arbitrary files.
 
 ```typescript
-deleteTheme(name: string): Promise<[]>
+deleteTheme(name: string): Promise<void>
 ```
 
 **Parameters:**
@@ -1589,7 +1589,7 @@ Anchors map corresponding line numbers between left and right buffers.
 Each anchor is a tuple of (left_line, right_line).
 
 ```typescript
-setScrollSyncAnchors(group_id: number, anchors: Vec<(usize, usize): boolean
+setScrollSyncAnchors(group_id: number, anchors: [number, number][]): boolean
 ```
 
 **Parameters:**
@@ -1597,7 +1597,7 @@ setScrollSyncAnchors(group_id: number, anchors: Vec<(usize, usize): boolean
 | Name | Type | Description |
 |------|------|-------------|
 | `group_id` | `number` | - |
-| `anchors` | `Vec<(usize, usize` | - |
+| `anchors` | `[number, number][]` | - |
 
 #### `removeScrollSyncGroup`
 
@@ -1624,7 +1624,7 @@ Use namespaces for easy batch removal (e.g., "spell", "todo").
 Multiple overlays can apply to the same range; colors blend.
 
 ```typescript
-addOverlay(buffer_id: number, namespace: string, start: number, end: number, r: number, g: number, b: number, bg_r: i16, bg_g: i16, bg_b: i16, underline: boolean, bold: boolean, italic: boolean, extend_to_line_end: boolean): boolean
+addOverlay(buffer_id: number, namespace: string, start: number, end: number, r: number, g: number, b: number, bg_r: number, bg_g: number, bg_b: number, underline: boolean, bold: boolean, italic: boolean, extend_to_line_end: boolean): boolean
 ```
 
 **Parameters:**
@@ -1638,9 +1638,9 @@ addOverlay(buffer_id: number, namespace: string, start: number, end: number, r: 
 | `r` | `number` | Red (0-255) |
 | `g` | `number` | Green (0-255) |
 | `b` | `number` | uffer_id - Target buffer ID |
-| `bg_r` | `i16` | - |
-| `bg_g` | `i16` | - |
-| `bg_b` | `i16` | - |
+| `bg_r` | `number` | - |
+| `bg_g` | `number` | - |
+| `bg_b` | `number` | - |
 | `underline` | `boolean` | Add underline decoration |
 | `bold` | `boolean` | Use bold text |
 | `italic` | `boolean` | Use italic text |
@@ -1811,7 +1811,7 @@ Creates a new file with the given content. Fails if the file already exists
 to prevent plugins from accidentally overwriting user data.
 
 ```typescript
-writeFile(path: string, content: string): Promise<[]>
+writeFile(path: string, content: string): Promise<void>
 ```
 
 **Parameters:**
@@ -2188,7 +2188,7 @@ editor.defineMode("diagnostics-list", "special", [
 ], true);
 
 ```typescript
-defineMode(name: string, parent: string, bindings: Vec<(String, String): boolean
+defineMode(name: string, parent: string, bindings: [string, string][], read_only: boolean): boolean
 ```
 
 **Parameters:**
@@ -2197,7 +2197,8 @@ defineMode(name: string, parent: string, bindings: Vec<(String, String): boolean
 |------|------|-------------|
 | `name` | `string` | Mode name (e.g., "diagnostics-list") |
 | `parent` | `string` | Parent mode name for inheritance (e.g., "special"), or null |
-| `bindings` | `Vec<(String, String` | Array of [key_string, command_name] pairs |
+| `bindings` | `[string, string][]` | Array of [key_string, command_name] pairs |
+| `read_only` | `boolean` | Whether buffers in this mode are read-only |
 
 **Example:**
 
