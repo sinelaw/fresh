@@ -9,6 +9,7 @@
 //! - Results are sent back via the existing PluginCommand channel
 //! - Async operations complete naturally without runtime destruction
 
+use crate::config::PluginConfig;
 use crate::input::command_registry::CommandRegistry;
 use crate::services::plugins::api::{EditorStateSnapshot, PluginCommand};
 use crate::services::plugins::hooks::{hook_args_to_json, HookArgs};
@@ -35,6 +36,15 @@ pub enum PluginRequest {
     LoadPluginsFromDir {
         dir: PathBuf,
         response: oneshot::Sender<Vec<String>>,
+    },
+
+    /// Load all plugins from a directory with config support
+    /// Returns (errors, discovered_plugins) where discovered_plugins contains
+    /// all found plugins with their paths and enabled status
+    LoadPluginsFromDirWithConfig {
+        dir: PathBuf,
+        plugin_configs: HashMap<String, PluginConfig>,
+        response: oneshot::Sender<(Vec<String>, HashMap<String, PluginConfig>)>,
     },
 
     /// Unload a plugin by name
@@ -276,6 +286,36 @@ impl PluginThreadHandle {
 
         rx.recv()
             .unwrap_or_else(|_| vec!["Plugin thread closed".to_string()])
+    }
+
+    /// Load all plugins from a directory with config support (blocking)
+    /// Returns (errors, discovered_plugins) where discovered_plugins is a map of
+    /// plugin name -> PluginConfig with paths populated.
+    pub fn load_plugins_from_dir_with_config(
+        &self,
+        dir: &Path,
+        plugin_configs: &HashMap<String, PluginConfig>,
+    ) -> (Vec<String>, HashMap<String, PluginConfig>) {
+        let (tx, rx) = oneshot::channel();
+        let Some(sender) = self.request_sender.as_ref() else {
+            return (vec!["Plugin thread shut down".to_string()], HashMap::new());
+        };
+        if sender
+            .send(PluginRequest::LoadPluginsFromDirWithConfig {
+                dir: dir.to_path_buf(),
+                plugin_configs: plugin_configs.clone(),
+                response: tx,
+            })
+            .is_err()
+        {
+            return (
+                vec!["Plugin thread not responding".to_string()],
+                HashMap::new(),
+            );
+        }
+
+        rx.recv()
+            .unwrap_or_else(|_| (vec!["Plugin thread closed".to_string()], HashMap::new()))
     }
 
     /// Unload a plugin (blocking)
@@ -673,6 +713,21 @@ async fn handle_request(
             let _ = response.send(errors);
         }
 
+        PluginRequest::LoadPluginsFromDirWithConfig {
+            dir,
+            plugin_configs,
+            response,
+        } => {
+            let (errors, discovered) = load_plugins_from_dir_with_config_internal(
+                Rc::clone(&runtime),
+                plugins,
+                &dir,
+                &plugin_configs,
+            )
+            .await;
+            let _ = response.send((errors, discovered));
+        }
+
         PluginRequest::UnloadPlugin { name, response } => {
             let result = unload_plugin_internal(plugins, commands, &name);
             let _ = response.send(result);
@@ -858,6 +913,102 @@ async fn load_plugins_from_dir_internal(
     }
 
     errors
+}
+
+/// Load all plugins from a directory with config support
+/// Returns (errors, discovered_plugins) where discovered_plugins contains all
+/// found plugin files with their configs (respecting enabled state from provided configs)
+async fn load_plugins_from_dir_with_config_internal(
+    runtime: Rc<RefCell<TypeScriptRuntime>>,
+    plugins: &mut HashMap<String, TsPluginInfo>,
+    dir: &Path,
+    plugin_configs: &HashMap<String, PluginConfig>,
+) -> (Vec<String>, HashMap<String, PluginConfig>) {
+    tracing::debug!(
+        "load_plugins_from_dir_with_config_internal: scanning directory {:?}",
+        dir
+    );
+    let mut errors = Vec::new();
+    let mut discovered_plugins: HashMap<String, PluginConfig> = HashMap::new();
+
+    if !dir.exists() {
+        tracing::warn!("Plugin directory does not exist: {:?}", dir);
+        return (errors, discovered_plugins);
+    }
+
+    // First pass: scan directory and collect all plugin files
+    let mut plugin_files: Vec<(String, std::path::PathBuf)> = Vec::new();
+    match std::fs::read_dir(dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let ext = path.extension().and_then(|s| s.to_str());
+                if ext == Some("ts") || ext == Some("js") {
+                    // Skip .i18n.json files (they're not plugins)
+                    if path.to_string_lossy().contains(".i18n.") {
+                        continue;
+                    }
+                    // Get plugin name from filename (without extension)
+                    let plugin_name = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    plugin_files.push((plugin_name, path));
+                }
+            }
+        }
+        Err(e) => {
+            let err = format!("Failed to read plugin directory: {}", e);
+            tracing::error!("{}", err);
+            errors.push(err);
+            return (errors, discovered_plugins);
+        }
+    }
+
+    // Second pass: build discovered_plugins map and load enabled plugins
+    for (plugin_name, path) in plugin_files {
+        // Check if we have an existing config for this plugin
+        let config = if let Some(existing_config) = plugin_configs.get(&plugin_name) {
+            // Use existing config but ensure path is set
+            PluginConfig {
+                enabled: existing_config.enabled,
+                path: Some(path.clone()),
+            }
+        } else {
+            // Create new config with default enabled = true
+            PluginConfig::new_with_path(path.clone())
+        };
+
+        // Add to discovered plugins
+        discovered_plugins.insert(plugin_name.clone(), config.clone());
+
+        // Only load if enabled
+        if config.enabled {
+            tracing::debug!(
+                "load_plugins_from_dir_with_config_internal: loading enabled plugin '{}'",
+                plugin_name
+            );
+            if let Err(e) = load_plugin_internal(Rc::clone(&runtime), plugins, &path).await {
+                let err = format!("Failed to load {:?}: {}", path, e);
+                tracing::error!("{}", err);
+                errors.push(err);
+            }
+        } else {
+            tracing::info!(
+                "load_plugins_from_dir_with_config_internal: skipping disabled plugin '{}'",
+                plugin_name
+            );
+        }
+    }
+
+    tracing::debug!(
+        "load_plugins_from_dir_with_config_internal: finished. Discovered {} plugins, {} errors",
+        discovered_plugins.len(),
+        errors.len()
+    );
+
+    (errors, discovered_plugins)
 }
 
 /// Unload a plugin

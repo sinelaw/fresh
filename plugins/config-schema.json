@@ -125,6 +125,14 @@
       "default": {
         "show_status_indicator": true
       }
+    },
+    "plugins": {
+      "description": "Plugin configurations by plugin name\nPlugins are auto-discovered from the plugins directory.\nUse this to enable/disable specific plugins.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/PluginConfig"
+      },
+      "default": {}
     }
   },
   "$defs": {
@@ -775,6 +783,25 @@
           "default": true
         }
       }
+    },
+    "PluginConfig": {
+      "description": "Configuration for an individual plugin",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Whether this plugin is enabled (default: true)\nWhen disabled, the plugin will not be loaded or executed.",
+          "type": "boolean",
+          "default": true
+        },
+        "path": {
+          "description": "Path to the plugin file (populated automatically when scanning)\nThis is filled in by the plugin system and should not be set manually.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "x-display-field": "/enabled"
     }
   }
 }

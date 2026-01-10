@@ -657,7 +657,7 @@ impl Editor {
     /// This is primarily used for testing with slow or mock backends
     /// to verify editor behavior under various I/O conditions
     fn with_options(
-        config: Config,
+        mut config: Config,
         width: u16,
         height: u16,
         working_dir: Option<PathBuf>,
@@ -814,10 +814,19 @@ impl Editor {
                 );
             }
 
-            // Load from all found plugin directories
+            // Load from all found plugin directories, respecting config
             for plugin_dir in plugin_dirs {
                 tracing::info!("Loading TypeScript plugins from: {:?}", plugin_dir);
-                let errors = plugin_manager.load_plugins_from_dir(&plugin_dir);
+                let (errors, discovered_plugins) =
+                    plugin_manager.load_plugins_from_dir_with_config(&plugin_dir, &config.plugins);
+
+                // Merge discovered plugins into config
+                for (name, plugin_config) in discovered_plugins {
+                    if !config.plugins.contains_key(&name) {
+                        config.plugins.insert(name, plugin_config);
+                    }
+                }
+
                 if !errors.is_empty() {
                     for err in &errors {
                         tracing::error!("TypeScript plugin load error: {}", err);

@@ -6,7 +6,7 @@
 use crate::config::{
     CursorStyle, FileBrowserConfig, FileExplorerConfig, FormatterConfig, HighlighterPreference,
     Keybinding, KeybindingMapName, KeymapConfig, LanguageConfig, LineEndingOption, OnSaveAction,
-    TerminalConfig, ThemeName, WarningsConfig,
+    PluginConfig, TerminalConfig, ThemeName, WarningsConfig,
 };
 use crate::types::LspServerConfig;
 use serde::{Deserialize, Serialize};
@@ -87,6 +87,7 @@ pub struct PartialConfig {
     pub languages: Option<HashMap<String, PartialLanguageConfig>>,
     pub lsp: Option<HashMap<String, LspServerConfig>>,
     pub warnings: Option<PartialWarningsConfig>,
+    pub plugins: Option<HashMap<String, PartialPluginConfig>>,
 }
 
 impl Merge for PartialConfig {
@@ -110,6 +111,7 @@ impl Merge for PartialConfig {
         merge_hashmap(&mut self.keybinding_maps, &other.keybinding_maps);
         merge_hashmap_recursive(&mut self.languages, &other.languages);
         merge_hashmap_recursive(&mut self.lsp, &other.lsp);
+        merge_hashmap_recursive(&mut self.plugins, &other.plugins);
 
         self.active_keybinding_map
             .merge_from(&other.active_keybinding_map);
@@ -260,6 +262,21 @@ impl Merge for PartialWarningsConfig {
     fn merge_from(&mut self, other: &Self) {
         self.show_status_indicator
             .merge_from(&other.show_status_indicator);
+    }
+}
+
+/// Partial plugin configuration.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PartialPluginConfig {
+    pub enabled: Option<bool>,
+    pub path: Option<std::path::PathBuf>,
+}
+
+impl Merge for PartialPluginConfig {
+    fn merge_from(&mut self, other: &Self) {
+        self.enabled.merge_from(&other.enabled);
+        self.path.merge_from(&other.path);
     }
 }
 
@@ -493,6 +510,24 @@ impl PartialWarningsConfig {
     }
 }
 
+impl From<&PluginConfig> for PartialPluginConfig {
+    fn from(cfg: &PluginConfig) -> Self {
+        Self {
+            enabled: Some(cfg.enabled),
+            path: cfg.path.clone(),
+        }
+    }
+}
+
+impl PartialPluginConfig {
+    pub fn resolve(self, defaults: &PluginConfig) -> PluginConfig {
+        PluginConfig {
+            enabled: self.enabled.unwrap_or(defaults.enabled),
+            path: self.path.or_else(|| defaults.path.clone()),
+        }
+    }
+}
+
 impl From<&LanguageConfig> for PartialLanguageConfig {
     fn from(cfg: &LanguageConfig) -> Self {
         Self {
@@ -563,6 +598,12 @@ impl From<&crate::config::Config> for PartialConfig {
             ),
             lsp: Some(cfg.lsp.clone()),
             warnings: Some(PartialWarningsConfig::from(&cfg.warnings)),
+            plugins: Some(
+                cfg.plugins
+                    .iter()
+                    .map(|(k, v)| (k.clone(), PartialPluginConfig::from(v)))
+                    .collect(),
+            ),
         }
     }
 }
@@ -615,6 +656,18 @@ impl PartialConfig {
             result
         };
 
+        // Resolve plugins HashMap - merge with defaults
+        let plugins = {
+            let mut result = defaults.plugins.clone();
+            if let Some(partial_plugins) = self.plugins {
+                for (key, partial_plugin) in partial_plugins {
+                    let default_plugin = result.get(&key).cloned().unwrap_or_default();
+                    result.insert(key, partial_plugin.resolve(&default_plugin));
+                }
+            }
+            result
+        };
+
         crate::config::Config {
             version: self.version.unwrap_or(defaults.version),
             theme: self.theme.unwrap_or_else(|| defaults.theme.clone()),
@@ -651,6 +704,7 @@ impl PartialConfig {
                 .warnings
                 .map(|e| e.resolve(&defaults.warnings))
                 .unwrap_or_else(|| defaults.warnings.clone()),
+            plugins,
         }
     }
 }

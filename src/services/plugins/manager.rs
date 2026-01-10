@@ -5,7 +5,9 @@
 //! disabled, all methods are no-ops, avoiding the need for cfg attributes
 //! scattered throughout the codebase.
 
+use crate::config::PluginConfig;
 use crate::input::command_registry::CommandRegistry;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
@@ -92,6 +94,60 @@ impl PluginManager {
         {
             let _ = dir;
             Vec::new()
+        }
+    }
+
+    /// Load plugins from a directory with config support.
+    /// Returns (errors, discovered_plugins) where discovered_plugins is a map of
+    /// plugin name -> PluginConfig with paths populated.
+    pub fn load_plugins_from_dir_with_config(
+        &self,
+        dir: &Path,
+        plugin_configs: &HashMap<String, PluginConfig>,
+    ) -> (Vec<String>, HashMap<String, PluginConfig>) {
+        #[cfg(feature = "plugins")]
+        {
+            if let Some(ref manager) = self.inner {
+                return manager.load_plugins_from_dir_with_config(dir, plugin_configs);
+            }
+            (Vec::new(), HashMap::new())
+        }
+        #[cfg(not(feature = "plugins"))]
+        {
+            let _ = (dir, plugin_configs);
+            (Vec::new(), HashMap::new())
+        }
+    }
+
+    /// Unload a plugin by name.
+    pub fn unload_plugin(&self, name: &str) -> anyhow::Result<()> {
+        #[cfg(feature = "plugins")]
+        {
+            self.inner
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Plugin system not active"))?
+                .unload_plugin(name)
+        }
+        #[cfg(not(feature = "plugins"))]
+        {
+            let _ = name;
+            Ok(())
+        }
+    }
+
+    /// Load a single plugin by path.
+    pub fn load_plugin(&self, path: &Path) -> anyhow::Result<()> {
+        #[cfg(feature = "plugins")]
+        {
+            self.inner
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Plugin system not active"))?
+                .load_plugin(path)
+        }
+        #[cfg(not(feature = "plugins"))]
+        {
+            let _ = path;
+            Ok(())
         }
     }
 

@@ -65,6 +65,7 @@ impl Editor {
     pub fn save_settings(&mut self) {
         let old_theme = self.config.theme.clone();
         let old_locale = self.config.locale.clone();
+        let old_plugins = self.config.plugins.clone();
 
         // Get target layer and new config
         let (target_layer, new_config) = {
@@ -118,6 +119,9 @@ impl Editor {
                 registry.refresh_builtin_commands();
             }
         }
+
+        // Handle plugin enable/disable changes
+        self.apply_plugin_config_changes(&old_plugins);
 
         // Update keybindings
         self.keybindings = KeybindingResolver::new(&self.config);
@@ -514,6 +518,48 @@ impl Editor {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Apply plugin configuration changes by loading/unloading plugins as needed
+    fn apply_plugin_config_changes(
+        &mut self,
+        old_plugins: &std::collections::HashMap<String, crate::config::PluginConfig>,
+    ) {
+        // Collect changes first to avoid borrow issues
+        let changes: Vec<_> = self
+            .config
+            .plugins
+            .iter()
+            .filter_map(|(name, new_config)| {
+                let was_enabled = old_plugins.get(name).map(|c| c.enabled).unwrap_or(true);
+                if new_config.enabled != was_enabled {
+                    Some((name.clone(), new_config.enabled, new_config.path.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Apply changes
+        for (name, now_enabled, path) in changes {
+            if now_enabled {
+                // Plugin was disabled, now enabled - load it
+                if let Some(ref path) = path {
+                    tracing::info!("Loading newly enabled plugin: {}", name);
+                    if let Err(e) = self.plugin_manager.load_plugin(path) {
+                        tracing::error!("Failed to load plugin '{}': {}", name, e);
+                        self.set_status_message(format!("Failed to load plugin '{}': {}", name, e));
+                    }
+                }
+            } else {
+                // Plugin was enabled, now disabled - unload it
+                tracing::info!("Unloading disabled plugin: {}", name);
+                if let Err(e) = self.plugin_manager.unload_plugin(&name) {
+                    tracing::error!("Failed to unload plugin '{}': {}", name, e);
+                    self.set_status_message(format!("Failed to unload plugin '{}': {}", name, e));
+                }
+            }
         }
     }
 }

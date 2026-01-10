@@ -370,6 +370,12 @@ pub struct Config {
     /// Warning notification settings
     #[serde(default)]
     pub warnings: WarningsConfig,
+
+    /// Plugin configurations by plugin name
+    /// Plugins are auto-discovered from the plugins directory.
+    /// Use this to enable/disable specific plugins.
+    #[serde(default)]
+    pub plugins: HashMap<String, PluginConfig>,
 }
 
 fn default_keybinding_map_name() -> KeybindingMapName {
@@ -681,6 +687,40 @@ impl Default for WarningsConfig {
     fn default() -> Self {
         Self {
             show_status_indicator: true,
+        }
+    }
+}
+
+/// Configuration for an individual plugin
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-display-field" = "/enabled"))]
+pub struct PluginConfig {
+    /// Whether this plugin is enabled (default: true)
+    /// When disabled, the plugin will not be loaded or executed.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Path to the plugin file (populated automatically when scanning)
+    /// This is filled in by the plugin system and should not be set manually.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<std::path::PathBuf>,
+}
+
+impl Default for PluginConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            path: None,
+        }
+    }
+}
+
+impl PluginConfig {
+    /// Create a new plugin config with the given path
+    pub fn new_with_path(path: std::path::PathBuf) -> Self {
+        Self {
+            enabled: true,
+            path: Some(path),
         }
     }
 }
@@ -1137,6 +1177,7 @@ impl Default for Config {
             languages: Self::default_languages(),
             lsp: Self::default_lsp_config(),
             warnings: WarningsConfig::default(),
+            plugins: HashMap::new(), // Populated when scanning for plugins
         }
     }
 }
