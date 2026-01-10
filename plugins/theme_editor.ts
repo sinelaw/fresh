@@ -12,6 +12,7 @@ const editor = getEditor();
  * - Copy from built-in themes to use as starting point
  * - Save as new theme name
  * - Easy option to set as default theme
+ *
  */
 
 // =============================================================================
@@ -108,7 +109,10 @@ function loadThemeSections(): ThemeSection[] {
     return cachedThemeSections;
   }
 
-  const schema = editor.getThemeSchema();
+  const schema = editor.getThemeSchema() as {
+    $defs?: Record<string, Record<string, unknown>>;
+    properties?: Record<string, unknown>;
+  };
   const defs = schema.$defs || {};
 
   // Helper to resolve $ref and get the referenced schema
@@ -480,7 +484,7 @@ function findThemesDir(): string {
  */
 async function loadBuiltinThemes(): Promise<string[]> {
   try {
-    const builtinThemes = editor.getBuiltinThemes();
+    const builtinThemes = editor.getBuiltinThemes() as Record<string, string>;
     return Object.keys(builtinThemes);
   } catch (e) {
     editor.debug(`Failed to load built-in themes list: ${e}`);
@@ -493,7 +497,7 @@ async function loadBuiltinThemes(): Promise<string[]> {
  */
 async function loadThemeFile(name: string): Promise<Record<string, unknown> | null> {
   try {
-    const builtinThemes = editor.getBuiltinThemes();
+    const builtinThemes = editor.getBuiltinThemes() as Record<string, string>;
     if (name in builtinThemes) {
       return JSON.parse(builtinThemes[name]);
     }
@@ -1639,8 +1643,10 @@ globalThis.theme_editor_nav_prev_section = function(): void {
  */
 globalThis.open_theme_editor = async function(): Promise<void> {
   if (isThemeEditorOpen()) {
-    // Focus the existing theme editor buffer
-    editor.focusBuffer(state.bufferId!);
+    // Focus the existing theme editor split
+    if (state.splitId !== null) {
+      editor.focusSplit(state.splitId);
+    }
     editor.setStatus(editor.t("status.already_open"));
     return;
   }
@@ -1794,7 +1800,7 @@ globalThis.theme_editor_edit_color = function(): void {
   }
 
   if (field.isSection) {
-    theme_editor_toggle_section();
+    globalThis.theme_editor_toggle_section();
     return;
   }
 
@@ -1860,13 +1866,13 @@ globalThis.theme_editor_save = async function(): Promise<void> {
   // Built-in themes require Save As
   if (state.isBuiltin) {
     editor.setStatus(editor.t("status.builtin_requires_save_as"));
-    theme_editor_save_as();
+    globalThis.theme_editor_save_as();
     return;
   }
 
   // If theme has never been saved (no path), trigger "Save As" instead
   if (!state.themePath) {
-    theme_editor_save_as();
+    globalThis.theme_editor_save_as();
     return;
   }
 

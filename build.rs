@@ -202,7 +202,9 @@ fn rust_type_to_ts(rust_type: &str) -> String {
 
     match rust_type {
         // Primitives
-        "u32" | "u16" | "u8" | "usize" | "i32" | "i16" | "i64" | "u64" | "f32" | "f64" => "number".to_string(),
+        "u32" | "u16" | "u8" | "usize" | "i32" | "i16" | "i64" | "u64" | "f32" | "f64" => {
+            "number".to_string()
+        }
         "bool" => "boolean".to_string(),
         "String" | "&str" => "string".to_string(),
         "()" => "void".to_string(),

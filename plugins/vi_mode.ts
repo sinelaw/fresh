@@ -12,6 +12,10 @@ const editor = getEditor();
  *
  * Uses the plugin API's executeAction() for true operator+motion composability:
  * any operator works with any motion via O(operators + motions) code.
+ *
+ * TODO: This plugin uses APIs that don't exist yet:
+ * - getLineStartPosition() - for visual block mode column calculation
+ * - defineMode with null parent - needs string parent mode
  */
 
 // Vi mode state
@@ -601,7 +605,7 @@ globalThis.vi_repeat = async function (): Promise<void> {
           editor.executeAction("delete_forward");
         }
         if (change.insertedText) {
-          editor.insertText(change.insertedText);
+          editor.insertAtCursor(change.insertedText);
         }
       } else if (change.action) {
         // Simple action like delete_forward, delete_backward
@@ -632,7 +636,7 @@ globalThis.vi_repeat = async function (): Promise<void> {
           editor.deleteRange(editor.getActiveBufferId(), start, end);
         }
         if (change.insertedText) {
-          editor.insertText(change.insertedText);
+          editor.insertAtCursor(change.insertedText);
         }
       }
       break;
@@ -645,7 +649,7 @@ globalThis.vi_repeat = async function (): Promise<void> {
           // For change: do the delete part, then insert the text
           applyOperatorWithMotion("d", change.motion, count);
           if (change.insertedText) {
-            editor.insertText(change.insertedText);
+            editor.insertAtCursor(change.insertedText);
           }
         } else {
           applyOperatorWithMotion(change.operator, change.motion, count);
@@ -662,7 +666,7 @@ globalThis.vi_repeat = async function (): Promise<void> {
         state.pendingTextObject = change.textObject.modifier;
         await applyTextObject(change.textObject.object);
         if (change.operator === "c" && change.insertedText) {
-          editor.insertText(change.insertedText);
+          editor.insertAtCursor(change.insertedText);
         }
       }
       break;
@@ -671,7 +675,7 @@ globalThis.vi_repeat = async function (): Promise<void> {
     case "insert": {
       // Pure insert (i, a, o, O)
       if (change.insertedText) {
-        editor.insertText(change.insertedText);
+        editor.insertAtCursor(change.insertedText);
       }
       break;
     }

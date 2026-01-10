@@ -117,6 +117,19 @@ interface EditorAPI {
     bg_b?: number,
     extend_to_line_end?: boolean
   ): boolean;
+
+  /**
+   * Get the theme JSON Schema (with proper typing)
+   */
+  getThemeSchema(): {
+    $defs?: Record<string, Record<string, unknown>>;
+    properties?: Record<string, unknown>;
+  };
+
+  /**
+   * Get built-in themes as a map of name to JSON string
+   */
+  getBuiltinThemes(): Record<string, string>;
 }
 
 /**

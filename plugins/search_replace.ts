@@ -226,7 +226,7 @@ async function showResultsPanel(): Promise<void> {
   const entries = buildPanelEntries();
 
   try {
-    resultsBufferId = await editor.createVirtualBufferInSplit({
+    const result = await editor.createVirtualBufferInSplit({
       name: "*Search/Replace*",
       mode: "search-replace-list",
       read_only: true,
@@ -236,9 +236,10 @@ async function showResultsPanel(): Promise<void> {
       show_line_numbers: false,
       show_cursors: true,
     });
+    resultsBufferId = result.buffer_id;
+    resultsSplitId = result.split_id ?? editor.getActiveSplitId();
 
     panelOpen = true;
-    resultsSplitId = editor.getActiveSplitId();
     editor.debug(`Search/Replace panel opened with buffer ID ${resultsBufferId}`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

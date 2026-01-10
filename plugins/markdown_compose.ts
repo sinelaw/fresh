@@ -1,3 +1,4 @@
+/// <reference path="./lib/fresh.d.ts" />
 // Markdown Compose Mode Plugin
 // Provides compose mode for Markdown documents with:
 // - Soft wrapping at a configurable width
@@ -23,23 +24,6 @@ const config: MarkdownConfig = {
 
 // Track buffers in compose mode (explicit toggle)
 const composeBuffers = new Set<number>();
-
-// Types match the Rust ViewTokenWire structure
-interface ViewTokenWire {
-  source_offset: number | null;
-  kind: ViewTokenWireKind;
-}
-
-type ViewTokenWireKind =
-  | { Text: string }
-  | "Newline"
-  | "Space"
-  | "Break";
-
-interface LayoutHints {
-  compose_width?: number | null;
-  column_guides?: number[] | null;
-}
 
 // =============================================================================
 // Block-based parser for hanging indent support

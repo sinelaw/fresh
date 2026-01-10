@@ -664,14 +664,9 @@ globalThis.git_blame_copy_hash = function(): void {
     return;
   }
 
-  // Use spawn to copy to clipboard
-  editor.spawnProcess("sh", ["-c", `echo -n "${hash}" | xclip -selection clipboard 2>/dev/null || echo -n "${hash}" | pbcopy 2>/dev/null || echo -n "${hash}" | xsel --clipboard 2>/dev/null`])
-    .then(() => {
-      editor.setStatus(editor.t("status.hash_copied", { short: hash.slice(0, 7), full: hash }));
-    })
-    .catch(() => {
-      editor.setStatus(editor.t("status.hash_display", { hash }));
-    });
+  // Copy hash to clipboard
+  editor.copyToClipboard(hash);
+  editor.setStatus(editor.t("status.hash_copied", { short: hash.slice(0, 7), full: hash }));
 };
 
 // =============================================================================

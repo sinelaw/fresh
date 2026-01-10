@@ -932,16 +932,9 @@ globalThis.git_log_copy_hash = function(): void {
     return;
   }
 
-  // Use spawn to copy to clipboard (works on most systems)
-  // Try xclip first (Linux), then pbcopy (macOS), then xsel
-  editor.spawnProcess("sh", ["-c", `echo -n "${commit.hash}" | xclip -selection clipboard 2>/dev/null || echo -n "${commit.hash}" | pbcopy 2>/dev/null || echo -n "${commit.hash}" | xsel --clipboard 2>/dev/null`])
-    .then(() => {
-      editor.setStatus(editor.t("status.hash_copied", { short: commit.shortHash, full: commit.hash }));
-    })
-    .catch(() => {
-      // If all clipboard commands fail, just show the hash
-      editor.setStatus(editor.t("status.hash_display", { hash: commit.hash }));
-    });
+  // Copy hash to clipboard
+  editor.copyToClipboard(commit.hash);
+  editor.setStatus(editor.t("status.hash_copied", { short: commit.shortHash, full: commit.hash }));
 };
 
 // =============================================================================

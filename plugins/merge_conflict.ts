@@ -14,6 +14,9 @@ const editor = getEditor();
  * - Visual highlighting with intra-line diffing
  *
  * Architecture: Plugin-based implementation following the spec in docs/MERGE.md
+ *
+ * TODO: Consider rewriting to use the built-in side-by-side diff in the core
+ * editor, or use composite buffers for a simpler implementation.
  */
 
 // =============================================================================
@@ -915,19 +918,19 @@ function buildResultEntries(): TextPropertyEntry[] {
 function applyHighlighting(): void {
   // Highlight OURS panel
   if (mergeState.oursPanelId !== null) {
-    editor.removeOverlaysByPrefix(mergeState.oursPanelId, "merge-");
+    editor.clearAllOverlays(mergeState.oursPanelId);
     highlightPanel(mergeState.oursPanelId, "ours");
   }
 
   // Highlight THEIRS panel
   if (mergeState.theirsPanelId !== null) {
-    editor.removeOverlaysByPrefix(mergeState.theirsPanelId, "merge-");
+    editor.clearAllOverlays(mergeState.theirsPanelId);
     highlightPanel(mergeState.theirsPanelId, "theirs");
   }
 
   // Highlight RESULT panel
   if (mergeState.resultPanelId !== null) {
-    editor.removeOverlaysByPrefix(mergeState.resultPanelId, "merge-");
+    editor.clearAllOverlays(mergeState.resultPanelId);
     highlightResultPanel(mergeState.resultPanelId);
   }
 }
@@ -1337,7 +1340,6 @@ async function createMergePanels(): Promise<void> {
     mode: "merge-conflict",
     read_only: true,
     entries: buildFullFileEntries("ours"),
-    panel_id: "merge-ours",
     show_line_numbers: true,
     show_cursors: true,
     editing_disabled: true,
@@ -1349,7 +1351,7 @@ async function createMergePanels(): Promise<void> {
   }
 
   // Create THEIRS panel to the right (vertical split)
-  const theirsId = await editor.createVirtualBufferInSplit({
+  const theirsResult = await editor.createVirtualBufferInSplit({
     name: `*THEIRS*${sourceExt}`,
     mode: "merge-conflict",
     read_only: true,
@@ -1362,9 +1364,9 @@ async function createMergePanels(): Promise<void> {
     editing_disabled: true,
   });
 
-  if (theirsId !== null) {
-    mergeState.theirsPanelId = theirsId;
-    mergeState.theirsSplitId = editor.getActiveSplitId();
+  if (theirsResult !== null) {
+    mergeState.theirsPanelId = theirsResult.buffer_id;
+    mergeState.theirsSplitId = theirsResult.split_id ?? editor.getActiveSplitId();
   }
 
   // Focus back on OURS and create RESULT in the middle
@@ -1372,7 +1374,7 @@ async function createMergePanels(): Promise<void> {
     editor.focusSplit(mergeState.oursSplitId);
   }
 
-  const resultId = await editor.createVirtualBufferInSplit({
+  const resultResult = await editor.createVirtualBufferInSplit({
     name: `*RESULT*${sourceExt}`,
     mode: "merge-result",
     read_only: false,
@@ -1385,9 +1387,9 @@ async function createMergePanels(): Promise<void> {
     editing_disabled: false,
   });
 
-  if (resultId !== null) {
-    mergeState.resultPanelId = resultId;
-    mergeState.resultSplitId = editor.getActiveSplitId();
+  if (resultResult !== null) {
+    mergeState.resultPanelId = resultResult.buffer_id;
+    mergeState.resultSplitId = resultResult.split_id ?? editor.getActiveSplitId();
   }
 
   // Distribute splits evenly so all three panels get equal width
@@ -1606,7 +1608,7 @@ globalThis.merge_save_and_exit = async function(): Promise<void> {
 
     // Delete all content
     if (bufferLength > 0) {
-      editor.deleteRange(mergeState.sourceBufferId, { start: 0, end: bufferLength });
+      editor.deleteRange(mergeState.sourceBufferId, 0, bufferLength);
     }
 
     // Insert resolved content

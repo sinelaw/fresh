@@ -1,10 +1,15 @@
-// Review Diff Plugin
-// Provides a unified workflow for reviewing code changes (diffs, conflicts, AI outputs).
-const editor = getEditor();
-
 /// <reference path="./lib/fresh.d.ts" />
 /// <reference path="./lib/types.ts" />
 /// <reference path="./lib/virtual-buffer-factory.ts" />
+
+// Review Diff Plugin
+// Provides a unified workflow for reviewing code changes (diffs, conflicts, AI outputs).
+//
+// TODO: This plugin has incomplete/broken functionality:
+// - Uses editor.prompt() which doesn't exist in the API (needs event-based prompt)
+// - Uses VirtualBufferOptions.read_only (should be readOnly)
+// - References stop_review_diff which is undefined
+const editor = getEditor();
 
 import { createVirtualBufferFactory } from "./lib/virtual-buffer-factory.ts";
 const VirtualBufferFactory = createVirtualBufferFactory(editor);
