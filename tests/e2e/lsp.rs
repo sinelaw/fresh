@@ -848,7 +848,6 @@ fn test_lsp_waiting_indicator() -> anyhow::Result<()> {
     target_os = "windows",
     ignore = "FakeLspServer uses a Bash script which is not available on Windows"
 )]
-#[ignore = "Semantic highlighting temporarily disabled"]
 fn test_semantic_tokens_version_gating() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
@@ -859,6 +858,7 @@ fn test_semantic_tokens_version_gating() -> anyhow::Result<()> {
     std::fs::write(&test_file, "fn main() {}\n")?;
 
     let mut config = fresh::config::Config::default();
+    config.editor.enable_semantic_tokens_full = true;
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::LspServerConfig {
@@ -1024,6 +1024,204 @@ fn test_semantic_tokens_range_preserves_overlays_on_edit() -> anyhow::Result<()>
         !handles_before.is_disjoint(&handles_after),
         "Expected semantic token overlays to persist while range response is pending"
     );
+
+    Ok(())
+}
+
+/// Ensure semantic token overlays persist when pressing Enter key specifically.
+/// This is different from type_text("\n") as Enter may trigger different code paths
+/// (e.g., autoindent, special newline handling).
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_semantic_tokens_persist_on_enter_key() -> anyhow::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+    use std::collections::HashSet;
+
+    let _fake_server = FakeLspServer::spawn_with_semantic_tokens_delay(200)?;
+
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("semantic_enter.rs");
+    std::fs::write(&test_file, "fn main() { let value = 1; }\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::semantic_tokens_delay_script_path()
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        100,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    let ns = fresh::services::lsp::semantic_tokens::lsp_semantic_tokens_namespace();
+    harness.wait_until(|h| {
+        let state = h.editor().active_state();
+        state
+            .overlays
+            .all()
+            .iter()
+            .any(|o| o.namespace.as_ref() == Some(&ns))
+    })?;
+
+    let handles_before: HashSet<_> = harness
+        .editor()
+        .active_state()
+        .overlays
+        .all()
+        .iter()
+        .filter(|o| o.namespace.as_ref() == Some(&ns))
+        .map(|o| o.handle.clone())
+        .collect();
+    assert!(
+        !handles_before.is_empty(),
+        "Expected semantic token overlays before Enter key"
+    );
+
+    // Position cursor at end of line and press Enter key specifically
+    // (not type_text("\n") which may use different code path)
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.process_async_and_render()?;
+
+    let handles_after: HashSet<_> = harness
+        .editor()
+        .active_state()
+        .overlays
+        .all()
+        .iter()
+        .filter(|o| o.namespace.as_ref() == Some(&ns))
+        .map(|o| o.handle.clone())
+        .collect();
+
+    assert!(
+        !handles_after.is_empty(),
+        "Semantic token overlays should not be cleared after Enter key"
+    );
+    assert!(
+        !handles_before.is_disjoint(&handles_after),
+        "Expected semantic token overlays to persist after Enter key press"
+    );
+
+    Ok(())
+}
+
+/// Ensure semantic token overlays shift with edits (marker tracking).
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_semantic_tokens_overlays_shift_on_edit() -> anyhow::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+    use std::collections::HashMap;
+
+    let _fake_server = FakeLspServer::spawn_with_semantic_tokens_delay(200)?;
+
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("semantic_shift.rs");
+    std::fs::write(&test_file, "fn main() { let value = 1; }\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.editor.enable_semantic_tokens_full = false;
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::semantic_tokens_delay_script_path()
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        100,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    let ns = fresh::services::lsp::semantic_tokens::lsp_semantic_tokens_namespace();
+    harness.wait_until(|h| {
+        h.editor()
+            .active_state()
+            .overlays
+            .all()
+            .iter()
+            .any(|o| o.namespace.as_ref() == Some(&ns))
+    })?;
+
+    let state_before = harness.editor().active_state();
+    let mut ranges_before = HashMap::new();
+    for overlay in state_before
+        .overlays
+        .all()
+        .iter()
+        .filter(|o| o.namespace.as_ref() == Some(&ns))
+    {
+        ranges_before.insert(
+            overlay.handle.clone(),
+            overlay.range(&state_before.marker_list),
+        );
+    }
+
+    assert!(
+        ranges_before.values().any(|range| *range == (0..2)),
+        "Expected semantic token overlay for 'fn'"
+    );
+    assert!(
+        ranges_before.values().any(|range| *range == (3..7)),
+        "Expected semantic token overlay for 'main'"
+    );
+
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE)?;
+    harness.type_text("abc")?;
+    harness.process_async_and_render()?;
+
+    let state_after = harness.editor().active_state();
+    for (handle, range_before) in ranges_before {
+        let overlay = state_after
+            .overlays
+            .all()
+            .iter()
+            .find(|o| o.handle == handle)
+            .expect("Expected semantic token overlay to persist after edit");
+        let range_after = overlay.range(&state_after.marker_list);
+        assert_eq!(
+            range_after.start,
+            range_before.start + 3,
+            "Overlay start should shift with insert"
+        );
+        assert_eq!(
+            range_after.end,
+            range_before.end + 3,
+            "Overlay end should shift with insert"
+        );
+    }
 
     Ok(())
 }
