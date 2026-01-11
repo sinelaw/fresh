@@ -60,7 +60,7 @@ impl EntryDialogState {
     ) -> Self {
         let mut items = Vec::new();
 
-        // Add key field as first item (editable text input)
+        // Add key field as first item (read-only for existing entries)
         let key_item = SettingItem {
             path: "__key__".to_string(),
             name: "Key".to_string(),
@@ -68,6 +68,7 @@ impl EntryDialogState {
             control: SettingControl::Text(TextInputState::new("Key").with_value(&key)),
             default: None,
             modified: false,
+            read_only: !is_new, // Key is editable only for new entries
         };
         items.push(key_item);
 
@@ -578,6 +579,10 @@ impl EntryDialogState {
     /// Start text editing mode for the current control
     pub fn start_editing(&mut self) {
         if let Some(item) = self.current_item_mut() {
+            // Don't allow editing read-only fields
+            if item.read_only {
+                return;
+            }
             match &mut item.control {
                 SettingControl::Text(state) => {
                     // TextInputState uses focus state, cursor is already at end from with_value
@@ -841,6 +846,10 @@ impl EntryDialogState {
     /// Toggle boolean value
     pub fn toggle_bool(&mut self) {
         if let Some(item) = self.current_item_mut() {
+            // Don't allow toggling read-only fields
+            if item.read_only {
+                return;
+            }
             if let SettingControl::Toggle(state) = &mut item.control {
                 state.checked = !state.checked;
             }
@@ -850,6 +859,10 @@ impl EntryDialogState {
     /// Toggle dropdown open state
     pub fn toggle_dropdown(&mut self) {
         if let Some(item) = self.current_item_mut() {
+            // Don't allow editing read-only fields
+            if item.read_only {
+                return;
+            }
             if let SettingControl::Dropdown(state) = &mut item.control {
                 state.open = !state.open;
             }
@@ -890,6 +903,10 @@ impl EntryDialogState {
     /// Increment number value
     pub fn increment_number(&mut self) {
         if let Some(item) = self.current_item_mut() {
+            // Don't allow editing read-only fields
+            if item.read_only {
+                return;
+            }
             if let SettingControl::Number(state) = &mut item.control {
                 state.increment();
             }
@@ -899,6 +916,10 @@ impl EntryDialogState {
     /// Decrement number value
     pub fn decrement_number(&mut self) {
         if let Some(item) = self.current_item_mut() {
+            // Don't allow editing read-only fields
+            if item.read_only {
+                return;
+            }
             if let SettingControl::Number(state) = &mut item.control {
                 state.decrement();
             }
@@ -1025,6 +1046,7 @@ mod tests {
                         description: Some("Enable this".to_string()),
                         setting_type: SettingType::Boolean,
                         default: Some(serde_json::json!(true)),
+                        read_only: false,
                     },
                     SettingSchema {
                         path: "/command".to_string(),
@@ -1032,10 +1054,12 @@ mod tests {
                         description: Some("Command to run".to_string()),
                         setting_type: SettingType::String,
                         default: Some(serde_json::json!("")),
+                        read_only: false,
                     },
                 ],
             },
             default: None,
+            read_only: false,
         }
     }
 

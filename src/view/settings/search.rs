@@ -181,6 +181,7 @@ mod tests {
             control: SettingControl::Toggle(ToggleState::new(false, name)),
             default: None,
             modified: false,
+            read_only: false,
         }
     }
 

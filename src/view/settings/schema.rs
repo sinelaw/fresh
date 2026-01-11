@@ -68,6 +68,8 @@ pub struct SettingSchema {
     pub setting_type: SettingType,
     /// Default value (as JSON)
     pub default: Option<serde_json::Value>,
+    /// Whether this field is read-only (cannot be edited by user)
+    pub read_only: bool,
 }
 
 /// Type of a setting, determines which control to render
@@ -159,6 +161,12 @@ struct RawSchema {
     /// e.g., "/command" for OnSaveAction, "/action" for Keybinding
     #[serde(rename = "x-display-field")]
     display_field: Option<String>,
+    /// Whether this field is read-only
+    #[serde(rename = "readOnly", default)]
+    read_only: bool,
+    /// Whether this Map-type property should be rendered as its own category
+    #[serde(rename = "x-standalone-category", default)]
+    standalone_category: bool,
 }
 
 /// An entry in the x-enum-values array
@@ -225,8 +233,18 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
         // Resolve references
         let resolved = resolve_ref(&prop, &defs);
 
-        // Check if this is a nested object (category) or a simple setting
-        if let Some(ref inner_props) = resolved.properties {
+        // Check if this property should be a standalone category (for Map types)
+        if prop.standalone_category {
+            // Create a category with the Map setting as its only content
+            let setting = parse_setting(&name, &path, &prop, &defs, &enum_values_map);
+            categories.push(SettingCategory {
+                name: display_name,
+                path: path.clone(),
+                description: prop.description.clone().or(resolved.description.clone()),
+                settings: vec![setting],
+                subcategories: Vec::new(),
+            });
+        } else if let Some(ref inner_props) = resolved.properties {
             // This is a category with nested settings
             let settings = parse_properties(inner_props, &path, &defs, &enum_values_map);
             categories.push(SettingCategory {
@@ -328,12 +346,16 @@ fn parse_setting(
         .clone()
         .or_else(|| resolved.description.clone());
 
+    // Check for readOnly flag on schema or resolved ref
+    let read_only = schema.read_only || resolved.read_only;
+
     SettingSchema {
         path: path.to_string(),
         name: humanize_name(name),
         description,
         setting_type,
         default: schema.default.clone(),
+        read_only,
     }
 }
 

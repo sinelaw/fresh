@@ -132,6 +132,7 @@
       "additionalProperties": {
         "$ref": "#/$defs/PluginConfig"
       },
+      "x-standalone-category": true,
       "default": {}
     }
   },
@@ -798,7 +799,8 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "readOnly": true
         }
       },
       "x-display-field": "/enabled"

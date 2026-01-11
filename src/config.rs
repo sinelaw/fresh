@@ -375,6 +375,7 @@ pub struct Config {
     /// Plugins are auto-discovered from the plugins directory.
     /// Use this to enable/disable specific plugins.
     #[serde(default)]
+    #[schemars(extend("x-standalone-category" = true))]
     pub plugins: HashMap<String, PluginConfig>,
 }
 
@@ -703,6 +704,7 @@ pub struct PluginConfig {
     /// Path to the plugin file (populated automatically when scanning)
     /// This is filled in by the plugin system and should not be set manually.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("readOnly" = true))]
     pub path: Option<std::path::PathBuf>,
 }
 

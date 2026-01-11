@@ -229,6 +229,8 @@ pub struct SettingItem {
     pub default: Option<serde_json::Value>,
     /// Whether this setting has been modified from default
     pub modified: bool,
+    /// Whether this field is read-only (cannot be edited)
+    pub read_only: bool,
 }
 
 /// The type of control to render for a setting
@@ -719,6 +721,7 @@ pub fn build_item(schema: &SettingSchema, config_value: &serde_json::Value) -> S
         control,
         default: schema.default.clone(),
         modified,
+        read_only: schema.read_only,
     }
 }
 
@@ -884,6 +887,7 @@ pub fn build_item_from_value(
         control,
         default: schema.default.clone(),
         modified,
+        read_only: schema.read_only,
     }
 }
 
