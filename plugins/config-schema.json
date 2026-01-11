@@ -133,6 +133,7 @@
         "$ref": "#/$defs/PluginConfig"
       },
       "x-standalone-category": true,
+      "x-no-add": true,
       "default": {}
     }
   },

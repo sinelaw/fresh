@@ -1159,6 +1159,45 @@ fn render_map_partial(
 
     let indent = 2u16;
 
+    // Row 1 is column headers (if display_field is set)
+    if state.display_field.is_some() && y < area.y + area.height {
+        if content_row >= skip_rows {
+            // Derive header name from display_field (e.g., "/enabled" -> "Enabled")
+            let value_header = state
+                .display_field
+                .as_ref()
+                .map(|f| {
+                    let name = f.trim_start_matches('/');
+                    // Capitalize first letter
+                    let mut chars = name.chars();
+                    match chars.next() {
+                        None => String::new(),
+                        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                    }
+                })
+                .unwrap_or_else(|| "Value".to_string());
+
+            let header_style = Style::default()
+                .fg(colors.label)
+                .add_modifier(Modifier::DIM);
+            let header_line = Line::from(vec![
+                Span::styled(" ".repeat(indent as usize), header_style),
+                Span::styled(
+                    format!("{:width$}", "Name", width = key_width as usize),
+                    header_style,
+                ),
+                Span::raw(" "),
+                Span::styled(value_header, header_style),
+            ]);
+            frame.render_widget(
+                Paragraph::new(header_line),
+                Rect::new(area.x, y, area.width, 1),
+            );
+            y += 1;
+        }
+        content_row += 1;
+    }
+
     // Render entries
     for (idx, (key, value)) in state.entries.iter().enumerate() {
         if y >= area.y + area.height {
