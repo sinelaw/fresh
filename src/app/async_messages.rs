@@ -282,22 +282,25 @@ impl Editor {
                     Ok(tokens_opt) => {
                         let spans = match tokens_opt {
                             Some(SemanticTokensRangeResult::Tokens(tokens)) => {
-                                let (_, spans) = decode_semantic_token_data(
+                                // LSP semantic tokens are always delta-encoded from document
+                                // position (0,0), even for range requests. The range only
+                                // filters which tokens are returned, not the encoding origin.
+                                let decoded = decode_semantic_token_data(
                                     &state.buffer,
                                     &legend,
                                     &tokens.data,
-                                    requested_start_line.unwrap_or(0),
+                                    0,
                                 );
-                                spans
+                                decoded.spans
                             }
                             Some(SemanticTokensRangeResult::Partial(partial)) => {
-                                let (_, spans) = decode_semantic_token_data(
+                                let decoded = decode_semantic_token_data(
                                     &state.buffer,
                                     &legend,
                                     &partial.data,
-                                    requested_start_line.unwrap_or(0),
+                                    0,
                                 );
-                                spans
+                                decoded.spans
                             }
                             None => Vec::new(),
                         };
@@ -342,39 +345,51 @@ impl Editor {
                         );
                     }
                     Ok(tokens_opt) => {
-                        let (result_id, raw_data, spans) = match tokens_opt {
+                        let decoded = match tokens_opt {
                             Some(SemanticTokensResult::Tokens(tokens)) => {
-                                let (raw, spans) = decode_semantic_token_data(
+                                let decoded = decode_semantic_token_data(
                                     &state.buffer,
                                     &legend,
                                     &tokens.data,
                                     0,
                                 );
-                                (tokens.result_id.clone(), raw, spans)
+                                SemanticTokensFullDecode {
+                                    result_id: tokens.result_id.clone(),
+                                    raw_data: decoded.raw,
+                                    spans: decoded.spans,
+                                }
                             }
                             Some(SemanticTokensResult::Partial(partial)) => {
-                                let (raw, spans) = decode_semantic_token_data(
+                                let decoded = decode_semantic_token_data(
                                     &state.buffer,
                                     &legend,
                                     &partial.data,
                                     0,
                                 );
-                                (None, raw, spans)
+                                SemanticTokensFullDecode {
+                                    result_id: None,
+                                    raw_data: decoded.raw,
+                                    spans: decoded.spans,
+                                }
                             }
-                            None => (None, Vec::new(), Vec::new()),
+                            None => SemanticTokensFullDecode {
+                                result_id: None,
+                                raw_data: Vec::new(),
+                                spans: Vec::new(),
+                            },
                         };
 
                         crate::services::lsp::semantic_tokens::apply_semantic_tokens_to_state(
                             state,
-                            &spans,
+                            &decoded.spans,
                             &self.theme,
                         );
 
                         state.set_semantic_tokens(SemanticTokenStore {
                             version: current_version,
-                            result_id,
-                            data: raw_data,
-                            tokens: spans,
+                            result_id: decoded.result_id,
+                            data: decoded.raw_data,
+                            tokens: decoded.spans,
                         });
                     }
                 }
@@ -407,11 +422,13 @@ impl Editor {
                             existing_store.and_then(|store| store.result_id.clone());
                         let existing_data = existing_store.map(|store| store.data.clone());
 
-                        let (result_id, raw_data) = match tokens_opt {
-                            Some(SemanticTokensFullDeltaResult::Tokens(tokens)) => (
-                                tokens.result_id.clone(),
-                                semantic_tokens_to_raw(&tokens.data),
-                            ),
+                        let decoded = match tokens_opt {
+                            Some(SemanticTokensFullDeltaResult::Tokens(tokens)) => {
+                                SemanticTokensDeltaDecode {
+                                    result_id: tokens.result_id.clone(),
+                                    raw_data: semantic_tokens_to_raw(&tokens.data),
+                                }
+                            }
                             Some(SemanticTokensFullDeltaResult::TokensDelta(delta)) => {
                                 let Some(existing) = existing_data else {
                                     tracing::warn!(
@@ -435,7 +452,10 @@ impl Editor {
                                         return;
                                     }
                                 };
-                                (delta.result_id.clone().or(existing_result_id), updated)
+                                SemanticTokensDeltaDecode {
+                                    result_id: delta.result_id.clone().or(existing_result_id),
+                                    raw_data: updated,
+                                }
                             }
                             Some(SemanticTokensFullDeltaResult::PartialTokensDelta { edits }) => {
                                 let Some(existing) = existing_data else {
@@ -457,13 +477,23 @@ impl Editor {
                                         return;
                                     }
                                 };
-                                (existing_result_id, updated)
+                                SemanticTokensDeltaDecode {
+                                    result_id: existing_result_id,
+                                    raw_data: updated,
+                                }
                             }
-                            None => (None, Vec::new()),
+                            None => SemanticTokensDeltaDecode {
+                                result_id: None,
+                                raw_data: Vec::new(),
+                            },
                         };
 
-                        let spans =
-                            decode_semantic_token_raw_data(&state.buffer, &legend, &raw_data, 0);
+                        let spans = decode_semantic_token_raw_data(
+                            &state.buffer,
+                            &legend,
+                            &decoded.raw_data,
+                            0,
+                        );
 
                         crate::services::lsp::semantic_tokens::apply_semantic_tokens_to_state(
                             state,
@@ -473,8 +503,8 @@ impl Editor {
 
                         state.set_semantic_tokens(SemanticTokenStore {
                             version: current_version,
-                            result_id,
-                            data: raw_data,
+                            result_id: decoded.result_id,
+                            data: decoded.raw_data,
                             tokens: spans,
                         });
                     }
@@ -1144,15 +1174,31 @@ fn decode_semantic_token_raw_data(
     result
 }
 
+struct SemanticTokenDecode {
+    raw: Vec<u32>,
+    spans: Vec<SemanticTokenSpan>,
+}
+
+struct SemanticTokensFullDecode {
+    result_id: Option<String>,
+    raw_data: Vec<u32>,
+    spans: Vec<SemanticTokenSpan>,
+}
+
+struct SemanticTokensDeltaDecode {
+    result_id: Option<String>,
+    raw_data: Vec<u32>,
+}
+
 fn decode_semantic_token_data(
     buffer: &Buffer,
     legend: &SemanticTokensLegend,
     data: &[SemanticToken],
     base_line: usize,
-) -> (Vec<u32>, Vec<SemanticTokenSpan>) {
+) -> SemanticTokenDecode {
     let raw = semantic_tokens_to_raw(data);
     let spans = decode_semantic_token_raw_data(buffer, legend, &raw, base_line);
-    (raw, spans)
+    SemanticTokenDecode { raw, spans }
 }
 
 fn apply_semantic_token_edits(
