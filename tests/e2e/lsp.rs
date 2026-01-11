@@ -3323,6 +3323,7 @@ fn test_inlay_hints_position_tracking() -> anyhow::Result<()> {
 /// normally trigger didChange notifications to the LSP). The LSP should only restart when
 /// the user explicitly uses the "restart lsp" command.
 #[test]
+#[cfg_attr(windows, ignore = "Uses bash script for fake LSP server")]
 fn test_stopped_lsp_does_not_auto_restart_on_edit() -> anyhow::Result<()> {
     use crate::common::fake_lsp::FakeLspServer;
 
