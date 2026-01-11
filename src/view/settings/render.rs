@@ -560,6 +560,7 @@ fn render_setting_item_pure(
         skip_top,
         theme,
         label_width.map(|w| w.saturating_sub(focus_indicator_width)),
+        item.read_only,
     );
 
     // Render description below the control (if visible and exists)
@@ -642,6 +643,7 @@ fn render_setting_item_pure(
 /// * `modified` - Whether the setting has been modified from default
 /// * `skip_rows` - Number of rows to skip at top of control (for partial visibility)
 /// * `label_width` - Optional label width for column alignment
+/// * `read_only` - Whether this field is read-only (displays as plain text instead of input)
 fn render_control(
     frame: &mut Frame,
     area: Rect,
@@ -651,6 +653,7 @@ fn render_control(
     skip_rows: u16,
     theme: &Theme,
     label_width: Option<u16>,
+    read_only: bool,
 ) -> ControlLayoutInfo {
     match control {
         // Single-row controls: only render if not skipped
@@ -693,10 +696,34 @@ fn render_control(
             if skip_rows > 0 {
                 return ControlLayoutInfo::Text(Rect::default());
             }
-            let colors = TextInputColors::from_theme(theme);
-            let text_layout =
-                render_text_input_aligned(frame, area, state, &colors, 30, label_width);
-            ControlLayoutInfo::Text(text_layout.input_area)
+            if read_only {
+                // Render read-only text as plain text (not editable)
+                let label_w = label_width.unwrap_or(20);
+                let label_style = Style::default().fg(theme.editor_fg);
+                let value_style = Style::default().fg(theme.line_number_fg);
+                let label = format!("{}: ", state.label);
+                let value = &state.value;
+
+                let label_area = Rect::new(area.x, area.y, label_w, 1);
+                let value_area = Rect::new(
+                    area.x + label_w,
+                    area.y,
+                    area.width.saturating_sub(label_w),
+                    1,
+                );
+
+                frame.render_widget(Paragraph::new(label.clone()).style(label_style), label_area);
+                frame.render_widget(
+                    Paragraph::new(value.as_str()).style(value_style),
+                    value_area,
+                );
+                ControlLayoutInfo::Text(Rect::default()) // No clickable area for read-only
+            } else {
+                let colors = TextInputColors::from_theme(theme);
+                let text_layout =
+                    render_text_input_aligned(frame, area, state, &colors, 30, label_width);
+                ControlLayoutInfo::Text(text_layout.input_area)
+            }
         }
 
         // Multi-row controls: pass skip_rows to render partial view
@@ -2065,6 +2092,7 @@ fn render_entry_dialog(
             skip_rows,
             theme,
             Some(label_col_width.saturating_sub(focus_indicator_width)),
+            item.read_only,
         );
 
         screen_y += render_height as u16;
