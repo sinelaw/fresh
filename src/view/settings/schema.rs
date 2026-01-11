@@ -106,6 +106,8 @@ pub enum SettingType {
         value_schema: Box<SettingSchema>,
         /// JSON pointer to field within value to display as preview (e.g., "/command")
         display_field: Option<String>,
+        /// Whether to disallow adding new entries (entries are auto-managed)
+        no_add: bool,
     },
     /// Complex type we can't edit directly
     Complex,
@@ -167,6 +169,9 @@ struct RawSchema {
     /// Whether this Map-type property should be rendered as its own category
     #[serde(rename = "x-standalone-category", default)]
     standalone_category: bool,
+    /// Whether this Map should disallow adding new entries (entries are auto-managed)
+    #[serde(rename = "x-no-add", default)]
+    no_add: bool,
 }
 
 /// An entry in the x-enum-values array
@@ -459,9 +464,13 @@ fn determine_type(
                         // Get display_field from x-display-field in the referenced schema
                         let display_field = inner_resolved.display_field.clone();
 
+                        // Get no_add from the parent schema (resolved)
+                        let no_add = resolved.no_add;
+
                         return SettingType::Map {
                             value_schema: Box::new(value_schema),
                             display_field,
+                            no_add,
                         };
                     }
                     AdditionalProperties::Bool(true) => {

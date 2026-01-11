@@ -49,6 +49,8 @@ pub struct MapState {
     pub value_schema: Option<Box<crate::view::settings::schema::SettingSchema>>,
     /// JSON pointer to field within value to display as preview (e.g., "/command")
     pub display_field: Option<String>,
+    /// Whether to disallow adding new entries (entries are auto-managed)
+    pub no_add: bool,
 }
 
 impl MapState {
@@ -64,12 +66,19 @@ impl MapState {
             expanded: Vec::new(),
             value_schema: None,
             display_field: None,
+            no_add: false,
         }
     }
 
     /// Set the display field (JSON pointer to field within value to show as preview)
     pub fn with_display_field(mut self, field: String) -> Self {
         self.display_field = Some(field);
+        self
+    }
+
+    /// Set whether adding new entries is disallowed
+    pub fn with_no_add(mut self, no_add: bool) -> Self {
+        self.no_add = no_add;
         self
     }
 
@@ -253,7 +262,7 @@ impl MapState {
                 self.focused_entry = Some(self.entries.len() - 1);
                 true
             }
-            None => false, // Empty map, move to previous item
+            None => false, // Empty map or at add-new with no entries, move to previous item
         }
     }
 
@@ -264,7 +273,12 @@ impl MapState {
                 self.focused_entry = Some(idx + 1);
                 true
             }
+            Some(_) if self.no_add => {
+                // At last entry but no_add is true, move to next item
+                false
+            }
             Some(_) => {
+                // At last entry, go to add-new
                 self.focused_entry = None;
                 self.cursor = self.new_key_text.len();
                 true
@@ -274,13 +288,23 @@ impl MapState {
     }
 
     /// Initialize focus when entering the control.
-    /// `from_above`: true = start at first entry, false = start at add-new field
+    /// `from_above`: true = start at first entry, false = start at add-new field (or last entry if no_add)
     pub fn init_focus(&mut self, from_above: bool) {
         if from_above && !self.entries.is_empty() {
             self.focused_entry = Some(0);
-        } else {
+        } else if !from_above && !self.entries.is_empty() && self.no_add {
+            // Coming from below with no_add, go to last entry
+            self.focused_entry = Some(self.entries.len() - 1);
+        } else if !self.no_add {
+            // Can go to add-new field
             self.focused_entry = None;
             self.cursor = self.new_key_text.len();
+        } else if !self.entries.is_empty() {
+            // no_add and coming from above, start at first entry
+            self.focused_entry = Some(0);
+        } else {
+            // Empty and no_add, shouldn't happen but handle gracefully
+            self.focused_entry = None;
         }
     }
 

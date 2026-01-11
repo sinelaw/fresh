@@ -375,7 +375,7 @@ pub struct Config {
     /// Plugins are auto-discovered from the plugins directory.
     /// Use this to enable/disable specific plugins.
     #[serde(default)]
-    #[schemars(extend("x-standalone-category" = true))]
+    #[schemars(extend("x-standalone-category" = true, "x-no-add" = true))]
     pub plugins: HashMap<String, PluginConfig>,
 }
 

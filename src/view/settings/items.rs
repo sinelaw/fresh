@@ -668,6 +668,7 @@ pub fn build_item(schema: &SettingSchema, config_value: &serde_json::Value) -> S
         SettingType::Map {
             value_schema,
             display_field,
+            no_add,
         } => {
             // Get current map value or default
             let map_value = current_value
@@ -679,6 +680,9 @@ pub fn build_item(schema: &SettingSchema, config_value: &serde_json::Value) -> S
             state = state.with_value_schema((**value_schema).clone());
             if let Some(field) = display_field {
                 state = state.with_display_field(field.clone());
+            }
+            if *no_add {
+                state = state.with_no_add(true);
             }
             SettingControl::Map(state)
         }
@@ -839,6 +843,7 @@ pub fn build_item_from_value(
         SettingType::Map {
             value_schema,
             display_field,
+            no_add,
         } => {
             let map_value = current_value
                 .cloned()
@@ -849,6 +854,9 @@ pub fn build_item_from_value(
             state = state.with_value_schema((**value_schema).clone());
             if let Some(field) = display_field {
                 state = state.with_display_field(field.clone());
+            }
+            if *no_add {
+                state = state.with_no_add(true);
             }
             SettingControl::Map(state)
         }

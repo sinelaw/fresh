@@ -1242,8 +1242,8 @@ fn render_map_partial(
         content_row += 1;
     }
 
-    // Add-new row (always show as button - dialog handles input)
-    let add_row_area = if y < area.y + area.height && content_row >= skip_rows {
+    // Add-new row (only show if adding is allowed)
+    let add_row_area = if !state.no_add && y < area.y + area.height && content_row >= skip_rows {
         let row_area = Rect::new(area.x, y, area.width, 1);
         let is_focused = state.focused_entry.is_none() && state.focus == FocusState::Focused;
 
