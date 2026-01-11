@@ -311,9 +311,8 @@ fn extract_ops(rust_source: &str) -> Vec<OpInfo> {
         if line.starts_with("#[op2") {
             let is_async = line.contains("async");
 
-            // Check for #[string] or #[serde] return marker on following lines
+            // Check for #[string] return marker on following lines
             let mut has_string_return = false;
-            let mut has_serde_return = false;
             let mut fn_line_idx = i + 1;
 
             while fn_line_idx < lines.len() {
@@ -322,7 +321,7 @@ fn extract_ops(rust_source: &str) -> Vec<OpInfo> {
                     has_string_return = true;
                     fn_line_idx += 1;
                 } else if next_line.starts_with("#[serde]") {
-                    has_serde_return = true;
+                    // Skip serde attribute lines
                     fn_line_idx += 1;
                 } else if next_line.starts_with("#[allow") {
                     fn_line_idx += 1;
@@ -345,7 +344,6 @@ fn extract_ops(rust_source: &str) -> Vec<OpInfo> {
                     if let Some(mut op_info) = parse_fn_signature(
                         fn_line,
                         has_string_return,
-                        has_serde_return,
                         is_async,
                         &lines[fn_line_idx..],
                     ) {
@@ -365,7 +363,6 @@ fn extract_ops(rust_source: &str) -> Vec<OpInfo> {
 fn parse_fn_signature(
     line: &str,
     has_string_return: bool,
-    has_serde_return: bool,
     is_async: bool,
     remaining_lines: &[&str],
 ) -> Option<OpInfo> {
@@ -458,15 +455,8 @@ fn parse_fn_signature(
         let rust_ret = full_sig[ret_start..ret_end].trim();
 
         // For serde return, the type is already the Rust type
-        if has_serde_return
-            || rust_ret.starts_with("Result<")
-            || rust_ret.starts_with("Option<")
-            || rust_ret.starts_with("Vec<")
-        {
-            rust_type_to_ts(rust_ret)
-        } else {
-            rust_type_to_ts(rust_ret)
-        }
+        // The conditions above were for documentation/future differentiation
+        rust_type_to_ts(rust_ret)
     } else {
         "void".to_string()
     };
@@ -497,9 +487,8 @@ fn parse_param(param_str: &str) -> Option<ParamInfo> {
         return None;
     }
 
-    // Check for #[string] or #[serde] attribute
+    // Check for #[string] attribute
     let is_string = param_str.contains("#[string]");
-    let is_serde = param_str.contains("#[serde]");
     let clean_param = param_str
         .replace("#[string]", "")
         .replace("#[serde]", "")
@@ -526,9 +515,8 @@ fn parse_param(param_str: &str) -> Option<ParamInfo> {
         } else {
             "string".to_string()
         }
-    } else if is_serde {
-        rust_type_to_ts(rust_type)
     } else {
+        // Both serde and non-serde cases use the same type conversion
         rust_type_to_ts(rust_type)
     };
 
@@ -613,8 +601,8 @@ fn parse_struct(lines: &[&str], struct_line_idx: usize) -> Option<StructInfo> {
     let mut in_struct = false;
     let mut field_doc = String::new();
 
-    for j in struct_line_idx..lines.len() {
-        let line = lines[j].trim();
+    for line in lines.iter().skip(struct_line_idx) {
+        let line = line.trim();
 
         if line.contains('{') {
             in_struct = true;
