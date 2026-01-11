@@ -1940,16 +1940,20 @@ fn test_entry_dialog_focus_indicator() {
     // Entry dialog should be open
     harness.assert_screen_contains("Edit Value");
 
-    // The focused field should have a ">" indicator
-    // First field is "Key" which should be focused by default
-    harness.assert_screen_contains("> Key");
+    // Read-only fields (Key) are displayed first but not focusable
+    // Key should be visible without focus indicator
+    harness.assert_screen_contains("Key:");
 
-    // Navigate down to next field
+    // The focused field should have a ">" indicator
+    // First editable field (Auto Indent) should be focused by default
+    harness.assert_screen_contains("> Auto Indent");
+
+    // Navigate down to next editable field
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Now "Auto Indent" should be focused with ">" indicator
-    harness.assert_screen_contains("> Auto Indent");
+    // Now "Comment Prefix" should be focused with ">" indicator
+    harness.assert_screen_contains("> Comment Prefix");
 
     // Close dialog
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -2414,14 +2418,29 @@ fn navigate_to_lsp_json_editor(harness: &mut EditorTestHarness) {
     harness.assert_screen_contains("Edit Value");
 
     // Navigate down to "Initialization Options" field
-    // Fields in entry dialog: Key, Args, Auto Start, Command, Enabled, Initialization Options
-    for _ in 0..5 {
+    // Navigate until we see the focus indicator on Initialization Options
+    for _ in 0..10 {
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        if screen.contains("> Initialization Options")
+            || screen.contains(">Initialization Options")
+            || screen.contains("> • Initialization Options")
+        {
+            break;
+        }
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness.render().unwrap();
 
-    // Verify we're on Initialization Options
-    harness.assert_screen_contains("Initialization Options");
+    // Verify we're on Initialization Options (may have bullet marker)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("> Initialization Options")
+            || screen.contains(">Initialization Options")
+            || screen.contains("> • Initialization Options"),
+        "Should be focused on Initialization Options. Screen:\n{}",
+        screen
+    );
 }
 
 /// Test that Delete key works in JSON editor (deletes character at cursor)
