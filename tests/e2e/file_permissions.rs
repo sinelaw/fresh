@@ -211,6 +211,142 @@ fn test_multiple_saves_preserve_permissions() {
     );
 }
 
+/// Test that saving a file preserves its owner and group (Unix)
+/// This tests issue #743: File owner changes when editing with group write privileges
+#[test]
+#[cfg(unix)]
+fn test_save_preserves_file_owner_and_group() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test_owner.txt");
+
+    // Create a file with group write permissions (simulating the bug scenario)
+    std::fs::write(&file_path, "initial content").unwrap();
+    std::fs::set_permissions(&file_path, Permissions::from_mode(0o664)).unwrap();
+
+    // Get initial owner/group
+    let initial_meta = std::fs::metadata(&file_path).unwrap();
+    let initial_uid = initial_meta.uid();
+    let initial_gid = initial_meta.gid();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open the file
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Modify the content
+    harness.type_text("modified ").unwrap();
+    harness.render().unwrap();
+
+    // Save the file
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    // Wait for save to complete
+    let file_path_clone = file_path.clone();
+    harness
+        .wait_until(move |_| {
+            std::fs::read_to_string(&file_path_clone)
+                .map(|s| s.starts_with("modified "))
+                .unwrap_or(false)
+        })
+        .unwrap();
+
+    // Verify owner and group are preserved
+    let final_meta = std::fs::metadata(&file_path).unwrap();
+    assert_eq!(
+        final_meta.uid(),
+        initial_uid,
+        "File owner (uid) should be preserved after save"
+    );
+    assert_eq!(
+        final_meta.gid(),
+        initial_gid,
+        "File group (gid) should be preserved after save"
+    );
+}
+
+/// Test that multiple saves preserve owner and group each time (Unix)
+/// This tests issue #743 more thoroughly with multiple save operations
+#[test]
+#[cfg(unix)]
+fn test_multiple_saves_preserve_owner_and_group() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("multi_owner.txt");
+
+    // Create a file with group write permissions
+    std::fs::write(&file_path, "v1").unwrap();
+    std::fs::set_permissions(&file_path, Permissions::from_mode(0o664)).unwrap();
+
+    let initial_meta = std::fs::metadata(&file_path).unwrap();
+    let initial_uid = initial_meta.uid();
+    let initial_gid = initial_meta.gid();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // First edit and save
+    harness.type_text(" edit1").unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let meta_after_first = std::fs::metadata(&file_path).unwrap();
+    assert_eq!(
+        meta_after_first.uid(),
+        initial_uid,
+        "Owner should be preserved after first save"
+    );
+    assert_eq!(
+        meta_after_first.gid(),
+        initial_gid,
+        "Group should be preserved after first save"
+    );
+
+    // Second edit and save
+    harness.type_text(" edit2").unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let meta_after_second = std::fs::metadata(&file_path).unwrap();
+    assert_eq!(
+        meta_after_second.uid(),
+        initial_uid,
+        "Owner should be preserved after second save"
+    );
+    assert_eq!(
+        meta_after_second.gid(),
+        initial_gid,
+        "Group should be preserved after second save"
+    );
+
+    // Third edit and save
+    harness.type_text(" edit3").unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let meta_after_third = std::fs::metadata(&file_path).unwrap();
+    assert_eq!(
+        meta_after_third.uid(),
+        initial_uid,
+        "Owner should be preserved after third save"
+    );
+    assert_eq!(
+        meta_after_third.gid(),
+        initial_gid,
+        "Group should be preserved after third save"
+    );
+}
+
 /// Test various permission modes are preserved (Unix)
 #[test]
 #[cfg(unix)]

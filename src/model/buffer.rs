@@ -416,6 +416,32 @@ impl TextBuffer {
     /// Tries to create the file in the same directory as the destination file first
     /// to allow for an atomic rename. If that fails (e.g., due to directory permissions),
     /// falls back to the system temporary directory.
+    /// Check if we should use in-place writing to preserve file ownership.
+    /// Returns true if the file exists and is owned by a different user.
+    /// On Unix, only root or the file owner can change file ownership with chown.
+    /// When the current user is not the file owner, using atomic write (temp file + rename)
+    /// would change the file's ownership to the current user. To preserve ownership,
+    /// we must write directly to the existing file instead.
+    #[cfg(unix)]
+    fn should_use_inplace_write(dest_path: &Path) -> bool {
+        if let Ok(meta) = std::fs::metadata(dest_path) {
+            let file_uid = meta.uid();
+            let current_uid = unsafe { libc::getuid() };
+            // If file is owned by a different user, we should write in-place
+            // to preserve ownership (since we can't chown to another user)
+            file_uid != current_uid
+        } else {
+            // File doesn't exist, use normal atomic write
+            false
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn should_use_inplace_write(_dest_path: &Path) -> bool {
+        // On non-Unix platforms, always use atomic write
+        false
+    }
+
     fn create_temp_file(dest_path: &Path) -> io::Result<(PathBuf, std::fs::File)> {
         // Try creating in same directory first
         let same_dir_temp = dest_path.with_extension("tmp");
@@ -464,8 +490,25 @@ impl TextBuffer {
         let needs_conversion = self.line_ending != self.original_line_ending;
         let target_ending = self.line_ending;
 
-        // Stage A: Temporary File Creation
-        let (temp_path, mut out_file) = Self::create_temp_file(dest_path)?;
+        // Determine whether to use in-place writing to preserve file ownership.
+        // When the file is owned by a different user (e.g., editing with group write
+        // permissions), we must write directly to the file to preserve ownership,
+        // since non-root users cannot chown files to other users.
+        let use_inplace = Self::should_use_inplace_write(dest_path);
+
+        // Stage A: Create output file (either temp file or open existing for in-place write)
+        let (temp_path, mut out_file) = if use_inplace {
+            // In-place write: open existing file with truncate to preserve ownership
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(dest_path)?;
+            (None, file)
+        } else {
+            // Atomic write: create temp file, will rename later
+            let (path, file) = Self::create_temp_file(dest_path)?;
+            (Some(path), file)
+        };
 
         if total > 0 {
             // Cache for open source files (for streaming unloaded regions)
@@ -546,40 +589,45 @@ impl TextBuffer {
         out_file.sync_all()?;
         drop(out_file);
 
-        // Restore original file permissions/owner before renaming
-        if let Some(ref meta) = original_metadata {
-            // Best effort restore
-            let _ = Self::restore_file_metadata(&temp_path, meta);
-        }
+        // Stage B & C: Only needed for atomic write (not in-place write)
+        if let Some(temp_path) = temp_path {
+            // Restore original file permissions/owner before renaming
+            if let Some(ref meta) = original_metadata {
+                // Best effort restore
+                let _ = Self::restore_file_metadata(&temp_path, meta);
+            }
 
-        // Stage C: Atomic Replacement or Sudo Fallback
-        if let Err(e) = std::fs::rename(&temp_path, dest_path) {
-            let is_permission_denied = e.kind() == io::ErrorKind::PermissionDenied;
-            let is_cross_device = cfg!(unix) && e.raw_os_error() == Some(18);
+            // Stage C: Atomic Replacement or Sudo Fallback
+            if let Err(e) = std::fs::rename(&temp_path, dest_path) {
+                let is_permission_denied = e.kind() == io::ErrorKind::PermissionDenied;
+                let is_cross_device = cfg!(unix) && e.raw_os_error() == Some(18);
 
-            if is_cross_device {
-                #[cfg(unix)]
-                {
-                    match std::fs::copy(&temp_path, dest_path) {
-                        Ok(_) => {
-                            let _ = std::fs::remove_file(&temp_path);
+                if is_cross_device {
+                    #[cfg(unix)]
+                    {
+                        match std::fs::copy(&temp_path, dest_path) {
+                            Ok(_) => {
+                                let _ = std::fs::remove_file(&temp_path);
+                            }
+                            Err(copy_err) if copy_err.kind() == io::ErrorKind::PermissionDenied => {
+                                return Err(self.make_sudo_error(
+                                    temp_path,
+                                    dest_path,
+                                    original_metadata,
+                                ));
+                            }
+                            Err(copy_err) => return Err(copy_err.into()),
                         }
-                        Err(copy_err) if copy_err.kind() == io::ErrorKind::PermissionDenied => {
-                            return Err(self.make_sudo_error(
-                                temp_path,
-                                dest_path,
-                                original_metadata,
-                            ));
-                        }
-                        Err(copy_err) => return Err(copy_err.into()),
                     }
+                } else if is_permission_denied {
+                    return Err(self.make_sudo_error(temp_path, dest_path, original_metadata));
+                } else {
+                    return Err(e.into());
                 }
-            } else if is_permission_denied {
-                return Err(self.make_sudo_error(temp_path, dest_path, original_metadata));
-            } else {
-                return Err(e.into());
             }
         }
+        // For in-place write, we already wrote directly to dest_path,
+        // preserving ownership since we modified the existing inode
 
         // Update saved file size to match the file on disk
         let new_size = std::fs::metadata(dest_path)?.len() as usize;
