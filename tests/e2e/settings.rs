@@ -2419,7 +2419,8 @@ fn navigate_to_lsp_json_editor(harness: &mut EditorTestHarness) {
 
     // Navigate down to "Initialization Options" field
     // Navigate until we see the focus indicator on Initialization Options
-    for _ in 0..10 {
+    // (cargo nextest handles external timeout)
+    loop {
         harness.render().unwrap();
         let screen = harness.screen_to_string();
         if screen.contains("> Initialization Options")
@@ -2430,17 +2431,6 @@ fn navigate_to_lsp_json_editor(harness: &mut EditorTestHarness) {
         }
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
-    harness.render().unwrap();
-
-    // Verify we're on Initialization Options (may have bullet marker)
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("> Initialization Options")
-            || screen.contains(">Initialization Options")
-            || screen.contains("> • Initialization Options"),
-        "Should be focused on Initialization Options. Screen:\n{}",
-        screen
-    );
 }
 
 /// Test that Delete key works in JSON editor (deletes character at cursor)
