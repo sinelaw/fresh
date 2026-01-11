@@ -16,6 +16,7 @@ pub mod recovery;
 pub mod release_checker;
 pub mod signal_handler;
 pub mod styled_html;
+pub mod telemetry;
 pub mod terminal;
 pub mod time_source;
 pub mod tracing_setup;

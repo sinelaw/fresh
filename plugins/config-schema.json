@@ -22,7 +22,7 @@
       "default": null
     },
     "check_for_updates": {
-      "description": "Check for new versions on quit (default: true)",
+      "description": "Check for new versions on startup (default: true).\nWhen enabled, also sends basic anonymous telemetry (version, OS, terminal type).",
       "type": "boolean",
       "default": true
     },

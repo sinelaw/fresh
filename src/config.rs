@@ -326,7 +326,8 @@ pub struct Config {
     #[serde(default)]
     pub locale: LocaleName,
 
-    /// Check for new versions on quit (default: true)
+    /// Check for new versions on startup (default: true).
+    /// When enabled, also sends basic anonymous telemetry (version, OS, terminal type).
     #[serde(default = "default_true")]
     pub check_for_updates: bool,
 

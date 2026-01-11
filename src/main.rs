@@ -59,6 +59,10 @@ struct Args {
     #[arg(long)]
     no_session: bool,
 
+    /// Disable upgrade checking and anonymous telemetry
+    #[arg(long)]
+    no_upgrade_check: bool,
+
     /// Print the effective configuration as JSON and exit
     #[arg(long)]
     dump_config: bool,
@@ -492,7 +496,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 
     let dir_context = fresh::config_io::DirectoryContext::from_system()?;
 
-    let config = if let Some(config_path) = &args.config {
+    let mut config = if let Some(config_path) = &args.config {
         // Explicit config file overrides layered system
         match config::Config::load_from_file(config_path) {
             Ok(cfg) => cfg,
@@ -508,6 +512,11 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     } else {
         config::Config::load_with_layers(&dir_context, &effective_working_dir)
     };
+
+    // CLI flag overrides config
+    if args.no_upgrade_check {
+        config.check_for_updates = false;
+    }
 
     // Initialize i18n with locale: CLI arg > config > environment
     // This ensures menu defaults are created with the correct translations

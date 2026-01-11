@@ -4,7 +4,7 @@
 //! - Check for new releases by fetching a GitHub releases API endpoint
 //! - Detect the installation method (Homebrew, npm, cargo, etc.) based on executable path
 //! - Provide appropriate update commands based on installation method
-//! - Periodic update checking with automatic re-spawn every hour
+//! - Periodic update checking with automatic re-spawn daily
 
 use std::env;
 use std::path::Path;
@@ -96,12 +96,12 @@ impl UpdateCheckHandle {
     }
 }
 
-/// Default check interval for periodic update checking (1 hour)
-pub const DEFAULT_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
+/// Default check interval for periodic update checking (24 hours)
+pub const DEFAULT_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Handle to a periodic update checker that runs in the background.
 ///
-/// The checker runs every hour and provides results via `poll_result()`.
+/// The checker runs daily and provides results via `poll_result()`.
 /// When a check finds an update, the result is stored until retrieved.
 pub struct PeriodicUpdateChecker {
     /// Receiver for update check results
@@ -175,9 +175,9 @@ impl Drop for PeriodicUpdateChecker {
     }
 }
 
-/// Start a periodic update checker that runs every hour.
+/// Start a periodic update checker that runs daily.
 ///
-/// The checker immediately runs the first check, then repeats every hour.
+/// The checker immediately runs the first check, then repeats daily.
 /// Results are available via `poll_result()` on the returned handle.
 pub fn start_periodic_update_check(releases_url: &str) -> PeriodicUpdateChecker {
     start_periodic_update_check_with_interval(releases_url, DEFAULT_UPDATE_CHECK_INTERVAL)
@@ -186,7 +186,7 @@ pub fn start_periodic_update_check(releases_url: &str) -> PeriodicUpdateChecker 
 /// Start a periodic update checker with a custom check interval.
 ///
 /// This is primarily for testing - allows specifying a short interval to verify
-/// the periodic behavior without waiting for an hour.
+/// the periodic behavior without waiting for a day.
 ///
 /// # Arguments
 /// * `releases_url` - The GitHub releases API URL to check
@@ -405,6 +405,9 @@ pub fn is_newer_version(current: &str, latest: &str) -> bool {
 
 /// Check for a new release (blocking)
 pub fn check_for_update(releases_url: &str) -> Result<ReleaseCheckResult, String> {
+    // Send telemetry alongside update check
+    super::telemetry::track_open();
+
     let latest_version = fetch_latest_version(releases_url)?;
     let install_method = detect_install_method();
     let update_available = is_newer_version(CURRENT_VERSION, &latest_version);

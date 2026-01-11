@@ -849,7 +849,7 @@ impl Editor {
         let show_menu_bar = config.editor.show_menu_bar;
         let show_tab_bar = config.editor.show_tab_bar;
 
-        // Start periodic update checker if enabled
+        // Start periodic update checker if enabled (also sends daily telemetry)
         let update_checker = if check_for_updates {
             tracing::debug!("Update checking enabled, starting periodic checker");
             Some(
