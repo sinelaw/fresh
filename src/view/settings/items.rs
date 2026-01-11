@@ -967,6 +967,7 @@ mod tests {
             description: Some("Check for updates".to_string()),
             setting_type: SettingType::Boolean,
             default: Some(serde_json::Value::Bool(true)),
+            read_only: false,
         };
 
         let config = sample_config();
@@ -993,6 +994,7 @@ mod tests {
                 maximum: Some(16),
             },
             default: Some(serde_json::Value::Number(4.into())),
+            read_only: false,
         };
 
         let config = sample_config();
@@ -1017,6 +1019,7 @@ mod tests {
             description: None,
             setting_type: SettingType::String,
             default: Some(serde_json::Value::String("high-contrast".to_string())),
+            read_only: false,
         };
 
         let config = sample_config();

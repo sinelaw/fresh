@@ -821,10 +821,9 @@ impl Editor {
                     plugin_manager.load_plugins_from_dir_with_config(&plugin_dir, &config.plugins);
 
                 // Merge discovered plugins into config
+                // discovered_plugins already contains the merged config (saved enabled state + discovered path)
                 for (name, plugin_config) in discovered_plugins {
-                    if !config.plugins.contains_key(&name) {
-                        config.plugins.insert(name, plugin_config);
-                    }
+                    config.plugins.insert(name, plugin_config);
                 }
 
                 if !errors.is_empty() {
