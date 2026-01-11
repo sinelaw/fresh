@@ -43,6 +43,9 @@ pub struct EntryDialogState {
     pub hover_button: Option<usize>,
     /// Original value when dialog was opened (for Cancel to restore)
     pub original_value: Value,
+    /// Index of first editable item (items before this are read-only)
+    /// Used for rendering separator and focus navigation
+    pub first_editable_index: usize,
 }
 
 impl EntryDialogState {
@@ -82,6 +85,16 @@ impl EntryDialogState {
             }
         }
 
+        // Sort items: read-only first, then editable
+        items.sort_by_key(|item| !item.read_only);
+
+        // Find the first editable item index
+        let first_editable_index = items.iter().position(|item| !item.read_only).unwrap_or(items.len());
+
+        // If all items are read-only, start with focus on buttons
+        let focus_on_buttons = first_editable_index >= items.len();
+        let selected_item = if focus_on_buttons { 0 } else { first_editable_index };
+
         let title = if is_new {
             format!("Add {}", schema.name)
         } else {
@@ -94,17 +107,18 @@ impl EntryDialogState {
             title,
             is_new,
             items,
-            selected_item: 0,
+            selected_item,
             sub_focus: None,
             editing_text: false,
             focused_button: 0,
-            focus_on_buttons: false,
+            focus_on_buttons,
             delete_requested: false,
             scroll_offset: 0,
             viewport_height: 20, // Default, updated during render
             hover_item: None,
             hover_button: None,
             original_value: value.clone(),
+            first_editable_index,
         }
     }
 
@@ -130,6 +144,16 @@ impl EntryDialogState {
             }
         }
 
+        // Sort items: read-only first, then editable
+        items.sort_by_key(|item| !item.read_only);
+
+        // Find the first editable item index
+        let first_editable_index = items.iter().position(|item| !item.read_only).unwrap_or(items.len());
+
+        // If all items are read-only, start with focus on buttons
+        let focus_on_buttons = first_editable_index >= items.len();
+        let selected_item = if focus_on_buttons { 0 } else { first_editable_index };
+
         let title = if is_new {
             format!("Add {}", schema.name)
         } else {
@@ -142,23 +166,25 @@ impl EntryDialogState {
             title,
             is_new,
             items,
-            selected_item: 0,
+            selected_item,
             sub_focus: None,
             editing_text: false,
             focused_button: 0,
-            focus_on_buttons: false,
+            focus_on_buttons,
             delete_requested: false,
             scroll_offset: 0,
             viewport_height: 20,
             hover_item: None,
             hover_button: None,
             original_value: value.clone(),
+            first_editable_index,
         }
     }
 
     /// Get the current key value from the key item
     pub fn get_key(&self) -> String {
-        if let Some(item) = self.items.first() {
+        // Find the key item by path (may not be first after sorting)
+        for item in &self.items {
             if item.path == "__key__" {
                 if let SettingControl::Text(state) = &item.control {
                     return state.value.clone();
@@ -224,9 +250,12 @@ impl EntryDialogState {
                 // Move to next button
                 self.focused_button += 1;
             } else {
-                // Wrap to first item
-                self.focus_on_buttons = false;
-                self.selected_item = 0;
+                // Wrap to first editable item (skip read-only items)
+                if self.first_editable_index < self.items.len() {
+                    self.focus_on_buttons = false;
+                    self.selected_item = self.first_editable_index;
+                }
+                // If all items are read-only, stay on buttons (don't wrap)
             }
         } else {
             // Check if current item is an ObjectArray that can navigate internally
@@ -279,6 +308,7 @@ impl EntryDialogState {
                 }
                 None => {
                     // Not an ObjectArray, normal navigation
+                    // All items after first_editable_index are editable (sorted)
                     if self.selected_item + 1 < self.items.len() {
                         self.selected_item += 1;
                         self.sub_focus = None;
@@ -306,9 +336,12 @@ impl EntryDialogState {
             if self.focused_button > 0 {
                 self.focused_button -= 1;
             } else {
-                // Move back to items
-                self.focus_on_buttons = false;
-                self.selected_item = self.items.len().saturating_sub(1);
+                // Move back to last editable item
+                if self.first_editable_index < self.items.len() {
+                    self.focus_on_buttons = false;
+                    self.selected_item = self.items.len().saturating_sub(1);
+                }
+                // If all items are read-only, stay on buttons (don't wrap)
             }
         } else {
             // Check if current item is an ObjectArray that can navigate internally
@@ -352,25 +385,28 @@ impl EntryDialogState {
                     }
                 }
                 Some(false) => {
-                    // Exit ObjectArray, go to previous item
-                    if self.selected_item > 0 {
+                    // Exit ObjectArray, go to previous editable item (not into read-only)
+                    if self.selected_item > self.first_editable_index {
                         self.selected_item -= 1;
                         self.sub_focus = None;
                         // Initialize previous item's ObjectArray to add-new (end)
                         self.init_object_array_focus_end();
                     } else {
+                        // At first editable item, go to buttons
                         self.focus_on_buttons = true;
                         self.focused_button = self.button_count().saturating_sub(1);
                     }
                 }
                 None => {
                     // Not an ObjectArray, normal navigation
-                    if self.selected_item > 0 {
+                    // Don't go below first_editable_index (read-only items)
+                    if self.selected_item > self.first_editable_index {
                         self.selected_item -= 1;
                         self.sub_focus = None;
                         // Initialize previous item's ObjectArray to add-new (end)
                         self.init_object_array_focus_end();
                     } else {
+                        // At first editable item, go to buttons
                         self.focus_on_buttons = true;
                         self.focused_button = self.button_count().saturating_sub(1);
                     }
@@ -466,21 +502,38 @@ impl EntryDialogState {
         }
     }
 
-    /// Calculate total content height for all items
+    /// Calculate total content height for all items (including separator)
     pub fn total_content_height(&self) -> usize {
-        self.items
+        let items_height: usize = self.items
             .iter()
             .map(|item| item.control.control_height() as usize)
-            .sum()
+            .sum();
+        // Add 1 for separator if we have both read-only and editable items
+        let separator_height = if self.first_editable_index > 0 && self.first_editable_index < self.items.len() {
+            1
+        } else {
+            0
+        };
+        items_height + separator_height
     }
 
-    /// Calculate the Y offset of the selected item
+    /// Calculate the Y offset of the selected item (including separator)
     pub fn selected_item_offset(&self) -> usize {
-        self.items
+        let items_offset: usize = self.items
             .iter()
             .take(self.selected_item)
             .map(|item| item.control.control_height() as usize)
-            .sum()
+            .sum();
+        // Add 1 for separator if selected item is after it
+        let separator_offset = if self.first_editable_index > 0
+            && self.first_editable_index < self.items.len()
+            && self.selected_item >= self.first_editable_index
+        {
+            1
+        } else {
+            0
+        };
+        items_offset + separator_offset
     }
 
     /// Calculate the height of the selected item
@@ -1134,21 +1187,33 @@ mod tests {
             &serde_json::json!({}),
             &schema,
             "/test",
-            false,
+            false, // existing entry - Key is read-only
         );
 
-        assert_eq!(dialog.selected_item, 0);
+        // With is_new=false, Key is read-only and sorted first
+        // Items: [Key (read-only), Enabled, Command]
+        // Focus starts at first editable item (index 1)
+        assert_eq!(dialog.first_editable_index, 1);
+        assert_eq!(dialog.selected_item, 1); // First editable (Enabled)
         assert!(!dialog.focus_on_buttons);
 
         dialog.focus_next();
-        assert_eq!(dialog.selected_item, 1);
+        assert_eq!(dialog.selected_item, 2); // Command
 
         dialog.focus_next();
-        assert_eq!(dialog.selected_item, 2);
-
-        dialog.focus_next();
-        assert!(dialog.focus_on_buttons);
+        assert!(dialog.focus_on_buttons); // No more editable items
         assert_eq!(dialog.focused_button, 0);
+
+        // Going back should skip read-only Key
+        dialog.focus_prev();
+        assert!(!dialog.focus_on_buttons);
+        assert_eq!(dialog.selected_item, 2); // Last editable (Command)
+
+        dialog.focus_prev();
+        assert_eq!(dialog.selected_item, 1); // First editable (Enabled)
+
+        dialog.focus_prev();
+        assert!(dialog.focus_on_buttons); // Wraps to buttons, not to read-only Key
     }
 
     #[test]

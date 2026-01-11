@@ -2050,7 +2050,35 @@ fn render_entry_dialog(
     let mut content_y: usize = 0;
     let mut screen_y = inner.y;
 
+    // Track if we need to render a separator (between read-only and editable items)
+    let first_editable = dialog.first_editable_index;
+    let has_readonly_items = first_editable > 0;
+    let has_editable_items = first_editable < dialog.items.len();
+    let needs_separator = has_readonly_items && has_editable_items;
+
     for (idx, item) in dialog.items.iter().enumerate() {
+        // Render separator before first editable item
+        if needs_separator && idx == first_editable {
+            // Add separator row to content height calculation
+            let separator_start = content_y;
+            let separator_end = content_y + 1;
+
+            if separator_end > scroll_offset && screen_y < inner.y + inner.height {
+                // Separator is visible
+                let skip_sep = if separator_start < scroll_offset { 1 } else { 0 };
+                if skip_sep == 0 {
+                    let sep_style = Style::default().fg(theme.line_number_fg);
+                    let separator_line = "─".repeat(inner.width.saturating_sub(2) as usize);
+                    frame.render_widget(
+                        Paragraph::new(separator_line).style(sep_style),
+                        Rect::new(inner.x + 1, screen_y, inner.width.saturating_sub(2), 1),
+                    );
+                    screen_y += 1;
+                }
+            }
+            content_y = separator_end;
+        }
+
         let control_height = item.control.control_height() as usize;
 
         // Check if this item is visible in the viewport
@@ -2085,10 +2113,12 @@ fn render_entry_dialog(
             continue;
         }
 
-        let is_focused = !dialog.focus_on_buttons && dialog.selected_item == idx;
-        let is_hovered = dialog.hover_item == Some(idx);
+        // Read-only items are not focusable - no focus/hover highlighting
+        let is_readonly = item.read_only;
+        let is_focused = !is_readonly && !dialog.focus_on_buttons && dialog.selected_item == idx;
+        let is_hovered = !is_readonly && dialog.hover_item == Some(idx);
 
-        // Draw selection or hover highlight background
+        // Draw selection or hover highlight background (only for editable items)
         if is_focused || is_hovered {
             let bg_style = if is_focused {
                 Style::default().bg(theme.current_line_bg)
@@ -2101,7 +2131,7 @@ fn render_entry_dialog(
             }
         }
 
-        // Render focus indicator ">" for the focused item
+        // Render focus indicator ">" for the focused item (only for editable items)
         let focus_indicator_width: u16 = 2; // "> "
         if is_focused && skip_rows == 0 {
             let indicator_style = Style::default()

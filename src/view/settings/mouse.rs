@@ -407,15 +407,27 @@ impl Editor {
             }
         }
 
-        // Check item hover
+        // Check item hover (only for editable items)
         if layout.in_content_area(col, row) {
             let click_y = (row - layout.inner_y) as usize + dialog.scroll_offset;
             let mut content_y: usize = 0;
 
+            // Check if we have a separator between read-only and editable items
+            let first_editable = dialog.first_editable_index;
+            let has_separator = first_editable > 0 && first_editable < dialog.items.len();
+
             for (idx, item) in dialog.items.iter().enumerate() {
+                // Account for separator before first editable item
+                if has_separator && idx == first_editable {
+                    content_y += 1; // separator height
+                }
+
                 let item_end = content_y + item.control.control_height() as usize;
                 if click_y >= content_y && click_y < item_end {
-                    dialog.hover_item = Some(idx);
+                    // Only hover on editable items
+                    if !item.read_only {
+                        dialog.hover_item = Some(idx);
+                    }
                     break;
                 }
                 content_y = item_end;
@@ -499,9 +511,22 @@ impl Editor {
         let click_y = (row - layout.inner_y) as usize + dialog.scroll_offset;
         let mut content_y: usize = 0;
 
+        // Check if we have a separator between read-only and editable items
+        let first_editable = dialog.first_editable_index;
+        let has_separator = first_editable > 0 && first_editable < dialog.items.len();
+
         for (idx, item) in dialog.items.iter().enumerate() {
+            // Account for separator before first editable item
+            if has_separator && idx == first_editable {
+                content_y += 1; // separator height
+            }
+
             let item_end = content_y + item.control.control_height() as usize;
             if click_y >= content_y && click_y < item_end {
+                // Skip clicks on read-only items
+                if item.read_only {
+                    return Ok(false);
+                }
                 dialog.focus_on_buttons = false;
                 dialog.selected_item = idx;
                 dialog.update_focus_states();
