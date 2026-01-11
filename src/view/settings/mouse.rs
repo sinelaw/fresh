@@ -389,7 +389,7 @@ impl Editor {
 
         // Check button hover
         if row == layout.button_y {
-            let buttons: &[&str] = if dialog.is_new {
+            let buttons: &[&str] = if dialog.is_new || dialog.no_delete {
                 &["[ Save ]", "[ Cancel ]"]
             } else {
                 &["[ Save ]", "[ Delete ]", "[ Cancel ]"]
@@ -476,7 +476,7 @@ impl Editor {
             return Ok(false);
         };
 
-        let buttons: &[&str] = if dialog.is_new {
+        let buttons: &[&str] = if dialog.is_new || dialog.no_delete {
             &["[ Save ]", "[ Cancel ]"]
         } else {
             &["[ Save ]", "[ Delete ]", "[ Cancel ]"]

@@ -46,6 +46,8 @@ pub struct EntryDialogState {
     /// Index of first editable item (items before this are read-only)
     /// Used for rendering separator and focus navigation
     pub first_editable_index: usize,
+    /// Whether deletion is disabled (for auto-managed entries like plugins)
+    pub no_delete: bool,
 }
 
 impl EntryDialogState {
@@ -60,6 +62,7 @@ impl EntryDialogState {
         schema: &SettingSchema,
         map_path: &str,
         is_new: bool,
+        no_delete: bool,
     ) -> Self {
         let mut items = Vec::new();
 
@@ -89,11 +92,18 @@ impl EntryDialogState {
         items.sort_by_key(|item| !item.read_only);
 
         // Find the first editable item index
-        let first_editable_index = items.iter().position(|item| !item.read_only).unwrap_or(items.len());
+        let first_editable_index = items
+            .iter()
+            .position(|item| !item.read_only)
+            .unwrap_or(items.len());
 
         // If all items are read-only, start with focus on buttons
         let focus_on_buttons = first_editable_index >= items.len();
-        let selected_item = if focus_on_buttons { 0 } else { first_editable_index };
+        let selected_item = if focus_on_buttons {
+            0
+        } else {
+            first_editable_index
+        };
 
         let title = if is_new {
             format!("Add {}", schema.name)
@@ -119,6 +129,7 @@ impl EntryDialogState {
             hover_button: None,
             original_value: value.clone(),
             first_editable_index,
+            no_delete,
         }
     }
 
@@ -148,11 +159,18 @@ impl EntryDialogState {
         items.sort_by_key(|item| !item.read_only);
 
         // Find the first editable item index
-        let first_editable_index = items.iter().position(|item| !item.read_only).unwrap_or(items.len());
+        let first_editable_index = items
+            .iter()
+            .position(|item| !item.read_only)
+            .unwrap_or(items.len());
 
         // If all items are read-only, start with focus on buttons
         let focus_on_buttons = first_editable_index >= items.len();
-        let selected_item = if focus_on_buttons { 0 } else { first_editable_index };
+        let selected_item = if focus_on_buttons {
+            0
+        } else {
+            first_editable_index
+        };
 
         let title = if is_new {
             format!("Add {}", schema.name)
@@ -178,6 +196,7 @@ impl EntryDialogState {
             hover_button: None,
             original_value: value.clone(),
             first_editable_index,
+            no_delete: false, // Arrays typically allow deletion
         }
     }
 
@@ -194,10 +213,10 @@ impl EntryDialogState {
         self.entry_key.clone()
     }
 
-    /// Get button count (3 for existing entries with Delete, 2 for new entries)
+    /// Get button count (3 for existing entries with Delete, 2 for new/no_delete entries)
     pub fn button_count(&self) -> usize {
-        if self.is_new {
-            2
+        if self.is_new || self.no_delete {
+            2 // Save, Cancel (no Delete for new entries or when no_delete is set)
         } else {
             3
         }
@@ -504,22 +523,25 @@ impl EntryDialogState {
 
     /// Calculate total content height for all items (including separator)
     pub fn total_content_height(&self) -> usize {
-        let items_height: usize = self.items
+        let items_height: usize = self
+            .items
             .iter()
             .map(|item| item.control.control_height() as usize)
             .sum();
         // Add 1 for separator if we have both read-only and editable items
-        let separator_height = if self.first_editable_index > 0 && self.first_editable_index < self.items.len() {
-            1
-        } else {
-            0
-        };
+        let separator_height =
+            if self.first_editable_index > 0 && self.first_editable_index < self.items.len() {
+                1
+            } else {
+                0
+            };
         items_height + separator_height
     }
 
     /// Calculate the Y offset of the selected item (including separator)
     pub fn selected_item_offset(&self) -> usize {
-        let items_offset: usize = self.items
+        let items_offset: usize = self
+            .items
             .iter()
             .take(self.selected_item)
             .map(|item| item.control.control_height() as usize)
@@ -1125,6 +1147,7 @@ mod tests {
             &schema,
             "/test",
             false,
+            false,
         );
 
         assert!(!dialog.items.is_empty());
@@ -1140,6 +1163,7 @@ mod tests {
             &serde_json::json!({"enabled": true, "command": "test-cmd"}),
             &schema,
             "/test",
+            false,
             false,
         );
 
@@ -1158,6 +1182,7 @@ mod tests {
             &schema,
             "/test",
             false,
+            false,
         );
 
         assert_eq!(dialog.get_key(), "mykey");
@@ -1171,6 +1196,7 @@ mod tests {
             &serde_json::json!({"enabled": true, "command": "cmd"}),
             &schema,
             "/test",
+            false,
             false,
         );
 
@@ -1188,6 +1214,7 @@ mod tests {
             &schema,
             "/test",
             false, // existing entry - Key is read-only
+            false, // allow delete
         );
 
         // With is_new=false, Key is read-only and sorted first
@@ -1226,6 +1253,7 @@ mod tests {
             &schema,
             "/test",
             true,
+            false,
         );
         assert_eq!(new_dialog.button_count(), 2); // Save, Cancel
 
@@ -1235,7 +1263,19 @@ mod tests {
             &schema,
             "/test",
             false,
+            false, // allow delete
         );
         assert_eq!(existing_dialog.button_count(), 3); // Save, Delete, Cancel
+
+        // no_delete hides the Delete button even for existing entries
+        let no_delete_dialog = EntryDialogState::from_schema(
+            "test".to_string(),
+            &serde_json::json!({}),
+            &schema,
+            "/test",
+            false,
+            true, // no delete (auto-managed entries like plugins)
+        );
+        assert_eq!(no_delete_dialog.button_count(), 2); // Save, Cancel (no Delete)
     }
 }

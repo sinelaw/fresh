@@ -50,12 +50,8 @@ fn test_settings_paste() {
 
     // Navigate down to Comment Prefix field (Key is read-only for existing entries)
     // Order: Key -> Auto Indent -> Comment Prefix
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap(); // Auto Indent
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap(); // Comment Prefix
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Auto Indent
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Comment Prefix
     harness.render().unwrap();
 
     // Enter to start editing the "Comment Prefix" field

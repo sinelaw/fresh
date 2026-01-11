@@ -22,6 +22,7 @@ enum NestedDialogInfo {
         schema: SettingSchema,
         path: String,
         is_new: bool,
+        no_delete: bool,
     },
     ArrayItem {
         index: Option<usize>,
@@ -657,8 +658,12 @@ impl SettingsState {
             return; // No schema available, can't create dialog
         };
 
+        // If the map doesn't allow adding, it also doesn't allow deleting (auto-managed entries)
+        let no_delete = map_state.no_add;
+
         // Create dialog from schema
-        let dialog = EntryDialogState::from_schema(key.clone(), value, schema, &path, false);
+        let dialog =
+            EntryDialogState::from_schema(key.clone(), value, schema, &path, false, no_delete);
         self.entry_dialog_stack.push(dialog);
     }
 
@@ -676,12 +681,14 @@ impl SettingsState {
         let path = item.path.clone();
 
         // Create dialog with empty key - user will fill it in
+        // no_delete is false for new entries (Delete button is not shown anyway for new entries)
         let dialog = EntryDialogState::from_schema(
             String::new(),
             &serde_json::json!({}),
             schema,
             &path,
             true,
+            false,
         );
         self.entry_dialog_stack.push(dialog);
     }
@@ -746,6 +753,7 @@ impl SettingsState {
             match &item.control {
                 SettingControl::Map(map_state) => {
                     let schema = map_state.value_schema.as_ref()?;
+                    let no_delete = map_state.no_add; // If can't add, can't delete either
                     if let Some(entry_idx) = map_state.focused_entry {
                         // Edit existing entry
                         let (key, value) = map_state.entries.get(entry_idx)?;
@@ -755,6 +763,7 @@ impl SettingsState {
                             schema: schema.as_ref().clone(),
                             path,
                             is_new: false,
+                            no_delete,
                         })
                     } else {
                         // Add new entry
@@ -764,6 +773,7 @@ impl SettingsState {
                             schema: schema.as_ref().clone(),
                             path,
                             is_new: true,
+                            no_delete: false, // New entries don't show Delete anyway
                         })
                     }
                 }
@@ -803,7 +813,8 @@ impl SettingsState {
                     schema,
                     path,
                     is_new,
-                } => EntryDialogState::from_schema(key, &value, &schema, &path, is_new),
+                    no_delete,
+                } => EntryDialogState::from_schema(key, &value, &schema, &path, is_new, no_delete),
                 NestedDialogInfo::ArrayItem {
                     index,
                     value,

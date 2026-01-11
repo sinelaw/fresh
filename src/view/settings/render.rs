@@ -2065,7 +2065,11 @@ fn render_entry_dialog(
 
             if separator_end > scroll_offset && screen_y < inner.y + inner.height {
                 // Separator is visible
-                let skip_sep = if separator_start < scroll_offset { 1 } else { 0 };
+                let skip_sep = if separator_start < scroll_offset {
+                    1
+                } else {
+                    0
+                };
                 if skip_sep == 0 {
                     let sep_style = Style::default().fg(theme.line_number_fg);
                     let separator_line = "─".repeat(inner.width.saturating_sub(2) as usize);
@@ -2182,7 +2186,8 @@ fn render_entry_dialog(
 
     // Render buttons at bottom
     let button_y = dialog_area.y + dialog_area.height - 2;
-    let buttons: Vec<&str> = if dialog.is_new {
+    // New entries and no_delete entries only show Save/Cancel (no Delete)
+    let buttons: Vec<&str> = if dialog.is_new || dialog.no_delete {
         vec!["[ Save ]", "[ Cancel ]"]
     } else {
         vec!["[ Save ]", "[ Delete ]", "[ Cancel ]"]
@@ -2194,7 +2199,7 @@ fn render_entry_dialog(
     for (idx, label) in buttons.iter().enumerate() {
         let is_selected = dialog.focus_on_buttons && dialog.focused_button == idx;
         let is_hovered = dialog.hover_button == Some(idx);
-        let is_delete = !dialog.is_new && idx == 1;
+        let is_delete = !dialog.is_new && !dialog.no_delete && idx == 1;
         let style = if is_selected {
             Style::default()
                 .fg(theme.menu_highlight_fg)
