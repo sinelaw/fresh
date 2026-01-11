@@ -1346,7 +1346,7 @@ impl KeybindingResolver {
                 });
 
                 let (key_code, modifiers) = matches[0];
-                return Some(Self::format_keybinding(key_code, modifiers));
+                return Some(format_keybinding(&key_code, &modifiers));
             }
         }
 
@@ -1401,45 +1401,6 @@ impl KeybindingResolver {
         }
 
         None
-    }
-
-    /// Format a keybinding for display (e.g., "Ctrl+S", "Alt+Enter", "F12")
-    fn format_keybinding(key_code: KeyCode, modifiers: KeyModifiers) -> String {
-        let mut parts = Vec::new();
-
-        if modifiers.contains(KeyModifiers::CONTROL) {
-            parts.push("Ctrl");
-        }
-        if modifiers.contains(KeyModifiers::ALT) {
-            parts.push("Alt");
-        }
-        if modifiers.contains(KeyModifiers::SHIFT) {
-            parts.push("Shift");
-        }
-
-        // Format the key
-        let key_str = match key_code {
-            KeyCode::Char(c) if c == ' ' => "Space".to_string(),
-            KeyCode::Char(c) => c.to_uppercase().to_string(),
-            KeyCode::Enter => "Enter".to_string(),
-            KeyCode::Backspace => "Backspace".to_string(),
-            KeyCode::Delete => "Delete".to_string(),
-            KeyCode::Tab => "Tab".to_string(),
-            KeyCode::Esc => "Esc".to_string(),
-            KeyCode::Left => "Left".to_string(),
-            KeyCode::Right => "Right".to_string(),
-            KeyCode::Up => "Up".to_string(),
-            KeyCode::Down => "Down".to_string(),
-            KeyCode::Home => "Home".to_string(),
-            KeyCode::End => "End".to_string(),
-            KeyCode::PageUp => "PageUp".to_string(),
-            KeyCode::PageDown => "PageDown".to_string(),
-            KeyCode::F(n) => format!("F{}", n),
-            _ => return String::new(),
-        };
-
-        parts.push(&key_str);
-        parts.join("+")
     }
 
     /// Parse a key string to KeyCode
