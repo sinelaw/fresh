@@ -1007,6 +1007,19 @@ mod tests {
         assert_eq!(state.footer_button_index, 4); // Edit button
         state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
         assert_eq!(state.focus_panel, FocusPanel::Categories);
+
+        // SECOND LOOP: Tab again should still land on Save button when entering Footer
+        // Tab -> Settings
+        state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
+        assert_eq!(state.focus_panel, FocusPanel::Settings);
+
+        // Tab -> Footer (should reset to Save button, not stay on Edit)
+        state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
+        assert_eq!(state.focus_panel, FocusPanel::Footer);
+        assert_eq!(
+            state.footer_button_index, 2,
+            "Footer should reset to Save button (index 2) on second loop"
+        );
     }
 
     #[test]

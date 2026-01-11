@@ -329,6 +329,11 @@ impl SettingsState {
             self.init_map_focus(true); // entering from above
         }
 
+        // Reset footer button to Save when entering Footer panel
+        if self.focus_panel == FocusPanel::Footer {
+            self.footer_button_index = 2; // Save button (0=Layer, 1=Reset, 2=Save, 3=Cancel)
+        }
+
         self.ensure_visible();
     }
 
