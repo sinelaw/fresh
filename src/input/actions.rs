@@ -2158,6 +2158,7 @@ pub fn action_to_events(
         | Action::PromptSetBookmark
         | Action::PromptJumpToBookmark
         | Action::PromptConfirm
+        | Action::PromptConfirmWithText(_)
         | Action::PromptCancel
         | Action::PromptBackspace
         | Action::PromptDelete

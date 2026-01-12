@@ -24,6 +24,7 @@ pub mod live_grep;
 pub mod locale;
 pub mod lsp;
 pub mod lsp_order;
+pub mod macros;
 pub mod margin;
 pub mod markdown_compose;
 pub mod menu_bar;

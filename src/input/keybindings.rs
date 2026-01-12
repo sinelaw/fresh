@@ -391,6 +391,8 @@ pub enum Action {
 
     // Prompt mode actions
     PromptConfirm,
+    /// PromptConfirm with recorded text for macro playback
+    PromptConfirmWithText(String),
     PromptCancel,
     PromptBackspace,
     PromptDelete,
@@ -1630,6 +1632,9 @@ impl KeybindingResolver {
             Action::DecreaseSplitSize => t!("action.decrease_split_size"),
             Action::ToggleMaximizeSplit => t!("action.toggle_maximize_split"),
             Action::PromptConfirm => t!("action.prompt_confirm"),
+            Action::PromptConfirmWithText(ref text) => {
+                format!("{} ({})", t!("action.prompt_confirm"), text).into()
+            }
             Action::PromptCancel => t!("action.prompt_cancel"),
             Action::PromptBackspace => t!("action.prompt_backspace"),
             Action::PromptDelete => t!("action.prompt_delete"),

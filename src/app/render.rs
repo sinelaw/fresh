@@ -3487,6 +3487,11 @@ impl Editor {
 
     /// Play back a recorded macro
     pub(super) fn play_macro(&mut self, key: char) {
+        // Prevent recursive macro playback
+        if self.macro_playing {
+            return;
+        }
+
         if let Some(actions) = self.macros.get(&key).cloned() {
             if actions.is_empty() {
                 self.set_status_message(t!("macro.empty", key = key).to_string());
@@ -3495,14 +3500,16 @@ impl Editor {
 
             // Temporarily disable recording to avoid recording the playback
             let was_recording = self.macro_recording.take();
+            self.macro_playing = true;
 
             let action_count = actions.len();
             for action in actions {
                 let _ = self.handle_action(action);
             }
 
-            // Restore recording state
+            // Restore recording and playing state
             self.macro_recording = was_recording;
+            self.macro_playing = false;
 
             self.set_status_message(
                 t!("macro.played", key = key, count = action_count).to_string(),
@@ -3526,6 +3533,16 @@ impl Editor {
                 | Action::PromptRecordMacro
                 | Action::PromptPlayMacro
                 | Action::PlayLastMacro => {}
+                // When recording PromptConfirm, capture the current prompt text
+                // so it can be replayed correctly
+                Action::PromptConfirm => {
+                    if let Some(prompt) = &self.prompt {
+                        let text = prompt.get_text().to_string();
+                        state.actions.push(Action::PromptConfirmWithText(text));
+                    } else {
+                        state.actions.push(action.clone());
+                    }
+                }
                 _ => {
                     state.actions.push(action.clone());
                 }
@@ -3627,12 +3644,9 @@ impl Editor {
             if let Some(actions) = self.macros.get(&key) {
                 content.push_str(&format!("Macro '{}': {} actions\n", key, actions.len()));
 
-                // Show first few actions as preview
-                for (i, action) in actions.iter().take(5).enumerate() {
+                // Show all actions
+                for (i, action) in actions.iter().enumerate() {
                     content.push_str(&format!("  {}. {:?}\n", i + 1, action));
-                }
-                if actions.len() > 5 {
-                    content.push_str(&format!("  ... and {} more actions\n", actions.len() - 5));
                 }
                 content.push('\n');
             }

@@ -468,6 +468,9 @@ pub struct Editor {
     /// Last recorded macro register (for F12 to replay)
     last_macro_register: Option<char>,
 
+    /// Flag to prevent recursive macro playback
+    macro_playing: bool,
+
     /// Pending plugin action receivers (for async action execution)
     #[cfg(feature = "plugins")]
     pending_plugin_actions: Vec<(
@@ -1026,6 +1029,7 @@ impl Editor {
             macros: HashMap::new(),
             macro_recording: None,
             last_macro_register: None,
+            macro_playing: false,
             #[cfg(feature = "plugins")]
             pending_plugin_actions: Vec::new(),
             #[cfg(feature = "plugins")]

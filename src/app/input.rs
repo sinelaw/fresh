@@ -1070,6 +1070,25 @@ impl Editor {
                     }
                 }
             }
+            Action::PromptConfirmWithText(ref text) => {
+                // For macro playback: set the prompt text before confirming
+                if let Some(ref mut prompt) = self.prompt {
+                    prompt.set_input(text.clone());
+                    self.update_prompt_suggestions();
+                }
+                if let Some((input, prompt_type, selected_index)) = self.confirm_prompt() {
+                    use super::prompt_actions::PromptResult;
+                    match self.handle_prompt_confirm_input(input, prompt_type, selected_index) {
+                        PromptResult::ExecuteAction(action) => {
+                            return self.handle_action(action);
+                        }
+                        PromptResult::EarlyReturn => {
+                            return Ok(());
+                        }
+                        PromptResult::Done => {}
+                    }
+                }
+            }
             Action::PopupConfirm => {
                 use super::popup_actions::PopupConfirmResult;
                 if let PopupConfirmResult::EarlyReturn = self.handle_popup_confirm() {
