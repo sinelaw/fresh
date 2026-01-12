@@ -226,7 +226,7 @@
           "default": 100
         },
         "large_file_threshold_bytes": {
-          "description": "File size threshold in bytes for \"large file\" behavior\nFiles larger than this will:\n- Skip LSP features\n- Use constant-size scrollbar thumb (1 char)\nFiles smaller will count actual lines for accurate scrollbar rendering",
+          "description": "File size threshold in bytes for \"large file\" behavior\nFiles larger than this will:\n- Skip LSP features\n- Use constant-size scrollbar thumb (1 char)\n\nFiles smaller will count actual lines for accurate scrollbar rendering",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
