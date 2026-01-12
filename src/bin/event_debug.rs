@@ -23,16 +23,16 @@ fn main() -> io::Result<()> {
     println!("================");
     println!("Press Ctrl+C or 'q' to exit.\n");
 
-    // Enable raw mode
-    enable_raw_mode()?;
+    crossterm::terminal::enable_raw_mode()?;
 
-    // Enable keyboard enhancement flags for better key detection
-    let keyboard_flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS;
-    let _ = stdout().execute(PushKeyboardEnhancementFlags(keyboard_flags));
-
-    // Enable mouse capture
-    let _ = crossterm::execute!(stdout(), crossterm::event::EnableMouseCapture);
+    crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::EnableMouseCapture,
+        crossterm::event::PushKeyboardEnhancementFlags(
+            crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | crossterm::event::KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+        )
+    )?;
 
     let result = run_event_loop();
 

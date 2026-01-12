@@ -1,18 +1,13 @@
 use anyhow::{Context, Result as AnyhowResult};
 use clap::Parser;
-use crossterm::{
-    cursor::SetCursorStyle,
-    event::{
-        poll as event_poll, read as event_read, DisableBracketedPaste, EnableBracketedPaste,
-        Event as CrosstermEvent, KeyEvent, KeyEventKind, KeyboardEnhancementFlags, MouseEvent,
-        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
-    },
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand,
+use crossterm::event::{
+    poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent, KeyEventKind,
+    MouseEvent,
 };
 use fresh::input::key_translator::KeyTranslator;
 #[cfg(target_os = "linux")]
 use fresh::services::gpm::{gpm_to_crossterm, GpmClient};
+use fresh::services::terminal_modes::{self, TerminalModes};
 use fresh::services::tracing_setup;
 use fresh::{
     app::Editor, config, config_io::DirectoryContext, services::release_checker,
@@ -108,6 +103,9 @@ struct SetupState {
     gpm_client: Option<GpmClient>,
     #[cfg(not(target_os = "linux"))]
     gpm_client: Option<()>,
+    /// Terminal mode state (raw mode, alternate screen, etc.)
+    /// Drop impl restores terminal on cleanup
+    terminal_modes: TerminalModes,
 }
 
 /// State for stdin streaming in background
@@ -422,13 +420,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
-        let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
-        let _ = stdout().execute(DisableBracketedPaste);
-        let _ = stdout().execute(SetCursorStyle::DefaultUserShape);
-        fresh::view::theme::Theme::reset_terminal_cursor_color();
-        let _ = stdout().execute(PopKeyboardEnhancementFlags);
-        let _ = disable_raw_mode();
-        let _ = stdout().execute(LeaveAlternateScreen);
+        terminal_modes::emergency_cleanup();
         original_hook(panic);
     }));
 
@@ -523,13 +515,9 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     let locale_override = args.locale.as_deref().or(config.locale.as_option());
     fresh::i18n::init_with_config(locale_override);
 
-    enable_raw_mode()?;
-    stdout().execute(EnterAlternateScreen)?;
-
-    let keyboard_flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS;
-    let _ = stdout().execute(PushKeyboardEnhancementFlags(keyboard_flags));
-    tracing::info!("Enabled keyboard enhancement flags: {:?}", keyboard_flags);
+    // Enable terminal modes (raw mode, alternate screen, mouse capture, etc.)
+    // This checks support for each mode and tracks what was enabled
+    let terminal_modes = TerminalModes::enable()?;
 
     #[cfg(target_os = "linux")]
     let gpm_client = match GpmClient::connect() {
@@ -542,17 +530,12 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     #[cfg(not(target_os = "linux"))]
     let gpm_client: Option<()> = None;
 
-    if gpm_client.is_none() {
-        let _ = crossterm::execute!(stdout(), crossterm::event::EnableMouseCapture);
-        tracing::info!("Enabled crossterm mouse capture");
-    } else {
-        tracing::info!("Using GPM for mouse capture, skipping crossterm mouse protocol");
+    if gpm_client.is_some() {
+        tracing::info!("Using GPM for mouse capture");
     }
 
-    // Enable bracketed paste mode so external pastes arrive as Event::Paste
-    let _ = stdout().execute(EnableBracketedPaste);
-    tracing::info!("Enabled bracketed paste mode");
-
+    // Set cursor style from config
+    use crossterm::ExecutableCommand;
     let _ = stdout().execute(config.editor.cursor_style.to_crossterm_style());
     tracing::info!("Set cursor style to {:?}", config.editor.cursor_style);
 
@@ -587,6 +570,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
         stdin_stream,
         key_translator,
         gpm_client,
+        terminal_modes,
     })
 }
 
@@ -685,6 +669,7 @@ fn main() -> AnyhowResult<()> {
         gpm_client,
         #[cfg(not(target_os = "linux"))]
         gpm_client,
+        mut terminal_modes,
     } = initialize_app(&args).context("Failed to initialize application")?;
 
     let mut current_working_dir = initial_working_dir;
@@ -792,16 +777,8 @@ fn main() -> AnyhowResult<()> {
         break (loop_result, update_result);
     };
 
-    // Clean up terminal
-    let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
-    let _ = stdout().execute(DisableBracketedPaste);
-    let _ = stdout().execute(SetCursorStyle::DefaultUserShape);
-    fresh::view::theme::Theme::reset_terminal_cursor_color();
-    let _ = stdout().execute(PopKeyboardEnhancementFlags);
-    disable_raw_mode().context("Failed to disable raw mode")?;
-    stdout()
-        .execute(LeaveAlternateScreen)
-        .context("Failed to leave alternate screen")?;
+    // Restore terminal state
+    terminal_modes.undo();
 
     // Check for updates after terminal is restored (using cached result)
     if let Some(update_result) = last_update_result {
