@@ -900,7 +900,7 @@ line 5: unchanged
     // Basic sanity check - after editing, we should have some indicators
     // (either from git gutter or buffer modified plugin)
     assert!(
-        indicator_count >= 1 || indicator_lines_after_save.len() >= 1,
+        indicator_count >= 1 || !indicator_lines_after_save.is_empty(),
         "Should have at least one indicator after making changes. \
          After insert: {}, After save: {}",
         indicator_count,

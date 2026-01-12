@@ -1689,7 +1689,7 @@ fn test_double_click_requires_same_position() {
     assert!(
         !harness.has_selection() || {
             let range = harness.get_selection_range();
-            range.map_or(true, |r| r.start == r.end)
+            range.is_none_or(|r| r.start == r.end)
         },
         "Single click should not create a selection"
     );

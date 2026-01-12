@@ -456,10 +456,12 @@ fn test_auto_revert_with_temp_rename_save() {
         let expected = new_content.clone();
         harness
             .wait_until(|h| h.get_buffer_content().unwrap() == expected)
-            .expect(&format!(
-                "Auto-revert should detect temp+rename save for version {}",
-                version
-            ));
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Auto-revert should detect temp+rename save for version {}",
+                    version
+                )
+            });
 
         harness.assert_buffer_content(&new_content);
     }

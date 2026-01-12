@@ -3977,6 +3977,7 @@ fn test_hover_popup_dismissed_on_focus_change() -> anyhow::Result<()> {
 /// The hover popup should stay visible when:
 /// 1. Mouse moves within the hovered symbol range
 /// 2. Mouse moves over the hover popup itself
+///
 /// The hover should only be dismissed when mouse leaves the editor area.
 ///
 /// Uses a fake LSP server to properly trigger hover flow via user-style events.
