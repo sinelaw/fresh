@@ -952,6 +952,71 @@ fn test_recovery_after_save_with_size_change() {
     }
 }
 
+/// Regression test for #753: unnamed buffer recovery
+///
+/// Tests two bugs that were fixed together:
+/// 1. Each auto-save generated a new recovery ID, creating duplicate recovery files
+/// 2. new_buffer() didn't create BufferMetadata, so recovery was silently skipped
+///
+/// This test:
+/// - Creates a NEW buffer (not the initial one) via new_buffer()
+/// - Types content and triggers multiple auto-saves
+/// - Verifies exactly ONE recovery file exists with correct content
+#[test]
+fn test_unnamed_buffer_created_via_new_buffer_has_stable_recovery() {
+    use fresh::services::recovery::RecoveryStorage;
+
+    let mut config = fresh::config::Config::default();
+    config.editor.auto_save_interval_secs = 0;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    // Create a NEW unnamed buffer (this is what was broken - new_buffer() didn't create metadata)
+    harness.editor_mut().new_buffer();
+
+    // Type content
+    harness.type_text("First content").unwrap();
+
+    // Trigger first auto-save
+    let saved1 = harness.editor_mut().auto_save_dirty_buffers().unwrap();
+    assert_eq!(saved1, 1, "Should save recovery for the new buffer");
+
+    // Type more content
+    harness.type_text(" more").unwrap();
+
+    // Trigger second auto-save
+    let saved2 = harness.editor_mut().auto_save_dirty_buffers().unwrap();
+    assert_eq!(saved2, 1, "Should save recovery again");
+
+    // Check recovery directory
+    let recovery_dir = harness.recovery_dir().expect("should have recovery dir");
+    let storage = RecoveryStorage::with_dir(recovery_dir);
+    let entries = storage.list_entries().unwrap();
+
+    let unsaved_entries: Vec<_> = entries
+        .iter()
+        .filter(|e| e.id.starts_with("unsaved_"))
+        .collect();
+
+    // This catches BOTH bugs:
+    // - If new_buffer() doesn't create metadata: 0 entries (recovery silently skipped)
+    // - If each auto-save creates new ID: 2 entries (duplicate files)
+    assert_eq!(
+        unsaved_entries.len(),
+        1,
+        "Should have exactly ONE recovery entry for unnamed buffer, found {}",
+        unsaved_entries.len()
+    );
+
+    // Verify content is the latest version
+    let chunked = storage
+        .read_chunked_content(&unsaved_entries[0].id)
+        .unwrap()
+        .unwrap();
+    let content = String::from_utf8_lossy(&chunked.chunks[0].content);
+    assert_eq!(content, "First content more");
+}
+
 /// Regression test: inserting at the end of a large file should not crash recovery
 ///
 /// Bug scenario:
