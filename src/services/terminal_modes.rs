@@ -25,6 +25,58 @@ use crossterm::{
 };
 use std::io::{stdout, Write};
 
+/// Configuration for keyboard enhancement flags.
+#[derive(Debug, Clone)]
+pub struct KeyboardConfig {
+    /// Enable CSI-u sequences for unambiguous escape code reading.
+    pub disambiguate_escape_codes: bool,
+    /// Enable key repeat and release events.
+    pub report_event_types: bool,
+    /// Enable alternate keycodes.
+    pub report_alternate_keys: bool,
+    /// Represent all keys as CSI-u escape codes.
+    pub report_all_keys_as_escape_codes: bool,
+}
+
+impl Default for KeyboardConfig {
+    fn default() -> Self {
+        Self {
+            disambiguate_escape_codes: true,
+            report_event_types: false,
+            report_alternate_keys: true,
+            report_all_keys_as_escape_codes: false,
+        }
+    }
+}
+
+impl KeyboardConfig {
+    /// Build crossterm KeyboardEnhancementFlags from this config.
+    pub fn to_flags(&self) -> KeyboardEnhancementFlags {
+        let mut flags = KeyboardEnhancementFlags::empty();
+        if self.disambiguate_escape_codes {
+            flags |= KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES;
+        }
+        if self.report_event_types {
+            flags |= KeyboardEnhancementFlags::REPORT_EVENT_TYPES;
+        }
+        if self.report_alternate_keys {
+            flags |= KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS;
+        }
+        if self.report_all_keys_as_escape_codes {
+            flags |= KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES;
+        }
+        flags
+    }
+
+    /// Returns true if any flags are enabled.
+    pub fn any_enabled(&self) -> bool {
+        self.disambiguate_escape_codes
+            || self.report_event_types
+            || self.report_alternate_keys
+            || self.report_all_keys_as_escape_codes
+    }
+}
+
 /// Tracks which terminal modes have been enabled and provides cleanup.
 ///
 /// Use `TerminalModes::enable()` to set up the terminal, then call `undo()`
@@ -46,10 +98,14 @@ impl TerminalModes {
 
     /// Enable all terminal modes, checking support for each.
     ///
+    /// The `keyboard_config` parameter controls which keyboard enhancement flags
+    /// to enable. Pass `None` to use defaults, or `Some(config)` for custom flags.
+    ///
     /// Returns Ok(Self) with tracked state of what was enabled.
     /// On error, automatically undoes any partially enabled modes.
-    pub fn enable() -> Result<Self> {
+    pub fn enable(keyboard_config: Option<&KeyboardConfig>) -> Result<Self> {
         let mut modes = Self::new();
+        let keyboard_config = keyboard_config.cloned().unwrap_or_default();
 
         // Enable raw mode
         if let Err(e) = enable_raw_mode() {
@@ -59,25 +115,28 @@ impl TerminalModes {
         modes.raw_mode = true;
         tracing::debug!("Enabled raw mode");
 
-        // Check and enable keyboard enhancement flags
-        match supports_keyboard_enhancement() {
-            Ok(true) => {
-                let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS;
-                if let Err(e) = stdout().execute(PushKeyboardEnhancementFlags(flags)) {
-                    tracing::warn!("Failed to enable keyboard enhancement: {}", e);
-                    // Non-fatal, continue without it
-                } else {
-                    modes.keyboard_enhancement = true;
-                    tracing::debug!("Enabled keyboard enhancement flags");
+        // Check and enable keyboard enhancement flags (if any are configured)
+        if keyboard_config.any_enabled() {
+            match supports_keyboard_enhancement() {
+                Ok(true) => {
+                    let flags = keyboard_config.to_flags();
+                    if let Err(e) = stdout().execute(PushKeyboardEnhancementFlags(flags)) {
+                        tracing::warn!("Failed to enable keyboard enhancement: {}", e);
+                        // Non-fatal, continue without it
+                    } else {
+                        modes.keyboard_enhancement = true;
+                        tracing::debug!("Enabled keyboard enhancement flags: {:?}", flags);
+                    }
+                }
+                Ok(false) => {
+                    tracing::info!("Keyboard enhancement not supported by terminal");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to query keyboard enhancement support: {}", e);
                 }
             }
-            Ok(false) => {
-                tracing::info!("Keyboard enhancement not supported by terminal");
-            }
-            Err(e) => {
-                tracing::warn!("Failed to query keyboard enhancement support: {}", e);
-            }
+        } else {
+            tracing::debug!("Keyboard enhancement disabled by config");
         }
 
         // Enable alternate screen

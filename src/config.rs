@@ -518,6 +518,35 @@ pub struct EditorConfig {
     #[serde(default)]
     pub cursor_style: CursorStyle,
 
+    /// Enable keyboard enhancement: disambiguate escape codes using CSI-u sequences.
+    /// This allows unambiguous reading of Escape and modified keys.
+    /// Requires terminal support (kitty keyboard protocol).
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub keyboard_disambiguate_escape_codes: bool,
+
+    /// Enable keyboard enhancement: report key event types (repeat/release).
+    /// Adds extra events when keys are autorepeated or released.
+    /// Requires terminal support (kitty keyboard protocol).
+    /// Default: false
+    #[serde(default = "default_false")]
+    pub keyboard_report_event_types: bool,
+
+    /// Enable keyboard enhancement: report alternate keycodes.
+    /// Sends alternate keycodes in addition to the base keycode.
+    /// Requires terminal support (kitty keyboard protocol).
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub keyboard_report_alternate_keys: bool,
+
+    /// Enable keyboard enhancement: report all keys as escape codes.
+    /// Represents all keyboard events as CSI-u sequences.
+    /// Required for repeat/release events on plain-text keys.
+    /// Requires terminal support (kitty keyboard protocol).
+    /// Default: false
+    #[serde(default = "default_false")]
+    pub keyboard_report_all_keys_as_escape_codes: bool,
+
     /// Enable quick suggestions (VS Code-like behavior).
     /// When enabled, completion suggestions appear automatically while typing,
     /// not just on trigger characters (like `.` or `::`).
@@ -627,6 +656,10 @@ impl Default for EditorConfig {
             file_tree_poll_interval_ms: default_file_tree_poll_interval(),
             default_line_ending: LineEndingOption::default(),
             cursor_style: CursorStyle::default(),
+            keyboard_disambiguate_escape_codes: true,
+            keyboard_report_event_types: false,
+            keyboard_report_alternate_keys: true,
+            keyboard_report_all_keys_as_escape_codes: false,
             quick_suggestions: true,
             show_menu_bar: true,
             show_tab_bar: true,

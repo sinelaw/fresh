@@ -53,6 +53,10 @@
         "file_tree_poll_interval_ms": 3000,
         "default_line_ending": "lf",
         "cursor_style": "default",
+        "keyboard_disambiguate_escape_codes": true,
+        "keyboard_report_event_types": false,
+        "keyboard_report_alternate_keys": true,
+        "keyboard_report_all_keys_as_escape_codes": false,
         "quick_suggestions": true,
         "show_menu_bar": true,
         "show_tab_bar": true
@@ -310,6 +314,26 @@
           "description": "Cursor style for the terminal cursor.\nOptions: blinking_block, steady_block, blinking_bar, steady_bar, blinking_underline, steady_underline\nDefault: blinking_block",
           "$ref": "#/$defs/CursorStyle",
           "default": "default"
+        },
+        "keyboard_disambiguate_escape_codes": {
+          "description": "Enable keyboard enhancement: disambiguate escape codes using CSI-u sequences.\nThis allows unambiguous reading of Escape and modified keys.\nRequires terminal support (kitty keyboard protocol).\nDefault: true",
+          "type": "boolean",
+          "default": true
+        },
+        "keyboard_report_event_types": {
+          "description": "Enable keyboard enhancement: report key event types (repeat/release).\nAdds extra events when keys are autorepeated or released.\nRequires terminal support (kitty keyboard protocol).\nDefault: false",
+          "type": "boolean",
+          "default": false
+        },
+        "keyboard_report_alternate_keys": {
+          "description": "Enable keyboard enhancement: report alternate keycodes.\nSends alternate keycodes in addition to the base keycode.\nRequires terminal support (kitty keyboard protocol).\nDefault: true",
+          "type": "boolean",
+          "default": true
+        },
+        "keyboard_report_all_keys_as_escape_codes": {
+          "description": "Enable keyboard enhancement: report all keys as escape codes.\nRepresents all keyboard events as CSI-u sequences.\nRequired for repeat/release events on plain-text keys.\nRequires terminal support (kitty keyboard protocol).\nDefault: false",
+          "type": "boolean",
+          "default": false
         },
         "quick_suggestions": {
           "description": "Enable quick suggestions (VS Code-like behavior).\nWhen enabled, completion suggestions appear automatically while typing,\nnot just on trigger characters (like `.` or `::`).\nDefault: true",

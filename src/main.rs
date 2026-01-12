@@ -7,7 +7,7 @@ use crossterm::event::{
 use fresh::input::key_translator::KeyTranslator;
 #[cfg(target_os = "linux")]
 use fresh::services::gpm::{gpm_to_crossterm, GpmClient};
-use fresh::services::terminal_modes::{self, TerminalModes};
+use fresh::services::terminal_modes::{self, KeyboardConfig, TerminalModes};
 use fresh::services::tracing_setup;
 use fresh::{
     app::Editor, config, config_io::DirectoryContext, services::release_checker,
@@ -517,7 +517,13 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 
     // Enable terminal modes (raw mode, alternate screen, mouse capture, etc.)
     // This checks support for each mode and tracks what was enabled
-    let terminal_modes = TerminalModes::enable()?;
+    let keyboard_config = KeyboardConfig {
+        disambiguate_escape_codes: config.editor.keyboard_disambiguate_escape_codes,
+        report_event_types: config.editor.keyboard_report_event_types,
+        report_alternate_keys: config.editor.keyboard_report_alternate_keys,
+        report_all_keys_as_escape_codes: config.editor.keyboard_report_all_keys_as_escape_codes,
+    };
+    let terminal_modes = TerminalModes::enable(Some(&keyboard_config))?;
 
     #[cfg(target_os = "linux")]
     let gpm_client = match GpmClient::connect() {

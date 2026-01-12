@@ -154,6 +154,10 @@ pub struct PartialEditorConfig {
     pub file_tree_poll_interval_ms: Option<u64>,
     pub default_line_ending: Option<LineEndingOption>,
     pub cursor_style: Option<CursorStyle>,
+    pub keyboard_disambiguate_escape_codes: Option<bool>,
+    pub keyboard_report_event_types: Option<bool>,
+    pub keyboard_report_alternate_keys: Option<bool>,
+    pub keyboard_report_all_keys_as_escape_codes: Option<bool>,
     pub quick_suggestions: Option<bool>,
     pub show_menu_bar: Option<bool>,
     pub show_tab_bar: Option<bool>,
@@ -199,6 +203,14 @@ impl Merge for PartialEditorConfig {
         self.default_line_ending
             .merge_from(&other.default_line_ending);
         self.cursor_style.merge_from(&other.cursor_style);
+        self.keyboard_disambiguate_escape_codes
+            .merge_from(&other.keyboard_disambiguate_escape_codes);
+        self.keyboard_report_event_types
+            .merge_from(&other.keyboard_report_event_types);
+        self.keyboard_report_alternate_keys
+            .merge_from(&other.keyboard_report_alternate_keys);
+        self.keyboard_report_all_keys_as_escape_codes
+            .merge_from(&other.keyboard_report_all_keys_as_escape_codes);
         self.quick_suggestions.merge_from(&other.quick_suggestions);
         self.show_menu_bar.merge_from(&other.show_menu_bar);
         self.show_tab_bar.merge_from(&other.show_tab_bar);
@@ -370,6 +382,12 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             file_tree_poll_interval_ms: Some(cfg.file_tree_poll_interval_ms),
             default_line_ending: Some(cfg.default_line_ending.clone()),
             cursor_style: Some(cfg.cursor_style),
+            keyboard_disambiguate_escape_codes: Some(cfg.keyboard_disambiguate_escape_codes),
+            keyboard_report_event_types: Some(cfg.keyboard_report_event_types),
+            keyboard_report_alternate_keys: Some(cfg.keyboard_report_alternate_keys),
+            keyboard_report_all_keys_as_escape_codes: Some(
+                cfg.keyboard_report_all_keys_as_escape_codes,
+            ),
             quick_suggestions: Some(cfg.quick_suggestions),
             show_menu_bar: Some(cfg.show_menu_bar),
             show_tab_bar: Some(cfg.show_tab_bar),
@@ -434,6 +452,18 @@ impl PartialEditorConfig {
                 .default_line_ending
                 .unwrap_or(defaults.default_line_ending.clone()),
             cursor_style: self.cursor_style.unwrap_or(defaults.cursor_style),
+            keyboard_disambiguate_escape_codes: self
+                .keyboard_disambiguate_escape_codes
+                .unwrap_or(defaults.keyboard_disambiguate_escape_codes),
+            keyboard_report_event_types: self
+                .keyboard_report_event_types
+                .unwrap_or(defaults.keyboard_report_event_types),
+            keyboard_report_alternate_keys: self
+                .keyboard_report_alternate_keys
+                .unwrap_or(defaults.keyboard_report_alternate_keys),
+            keyboard_report_all_keys_as_escape_codes: self
+                .keyboard_report_all_keys_as_escape_codes
+                .unwrap_or(defaults.keyboard_report_all_keys_as_escape_codes),
             quick_suggestions: self.quick_suggestions.unwrap_or(defaults.quick_suggestions),
             show_menu_bar: self.show_menu_bar.unwrap_or(defaults.show_menu_bar),
             show_tab_bar: self.show_tab_bar.unwrap_or(defaults.show_tab_bar),
