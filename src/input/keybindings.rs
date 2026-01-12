@@ -957,10 +957,7 @@ impl KeybindingResolver {
         action: Action,
         key_name: &str,
     ) {
-        let context_bindings = self
-            .default_bindings
-            .entry(context)
-            .or_default();
+        let context_bindings = self.default_bindings.entry(context).or_default();
 
         // Insert the primary binding
         context_bindings.insert((key_code, modifiers), action.clone());

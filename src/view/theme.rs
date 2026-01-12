@@ -1279,7 +1279,7 @@ mod tests {
     fn test_builtin_themes_match_schema() {
         for theme in BUILTIN_THEMES {
             let _: ThemeFile = serde_json::from_str(theme.json)
-                .expect(&format!("Theme '{}' does not match schema", theme.name));
+                .unwrap_or_else(|_| panic!("Theme '{}' does not match schema", theme.name));
         }
     }
 

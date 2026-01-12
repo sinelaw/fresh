@@ -163,9 +163,7 @@ fn test_stdin_streaming_progress() {
 
     // Spawn background thread that writes data progressively
     let thread_handle = thread::spawn(move || -> anyhow::Result<()> {
-        let mut file = OpenOptions::new()
-            .append(true)
-            .open(&temp_path_clone)?;
+        let mut file = OpenOptions::new().append(true).open(&temp_path_clone)?;
 
         let mut count = 0;
         while !stop_signal_clone.load(Ordering::Relaxed) && count < 10 {

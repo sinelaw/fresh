@@ -56,35 +56,6 @@ pub fn compute_tab_scroll_offset(
     offset.min(total_width.saturating_sub(max_width))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::compute_tab_scroll_offset;
-
-    #[test]
-    fn offset_clamped_to_zero_when_active_first() {
-        let widths = vec![5, 5, 5]; // tab widths
-        let offset = compute_tab_scroll_offset(&widths, 0, 6, 10, 1);
-        assert_eq!(offset, 0);
-    }
-
-    #[test]
-    fn offset_moves_to_show_active_tab() {
-        let widths = vec![5, 8, 6]; // active is the middle tab (index 1)
-        let offset = compute_tab_scroll_offset(&widths, 1, 6, 0, 1);
-        // Active tab width 8 cannot fully fit into width 6; expect it to right-align within view.
-        assert_eq!(offset, 8);
-    }
-
-    #[test]
-    fn offset_respects_total_width_bounds() {
-        let widths = vec![3, 3, 3, 3];
-        let offset = compute_tab_scroll_offset(&widths, 3, 4, 100, 1);
-        let total: usize = widths.iter().sum();
-        let total_with_padding = total + 3; // three gaps of width 1
-        assert!(offset <= total_with_padding.saturating_sub(4));
-    }
-}
-
 impl TabsRenderer {
     /// Render the tab bar for a specific split showing only its open buffers
     ///
@@ -494,5 +465,34 @@ impl TabsRenderer {
             0,    // Default tab_scroll_offset for legacy render
             None, // No hover state for legacy render
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_tab_scroll_offset;
+
+    #[test]
+    fn offset_clamped_to_zero_when_active_first() {
+        let widths = vec![5, 5, 5]; // tab widths
+        let offset = compute_tab_scroll_offset(&widths, 0, 6, 10, 1);
+        assert_eq!(offset, 0);
+    }
+
+    #[test]
+    fn offset_moves_to_show_active_tab() {
+        let widths = vec![5, 8, 6]; // active is the middle tab (index 1)
+        let offset = compute_tab_scroll_offset(&widths, 1, 6, 0, 1);
+        // Active tab width 8 cannot fully fit into width 6; expect it to right-align within view.
+        assert_eq!(offset, 8);
+    }
+
+    #[test]
+    fn offset_respects_total_width_bounds() {
+        let widths = vec![3, 3, 3, 3];
+        let offset = compute_tab_scroll_offset(&widths, 3, 4, 100, 1);
+        let total: usize = widths.iter().sum();
+        let total_with_padding = total + 3; // three gaps of width 1
+        assert!(offset <= total_with_padding.saturating_sub(4));
     }
 }

@@ -641,6 +641,6 @@ mod tests {
         println!("  .tsx -> {:?}", tsx_syntax.map(|s| &s.name));
 
         // This test always passes - it's for dumping info
-        assert!(syntaxes.len() > 0);
+        assert!(!syntaxes.is_empty());
     }
 }

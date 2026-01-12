@@ -1152,7 +1152,7 @@ mod tests {
 
     #[test]
     fn test_parse_multiple_files() {
-        let inputs = vec!["file1.txt", "sub/file2.rs:10", "file3.cpp:20:5"];
+        let inputs = ["file1.txt", "sub/file2.rs:10", "file3.cpp:20:5"];
         let locs: Vec<FileLocation> = inputs.iter().map(|i| parse_file_location(i)).collect();
 
         assert_eq!(locs.len(), 3);

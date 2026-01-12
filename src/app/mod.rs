@@ -2947,9 +2947,7 @@ impl Editor {
         &mut self,
         key: &str,
     ) -> &mut crate::input::input_history::InputHistory {
-        self.prompt_histories
-            .entry(key.to_string())
-            .or_default()
+        self.prompt_histories.entry(key.to_string()).or_default()
     }
 
     /// Get a prompt history for the given key (immutable)

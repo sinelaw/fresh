@@ -23,8 +23,7 @@ use std::sync::RwLock;
 /// Structure: plugin_name -> locale -> key -> translated_string
 type PluginStringsMap = HashMap<String, HashMap<String, HashMap<String, String>>>;
 
-static PLUGIN_STRINGS: Lazy<RwLock<PluginStringsMap>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
+static PLUGIN_STRINGS: Lazy<RwLock<PluginStringsMap>> = Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// Register strings for a plugin.
 /// format: { "en": { "key": "value" }, "es": { "key": "value" } }

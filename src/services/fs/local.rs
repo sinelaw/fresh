@@ -160,9 +160,7 @@ impl FsBackend for LocalFsBackend {
             match task.await {
                 Ok(Ok(metadata)) => results.push(Ok(metadata)),
                 Ok(Err(e)) => results.push(Err(e)),
-                Err(_) => {
-                    results.push(Err(io::Error::other("Task join error")))
-                }
+                Err(_) => results.push(Err(io::Error::other("Task join error"))),
             }
         }
 

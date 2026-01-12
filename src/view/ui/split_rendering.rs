@@ -1562,10 +1562,7 @@ impl SplitRenderer {
             // Accumulate or flush spans based on style changes
             if let Some(style) = current_style {
                 if style != final_style && !current_span_text.is_empty() {
-                    spans.push(Span::styled(
-                        std::mem::take(&mut current_span_text),
-                        style,
-                    ));
+                    spans.push(Span::styled(std::mem::take(&mut current_span_text), style));
                 }
             }
 
@@ -3224,8 +3221,7 @@ impl SplitRenderer {
                     let is_selected = !exclude_from_selection
                         && (byte_pos.is_some_and(|bp| {
                             selection_ranges.iter().any(|range| range.contains(&bp))
-                        })
-                        || is_in_block_selection);
+                        }) || is_in_block_selection);
 
                     // Compute character style using helper function
                     // char_styles is indexed by character position, not visual column
@@ -5191,7 +5187,7 @@ mod tests {
         // Step 4: Simulate highlight span lookup
         // If TreeSitter highlights "int" as keyword (bytes 0-3 for line 1, bytes 8-11 for line 2),
         // the lookup should find these correctly.
-        let simulated_highlight_spans = vec![
+        let simulated_highlight_spans = [
             // "int" on line 1: bytes 0-3
             (0usize..3usize, "keyword"),
             // "int" on line 2: bytes 8-11

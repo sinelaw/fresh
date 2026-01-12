@@ -999,7 +999,7 @@ mod tests {
 
         // Without has_selection set, action should be disabled
         assert!(state
-            .get_highlighted_action(&[select_menu.clone()])
+            .get_highlighted_action(std::slice::from_ref(&select_menu))
             .is_none());
 
         // With has_selection set to true, action should be enabled

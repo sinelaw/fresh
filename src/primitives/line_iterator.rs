@@ -428,7 +428,7 @@ mod tests {
         for (offset, expected_line, expected_col) in expected {
             let pos = buffer
                 .offset_to_position(offset)
-                .expect(&format!("Should have position for offset {}", offset));
+                .unwrap_or_else(|| panic!("Should have position for offset {}", offset));
             assert_eq!(pos.line, expected_line, "Wrong line for offset {}", offset);
             assert_eq!(
                 pos.column, expected_col,

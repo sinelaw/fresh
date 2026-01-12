@@ -255,10 +255,7 @@ impl Editor {
                     let top_byte = viewport_top_byte;
 
                     // Get or create the seen byte ranges set for this buffer
-                    let seen_byte_ranges = self
-                        .seen_byte_ranges
-                        .entry(buffer_id)
-                        .or_default();
+                    let seen_byte_ranges = self.seen_byte_ranges.entry(buffer_id).or_default();
 
                     // Collect only NEW lines (not seen before based on byte range)
                     let mut new_lines: Vec<crate::services::plugins::hooks::LineInfo> = Vec::new();

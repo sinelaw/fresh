@@ -7012,7 +7012,7 @@ mod tests {
                 let cmds = handle.process_commands();
                 eprintln!("Commands after load: {:?}", cmds.len());
                 // The vi mode plugin should register the "Toggle Vi mode" command
-                assert!(cmds.len() > 0, "Vi mode plugin should register commands");
+                assert!(!cmds.is_empty(), "Vi mode plugin should register commands");
             }
             Err(e) => {
                 panic!("Vi mode plugin failed to load: {}", e);

@@ -348,8 +348,7 @@ impl InputHistory {
     /// Save history to a file
     pub fn save_to_file(&self, path: &std::path::Path) -> std::io::Result<()> {
         // Only save items, not navigation state
-        let json = serde_json::to_string_pretty(&self.items)
-            .map_err(std::io::Error::other)?;
+        let json = serde_json::to_string_pretty(&self.items).map_err(std::io::Error::other)?;
 
         // Create parent directory if it doesn't exist
         if let Some(parent) = path.parent() {
@@ -367,8 +366,7 @@ impl InputHistory {
         }
 
         let json = std::fs::read_to_string(path)?;
-        let items: Vec<String> = serde_json::from_str(&json)
-            .map_err(std::io::Error::other)?;
+        let items: Vec<String> = serde_json::from_str(&json).map_err(std::io::Error::other)?;
 
         let mut history = Self::new();
         history.items = items;

@@ -680,8 +680,7 @@ impl Editor {
         let old_status = self.lsp_server_statuses.get(&language).cloned();
 
         // Update server status
-        self.lsp_server_statuses
-            .insert(language.clone(), status);
+        self.lsp_server_statuses.insert(language.clone(), status);
         self.update_lsp_status_from_server_statuses();
 
         // Update warning domain for LSP status indicator

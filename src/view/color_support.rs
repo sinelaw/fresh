@@ -358,8 +358,8 @@ mod tests {
     #[test]
     fn test_rgb_to_256_red() {
         let idx = rgb_to_256(255, 0, 0);
-        assert!(idx >= 16 && idx <= 231); // Should be in color cube
-                                          // Pure red should be index 196 (5*36 + 0*6 + 0 + 16)
+        assert!((16..=231).contains(&idx)); // Should be in color cube
+                                            // Pure red should be index 196 (5*36 + 0*6 + 0 + 16)
         assert_eq!(idx, 196);
     }
 

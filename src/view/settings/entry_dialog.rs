@@ -280,30 +280,27 @@ impl EntryDialogState {
             }
         } else {
             // Check if current item is an ObjectArray that can navigate internally
-            let array_nav_result = self
-                .items
-                .get(self.selected_item)
-                .and_then(|item| {
-                    if let SettingControl::ObjectArray(state) = &item.control {
-                        // Navigation order: entries -> add-new -> exit
-                        match state.focused_index {
-                            Some(idx) if idx + 1 < state.bindings.len() => {
-                                // On entry, can go to next entry
-                                Some(true)
-                            }
-                            Some(_) => {
-                                // On last entry, can go to add-new
-                                Some(true)
-                            }
-                            None => {
-                                // On add-new, exit to next dialog item
-                                Some(false)
-                            }
+            let array_nav_result = self.items.get(self.selected_item).and_then(|item| {
+                if let SettingControl::ObjectArray(state) = &item.control {
+                    // Navigation order: entries -> add-new -> exit
+                    match state.focused_index {
+                        Some(idx) if idx + 1 < state.bindings.len() => {
+                            // On entry, can go to next entry
+                            Some(true)
                         }
-                    } else {
-                        None
+                        Some(_) => {
+                            // On last entry, can go to add-new
+                            Some(true)
+                        }
+                        None => {
+                            // On add-new, exit to next dialog item
+                            Some(false)
+                        }
                     }
-                });
+                } else {
+                    None
+                }
+            });
 
             match array_nav_result {
                 Some(true) => {
@@ -365,34 +362,31 @@ impl EntryDialogState {
             }
         } else {
             // Check if current item is an ObjectArray that can navigate internally
-            let array_nav_result = self
-                .items
-                .get(self.selected_item)
-                .and_then(|item| {
-                    if let SettingControl::ObjectArray(state) = &item.control {
-                        // Navigation order (reverse): exit <- entries <- add-new
-                        match state.focused_index {
-                            None => {
-                                // On add-new, can go back to last entry (if any)
-                                if !state.bindings.is_empty() {
-                                    Some(true)
-                                } else {
-                                    Some(false) // No entries, exit
-                                }
-                            }
-                            Some(0) => {
-                                // On first entry, exit to previous dialog item
-                                Some(false)
-                            }
-                            Some(_) => {
-                                // On entry, can go to previous entry
+            let array_nav_result = self.items.get(self.selected_item).and_then(|item| {
+                if let SettingControl::ObjectArray(state) = &item.control {
+                    // Navigation order (reverse): exit <- entries <- add-new
+                    match state.focused_index {
+                        None => {
+                            // On add-new, can go back to last entry (if any)
+                            if !state.bindings.is_empty() {
                                 Some(true)
+                            } else {
+                                Some(false) // No entries, exit
                             }
                         }
-                    } else {
-                        None
+                        Some(0) => {
+                            // On first entry, exit to previous dialog item
+                            Some(false)
+                        }
+                        Some(_) => {
+                            // On entry, can go to previous entry
+                            Some(true)
+                        }
                     }
-                });
+                } else {
+                    None
+                }
+            });
 
             match array_nav_result {
                 Some(true) => {

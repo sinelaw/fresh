@@ -720,11 +720,7 @@ mod tests {
         );
 
         // Verify the code content is preserved
-        let all_text: String = lines
-            .iter()
-            .map(get_line_text)
-            .collect::<Vec<_>>()
-            .join("");
+        let all_text: String = lines.iter().map(get_line_text).collect::<Vec<_>>().join("");
         assert!(all_text.contains("fn"), "Should contain 'fn' keyword");
         assert!(all_text.contains("main"), "Should contain 'main'");
         assert!(all_text.contains("println"), "Should contain 'println'");
@@ -741,11 +737,7 @@ mod tests {
         assert!(!lines.is_empty(), "Should have parsed lines");
 
         // Content should be preserved
-        let all_text: String = lines
-            .iter()
-            .map(get_line_text)
-            .collect::<Vec<_>>()
-            .join("");
+        let all_text: String = lines.iter().map(get_line_text).collect::<Vec<_>>().join("");
         assert!(
             all_text.contains("some code here"),
             "Should contain the code"
