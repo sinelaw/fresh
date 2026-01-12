@@ -303,6 +303,12 @@ impl EditorStateSnapshot {
     }
 }
 
+impl Default for EditorStateSnapshot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Position for inserting menu items or menus
 #[derive(Debug, Clone)]
 pub enum MenuPosition {
@@ -984,6 +990,7 @@ impl PluginApi {
 
     /// Add an overlay (decoration) to a buffer
     /// Returns an opaque handle that can be used to remove the overlay later
+    #[allow(clippy::too_many_arguments)]
     pub fn add_overlay(
         &self,
         buffer_id: BufferId,

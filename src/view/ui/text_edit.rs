@@ -433,13 +433,11 @@ impl TextEdit {
             self.lines.insert(self.cursor_row + 1, after);
             self.cursor_row += 1;
             self.cursor_col = 0;
-        } else if c != '\n' {
-            if self.cursor_row < self.lines.len() {
-                let line = &mut self.lines[self.cursor_row];
-                let col = self.cursor_col.min(line.len());
-                line.insert(col, c);
-                self.cursor_col = col + c.len_utf8();
-            }
+        } else if c != '\n' && self.cursor_row < self.lines.len() {
+            let line = &mut self.lines[self.cursor_row];
+            let col = self.cursor_col.min(line.len());
+            line.insert(col, c);
+            self.cursor_col = col + c.len_utf8();
         }
         // Ignore newline in single-line mode
     }

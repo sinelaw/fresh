@@ -183,7 +183,7 @@ fn test_document_model_large_file() {
         .unwrap();
 
     assert!(
-        viewport.lines.len() > 0,
+        !viewport.lines.is_empty(),
         "Should return at least some lines"
     );
     assert!(
@@ -213,7 +213,7 @@ fn test_document_model_large_file() {
     // Test 6: Verify get_chunk_at_offset works for large files
     let (chunk_offset, chunk_text) = state.get_chunk_at_offset(0, 100).unwrap();
     assert_eq!(chunk_offset, 0, "Chunk should start at requested offset");
-    assert!(chunk_text.len() > 0, "Chunk should contain some text");
+    assert!(!chunk_text.is_empty(), "Chunk should contain some text");
     assert!(chunk_text.len() <= 200, "Chunk should be reasonably sized");
 
     // Test 7: Verify viewport content from middle of file
@@ -223,7 +223,7 @@ fn test_document_model_large_file() {
         .unwrap();
 
     assert!(
-        viewport_mid.lines.len() > 0,
+        !viewport_mid.lines.is_empty(),
         "Should get lines from middle of file"
     );
     // Note: The viewport may start slightly before the requested offset if we're mid-line,

@@ -132,6 +132,7 @@ pub enum HookArgs {
     /// This hook fires when:
     /// - Lines become visible for the first time (viewport scroll)
     /// - Line content changes (insert/delete)
+    ///
     /// Plugins should use this instead of RenderLine for better performance
     LinesChanged {
         buffer_id: BufferId,
@@ -323,7 +324,7 @@ impl HookRegistry {
     pub fn add_hook(&mut self, name: &str, callback: HookCallback) {
         self.hooks
             .entry(name.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(callback);
     }
 

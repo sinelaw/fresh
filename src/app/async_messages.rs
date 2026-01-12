@@ -681,7 +681,7 @@ impl Editor {
 
         // Update server status
         self.lsp_server_statuses
-            .insert(language.clone(), status.clone());
+            .insert(language.clone(), status);
         self.update_lsp_status_from_server_statuses();
 
         // Update warning domain for LSP status indicator
@@ -1120,7 +1120,7 @@ fn decode_semantic_token_raw_data(
     data: &[u32],
     base_line: usize,
 ) -> Vec<SemanticTokenSpan> {
-    if data.len() % 5 != 0 {
+    if !data.len().is_multiple_of(5) {
         tracing::warn!(
             "Semantic token data length {} is not divisible by 5",
             data.len()

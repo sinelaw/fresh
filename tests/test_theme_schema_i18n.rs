@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 /// Parse the raw JSON schema and extract section/field names with their i18n keys
 #[cfg(feature = "runtime")]
+#[allow(clippy::type_complexity)]
 fn parse_schema_i18n_keys(
     schema: &serde_json::Value,
 ) -> Vec<(String, String, String, Vec<(String, String, String)>)> {

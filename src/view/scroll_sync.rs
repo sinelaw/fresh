@@ -90,8 +90,7 @@ impl ScrollSyncGroup {
         let anchor = self
             .anchors
             .iter()
-            .filter(|a| a.left_line <= left_line)
-            .last()
+            .rfind(|a| a.left_line <= left_line)
             .unwrap_or(&self.anchors[0]);
 
         // Calculate offset from anchor
@@ -107,8 +106,7 @@ impl ScrollSyncGroup {
         let anchor = self
             .anchors
             .iter()
-            .filter(|a| a.right_line <= right_line)
-            .last()
+            .rfind(|a| a.right_line <= right_line)
             .unwrap_or(&self.anchors[0]);
 
         // Calculate offset from anchor in right space

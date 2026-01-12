@@ -1,4 +1,3 @@
-#![cfg(test)]
 // EditorTestHarness - Virtual terminal environment for E2E testing
 
 use anyhow::Result as AnyhowResult;
@@ -383,17 +382,15 @@ impl EditorTestHarness {
         config.editor.double_click_time_ms = 10; // Fast double-click for faster tests
 
         // Create filesystem backend (slow or default)
-        let (fs_backend, fs_metrics): (
-            Option<Arc<dyn FsBackend>>,
-            Option<Arc<tokio::sync::Mutex<BackendMetrics>>>,
-        ) = if let Some(slow_config) = options.slow_fs_config {
-            let local_backend = Arc::new(LocalFsBackend::new());
-            let slow_backend = SlowFsBackend::new(local_backend, slow_config);
-            let metrics = slow_backend.metrics_arc();
-            (Some(Arc::new(slow_backend)), Some(metrics))
-        } else {
-            (None, None)
-        };
+        let (fs_backend, fs_metrics): (Option<Arc<dyn FsBackend>>, _) =
+            if let Some(slow_config) = options.slow_fs_config {
+                let local_backend = Arc::new(LocalFsBackend::new());
+                let slow_backend = SlowFsBackend::new(local_backend, slow_config);
+                let metrics = slow_backend.metrics_arc();
+                (Some(Arc::new(slow_backend)), Some(metrics))
+            } else {
+                (None, None)
+            };
 
         // Create terminal
         let backend = TestBackend::new(width, height);
@@ -1018,7 +1015,7 @@ impl EditorTestHarness {
     /// this checks if the cell has a background color matching scrollbar thumb colors.
     pub fn is_scrollbar_thumb_at(&self, x: u16, y: u16) -> bool {
         self.get_cell_style(x, y)
-            .map(|style| crate::common::scrollbar::is_scrollbar_thumb_style(style))
+            .map(crate::common::scrollbar::is_scrollbar_thumb_style)
             .unwrap_or(false)
     }
 
@@ -1028,7 +1025,7 @@ impl EditorTestHarness {
     /// this checks if the cell has a background color matching scrollbar track colors.
     pub fn is_scrollbar_track_at(&self, x: u16, y: u16) -> bool {
         self.get_cell_style(x, y)
-            .map(|style| crate::common::scrollbar::is_scrollbar_track_style(style))
+            .map(crate::common::scrollbar::is_scrollbar_track_style)
             .unwrap_or(false)
     }
 

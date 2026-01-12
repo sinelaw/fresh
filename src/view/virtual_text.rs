@@ -163,6 +163,7 @@ impl VirtualTextManager {
     /// Add a virtual text entry with a string identifier
     ///
     /// This is useful for plugins that need to track and remove virtual texts by name.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_with_id(
         &mut self,
         marker_list: &mut MarkerList,
@@ -206,6 +207,7 @@ impl VirtualTextManager {
     /// * `placement` - LineAbove or LineBelow
     /// * `namespace` - Namespace for bulk removal (e.g., "git-blame")
     /// * `priority` - Ordering when multiple lines at same position
+    #[allow(clippy::too_many_arguments)]
     pub fn add_line(
         &mut self,
         marker_list: &mut MarkerList,

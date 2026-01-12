@@ -25,7 +25,7 @@ struct CursorLineInfo {
 /// Get line info for a cursor position
 fn get_cursor_line_info(state: &mut EditorState, position: usize) -> Option<CursorLineInfo> {
     let mut iter = state.buffer.line_iterator(position, 80);
-    let (line_start, _) = iter.next()?;
+    let (line_start, _) = iter.next_line()?;
     Some(CursorLineInfo {
         line_start,
         col_offset: position.saturating_sub(line_start),
@@ -176,7 +176,7 @@ pub fn add_cursor_above(state: &mut EditorState) -> AddCursorResult {
 
     // Navigate to previous line using iterator
     let mut iter = state.buffer.line_iterator(adjusted_position, 80);
-    iter.next(); // Consume current line
+    iter.next_line(); // Consume current line
     iter.prev(); // Move back to current line
 
     // Get the previous line
@@ -203,10 +203,10 @@ pub fn add_cursor_below(state: &mut EditorState) -> AddCursorResult {
 
     // Navigate to next line using iterator
     let mut iter = state.buffer.line_iterator(position, 80);
-    iter.next(); // Consume current line
+    iter.next_line(); // Consume current line
 
     // Get next line
-    if let Some((next_line_start, next_line_content)) = iter.next() {
+    if let Some((next_line_start, next_line_content)) = iter.next_line() {
         let new_pos = cursor_position_on_line(next_line_start, &next_line_content, info.col_offset);
         success_result(Cursor::new(new_pos), state)
     } else {

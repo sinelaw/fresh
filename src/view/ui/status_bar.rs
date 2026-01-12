@@ -251,6 +251,7 @@ impl StatusBarRenderer {
     ///
     /// # Returns
     /// Layout information with positions of clickable indicators
+    #[allow(clippy::too_many_arguments)]
     pub fn render_status_bar(
         frame: &mut Frame,
         area: Rect,
@@ -448,6 +449,7 @@ impl StatusBarRenderer {
     }
 
     /// Render the normal status bar
+    #[allow(clippy::too_many_arguments)]
     fn render_status(
         frame: &mut Frame,
         area: Rect,
@@ -886,6 +888,7 @@ impl StatusBarRenderer {
     ///
     /// # Returns
     /// Layout information for hit testing mouse clicks on checkboxes
+    #[allow(clippy::too_many_arguments)]
     pub fn render_search_options(
         frame: &mut Frame,
         area: Rect,

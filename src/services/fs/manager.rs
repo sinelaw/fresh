@@ -2,9 +2,13 @@ use super::backend::{FsBackend, FsEntry, FsMetadata};
 use std::collections::HashMap;
 use std::fmt;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex};
+
+/// Type alias for pending directory requests map
+type PendingDirRequests =
+    Arc<Mutex<HashMap<PathBuf, Vec<oneshot::Sender<io::Result<Vec<FsEntry>>>>>>>;
 
 /// Manages filesystem operations with request batching and deduplication
 ///
@@ -17,8 +21,7 @@ pub struct FsManager {
     backend: Arc<dyn FsBackend>,
     /// Pending directory listing requests
     /// Map of path -> list of channels waiting for the result
-    pending_dir_requests:
-        Arc<Mutex<HashMap<PathBuf, Vec<oneshot::Sender<io::Result<Vec<FsEntry>>>>>>>,
+    pending_dir_requests: PendingDirRequests,
 }
 
 impl fmt::Debug for FsManager {
@@ -84,7 +87,7 @@ impl FsManager {
         } else {
             // Wait for the other request to complete
             rx.await
-                .unwrap_or_else(|_| Err(io::Error::new(io::ErrorKind::Other, "Request cancelled")))
+                .unwrap_or_else(|_| Err(io::Error::other("Request cancelled")))
         }
     }
 
@@ -97,31 +100,34 @@ impl FsManager {
     }
 
     /// Get metadata for a single path
-    pub async fn get_single_metadata(&self, path: &PathBuf) -> io::Result<FsMetadata> {
-        let results = self.backend.get_metadata_batch(&[path.clone()]).await;
+    pub async fn get_single_metadata(&self, path: &Path) -> io::Result<FsMetadata> {
+        let results = self
+            .backend
+            .get_metadata_batch(std::slice::from_ref(&path.to_path_buf()))
+            .await;
         results
             .into_iter()
             .next()
-            .unwrap_or_else(|| Err(io::Error::new(io::ErrorKind::Other, "No result returned")))
+            .unwrap_or_else(|| Err(io::Error::other("No result returned")))
     }
 
     /// Check if a path exists
-    pub async fn exists(&self, path: &PathBuf) -> bool {
+    pub async fn exists(&self, path: &Path) -> bool {
         self.backend.exists(path).await
     }
 
     /// Check if a path is a directory
-    pub async fn is_dir(&self, path: &PathBuf) -> io::Result<bool> {
+    pub async fn is_dir(&self, path: &Path) -> io::Result<bool> {
         self.backend.is_dir(path).await
     }
 
     /// Get a complete entry for a path (with metadata)
-    pub async fn get_entry(&self, path: &PathBuf) -> io::Result<FsEntry> {
+    pub async fn get_entry(&self, path: &Path) -> io::Result<FsEntry> {
         self.backend.get_entry(path).await
     }
 
     /// Get canonical path
-    pub async fn canonicalize(&self, path: &PathBuf) -> io::Result<PathBuf> {
+    pub async fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
         self.backend.canonicalize(path).await
     }
 

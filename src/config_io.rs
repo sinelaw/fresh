@@ -98,16 +98,14 @@ fn migrate_v0_to_v1(mut value: Value) -> Result<Value, ConfigError> {
         map.insert("version".to_string(), Value::Number(1.into()));
 
         // Example: rename camelCase keys to snake_case if they exist
-        if let Some(editor) = map.get_mut("editor") {
-            if let Value::Object(ref mut editor_map) = editor {
-                // tabSize -> tab_size (hypothetical legacy format)
-                if let Some(val) = editor_map.remove("tabSize") {
-                    editor_map.entry("tab_size").or_insert(val);
-                }
-                // lineNumbers -> line_numbers
-                if let Some(val) = editor_map.remove("lineNumbers") {
-                    editor_map.entry("line_numbers").or_insert(val);
-                }
+        if let Some(Value::Object(ref mut editor_map)) = map.get_mut("editor") {
+            // tabSize -> tab_size (hypothetical legacy format)
+            if let Some(val) = editor_map.remove("tabSize") {
+                editor_map.entry("tab_size").or_insert(val);
+            }
+            // lineNumbers -> line_numbers
+            if let Some(val) = editor_map.remove("lineNumbers") {
+                editor_map.entry("line_numbers").or_insert(val);
             }
         }
     }

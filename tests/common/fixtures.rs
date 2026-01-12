@@ -1,4 +1,3 @@
-#![cfg(test)]
 // Test file fixtures
 
 use std::fs;

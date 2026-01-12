@@ -361,7 +361,7 @@ impl Editor {
     fn should_create_new_file(input: &str) -> bool {
         // If input contains a dot with something after it (extension), or
         // contains a path separator, treat it as a file to be created
-        let has_extension = input.rfind('.').map_or(false, |pos| {
+        let has_extension = input.rfind('.').is_some_and(|pos| {
             // Check there's something after the dot that's not a path separator
             let after_dot = &input[pos + 1..];
             !after_dot.is_empty() && !after_dot.contains('/') && !after_dot.contains('\\')

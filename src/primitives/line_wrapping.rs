@@ -203,7 +203,7 @@ mod tests {
 
         assert_eq!(segments.len(), 1);
         assert_eq!(segments[0].text, "");
-        assert_eq!(segments[0].is_continuation, false);
+        assert!(!segments[0].is_continuation);
     }
 
     #[test]
@@ -214,7 +214,7 @@ mod tests {
 
         assert_eq!(segments.len(), 1);
         assert_eq!(segments[0].text, text);
-        assert_eq!(segments[0].is_continuation, false);
+        assert!(!segments[0].is_continuation);
     }
 
     #[test]
@@ -235,13 +235,13 @@ mod tests {
         assert_eq!(segments.len(), 3);
 
         assert_eq!(segments[0].text, SEG0);
-        assert_eq!(segments[0].is_continuation, false);
+        assert!(!segments[0].is_continuation);
 
         assert_eq!(segments[1].text, SEG1);
-        assert_eq!(segments[1].is_continuation, true);
+        assert!(segments[1].is_continuation);
 
         assert_eq!(segments[2].text, SEG2);
-        assert_eq!(segments[2].is_continuation, true);
+        assert!(segments[2].is_continuation);
 
         // Test char_position_to_segment with various positions
 
@@ -301,7 +301,7 @@ mod tests {
             51,
             "First segment should be 51 chars"
         );
-        assert_eq!(segments[1].is_continuation, true);
+        assert!(segments[1].is_continuation);
 
         // Second segment starts with space, then B's (51 chars total)
         assert_eq!(
@@ -360,7 +360,7 @@ mod tests {
         println!("Text len: {}", text.len());
         println!("Text[48..55]: {:?}", &text[48..55]);
 
-        let segments = wrap_line(&text, &config);
+        let segments = wrap_line(text, &config);
 
         for (i, seg) in segments.iter().enumerate() {
             println!(
@@ -807,10 +807,10 @@ mod proptests {
             _n_wide in 1usize..5,
         ) {
             // Create ASCII string with n_ascii * 2 characters (each 1 column)
-            let ascii_text: String = std::iter::repeat('A').take(n_ascii * 2).collect();
+            let ascii_text: String = "A".repeat(n_ascii * 2);
             // Create wide string with n_wide * 2 characters (each 2 columns, so n_wide * 4 visual width)
             // Actually, to match visual width, we need n_ascii wide chars
-            let wide_text: String = std::iter::repeat('你').take(n_ascii).collect();
+            let wide_text: String = "你".repeat(n_ascii);
 
             // Both should have same visual width
             let ascii_width = str_width(&ascii_text);

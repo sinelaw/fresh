@@ -1,4 +1,3 @@
-#![cfg(test)]
 //! Git test helper - creates hermetic git repositories for testing
 
 use super::harness::{copy_plugin, copy_plugin_lib};

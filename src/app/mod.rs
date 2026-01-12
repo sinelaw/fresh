@@ -674,6 +674,7 @@ impl Editor {
 
     /// Create a new editor for testing with optional custom backends
     /// Uses empty grammar registry for fast initialization
+    #[allow(clippy::too_many_arguments)]
     pub fn for_test(
         config: Config,
         width: u16,
@@ -701,6 +702,7 @@ impl Editor {
     /// Create a new editor with custom options
     /// This is primarily used for testing with slow or mock backends
     /// to verify editor behavior under various I/O conditions
+    #[allow(clippy::too_many_arguments)]
     fn with_options(
         mut config: Config,
         width: u16,
@@ -723,7 +725,7 @@ impl Editor {
 
         // Canonicalize working_dir to resolve symlinks and normalize path components
         // This ensures consistent path comparisons throughout the editor
-        let working_dir = working_dir.canonicalize().unwrap_or_else(|_| working_dir);
+        let working_dir = working_dir.canonicalize().unwrap_or(working_dir);
 
         // Load theme from config
         let theme = crate::view::theme::Theme::from_name(&config.theme)
@@ -2338,7 +2340,7 @@ impl Editor {
 
                 if let Some(view_state) = view_state {
                     // Recenter viewport on cursor
-                    let cursor = view_state.cursors.primary().clone();
+                    let cursor = *view_state.cursors.primary();
                     let viewport_height = view_state.viewport.visible_line_count();
                     let target_rows_from_top = viewport_height / 2;
 
@@ -2947,7 +2949,7 @@ impl Editor {
     ) -> &mut crate::input::input_history::InputHistory {
         self.prompt_histories
             .entry(key.to_string())
-            .or_insert_with(crate::input::input_history::InputHistory::new)
+            .or_default()
     }
 
     /// Get a prompt history for the given key (immutable)
@@ -3021,7 +3023,7 @@ impl Editor {
     pub fn get_status_message(&self) -> Option<&String> {
         self.plugin_status_message
             .as_ref()
-            .or_else(|| self.status_message.as_ref())
+            .or(self.status_message.as_ref())
     }
 
     /// Update prompt suggestions based on current input
@@ -3642,11 +3644,8 @@ impl Editor {
                 });
 
                 // Selected text from primary cursor (for clipboard plugin)
-                snapshot.selected_text = if let Some(range) = primary_selection {
-                    Some(active_state.get_text_range(range.start, range.end))
-                } else {
-                    None
-                };
+                snapshot.selected_text = primary_selection
+                    .map(|range| active_state.get_text_range(range.start, range.end));
 
                 // All cursors
                 snapshot.all_cursors = active_state

@@ -8,7 +8,7 @@ pub use crate::types::ProcessLimits;
 
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 impl ProcessLimits {
     /// Get the memory limit in bytes, computed from percentage of total system memory
@@ -16,7 +16,7 @@ impl ProcessLimits {
         self.max_memory_percent.and_then(|percent| {
             SystemResources::total_memory_mb()
                 .ok()
-                .map(|total_mb| (total_mb as u64 * percent as u64 / 100) * 1024 * 1024)
+                .map(|total_mb| (total_mb * percent as u64 / 100) * 1024 * 1024)
         })
     }
 
@@ -200,7 +200,7 @@ fn find_user_cgroup() -> Option<PathBuf> {
 
 /// Set memory limit in a cgroup (works without full delegation)
 #[cfg(target_os = "linux")]
-fn set_cgroup_memory(cgroup_path: &PathBuf, bytes: u64) -> io::Result<()> {
+fn set_cgroup_memory(cgroup_path: &Path, bytes: u64) -> io::Result<()> {
     let memory_max_file = cgroup_path.join("memory.max");
     fs::write(&memory_max_file, format!("{}", bytes))?;
     Ok(())
@@ -208,7 +208,7 @@ fn set_cgroup_memory(cgroup_path: &PathBuf, bytes: u64) -> io::Result<()> {
 
 /// Set CPU limit in a cgroup (requires cpu controller delegation)
 #[cfg(target_os = "linux")]
-fn set_cgroup_cpu(cgroup_path: &PathBuf, percent: u32) -> io::Result<()> {
+fn set_cgroup_cpu(cgroup_path: &Path, percent: u32) -> io::Result<()> {
     // cpu.max format: "$MAX $PERIOD" where MAX/PERIOD = desired quota
     // Standard period is 100ms (100000 microseconds)
     let period_us = 100_000;
@@ -220,7 +220,7 @@ fn set_cgroup_cpu(cgroup_path: &PathBuf, percent: u32) -> io::Result<()> {
 
 /// Check if a file is writable
 #[cfg(target_os = "linux")]
-fn is_writable(path: &PathBuf) -> bool {
+fn is_writable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
 
     if let Ok(metadata) = fs::metadata(path) {
@@ -234,7 +234,7 @@ fn is_writable(path: &PathBuf) -> bool {
 
 /// Move the current process into a cgroup
 #[cfg(target_os = "linux")]
-fn move_to_cgroup(cgroup_path: &PathBuf) -> io::Result<()> {
+fn move_to_cgroup(cgroup_path: &Path) -> io::Result<()> {
     let procs_file = cgroup_path.join("cgroup.procs");
     let pid = std::process::id();
     fs::write(&procs_file, format!("{}", pid))?;
@@ -316,7 +316,7 @@ fn apply_memory_limit_setrlimit(bytes: u64) -> io::Result<()> {
 
     // Set RLIMIT_AS (address space / virtual memory limit)
     setrlimit(Resource::RLIMIT_AS, bytes, bytes)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("setrlimit AS failed: {}", e)))
+        .map_err(|e| io::Error::other(format!("setrlimit AS failed: {}", e)))
 }
 
 /// Get the number of CPU cores (Linux)

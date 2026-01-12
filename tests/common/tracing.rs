@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use std::sync::Once;
 
 /// Initialize the global tracing subscriber once (used by tests that run with `RUST_LOG`).

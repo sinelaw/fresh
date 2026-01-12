@@ -39,8 +39,8 @@ pub fn diff_piece_trees(
     if leaf_slices_equal(&before_leaves, &after_leaves) {
         return PieceTreeDiff {
             equal: true,
-            byte_ranges: vec![0..0],
-            line_ranges: Some(vec![0..0]),
+            byte_ranges: Vec::new(),
+            line_ranges: Some(Vec::new()),
         };
     }
 
@@ -132,7 +132,7 @@ fn with_doc_offsets(leaves: &[LeafData]) -> Vec<Span> {
     let mut offset = 0;
     for leaf in leaves {
         spans.push(Span {
-            leaf: leaf.clone(),
+            leaf: *leaf,
             doc_offset: offset,
         });
         offset += leaf.bytes;
@@ -364,11 +364,7 @@ fn count_lines_in_range(
         if offset >= span_end {
             continue;
         }
-        let local_start = if offset > span_start {
-            offset - span_start
-        } else {
-            0
-        };
+        let local_start = offset.saturating_sub(span_start);
         let available = span.leaf.bytes - local_start;
         let take = available.min(remaining);
 
@@ -409,6 +405,7 @@ fn line_ranges(
 }
 
 #[cfg(test)]
+#[allow(clippy::single_range_in_vec_init)]
 mod tests {
     use super::*;
     use crate::model::piece_tree::BufferLocation;
@@ -446,10 +443,7 @@ mod tests {
             lf_left: leaves[..mid]
                 .iter()
                 .map(|l| l.line_feed_cnt)
-                .fold(Some(0usize), |acc, v| match (acc, v) {
-                    (Some(a), Some(b)) => Some(a + b),
-                    _ => None,
-                }),
+                .try_fold(0usize, |acc, v| v.map(|b| acc + b)),
             left,
             right,
         })
@@ -474,8 +468,8 @@ mod tests {
 
         let diff = diff_piece_trees(&before, &after, &count_line_feeds);
         assert!(diff.equal);
-        assert_eq!(diff.byte_ranges, vec![0..0]);
-        assert_eq!(diff.line_ranges, Some(vec![0..0]));
+        assert!(diff.byte_ranges.is_empty());
+        assert_eq!(diff.line_ranges, Some(Vec::new()));
     }
 
     #[test]

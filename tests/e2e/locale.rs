@@ -23,8 +23,10 @@ fn test_default_locale_shows_english_search_options() {
 
 #[test]
 fn test_locale_from_config_spanish_search_options() {
-    let mut config = Config::default();
-    config.locale = LocaleName(Some("es".to_string()));
+    let config = Config {
+        locale: LocaleName(Some("es".to_string())),
+        ..Default::default()
+    };
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.render().unwrap();
@@ -42,8 +44,10 @@ fn test_locale_from_config_spanish_search_options() {
 
 #[test]
 fn test_locale_from_config_german_search_options() {
-    let mut config = Config::default();
-    config.locale = LocaleName(Some("de".to_string()));
+    let config = Config {
+        locale: LocaleName(Some("de".to_string())),
+        ..Default::default()
+    };
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.render().unwrap();
@@ -60,8 +64,10 @@ fn test_locale_from_config_german_search_options() {
 
 #[test]
 fn test_locale_from_config_french_search_options() {
-    let mut config = Config::default();
-    config.locale = LocaleName(Some("fr".to_string()));
+    let config = Config {
+        locale: LocaleName(Some("fr".to_string())),
+        ..Default::default()
+    };
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.render().unwrap();
@@ -78,8 +84,10 @@ fn test_locale_from_config_french_search_options() {
 
 #[test]
 fn test_locale_from_config_japanese_buffer_name() {
-    let mut config = Config::default();
-    config.locale = LocaleName(Some("ja".to_string()));
+    let config = Config {
+        locale: LocaleName(Some("ja".to_string())),
+        ..Default::default()
+    };
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.render().unwrap();
@@ -91,8 +99,10 @@ fn test_locale_from_config_japanese_buffer_name() {
 
 #[test]
 fn test_locale_from_config_chinese_buffer_name() {
-    let mut config = Config::default();
-    config.locale = LocaleName(Some("zh-CN".to_string()));
+    let config = Config {
+        locale: LocaleName(Some("zh-CN".to_string())),
+        ..Default::default()
+    };
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.render().unwrap();
@@ -171,8 +181,10 @@ fn test_locale_switch_via_command_palette() {
 
 #[test]
 fn test_invalid_locale_falls_back_to_english() {
-    let mut config = Config::default();
-    config.locale = LocaleName(Some("nonexistent-locale".to_string()));
+    let config = Config {
+        locale: LocaleName(Some("nonexistent-locale".to_string())),
+        ..Default::default()
+    };
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.render().unwrap();
@@ -189,8 +201,10 @@ fn test_invalid_locale_falls_back_to_english() {
 
 #[test]
 fn test_locale_switch_updates_search_cancelled_message() {
-    let mut config = Config::default();
-    config.locale = LocaleName(Some("es".to_string()));
+    let config = Config {
+        locale: LocaleName(Some("es".to_string())),
+        ..Default::default()
+    };
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.render().unwrap();
@@ -292,8 +306,10 @@ fn test_multiple_locales_can_be_loaded() {
     ];
 
     for (locale, expected_text) in locales_and_expected {
-        let mut config = Config::default();
-        config.locale = LocaleName(Some(locale.to_string()));
+        let config = Config {
+            locale: LocaleName(Some(locale.to_string())),
+            ..Default::default()
+        };
 
         let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
         harness.render().unwrap();

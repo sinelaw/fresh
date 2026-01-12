@@ -1154,9 +1154,8 @@ mod tests {
             plugin.is_some(),
             "Disabled plugin should be in resolved config"
         );
-        assert_eq!(
-            plugin.unwrap().enabled,
-            false,
+        assert!(
+            !plugin.unwrap().enabled,
             "Plugin should remain disabled after resolve"
         );
     }

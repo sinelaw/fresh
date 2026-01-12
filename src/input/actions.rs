@@ -54,7 +54,7 @@ fn calculate_visual_column(
     let current_line_start = iter.current_position();
     let byte_column = cursor_position.saturating_sub(current_line_start);
 
-    if let Some((_, line_content)) = iter.next() {
+    if let Some((_, line_content)) = iter.next_line() {
         if byte_column > 0 && byte_column <= line_content.len() {
             (str_width(&line_content[..byte_column]), byte_column)
         } else {
@@ -141,7 +141,7 @@ fn collect_line_starts(
 
     // Collect all line starts by iterating through lines using a single iterator
     // The iterator naturally handles the trailing empty line case without infinite loops
-    while let Some((line_start, _)) = iter.next() {
+    while let Some((line_start, _)) = iter.next_line() {
         if line_start > end_pos || line_start > buffer_len {
             break;
         }
@@ -603,8 +603,7 @@ fn insert_char_events(
                     if is_closing_delimiter
                         && data.only_spaces
                         && data.insert_position > data.line_start
-                    {
-                        if handle_skip_over_with_dedent(
+                        && handle_skip_over_with_dedent(
                             state,
                             events,
                             data.cursor_id,
@@ -612,9 +611,9 @@ fn insert_char_events(
                             data.insert_position,
                             data.line_start,
                             tab_size,
-                        ) {
-                            continue;
-                        }
+                        )
+                    {
+                        continue;
                     }
                     // Simple skip-over
                     handle_skip_over(events, data.cursor_id, data.insert_position);
@@ -800,7 +799,9 @@ pub fn action_to_events(
 
                 // For each line start, calculate what to delete
                 for &line_start in &line_starts {
-                    if !all_line_deletions.contains_key(&line_start) {
+                    if let std::collections::btree_map::Entry::Vacant(e) =
+                        all_line_deletions.entry(line_start)
+                    {
                         let (chars_to_remove, deleted_text) = calculate_leading_whitespace_removal(
                             &state.buffer,
                             line_start,
@@ -808,7 +809,7 @@ pub fn action_to_events(
                         );
 
                         if chars_to_remove > 0 {
-                            all_line_deletions.insert(line_start, (chars_to_remove, deleted_text));
+                            e.insert((chars_to_remove, deleted_text));
                         }
                     }
                 }
@@ -1113,9 +1114,9 @@ pub fn action_to_events(
                     .line_iterator(cursor.position, estimated_line_length);
 
                 // Consume current line
-                iter.next();
+                iter.next_line();
 
-                if let Some((next_line_start, next_line_content)) = iter.next() {
+                if let Some((next_line_start, next_line_content)) = iter.next_line() {
                     // Calculate byte offset from visual column, ensuring valid character boundary
                     let next_line_text = next_line_content.trim_end_matches('\n');
                     let byte_offset =
@@ -1146,7 +1147,7 @@ pub fn action_to_events(
                 let mut iter = state
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
-                if let Some((line_start, _)) = iter.next() {
+                if let Some((line_start, _)) = iter.next_line() {
                     // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                     let new_anchor = if cursor.deselect_on_move {
                         None
@@ -1171,7 +1172,7 @@ pub fn action_to_events(
                 let mut iter = state
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
-                if let Some((line_start, line_content)) = iter.next() {
+                if let Some((line_start, line_content)) = iter.next_line() {
                     // In both LF and CRLF mode, cursor lands at the first byte of line ending
                     // For LF: cursor on \n. For CRLF: cursor on \r (before both \r\n)
                     let line_end = line_start + content_len_without_line_ending(&line_content);
@@ -1342,11 +1343,11 @@ pub fn action_to_events(
                 };
 
                 // Consume current line
-                iter.next();
+                iter.next_line();
 
                 let mut new_pos = cursor.position;
                 for _ in 0..lines_to_move {
-                    if let Some((line_start, line_content)) = iter.next() {
+                    if let Some((line_start, line_content)) = iter.next_line() {
                         let line_len = line_content.trim_end_matches('\n').len();
                         new_pos = line_start + goal_column.min(line_len);
                     } else {
@@ -1462,8 +1463,8 @@ pub fn action_to_events(
                 };
 
                 // Skip current line, then get next line
-                iter.next();
-                if let Some((next_line_start, next_line_content)) = iter.next() {
+                iter.next_line();
+                if let Some((next_line_start, next_line_content)) = iter.next_line() {
                     let next_line_len = next_line_content.trim_end_matches('\n').len();
                     let new_pos = next_line_start + goal_column.min(next_line_len);
 
@@ -1487,7 +1488,7 @@ pub fn action_to_events(
                     .line_iterator(cursor.position, estimated_line_length);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
 
-                if let Some((line_start, _)) = iter.next() {
+                if let Some((line_start, _)) = iter.next_line() {
                     events.push(Event::MoveCursor {
                         cursor_id,
                         old_position: cursor.position,
@@ -1508,7 +1509,7 @@ pub fn action_to_events(
                     .line_iterator(cursor.position, estimated_line_length);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
 
-                if let Some((line_start, line_content)) = iter.next() {
+                if let Some((line_start, line_content)) = iter.next_line() {
                     // In both LF and CRLF mode, cursor lands at the first byte of line ending
                     // For LF: cursor on \n. For CRLF: cursor on \r (before both \r\n)
                     let line_end = line_start + content_len_without_line_ending(&line_content);
@@ -1647,11 +1648,11 @@ pub fn action_to_events(
                 };
 
                 // Consume current line
-                iter.next();
+                iter.next_line();
 
                 let mut new_pos = cursor.position;
                 for _ in 0..lines_to_move {
-                    if let Some((line_start, line_content)) = iter.next() {
+                    if let Some((line_start, line_content)) = iter.next_line() {
                         let line_len = line_content.trim_end_matches('\n').len();
                         new_pos = line_start + goal_column.min(line_len);
                     } else {
@@ -1746,15 +1747,15 @@ pub fn action_to_events(
                                 .copied();
 
                             // Check if we're between matching brackets/quotes
-                            let is_matching_pair = match (char_before, char_after) {
-                                (Some(b'('), Some(b')')) => true,
-                                (Some(b'['), Some(b']')) => true,
-                                (Some(b'{'), Some(b'}')) => true,
-                                (Some(b'"'), Some(b'"')) => true,
-                                (Some(b'\''), Some(b'\'')) => true,
-                                (Some(b'`'), Some(b'`')) => true,
-                                _ => false,
-                            };
+                            let is_matching_pair = matches!(
+                                (char_before, char_after),
+                                (Some(b'('), Some(b')'))
+                                    | (Some(b'['), Some(b']'))
+                                    | (Some(b'{'), Some(b'}'))
+                                    | (Some(b'"'), Some(b'"'))
+                                    | (Some(b'\''), Some(b'\''))
+                                    | (Some(b'`'), Some(b'`'))
+                            );
 
                             if is_matching_pair {
                                 // Delete both opening and closing characters
@@ -1861,7 +1862,7 @@ pub fn action_to_events(
                         .buffer
                         .line_iterator(cursor.position, estimated_line_length);
                     let line_start = iter.current_position();
-                    iter.next().map(|(_start, content)| {
+                    iter.next_line().map(|(_start, content)| {
                         let line_end = line_start + content.len();
                         (cursor_id, line_start..line_end)
                     })
@@ -1882,7 +1883,7 @@ pub fn action_to_events(
                         .buffer
                         .line_iterator(cursor.position, estimated_line_length);
                     let line_start = iter.current_position();
-                    iter.next().map(|(_start, content)| {
+                    iter.next_line().map(|(_start, content)| {
                         let line_end = line_start + content_len_without_line_ending(&content);
                         if cursor.position < line_end {
                             Some((cursor_id, cursor.position..line_end))
@@ -2304,7 +2305,7 @@ pub fn action_to_events(
                 let mut iter = state
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
-                if let Some((line_start, line_content)) = iter.next() {
+                if let Some((line_start, line_content)) = iter.next_line() {
                     // Include newline if present
                     let line_end = line_start + line_content.len();
 
@@ -3850,7 +3851,7 @@ mod property_tests {
             // Find all actual line starts in the text
             let mut expected_line_starts: Vec<usize> = vec![0];
             for (i, &byte) in text.iter().enumerate() {
-                if byte == b'\n' && i + 1 <= buffer_len {
+                if byte == b'\n' && i < buffer_len {
                     expected_line_starts.push(i + 1);
                 }
             }

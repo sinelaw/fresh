@@ -33,15 +33,13 @@ pub fn compute_tab_scroll_offset(
     let mut tab_end = 0usize;
 
     // Walk through widths to locate active tab boundaries.
-    let mut tab_counter = 0usize;
-    for w in tab_widths {
+    for (tab_counter, w) in tab_widths.iter().enumerate() {
         let next = tab_start + *w;
         if tab_counter == active_idx {
             tab_end = next;
             break;
         }
         tab_start = next + padding_between_tabs;
-        tab_counter += 1;
     }
 
     // If we didn't find the tab, keep current offset.
@@ -104,6 +102,7 @@ impl TabsRenderer {
     /// # Returns
     /// Vec of (buffer_id, tab_start_col, tab_end_col, close_start_col) for each visible tab.
     /// These are absolute screen column positions for hit testing.
+    #[allow(clippy::too_many_arguments)]
     pub fn render_for_split(
         frame: &mut Frame,
         area: Rect,
@@ -126,7 +125,7 @@ impl TabsRenderer {
         let mut rendered_buffer_ids: Vec<BufferId> = Vec::new(); // Track which buffers actually got rendered
 
         // First, build all spans and calculate their display widths
-        for (_idx, id) in split_buffers.iter().enumerate() {
+        for id in split_buffers.iter() {
             // Check if this is a regular buffer or a composite buffer
             let is_regular_buffer = buffers.contains_key(id);
             let is_composite_buffer = composite_buffers.contains_key(id);

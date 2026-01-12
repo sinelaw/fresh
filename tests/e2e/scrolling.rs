@@ -184,8 +184,13 @@ fn test_cursor_advances_beyond_viewport_width() {
 #[test]
 fn test_horizontal_scrolling() {
     use fresh::config::Config;
-    let mut config = Config::default();
-    config.editor.line_wrap = false;
+    let config = Config {
+        editor: fresh::config::EditorConfig {
+            line_wrap: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 
     // Calculate visible width (80 - 7 for line number gutter = 73 chars)
@@ -231,8 +236,13 @@ fn test_horizontal_scrolling() {
 fn test_horizontal_scroll_left() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use fresh::config::Config;
-    let mut config = Config::default();
-    config.editor.line_wrap = false;
+    let config = Config {
+        editor: fresh::config::EditorConfig {
+            line_wrap: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 
     // Type a long line
@@ -263,8 +273,13 @@ fn test_horizontal_scroll_left() {
 fn test_horizontal_scroll_with_arrows() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use fresh::config::Config;
-    let mut config = Config::default();
-    config.editor.line_wrap = false;
+    let config = Config {
+        editor: fresh::config::EditorConfig {
+            line_wrap: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 
     // Type a line longer than visible width
@@ -307,8 +322,13 @@ fn test_horizontal_scroll_with_arrows() {
 fn test_cursor_wrap_on_long_line_navigation() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use fresh::config::Config;
-    let mut config = Config::default();
-    config.editor.line_wrap = false;
+    let config = Config {
+        editor: fresh::config::EditorConfig {
+            line_wrap: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 
     // Create a long line that extends well beyond viewport width (100 chars)
@@ -531,21 +551,21 @@ fn test_cursor_disappears_beyond_long_line_end() {
         println!("  Cursor VISIBLE: {}", is_cursor_visible);
 
         // Show the screen line at cursor Y position for critical positions
-        if i <= 7 || (buffer_pos >= 99 && buffer_pos <= 102) || !is_cursor_visible {
-            if (screen_pos.1 as usize) < lines.len() {
-                let line = lines[screen_pos.1 as usize];
-                println!("  Screen line {}: {:?}", screen_pos.1, line);
-                // Also show line length
-                let visible_line: String = line
-                    .chars()
-                    .filter(|c| !c.is_control() && *c != '\u{1b}')
-                    .collect();
-                println!(
-                    "    (visible length: {} chars, cursor X: {})",
-                    visible_line.len(),
-                    screen_pos.0
-                );
-            }
+        if (i <= 7 || (99..=102).contains(&buffer_pos) || !is_cursor_visible)
+            && (screen_pos.1 as usize) < lines.len()
+        {
+            let line = lines[screen_pos.1 as usize];
+            println!("  Screen line {}: {:?}", screen_pos.1, line);
+            // Also show line length
+            let visible_line: String = line
+                .chars()
+                .filter(|c| !c.is_control() && *c != '\u{1b}')
+                .collect();
+            println!(
+                "    (visible length: {} chars, cursor X: {})",
+                visible_line.len(),
+                screen_pos.0
+            );
         }
     }
 
@@ -612,7 +632,7 @@ fn test_vertical_scroll_when_typing_to_bottom() {
     let buffer = &mut harness.editor_mut().active_state_mut().buffer;
     let mut iter = buffer.line_iterator(0, 80);
     let mut cursor_line = 0;
-    while let Some((line_start, _)) = iter.next() {
+    while let Some((line_start, _)) = iter.next_line() {
         if line_start > cursor_pos {
             break;
         }
@@ -1265,7 +1285,7 @@ fn test_line_numbers_absolute_after_jump_to_beginning() {
     let mut iter = state.buffer.line_iterator(top_byte, 80);
     let mut line_count = 0;
     for i in 0..5 {
-        if let Some((byte_pos, content)) = iter.next() {
+        if let Some((byte_pos, content)) = iter.next_line() {
             println!(
                 "    Line {} at byte {}: {} bytes",
                 i,
@@ -1895,7 +1915,7 @@ fn test_page_down_when_buffer_equals_viewport_height() {
     // Layout: menu bar, tab bar, content, status bar, prompt line
     // Content area is terminal_height - 3 (rows 2 to terminal_height-3)
     let viewport_height = (terminal_height - 3) as usize; // 21 lines
-    let expected_bottom_row = (terminal_height - 3) as u16; // Row 21
+    let expected_bottom_row = terminal_height - 3; // Row 21
 
     // Create buffer with exactly viewport_height lines
     let temp_dir = TempDir::new().unwrap();

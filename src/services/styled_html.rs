@@ -53,8 +53,8 @@ pub fn render_styled_html(text: &str, highlight_spans: &[HighlightSpan], theme: 
     for span in highlight_spans {
         let start = span.range.start.min(text.len());
         let end = span.range.end.min(text.len());
-        for i in start..end {
-            color_map[i] = Some(span.color);
+        for slot in &mut color_map[start..end] {
+            *slot = Some(span.color);
         }
     }
 

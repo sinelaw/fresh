@@ -34,7 +34,7 @@ fn test_command_palette_delete_word_backward() {
 
     // Debug: Check what's in the prompt
     let lines: Vec<&str> = screen.lines().collect();
-    let prompt_line = lines.iter().rev().nth(0); // Last line should be the prompt
+    let prompt_line = lines.iter().next_back(); // Last line should be the prompt
     println!("Prompt line: {:?}", prompt_line);
 
     // The word "file" should be deleted, leaving "open "

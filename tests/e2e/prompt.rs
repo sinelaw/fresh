@@ -546,7 +546,7 @@ fn test_save_as_relative_path() {
             }
             readable
         })
-        .expect(&format!("File should be created at {:?}", expected_path));
+        .unwrap_or_else(|_| panic!("File should be created at {:?}", expected_path));
 
     eprintln!("[TEST] File created successfully, verifying content");
     let content = fs::read_to_string(&expected_path).unwrap();

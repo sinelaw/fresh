@@ -253,13 +253,11 @@ impl Editor {
                                     t!("prompt.sudo_save_failed", error = e.to_string())
                                         .to_string(),
                                 );
-                            } else {
-                                if let Err(e) = self.finalize_save(Some(info.dest_path)) {
-                                    self.set_status_message(
-                                        t!("prompt.sudo_save_failed", error = e.to_string())
-                                            .to_string(),
-                                    );
-                                }
+                            } else if let Err(e) = self.finalize_save(Some(info.dest_path)) {
+                                self.set_status_message(
+                                    t!("prompt.sudo_save_failed", error = e.to_string())
+                                        .to_string(),
+                                );
                             }
                         }
                         Err(e) => {

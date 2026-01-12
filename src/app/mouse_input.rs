@@ -57,7 +57,7 @@ impl Editor {
         };
 
         // When settings modal is open, capture all mouse events
-        if self.settings_state.as_ref().map_or(false, |s| s.visible) {
+        if self.settings_state.as_ref().is_some_and(|s| s.visible) {
             return self.handle_settings_mouse(mouse_event, is_double_click);
         }
 
@@ -401,6 +401,7 @@ impl Editor {
     /// Hover popup stays visible when:
     /// - Mouse is over the hover popup itself
     /// - Mouse is within the hovered symbol range
+    ///
     /// Hover is dismissed when mouse leaves the editor area entirely.
     fn update_lsp_hover_state(&mut self, col: u16, row: u16) {
         tracing::trace!(col, row, "update_lsp_hover_state: raw mouse position");
@@ -1073,10 +1074,8 @@ impl Editor {
         }
 
         // Check if click is on the file browser popup
-        if self.is_file_open_active() {
-            if self.handle_file_open_click(col, row) {
-                return Ok(());
-            }
+        if self.is_file_open_active() && self.handle_file_open_click(col, row) {
+            return Ok(());
         }
 
         // Check if click is on menu bar (row 0)
@@ -1421,31 +1420,29 @@ impl Editor {
         // If dragging popup scrollbar, update popup scroll position
         if let Some(popup_idx) = self.mouse_state.dragging_popup_scrollbar {
             // Find the popup's scrollbar rect from cached layout
-            if let Some((_, _, inner_rect, _, _, scrollbar_rect, total_lines)) = self
+            if let Some((_, _, inner_rect, _, _, Some(sb_rect), total_lines)) = self
                 .cached_layout
                 .popup_areas
                 .iter()
                 .find(|(idx, _, _, _, _, _, _)| *idx == popup_idx)
             {
-                if let Some(sb_rect) = scrollbar_rect {
-                    let track_height = sb_rect.height as usize;
-                    let visible_lines = inner_rect.height as usize;
+                let track_height = sb_rect.height as usize;
+                let visible_lines = inner_rect.height as usize;
 
-                    if track_height > 0 && *total_lines > visible_lines {
-                        let relative_row = row.saturating_sub(sb_rect.y) as usize;
-                        let max_scroll = total_lines.saturating_sub(visible_lines);
-                        let target_scroll = if track_height > 1 {
-                            (relative_row * max_scroll) / (track_height.saturating_sub(1))
-                        } else {
-                            0
-                        };
+                if track_height > 0 && *total_lines > visible_lines {
+                    let relative_row = row.saturating_sub(sb_rect.y) as usize;
+                    let max_scroll = total_lines.saturating_sub(visible_lines);
+                    let target_scroll = if track_height > 1 {
+                        (relative_row * max_scroll) / (track_height.saturating_sub(1))
+                    } else {
+                        0
+                    };
 
-                        let state = self.active_state_mut();
-                        if let Some(popup) = state.popups.get_mut(popup_idx) {
-                            let current_scroll = popup.scroll_offset as i32;
-                            let delta = target_scroll as i32 - current_scroll;
-                            popup.scroll_by(delta);
-                        }
+                    let state = self.active_state_mut();
+                    if let Some(popup) = state.popups.get_mut(popup_idx) {
+                        let current_scroll = popup.scroll_offset as i32;
+                        let delta = target_scroll as i32 - current_scroll;
+                        popup.scroll_by(delta);
                     }
                 }
             }

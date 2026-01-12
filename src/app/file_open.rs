@@ -8,7 +8,7 @@ use crate::input::fuzzy::fuzzy_match;
 use crate::services::fs::{FsEntry, FsEntryType};
 use rust_i18n::t;
 use std::cmp::Ordering;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// A file entry in the browser with filter match state
@@ -118,7 +118,7 @@ impl FileOpenState {
     }
 
     /// Build navigation shortcuts for the given directory
-    fn build_shortcuts(current_dir: &PathBuf) -> Vec<NavigationShortcut> {
+    fn build_shortcuts(current_dir: &Path) -> Vec<NavigationShortcut> {
         let mut shortcuts = Vec::new();
 
         // Parent directory

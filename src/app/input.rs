@@ -8,7 +8,7 @@ impl Editor {
         use crate::input::keybindings::KeyContext;
 
         // Priority order: Settings > Menu > Prompt > Popup > Rename > Current context (FileExplorer or Normal)
-        if self.settings_state.as_ref().map_or(false, |s| s.visible) {
+        if self.settings_state.as_ref().is_some_and(|s| s.visible) {
             KeyContext::Settings
         } else if self.menu_state.active_menu.is_some() {
             KeyContext::Menu
@@ -101,7 +101,7 @@ impl Editor {
                     tracing::debug!("Mode chord resolved to action: {}", action_name);
                     self.chord_state.clear();
                     let action = Action::from_str(&action_name, &std::collections::HashMap::new())
-                        .unwrap_or_else(|| Action::PluginAction(action_name));
+                        .unwrap_or(Action::PluginAction(action_name));
                     return self.handle_action(action);
                 }
 
@@ -1011,7 +1011,7 @@ impl Editor {
                 let has_changes = self
                     .settings_state
                     .as_ref()
-                    .map_or(false, |s| s.has_changes());
+                    .is_some_and(|s| s.has_changes());
                 if has_changes {
                     // Show confirmation dialog
                     if let Some(ref mut state) = self.settings_state {
@@ -1168,7 +1168,7 @@ impl Editor {
                     // Calculate new index based on scroll delta
                     let new_index = if delta < 0 {
                         // Scroll up (negative delta)
-                        current_index.saturating_sub(delta.abs() as usize)
+                        current_index.saturating_sub(delta.unsigned_abs() as usize)
                     } else {
                         // Scroll down (positive delta)
                         (current_index + delta as usize).min(visible.len() - 1)
@@ -1236,7 +1236,7 @@ impl Editor {
                 // No view transform - use traditional buffer-based scrolling
                 if delta < 0 {
                     // Scroll up
-                    let lines_to_scroll = delta.abs() as usize;
+                    let lines_to_scroll = delta.unsigned_abs() as usize;
                     view_state.viewport.scroll_up(buffer, lines_to_scroll);
                 } else {
                     // Scroll down
@@ -1334,7 +1334,7 @@ impl Editor {
                     let mut line_byte = 0;
 
                     for _ in 0..target_line {
-                        if let Some((pos, _content)) = iter.next() {
+                        if let Some((pos, _content)) = iter.next_line() {
                             line_byte = pos;
                         } else {
                             break;
@@ -1342,7 +1342,7 @@ impl Editor {
                     }
 
                     // Get the position of the target line
-                    if let Some((pos, _)) = iter.next() {
+                    if let Some((pos, _)) = iter.next_line() {
                         pos
                     } else {
                         line_byte // Reached end of buffer
@@ -1446,7 +1446,7 @@ impl Editor {
                     let mut line_byte = 0;
 
                     for _ in 0..target_line {
-                        if let Some((pos, _content)) = iter.next() {
+                        if let Some((pos, _content)) = iter.next_line() {
                             line_byte = pos;
                         } else {
                             break;
@@ -1454,7 +1454,7 @@ impl Editor {
                     }
 
                     // Get the position of the target line
-                    if let Some((pos, _)) = iter.next() {
+                    if let Some((pos, _)) = iter.next_line() {
                         pos
                     } else {
                         line_byte // Reached end of buffer
@@ -1520,7 +1520,7 @@ impl Editor {
 
             // Consume viewport_height lines to find where the visible area ends
             for _ in 0..viewport_height {
-                if let Some((pos, line)) = iter.next() {
+                if let Some((pos, line)) = iter.next_line() {
                     // The bottom of this line is at pos + line.len()
                     bottom_byte = pos + line.len();
                 } else {
@@ -1559,7 +1559,7 @@ impl Editor {
         // Count total lines in buffer
         let mut line_count = 0;
         let mut iter = buffer.line_iterator(0, 80);
-        while iter.next().is_some() {
+        while iter.next_line().is_some() {
             line_count += 1;
         }
 
@@ -1578,7 +1578,7 @@ impl Editor {
         let mut max_byte_pos = 0;
 
         while current_line < scrollable_lines {
-            if let Some((pos, _content)) = iter.next() {
+            if let Some((pos, _content)) = iter.next_line() {
                 max_byte_pos = pos;
                 current_line += 1;
             } else {
@@ -2169,7 +2169,7 @@ impl Editor {
     pub(super) fn apply_cursor_style(&mut self, style_name: &str) {
         use crate::config::CursorStyle;
 
-        if let Some(style) = CursorStyle::from_str(style_name) {
+        if let Some(style) = CursorStyle::parse(style_name) {
             // Update the config in memory
             self.config.editor.cursor_style = style;
 
@@ -2527,8 +2527,8 @@ impl Editor {
         // Check if active buffer is a composite buffer - handle scroll/movement specially
         let buffer_id = self.active_buffer();
         if self.is_composite_buffer(buffer_id) {
-            if let Some(handled) = self.handle_composite_action(buffer_id, &action) {
-                return if handled { Ok(()) } else { Ok(()) };
+            if let Some(_handled) = self.handle_composite_action(buffer_id, &action) {
+                return Ok(());
             }
         }
 

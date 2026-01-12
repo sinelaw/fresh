@@ -3678,7 +3678,7 @@ async fn op_fresh_get_buffer_text(
 
     match response {
         crate::services::plugins::api::PluginResponse::BufferText { text, .. } => {
-            text.map_err(|e| JsErrorBox::generic(e))
+            text.map_err(JsErrorBox::generic)
         }
         _ => Err(JsErrorBox::generic("Unexpected response type")),
     }
@@ -4769,7 +4769,7 @@ impl TypeScriptRuntime {
     /// Returns true if there's still pending work, false if all work is done.
     pub fn poll_event_loop_once(&mut self) -> bool {
         let waker = std::task::Waker::noop();
-        let mut cx = std::task::Context::from_waker(&waker);
+        let mut cx = std::task::Context::from_waker(waker);
         match self.js_runtime.poll_event_loop(&mut cx, Default::default()) {
             std::task::Poll::Ready(result) => {
                 if let Err(e) = result {

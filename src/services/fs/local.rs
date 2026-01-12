@@ -161,7 +161,7 @@ impl FsBackend for LocalFsBackend {
                 Ok(Ok(metadata)) => results.push(Ok(metadata)),
                 Ok(Err(e)) => results.push(Err(e)),
                 Err(_) => {
-                    results.push(Err(io::Error::new(io::ErrorKind::Other, "Task join error")))
+                    results.push(Err(io::Error::other("Task join error")))
                 }
             }
         }

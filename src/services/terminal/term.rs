@@ -71,8 +71,10 @@ impl TerminalState {
     /// Create a new terminal state
     pub fn new(cols: u16, rows: u16) -> Self {
         let size = TermSize::new(cols as usize, rows as usize);
-        let mut config = TermConfig::default();
-        config.scrolling_history = SCROLLBACK_LINES;
+        let config = TermConfig {
+            scrolling_history: SCROLLBACK_LINES,
+            ..Default::default()
+        };
         let term = Term::new(config, &size, NullListener);
 
         Self {
@@ -454,7 +456,7 @@ impl TerminalState {
         }
 
         // Trim trailing whitespace but preserve color codes
-        let trimmed = line_str.trim_end_matches(|c: char| c == ' ' || c == '\0');
+        let trimmed = line_str.trim_end_matches([' ', '\0']);
         writeln!(writer, "{}", trimmed)
     }
 

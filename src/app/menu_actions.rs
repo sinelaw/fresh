@@ -174,12 +174,12 @@ impl Editor {
         for depth in 0..=self.menu_state.submenu_path.len() {
             let max_width = current_items
                 .iter()
-                .filter_map(|item| match item {
-                    MenuItem::Action { label, .. } => Some(str_width(label) + 20),
-                    MenuItem::Submenu { label, .. } => Some(str_width(label) + 20),
-                    MenuItem::DynamicSubmenu { label, .. } => Some(str_width(label) + 20),
-                    MenuItem::Separator { .. } => Some(20),
-                    MenuItem::Label { info } => Some(str_width(info) + 4),
+                .map(|item| match item {
+                    MenuItem::Action { label, .. } => str_width(label) + 20,
+                    MenuItem::Submenu { label, .. } => str_width(label) + 20,
+                    MenuItem::DynamicSubmenu { label, .. } => str_width(label) + 20,
+                    MenuItem::Separator { .. } => 20,
+                    MenuItem::Label { info } => str_width(info) + 4,
                 })
                 .max()
                 .unwrap_or(20)
@@ -262,12 +262,12 @@ impl Editor {
         for depth in 0..=self.menu_state.submenu_path.len() {
             let max_width = current_items
                 .iter()
-                .filter_map(|item| match item {
-                    MenuItem::Action { label, .. } => Some(str_width(label) + 20),
-                    MenuItem::Submenu { label, .. } => Some(str_width(label) + 20),
-                    MenuItem::DynamicSubmenu { label, .. } => Some(str_width(label) + 20),
-                    MenuItem::Separator { .. } => Some(20),
-                    MenuItem::Label { info } => Some(str_width(info) + 4),
+                .map(|item| match item {
+                    MenuItem::Action { label, .. } => str_width(label) + 20,
+                    MenuItem::Submenu { label, .. } => str_width(label) + 20,
+                    MenuItem::DynamicSubmenu { label, .. } => str_width(label) + 20,
+                    MenuItem::Separator { .. } => 20,
+                    MenuItem::Label { info } => str_width(info) + 4,
                 })
                 .max()
                 .unwrap_or(20)

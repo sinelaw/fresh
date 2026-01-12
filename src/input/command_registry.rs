@@ -130,7 +130,7 @@ impl CommandRegistry {
             cmd.custom_contexts.is_empty()
                 || cmd.custom_contexts.iter().all(|ctx| {
                     active_custom_contexts.contains(ctx)
-                        || active_buffer_mode.map_or(false, |mode| mode == ctx)
+                        || active_buffer_mode.is_some_and(|mode| mode == ctx)
                 })
         };
 

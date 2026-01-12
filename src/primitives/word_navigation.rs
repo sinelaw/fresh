@@ -38,15 +38,14 @@ pub fn find_word_start_bytes(bytes: &[u8], pos: usize) -> usize {
     let mut new_pos = pos;
 
     // If we're at the end or at a non-word character, scan left
-    if new_pos >= bytes.len()
-        || (bytes
+    if (new_pos >= bytes.len()
+        || bytes
             .get(new_pos)
             .map(|&b| !is_word_char(b))
             .unwrap_or(true))
+        && new_pos > 0
     {
-        if new_pos > 0 {
-            new_pos = new_pos.saturating_sub(1);
-        }
+        new_pos = new_pos.saturating_sub(1);
     }
 
     // Find start of current word by scanning backwards
@@ -130,15 +129,14 @@ pub fn find_completion_word_start(buffer: &Buffer, pos: usize) -> usize {
     let mut new_pos = offset;
 
     // If we're at the end of the buffer or at a non-word character, scan left
-    if new_pos >= bytes.len()
-        || (bytes
+    if (new_pos >= bytes.len()
+        || bytes
             .get(new_pos)
             .map(|&b| !is_word_char(b))
             .unwrap_or(true))
+        && new_pos > 0
     {
-        if new_pos > 0 {
-            new_pos = new_pos.saturating_sub(1);
-        }
+        new_pos = new_pos.saturating_sub(1);
     }
 
     // Find start of current identifier segment by scanning backwards

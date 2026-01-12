@@ -32,8 +32,13 @@ fn test_line_wrapping_basic_rendering() {
 /// Test line wrapping can be disabled
 #[test]
 fn test_line_wrapping_disabled() {
-    let mut config = Config::default();
-    config.editor.line_wrap = false;
+    let config = Config {
+        editor: fresh::config::EditorConfig {
+            line_wrap: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let mut harness = EditorTestHarness::with_config(60, 24, config).unwrap();
 
     // Type a long line
@@ -665,11 +670,9 @@ fn test_wrapped_line_scrolling_down_past_viewport() {
         }
 
         // Check if scrolling has occurred
-        if !screen_now.contains("[0]") {
-            if !scrolling_occurred {
-                eprintln!("\n=== SCROLLING DETECTED after {} down presses ===", i + 1);
-                scrolling_occurred = true;
-            }
+        if !screen_now.contains("[0]") && !scrolling_occurred {
+            eprintln!("\n=== SCROLLING DETECTED after {} down presses ===", i + 1);
+            scrolling_occurred = true;
         }
 
         // Stop after we've scrolled significantly
@@ -703,7 +706,7 @@ fn test_wrapped_line_scrolling_down_past_viewport() {
 /// 1. The first visual row of a wrapped line
 /// 2. Continuation rows (wrapped portions)
 /// 3. Empty lines
-/// all position the cursor at the correct buffer offset
+///    all position the cursor at the correct buffer offset
 #[test]
 fn test_mouse_click_on_wrapped_lines() {
     // Initialize tracing for debugging
@@ -793,7 +796,7 @@ fn test_mouse_click_on_wrapped_lines() {
     );
     // Should be roughly where we clicked (allowing some tolerance for character width)
     assert!(
-        pos_after_click1 >= 3 && pos_after_click1 <= 10,
+        (3..=10).contains(&pos_after_click1),
         "Click at x={} should position cursor around position 5, got {}",
         click_x,
         pos_after_click1
@@ -855,7 +858,7 @@ fn test_mouse_click_on_wrapped_lines() {
 
     // First, find which visual row the empty line is on
     // Line 1 wraps to ~2 visual rows (85 chars / 51 chars per row ≈ 2 rows)
-    let visual_rows_for_line1 = (long_line.len() + text_width - 1) / text_width;
+    let visual_rows_for_line1 = long_line.len().div_ceil(text_width);
     eprintln!("Line 1 takes {} visual rows", visual_rows_for_line1);
 
     let empty_line_visual_row = content_first_row + visual_rows_for_line1;

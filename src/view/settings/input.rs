@@ -46,11 +46,11 @@ impl InputHandler for SettingsState {
         }
 
         // Global shortcut: Ctrl+S to save
-        if event.modifiers.contains(KeyModifiers::CONTROL) {
-            if matches!(event.code, KeyCode::Char('s') | KeyCode::Char('S')) {
-                ctx.defer(DeferredAction::CloseSettings { save: true });
-                return InputResult::Consumed;
-            }
+        if event.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(event.code, KeyCode::Char('s') | KeyCode::Char('S'))
+        {
+            ctx.defer(DeferredAction::CloseSettings { save: true });
+            return InputResult::Consumed;
         }
 
         // Route to focused panel
@@ -325,25 +325,22 @@ impl SettingsState {
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 // Check button state first with immutable borrow
-                let button_action = self
-                    .entry_dialog()
-                    .map(|dialog| {
-                        if dialog.focus_on_buttons {
-                            let cancel_idx = dialog.button_count() - 1;
-                            if dialog.focused_button == 0 {
-                                Some(ButtonAction::Save)
-                            } else if !dialog.is_new && dialog.focused_button == 1 {
-                                Some(ButtonAction::Delete)
-                            } else if dialog.focused_button == cancel_idx {
-                                Some(ButtonAction::Cancel)
-                            } else {
-                                None
-                            }
+                let button_action = self.entry_dialog().and_then(|dialog| {
+                    if dialog.focus_on_buttons {
+                        let cancel_idx = dialog.button_count() - 1;
+                        if dialog.focused_button == 0 {
+                            Some(ButtonAction::Save)
+                        } else if !dialog.is_new && dialog.focused_button == 1 {
+                            Some(ButtonAction::Delete)
+                        } else if dialog.focused_button == cancel_idx {
+                            Some(ButtonAction::Cancel)
                         } else {
                             None
                         }
-                    })
-                    .flatten();
+                    } else {
+                        None
+                    }
+                });
 
                 if let Some(action) = button_action {
                     match action {

@@ -13,8 +13,10 @@ use fresh::config::Config;
 
 /// Create a harness with Emacs keybinding style
 fn emacs_harness(width: u16, height: u16) -> EditorTestHarness {
-    let mut config = Config::default();
-    config.active_keybinding_map = "emacs".into();
+    let config = Config {
+        active_keybinding_map: "emacs".into(),
+        ..Default::default()
+    };
     EditorTestHarness::create(
         width,
         height,
@@ -202,7 +204,7 @@ fn test_recenter_basic() {
 
     // Cursor should be around line 50 (0-indexed)
     assert!(
-        cursor_line_after >= 49 && cursor_line_after <= 51,
+        (49..=51).contains(&cursor_line_after),
         "Cursor should be around line 50, got {}",
         cursor_line_after
     );

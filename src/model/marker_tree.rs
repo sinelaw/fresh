@@ -329,10 +329,7 @@ impl IntervalTree {
     /// Recursive helper for delete
     fn delete_recursive(root: NodePtr, start: u64, id: MarkerId) -> NodePtr {
         // Remove unnecessary 'mut'
-        let root = match root {
-            Some(r) => r,
-            None => return None,
-        };
+        let root = root?;
 
         Node::push_delta(&root);
 
@@ -371,15 +368,15 @@ impl IntervalTree {
             if let Some(ref r) = right {
                 r.borrow_mut().parent = node.parent.clone();
             }
-            return right;
+            right
         } else if node.right.is_none() {
             let left = node.left.take();
             if let Some(ref l) = left {
                 l.borrow_mut().parent = node.parent.clone();
             }
-            return left;
+            left
         } else {
-            let successor_rc = Self::min_node(&node.right.as_ref().unwrap());
+            let successor_rc = Self::min_node(node.right.as_ref().unwrap());
 
             let (successor_start, successor_id) = {
                 let s = successor_rc.borrow();
@@ -392,7 +389,7 @@ impl IntervalTree {
 
             drop(node);
             Node::update_stats(&node_rc);
-            return Self::balance(node_rc);
+            Self::balance(node_rc)
         }
     }
 

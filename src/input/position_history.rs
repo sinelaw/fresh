@@ -101,28 +101,21 @@ impl PositionHistory {
     pub fn record_movement(&mut self, buffer_id: BufferId, position: usize, anchor: Option<usize>) {
         let entry = PositionEntry::new(buffer_id, position, anchor);
 
-        match &mut self.pending_movement {
-            Some(pending) => {
-                // Check if this is a continuation of the current movement
-                if pending.start_entry.buffer_id == buffer_id {
-                    // Calculate distance from the pending movement's start position
-                    let distance = if position > pending.start_entry.position {
-                        position - pending.start_entry.position
-                    } else {
-                        pending.start_entry.position - position
-                    };
+        if let Some(pending) = &mut self.pending_movement {
+            // Check if this is a continuation of the current movement
+            if pending.start_entry.buffer_id == buffer_id {
+                // Calculate distance from the pending movement's start position
+                let distance = position.abs_diff(pending.start_entry.position);
 
-                    // Check if this is a small movement that should be coalesced
-                    if distance <= LARGE_JUMP_THRESHOLD {
-                        // Small movement - keep coalescing, don't commit yet
-                        return;
-                    }
+                // Check if this is a small movement that should be coalesced
+                if distance <= LARGE_JUMP_THRESHOLD {
+                    // Small movement - keep coalescing, don't commit yet
+                    return;
                 }
-
-                // Different buffer or large jump - commit the pending movement
-                self.commit_pending_movement();
             }
-            None => {}
+
+            // Different buffer or large jump - commit the pending movement
+            self.commit_pending_movement();
         }
 
         // Start a new pending movement
@@ -161,10 +154,8 @@ impl PositionHistory {
 
         // Don't add duplicate consecutive entries
         if let Some(current_idx) = self.current_index {
-            if current_idx < self.entries.len() {
-                if self.entries[current_idx] == entry {
-                    return;
-                }
+            if current_idx < self.entries.len() && self.entries[current_idx] == entry {
+                return;
             }
         }
 

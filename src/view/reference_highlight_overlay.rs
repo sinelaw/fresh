@@ -64,6 +64,7 @@ impl ReferenceHighlightOverlay {
     /// 3. Update overlays when debounce period elapses
     ///
     /// Returns true if overlays were updated
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         buffer: &Buffer,
@@ -122,6 +123,7 @@ impl ReferenceHighlightOverlay {
     }
 
     /// Apply highlights for the current word
+    #[allow(clippy::too_many_arguments)]
     fn apply_highlights(
         &self,
         buffer: &Buffer,

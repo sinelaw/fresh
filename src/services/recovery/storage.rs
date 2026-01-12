@@ -71,8 +71,7 @@ impl RecoveryStorage {
         self.ensure_dir()?;
 
         let info = SessionInfo::new();
-        let json = serde_json::to_string_pretty(&info)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let json = serde_json::to_string_pretty(&info).map_err(io::Error::other)?;
 
         self.atomic_write(&self.session_lock_path(), json.as_bytes())?;
         Ok(info)
@@ -84,8 +83,7 @@ impl RecoveryStorage {
         if path.exists() {
             // Just update the file's mtime by rewriting it
             let info = SessionInfo::new();
-            let json = serde_json::to_string_pretty(&info)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let json = serde_json::to_string_pretty(&info).map_err(io::Error::other)?;
             self.atomic_write(&path, json.as_bytes())?;
         }
         Ok(())
@@ -187,6 +185,7 @@ impl RecoveryStorage {
     ///
     /// - `{id}.meta.json` - Contains RecoveryMetadata with embedded ChunkedRecoveryIndex
     /// - `{id}.chunk.0`, `{id}.chunk.1`, ... - Raw binary content for each chunk
+    #[allow(clippy::too_many_arguments)]
     pub fn save_recovery(
         &self,
         id: &str,
@@ -270,8 +269,7 @@ impl RecoveryStorage {
         };
 
         // Write metadata (includes chunk index)
-        let meta_json = serde_json::to_string_pretty(&meta_file)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let meta_json = serde_json::to_string_pretty(&meta_file).map_err(io::Error::other)?;
         self.atomic_write(&meta_path, meta_json.as_bytes())?;
 
         Ok(metadata)

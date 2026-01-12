@@ -300,7 +300,7 @@ impl SettingsState {
                 if !handled {
                     let can_move = self
                         .current_page()
-                        .map_or(false, |page| self.selected_item + 1 < page.items.len());
+                        .is_some_and(|page| self.selected_item + 1 < page.items.len());
                     if can_move {
                         self.selected_item += 1;
                         self.sub_focus = None;
@@ -723,7 +723,7 @@ impl SettingsState {
 
         // Create dialog from schema
         let dialog =
-            EntryDialogState::from_schema(key.clone(), value, schema, &path, false, no_delete);
+            EntryDialogState::from_schema(key.clone(), value, schema, path, false, no_delete);
         self.entry_dialog_stack.push(dialog);
     }
 
@@ -1138,7 +1138,7 @@ impl SettingsState {
 
     /// Check if the current item is editable (TextList, Text, or Map)
     pub fn is_editable_control(&self) -> bool {
-        self.current_item().map_or(false, |item| {
+        self.current_item().is_some_and(|item| {
             matches!(
                 item.control,
                 SettingControl::TextList(_) | SettingControl::Text(_) | SettingControl::Map(_)
@@ -1317,7 +1317,7 @@ impl SettingsState {
 
     /// Check if current item is a dropdown with menu open
     pub fn is_dropdown_open(&self) -> bool {
-        self.current_item().map_or(false, |item| {
+        self.current_item().is_some_and(|item| {
             if let SettingControl::Dropdown(ref d) = item.control {
                 d.open
             } else {
@@ -1425,7 +1425,7 @@ impl SettingsState {
 
     /// Check if current item is a number input being edited
     pub fn is_number_editing(&self) -> bool {
-        self.current_item().map_or(false, |item| {
+        self.current_item().is_some_and(|item| {
             if let SettingControl::Number(ref n) = item.control {
                 n.editing()
             } else {

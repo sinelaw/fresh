@@ -635,6 +635,13 @@ async fn plugin_thread_loop(
 ///
 /// This prevents deadlock when an action awaits a response from the main thread
 /// while the main thread is waiting for a blocking hook to complete.
+///
+/// # Safety (clippy::await_holding_refcell_ref)
+/// The RefCell borrow held across await is safe because:
+/// - This runs on a single-threaded tokio runtime (no parallel task execution)
+/// - No spawn_local calls exist that could create concurrent access to `runtime`
+/// - The runtime Rc<RefCell<>> is never shared with other concurrent tasks
+#[allow(clippy::await_holding_refcell_ref)]
 async fn execute_action_with_hooks(
     action_name: &str,
     response: oneshot::Sender<Result<()>>,
@@ -669,6 +676,13 @@ async fn execute_action_with_hooks(
 }
 
 /// Run a hook with Rc<RefCell<TypeScriptRuntime>>
+///
+/// # Safety (clippy::await_holding_refcell_ref)
+/// The RefCell borrow held across await is safe because:
+/// - This runs on a single-threaded tokio runtime (no parallel task execution)
+/// - No spawn_local calls exist that could create concurrent access to `runtime`
+/// - The runtime Rc<RefCell<>> is never shared with other concurrent tasks
+#[allow(clippy::await_holding_refcell_ref)]
 async fn run_hook_internal_rc(
     runtime: Rc<RefCell<TypeScriptRuntime>>,
     hook_name: &str,
@@ -794,6 +808,13 @@ async fn handle_request(
 }
 
 /// Load a plugin from a file
+///
+/// # Safety (clippy::await_holding_refcell_ref)
+/// The RefCell borrow held across await is safe because:
+/// - This runs on a single-threaded tokio runtime (no parallel task execution)
+/// - No spawn_local calls exist that could create concurrent access to `runtime`
+/// - The runtime Rc<RefCell<>> is never shared with other concurrent tasks
+#[allow(clippy::await_holding_refcell_ref)]
 async fn load_plugin_internal(
     runtime: Rc<RefCell<TypeScriptRuntime>>,
     plugins: &mut HashMap<String, TsPluginInfo>,

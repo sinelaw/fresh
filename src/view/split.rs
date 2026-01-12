@@ -513,11 +513,9 @@ impl SplitManager {
     /// Update the buffer ID of the active split
     /// Returns true if successful (active split is a leaf), false otherwise
     pub fn set_active_buffer_id(&mut self, new_buffer_id: BufferId) -> bool {
-        if let Some(node) = self.root.find_mut(self.active_split) {
-            if let SplitNode::Leaf { buffer_id, .. } = node {
-                *buffer_id = new_buffer_id;
-                return true;
-            }
+        if let Some(SplitNode::Leaf { buffer_id, .. }) = self.root.find_mut(self.active_split) {
+            *buffer_id = new_buffer_id;
+            return true;
         }
         false
     }
@@ -738,12 +736,8 @@ impl SplitManager {
 
     /// Get the current ratio of a split container
     pub fn get_ratio(&self, split_id: SplitId) -> Option<f32> {
-        if let Some(node) = self.root.find(split_id) {
-            if let SplitNode::Split { ratio, .. } = node {
-                Some(*ratio)
-            } else {
-                None
-            }
+        if let Some(SplitNode::Split { ratio, .. }) = self.root.find(split_id) {
+            Some(*ratio)
         } else {
             None
         }
@@ -905,7 +899,7 @@ impl SplitManager {
                 view_states
                     .get(id)
                     .and_then(|vs| vs.sync_group)
-                    .map_or(false, |g| g == group_id)
+                    .is_some_and(|g| g == group_id)
             })
             .collect()
     }

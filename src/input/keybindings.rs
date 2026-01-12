@@ -54,10 +54,10 @@ pub fn format_keybinding(keycode: &KeyCode, modifiers: &KeyModifiers) -> String 
         KeyCode::Delete => result.push_str("Del"),
         KeyCode::Tab => result.push_str("Tab"),
         KeyCode::Esc => result.push_str("Esc"),
-        KeyCode::Left => result.push_str("←"),
-        KeyCode::Right => result.push_str("→"),
-        KeyCode::Up => result.push_str("↑"),
-        KeyCode::Down => result.push_str("↓"),
+        KeyCode::Left => result.push('←'),
+        KeyCode::Right => result.push('→'),
+        KeyCode::Up => result.push('↑'),
+        KeyCode::Down => result.push('↓'),
         KeyCode::Home => result.push_str("Home"),
         KeyCode::End => result.push_str("End"),
         KeyCode::PageUp => result.push_str("PgUp"),
@@ -927,7 +927,7 @@ impl KeybindingResolver {
                     if sequence.len() == binding.keys.len() && !sequence.is_empty() {
                         self.default_chord_bindings
                             .entry(context)
-                            .or_insert_with(HashMap::new)
+                            .or_default()
                             .insert(sequence, action);
                     }
                 } else if let Some(key_code) = Self::parse_key(&binding.key) {
@@ -960,7 +960,7 @@ impl KeybindingResolver {
         let context_bindings = self
             .default_bindings
             .entry(context)
-            .or_insert_with(HashMap::new);
+            .or_default();
 
         // Insert the primary binding
         context_bindings.insert((key_code, modifiers), action.clone());
@@ -1022,7 +1022,7 @@ impl KeybindingResolver {
                     if sequence.len() == binding.keys.len() && !sequence.is_empty() {
                         self.chord_bindings
                             .entry(context)
-                            .or_insert_with(HashMap::new)
+                            .or_default()
                             .insert(sequence, action);
                     }
                 } else if let Some(key_code) = Self::parse_key(&binding.key) {
@@ -1030,7 +1030,7 @@ impl KeybindingResolver {
                     let modifiers = Self::parse_modifiers(&binding.modifiers);
                     self.bindings
                         .entry(context)
-                        .or_insert_with(HashMap::new)
+                        .or_default()
                         .insert((key_code, modifiers), action);
                 }
             }
@@ -1232,12 +1232,12 @@ impl KeybindingResolver {
         }
 
         // Handle regular character input in text input contexts
-        if context.allows_text_input() {
-            if event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT {
-                if let KeyCode::Char(c) = event.code {
-                    tracing::trace!("  -> Character input: '{}'", c);
-                    return Action::InsertChar(c);
-                }
+        if context.allows_text_input()
+            && (event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT)
+        {
+            if let KeyCode::Char(c) = event.code {
+                tracing::trace!("  -> Character input: '{}'", c);
+                return Action::InsertChar(c);
             }
         }
 
@@ -1446,7 +1446,6 @@ impl KeybindingResolver {
     }
 
     /// Create default keybindings organized by context
-
     /// Get all keybindings (for help display)
     /// Returns a Vec of (key_description, action_description)
     pub fn get_all_bindings(&self) -> Vec<(String, String)> {
@@ -1849,7 +1848,7 @@ impl KeybindingResolver {
 
                     self.bindings
                         .entry(context)
-                        .or_insert_with(HashMap::new)
+                        .or_default()
                         .insert((key_code, modifiers), action);
                 }
             }

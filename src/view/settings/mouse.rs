@@ -30,7 +30,7 @@ impl EntryDialogLayout {
             return None;
         }
 
-        let dialog_width = (modal.width * 85 / 100).min(90).max(50);
+        let dialog_width = (modal.width * 85 / 100).clamp(50, 90);
         let dialog_height = (modal.height * 90 / 100).max(15);
         let dialog_x = modal.x + (modal.width.saturating_sub(dialog_width)) / 2;
         let dialog_y = modal.y + (modal.height.saturating_sub(dialog_height)) / 2;

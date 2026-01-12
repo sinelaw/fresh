@@ -29,6 +29,7 @@ impl FileExplorerRenderer {
     }
 
     /// Render the file explorer in the given frame area
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         view: &mut FileTreeView,
         frame: &mut Frame,
@@ -175,6 +176,7 @@ impl FileExplorerRenderer {
     }
 
     /// Render a single tree node as a ListItem
+    #[allow(clippy::too_many_arguments)]
     fn render_node(
         view: &FileTreeView,
         node_id: NodeId,
@@ -288,7 +290,7 @@ impl FileExplorerRenderer {
                 .metadata
                 .as_ref()
                 .and_then(|m| m.size)
-                .map(|size| Self::format_size(size))
+                .map(Self::format_size)
         } else if node.is_expanded() {
             let count = node.children.len();
             Some(if count == 1 {

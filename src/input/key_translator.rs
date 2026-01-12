@@ -367,7 +367,7 @@ mod tests {
         // Map Char('\x7f') to Backspace
         let raw = KeyEvent::new(KeyCode::Char('\x7f'), KeyModifiers::NONE);
         let expected = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
-        translator.add_translation(raw.clone(), expected.clone());
+        translator.add_translation(raw, expected);
 
         assert_eq!(translator.len(), 1);
         assert!(translator.has_translation(&raw));
@@ -399,7 +399,7 @@ mod tests {
         // Map Alt+b to Alt+Left
         let raw = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT);
         let expected = KeyEvent::new(KeyCode::Left, KeyModifiers::ALT);
-        translator.add_translation(raw.clone(), expected.clone());
+        translator.add_translation(raw, expected);
 
         let result = translator.translate(raw);
         assert_eq!(result.code, KeyCode::Left);

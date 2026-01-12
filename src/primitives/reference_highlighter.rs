@@ -242,7 +242,7 @@ impl ReferenceHighlighter {
                     // Extract capture indices
                     let mut captures = LocalsCaptures::default();
                     for (i, name) in query.capture_names().iter().enumerate() {
-                        match name.as_ref() {
+                        match *name {
                             "local.scope" => captures.scope = Some(i as u32),
                             "local.definition" => captures.definition = Some(i as u32),
                             "local.reference" => captures.reference = Some(i as u32),
@@ -445,7 +445,7 @@ impl ReferenceHighlighter {
                         .enumerate()
                         .filter(|(_, s)| s.start <= start && end <= s.end)
                         .map(|(i, _)| i)
-                        .last()
+                        .next_back()
                         .unwrap_or(usize::MAX);
                     definitions.push((range, text, scope_id));
                 } else if capture.index == ref_idx {
@@ -546,7 +546,7 @@ impl ReferenceHighlighter {
                             && def_range.start < range.start
                             && scopes
                                 .get(*def_scope)
-                                .map_or(false, |s| range.start >= s.start && range.end <= s.end)
+                                .is_some_and(|s| range.start >= s.start && range.end <= s.end)
                     });
 
                     if !is_shadowed {

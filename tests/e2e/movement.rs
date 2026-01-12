@@ -276,7 +276,7 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
     // This simulates quick typing which might cause sync issues
     let chars_to_type = "ABCDEFGHIJ"; // Type 10 characters rapidly
 
-    for (i, ch) in chars_to_type.chars().enumerate() {
+    for (byte_idx, ch) in chars_to_type.char_indices() {
         // Type the character
         harness
             .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
@@ -285,11 +285,14 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
 
         // After each character insertion:
         // 1. Verify buffer content is correct
-        let expected_buffer = format!("Hello {}World", &chars_to_type[..=i]);
+        // byte_idx is the byte index, add ch.len_utf8() to include the current char
+        let expected_buffer = format!("Hello {}World", &chars_to_type[..byte_idx + ch.len_utf8()]);
         harness.assert_buffer_content(&expected_buffer);
 
         // 2. Verify logical cursor position is correct (should advance by 1)
-        let expected_cursor_pos = 6 + i + 1;
+        // For ASCII chars, byte_idx + 1 equals the character count
+        let char_count = byte_idx + 1; // Since all chars are ASCII, byte index + 1 = char count
+        let expected_cursor_pos = 6 + char_count;
         let actual_cursor_pos = harness.cursor_position();
         assert_eq!(
             actual_cursor_pos, expected_cursor_pos,
@@ -298,11 +301,11 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
 
         // 3. Verify screen cursor position matches logical position
         let screen_pos = harness.screen_cursor_position();
-        let expected_screen_x = 14 + i as u16 + 1; // Initial (14) + characters typed so far
+        let expected_screen_x = 14 + char_count as u16; // Initial (14) + characters typed so far
         assert_eq!(
             screen_pos.0, expected_screen_x,
             "After typing '{}' (char {} of {}), screen cursor X should be {} but is {}.\nBuffer: '{}'",
-            ch, i + 1, chars_to_type.len(), expected_screen_x, screen_pos.0, expected_buffer
+            ch, char_count, chars_to_type.len(), expected_screen_x, screen_pos.0, expected_buffer
         );
 
         // Screen cursor Y should remain on first content row

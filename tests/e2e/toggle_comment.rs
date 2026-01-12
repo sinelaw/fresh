@@ -127,7 +127,7 @@ fn test_toggle_comment_preserves_selection() {
     harness.render().unwrap();
 
     // Verify we have a selection before commenting
-    let cursor_before = harness.editor().active_state().cursors.primary().clone();
+    let cursor_before = *harness.editor().active_state().cursors.primary();
     assert!(
         cursor_before.selection_range().is_some(),
         "Should have selection before toggle comment"
@@ -147,7 +147,7 @@ fn test_toggle_comment_preserves_selection() {
     );
 
     // Verify selection is still active after commenting
-    let cursor_after = harness.editor().active_state().cursors.primary().clone();
+    let cursor_after = *harness.editor().active_state().cursors.primary();
     assert!(
         cursor_after.selection_range().is_some(),
         "Selection should be preserved after toggle comment"
@@ -191,7 +191,7 @@ fn test_toggle_uncomment_preserves_selection() {
     harness.render().unwrap();
 
     // Verify we have a selection before uncommenting
-    let cursor_before = harness.editor().active_state().cursors.primary().clone();
+    let cursor_before = *harness.editor().active_state().cursors.primary();
     assert!(
         cursor_before.selection_range().is_some(),
         "Should have selection before toggle comment"
@@ -209,7 +209,7 @@ fn test_toggle_uncomment_preserves_selection() {
     );
 
     // Verify selection is still active after uncommenting
-    let cursor_after = harness.editor().active_state().cursors.primary().clone();
+    let cursor_after = *harness.editor().active_state().cursors.primary();
     assert!(
         cursor_after.selection_range().is_some(),
         "Selection should be preserved after toggle uncomment"
@@ -289,7 +289,7 @@ fn test_toggle_comment_single_line_no_newline() {
     harness.render().unwrap();
 
     // Verify we have a selection
-    let cursor = harness.editor().active_state().cursors.primary().clone();
+    let cursor = *harness.editor().active_state().cursors.primary();
     assert!(
         cursor.selection_range().is_some(),
         "Should have selection after Ctrl+A"

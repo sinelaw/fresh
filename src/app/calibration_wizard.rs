@@ -27,7 +27,7 @@ impl ExpectedKey {
 
     /// Convert to a KeyEvent for comparison
     pub fn to_key_event(&self) -> KeyEvent {
-        KeyEvent::new(self.code.clone(), self.modifiers)
+        KeyEvent::new(self.code, self.modifiers)
     }
 }
 
@@ -981,7 +981,7 @@ mod tests {
 
         // Capture a key mapping
         let raw = KeyEvent::new(KeyCode::Char('\x7f'), KeyModifiers::NONE);
-        wizard.handle_capture_key(raw.clone());
+        wizard.handle_capture_key(raw);
 
         let translator = wizard.build_translator();
         assert_eq!(translator.len(), 1);

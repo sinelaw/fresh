@@ -436,10 +436,8 @@ impl PieceTreeNode {
             } => {
                 let left_end = current_offset + left_bytes;
 
-                if end <= current_offset {
-                    Some(0) // Range is completely before this node
-                } else if start >= current_offset + self.total_bytes() {
-                    Some(0) // Range is completely after this node
+                if end <= current_offset || start >= current_offset + self.total_bytes() {
+                    Some(0) // Range is completely before or after this node
                 } else if start <= current_offset && end >= current_offset + self.total_bytes() {
                     // Range completely contains this node
                     self.total_line_feeds()
@@ -791,6 +789,7 @@ impl PieceTree {
     /// Insert text at the given position (line, column)
     /// Returns new cursor after the inserted text
     /// This performs a SINGLE tree traversal (more efficient than position_to_offset + insert)
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_at_position(
         &mut self,
         line: usize,
@@ -832,6 +831,7 @@ impl PieceTree {
 
     /// Helper to collect leaves while splitting at a position (line, column)
     /// Similar to collect_leaves_with_split but works with positions instead of offsets
+    #[allow(clippy::too_many_arguments)]
     fn collect_leaves_with_split_at_position(
         &self,
         node: &Arc<PieceTreeNode>,
@@ -1275,6 +1275,7 @@ impl PieceTree {
 
     /// Helper to collect leaves while deleting a range specified by positions
     /// This finds both positions and performs the deletion in a single tree traversal
+    #[allow(clippy::too_many_arguments)]
     fn collect_leaves_with_position_delete(
         &self,
         node: &Arc<PieceTreeNode>,
@@ -1855,7 +1856,7 @@ impl PieceTree {
 
                 // Insert belongs at or before leaf_start
                 if let Some(insert) = insert_leaf {
-                    new_leaves.push(insert.clone());
+                    new_leaves.push(*insert);
                 }
                 edit_idx -= 1;
             }
@@ -1889,7 +1890,7 @@ impl PieceTree {
             }
 
             if keep_leaf {
-                new_leaves.push(leaf.clone());
+                new_leaves.push(leaf);
             }
 
             current_offset = leaf_end;
@@ -1898,7 +1899,7 @@ impl PieceTree {
         // Handle any remaining inserts at the end of document
         while edit_idx > 0 {
             if let Some(insert) = &edit_ranges[edit_idx - 1].2 {
-                new_leaves.push(insert.clone());
+                new_leaves.push(*insert);
             }
             edit_idx -= 1;
         }
@@ -2354,7 +2355,7 @@ mod tests {
         let mut idx = 0;
 
         let delta = tree.apply_bulk_edits(&edits, &buffers, |_text| {
-            let info = infos[idx].clone();
+            let info = infos[idx];
             idx += 1;
             info
         });
@@ -2392,7 +2393,7 @@ mod tests {
         let mut idx = 0;
 
         let delta = tree.apply_bulk_edits(&edits, &buffers, |_text| {
-            let info = infos[idx].clone();
+            let info = infos[idx];
             idx += 1;
             info
         });
@@ -2420,7 +2421,7 @@ mod tests {
         let mut idx = 0;
 
         let delta = tree.apply_bulk_edits(&edits, &buffers, |_text| {
-            let info = infos[idx].clone();
+            let info = infos[idx];
             idx += 1;
             info
         });
@@ -2483,7 +2484,7 @@ mod tests {
         let mut idx = 0;
 
         tree.apply_bulk_edits(&edits, &buffers, |_text| {
-            let info = infos[idx].clone();
+            let info = infos[idx];
             idx += 1;
             info
         });
@@ -2528,7 +2529,7 @@ mod tests {
 
         // Apply bulk edit
         tree1.apply_bulk_edits(&edits, &buffers1, |_text| {
-            let info = infos[idx].clone();
+            let info = infos[idx];
             idx += 1;
             info
         });
@@ -2839,7 +2840,7 @@ mod property_tests {
 
             let mut idx = 0;
             tree.apply_bulk_edits(&edits, &buffers, |_text| {
-                let info = infos[idx].clone();
+                let info = infos[idx];
                 idx += 1;
                 info
             });
@@ -2882,7 +2883,7 @@ mod property_tests {
 
             let mut idx = 0;
             let delta = tree.apply_bulk_edits(&edits, &buffers, |_text| {
-                let info = infos[idx].clone();
+                let info = infos[idx];
                 idx += 1;
                 info
             });
@@ -2925,7 +2926,7 @@ mod property_tests {
 
             let mut idx = 0;
             tree.apply_bulk_edits(&edits, &buffers, |_text| {
-                let info = infos[idx].clone();
+                let info = infos[idx];
                 idx += 1;
                 info
             });

@@ -42,7 +42,7 @@ pub struct ViewToken {
 }
 
 /// A view stream for a viewport
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ViewStream {
     pub tokens: Vec<ViewToken>,
     /// Mapping from view token index to source offset (if present)

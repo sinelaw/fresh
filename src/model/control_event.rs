@@ -125,7 +125,7 @@ impl ControlEvent {
             (Value::Object(exp_map), Value::Object(data_map)) => {
                 // All expected keys must match
                 exp_map.iter().all(|(k, v)| {
-                    data_map.get(k).map_or(false, |data_v| {
+                    data_map.get(k).is_some_and(|data_v| {
                         if v.is_null() {
                             true // Null in pattern means "key exists, any value"
                         } else {

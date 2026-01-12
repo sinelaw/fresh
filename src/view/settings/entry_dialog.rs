@@ -283,7 +283,7 @@ impl EntryDialogState {
             let array_nav_result = self
                 .items
                 .get(self.selected_item)
-                .map(|item| {
+                .and_then(|item| {
                     if let SettingControl::ObjectArray(state) = &item.control {
                         // Navigation order: entries -> add-new -> exit
                         match state.focused_index {
@@ -303,8 +303,7 @@ impl EntryDialogState {
                     } else {
                         None
                     }
-                })
-                .flatten();
+                });
 
             match array_nav_result {
                 Some(true) => {
@@ -369,7 +368,7 @@ impl EntryDialogState {
             let array_nav_result = self
                 .items
                 .get(self.selected_item)
-                .map(|item| {
+                .and_then(|item| {
                     if let SettingControl::ObjectArray(state) = &item.control {
                         // Navigation order (reverse): exit <- entries <- add-new
                         match state.focused_index {
@@ -393,8 +392,7 @@ impl EntryDialogState {
                     } else {
                         None
                     }
-                })
-                .flatten();
+                });
 
             match array_nav_result {
                 Some(true) => {
@@ -687,11 +685,8 @@ impl EntryDialogState {
     /// Stop text editing mode
     pub fn stop_editing(&mut self) {
         if let Some(item) = self.current_item_mut() {
-            match &mut item.control {
-                SettingControl::Number(state) => {
-                    state.cancel_editing();
-                }
-                _ => {}
+            if let SettingControl::Number(state) = &mut item.control {
+                state.cancel_editing();
             }
         }
         self.editing_text = false;

@@ -179,7 +179,7 @@ fn find_changed_lines_with_deletions(
             // Determine if this is an insertion or modification
             // It's a modification if there's a corresponding saved line at the same position
             // that was also not matched (i.e., both were changed)
-            let change_type = classify_change(start, i, saved.len(), current.len(), &lcs);
+            let change_type = classify_change(start, i, saved.len(), current.len(), lcs);
             changes.push(LineChange::new(range.clone(), change_type));
             ranges.push(range);
         } else {
@@ -203,7 +203,7 @@ fn find_changed_lines_with_deletions(
             // This saved line was deleted - mark at current position
             let deletion_line = if current_idx < current.len() {
                 current_idx
-            } else if current.len() > 0 {
+            } else if !current.is_empty() {
                 current.len() - 1
             } else {
                 0

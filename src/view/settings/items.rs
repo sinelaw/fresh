@@ -338,7 +338,7 @@ impl SettingItem {
             if chars_per_line == 0 {
                 return 1;
             }
-            ((desc.len() + chars_per_line - 1) / chars_per_line) as u16
+            desc.len().div_ceil(chars_per_line) as u16
         } else {
             0
         }

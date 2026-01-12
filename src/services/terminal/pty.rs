@@ -17,7 +17,7 @@ pub fn key_to_pty_bytes(code: KeyCode, modifiers: KeyModifiers) -> Option<Vec<u8
     if ctrl && !alt {
         if let KeyCode::Char(c) = code {
             let c = c.to_ascii_lowercase();
-            if c >= 'a' && c <= 'z' {
+            if c.is_ascii_lowercase() {
                 // Ctrl+A = 0x01, Ctrl+B = 0x02, etc.
                 let ctrl_char = (c as u8) - b'a' + 1;
                 return Some(vec![ctrl_char]);

@@ -303,7 +303,7 @@ impl Editor {
         source_split_id: SplitId,
         target_split_id: SplitId,
         direction: SplitDirection,
-        new_split_first: bool, // If true, new split is placed first (left/top)
+        _new_split_first: bool, // If true, new split is placed first (left/top) - TODO: implement
     ) {
         // Check if source split will be empty after removing this buffer
         let source_becomes_empty = self
@@ -341,7 +341,7 @@ impl Editor {
         self.split_manager.set_active_split(target_split_id);
 
         // Determine the ratio (new split gets 50%)
-        let ratio = if new_split_first { 0.5 } else { 0.5 };
+        let ratio = 0.5;
 
         // Create the split
         match self.split_manager.split_active(direction, buffer_id, ratio) {

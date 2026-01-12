@@ -20,6 +20,12 @@ impl QueryReplaceConfirmInputHandler {
     }
 }
 
+impl Default for QueryReplaceConfirmInputHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InputHandler for QueryReplaceConfirmInputHandler {
     fn handle_key_event(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
         match event.code {

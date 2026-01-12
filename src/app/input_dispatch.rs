@@ -24,7 +24,7 @@ impl Editor {
         let in_modal = self.is_prompting()
             || self.active_state().popups.is_visible()
             || self.menu_state.active_menu.is_some()
-            || self.settings_state.as_ref().map_or(false, |s| s.visible)
+            || self.settings_state.as_ref().is_some_and(|s| s.visible)
             || self.calibration_wizard.is_some();
 
         if in_modal {
@@ -124,7 +124,7 @@ impl Editor {
             let is_query_replace_confirm = self
                 .prompt
                 .as_ref()
-                .map_or(false, |p| p.prompt_type == PromptType::QueryReplaceConfirm);
+                .is_some_and(|p| p.prompt_type == PromptType::QueryReplaceConfirm);
             if is_query_replace_confirm {
                 let mut handler = QueryReplaceConfirmInputHandler::new();
                 let result = handler.dispatch_input(event, &mut ctx);

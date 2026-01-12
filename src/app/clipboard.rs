@@ -76,7 +76,7 @@ impl Editor {
 
             for pos in positions {
                 let mut iter = state.buffer.line_iterator(pos, estimated_line_length);
-                if let Some((_start, content)) = iter.next() {
+                if let Some((_start, content)) = iter.next_line() {
                     if !text.is_empty() {
                         text.push('\n');
                     }
@@ -328,7 +328,7 @@ impl Editor {
                     .filter_map(|pos| {
                         let mut iter = state.buffer.line_iterator(pos, estimated_line_length);
                         let line_start = iter.current_position();
-                        iter.next().map(|(_start, content)| {
+                        iter.next_line().map(|(_start, content)| {
                             let line_end = line_start + content.len();
                             line_start..line_end
                         })
@@ -692,7 +692,7 @@ impl Editor {
         for pos in cursor_positions {
             let mut iter = state.buffer.line_iterator(pos, estimated_line_length);
             let line_start = iter.current_position();
-            if let Some((_start, content)) = iter.next() {
+            if let Some((_start, content)) = iter.next_line() {
                 // Don't include the line ending in yank
                 let content_len = content.trim_end_matches(&['\n', '\r'][..]).len();
                 let line_end = line_start + content_len;

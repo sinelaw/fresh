@@ -31,6 +31,7 @@ impl Editor {
     // ==================== Overlay Commands ====================
 
     /// Handle AddOverlay command
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_add_overlay(
         &mut self,
         buffer_id: BufferId,
@@ -117,6 +118,7 @@ impl Editor {
     // ==================== Virtual Text Commands ====================
 
     /// Handle AddVirtualText command
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_add_virtual_text(
         &mut self,
         buffer_id: BufferId,
@@ -197,6 +199,7 @@ impl Editor {
     }
 
     /// Handle AddVirtualLine command
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_add_virtual_line(
         &mut self,
         buffer_id: BufferId,
@@ -506,7 +509,7 @@ impl Editor {
                     // Set cursor position in the split's view state
                     view_state.cursors.primary_mut().move_to(position, false);
                     // Ensure the cursor is visible by scrolling the split's viewport
-                    let cursor = view_state.cursors.primary().clone();
+                    let cursor = *view_state.cursors.primary();
                     view_state
                         .viewport
                         .ensure_visible(&mut state.buffer, &cursor);
@@ -723,7 +726,7 @@ impl Editor {
 
         // Iterate through lines until we reach the target
         for current_line in 0..=target_line {
-            if let Some((line_start, _)) = iter.next() {
+            if let Some((line_start, _)) = iter.next_line() {
                 if current_line == target_line {
                     target_byte = line_start;
                     break;
@@ -1107,11 +1110,7 @@ impl Editor {
                     language
                 ))
             } else if let Some(handle) = lsp.get_handle_mut(&language) {
-                if let Err(e) = handle.send_plugin_request(request_id, method, params) {
-                    Some(e)
-                } else {
-                    None
-                }
+                handle.send_plugin_request(request_id, method, params).err()
             } else {
                 Some(format!("LSP server for '{}' is unavailable", language))
             }

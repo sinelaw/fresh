@@ -37,7 +37,6 @@ impl Editor {
                     self.set_status_message(
                         t!("settings.failed_to_open", error = e.to_string()).to_string(),
                     );
-                    return;
                 }
             }
         } else if let Some(ref mut state) = self.settings_state {

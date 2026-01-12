@@ -93,11 +93,9 @@ impl TextListState {
                     self.cursor += s.len();
                 }
             }
-        } else {
-            if self.cursor <= self.new_item_text.len() {
-                self.new_item_text.insert_str(self.cursor, s);
-                self.cursor += s.len();
-            }
+        } else if self.cursor <= self.new_item_text.len() {
+            self.new_item_text.insert_str(self.cursor, s);
+            self.cursor += s.len();
         }
     }
 

@@ -487,6 +487,7 @@ impl MenuRenderer {
     }
 
     /// Render a dropdown menu and all its open submenus
+    #[allow(clippy::too_many_arguments)]
     fn render_dropdown_chain(
         frame: &mut Frame,
         menu_bar_area: Rect,
@@ -583,12 +584,12 @@ impl MenuRenderer {
     fn calculate_dropdown_width(items: &[MenuItem]) -> usize {
         items
             .iter()
-            .filter_map(|item| match item {
-                MenuItem::Action { label, .. } => Some(str_width(label) + 20),
-                MenuItem::Submenu { label, .. } => Some(str_width(label) + 20),
-                MenuItem::DynamicSubmenu { label, .. } => Some(str_width(label) + 20),
-                MenuItem::Separator { .. } => Some(20),
-                MenuItem::Label { info } => Some(str_width(info) + 4),
+            .map(|item| match item {
+                MenuItem::Action { label, .. } => str_width(label) + 20,
+                MenuItem::Submenu { label, .. } => str_width(label) + 20,
+                MenuItem::DynamicSubmenu { label, .. } => str_width(label) + 20,
+                MenuItem::Separator { .. } => 20,
+                MenuItem::Label { info } => str_width(info) + 4,
             })
             .max()
             .unwrap_or(20)

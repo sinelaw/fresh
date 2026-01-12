@@ -25,6 +25,7 @@ use ratatui::Frame;
 /// Build spans for a text line with selection highlighting
 ///
 /// Returns a vector of spans where selected portions are highlighted.
+#[allow(clippy::too_many_arguments)]
 fn build_selection_spans(
     display_text: &str,
     display_len: usize,
@@ -551,7 +552,7 @@ fn render_settings_panel(
     let render_ctx = RenderContext {
         selected_item: state.selected_item,
         settings_focused: state.focus_panel == FocusPanel::Settings,
-        hover_hit: state.hover_hit.clone(),
+        hover_hit: state.hover_hit,
     };
 
     // Area for items (below header)
@@ -663,6 +664,7 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 /// # Arguments
 /// * `skip_top` - Number of rows to skip at top of item (for partial visibility when scrolling)
 /// * `label_width` - Optional label width for column alignment
+#[allow(clippy::too_many_arguments)]
 fn render_setting_item_pure(
     frame: &mut Frame,
     area: Rect,
@@ -834,6 +836,7 @@ fn render_setting_item_pure(
 /// * `skip_rows` - Number of rows to skip at top of control (for partial visibility)
 /// * `label_width` - Optional label width for column alignment
 /// * `read_only` - Whether this field is read-only (displays as plain text instead of input)
+#[allow(clippy::too_many_arguments)]
 fn render_control(
     frame: &mut Frame,
     area: Rect,
@@ -1664,6 +1667,7 @@ pub enum ControlLayoutInfo {
 }
 
 /// Render a single button with focus/hover states
+#[allow(clippy::too_many_arguments)]
 fn render_button(
     frame: &mut Frame,
     area: Rect,
@@ -2433,7 +2437,7 @@ fn render_entry_dialog(
     };
 
     // Calculate dialog size - use most of available space for editing
-    let dialog_width = (parent_area.width * 85 / 100).min(90).max(50);
+    let dialog_width = (parent_area.width * 85 / 100).clamp(50, 90);
     let dialog_height = (parent_area.height * 90 / 100).max(15);
     let dialog_x = parent_area.x + (parent_area.width.saturating_sub(dialog_width)) / 2;
     let dialog_y = parent_area.y + (parent_area.height.saturating_sub(dialog_height)) / 2;

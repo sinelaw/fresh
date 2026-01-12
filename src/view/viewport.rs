@@ -122,6 +122,7 @@ impl Viewport {
     /// - Indicator column: 1 char (space, or symbols like ●/✗/⚠)
     /// - Line numbers: N digits (min 4), right-aligned
     /// - Separator: " │ " = 3 chars (space, box char, space)
+    ///
     /// Total width = 1 + N + 3 = N + 4 (where N >= 4 minimum, so min 8 total)
     /// This is a heuristic that assumes approximately 80 chars per line
     pub fn gutter_width(&self, buffer: &Buffer) -> usize {
@@ -146,7 +147,6 @@ impl Viewport {
             }
         }
         let new_position = iter.current_position();
-        drop(iter); // Explicitly drop to release borrow
         self.set_top_byte_with_limit(buffer, new_position);
     }
 
@@ -155,12 +155,11 @@ impl Viewport {
     pub fn scroll_down(&mut self, buffer: &mut Buffer, lines: usize) {
         let mut iter = buffer.line_iterator(self.top_byte, 80);
         for _ in 0..lines {
-            if iter.next().is_none() {
+            if iter.next_line().is_none() {
                 break;
             }
         }
         let new_position = iter.current_position();
-        drop(iter); // Explicitly drop to release borrow
         self.set_top_byte_with_limit(buffer, new_position);
     }
 
@@ -496,7 +495,7 @@ impl Viewport {
         let mut iter = buffer.line_iterator(proposed_top_byte, 80);
         let mut lines_visible = 0;
 
-        while let Some((_, _)) = iter.next() {
+        while let Some((_, _)) = iter.next_line() {
             lines_visible += 1;
             if lines_visible >= viewport_height {
                 // We have a full viewport of content, use proposed position
@@ -569,9 +568,8 @@ impl Viewport {
         let mut current_line = 0;
 
         while current_line < line {
-            if let Some((line_start, _)) = iter.next() {
+            if let Some((line_start, _)) = iter.next_line() {
                 if current_line + 1 == line {
-                    drop(iter);
                     self.set_top_byte_with_limit(buffer, line_start);
                     return;
                 }
@@ -584,7 +582,6 @@ impl Viewport {
 
         // If we didn't find the line, stay at the last valid position
         let target_position = iter.current_position();
-        drop(iter);
         self.set_top_byte_with_limit(buffer, target_position);
     }
 
@@ -670,95 +667,92 @@ impl Viewport {
         let cursor_is_visible = if cursor_line_start < self.top_byte {
             // Cursor is above viewport
             false
-        } else {
-            if self.line_wrap_enabled {
-                // With line wrapping: count VISUAL ROWS (wrapped segments), not logical lines
-                let gutter_width = self.gutter_width(buffer);
-                let wrap_config = WrapConfig::new(self.width as usize, gutter_width, true);
+        } else if self.line_wrap_enabled {
+            // With line wrapping: count VISUAL ROWS (wrapped segments), not logical lines
+            let gutter_width = self.gutter_width(buffer);
+            let wrap_config = WrapConfig::new(self.width as usize, gutter_width, true);
 
-                let mut iter = buffer.line_iterator(self.top_byte, 80);
-                let mut visual_rows = 0;
+            let mut iter = buffer.line_iterator(self.top_byte, 80);
+            let mut visual_rows = 0;
 
-                // Iterate through logical lines, but count their wrapped rows
-                loop {
-                    let current_pos = iter.current_position();
+            // Iterate through logical lines, but count their wrapped rows
+            loop {
+                let current_pos = iter.current_position();
 
-                    // If we reached the cursor's line, check if the cursor is within visible rows
-                    if current_pos >= cursor_line_start {
-                        // The cursor's line starts within or after the viewport
-                        if current_pos == cursor_line_start {
-                            // We need to check if the cursor's SPECIFIC POSITION within the wrapped line is visible
-                            // Get the line content
-                            let line_content = if let Some((_, content)) = iter.next() {
-                                content.trim_end_matches('\n').to_string()
-                            } else {
-                                // At EOF after trailing newline - empty line
-                                String::new()
-                            };
-
-                            // Wrap the line (even if empty, it still takes 1 row)
-                            let segments = wrap_line(&line_content, &wrap_config);
-                            let segments_count = segments.len().max(1); // Empty line is 1 row
-
-                            // Find which segment the cursor is in
-                            let cursor_column = cursor.position.saturating_sub(cursor_line_start);
-                            let (cursor_segment_idx, _) =
-                                char_position_to_segment(cursor_column, &segments);
-
-                            // Add the rows for this line up to and including the cursor's segment
-                            // For empty lines, cursor_segment_idx is 0, so we add 1 row
-                            visual_rows += cursor_segment_idx.min(segments_count - 1) + 1;
-
-                            // Check if cursor's row is within viewport with scroll offset applied
-                            // Cursor should be between effective_offset and (viewport_lines - effective_offset)
-                            break visual_rows > effective_offset
-                                && visual_rows <= viewport_lines.saturating_sub(effective_offset);
+                // If we reached the cursor's line, check if the cursor is within visible rows
+                if current_pos >= cursor_line_start {
+                    // The cursor's line starts within or after the viewport
+                    if current_pos == cursor_line_start {
+                        // We need to check if the cursor's SPECIFIC POSITION within the wrapped line is visible
+                        // Get the line content
+                        let line_content = if let Some((_, content)) = iter.next_line() {
+                            content.trim_end_matches('\n').to_string()
                         } else {
-                            // We passed the cursor's line without finding it - shouldn't happen
-                            break false;
-                        }
-                    }
+                            // At EOF after trailing newline - empty line
+                            String::new()
+                        };
 
-                    // Get the next line
-                    if let Some((_line_start, line_content)) = iter.next() {
-                        // Wrap this line to count how many visual rows it takes
-                        let line_text = line_content.trim_end_matches('\n');
-                        let segments = wrap_line(line_text, &wrap_config);
-                        visual_rows += segments.len();
+                        // Wrap the line (even if empty, it still takes 1 row)
+                        let segments = wrap_line(&line_content, &wrap_config);
+                        let segments_count = segments.len().max(1); // Empty line is 1 row
 
-                        // If we've exceeded the viewport, cursor is not visible
-                        if visual_rows >= viewport_lines {
-                            break false;
-                        }
+                        // Find which segment the cursor is in
+                        let cursor_column = cursor.position.saturating_sub(cursor_line_start);
+                        let (cursor_segment_idx, _) =
+                            char_position_to_segment(cursor_column, &segments);
+
+                        // Add the rows for this line up to and including the cursor's segment
+                        // For empty lines, cursor_segment_idx is 0, so we add 1 row
+                        visual_rows += cursor_segment_idx.min(segments_count - 1) + 1;
+
+                        // Check if cursor's row is within viewport with scroll offset applied
+                        // Cursor should be between effective_offset and (viewport_lines - effective_offset)
+                        break visual_rows > effective_offset
+                            && visual_rows <= viewport_lines.saturating_sub(effective_offset);
                     } else {
-                        // Reached end of buffer
+                        // We passed the cursor's line without finding it - shouldn't happen
                         break false;
                     }
                 }
-            } else {
-                // Without line wrapping: count logical lines as before
-                let mut iter = buffer.line_iterator(self.top_byte, 80);
-                let mut lines_from_top = 0;
 
-                while iter.current_position() < cursor_line_start && lines_from_top < viewport_lines
-                {
-                    if iter.next().is_none() {
-                        break;
+                // Get the next line
+                if let Some((_line_start, line_content)) = iter.next_line() {
+                    // Wrap this line to count how many visual rows it takes
+                    let line_text = line_content.trim_end_matches('\n');
+                    let segments = wrap_line(line_text, &wrap_config);
+                    visual_rows += segments.len();
+
+                    // If we've exceeded the viewport, cursor is not visible
+                    if visual_rows >= viewport_lines {
+                        break false;
                     }
-                    lines_from_top += 1;
+                } else {
+                    // Reached end of buffer
+                    break false;
                 }
-
-                // Apply scroll offset: cursor should be between offset and (viewport_lines - offset)
-                let visible = lines_from_top > effective_offset
-                    && lines_from_top < viewport_lines.saturating_sub(effective_offset);
-                tracing::trace!(
-                    "ensure_visible (no wrap): lines_from_top={}, effective_offset={}, visible={}",
-                    lines_from_top,
-                    effective_offset,
-                    visible
-                );
-                visible
             }
+        } else {
+            // Without line wrapping: count logical lines as before
+            let mut iter = buffer.line_iterator(self.top_byte, 80);
+            let mut lines_from_top = 0;
+
+            while iter.current_position() < cursor_line_start && lines_from_top < viewport_lines {
+                if iter.next_line().is_none() {
+                    break;
+                }
+                lines_from_top += 1;
+            }
+
+            // Apply scroll offset: cursor should be between offset and (viewport_lines - offset)
+            let visible = lines_from_top > effective_offset
+                && lines_from_top < viewport_lines.saturating_sub(effective_offset);
+            tracing::trace!(
+                "ensure_visible (no wrap): lines_from_top={}, effective_offset={}, visible={}",
+                lines_from_top,
+                effective_offset,
+                visible
+            );
+            visible
         };
 
         tracing::trace!(
@@ -781,7 +775,7 @@ impl Viewport {
                 let mut visual_rows_counted = 0;
 
                 // First, count how many rows the cursor's line takes up to the cursor position
-                if let Some((_line_start, line_content)) = iter.next() {
+                if let Some((_line_start, line_content)) = iter.next_line() {
                     let line_text = if line_content.ends_with('\n') {
                         &line_content[..line_content.len() - 1]
                     } else {
@@ -804,7 +798,7 @@ impl Viewport {
                         break; // Hit beginning of buffer
                     }
 
-                    if let Some((_line_start, line_content)) = iter.next() {
+                    if let Some((_line_start, line_content)) = iter.next_line() {
                         let line_text = if line_content.ends_with('\n') {
                             &line_content[..line_content.len() - 1]
                         } else {
@@ -846,7 +840,7 @@ impl Viewport {
 
             // Get the line content to know its length (for limiting horizontal scroll)
             let mut line_iter = buffer.line_iterator(cursor_line_start, 80);
-            let line_length = if let Some((_start, content)) = line_iter.next() {
+            let line_length = if let Some((_start, content)) = line_iter.next_line() {
                 // Line length without the newline character
                 content.trim_end_matches('\n').len()
             } else {
@@ -870,7 +864,7 @@ impl Viewport {
         let mut target_line_byte = 0;
 
         while current_line < line {
-            if let Some((line_start, _)) = seek_iter.next() {
+            if let Some((line_start, _)) = seek_iter.next_line() {
                 if current_line + 1 == line {
                     target_line_byte = line_start;
                     break;
@@ -888,7 +882,7 @@ impl Viewport {
         let mut lines_from_top = 0;
         let mut target_is_visible = false;
 
-        while let Some((line_byte, _)) = iter.next() {
+        while let Some((line_byte, _)) = iter.next_line() {
             if line_byte == target_line_byte {
                 target_is_visible = lines_from_top < visible_count;
                 break;
@@ -912,7 +906,6 @@ impl Viewport {
                 }
             }
             let position = iter.current_position();
-            drop(iter);
             self.set_top_byte_with_limit(buffer, position);
         }
     }
@@ -1008,7 +1001,7 @@ impl Viewport {
         // Count lines between min and max using iterator
         let mut iter = buffer.line_iterator(min_byte, 80);
         let mut line_span = 0;
-        while let Some((line_byte, _)) = iter.next() {
+        while let Some((line_byte, _)) = iter.next_line() {
             if line_byte >= max_byte {
                 break;
             }
@@ -1027,7 +1020,6 @@ impl Viewport {
                 }
             }
             let position = iter.current_position();
-            drop(iter);
             self.set_top_byte_with_limit(buffer, position);
         } else {
             // Can't fit all cursors, ensure primary is visible
@@ -1052,7 +1044,7 @@ impl Viewport {
         let mut iter = buffer.line_iterator(self.top_byte, 80);
         let mut screen_row = 0;
 
-        while let Some((line_byte, _)) = iter.next() {
+        while let Some((line_byte, _)) = iter.next_line() {
             if line_byte >= line_start {
                 break;
             }
@@ -1067,7 +1059,7 @@ impl Viewport {
 
             // Get the line text for wrapping
             let mut line_iter = buffer.line_iterator(line_start, 80);
-            let line_text = if let Some((_start, content)) = line_iter.next() {
+            let line_text = if let Some((_start, content)) = line_iter.next_line() {
                 // Remove trailing newline if present
                 content.trim_end_matches('\n').to_string()
             } else {
@@ -1151,7 +1143,7 @@ mod tests {
         let mut iter = buffer.line_iterator(vp.top_byte, 80);
         let mut found = false;
         for _ in 0..vp.visible_line_count() {
-            if iter.next().is_none() {
+            if iter.next_line().is_none() {
                 break;
             }
             found = true;
@@ -1168,7 +1160,7 @@ mod tests {
         let mut iter = buffer.line_iterator(0, 80);
         let mut cursor_pos = 0;
         for i in 0..15 {
-            if let Some((line_start, _)) = iter.next() {
+            if let Some((line_start, _)) = iter.next_line() {
                 if i == 14 {
                     cursor_pos = line_start;
                     break;
@@ -1217,7 +1209,7 @@ mod tests {
         let mut iter = buffer.line_iterator(0, 80);
         let mut line_5_byte = 0;
         for i in 0..5 {
-            if let Some((line_start, _)) = iter.next() {
+            if let Some((line_start, _)) = iter.next_line() {
                 if i == 4 {
                     line_5_byte = line_start;
                     break;
@@ -1273,7 +1265,7 @@ mod tests {
         let mut iter = buffer.line_iterator(0, 80);
         let mut line_15_byte = 0;
         for i in 0..15 {
-            if let Some((line_start, _)) = iter.next() {
+            if let Some((line_start, _)) = iter.next_line() {
                 if i == 14 {
                     line_15_byte = line_start;
                     break;
@@ -1319,7 +1311,6 @@ mod tests {
             "Should have scrolled right, but left_column = {}",
             vp.left_column
         );
-        let initial_left_col = vp.left_column;
 
         // Now simulate pressing Enter: newline is added, cursor moves to start of new line
         // Add the newline to the buffer

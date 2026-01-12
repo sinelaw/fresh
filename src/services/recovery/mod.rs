@@ -260,6 +260,7 @@ impl RecoveryService {
     /// - `line_count`: Number of lines in the buffer
     /// - `original_file_size`: Size of the original file (0 for new buffers)
     /// - `final_size`: Total size after applying all modifications
+    #[allow(clippy::too_many_arguments)]
     pub fn save_buffer(
         &mut self,
         buffer_id: &str,
@@ -433,10 +434,10 @@ impl RecoveryService {
         let mut cleaned = 0;
 
         for entry in entries {
-            if entry.age_seconds() > self.config.max_recovery_age_secs {
-                if self.storage.delete_recovery(&entry.id).is_ok() {
-                    cleaned += 1;
-                }
+            if entry.age_seconds() > self.config.max_recovery_age_secs
+                && self.storage.delete_recovery(&entry.id).is_ok()
+            {
+                cleaned += 1;
             }
         }
 

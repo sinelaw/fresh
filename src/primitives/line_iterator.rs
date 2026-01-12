@@ -115,7 +115,7 @@ impl<'a> LineIterator<'a> {
         let mut pending_trailing_empty_line = false;
         if buffer_len > 0 && byte_pos == buffer_len {
             if let Ok(bytes) = buffer.get_text_range_mut(buffer_len - 1, 1) {
-                if bytes.get(0) == Some(&b'\n') {
+                if bytes.first() == Some(&b'\n') {
                     pending_trailing_empty_line = true;
                 }
             }
@@ -132,7 +132,7 @@ impl<'a> LineIterator<'a> {
 
     /// Get the next line (moving forward)
     /// Uses lazy loading to handle unloaded buffers transparently
-    pub fn next(&mut self) -> Option<(usize, String)> {
+    pub fn next_line(&mut self) -> Option<(usize, String)> {
         if self.pending_trailing_empty_line {
             self.pending_trailing_empty_line = false;
             let line_start = self.buffer_len;
@@ -315,7 +315,7 @@ impl<'a> LineIterator<'a> {
     }
 
     fn schedule_trailing_empty_line(&mut self, line_bytes: &[u8]) {
-        if line_bytes.ends_with(&[b'\n']) && self.current_pos == self.buffer_len {
+        if line_bytes.ends_with(b"\n") && self.current_pos == self.buffer_len {
             self.pending_trailing_empty_line = true;
         }
     }
@@ -365,22 +365,22 @@ mod tests {
         let mut iter = buffer.line_iterator(0, 80);
 
         // First line
-        let (pos, content) = iter.next().expect("Should have first line");
+        let (pos, content) = iter.next_line().expect("Should have first line");
         assert_eq!(pos, 0);
         assert_eq!(content, "Hello\n");
 
         // Second line
-        let (pos, content) = iter.next().expect("Should have second line");
+        let (pos, content) = iter.next_line().expect("Should have second line");
         assert_eq!(pos, 6);
         assert_eq!(content, "World\n");
 
         // Third line
-        let (pos, content) = iter.next().expect("Should have third line");
+        let (pos, content) = iter.next_line().expect("Should have third line");
         assert_eq!(pos, 12);
         assert_eq!(content, "Test");
 
         // No more lines
-        assert!(iter.next().is_none());
+        assert!(iter.next_line().is_none());
     }
 
     #[test]
@@ -396,12 +396,12 @@ mod tests {
         );
 
         // First next() should return current line
-        let (pos, content) = iter.next().expect("Should have current line");
+        let (pos, content) = iter.next_line().expect("Should have current line");
         assert_eq!(pos, 6);
         assert_eq!(content, "World\n");
 
         // Second next() should return next line
-        let (pos, content) = iter.next().expect("Should have next line");
+        let (pos, content) = iter.next_line().expect("Should have next line");
         assert_eq!(pos, 12);
         assert_eq!(content, "Test");
     }
@@ -475,11 +475,11 @@ mod tests {
         let mut buffer = TextBuffer::from_bytes(b"Only one line".to_vec());
         let mut iter = buffer.line_iterator(0, 80);
 
-        let (pos, content) = iter.next().expect("Should have the line");
+        let (pos, content) = iter.next_line().expect("Should have the line");
         assert_eq!(pos, 0);
         assert_eq!(content, "Only one line");
 
-        assert!(iter.next().is_none());
+        assert!(iter.next_line().is_none());
         assert!(iter.prev().is_none());
     }
 
@@ -488,15 +488,15 @@ mod tests {
         let mut buffer = TextBuffer::from_bytes(b"Line1\n\nLine3".to_vec());
         let mut iter = buffer.line_iterator(0, 80);
 
-        let (pos, content) = iter.next().expect("First line");
+        let (pos, content) = iter.next_line().expect("First line");
         assert_eq!(pos, 0);
         assert_eq!(content, "Line1\n");
 
-        let (pos, content) = iter.next().expect("Empty line");
+        let (pos, content) = iter.next_line().expect("Empty line");
         assert_eq!(pos, 6);
         assert_eq!(content, "\n");
 
-        let (pos, content) = iter.next().expect("Third line");
+        let (pos, content) = iter.next_line().expect("Third line");
         assert_eq!(pos, 7);
         assert_eq!(content, "Line3");
     }
@@ -506,17 +506,17 @@ mod tests {
         let mut buffer = TextBuffer::from_bytes(b"Hello world\n".to_vec());
         let mut iter = buffer.line_iterator(0, 80);
 
-        let (pos, content) = iter.next().expect("First line");
+        let (pos, content) = iter.next_line().expect("First line");
         assert_eq!(pos, 0);
         assert_eq!(content, "Hello world\n");
 
         let (pos, content) = iter
-            .next()
+            .next_line()
             .expect("Should emit empty line for trailing newline");
         assert_eq!(pos, "Hello world\n".len());
         assert_eq!(content, "");
 
-        assert!(iter.next().is_none(), "No more lines expected");
+        assert!(iter.next_line().is_none(), "No more lines expected");
     }
 
     #[test]
@@ -526,12 +526,12 @@ mod tests {
         let mut iter = buffer.line_iterator(buffer_len, 80);
 
         let (pos, content) = iter
-            .next()
+            .next_line()
             .expect("Should emit empty line at EOF when starting there");
         assert_eq!(pos, buffer_len);
         assert_eq!(content, "");
 
-        assert!(iter.next().is_none(), "No more lines expected");
+        assert!(iter.next_line().is_none(), "No more lines expected");
     }
 
     /// BUG REPRODUCTION: Line longer than estimated_line_length
@@ -611,17 +611,17 @@ mod tests {
         let mut iter = buffer.line_iterator(0, 80);
 
         // First line: starts at 0, content is "abc\r\n"
-        let (pos, line_content) = iter.next().expect("Should have first line");
+        let (pos, line_content) = iter.next_line().expect("Should have first line");
         assert_eq!(pos, 0, "First line should start at byte 0");
         assert_eq!(line_content, "abc\r\n", "First line content");
 
         // Second line: starts at 5 (after "abc\r\n"), content is "def\r\n"
-        let (pos, line_content) = iter.next().expect("Should have second line");
+        let (pos, line_content) = iter.next_line().expect("Should have second line");
         assert_eq!(pos, 5, "Second line should start at byte 5 (after CRLF)");
         assert_eq!(line_content, "def\r\n", "Second line content");
 
         // Third line: starts at 10 (after "abc\r\ndef\r\n"), content is "ghi\r\n"
-        let (pos, line_content) = iter.next().expect("Should have third line");
+        let (pos, line_content) = iter.next_line().expect("Should have third line");
         assert_eq!(
             pos, 10,
             "Third line should start at byte 10 (after two CRLFs)"
@@ -630,12 +630,12 @@ mod tests {
 
         // Trailing CRLF means there's an empty synthetic line at EOF
         let (pos, line_content) = iter
-            .next()
+            .next_line()
             .expect("Should emit empty line after trailing CRLF");
         assert_eq!(pos, buffer_len, "Empty line should start at EOF");
         assert_eq!(line_content, "", "Empty line content");
 
-        assert!(iter.next().is_none(), "Should have no more lines");
+        assert!(iter.next_line().is_none(), "Should have no more lines");
     }
 
     /// Test that line_start values are correct for CRLF files when starting from middle
@@ -698,7 +698,7 @@ mod tests {
         let mut chunk_count = 0;
         let mut chunk_sizes = Vec::new();
 
-        while let Some((pos, chunk)) = iter.next() {
+        while let Some((pos, chunk)) = iter.next_line() {
             // Verify chunk starts at expected position
             assert_eq!(
                 pos,

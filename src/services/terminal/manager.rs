@@ -396,10 +396,7 @@ impl TerminalManager {
             })
         })();
 
-        let handle = handle_result.map_err(|err| {
-            // Surface the PTY failure directly; tests and production both require PTY.
-            err
-        })?;
+        let handle = handle_result?;
 
         self.terminals.insert(id, handle);
         tracing::info!("Created terminal {:?} ({}x{})", id, cols, rows);

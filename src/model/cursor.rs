@@ -3,18 +3,13 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 /// Selection mode for cursors
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SelectionMode {
     /// Normal character-wise selection (stream)
+    #[default]
     Normal,
     /// Block/rectangular selection (column-wise)
     Block,
-}
-
-impl Default for SelectionMode {
-    fn default() -> Self {
-        SelectionMode::Normal
-    }
 }
 
 /// Position in 2D coordinates (for block selection)

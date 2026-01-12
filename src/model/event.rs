@@ -726,7 +726,7 @@ impl EventLog {
         self.current_index = self.entries.len();
 
         // Check if we should create a snapshot
-        if self.entries.len() % self.snapshot_interval == 0 {
+        if self.entries.len().is_multiple_of(self.snapshot_interval) {
             // Snapshot creation will be implemented when we have Buffer
             // For now, just track that we'd create one here
         }
@@ -742,6 +742,11 @@ impl EventLog {
     /// Get the number of events in the log
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Check if the event log is empty
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     /// Can we undo?

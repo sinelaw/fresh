@@ -199,7 +199,7 @@ impl GrammarRegistry {
                 || file_name.ends_with(".tmLanguage")
                 || file_name.ends_with(".sublime-syntax")
             {
-                if let Err(e) = builder.add_from_folder(&dir, false) {
+                if let Err(e) = builder.add_from_folder(dir, false) {
                     tracing::warn!("Failed to load grammar from {:?}: {}", dir, e);
                 } else {
                     tracing::info!("Loaded grammar from {:?}", dir);
@@ -334,7 +334,7 @@ impl GrammarRegistry {
     ) -> Option<&SyntaxReference> {
         // Try filename match from languages config first
         if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-            for (_language_name, lang_config) in languages {
+            for lang_config in languages.values() {
                 if lang_config.filenames.iter().any(|f| f == filename) {
                     // Found a match - try to find syntax by grammar name
                     if let Some(syntax) = self.find_syntax_by_name(&lang_config.grammar) {
@@ -355,7 +355,7 @@ impl GrammarRegistry {
 
         // Try extension match from languages config
         if let Some(extension) = path.extension().and_then(|e| e.to_str()) {
-            for (_language_name, lang_config) in languages {
+            for lang_config in languages.values() {
                 if lang_config.extensions.iter().any(|ext| ext == extension) {
                     // Found a match - try to find syntax by grammar name
                     if let Some(syntax) = self.find_syntax_by_name(&lang_config.grammar) {

@@ -766,10 +766,7 @@ impl Editor {
     /// Check if saving would overwrite changes made by another process
     /// Returns Some(current_mtime) if there's a conflict, None otherwise
     pub fn check_save_conflict(&self) -> Option<std::time::SystemTime> {
-        let path = match self.active_state().buffer.file_path() {
-            Some(p) => p,
-            None => return None,
-        };
+        let path = self.active_state().buffer.file_path()?;
 
         // Get current file modification time
         let current_mtime = match std::fs::metadata(path).and_then(|m| m.modified()) {

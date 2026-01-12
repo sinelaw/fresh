@@ -658,7 +658,7 @@ fn test_multicursor_indent_with_selections() {
         );
         assert_eq!(
             c1.anchor,
-            Some(0 + indent_offset),
+            Some(indent_offset),
             "Indent {}: Cursor 1 anchor",
             indent_count
         );
@@ -729,7 +729,7 @@ fn test_multicursor_indent_with_selections() {
         );
         assert_eq!(
             c1.anchor,
-            Some(0 + indent_offset),
+            Some(indent_offset),
             "Dedent {}: Cursor 1 anchor",
             dedent_count
         );

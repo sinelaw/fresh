@@ -57,21 +57,15 @@ pub const LOAD_CHUNK_SIZE: usize = 1024 * 1024;
 pub const CHUNK_ALIGNMENT: usize = 64 * 1024;
 
 /// Line ending format used in the file
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LineEnding {
     /// Unix/Linux/Mac format (\n)
+    #[default]
     LF,
     /// Windows format (\r\n)
     CRLF,
     /// Old Mac format (\r) - rare but supported
     CR,
-}
-
-impl Default for LineEnding {
-    fn default() -> Self {
-        // Default to LF (Unix) for new files
-        Self::LF
-    }
 }
 
 impl LineEnding {
@@ -745,8 +739,8 @@ impl TextBuffer {
         if Arc::ptr_eq(&self.saved_root, &self.piece_tree.root()) {
             return PieceTreeDiff {
                 equal: true,
-                byte_ranges: vec![0..0],
-                line_ranges: Some(vec![0..0]),
+                byte_ranges: Vec::new(),
+                line_ranges: Some(Vec::new()),
             };
         }
 
@@ -781,8 +775,8 @@ impl TextBuffer {
                 // Content is the same despite structure differences (rare case: undo/redo)
                 return PieceTreeDiff {
                     equal: true,
-                    byte_ranges: vec![0..0],
-                    line_ranges: Some(vec![0..0]),
+                    byte_ranges: Vec::new(),
+                    line_ranges: Some(Vec::new()),
                 };
             }
         }
@@ -1176,7 +1170,7 @@ impl TextBuffer {
         let delta = self
             .piece_tree
             .apply_bulk_edits(edits, &self.buffers, |_text| {
-                let info = buffer_info[idx].clone();
+                let info = buffer_info[idx];
                 idx += 1;
                 info
             });
@@ -1957,13 +1951,7 @@ impl TextBuffer {
             return None;
         }
 
-        for i in 0..=haystack.len() - needle.len() {
-            if &haystack[i..i + needle.len()] == needle {
-                return Some(i);
-            }
-        }
-
-        None
+        (0..=haystack.len() - needle.len()).find(|&i| &haystack[i..i + needle.len()] == needle)
     }
 
     /// Find the next occurrence of a regex pattern, with wrap-around
@@ -2086,20 +2074,16 @@ impl TextBuffer {
 
         // Keep searching and replacing
         // Note: we search forward from last replacement to handle growth/shrinkage
-        loop {
-            // Find next occurrence (no wrap-around for replace_all)
-            if let Some(found_pos) = self.find_next_in_range(pattern, pos, Some(0..self.len())) {
-                self.replace_range(found_pos..found_pos + pattern.len(), replacement);
-                count += 1;
+        // Find next occurrence (no wrap-around for replace_all)
+        while let Some(found_pos) = self.find_next_in_range(pattern, pos, Some(0..self.len())) {
+            self.replace_range(found_pos..found_pos + pattern.len(), replacement);
+            count += 1;
 
-                // Move past the replacement
-                pos = found_pos + replacement.len();
+            // Move past the replacement
+            pos = found_pos + replacement.len();
 
-                // If we're at or past the end, stop
-                if pos >= self.len() {
-                    break;
-                }
-            } else {
+            // If we're at or past the end, stop
+            if pos >= self.len() {
                 break;
             }
         }
@@ -2112,23 +2096,18 @@ impl TextBuffer {
         let mut count = 0;
         let mut pos = 0;
 
-        loop {
-            if let Some(found_pos) = self.find_next_regex_in_range(regex, pos, Some(0..self.len()))
-            {
-                // Get the match to find its length
-                let text = self
-                    .get_text_range_mut(found_pos, self.len() - found_pos)
-                    .context("Failed to read text for regex match")?;
+        while let Some(found_pos) = self.find_next_regex_in_range(regex, pos, Some(0..self.len())) {
+            // Get the match to find its length
+            let text = self
+                .get_text_range_mut(found_pos, self.len() - found_pos)
+                .context("Failed to read text for regex match")?;
 
-                if let Some(mat) = regex.find(&text) {
-                    self.replace_range(found_pos..found_pos + mat.len(), replacement);
-                    count += 1;
-                    pos = found_pos + replacement.len();
+            if let Some(mat) = regex.find(&text) {
+                self.replace_range(found_pos..found_pos + mat.len(), replacement);
+                count += 1;
+                pos = found_pos + replacement.len();
 
-                    if pos >= self.len() {
-                        break;
-                    }
-                } else {
+                if pos >= self.len() {
                     break;
                 }
             } else {
@@ -2271,8 +2250,7 @@ impl TextBuffer {
         };
 
         // Start from index 1 (we want the NEXT boundary)
-        for i in 1..bytes.len() {
-            let byte = bytes[i];
+        for (i, &byte) in bytes.iter().enumerate().skip(1) {
             // Check if this is a UTF-8 leading byte (not a continuation byte)
             if (byte & 0b1100_0000) != 0b1000_0000 {
                 return pos + i;

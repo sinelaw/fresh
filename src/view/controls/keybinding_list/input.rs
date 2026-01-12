@@ -68,17 +68,12 @@ impl KeybindingListState {
         }
 
         match key.code {
-            KeyCode::Enter => {
-                if self.focused_index.is_none() {
-                    // On add row
-                    Some(KeybindingListEvent::AddRequested)
-                } else if let Some(index) = self.focused_index {
-                    // On an entry - request edit
-                    Some(KeybindingListEvent::EditRequested(index))
-                } else {
-                    None
-                }
-            }
+            KeyCode::Enter => match self.focused_index {
+                // On add row
+                None => Some(KeybindingListEvent::AddRequested),
+                // On an entry - request edit
+                Some(index) => Some(KeybindingListEvent::EditRequested(index)),
+            },
             KeyCode::Delete | KeyCode::Backspace => {
                 if let Some(index) = self.focused_index {
                     self.remove_binding(index);

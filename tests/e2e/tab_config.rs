@@ -518,16 +518,13 @@ fn test_issue_384_tab_width_affects_rendering() {
         // Find visual column positions by iterating through chars
         let mut indicator_col = None;
         let mut x_col = None;
-        let mut col = 0;
-        for ch in x_line.chars() {
+        for (col, ch) in x_line.chars().enumerate() {
             if ch == '→' {
                 indicator_col = Some(col);
             }
             if ch == 'X' {
                 x_col = Some(col);
             }
-            // Each char is 1 visual column (assuming no double-width chars here)
-            col += 1;
         }
 
         Some(x_col? - indicator_col?)

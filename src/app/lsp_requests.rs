@@ -418,7 +418,7 @@ impl Editor {
             None => return, // No path, no language detection
         };
 
-        let language = match detect_language(&path, &self.config.languages) {
+        let language = match detect_language(path, &self.config.languages) {
             Some(lang) => lang,
             None => return, // Unknown language
         };
@@ -699,7 +699,7 @@ impl Editor {
         popup.width = 80;
         // Use dynamic max_height based on terminal size (60% of height, min 15, max 40)
         // This allows hover popups to show more documentation on larger terminals
-        let dynamic_height = (self.terminal_height * 60 / 100).max(15).min(40);
+        let dynamic_height = (self.terminal_height * 60 / 100).clamp(15, 40);
         popup.max_height = dynamic_height;
         popup.border_style = Style::default().fg(self.theme.popup_border_fg);
         popup.background_style = Style::default().bg(self.theme.popup_bg);
@@ -753,7 +753,7 @@ impl Editor {
             // byte offset so they appear at the correct location (e.g., before punctuation
             // or newline). Hints at or beyond EOF are anchored to the last character and
             // rendered after it.
-            if state.buffer.len() == 0 {
+            if state.buffer.is_empty() {
                 continue;
             }
 
@@ -2200,7 +2200,7 @@ mod tests {
             EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
         state.buffer = Buffer::from_str_test("ab");
 
-        if state.buffer.len() > 0 {
+        if !state.buffer.is_empty() {
             state.marker_list.adjust_for_insert(0, state.buffer.len());
         }
 
@@ -2222,7 +2222,7 @@ mod tests {
             EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
         state.buffer = Buffer::from_str_test("ab");
 
-        if state.buffer.len() > 0 {
+        if !state.buffer.is_empty() {
             state.marker_list.adjust_for_insert(0, state.buffer.len());
         }
 

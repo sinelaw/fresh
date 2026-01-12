@@ -190,13 +190,14 @@ fn cleanup_stale_logs_in_dir(dir: &std::path::Path, current_pid: u32) {
             }
 
             // Check if the process is still running and file is old enough
-            if !is_process_running(pid) && is_file_older_than(&entry.path(), CLEANUP_AGE) {
-                if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-                    if let Err(e) = fs::remove_file(entry.path()) {
-                        tracing::debug!("Failed to clean up stale log {:?}: {}", entry.path(), e);
-                    } else {
-                        tracing::debug!("Cleaned up stale log file: {:?}", entry.path());
-                    }
+            if !is_process_running(pid)
+                && is_file_older_than(&entry.path(), CLEANUP_AGE)
+                && entry.file_type().map(|t| t.is_file()).unwrap_or(false)
+            {
+                if let Err(e) = fs::remove_file(entry.path()) {
+                    tracing::debug!("Failed to clean up stale log {:?}: {}", entry.path(), e);
+                } else {
+                    tracing::debug!("Cleaned up stale log file: {:?}", entry.path());
                 }
             }
         }

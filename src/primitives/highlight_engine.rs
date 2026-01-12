@@ -181,12 +181,14 @@ pub enum HighlighterPreference {
 }
 
 /// Unified highlighting engine supporting multiple backends
+#[derive(Default)]
 pub enum HighlightEngine {
     /// Tree-sitter based highlighting (built-in languages)
-    TreeSitter(Highlighter),
+    TreeSitter(Box<Highlighter>),
     /// TextMate grammar based highlighting
-    TextMate(TextMateEngine),
+    TextMate(Box<TextMateEngine>),
     /// No highlighting available
+    #[default]
     None,
 }
 
@@ -525,7 +527,7 @@ impl HighlightEngine {
             HighlighterPreference::TreeSitter => {
                 if let Some(lang) = Language::from_path(path) {
                     if let Ok(highlighter) = Highlighter::new(lang) {
-                        return Self::TreeSitter(highlighter);
+                        return Self::TreeSitter(Box::new(highlighter));
                     }
                 }
                 Self::None
@@ -548,7 +550,7 @@ impl HighlightEngine {
             HighlighterPreference::TreeSitter => {
                 if let Some(lang) = Language::from_path(path) {
                     if let Ok(highlighter) = Highlighter::new(lang) {
-                        return Self::TreeSitter(highlighter);
+                        return Self::TreeSitter(Box::new(highlighter));
                     }
                 }
                 Self::None
@@ -571,11 +573,11 @@ impl HighlightEngine {
                 .iter()
                 .position(|s| s.name == syntax.name)
             {
-                return Self::TextMate(TextMateEngine::with_language(
+                return Self::TextMate(Box::new(TextMateEngine::with_language(
                     syntax_set,
                     index,
                     ts_language,
-                ));
+                )));
             }
         }
 
@@ -587,7 +589,7 @@ impl HighlightEngine {
                     "No TextMate grammar for {:?}, falling back to tree-sitter",
                     path.extension()
                 );
-                return Self::TreeSitter(highlighter);
+                return Self::TreeSitter(Box::new(highlighter));
             }
         }
 
@@ -613,11 +615,11 @@ impl HighlightEngine {
                 .iter()
                 .position(|s| s.name == syntax.name)
             {
-                return Self::TextMate(TextMateEngine::with_language(
+                return Self::TextMate(Box::new(TextMateEngine::with_language(
                     syntax_set,
                     index,
                     ts_language,
-                ));
+                )));
             }
         }
 
@@ -629,7 +631,7 @@ impl HighlightEngine {
                     "No TextMate grammar for {:?}, falling back to tree-sitter",
                     path.extension()
                 );
-                return Self::TreeSitter(highlighter);
+                return Self::TreeSitter(Box::new(highlighter));
             }
         }
 
@@ -708,12 +710,6 @@ impl HighlightEngine {
             Self::TextMate(h) => h.language(),
             Self::None => None,
         }
-    }
-}
-
-impl Default for HighlightEngine {
-    fn default() -> Self {
-        Self::None
     }
 }
 

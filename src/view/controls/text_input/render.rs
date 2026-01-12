@@ -95,11 +95,7 @@ pub fn render_text_input_aligned(
     let cursor_visual_pos = str_width(text_before_cursor);
 
     // Calculate scroll offset based on visual width
-    let scroll_visual_offset = if cursor_visual_pos > inner_width {
-        cursor_visual_pos - inner_width
-    } else {
-        0
-    };
+    let scroll_visual_offset = cursor_visual_pos.saturating_sub(inner_width);
 
     // Build visible text by iterating chars and tracking visual width
     let mut visible_text = String::new();

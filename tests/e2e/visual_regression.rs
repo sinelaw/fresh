@@ -308,6 +308,7 @@ fn test_lsp_rename_undo_restores_all() {
         .unwrap();
 
     // Simulate LSP WorkspaceEdit response with multiple edits
+    #[allow(clippy::mutable_key_type)]
     let mut changes = HashMap::new();
     changes.insert(
         file_uri.clone(),

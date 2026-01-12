@@ -1,7 +1,7 @@
-///! LSP diagnostics display
-///!
-///! This module handles converting LSP diagnostics to visual overlays in the editor.
-///! Diagnostics are displayed as colored underlines (red for errors, yellow for warnings, etc.)
+//! LSP diagnostics display
+//!
+//! This module handles converting LSP diagnostics to visual overlays in the editor.
+//! Diagnostics are displayed as colored underlines (red for errors, yellow for warnings, etc.)
 use crate::model::buffer::Buffer;
 use crate::state::EditorState;
 use crate::view::overlay::{Overlay, OverlayFace, OverlayNamespace};

@@ -722,7 +722,7 @@ mod tests {
         // Verify the code content is preserved
         let all_text: String = lines
             .iter()
-            .map(|l| get_line_text(l))
+            .map(get_line_text)
             .collect::<Vec<_>>()
             .join("");
         assert!(all_text.contains("fn"), "Should contain 'fn' keyword");
@@ -743,7 +743,7 @@ mod tests {
         // Content should be preserved
         let all_text: String = lines
             .iter()
-            .map(|l| get_line_text(l))
+            .map(get_line_text)
             .collect::<Vec<_>>()
             .join("");
         assert!(
@@ -870,7 +870,7 @@ mod tests {
         // Each item should be on its own line
         assert!(lines.len() >= 3, "Should have at least 3 lines for 3 items");
 
-        let all_text: String = lines.iter().map(|l| get_line_text(l)).collect();
+        let all_text: String = lines.iter().map(get_line_text).collect();
         assert!(all_text.contains("Item 1"), "Should contain Item 1");
         assert!(all_text.contains("Item 2"), "Should contain Item 2");
         assert!(all_text.contains("Item 3"), "Should contain Item 3");
@@ -886,7 +886,7 @@ mod tests {
             lines.len(),
             3,
             "Should have 3 lines (para, blank, para), got: {:?}",
-            lines.iter().map(|l| get_line_text(l)).collect::<Vec<_>>()
+            lines.iter().map(get_line_text).collect::<Vec<_>>()
         );
 
         assert_eq!(get_line_text(&lines[0]), "First paragraph.");
@@ -904,7 +904,7 @@ mod tests {
         let lines = parse_markdown("Line one\nLine two", &theme, None);
 
         // Soft break should become a space, keeping content on same paragraph
-        let all_text: String = lines.iter().map(|l| get_line_text(l)).collect();
+        let all_text: String = lines.iter().map(get_line_text).collect();
         assert!(
             all_text.contains("one") && all_text.contains("two"),
             "Should contain both lines"
@@ -974,7 +974,7 @@ mod tests {
         assert!(code_line.is_some(), "Should have code block with Path");
 
         // Documentation text should be present
-        let all_text: String = lines.iter().map(|l| get_line_text(l)).collect();
+        let all_text: String = lines.iter().map(get_line_text).collect();
         assert!(
             all_text.contains("PurePath subclass"),
             "Should contain docstring"

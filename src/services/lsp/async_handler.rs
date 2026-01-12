@@ -499,6 +499,7 @@ struct LspState {
 
 impl LspState {
     /// Replay pending commands that were queued before initialization
+    #[allow(clippy::type_complexity)]
     async fn replay_pending_commands(
         &mut self,
         commands: Vec<LspCommand>,
@@ -620,6 +621,7 @@ impl LspState {
     }
 
     /// Send request using shared pending map
+    #[allow(clippy::type_complexity)]
     async fn send_request_sequential<P: Serialize, R: for<'de> Deserialize<'de>>(
         &mut self,
         method: &str,
@@ -631,6 +633,7 @@ impl LspState {
     }
 
     /// Send request using shared pending map with optional editor request tracking
+    #[allow(clippy::type_complexity)]
     async fn send_request_sequential_tracked<P: Serialize, R: for<'de> Deserialize<'de>>(
         &mut self,
         method: &str,
@@ -682,6 +685,7 @@ impl LspState {
     }
 
     /// Handle initialize command
+    #[allow(clippy::type_complexity)]
     async fn handle_initialize_sequential(
         &mut self,
         root_uri: Option<Uri>,
@@ -701,7 +705,7 @@ impl LspState {
                     .path()
                     .as_str()
                     .split('/')
-                    .last()
+                    .next_back()
                     .unwrap_or("workspace")
                     .to_string(),
             }]
@@ -764,6 +768,7 @@ impl LspState {
     }
 
     /// Handle did_open command
+    #[allow(clippy::type_complexity)]
     async fn handle_did_open_sequential(
         &mut self,
         uri: Uri,
@@ -797,6 +802,7 @@ impl LspState {
     }
 
     /// Handle did_change command
+    #[allow(clippy::type_complexity)]
     async fn handle_did_change_sequential(
         &mut self,
         uri: Uri,
@@ -864,6 +870,7 @@ impl LspState {
     }
 
     /// Handle completion request
+    #[allow(clippy::type_complexity)]
     async fn handle_completion(
         &mut self,
         request_id: u64,
@@ -910,12 +917,9 @@ impl LspState {
                     serde_json::from_value::<lsp_types::CompletionList>(result.clone())
                 {
                     list.items
-                } else if let Ok(items) =
-                    serde_json::from_value::<Vec<lsp_types::CompletionItem>>(result)
-                {
-                    items
                 } else {
-                    vec![]
+                    serde_json::from_value::<Vec<lsp_types::CompletionItem>>(result)
+                        .unwrap_or_default()
                 };
 
                 // Send to main loop
@@ -937,6 +941,7 @@ impl LspState {
     }
 
     /// Handle go-to-definition request
+    #[allow(clippy::type_complexity)]
     async fn handle_goto_definition(
         &mut self,
         request_id: u64,
@@ -1016,6 +1021,7 @@ impl LspState {
     }
 
     /// Handle rename request
+    #[allow(clippy::type_complexity)]
     async fn handle_rename(
         &mut self,
         request_id: u64,
@@ -1086,6 +1092,7 @@ impl LspState {
     }
 
     /// Handle hover documentation request
+    #[allow(clippy::type_complexity)]
     async fn handle_hover(
         &mut self,
         request_id: u64,
@@ -1206,6 +1213,7 @@ impl LspState {
     }
 
     /// Handle find references request
+    #[allow(clippy::type_complexity)]
     async fn handle_references(
         &mut self,
         request_id: u64,
@@ -1273,6 +1281,7 @@ impl LspState {
     }
 
     /// Handle signature help request
+    #[allow(clippy::type_complexity)]
     async fn handle_signature_help(
         &mut self,
         request_id: u64,
@@ -1347,6 +1356,8 @@ impl LspState {
     }
 
     /// Handle code actions request
+    #[allow(clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
     async fn handle_code_actions(
         &mut self,
         request_id: u64,
@@ -1429,6 +1440,7 @@ impl LspState {
     }
 
     /// Handle document diagnostic request (pull diagnostics)
+    #[allow(clippy::type_complexity)]
     async fn handle_document_diagnostic(
         &mut self,
         request_id: u64,
@@ -1555,6 +1567,8 @@ impl LspState {
     }
 
     /// Handle inlay hints request (LSP 3.17+)
+    #[allow(clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
     async fn handle_inlay_hints(
         &mut self,
         request_id: u64,
@@ -1632,6 +1646,7 @@ impl LspState {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     async fn handle_semantic_tokens_full(
         &mut self,
         request_id: u64,
@@ -1680,6 +1695,7 @@ impl LspState {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     async fn handle_semantic_tokens_full_delta(
         &mut self,
         request_id: u64,
@@ -1734,6 +1750,7 @@ impl LspState {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     async fn handle_semantic_tokens_range(
         &mut self,
         request_id: u64,
@@ -1785,6 +1802,7 @@ impl LspState {
     }
 
     /// Handle a plugin-initiated request by forwarding it to the server
+    #[allow(clippy::type_complexity)]
     async fn handle_plugin_request(
         &mut self,
         request_id: u64,
@@ -2037,6 +2055,8 @@ impl LspTask {
     }
 
     /// Spawn the stdout reader task that continuously reads and dispatches LSP messages
+    #[allow(clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
     fn spawn_stdout_reader(
         mut stdout: BufReader<ChildStdout>,
         pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
@@ -2604,9 +2624,9 @@ async fn read_message_from_stdout(
             break;
         }
 
-        if line.starts_with("Content-Length: ") {
+        if let Some(len_str) = line.strip_prefix("Content-Length: ") {
             content_length = Some(
-                line[16..]
+                len_str
                     .trim()
                     .parse()
                     .map_err(|e| format!("Invalid Content-Length: {}", e))?,
@@ -2632,6 +2652,7 @@ async fn read_message_from_stdout(
 }
 
 /// Standalone function to handle and dispatch messages (for reader task)
+#[allow(clippy::type_complexity)]
 async fn handle_message_dispatch(
     message: JsonRpcMessage,
     pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
@@ -2875,13 +2896,9 @@ async fn handle_notification_dispatch(
                     let token = progress
                         .get("token")
                         .and_then(|v| {
-                            if let Some(s) = v.as_str() {
-                                Some(s.to_string())
-                            } else if let Some(n) = v.as_i64() {
-                                Some(n.to_string())
-                            } else {
-                                None
-                            }
+                            v.as_str()
+                                .map(|s| s.to_string())
+                                .or_else(|| v.as_i64().map(|n| n.to_string()))
                         })
                         .unwrap_or_else(|| "unknown".to_string());
 
@@ -3319,6 +3336,7 @@ impl LspHandle {
     }
 
     /// Request code actions
+    #[allow(clippy::too_many_arguments)]
     pub fn code_actions(
         &self,
         request_id: u64,

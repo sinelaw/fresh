@@ -53,7 +53,7 @@ fn find_word_boundary_left(line: &str, from_column: usize) -> usize {
     while pos > 0
         && graphemes
             .get(pos.saturating_sub(1))
-            .map_or(false, |g| g.chars().all(|c| c.is_whitespace()))
+            .is_some_and(|g| g.chars().all(|c| c.is_whitespace()))
     {
         pos -= 1;
     }
@@ -61,7 +61,7 @@ fn find_word_boundary_left(line: &str, from_column: usize) -> usize {
     while pos > 0
         && graphemes
             .get(pos.saturating_sub(1))
-            .map_or(false, |g| !g.chars().all(|c| c.is_whitespace()))
+            .is_some_and(|g| !g.chars().all(|c| c.is_whitespace()))
     {
         pos -= 1;
     }

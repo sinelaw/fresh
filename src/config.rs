@@ -169,7 +169,7 @@ impl CursorStyle {
     }
 
     /// Parse from string (for command palette)
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "default" => Some(CursorStyle::Default),
             "blinking_block" => Some(CursorStyle::BlinkingBlock),
@@ -246,21 +246,16 @@ impl PartialEq<str> for KeybindingMapName {
 }
 
 /// Line ending format for new files
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LineEndingOption {
     /// Unix/Linux/macOS format (LF)
+    #[default]
     Lf,
     /// Windows format (CRLF)
     Crlf,
     /// Classic Mac format (CR) - rare
     Cr,
-}
-
-impl Default for LineEndingOption {
-    fn default() -> Self {
-        Self::Lf
-    }
 }
 
 impl LineEndingOption {
@@ -437,6 +432,7 @@ pub struct EditorConfig {
     /// Files larger than this will:
     /// - Skip LSP features
     /// - Use constant-size scrollbar thumb (1 char)
+    ///
     /// Files smaller will count actual lines for accurate scrollbar rendering
     #[serde(default = "default_large_file_threshold")]
     pub large_file_threshold_bytes: u64,
@@ -748,17 +744,11 @@ impl Default for FileExplorerConfig {
 }
 
 /// File browser configuration (for Open File dialog)
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct FileBrowserConfig {
     /// Whether to show hidden files (starting with .) by default in Open File dialog
     #[serde(default = "default_false")]
     pub show_hidden: bool,
-}
-
-impl Default for FileBrowserConfig {
-    fn default() -> Self {
-        Self { show_hidden: false }
-    }
 }
 
 /// A single key in a sequence
@@ -1061,7 +1051,7 @@ pub enum HighlighterPreference {
 }
 
 /// Menu bar configuration
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct MenuConfig {
     /// List of top-level menus in the menu bar
     #[serde(default)]
@@ -1189,12 +1179,6 @@ impl Default for Config {
             warnings: WarningsConfig::default(),
             plugins: HashMap::new(), // Populated when scanning for plugins
         }
-    }
-}
-
-impl Default for MenuConfig {
-    fn default() -> Self {
-        Self { menus: vec![] }
     }
 }
 
