@@ -23,29 +23,37 @@ fn use_macos_symbols() -> bool {
 }
 
 /// Format a keybinding as a user-friendly string
-/// On macOS, uses native symbols for Alt (⌥) and Shift (⇧)
+/// On macOS, uses native symbols: ⌃ (Control), ⌥ (Option), ⇧ (Shift) without separators
+/// On other platforms, uses "Ctrl+Alt+Shift+" format
 pub fn format_keybinding(keycode: &KeyCode, modifiers: &KeyModifiers) -> String {
     let mut result = String::new();
 
-    // Control key is Ctrl on all platforms (crossterm's CONTROL modifier is the physical Ctrl key)
-    // On macOS, use native symbols for Alt and Shift only
+    // On macOS, use native symbols: ⌃ (Control), ⌥ (Option/Alt), ⇧ (Shift)
     let (ctrl_label, alt_label, shift_label) = if use_macos_symbols() {
-        ("Ctrl", "⌥", "⇧")
+        ("⌃", "⌥", "⇧")
     } else {
         ("Ctrl", "Alt", "Shift")
     };
 
+    let use_plus = !use_macos_symbols();
+
     if modifiers.contains(KeyModifiers::CONTROL) {
         result.push_str(ctrl_label);
-        result.push('+');
+        if use_plus {
+            result.push('+');
+        }
     }
     if modifiers.contains(KeyModifiers::ALT) {
         result.push_str(alt_label);
-        result.push('+');
+        if use_plus {
+            result.push('+');
+        }
     }
     if modifiers.contains(KeyModifiers::SHIFT) {
         result.push_str(shift_label);
-        result.push('+');
+        if use_plus {
+            result.push('+');
+        }
     }
 
     match keycode {
