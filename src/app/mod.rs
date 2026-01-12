@@ -902,6 +902,8 @@ impl Editor {
             Some(
                 crate::services::release_checker::start_periodic_update_check(
                     crate::services::release_checker::DEFAULT_RELEASES_URL,
+                    time_source.clone(),
+                    dir_context.data_dir.clone(),
                 ),
             )
         } else {

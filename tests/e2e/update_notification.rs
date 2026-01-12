@@ -4,9 +4,11 @@ use crate::common::harness::EditorTestHarness;
 use fresh::services::release_checker::{
     start_periodic_update_check_with_interval, CURRENT_VERSION,
 };
+use fresh::services::time_source::TestTimeSource;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
+use tempfile::tempdir;
 
 /// Test helper: start a local HTTP server that returns a mock release JSON
 /// Returns (stop_sender, url) - send to stop_sender to shut down the server
@@ -69,7 +71,14 @@ fn test_update_notification_appears_in_status_bar() {
     let mut harness = EditorTestHarness::new(100, 24).unwrap();
 
     // Create an update checker pointing to our mock server
-    let checker = start_periodic_update_check_with_interval(&url, Duration::from_secs(3600));
+    let time_source = TestTimeSource::shared();
+    let temp_dir = tempdir().unwrap();
+    let checker = start_periodic_update_check_with_interval(
+        &url,
+        Duration::from_secs(3600),
+        time_source,
+        temp_dir.path().to_path_buf(),
+    );
 
     // Inject the checker into the editor
     harness.editor_mut().set_update_checker(checker);
@@ -120,7 +129,14 @@ fn test_update_notification_not_shown_when_current() {
 
     let mut harness = EditorTestHarness::new(100, 24).unwrap();
 
-    let checker = start_periodic_update_check_with_interval(&url, Duration::from_secs(3600));
+    let time_source = TestTimeSource::shared();
+    let temp_dir = tempdir().unwrap();
+    let checker = start_periodic_update_check_with_interval(
+        &url,
+        Duration::from_secs(3600),
+        time_source,
+        temp_dir.path().to_path_buf(),
+    );
     harness.editor_mut().set_update_checker(checker);
 
     // Wait for the update check to complete
@@ -165,7 +181,14 @@ fn test_update_notification_positioned_near_ctrl_p() {
 
     let mut harness = EditorTestHarness::new(120, 24).unwrap();
 
-    let checker = start_periodic_update_check_with_interval(&url, Duration::from_secs(3600));
+    let time_source = TestTimeSource::shared();
+    let temp_dir = tempdir().unwrap();
+    let checker = start_periodic_update_check_with_interval(
+        &url,
+        Duration::from_secs(3600),
+        time_source,
+        temp_dir.path().to_path_buf(),
+    );
     harness.editor_mut().set_update_checker(checker);
 
     // Wait for update check

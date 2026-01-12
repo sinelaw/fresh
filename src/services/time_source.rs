@@ -6,6 +6,7 @@
 //!
 //! See `docs/internal/TIMESOURCE_DESIGN.md` for the full design document.
 
+use chrono::{NaiveDate, Utc};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -22,6 +23,11 @@ pub trait TimeSource: Send + Sync + std::fmt::Debug {
     ///
     /// In tests, this may be a no-op or advance logical time.
     fn sleep(&self, duration: Duration);
+
+    /// Get today's date as YYYY-MM-DD string.
+    ///
+    /// Used for daily debouncing of telemetry/update checks.
+    fn today_date_string(&self) -> String;
 
     /// Calculate elapsed time since an earlier instant.
     fn elapsed_since(&self, earlier: Instant) -> Duration {
@@ -56,6 +62,10 @@ impl TimeSource for RealTimeSource {
     fn sleep(&self, duration: Duration) {
         std::thread::sleep(duration);
     }
+
+    fn today_date_string(&self) -> String {
+        Utc::now().format("%Y-%m-%d").to_string()
+    }
 }
 
 /// Test implementation with controllable time.
@@ -63,6 +73,7 @@ impl TimeSource for RealTimeSource {
 /// - `now()` returns a logical instant based on internal counter
 /// - `sleep()` advances logical time (no actual sleeping)
 /// - Time can be advanced manually via `advance()`
+/// - `today_date_string()` returns a date based on base_date + elapsed days
 ///
 /// # Example
 ///
@@ -84,6 +95,8 @@ pub struct TestTimeSource {
     logical_nanos: AtomicU64,
     /// Base instant (real time at creation, used for Instant arithmetic).
     base_instant: Instant,
+    /// Base date for calendar calculations.
+    base_date: NaiveDate,
 }
 
 impl Default for TestTimeSource {
@@ -98,6 +111,7 @@ impl TestTimeSource {
         Self {
             logical_nanos: AtomicU64::new(0),
             base_instant: Instant::now(),
+            base_date: Utc::now().date_naive(),
         }
     }
 
@@ -141,6 +155,16 @@ impl TimeSource for TestTimeSource {
         // No actual sleeping - just advance logical time.
         // This makes tests run instantly while still simulating time passage.
         self.advance(duration);
+    }
+
+    fn today_date_string(&self) -> String {
+        // Calculate days elapsed from logical time
+        let elapsed_days = (self.elapsed().as_secs() / 86400) as i64;
+        let current_date = self
+            .base_date
+            .checked_add_signed(chrono::Duration::days(elapsed_days))
+            .unwrap_or(self.base_date);
+        current_date.format("%Y-%m-%d").to_string()
     }
 }
 
