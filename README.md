@@ -71,6 +71,8 @@ Or, pick your preferred method:
 
 On macOS and some linux distros (Bazzite/Bluefin/Aurora):
 
+> **Note:** On macOS, see [macOS Terminal Tips](docs/USER_GUIDE.md#macos-terminal-tips) for recommended terminal configuration.
+
 ```bash
 brew tap sinelaw/fresh
 brew install fresh-editor

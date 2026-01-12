@@ -618,12 +618,36 @@ For the best experience with Fresh on macOS, use a terminal that supports the **
 
 | Terminal | KKP Support | Notes |
 | :--- | :--- | :--- |
-| **Kitty** | Full | Best keyboard handling |
+| **Kitty** | Full | Best keyboard handling; set `macos_option_as_alt left` in config |
 | **Ghostty** | Full | Modern, fast |
 | **WezTerm** | Full | Highly configurable |
 | **Alacritty** | Full | GPU-accelerated |
 | **iTerm2** | CSI u | Enable in Preferences → Profiles → Keys → "Report modifiers using CSI u" |
 | **Terminal.app** | None | Requires manual key mappings (see above) |
+
+#### Keyboard Enhancement Flags
+
+Fresh can use the Kitty Keyboard Protocol to get more accurate key reporting from supported terminals. You can configure which features to enable in your config file:
+
+```json
+{
+  "editor": {
+    "keyboard_disambiguate_escape_codes": true,
+    "keyboard_report_event_types": false,
+    "keyboard_report_alternate_keys": true,
+    "keyboard_report_all_keys_as_escape_codes": false
+  }
+}
+```
+
+| Option | Default | Description |
+| :--- | :--- | :--- |
+| `keyboard_disambiguate_escape_codes` | `true` | Use CSI-u sequences for unambiguous escape/modifier key reading |
+| `keyboard_report_event_types` | `false` | Report key repeat and release events (not just press) |
+| `keyboard_report_alternate_keys` | `true` | Send alternate keycodes in addition to base keycodes |
+| `keyboard_report_all_keys_as_escape_codes` | `false` | Report all keys (including plain text) as escape sequences |
+
+These flags only take effect if your terminal supports the Kitty Keyboard Protocol. Fresh automatically detects support and falls back gracefully if the protocol is unavailable. If you experience keyboard issues, try disabling all flags by setting them to `false`.
 
 #### Home and End Keys
 
