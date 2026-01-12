@@ -3599,6 +3599,7 @@ impl Editor {
             binary: false,
             lsp_opened_with: std::collections::HashSet::new(),
             hidden_from_tabs: false,
+            recovery_id: None,
         };
         self.buffer_metadata.insert(buffer_id, metadata);
 
@@ -3674,6 +3675,7 @@ impl Editor {
             binary: false,
             lsp_opened_with: std::collections::HashSet::new(),
             hidden_from_tabs: false,
+            recovery_id: None,
         };
         self.buffer_metadata.insert(buffer_id, metadata);
 

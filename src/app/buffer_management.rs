@@ -448,6 +448,8 @@ impl Editor {
         self.buffers.insert(buffer_id, state);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
+        self.buffer_metadata
+            .insert(buffer_id, crate::app::types::BufferMetadata::new());
 
         // Apply line_wrap default from config to the active split
         let active_split = self.split_manager.active_split();

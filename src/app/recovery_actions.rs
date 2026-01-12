@@ -153,10 +153,9 @@ impl Editor {
             return Ok(0);
         }
 
-        // Collect buffer info first to avoid borrow issues
-        // Only include buffers that have pending recovery changes AND need auto-save
+        // Collect buffer IDs that need recovery first (immutable pass)
         // Skip composite buffers and hidden buffers (they should not be saved for recovery)
-        let buffer_info: Vec<_> = self
+        let buffers_needing_recovery: Vec<_> = self
             .buffers
             .iter()
             .filter_map(|(buffer_id, state)| {
@@ -170,19 +169,59 @@ impl Editor {
                         return None;
                     }
                 }
+                if state.buffer.is_recovery_pending() {
+                    Some(*buffer_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Ensure unnamed buffers have stable recovery IDs (mutable pass)
+        // For file-backed buffers, recovery_id is computed from path hash (stable).
+        // For unnamed buffers, we generate once and store in metadata.
+        for buffer_id in &buffers_needing_recovery {
+            let needs_id = self
+                .buffer_metadata
+                .get(buffer_id)
+                .map(|meta| {
+                    let path = meta.file_path();
+                    let is_unnamed = path.map(|p| p.as_os_str().is_empty()).unwrap_or(true);
+                    is_unnamed && meta.recovery_id.is_none()
+                })
+                .unwrap_or(false);
+
+            if needs_id {
+                let new_id = crate::services::recovery::generate_buffer_id();
+                if let Some(meta) = self.buffer_metadata.get_mut(buffer_id) {
+                    meta.recovery_id = Some(new_id);
+                }
+            }
+        }
+
+        // Now collect full buffer info with stable recovery IDs
+        let buffer_info: Vec<_> = buffers_needing_recovery
+            .into_iter()
+            .filter_map(|buffer_id| {
+                let state = self.buffers.get(&buffer_id)?;
+                let meta = self.buffer_metadata.get(&buffer_id)?;
+
+                let path = state.buffer.file_path().map(|p| p.to_path_buf());
+
+                // Get recovery_id: use stored one for unnamed buffers, compute from path otherwise
+                let recovery_id = if let Some(ref stored_id) = meta.recovery_id {
+                    stored_id.clone()
+                } else {
+                    self.recovery_service.get_buffer_id(path.as_deref())
+                };
+
+                // Only save if enough time has passed since last recovery save
                 let recovery_pending = state.buffer.is_recovery_pending();
-                if recovery_pending {
-                    let path = state.buffer.file_path().map(|p| p.to_path_buf());
-                    let recovery_id = self.recovery_service.get_buffer_id(path.as_deref());
-                    // Only save if enough time has passed since last recovery save
-                    if self
-                        .recovery_service
-                        .needs_auto_save(&recovery_id, recovery_pending)
-                    {
-                        Some((*buffer_id, recovery_id, path))
-                    } else {
-                        None
-                    }
+                if self
+                    .recovery_service
+                    .needs_auto_save(&recovery_id, recovery_pending)
+                {
+                    Some((buffer_id, recovery_id, path))
                 } else {
                     None
                 }
@@ -295,11 +334,25 @@ impl Editor {
 
     /// Delete recovery for a buffer (call after saving or closing)
     pub fn delete_buffer_recovery(&mut self, buffer_id: BufferId) -> AnyhowResult<()> {
+        // Get recovery_id: use stored one for unnamed buffers, compute from path otherwise
+        let recovery_id = {
+            let meta = self.buffer_metadata.get(&buffer_id);
+            let state = self.buffers.get(&buffer_id);
+
+            if let Some(stored_id) = meta.and_then(|m| m.recovery_id.clone()) {
+                stored_id
+            } else if let Some(state) = state {
+                let path = state.buffer.file_path().map(|p| p.to_path_buf());
+                self.recovery_service.get_buffer_id(path.as_deref())
+            } else {
+                return Ok(());
+            }
+        };
+
+        self.recovery_service.delete_buffer_recovery(&recovery_id)?;
+
+        // Clear recovery_pending since buffer is now saved
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
-            let path = state.buffer.file_path().map(|p| p.to_path_buf());
-            let recovery_id = self.recovery_service.get_buffer_id(path.as_deref());
-            self.recovery_service.delete_buffer_recovery(&recovery_id)?;
-            // Clear recovery_pending since buffer is now saved
             state.buffer.set_recovery_pending(false);
         }
         Ok(())

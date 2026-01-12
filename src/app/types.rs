@@ -111,6 +111,11 @@ pub struct BufferMetadata {
 
     /// Whether this buffer should be hidden from tabs (used for composite source buffers)
     pub hidden_from_tabs: bool,
+
+    /// Stable recovery ID for unnamed buffers.
+    /// For file-backed buffers, recovery ID is computed from the path hash.
+    /// For unnamed buffers, this is generated once and reused across auto-saves.
+    pub recovery_id: Option<String>,
 }
 
 impl BufferMetadata {
@@ -165,6 +170,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: false,
+            recovery_id: None,
         }
     }
 
@@ -183,6 +189,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: false,
+            recovery_id: None,
         }
     }
 
@@ -213,6 +220,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: false,
+            recovery_id: None,
         }
     }
 
@@ -262,6 +270,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: false,
+            recovery_id: None,
         }
     }
 
@@ -278,6 +287,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: true,
+            recovery_id: None,
         }
     }
 
