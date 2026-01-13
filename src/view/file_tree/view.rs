@@ -31,6 +31,30 @@ pub enum SortMode {
     Modified,
 }
 
+impl SortMode {
+    /// Get a comparison function for this sort mode
+    pub fn comparator(self) -> fn(&FsEntry, &FsEntry) -> std::cmp::Ordering {
+        match self {
+            SortMode::Name => |a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            SortMode::Type => |a, b| match (a.is_dir(), b.is_dir()) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            },
+            SortMode::Modified => |a, b| {
+                let a_time = a.metadata.as_ref().and_then(|m| m.modified);
+                let b_time = b.metadata.as_ref().and_then(|m| m.modified);
+                match (a_time, b_time) {
+                    (Some(at), Some(bt)) => bt.cmp(&at), // Newest first
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                }
+            },
+        }
+    }
+}
+
 impl FileTreeView {
     /// Create a new file tree view
     pub fn new(tree: FileTree) -> Self {
@@ -262,10 +286,13 @@ impl FileTreeView {
         self.sort_mode
     }
 
-    /// Set the sort mode
+    /// Set the sort mode and re-sort all expanded directories
     pub fn set_sort_mode(&mut self, mode: SortMode) {
+        if self.sort_mode == mode {
+            return;
+        }
         self.sort_mode = mode;
-        // TODO: Re-sort children when sort mode changes
+        self.tree.sort_all_nodes(mode.comparator());
     }
 
     /// Get selected node entry (convenience method)
@@ -567,5 +594,98 @@ mod tests {
 
         view.set_sort_mode(SortMode::Modified);
         assert_eq!(view.get_sort_mode(), SortMode::Modified);
+    }
+
+    #[tokio::test]
+    async fn test_sort_mode_changes_order() {
+        let (_temp_dir, mut view) = create_test_view().await;
+        let root_id = view.tree().root_id();
+        view.tree_mut().expand_node(root_id).await.unwrap();
+
+        // Initial order (Type sort)
+        let initial_names: Vec<_> = view
+            .get_display_nodes()
+            .iter()
+            .skip(1)
+            .filter_map(|(id, _)| view.tree().get_node(*id))
+            .map(|n| n.entry.name.clone())
+            .collect();
+
+        assert_eq!(initial_names, vec!["dir1", "dir2", "file3.txt"]);
+
+        // Change to Name sort
+        view.set_sort_mode(SortMode::Name);
+
+        let name_sorted: Vec<_> = view
+            .get_display_nodes()
+            .iter()
+            .skip(1)
+            .filter_map(|(id, _)| view.tree().get_node(*id))
+            .map(|n| n.entry.name.clone())
+            .collect();
+
+        assert_eq!(name_sorted, vec!["dir1", "dir2", "file3.txt"]);
+
+        // Setting same mode is a no-op
+        view.set_sort_mode(SortMode::Name);
+        assert_eq!(view.get_sort_mode(), SortMode::Name);
+    }
+
+    #[tokio::test]
+    async fn test_sort_mode_type_dirs_first() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path();
+
+        // Create structure where Name and Type sorts differ
+        std_fs::write(temp_path.join("aaa_file.txt"), "content").unwrap();
+        std_fs::create_dir(temp_path.join("bbb_dir")).unwrap();
+        std_fs::write(temp_path.join("ccc_file.txt"), "content").unwrap();
+
+        let backend = Arc::new(LocalFsBackend::new());
+        let manager = Arc::new(FsManager::new(backend));
+        let tree = FileTree::new(temp_path.to_path_buf(), manager)
+            .await
+            .unwrap();
+        let mut view = FileTreeView::new(tree);
+
+        let root_id = view.tree().root_id();
+        view.tree_mut().expand_node(root_id).await.unwrap();
+
+        // Type sort: directories first
+        let type_sorted: Vec<_> = view
+            .get_display_nodes()
+            .iter()
+            .skip(1)
+            .filter_map(|(id, _)| view.tree().get_node(*id))
+            .map(|n| n.entry.name.clone())
+            .collect();
+
+        assert_eq!(type_sorted, vec!["bbb_dir", "aaa_file.txt", "ccc_file.txt"]);
+
+        // Name sort: alphabetical
+        view.set_sort_mode(SortMode::Name);
+
+        let name_sorted: Vec<_> = view
+            .get_display_nodes()
+            .iter()
+            .skip(1)
+            .filter_map(|(id, _)| view.tree().get_node(*id))
+            .map(|n| n.entry.name.clone())
+            .collect();
+
+        assert_eq!(name_sorted, vec!["aaa_file.txt", "bbb_dir", "ccc_file.txt"]);
+
+        // Back to Type sort
+        view.set_sort_mode(SortMode::Type);
+
+        let back_to_type: Vec<_> = view
+            .get_display_nodes()
+            .iter()
+            .skip(1)
+            .filter_map(|(id, _)| view.tree().get_node(*id))
+            .map(|n| n.entry.name.clone())
+            .collect();
+
+        assert_eq!(back_to_type, vec!["bbb_dir", "aaa_file.txt", "ccc_file.txt"]);
     }
 }
