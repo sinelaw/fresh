@@ -465,7 +465,9 @@ export class Finder<T> {
         options.initialQuery
       );
     } else {
-      this.editor.startPrompt(options.title, this.config.id);
+      this.editor.debug(`[Finder] calling startPrompt with title="${options.title}", id="${this.config.id}"`);
+      const result = this.editor.startPrompt(options.title, this.config.id);
+      this.editor.debug(`[Finder] startPrompt returned: ${result}`);
     }
     this.editor.setStatus("Type to search...");
   }
@@ -951,11 +953,11 @@ export class Finder<T> {
   }
 
   private closePreview(): void {
-    if (this.previewState.bufferId !== null) {
+    if (this.previewState.bufferId || this.previewState.bufferId == 0) {
       this.editor.closeBuffer(this.previewState.bufferId);
       this.previewState.bufferId = null;
     }
-    if (this.previewState.splitId !== null) {
+    if (this.previewState.splitId || this.previewState.splitId == 0) {
       this.editor.closeSplit(this.previewState.splitId);
       this.previewState.splitId = null;
     }

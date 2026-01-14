@@ -766,12 +766,12 @@ globalThis.show_git_log = async function(): Promise<void> {
   const bufferId = await editor.createVirtualBufferInExistingSplit({
     name: "*Git Log*",
     mode: "git-log",
-    read_only: true,
+    readOnly: true,
     entries: entries,
-    split_id: gitLogState.splitId!,
-    show_line_numbers: false,
-    show_cursors: true,
-    editing_disabled: true,
+    splitId: gitLogState.splitId!,
+    showLineNumbers: false,
+    showCursors: true,
+    editingDisabled: true,
   });
 
   if (bufferId !== null) {
@@ -900,12 +900,12 @@ globalThis.git_log_show_commit = async function(): Promise<void> {
   const bufferId = await editor.createVirtualBufferInExistingSplit({
     name: `*Commit: ${commit.shortHash}*`,
     mode: "git-commit-detail",
-    read_only: true,
+    readOnly: true,
     entries: entries,
-    split_id: gitLogState.splitId!,
-    show_line_numbers: false, // Disable line numbers for cleaner diff view
-    show_cursors: true,
-    editing_disabled: true,
+    splitId: gitLogState.splitId!,
+    showLineNumbers: false, // Disable line numbers for cleaner diff view
+    showCursors: true,
+    editingDisabled: true,
   });
 
   if (bufferId !== null) {
@@ -1213,12 +1213,12 @@ globalThis.git_commit_detail_open_file = async function(): Promise<void> {
       const bufferId = await editor.createVirtualBufferInExistingSplit({
         name: `${file} @ ${commit.shortHash}`,
         mode: "git-file-view",
-        read_only: true,
+        readOnly: true,
         entries: entries,
-        split_id: commitDetailState.splitId!,
-        show_line_numbers: true,
-        show_cursors: true,
-        editing_disabled: true,
+        splitId: commitDetailState.splitId!,
+        showLineNumbers: true,
+        showCursors: true,
+        editingDisabled: true,
       });
 
       if (bufferId !== null) {

@@ -22,6 +22,7 @@ pub struct SplitId(pub usize);
 /// Unique identifier for a buffer (re-exported from editor.rs)
 /// Note: This is defined in editor.rs and re-exported here for events
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct BufferId(pub usize);
 
 /// Direction of a split (re-exported from split.rs for events)

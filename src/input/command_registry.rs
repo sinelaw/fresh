@@ -73,6 +73,11 @@ impl CommandRegistry {
     /// If a command with the same name already exists, it will be replaced.
     /// This allows plugins to override built-in commands.
     pub fn register(&self, command: Command) {
+        tracing::debug!(
+            "CommandRegistry::register: name='{}', action={:?}",
+            command.name,
+            command.action
+        );
         let mut commands = self.plugin_commands.write().unwrap();
 
         // Remove existing command with same name
@@ -80,6 +85,10 @@ impl CommandRegistry {
 
         // Add new command
         commands.push(command);
+        tracing::debug!(
+            "CommandRegistry::register: plugin_commands now has {} items",
+            commands.len()
+        );
     }
 
     /// Unregister a command by name
@@ -99,8 +108,29 @@ impl CommandRegistry {
         let mut all_commands = self.builtin_commands.clone();
 
         let plugin_commands = self.plugin_commands.read().unwrap();
+        let plugin_count = plugin_commands.len();
+
+        // Debug: check if vi_mode_toggle is in plugin commands
+        let target_action =
+            crate::input::keybindings::Action::PluginAction("vi_mode_toggle".to_string());
+        let has_target = plugin_commands.iter().any(|c| c.action == target_action);
+        if has_target {
+            tracing::debug!("get_all: vi_mode_toggle found via comparison!");
+        } else if plugin_count > 0 {
+            tracing::debug!(
+                "get_all: {} plugin commands but vi_mode_toggle NOT found",
+                plugin_count
+            );
+        }
+
         all_commands.extend(plugin_commands.iter().cloned());
 
+        tracing::trace!(
+            "CommandRegistry::get_all: {} builtin + {} plugin = {} total",
+            self.builtin_commands.len(),
+            plugin_count,
+            all_commands.len()
+        );
         all_commands
     }
 

@@ -32,7 +32,7 @@ path = "src/lib.rs"
 
 [features]
 default = ["plugins", "runtime", "embed-plugins"]
-plugins = ["dep:deno_core", "dep:deno_ast", "dep:deno_error"]
+plugins = ["dep:rquickjs", "dep:rquickjs-serde", "dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_parser", "dep:oxc_transformer", "dep:oxc_codegen", "dep:oxc_span", "dep:oxc_semantic", "dep:fresh-plugin-api-macros", "dep:ts-rs"]
 # Embed plugins into the binary as a fallback when no disk plugins are found
 embed-plugins = ["plugins", "dep:include_dir", "dep:dirs", "dep:trash"]
 # Feature for optional development binaries (generate_schema, event_debug)
@@ -122,9 +122,20 @@ regex = { version = "1.12", optional = true }
 libc = { version = "0.2", optional = true }
 libloading = { version = "0.9", optional = true }
 nix = { version = "0.30", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
-deno_core = { version = "0.376.0", default-features = false, features = ["v8_use_custom_libcxx"], optional = true }
-deno_ast = { version = "0.51.0", default-features = false, features = ["transpiling"], optional = true }
-deno_error = { version = "0.7", optional = true }
+# QuickJS JavaScript runtime with oxc for TypeScript transpilation
+rquickjs = { version = "0.11", features = ["bindgen", "futures", "macro"], optional = true }
+rquickjs-serde = { version = "0.4", optional = true }
+oxc_allocator = { version = "0.108", optional = true }
+oxc_ast = { version = "0.108", optional = true }
+oxc_parser = { version = "0.108", optional = true }
+oxc_transformer = { version = "0.108", optional = true }
+oxc_codegen = { version = "0.108", optional = true }
+oxc_span = { version = "0.108", optional = true }
+oxc_semantic = { version = "0.108", optional = true }
+# Plugin API proc macros for type-safe bindings
+fresh-plugin-api-macros = { path = "crates/fresh-plugin-api-macros", optional = true }
+# TypeScript type generation from Rust structs
+ts-rs = { version = "11.1", optional = true }
 tree-sitter-python = { version = "0.25.0", optional = true }
 tree-sitter-javascript = { version = "0.25.0", optional = true }
 tree-sitter-typescript = { version = "0.23.2", optional = true }

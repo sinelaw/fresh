@@ -58,14 +58,14 @@ editor.registerCommand(
   "%cmd.find",
   "%cmd.find_desc",
   "start_git_find_file",
-  "normal"
+  null
 );
 
 editor.registerCommand(
   "%cmd.reload",
   "%cmd.reload_desc",
   "git_reload_files",
-  "normal"
+  null
 );
 
 editor.debug("Git Find File plugin loaded (using Finder abstraction)");

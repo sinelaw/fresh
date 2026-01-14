@@ -15,6 +15,47 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
+#[cfg(feature = "plugins")]
+use ts_rs::TS;
+
+/// A callback ID for JavaScript promises in the plugin runtime.
+///
+/// This newtype distinguishes JS promise callbacks (resolved via `resolve_callback`)
+/// from Rust oneshot channel IDs (resolved via `send_plugin_response`).
+/// Using a newtype prevents accidentally mixing up these two callback mechanisms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct JsCallbackId(pub u64);
+
+impl JsCallbackId {
+    /// Create a new JS callback ID
+    pub fn new(id: u64) -> Self {
+        Self(id)
+    }
+
+    /// Get the underlying u64 value
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+impl From<u64> for JsCallbackId {
+    fn from(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+impl From<JsCallbackId> for u64 {
+    fn from(id: JsCallbackId) -> u64 {
+        id.0
+    }
+}
+
+impl std::fmt::Display for JsCallbackId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Response from the editor for async plugin operations
 #[derive(Debug, Clone)]
 pub enum PluginResponse {
@@ -47,16 +88,24 @@ pub enum PluginResponse {
 }
 
 /// Information about a cursor in the editor
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
 pub struct CursorInfo {
     /// Byte position of the cursor
     pub position: usize,
     /// Selection range (if any)
+    #[cfg_attr(
+        feature = "plugins",
+        ts(type = "{ start: number; end: number } | null")
+    )]
     pub selection: Option<Range<usize>>,
 }
 
 /// Specification for an action to execute, with optional repeat count
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
 pub struct ActionSpec {
     /// Action name (e.g., "move_word_right", "delete_line")
     pub action: String,
@@ -65,11 +114,16 @@ pub struct ActionSpec {
 }
 
 /// Information about a buffer
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
 pub struct BufferInfo {
     /// Buffer ID
+    #[cfg_attr(feature = "plugins", ts(type = "number"))]
     pub id: BufferId,
     /// File path (if any)
+    #[serde(serialize_with = "serialize_path")]
+    #[cfg_attr(feature = "plugins", ts(type = "string"))]
     pub path: Option<PathBuf>,
     /// Whether the buffer has been modified
     pub modified: bool,
@@ -77,16 +131,67 @@ pub struct BufferInfo {
     pub length: usize,
 }
 
+fn serialize_path<S: serde::Serializer>(path: &Option<PathBuf>, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(
+        &path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default(),
+    )
+}
+
+/// Serialize ranges as [start, end] tuples for JS compatibility
+fn serialize_ranges_as_tuples<S>(ranges: &[Range<usize>], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use serde::ser::SerializeSeq;
+    let mut seq = serializer.serialize_seq(Some(ranges.len()))?;
+    for range in ranges {
+        seq.serialize_element(&(range.start, range.end))?;
+    }
+    seq.end()
+}
+
+/// Serialize optional ranges as [start, end] tuples for JS compatibility
+fn serialize_opt_ranges_as_tuples<S>(
+    ranges: &Option<Vec<Range<usize>>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match ranges {
+        Some(ranges) => {
+            use serde::ser::SerializeSeq;
+            let mut seq = serializer.serialize_seq(Some(ranges.len()))?;
+            for range in ranges {
+                seq.serialize_element(&(range.start, range.end))?;
+            }
+            seq.end()
+        }
+        None => serializer.serialize_none(),
+    }
+}
+
 /// Diff between current buffer content and last saved snapshot
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
 pub struct BufferSavedDiff {
     pub equal: bool,
+    #[serde(serialize_with = "serialize_ranges_as_tuples")]
+    #[cfg_attr(feature = "plugins", ts(type = "Array<[number, number]>"))]
     pub byte_ranges: Vec<Range<usize>>,
+    #[serde(serialize_with = "serialize_opt_ranges_as_tuples")]
+    #[cfg_attr(feature = "plugins", ts(type = "Array<[number, number]> | null"))]
     pub line_ranges: Option<Vec<Range<usize>>>,
 }
 
 /// Information about the viewport
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
 pub struct ViewportInfo {
     /// Byte position of the first visible line
     pub top_byte: usize,
@@ -100,6 +205,8 @@ pub struct ViewportInfo {
 
 /// Layout hints supplied by plugins (e.g., Compose mode)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
 pub struct LayoutHints {
     /// Optional compose width for centering/wrapping
     pub compose_width: Option<u16>,
@@ -113,9 +220,12 @@ pub struct LayoutHints {
 
 /// Layout configuration for composite buffers
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export, rename = "TsCompositeLayoutConfig"))]
 pub struct CompositeLayoutConfig {
     /// Layout type: "side-by-side", "stacked", or "unified"
     #[serde(rename = "type")]
+    #[cfg_attr(feature = "plugins", ts(rename = "type"))]
     pub layout_type: String,
     /// Width ratios for side-by-side (e.g., [0.5, 0.5])
     #[serde(default)]
@@ -134,6 +244,8 @@ fn default_true() -> bool {
 
 /// Source pane configuration for composite buffers
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export, rename = "TsCompositeSourceConfig"))]
 pub struct CompositeSourceConfig {
     /// Buffer ID of the source buffer
     pub buffer_id: usize,
@@ -149,15 +261,20 @@ pub struct CompositeSourceConfig {
 
 /// Style configuration for a composite pane
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export, rename = "TsCompositePaneStyle"))]
 pub struct CompositePaneStyle {
     /// Background color for added lines (RGB)
     #[serde(default)]
+    #[cfg_attr(feature = "plugins", ts(type = "[number, number, number] | null"))]
     pub add_bg: Option<(u8, u8, u8)>,
     /// Background color for removed lines (RGB)
     #[serde(default)]
+    #[cfg_attr(feature = "plugins", ts(type = "[number, number, number] | null"))]
     pub remove_bg: Option<(u8, u8, u8)>,
     /// Background color for modified lines (RGB)
     #[serde(default)]
+    #[cfg_attr(feature = "plugins", ts(type = "[number, number, number] | null"))]
     pub modify_bg: Option<(u8, u8, u8)>,
     /// Gutter style: "line-numbers", "diff-markers", "both", or "none"
     #[serde(default)]
@@ -166,6 +283,8 @@ pub struct CompositePaneStyle {
 
 /// Diff hunk for composite buffer alignment
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export, rename = "TsCompositeHunk"))]
 pub struct CompositeHunk {
     /// Starting line in old buffer (0-indexed)
     pub old_start: usize,
@@ -179,6 +298,8 @@ pub struct CompositeHunk {
 
 /// Wire-format view token kind (serialized for plugin transforms)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
 pub enum ViewTokenWireKind {
     Text(String),
     Newline,
@@ -198,12 +319,16 @@ pub enum ViewTokenWireKind {
 /// mapping (source_offset: None), such as annotation headers in git blame.
 /// For tokens with source_offset: Some(_), syntax highlighting is applied instead.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
 pub struct ViewTokenStyle {
     /// Foreground color as RGB tuple
     #[serde(default)]
+    #[cfg_attr(feature = "plugins", ts(type = "[number, number, number] | null"))]
     pub fg: Option<(u8, u8, u8)>,
     /// Background color as RGB tuple
     #[serde(default)]
+    #[cfg_attr(feature = "plugins", ts(type = "[number, number, number] | null"))]
     pub bg: Option<(u8, u8, u8)>,
     /// Whether to render in bold
     #[serde(default)]
@@ -215,6 +340,8 @@ pub struct ViewTokenStyle {
 
 /// Wire-format view token with optional source mapping and styling
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
 pub struct ViewTokenWire {
     /// Source byte offset in the buffer. None for injected content (annotations).
     pub source_offset: Option<usize>,
@@ -384,7 +511,41 @@ pub enum PluginCommand {
         command: String,
         args: Vec<String>,
         cwd: Option<String>,
-        callback_id: u64, // ID to look up callback in _spawn_callbacks Lua table
+        callback_id: JsCallbackId,
+    },
+
+    /// Delay/sleep for a duration (async, resolves callback when done)
+    Delay {
+        callback_id: JsCallbackId,
+        duration_ms: u64,
+    },
+
+    /// Spawn a long-running background process
+    /// Unlike SpawnProcess, this returns immediately with a process handle
+    /// and provides streaming output via hooks
+    SpawnBackgroundProcess {
+        /// Unique ID for this process (generated by plugin runtime)
+        process_id: u64,
+        /// Command to execute
+        command: String,
+        /// Arguments to pass
+        args: Vec<String>,
+        /// Working directory (optional)
+        cwd: Option<String>,
+        /// Callback ID to call when process exits
+        callback_id: JsCallbackId,
+    },
+
+    /// Kill a background process by ID
+    KillBackgroundProcess { process_id: u64 },
+
+    /// Wait for a process to complete and get its result
+    /// Used with processes started via SpawnProcess
+    SpawnProcessWait {
+        /// Process ID to wait for
+        process_id: u64,
+        /// Callback ID for async response
+        callback_id: JsCallbackId,
     },
 
     /// Set layout hints for a buffer/viewport
@@ -890,6 +1051,8 @@ pub struct ReviewHunk {
 
 /// Action button for action popups
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export, rename = "TsActionPopupAction"))]
 pub struct ActionPopupAction {
     /// Unique action identifier (returned in ActionPopupResult)
     pub id: String,
@@ -899,12 +1062,247 @@ pub struct ActionPopupAction {
 
 /// Syntax highlight span for a buffer range
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
 pub struct TsHighlightSpan {
     pub start: u32,
     pub end: u32,
+    #[cfg_attr(feature = "plugins", ts(type = "[number, number, number]"))]
     pub color: (u8, u8, u8),
     pub bold: bool,
     pub italic: bool,
+}
+
+/// Result from spawning a process with spawnProcess
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
+pub struct SpawnResult {
+    /// Complete stdout as string
+    pub stdout: String,
+    /// Complete stderr as string
+    pub stderr: String,
+    /// Process exit code (0 usually means success, -1 if killed)
+    pub exit_code: i32,
+}
+
+/// Result from spawning a background process
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
+pub struct BackgroundProcessResult {
+    /// Unique process ID for later reference
+    #[cfg_attr(feature = "plugins", ts(type = "number"))]
+    pub process_id: u64,
+    /// Process exit code (0 usually means success, -1 if killed)
+    /// Only present when the process has exited
+    pub exit_code: i32,
+}
+
+/// Entry for virtual buffer content with optional text properties (JS API version)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export, rename = "TextPropertyEntry"))]
+pub struct JsTextPropertyEntry {
+    /// Text content for this entry
+    pub text: String,
+    /// Optional properties attached to this text (e.g., file path, line number)
+    #[serde(default)]
+    #[cfg_attr(feature = "plugins", ts(optional, type = "Record<string, unknown>"))]
+    pub properties: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Options for createVirtualBuffer
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
+pub struct CreateVirtualBufferOptions {
+    /// Buffer name (displayed in tabs/title)
+    pub name: String,
+    /// Mode for keybindings (e.g., "git-log", "search-results")
+    #[serde(default)]
+    #[cfg_attr(feature = "plugins", ts(optional))]
+    pub mode: Option<String>,
+    /// Whether buffer is read-only (default: false)
+    #[serde(default, rename = "readOnly")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "readOnly"))]
+    pub read_only: Option<bool>,
+    /// Show line numbers in gutter (default: false)
+    #[serde(default, rename = "showLineNumbers")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "showLineNumbers"))]
+    pub show_line_numbers: Option<bool>,
+    /// Show cursor (default: true)
+    #[serde(default, rename = "showCursors")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "showCursors"))]
+    pub show_cursors: Option<bool>,
+    /// Disable text editing (default: false)
+    #[serde(default, rename = "editingDisabled")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "editingDisabled"))]
+    pub editing_disabled: Option<bool>,
+    /// Hide from tab bar (default: false)
+    #[serde(default, rename = "hiddenFromTabs")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "hiddenFromTabs"))]
+    pub hidden_from_tabs: Option<bool>,
+    /// Initial content entries with optional properties
+    #[serde(default)]
+    #[cfg_attr(feature = "plugins", ts(optional))]
+    pub entries: Option<Vec<JsTextPropertyEntry>>,
+}
+
+/// Options for createVirtualBufferInSplit
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
+pub struct CreateVirtualBufferInSplitOptions {
+    /// Buffer name (displayed in tabs/title)
+    pub name: String,
+    /// Mode for keybindings (e.g., "git-log", "search-results")
+    #[serde(default)]
+    #[cfg_attr(feature = "plugins", ts(optional))]
+    pub mode: Option<String>,
+    /// Whether buffer is read-only (default: false)
+    #[serde(default, rename = "readOnly")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "readOnly"))]
+    pub read_only: Option<bool>,
+    /// Split ratio 0.0-1.0 (default: 0.5)
+    #[serde(default)]
+    #[cfg_attr(feature = "plugins", ts(optional))]
+    pub ratio: Option<f32>,
+    /// Split direction: "horizontal" or "vertical"
+    #[serde(default)]
+    #[cfg_attr(feature = "plugins", ts(optional))]
+    pub direction: Option<String>,
+    /// Panel ID to split from
+    #[serde(default, rename = "panelId")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "panelId"))]
+    pub panel_id: Option<String>,
+    /// Show line numbers in gutter (default: true)
+    #[serde(default, rename = "showLineNumbers")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "showLineNumbers"))]
+    pub show_line_numbers: Option<bool>,
+    /// Show cursor (default: true)
+    #[serde(default, rename = "showCursors")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "showCursors"))]
+    pub show_cursors: Option<bool>,
+    /// Disable text editing (default: false)
+    #[serde(default, rename = "editingDisabled")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "editingDisabled"))]
+    pub editing_disabled: Option<bool>,
+    /// Enable line wrapping
+    #[serde(default, rename = "lineWrap")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "lineWrap"))]
+    pub line_wrap: Option<bool>,
+    /// Initial content entries with optional properties
+    #[serde(default)]
+    #[cfg_attr(feature = "plugins", ts(optional))]
+    pub entries: Option<Vec<JsTextPropertyEntry>>,
+}
+
+/// Options for createVirtualBufferInExistingSplit
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(feature = "plugins", ts(export))]
+pub struct CreateVirtualBufferInExistingSplitOptions {
+    /// Buffer name (displayed in tabs/title)
+    pub name: String,
+    /// Target split ID (required)
+    #[serde(rename = "splitId")]
+    #[cfg_attr(feature = "plugins", ts(rename = "splitId"))]
+    pub split_id: usize,
+    /// Mode for keybindings (e.g., "git-log", "search-results")
+    #[serde(default)]
+    #[cfg_attr(feature = "plugins", ts(optional))]
+    pub mode: Option<String>,
+    /// Whether buffer is read-only (default: false)
+    #[serde(default, rename = "readOnly")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "readOnly"))]
+    pub read_only: Option<bool>,
+    /// Show line numbers in gutter (default: true)
+    #[serde(default, rename = "showLineNumbers")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "showLineNumbers"))]
+    pub show_line_numbers: Option<bool>,
+    /// Show cursor (default: true)
+    #[serde(default, rename = "showCursors")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "showCursors"))]
+    pub show_cursors: Option<bool>,
+    /// Disable text editing (default: false)
+    #[serde(default, rename = "editingDisabled")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "editingDisabled"))]
+    pub editing_disabled: Option<bool>,
+    /// Enable line wrapping
+    #[serde(default, rename = "lineWrap")]
+    #[cfg_attr(feature = "plugins", ts(optional, rename = "lineWrap"))]
+    pub line_wrap: Option<bool>,
+    /// Initial content entries with optional properties
+    #[serde(default)]
+    #[cfg_attr(feature = "plugins", ts(optional))]
+    pub entries: Option<Vec<JsTextPropertyEntry>>,
+}
+
+/// Result of getTextPropertiesAtCursor - array of property objects
+///
+/// Each element contains the properties from a text property span that overlaps
+/// with the cursor position. Properties are dynamic key-value pairs set by plugins.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "plugins", derive(TS))]
+#[cfg_attr(
+    feature = "plugins",
+    ts(export, type = "Array<Record<string, unknown>>")
+)]
+pub struct TextPropertiesAtCursor(pub Vec<HashMap<String, serde_json::Value>>);
+
+// Implement FromJs for option types using rquickjs_serde
+#[cfg(feature = "plugins")]
+mod fromjs_impls {
+    use super::*;
+    use rquickjs::{Ctx, FromJs, Value};
+
+    impl<'js> FromJs<'js> for JsTextPropertyEntry {
+        fn from_js(ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+                from: "object",
+                to: "JsTextPropertyEntry",
+                message: Some(e.to_string()),
+            })
+        }
+    }
+
+    impl<'js> FromJs<'js> for CreateVirtualBufferOptions {
+        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+                from: "object",
+                to: "CreateVirtualBufferOptions",
+                message: Some(e.to_string()),
+            })
+        }
+    }
+
+    impl<'js> FromJs<'js> for CreateVirtualBufferInSplitOptions {
+        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+                from: "object",
+                to: "CreateVirtualBufferInSplitOptions",
+                message: Some(e.to_string()),
+            })
+        }
+    }
+
+    impl<'js> FromJs<'js> for CreateVirtualBufferInExistingSplitOptions {
+        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+                from: "object",
+                to: "CreateVirtualBufferInExistingSplitOptions",
+                message: Some(e.to_string()),
+            })
+        }
+    }
+
+    impl<'js> rquickjs::IntoJs<'js> for TextPropertiesAtCursor {
+        fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+            rquickjs_serde::to_value(ctx.clone(), &self.0)
+                .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        }
+    }
 }
 
 /// Plugin API context - provides safe access to editor functionality

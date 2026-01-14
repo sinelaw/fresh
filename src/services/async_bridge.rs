@@ -170,6 +170,25 @@ pub enum AsyncMessage {
         exit_code: i32,
     },
 
+    /// Plugin delay/timer completed
+    PluginDelayComplete {
+        /// Callback ID to resolve
+        callback_id: u64,
+    },
+
+    /// Background process stdout data
+    PluginProcessStdout { process_id: u64, data: String },
+
+    /// Background process stderr data
+    PluginProcessStderr { process_id: u64, data: String },
+
+    /// Background process exited
+    PluginBackgroundProcessExit {
+        process_id: u64,
+        callback_id: u64,
+        exit_code: i32,
+    },
+
     /// LSP progress notification ($/progress)
     LspProgress {
         language: String,

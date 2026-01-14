@@ -481,12 +481,12 @@ globalThis.show_git_blame = async function(): Promise<void> {
   const bufferId = await editor.createVirtualBufferInExistingSplit({
     name: bufferName,
     mode: "git-blame",
-    read_only: true,
+    readOnly: true,
     entries: entries,
-    split_id: blameState.splitId!,
-    show_line_numbers: true,  // We DO want line numbers (headers won't have them due to source_offset: null)
-    show_cursors: true,
-    editing_disabled: true,
+    splitId: blameState.splitId!,
+    showLineNumbers: true,  // We DO want line numbers (headers won't have them due to source_offset: null)
+    showCursors: true,
+    editingDisabled: true,
   });
 
   if (bufferId !== null) {

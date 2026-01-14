@@ -1,19 +1,20 @@
 //! Plugin Thread: Dedicated thread for TypeScript plugin execution
 //!
 //! This module implements a dedicated thread architecture for plugin execution,
-//! solving the problem of creating new tokio runtimes for each hook call.
+//! using QuickJS as the JavaScript runtime with oxc for TypeScript transpilation.
 //!
 //! Architecture:
 //! - Main thread (UI) sends requests to plugin thread via channel
-//! - Plugin thread owns JsRuntime and persistent tokio runtime
+//! - Plugin thread owns QuickJS runtime and persistent tokio runtime
 //! - Results are sent back via the existing PluginCommand channel
 //! - Async operations complete naturally without runtime destruction
 
 use crate::config::PluginConfig;
 use crate::input::command_registry::CommandRegistry;
 use crate::services::plugins::api::{EditorStateSnapshot, PluginCommand};
+use crate::services::plugins::backend::quickjs_backend::{PendingResponses, TsPluginInfo};
+use crate::services::plugins::backend::QuickJsBackend;
 use crate::services::plugins::hooks::{hook_args_to_json, HookArgs};
-use crate::services::plugins::runtime::{TsPluginInfo, TypeScriptRuntime};
 use anyhow::{anyhow, Result};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -30,6 +31,18 @@ pub enum PluginRequest {
     LoadPlugin {
         path: PathBuf,
         response: oneshot::Sender<Result<()>>,
+    },
+
+    /// Resolve an async callback with a result (for async operations like SpawnProcess, Delay)
+    ResolveCallback {
+        callback_id: super::api::JsCallbackId,
+        result_json: String,
+    },
+
+    /// Reject an async callback with an error
+    RejectCallback {
+        callback_id: super::api::JsCallbackId,
+        error: String,
     },
 
     /// Load all plugins from a directory
@@ -148,7 +161,7 @@ pub struct PluginThreadHandle {
     commands: Arc<RwLock<CommandRegistry>>,
 
     /// Pending response senders for async operations (shared with runtime)
-    pending_responses: crate::services::plugins::runtime::PendingResponses,
+    pending_responses: PendingResponses,
 
     /// Receiver for plugin commands (polled by editor directly)
     command_receiver: std::sync::mpsc::Receiver<PluginCommand>,
@@ -169,7 +182,7 @@ impl PluginThreadHandle {
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
 
         // Create pending responses map (shared between handle and runtime)
-        let pending_responses: crate::services::plugins::runtime::PendingResponses =
+        let pending_responses: PendingResponses =
             Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
         let thread_pending_responses = Arc::clone(&pending_responses);
 
@@ -199,20 +212,20 @@ impl PluginThreadHandle {
                 }
             };
 
-            // Create TypeScript runtime with state
-            tracing::debug!("Plugin thread: creating TypeScript runtime (V8 initialization)");
-            let runtime = match TypeScriptRuntime::with_state_and_responses(
+            // Create QuickJS runtime with state
+            tracing::debug!("Plugin thread: creating QuickJS runtime");
+            let runtime = match QuickJsBackend::with_state_and_responses(
                 Arc::clone(&thread_state_snapshot),
                 command_sender,
                 thread_pending_responses,
                 dir_context,
             ) {
                 Ok(rt) => {
-                    tracing::debug!("Plugin thread: TypeScript runtime created successfully");
+                    tracing::debug!("Plugin thread: QuickJS runtime created successfully");
                     rt
                 }
                 Err(e) => {
-                    tracing::error!("Failed to create TypeScript runtime: {}", e);
+                    tracing::error!("Failed to create QuickJS runtime: {}", e);
                     return;
                 }
             };
@@ -250,7 +263,60 @@ impl PluginThreadHandle {
     ///
     /// This is called by the editor after processing a command that requires a response.
     pub fn deliver_response(&self, response: crate::services::plugins::api::PluginResponse) {
-        respond_to_pending(&self.pending_responses, response);
+        // First try to find a pending Rust request (oneshot channel)
+        if respond_to_pending(&self.pending_responses, response.clone()) {
+            return;
+        }
+
+        // If not found, it must be a JS callback
+        use crate::services::plugins::api::{JsCallbackId, PluginResponse};
+        use serde_json::json;
+
+        match response {
+            PluginResponse::VirtualBufferCreated {
+                request_id,
+                buffer_id,
+                split_id,
+            } => {
+                let result = json!({
+                    "buffer_id": buffer_id,
+                    "split_id": split_id
+                });
+                self.resolve_callback(JsCallbackId(request_id), result.to_string());
+            }
+            PluginResponse::LspRequest { request_id, result } => match result {
+                Ok(value) => {
+                    self.resolve_callback(JsCallbackId(request_id), value.to_string());
+                }
+                Err(e) => {
+                    self.reject_callback(JsCallbackId(request_id), e);
+                }
+            },
+            PluginResponse::HighlightsComputed { request_id, spans } => {
+                let result = serde_json::to_string(&spans).unwrap_or_else(|_| "[]".to_string());
+                self.resolve_callback(JsCallbackId(request_id), result);
+            }
+            PluginResponse::BufferText { request_id, text } => match text {
+                Ok(content) => {
+                    // JSON stringify the content string
+                    let result =
+                        serde_json::to_string(&content).unwrap_or_else(|_| "\"\"".to_string());
+                    self.resolve_callback(JsCallbackId(request_id), result);
+                }
+                Err(e) => {
+                    self.reject_callback(JsCallbackId(request_id), e);
+                }
+            },
+            PluginResponse::CompositeBufferCreated {
+                request_id,
+                buffer_id,
+            } => {
+                let result = json!({
+                    "buffer_id": buffer_id
+                });
+                self.resolve_callback(JsCallbackId(request_id), result.to_string());
+            }
+        }
     }
 
     /// Load a plugin from a file (blocking)
@@ -476,6 +542,25 @@ impl PluginThreadHandle {
 
         tracing::debug!("PluginThreadHandle::shutdown: shutdown complete");
     }
+
+    /// Resolve an async callback in the plugin runtime
+    /// Called by the app when async operations (SpawnProcess, Delay) complete
+    pub fn resolve_callback(&self, callback_id: super::api::JsCallbackId, result_json: String) {
+        if let Some(sender) = self.request_sender.as_ref() {
+            let _ = sender.send(PluginRequest::ResolveCallback {
+                callback_id,
+                result_json,
+            });
+        }
+    }
+
+    /// Reject an async callback in the plugin runtime
+    /// Called by the app when async operations fail
+    pub fn reject_callback(&self, callback_id: super::api::JsCallbackId, error: String) {
+        if let Some(sender) = self.request_sender.as_ref() {
+            let _ = sender.send(PluginRequest::RejectCallback { callback_id, error });
+        }
+    }
 }
 
 impl Drop for PluginThreadHandle {
@@ -485,9 +570,9 @@ impl Drop for PluginThreadHandle {
 }
 
 fn respond_to_pending(
-    pending_responses: &crate::services::plugins::runtime::PendingResponses,
+    pending_responses: &PendingResponses,
     response: crate::services::plugins::api::PluginResponse,
-) {
+) -> bool {
     let request_id = match &response {
         crate::services::plugins::api::PluginResponse::VirtualBufferCreated {
             request_id, ..
@@ -510,6 +595,9 @@ fn respond_to_pending(
 
     if let Some(tx) = sender {
         let _ = tx.send(response);
+        true
+    } else {
+        false
     }
 }
 
@@ -517,7 +605,6 @@ fn respond_to_pending(
 mod plugin_thread_tests {
     use super::*;
     use crate::services::plugins::api::PluginResponse;
-    use crate::services::plugins::runtime::PendingResponses;
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
@@ -581,7 +668,7 @@ mod plugin_thread_tests {
 /// polling. This allows long-running promises (like process spawns) to make progress
 /// even when no requests are coming in, preventing the UI from getting stuck.
 async fn plugin_thread_loop(
-    runtime: Rc<RefCell<TypeScriptRuntime>>,
+    runtime: Rc<RefCell<QuickJsBackend>>,
     plugins: &mut HashMap<String, TsPluginInfo>,
     commands: &Arc<RwLock<CommandRegistry>>,
     mut request_receiver: tokio::sync::mpsc::UnboundedReceiver<PluginRequest>,
@@ -602,8 +689,10 @@ async fn plugin_thread_loop(
                         action_name,
                         response,
                     }) => {
-                        // Handle ExecuteAction specially
-                        execute_action_with_hooks(&action_name, response, Rc::clone(&runtime)).await;
+                        // Start the action without blocking - this allows us to process
+                        // ResolveCallback requests that the action may be waiting for.
+                        let result = runtime.borrow_mut().start_action(&action_name);
+                        let _ = response.send(result);
                         has_pending_work = true; // Action may have started async work
                     }
                     Some(request) => {
@@ -641,41 +730,8 @@ async fn plugin_thread_loop(
 /// - This runs on a single-threaded tokio runtime (no parallel task execution)
 /// - No spawn_local calls exist that could create concurrent access to `runtime`
 /// - The runtime Rc<RefCell<>> is never shared with other concurrent tasks
-#[allow(clippy::await_holding_refcell_ref)]
-async fn execute_action_with_hooks(
-    action_name: &str,
-    response: oneshot::Sender<Result<()>>,
-    runtime: Rc<RefCell<TypeScriptRuntime>>,
-) {
-    tracing::trace!(
-        "execute_action_with_hooks: starting action '{}'",
-        action_name
-    );
 
-    // Execute the action - we can't process hooks during this because the runtime
-    // is borrowed. Instead, we need a different approach to break the deadlock.
-    //
-    // The deadlock scenario is:
-    // 1. Action awaits response from main thread
-    // 2. Main thread calls run_hook_blocking and waits
-    // 3. Main thread can't deliver response because it's waiting
-    // 4. Plugin thread can't process hook because action has runtime
-    //
-    // The fix is to make the main thread continue processing commands while
-    // waiting for hooks. But for now, we execute the action and hope for the best.
-    // A proper fix requires changes to the main thread's wait_for logic.
-
-    let result = runtime.borrow_mut().execute_action(action_name).await;
-
-    tracing::trace!(
-        "execute_action_with_hooks: action '{}' completed with result: {:?}",
-        action_name,
-        result.is_ok()
-    );
-    let _ = response.send(result);
-}
-
-/// Run a hook with Rc<RefCell<TypeScriptRuntime>>
+/// Run a hook with Rc<RefCell<QuickJsBackend>>
 ///
 /// # Safety (clippy::await_holding_refcell_ref)
 /// The RefCell borrow held across await is safe because:
@@ -684,7 +740,7 @@ async fn execute_action_with_hooks(
 /// - The runtime Rc<RefCell<>> is never shared with other concurrent tasks
 #[allow(clippy::await_holding_refcell_ref)]
 async fn run_hook_internal_rc(
-    runtime: Rc<RefCell<TypeScriptRuntime>>,
+    runtime: Rc<RefCell<QuickJsBackend>>,
     hook_name: &str,
     args: &HookArgs,
 ) -> Result<()> {
@@ -712,7 +768,7 @@ async fn run_hook_internal_rc(
 /// Handle a single request in the plugin thread
 async fn handle_request(
     request: PluginRequest,
-    runtime: Rc<RefCell<TypeScriptRuntime>>,
+    runtime: Rc<RefCell<QuickJsBackend>>,
     plugins: &mut HashMap<String, TsPluginInfo>,
     commands: &Arc<RwLock<CommandRegistry>>,
 ) -> bool {
@@ -771,18 +827,31 @@ async fn handle_request(
         PluginRequest::RunHook { hook_name, args } => {
             // Fire-and-forget hook execution
             let hook_start = std::time::Instant::now();
-            tracing::trace!(hook = %hook_name, "RunHook request received");
+            // Use info level for prompt hooks to aid debugging
+            if hook_name == "prompt_confirmed" || hook_name == "prompt_cancelled" {
+                tracing::info!(hook = %hook_name, ?args, "RunHook request received (prompt hook)");
+            } else {
+                tracing::trace!(hook = %hook_name, "RunHook request received");
+            }
             if let Err(e) = run_hook_internal_rc(Rc::clone(&runtime), &hook_name, &args).await {
                 let error_msg = format!("Plugin error in '{}': {}", hook_name, e);
                 tracing::error!("{}", error_msg);
                 // Surface the error to the UI
                 runtime.borrow_mut().send_status(error_msg);
             }
-            tracing::trace!(
-                hook = %hook_name,
-                elapsed_ms = hook_start.elapsed().as_millis(),
-                "RunHook completed"
-            );
+            if hook_name == "prompt_confirmed" || hook_name == "prompt_cancelled" {
+                tracing::info!(
+                    hook = %hook_name,
+                    elapsed_ms = hook_start.elapsed().as_millis(),
+                    "RunHook completed (prompt hook)"
+                );
+            } else {
+                tracing::trace!(
+                    hook = %hook_name,
+                    elapsed_ms = hook_start.elapsed().as_millis(),
+                    "RunHook completed"
+                );
+            }
         }
 
         PluginRequest::HasHookHandlers {
@@ -796,6 +865,30 @@ async fn handle_request(
         PluginRequest::ListPlugins { response } => {
             let plugin_list: Vec<TsPluginInfo> = plugins.values().cloned().collect();
             let _ = response.send(plugin_list);
+        }
+
+        PluginRequest::ResolveCallback {
+            callback_id,
+            result_json,
+        } => {
+            tracing::info!(
+                "ResolveCallback: resolving callback_id={} with result_json={}",
+                callback_id,
+                result_json
+            );
+            runtime
+                .borrow_mut()
+                .resolve_callback(callback_id, &result_json);
+            // resolve_callback now runs execute_pending_job() internally
+            tracing::info!(
+                "ResolveCallback: done resolving callback_id={}",
+                callback_id
+            );
+        }
+
+        PluginRequest::RejectCallback { callback_id, error } => {
+            runtime.borrow_mut().reject_callback(callback_id, &error);
+            // reject_callback now runs execute_pending_job() internally
         }
 
         PluginRequest::Shutdown => {
@@ -816,7 +909,7 @@ async fn handle_request(
 /// - The runtime Rc<RefCell<>> is never shared with other concurrent tasks
 #[allow(clippy::await_holding_refcell_ref)]
 async fn load_plugin_internal(
-    runtime: Rc<RefCell<TypeScriptRuntime>>,
+    runtime: Rc<RefCell<QuickJsBackend>>,
     plugins: &mut HashMap<String, TsPluginInfo>,
     path: &Path,
 ) -> Result<()> {
@@ -885,7 +978,7 @@ async fn load_plugin_internal(
 
 /// Load all plugins from a directory
 async fn load_plugins_from_dir_internal(
-    runtime: Rc<RefCell<TypeScriptRuntime>>,
+    runtime: Rc<RefCell<QuickJsBackend>>,
     plugins: &mut HashMap<String, TsPluginInfo>,
     dir: &Path,
 ) -> Vec<String> {
@@ -940,7 +1033,7 @@ async fn load_plugins_from_dir_internal(
 /// Returns (errors, discovered_plugins) where discovered_plugins contains all
 /// found plugin files with their configs (respecting enabled state from provided configs)
 async fn load_plugins_from_dir_with_config_internal(
-    runtime: Rc<RefCell<TypeScriptRuntime>>,
+    runtime: Rc<RefCell<QuickJsBackend>>,
     plugins: &mut HashMap<String, TsPluginInfo>,
     dir: &Path,
     plugin_configs: &HashMap<String, PluginConfig>,
@@ -1056,7 +1149,7 @@ fn unload_plugin_internal(
 
 /// Reload a plugin
 async fn reload_plugin_internal(
-    runtime: Rc<RefCell<TypeScriptRuntime>>,
+    runtime: Rc<RefCell<QuickJsBackend>>,
     plugins: &mut HashMap<String, TsPluginInfo>,
     commands: &Arc<RwLock<CommandRegistry>>,
     name: &str,

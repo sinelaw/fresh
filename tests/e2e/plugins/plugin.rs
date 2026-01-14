@@ -947,9 +947,9 @@ fn test_plugin_multiple_actions_no_deadlock() {
 const editor = getEditor();
 // Test plugin for multiple concurrent actions
 
-editor.registerCommand("Action A", "Set status to A", "action_a", "normal");
-editor.registerCommand("Action B", "Set status to B", "action_b", "normal");
-editor.registerCommand("Action C", "Set status to C", "action_c", "normal");
+editor.registerCommand("Action A", "Set status to A", "action_a", null);
+editor.registerCommand("Action B", "Set status to B", "action_b", null);
+editor.registerCommand("Action C", "Set status to C", "action_c", null);
 
 globalThis.action_a = function(): void {
     editor.setStatus("Status: A executed");
@@ -1677,6 +1677,10 @@ fn test_clangd_plugin_switch_source_header() -> anyhow::Result<()> {
 /// Test that plugin commands show the plugin name as source in command palette
 #[test]
 fn test_plugin_command_source_in_palette() {
+    // Initialize tracing and signal handlers for debugging
+    init_tracing_from_env();
+    fresh::services::signal_handler::install_signal_handlers();
+
     // Create a temporary project directory
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");
@@ -1696,7 +1700,7 @@ editor.registerCommand(
     "Test Source Plugin Command",
     "A special command for testing",
     "test_source_action",
-    "normal"
+    null
 );
 
 editor.setStatus("Test source plugin loaded!");

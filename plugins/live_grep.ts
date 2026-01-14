@@ -92,7 +92,7 @@ editor.registerCommand(
   "%cmd.live_grep",
   "%cmd.live_grep_desc",
   "start_live_grep",
-  "normal"
+  null
 );
 
 editor.debug("Live Grep plugin loaded (using Finder abstraction)");

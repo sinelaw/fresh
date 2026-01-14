@@ -1103,21 +1103,21 @@ globalThis.review_drill_down = async () => {
         const oldBufferId = await editor.createVirtualBuffer({
             name: `*OLD:${h.file}*`,
             mode: "normal",
-            read_only: true,
+            readOnly: true,
             entries: oldEntries,
-            show_line_numbers: true,
-            editing_disabled: true,
-            hidden_from_tabs: true
+            showLineNumbers: true,
+            editingDisabled: true,
+            hiddenFromTabs: true
         });
 
         const newBufferId = await editor.createVirtualBuffer({
             name: `*NEW:${h.file}*`,
             mode: "normal",
-            read_only: true,
+            readOnly: true,
             entries: newEntries,
-            show_line_numbers: true,
-            editing_disabled: true,
-            hidden_from_tabs: true
+            showLineNumbers: true,
+            editingDisabled: true,
+            hiddenFromTabs: true
         });
 
         // Convert hunks to composite buffer format (parse counts from git diff)
@@ -1493,7 +1493,7 @@ globalThis.start_review_diff = async () => {
     state.comments = []; // Reset comments for new session
 
     const bufferId = await VirtualBufferFactory.create({
-        name: "*Review Diff*", mode: "review-mode", read_only: true,
+        name: "*Review Diff*", mode: "review-mode", readOnly: true,
         entries: (await renderReviewStream()).entries, showLineNumbers: false
     });
     state.reviewBufferId = bufferId;
@@ -1666,21 +1666,21 @@ globalThis.side_by_side_diff_current_file = async () => {
     const oldBufferId = await editor.createVirtualBuffer({
         name: `*OLD:${filePath}*`,
         mode: "normal",
-        read_only: true,
+        readOnly: true,
         entries: oldEntries,
-        show_line_numbers: true,
-        editing_disabled: true,
-        hidden_from_tabs: true
+        showLineNumbers: true,
+        editingDisabled: true,
+        hiddenFromTabs: true
     });
 
     const newBufferId = await editor.createVirtualBuffer({
         name: `*NEW:${filePath}*`,
         mode: "normal",
-        read_only: true,
+        readOnly: true,
         entries: newEntries,
-        show_line_numbers: true,
-        editing_disabled: true,
-        hidden_from_tabs: true
+        showLineNumbers: true,
+        editingDisabled: true,
+        hiddenFromTabs: true
     });
 
     // Convert hunks to composite buffer format

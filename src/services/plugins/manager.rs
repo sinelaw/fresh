@@ -213,7 +213,7 @@ impl PluginManager {
 
     /// List all loaded plugins.
     #[cfg(feature = "plugins")]
-    pub fn list_plugins(&self) -> Vec<super::runtime::TsPluginInfo> {
+    pub fn list_plugins(&self) -> Vec<super::backend::TsPluginInfo> {
         self.inner
             .as_ref()
             .map(|m| m.list_plugins())
@@ -242,6 +242,22 @@ impl PluginManager {
         {
             let _ = hook_name;
             false
+        }
+    }
+
+    /// Resolve an async callback in the plugin runtime
+    #[cfg(feature = "plugins")]
+    pub fn resolve_callback(&self, callback_id: super::api::JsCallbackId, result_json: String) {
+        if let Some(inner) = &self.inner {
+            inner.resolve_callback(callback_id, result_json);
+        }
+    }
+
+    /// Reject an async callback in the plugin runtime
+    #[cfg(feature = "plugins")]
+    pub fn reject_callback(&self, callback_id: super::api::JsCallbackId, error: String) {
+        if let Some(inner) = &self.inner {
+            inner.reject_callback(callback_id, error);
         }
     }
 }

@@ -209,6 +209,10 @@ pub struct Editor {
     /// Plugin-provided status message (displayed alongside the core status)
     plugin_status_message: Option<String>,
 
+    /// Accumulated plugin errors (for test assertions)
+    /// These are collected when plugin error messages are received
+    plugin_errors: Vec<String>,
+
     /// Active prompt (minibuffer)
     prompt: Option<Prompt>,
 
@@ -420,6 +424,10 @@ pub struct Editor {
     /// Named panel IDs mapping (for idempotent panel operations)
     /// Maps panel ID (e.g., "diagnostics") to buffer ID
     panel_ids: HashMap<String, BufferId>,
+
+    /// Background process abort handles for cancellation
+    /// Maps process_id to abort handle
+    background_process_handles: HashMap<u64, tokio::task::AbortHandle>,
 
     /// Prompt histories keyed by prompt type name (e.g., "search", "replace", "goto_line", "plugin:custom_name")
     /// This provides a generic history system that works for all prompt types including plugin prompts.
@@ -823,6 +831,14 @@ impl Editor {
             dir_context.clone(),
         );
 
+        // Update the plugin state snapshot with working_dir BEFORE loading plugins
+        // This ensures plugins can call getCwd() correctly during initialization
+        #[cfg(feature = "plugins")]
+        if let Some(snapshot_handle) = plugin_manager.state_snapshot_handle() {
+            let mut snapshot = snapshot_handle.write().unwrap();
+            snapshot.working_dir = working_dir.clone();
+        }
+
         // Load TypeScript plugins from multiple directories:
         // 1. Next to the executable (for cargo-dist installations)
         // 2. In the working directory (for development/local usage)
@@ -931,6 +947,7 @@ impl Editor {
             restart_with_dir: None,
             status_message: None,
             plugin_status_message: None,
+            plugin_errors: Vec::new(),
             prompt: None,
             terminal_width: width,
             terminal_height: height,
@@ -1002,6 +1019,7 @@ impl Editor {
             plugin_manager,
             seen_byte_ranges: HashMap::new(),
             panel_ids: HashMap::new(),
+            background_process_handles: HashMap::new(),
             prompt_histories: {
                 // Load prompt histories from disk if available
                 let mut histories = HashMap::new();
@@ -3030,6 +3048,17 @@ impl Editor {
             .or(self.status_message.as_ref())
     }
 
+    /// Get accumulated plugin errors (for test assertions)
+    /// Returns all error messages that were detected in plugin status messages
+    pub fn get_plugin_errors(&self) -> &[String] {
+        &self.plugin_errors
+    }
+
+    /// Clear accumulated plugin errors
+    pub fn clear_plugin_errors(&mut self) {
+        self.plugin_errors.clear();
+    }
+
     /// Update prompt suggestions based on current input
     pub fn update_prompt_suggestions(&mut self) {
         // Extract prompt type and input to avoid borrow checker issues
@@ -3343,7 +3372,56 @@ impl Editor {
                     stderr,
                     exit_code,
                 } => {
-                    self.handle_plugin_process_output(process_id, stdout, stderr, exit_code);
+                    self.handle_plugin_process_output(
+                        crate::services::plugins::api::JsCallbackId::from(process_id),
+                        stdout,
+                        stderr,
+                        exit_code,
+                    );
+                }
+                AsyncMessage::PluginDelayComplete { callback_id } => {
+                    self.plugin_manager.resolve_callback(
+                        crate::services::plugins::api::JsCallbackId::from(callback_id),
+                        "null".to_string(),
+                    );
+                }
+                AsyncMessage::PluginProcessStdout { process_id, data } => {
+                    // Run onProcessStdout hook for streaming output
+                    self.plugin_manager.run_hook(
+                        "onProcessStdout",
+                        crate::services::plugins::hooks::HookArgs::ProcessOutput {
+                            process_id,
+                            data,
+                        },
+                    );
+                }
+                AsyncMessage::PluginProcessStderr { process_id, data } => {
+                    // Run onProcessStderr hook for streaming output
+                    self.plugin_manager.run_hook(
+                        "onProcessStderr",
+                        crate::services::plugins::hooks::HookArgs::ProcessOutput {
+                            process_id,
+                            data,
+                        },
+                    );
+                }
+                AsyncMessage::PluginBackgroundProcessExit {
+                    process_id,
+                    callback_id,
+                    exit_code,
+                } => {
+                    // Clean up abort handle
+                    self.background_process_handles.remove(&process_id);
+                    // Resolve callback with exit info
+                    // Using BackgroundProcessResult struct ensures field names match TypeScript types
+                    let result = crate::services::plugins::api::BackgroundProcessResult {
+                        process_id,
+                        exit_code,
+                    };
+                    self.plugin_manager.resolve_callback(
+                        crate::services::plugins::api::JsCallbackId::from(callback_id),
+                        serde_json::to_string(&result).unwrap(),
+                    );
                 }
                 AsyncMessage::CustomNotification {
                     language,
@@ -4007,19 +4085,222 @@ impl Editor {
                 self.handle_set_clipboard(text);
             }
 
-            // ==================== Deprecated Commands ====================
+            // ==================== Async Plugin Commands ====================
             PluginCommand::SpawnProcess {
                 command,
                 args,
                 cwd,
-                callback_id: _,
+                callback_id,
             } => {
+                // Spawn process asynchronously via tokio
+                if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+                    let effective_cwd = cwd.unwrap_or_else(|| {
+                        std::env::current_dir()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_else(|_| ".".to_string())
+                    });
+                    let sender = bridge.sender();
+                    runtime.spawn(async move {
+                        let output = tokio::process::Command::new(&command)
+                            .args(&args)
+                            .current_dir(&effective_cwd)
+                            .output()
+                            .await;
+
+                        match output {
+                            Ok(output) => {
+                                let _ = sender.send(AsyncMessage::PluginProcessOutput {
+                                    process_id: callback_id.as_u64(),
+                                    stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                                    exit_code: output.status.code().unwrap_or(-1),
+                                });
+                            }
+                            Err(e) => {
+                                let _ = sender.send(AsyncMessage::PluginProcessOutput {
+                                    process_id: callback_id.as_u64(),
+                                    stdout: String::new(),
+                                    stderr: e.to_string(),
+                                    exit_code: -1,
+                                });
+                            }
+                        }
+                    });
+                } else {
+                    // Fallback to blocking if no runtime available
+                    let effective_cwd = cwd.unwrap_or_else(|| ".".to_string());
+                    match std::process::Command::new(&command)
+                        .args(&args)
+                        .current_dir(&effective_cwd)
+                        .output()
+                    {
+                        Ok(output) => {
+                            // Using SpawnResult struct ensures field names match TypeScript types
+                            let result = crate::services::plugins::api::SpawnResult {
+                                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                                exit_code: output.status.code().unwrap_or(-1),
+                            };
+                            self.plugin_manager.resolve_callback(
+                                callback_id,
+                                serde_json::to_string(&result).unwrap(),
+                            );
+                        }
+                        Err(e) => {
+                            self.plugin_manager
+                                .reject_callback(callback_id, e.to_string());
+                        }
+                    }
+                }
+            }
+
+            PluginCommand::SpawnProcessWait {
+                process_id,
+                callback_id,
+            } => {
+                // TODO: Implement proper process wait tracking
+                // For now, just reject with an error since there's no process tracking yet
                 tracing::warn!(
-                    "SpawnProcess command with callback is deprecated. TypeScript plugins use native async. Command: {}",
-                    command
+                    "SpawnProcessWait not fully implemented - process_id={}",
+                    process_id
                 );
-                let _ = args;
-                let _ = cwd;
+                self.plugin_manager.reject_callback(
+                    callback_id,
+                    format!(
+                        "SpawnProcessWait not yet fully implemented for process_id={}",
+                        process_id
+                    ),
+                );
+            }
+
+            PluginCommand::Delay {
+                callback_id,
+                duration_ms,
+            } => {
+                // Spawn async delay via tokio
+                if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+                    let sender = bridge.sender();
+                    let callback_id_u64 = callback_id.as_u64();
+                    runtime.spawn(async move {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(duration_ms)).await;
+                        let _ = sender.send(AsyncMessage::PluginDelayComplete {
+                            callback_id: callback_id_u64,
+                        });
+                    });
+                } else {
+                    // Fallback to blocking if no runtime available
+                    std::thread::sleep(std::time::Duration::from_millis(duration_ms));
+                    self.plugin_manager
+                        .resolve_callback(callback_id, "null".to_string());
+                }
+            }
+
+            PluginCommand::SpawnBackgroundProcess {
+                process_id,
+                command,
+                args,
+                cwd,
+                callback_id,
+            } => {
+                // Spawn background process with streaming output via tokio
+                if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+                    use tokio::io::{AsyncBufReadExt, BufReader};
+                    use tokio::process::Command as TokioCommand;
+
+                    let effective_cwd = cwd.unwrap_or_else(|| {
+                        std::env::current_dir()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_else(|_| ".".to_string())
+                    });
+
+                    let sender = bridge.sender();
+                    let sender_stdout = sender.clone();
+                    let sender_stderr = sender.clone();
+                    let callback_id_u64 = callback_id.as_u64();
+
+                    let handle = runtime.spawn(async move {
+                        let mut child = match TokioCommand::new(&command)
+                            .args(&args)
+                            .current_dir(&effective_cwd)
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped())
+                            .spawn()
+                        {
+                            Ok(child) => child,
+                            Err(e) => {
+                                let _ = sender.send(AsyncMessage::PluginBackgroundProcessExit {
+                                    process_id,
+                                    callback_id: callback_id_u64,
+                                    exit_code: -1,
+                                });
+                                tracing::error!("Failed to spawn background process: {}", e);
+                                return;
+                            }
+                        };
+
+                        // Stream stdout
+                        let stdout = child.stdout.take();
+                        let stderr = child.stderr.take();
+                        let pid = process_id;
+
+                        // Spawn stdout reader
+                        if let Some(stdout) = stdout {
+                            let sender = sender_stdout;
+                            tokio::spawn(async move {
+                                let reader = BufReader::new(stdout);
+                                let mut lines = reader.lines();
+                                while let Ok(Some(line)) = lines.next_line().await {
+                                    let _ = sender.send(AsyncMessage::PluginProcessStdout {
+                                        process_id: pid,
+                                        data: line + "\n",
+                                    });
+                                }
+                            });
+                        }
+
+                        // Spawn stderr reader
+                        if let Some(stderr) = stderr {
+                            let sender = sender_stderr;
+                            tokio::spawn(async move {
+                                let reader = BufReader::new(stderr);
+                                let mut lines = reader.lines();
+                                while let Ok(Some(line)) = lines.next_line().await {
+                                    let _ = sender.send(AsyncMessage::PluginProcessStderr {
+                                        process_id: pid,
+                                        data: line + "\n",
+                                    });
+                                }
+                            });
+                        }
+
+                        // Wait for process to complete
+                        let exit_code = match child.wait().await {
+                            Ok(status) => status.code().unwrap_or(-1),
+                            Err(_) => -1,
+                        };
+
+                        let _ = sender.send(AsyncMessage::PluginBackgroundProcessExit {
+                            process_id,
+                            callback_id: callback_id_u64,
+                            exit_code,
+                        });
+                    });
+
+                    // Store abort handle for potential kill
+                    self.background_process_handles
+                        .insert(process_id, handle.abort_handle());
+                } else {
+                    // No runtime - reject immediately
+                    self.plugin_manager
+                        .reject_callback(callback_id, "Async runtime not available".to_string());
+                }
+            }
+
+            PluginCommand::KillBackgroundProcess { process_id } => {
+                if let Some(handle) = self.background_process_handles.remove(&process_id) {
+                    handle.abort();
+                    tracing::debug!("Killed background process {}", process_id);
+                }
             }
 
             // ==================== Virtual Buffer Commands (complex, kept inline) ====================
@@ -4087,18 +4368,18 @@ impl Editor {
 
                         // Send response if request_id is present
                         if let Some(req_id) = request_id {
-                            tracing::trace!(
-                                "CreateVirtualBufferWithContent: sending response for request_id={}, buffer_id={:?}",
+                            tracing::info!(
+                                "CreateVirtualBufferWithContent: resolving callback for request_id={}, buffer_id={:?}",
                                 req_id,
                                 buffer_id
                             );
-                            self.send_plugin_response(
-                                crate::services::plugins::api::PluginResponse::VirtualBufferCreated {
-                                    buffer_id,
-                                    request_id: req_id,
-                                    split_id: None, // Created in current split, not a new split
-                                },
+                            // createVirtualBuffer returns just the buffer ID (number), not an object
+                            let result = buffer_id.0.to_string();
+                            self.plugin_manager.resolve_callback(
+                                crate::services::plugins::api::JsCallbackId::from(req_id),
+                                result,
                             );
+                            tracing::info!("CreateVirtualBufferWithContent: resolve_callback sent for request_id={}", req_id);
                         }
                     }
                     Err(e) => {
@@ -4147,14 +4428,15 @@ impl Editor {
                                 );
                             }
 
-                            // Send response with existing buffer ID and split ID
+                            // Send response with existing buffer ID and split ID via callback resolution
                             if let Some(req_id) = request_id {
-                                self.send_plugin_response(
-                                    crate::services::plugins::api::PluginResponse::VirtualBufferCreated {
-                                        request_id: req_id,
-                                        buffer_id: existing_buffer_id,
-                                        split_id: splits.first().copied(),
-                                    },
+                                let result = serde_json::json!({
+                                    "bufferId": existing_buffer_id.0,
+                                    "splitId": splits.first().map(|s| s.0)
+                                });
+                                self.plugin_manager.resolve_callback(
+                                    crate::services::plugins::api::JsCallbackId::from(req_id),
+                                    result.to_string(),
                                 );
                             }
                             return Ok(());
@@ -4247,15 +4529,16 @@ impl Editor {
                         }
                     };
 
-                // Send response with buffer ID and split ID
+                // Send response with buffer ID and split ID via callback resolution
                 if let Some(req_id) = request_id {
-                    tracing::trace!("CreateVirtualBufferInSplit: sending response for request_id={}, buffer_id={:?}, split_id={:?}", req_id, buffer_id, created_split_id);
-                    self.send_plugin_response(
-                        crate::services::plugins::api::PluginResponse::VirtualBufferCreated {
-                            request_id: req_id,
-                            buffer_id,
-                            split_id: created_split_id,
-                        },
+                    tracing::trace!("CreateVirtualBufferInSplit: resolving callback for request_id={}, buffer_id={:?}, split_id={:?}", req_id, buffer_id, created_split_id);
+                    let result = serde_json::json!({
+                        "bufferId": buffer_id.0,
+                        "splitId": created_split_id.map(|s| s.0)
+                    });
+                    self.plugin_manager.resolve_callback(
+                        crate::services::plugins::api::JsCallbackId::from(req_id),
+                        result.to_string(),
                     );
                 }
             }
@@ -4341,14 +4624,12 @@ impl Editor {
                     );
                 }
 
-                // Send response with buffer ID and split ID
+                // Send response with buffer ID via callback resolution
                 if let Some(req_id) = request_id {
-                    self.send_plugin_response(
-                        crate::services::plugins::api::PluginResponse::VirtualBufferCreated {
-                            request_id: req_id,
-                            buffer_id,
-                            split_id: Some(split_id),
-                        },
+                    // Return just the buffer ID as a number (consistent with TypeScript definition)
+                    self.plugin_manager.resolve_callback(
+                        crate::services::plugins::api::JsCallbackId::from(req_id),
+                        buffer_id.0.to_string(),
                     );
                 }
             }
@@ -4609,11 +4890,18 @@ impl Editor {
             Err(format!("Buffer {:?} not found", buffer_id))
         };
 
-        // Send response via plugin manager
-        self.send_plugin_response(crate::services::plugins::api::PluginResponse::BufferText {
-            request_id,
-            text: result,
-        });
+        // Resolve the JavaScript Promise callback directly
+        let callback_id = crate::services::plugins::api::JsCallbackId::from(request_id);
+        match result {
+            Ok(text) => {
+                // Serialize text as JSON string
+                let json = serde_json::to_string(&text).unwrap_or_else(|_| "null".to_string());
+                self.plugin_manager.resolve_callback(callback_id, json);
+            }
+            Err(error) => {
+                self.plugin_manager.reject_callback(callback_id, error);
+            }
+        }
     }
 
     /// Set the global editor mode (for vi mode)

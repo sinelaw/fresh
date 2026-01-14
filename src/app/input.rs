@@ -921,6 +921,7 @@ impl Editor {
                 }
             }
             Action::PluginAction(action_name) => {
+                tracing::debug!("handle_action: PluginAction('{}')", action_name);
                 // Execute the plugin callback via TypeScript plugin thread
                 // Use non-blocking version to avoid deadlock with async plugin ops
                 #[cfg(feature = "plugins")]

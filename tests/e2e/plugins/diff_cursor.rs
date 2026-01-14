@@ -1358,11 +1358,11 @@ fn test_diff_cursor_wrap_left_to_prev_line() {
         screen
     );
 
-    // Should be at end of line 2 (column 6 for "first" which has 5 chars, cursor at end is col 6)
-    // Note: Column might be displayed as 5 or 6 depending on 0-indexed vs 1-indexed
+    // Should be at end of line 2 (column 10 for "first_mod" which has 9 chars, cursor at end is col 10)
+    // Note: Column might be displayed as 9 or 10 depending on 0-indexed vs 1-indexed
     assert!(
-        screen.contains("Col 5") || screen.contains("Col 6"),
-        "Should be at end of line (col 5 or 6), got: {}",
+        screen.contains("Col 9") || screen.contains("Col 10"),
+        "Should be at end of line (col 9 or 10), got: {}",
         screen
     );
 }

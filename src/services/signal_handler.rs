@@ -1,3 +1,62 @@
+use std::sync::Mutex;
+
+/// Global storage for JavaScript execution state (thread-safe)
+/// This is updated by the plugin thread and read by signal handlers
+static JS_EXECUTION_STATE: Mutex<String> = Mutex::new(String::new());
+
+/// Update the current JavaScript execution state.
+/// Called by the plugin thread when execution state changes.
+pub fn set_js_execution_state(state: String) {
+    if let Ok(mut guard) = JS_EXECUTION_STATE.lock() {
+        *guard = state;
+    }
+}
+
+/// Clear the JavaScript execution state.
+pub fn clear_js_execution_state() {
+    if let Ok(mut guard) = JS_EXECUTION_STATE.lock() {
+        guard.clear();
+    }
+}
+
+/// Get the current JavaScript execution state (for signal handler).
+pub fn get_js_execution_state() -> String {
+    JS_EXECUTION_STATE
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_else(|_| "(mutex poisoned)".to_string())
+}
+
+/// Global callback for dumping JavaScript state on signal
+static JS_DUMP_CALLBACK: Mutex<Option<Box<dyn Fn() + Send + Sync>>> = Mutex::new(None);
+
+/// Register a callback to dump JavaScript state when a signal is received.
+/// This is called by the plugin manager to register its dump function.
+pub fn register_js_dump_callback<F>(callback: F)
+where
+    F: Fn() + Send + Sync + 'static,
+{
+    *JS_DUMP_CALLBACK.lock().unwrap() = Some(Box::new(callback));
+}
+
+/// Dump JavaScript state (called from signal handler)
+pub fn dump_js_state() {
+    // First dump the execution state string (thread-safe)
+    let state = get_js_execution_state();
+    if !state.is_empty() {
+        tracing::error!("Current JS execution: {}", state);
+    } else {
+        tracing::error!("JS execution state: (idle or not tracked)");
+    }
+
+    // Then call the custom callback if registered
+    if let Ok(guard) = JS_DUMP_CALLBACK.lock() {
+        if let Some(ref callback) = *guard {
+            callback();
+        }
+    }
+}
+
 /// Initialize signal handlers for SIGTERM and SIGINT.
 /// On Linux, dumps thread backtraces before terminating.
 /// On other platforms, this is a no-op (default terminal behavior applies).
@@ -37,9 +96,16 @@ mod linux {
                 return;
             }
 
-            tracing::error!("Signal received, dumping thread backtraces...");
+            tracing::error!("=== SIGNAL RECEIVED - Dumping debug info ===");
+
+            // Dump JavaScript state first (if registered)
+            tracing::error!("--- JavaScript State ---");
+            super::dump_js_state();
+
+            // Then dump Rust thread backtraces
+            tracing::error!("--- Rust Thread Backtraces ---");
             dump_all_thread_backtraces();
-            tracing::error!("Backtrace dump complete, terminating process");
+            tracing::error!("=== Debug dump complete, terminating process ===");
 
             // Terminate the process
             std::process::exit(130); // Standard exit code for Ctrl+C

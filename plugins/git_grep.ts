@@ -67,7 +67,7 @@ globalThis.start_git_grep = function (): void {
 };
 
 // Register command
-editor.registerCommand("%cmd.grep", "%cmd.grep_desc", "start_git_grep", "normal");
+editor.registerCommand("%cmd.grep", "%cmd.grep_desc", "start_git_grep", null);
 
 // Log that plugin loaded successfully
 editor.debug("Git Grep plugin loaded (using Finder abstraction)");

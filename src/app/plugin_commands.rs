@@ -945,6 +945,16 @@ impl Editor {
         if message.trim().is_empty() {
             self.plugin_status_message = None;
         } else {
+            // Detect plugin errors and collect them for test assertions
+            // Error patterns: "Plugin error", "JS error", "handler error"
+            let lower = message.to_lowercase();
+            if lower.contains("plugin error")
+                || lower.contains("js error")
+                || lower.contains("handler error")
+                || lower.contains("error in")
+            {
+                self.plugin_errors.push(message.clone());
+            }
             self.plugin_status_message = Some(message);
         }
     }
@@ -1022,6 +1032,11 @@ impl Editor {
 
     /// Handle RegisterCommand command
     pub(super) fn handle_register_command(&self, command: crate::input::commands::Command) {
+        tracing::debug!(
+            "handle_register_command: name='{}', action={:?}",
+            command.name,
+            command.action
+        );
         self.command_registry.read().unwrap().register(command);
     }
 
@@ -1118,10 +1133,10 @@ impl Editor {
             Some("LSP manager not initialized".to_string())
         };
         if let Some(err_msg) = error {
-            self.send_plugin_response(PluginResponse::LspRequest {
-                request_id,
-                result: Err(err_msg),
-            });
+            self.plugin_manager.reject_callback(
+                crate::services::plugins::api::JsCallbackId::from(request_id),
+                err_msg,
+            );
         }
     }
 

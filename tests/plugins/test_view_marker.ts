@@ -1,4 +1,4 @@
-/// <reference path="../types/fresh.d.ts" />
+/// <reference path="../../plugins/lib/fresh.d.ts" />
 const editor = getEditor();
 
 /**
@@ -50,7 +50,7 @@ function addTestHeaders(bufferId: number): void {
         byteOffset,
         `── Header before line ${lineNum} ──`,
         200, 200, 100,  // Yellow-ish fg
-        -1, -1, -1,     // No background
+        0, 0, 0,        // Black background (u8 values required)
         true,           // above
         TEST_NAMESPACE,
         0
@@ -66,7 +66,7 @@ function addTestHeaders(bufferId: number): void {
       0,
       "== INTERLEAVED HEADER ==",
       255, 255, 0,  // Yellow fg
-      -1, -1, -1,   // No background
+      0, 0, 0,      // Black background (u8 values required)
       true,         // above
       TEST_NAMESPACE,
       -1  // lower priority to appear first
@@ -78,7 +78,7 @@ function addTestHeaders(bufferId: number): void {
       0,
       "== HEADER AT BYTE 0 ==",
       255, 255, 0,  // Yellow fg
-      -1, -1, -1,   // No background
+      0, 0, 0,      // Black background (u8 values required)
       true,         // above
       TEST_NAMESPACE,
       0
@@ -91,7 +91,7 @@ function addTestHeaders(bufferId: number): void {
         0,
         `Virtual pad ${i + 1}`,
         180, 180, 180,  // Light gray fg
-        -1, -1, -1,     // No background
+        0, 0, 0,        // Black background (u8 values required)
         true,           // above
         TEST_NAMESPACE,
         i + 1  // increasing priority so they appear in order after header
@@ -119,12 +119,12 @@ async function open_test_view_marker(padLines: number, name: string): Promise<vo
   const bufferId = await editor.createVirtualBufferInExistingSplit({
     name,
     mode: "test-view-marker",
-    read_only: true,
+    readOnly: true,
     entries,
-    split_id: splitId,
-    show_line_numbers: true,
-    show_cursors: true,
-    editing_disabled: true,
+    splitId: splitId,
+    showLineNumbers: true,
+    showCursors: true,
+    editingDisabled: true,
   });
 
   if (bufferId !== null) {
@@ -160,12 +160,12 @@ async function open_test_view_marker_interleaved(name: string): Promise<void> {
   const bufferId = await editor.createVirtualBufferInExistingSplit({
     name,
     mode: "test-view-marker",
-    read_only: true,
+    readOnly: true,
     entries,
-    split_id: splitId,
-    show_line_numbers: true,
-    show_cursors: true,
-    editing_disabled: true,
+    splitId: splitId,
+    showLineNumbers: true,
+    showCursors: true,
+    editingDisabled: true,
   });
 
   if (bufferId !== null) {

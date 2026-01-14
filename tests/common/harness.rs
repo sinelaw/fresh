@@ -2,21 +2,18 @@
 
 use anyhow::Result as AnyhowResult;
 
-// Initialize V8 early - must happen before any Editor/JsRuntime is created
-// and only once per process. Using ctor ensures this runs at test startup.
-// Only needed when the plugins feature is enabled.
-#[cfg(feature = "plugins")]
-#[ctor::ctor]
-fn init_v8_for_tests() {
-    fresh::v8_init::init();
-}
-
 // Common initialization (non-plugin related)
 #[ctor::ctor]
-fn init_keybindings_for_tests() {
+fn init_test_environment() {
     // Force Linux-style keybindings (Ctrl/Alt/Shift instead of ⌘/⌥/⇧)
     // to ensure consistent visual test output across platforms
     fresh::input::keybindings::set_force_linux_keybindings(true);
+
+    // Install signal handlers for debugging hangs (dumps JS + Rust stack traces on Ctrl+C)
+    fresh::services::signal_handler::install_signal_handlers();
+
+    // Enable panicking on JS errors so plugin bugs surface immediately in tests
+    fresh::services::plugins::backend::set_panic_on_js_errors(true);
 }
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -1099,6 +1096,31 @@ impl EditorTestHarness {
         );
     }
 
+    /// Assert that no plugin errors have occurred
+    /// This checks the accumulated error messages from plugin execution
+    /// Call this at key points in tests to catch plugin errors early
+    pub fn assert_no_plugin_errors(&self) {
+        let errors = self.editor.get_plugin_errors();
+        if !errors.is_empty() {
+            let screen = self.screen_to_string();
+            panic!(
+                "Plugin error(s) occurred:\n{}\n\nScreen content:\n{}",
+                errors.join("\n"),
+                screen
+            );
+        }
+    }
+
+    /// Get any accumulated plugin errors
+    pub fn get_plugin_errors(&self) -> &[String] {
+        self.editor.get_plugin_errors()
+    }
+
+    /// Clear accumulated plugin errors (useful if testing error handling)
+    pub fn clear_plugin_errors(&mut self) {
+        self.editor.clear_plugin_errors();
+    }
+
     /// Get the buffer content (not screen, actual buffer text)
     /// Returns None for large files with unloaded regions (lazy loading)
     pub fn get_buffer_content(&self) -> Option<String> {
@@ -1509,6 +1531,7 @@ impl EditorTestHarness {
         let start = std::time::Instant::now();
         let timeout = std::time::Duration::from_millis(timeout_ms);
 
+        tracing::info!("waiting...");
         while start.elapsed() < timeout {
             self.process_async_and_render()?;
             if condition(self) {
@@ -1531,6 +1554,8 @@ impl EditorTestHarness {
         F: FnMut(&Self) -> bool,
     {
         const WAIT_SLEEP: std::time::Duration = std::time::Duration::from_millis(50);
+
+        tracing::info!("waiting...");
         loop {
             self.process_async_and_render()?;
             if condition(self) {
@@ -1583,6 +1608,7 @@ impl EditorTestHarness {
     /// Wait for screen to contain specific text
     pub fn wait_for_screen_contains(&mut self, text: &str) -> anyhow::Result<()> {
         let text = text.to_string();
+        tracing::info!("wait_for_screen_contains: {:?}", text);
         self.wait_until(move |h| h.screen_to_string().contains(&text))
     }
 

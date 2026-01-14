@@ -53,6 +53,8 @@ fn open_theme_editor(harness: &mut EditorTestHarness) {
 /// Test that the theme editor command is registered by the plugin
 #[test]
 fn test_theme_editor_command_registered() {
+    init_tracing_from_env();
+
     // Create a temporary project directory
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");
@@ -2202,6 +2204,9 @@ fn test_theme_editor_nostalgia_builtin_via_arrow_selection() {
 /// was selected, so "builtin:nostalgia" was not being passed correctly to the handler.
 #[test]
 fn test_theme_editor_select_nostalgia_from_dropdown() {
+    init_tracing_from_env();
+    eprintln!("[TEST] test_theme_editor_select_nostalgia_from_dropdown: starting");
+
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
@@ -2216,40 +2221,54 @@ fn test_theme_editor_select_nostalgia_from_dropdown() {
             .unwrap();
 
     harness.render().unwrap();
+    eprintln!("[TEST] harness created and rendered");
 
     // Open command palette
+    eprintln!("[TEST] opening command palette...");
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
+    eprintln!("[TEST] command palette opened");
 
+    eprintln!("[TEST] typing 'Edit Theme'...");
     harness.type_text("Edit Theme").unwrap();
     harness.render().unwrap();
+    eprintln!("[TEST] typed 'Edit Theme'");
 
+    eprintln!("[TEST] pressing Enter to execute command...");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
+    eprintln!("[TEST] Enter pressed, waiting for theme selection prompt...");
 
     // Wait for theme selection prompt
     harness
         .wait_until(|h| h.screen_to_string().contains("Select theme to edit"))
         .unwrap();
+    eprintln!("[TEST] theme selection prompt appeared");
 
     // Type "nostalgia" to filter the list
+    eprintln!("[TEST] typing 'nostalgia'...");
     harness.type_text("nostalgia").unwrap();
     harness.render().unwrap();
+    eprintln!("[TEST] typed 'nostalgia'");
 
     // Press Down to select the nostalgia suggestion from the dropdown
     // This is the key part - selecting from dropdown sends the suggestion's `value`
+    eprintln!("[TEST] pressing Down to select suggestion...");
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
+    eprintln!("[TEST] Down pressed");
 
     // Confirm selection
+    eprintln!("[TEST] pressing Enter to confirm selection...");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
+    eprintln!("[TEST] Enter pressed, waiting for Theme Editor to load...");
 
     // Wait for theme editor to fully load
     harness
@@ -2258,6 +2277,7 @@ fn test_theme_editor_select_nostalgia_from_dropdown() {
             screen.contains("Theme Editor") && !screen.contains("Loading theme editor")
         })
         .unwrap();
+    eprintln!("[TEST] Theme Editor loaded");
 
     let screen = harness.screen_to_string();
 

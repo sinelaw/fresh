@@ -5,9 +5,6 @@ rust_i18n::i18n!("locales", fallback = "en");
 
 pub mod i18n;
 
-#[cfg(feature = "plugins")]
-pub mod v8_init;
-
 // Core types and config are always available (needed for schema generation)
 pub mod config;
 pub mod partial_config;

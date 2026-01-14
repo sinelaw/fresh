@@ -272,6 +272,16 @@ pub enum HookArgs {
         /// The action ID selected, or "dismissed" if closed without selection
         action_id: String,
     },
+
+    /// Background process output (streaming)
+    /// This hook fires when a background process produces stdout or stderr output.
+    /// Plugins can use this to display output in real-time.
+    ProcessOutput {
+        /// The process ID
+        process_id: u64,
+        /// The output data (a line or chunk of output)
+        data: String,
+    },
 }
 
 /// Information about a single line for the LinesChanged hook
@@ -733,6 +743,12 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<String> {
             serde_json::json!({
                 "popup_id": popup_id,
                 "action_id": action_id,
+            })
+        }
+        HookArgs::ProcessOutput { process_id, data } => {
+            serde_json::json!({
+                "process_id": process_id,
+                "data": data,
             })
         }
     };

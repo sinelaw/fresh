@@ -478,7 +478,7 @@ editor.registerCommand(
   "%cmd.search_replace",
   "%cmd.search_replace_desc",
   "start_search_replace",
-  "normal"
+  null
 );
 
 // Plugin initialization

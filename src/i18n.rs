@@ -46,7 +46,15 @@ pub fn translate_plugin_string(
 
     let plugin_map: &HashMap<String, HashMap<String, String>> = match all_strings.get(plugin_name) {
         Some(m) => m,
-        None => return key.to_string(),
+        None => {
+            tracing::debug!(
+                "translate_plugin_string: plugin '{}' not found (available: {:?}), returning key '{}'",
+                plugin_name,
+                all_strings.keys().collect::<Vec<_>>(),
+                key
+            );
+            return key.to_string();
+        }
     };
 
     // Try current locale, then fallback to English
@@ -55,7 +63,16 @@ pub fn translate_plugin_string(
 
     let template: &String = match lang_map.and_then(|m| m.get(key)) {
         Some(t) => t,
-        None => return key.to_string(),
+        None => {
+            tracing::debug!(
+                "translate_plugin_string: key '{}' not found for plugin '{}' (locale='{}', available keys: {:?})",
+                key,
+                plugin_name,
+                locale,
+                plugin_map.get(&locale).or_else(|| plugin_map.get("en")).map(|m| m.keys().take(5).collect::<Vec<_>>())
+            );
+            return key.to_string();
+        }
     };
 
     // Simple interpolation: %{variable}

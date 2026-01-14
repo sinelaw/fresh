@@ -170,3 +170,79 @@ interface ProcessHandle extends PromiseLike<SpawnResult> {
   kill(): Promise<boolean>;
 }
 
+/** Entry for virtual buffer content with optional text properties */
+interface TextPropertyEntry {
+  /** Text content for this entry */
+  text: string;
+  /** Optional properties attached to this text (e.g., file path, line number) */
+  properties?: Record<string, unknown>;
+}
+
+/** Options for createVirtualBuffer */
+interface CreateVirtualBufferOptions {
+  /** Buffer name (displayed in tabs/title) */
+  name: string;
+  /** Mode for keybindings (e.g., "git-log", "search-results") */
+  mode?: string;
+  /** Whether buffer is read-only (default: false) */
+  readOnly?: boolean;
+  /** Show line numbers in gutter (default: false) */
+  showLineNumbers?: boolean;
+  /** Show cursor (default: true) */
+  showCursors?: boolean;
+  /** Disable text editing (default: false) */
+  editingDisabled?: boolean;
+  /** Hide from tab bar (default: false) */
+  hiddenFromTabs?: boolean;
+  /** Initial content entries with optional properties */
+  entries?: TextPropertyEntry[];
+}
+
+/** Options for createVirtualBufferInSplit */
+interface CreateVirtualBufferInSplitOptions {
+  /** Buffer name (displayed in tabs/title) */
+  name: string;
+  /** Mode for keybindings (e.g., "git-log", "search-results") */
+  mode?: string;
+  /** Whether buffer is read-only (default: false) */
+  readOnly?: boolean;
+  /** Split ratio 0.0-1.0 (default: 0.5) */
+  ratio?: number;
+  /** Split direction: "horizontal" or "vertical" */
+  direction?: string;
+  /** Panel ID to split from */
+  panelId?: string;
+  /** Show line numbers in gutter (default: true) */
+  showLineNumbers?: boolean;
+  /** Show cursor (default: true) */
+  showCursors?: boolean;
+  /** Disable text editing (default: false) */
+  editingDisabled?: boolean;
+  /** Enable line wrapping */
+  lineWrap?: boolean;
+  /** Initial content entries with optional properties */
+  entries?: TextPropertyEntry[];
+}
+
+/** Options for createVirtualBufferInExistingSplit */
+interface CreateVirtualBufferInExistingSplitOptions {
+  /** Buffer name (displayed in tabs/title) */
+  name: string;
+  /** Target split ID (required) */
+  splitId: number;
+  /** Mode for keybindings (e.g., "git-log", "search-results") */
+  mode?: string;
+  /** Whether buffer is read-only (default: false) */
+  readOnly?: boolean;
+  /** Show line numbers in gutter (default: true) */
+  showLineNumbers?: boolean;
+  /** Show cursor (default: true) */
+  showCursors?: boolean;
+  /** Disable text editing (default: false) */
+  editingDisabled?: boolean;
+  /** Enable line wrapping */
+  lineWrap?: boolean;
+  /** Initial content entries with optional properties */
+  entries?: TextPropertyEntry[];
+}
+

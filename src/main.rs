@@ -69,6 +69,10 @@ struct Args {
     /// Override the locale (e.g., 'en', 'ja', 'zh-CN')
     #[arg(long, value_name = "LOCALE")]
     locale: Option<String>,
+
+    /// Check a plugin by bundling it and printing the output (for debugging)
+    #[arg(long, value_name = "PLUGIN_PATH")]
+    check_plugin: Option<PathBuf>,
 }
 
 /// Parsed file location from CLI argument in file:line:col format
@@ -613,6 +617,54 @@ fn run_editor_iteration(
     })
 }
 
+/// Check a plugin by bundling it and printing the output
+#[cfg(feature = "plugins")]
+fn check_plugin_bundle(plugin_path: &std::path::Path) -> AnyhowResult<()> {
+    use fresh::services::plugins::transpile;
+
+    eprintln!("Checking plugin: {}", plugin_path.display());
+
+    // Read the source
+    let source = std::fs::read_to_string(plugin_path)
+        .with_context(|| format!("Failed to read plugin file: {}", plugin_path.display()))?;
+
+    eprintln!("Source length: {} bytes", source.len());
+
+    // Check if it needs bundling
+    if transpile::has_es_module_syntax(&source) {
+        eprintln!("Plugin has ES module syntax, bundling...\n");
+
+        match transpile::bundle_module(plugin_path) {
+            Ok(bundled) => {
+                eprintln!("=== BUNDLED OUTPUT ({} bytes) ===\n", bundled.len());
+                println!("{}", bundled);
+                eprintln!("\n=== END BUNDLED OUTPUT ===");
+            }
+            Err(e) => {
+                eprintln!("ERROR bundling plugin: {}", e);
+                return Err(e);
+            }
+        }
+    } else {
+        eprintln!("Plugin has no ES module syntax, transpiling directly...\n");
+
+        let filename = plugin_path.to_str().unwrap_or("plugin.ts");
+        match transpile::transpile_typescript(&source, filename) {
+            Ok(transpiled) => {
+                eprintln!("=== TRANSPILED OUTPUT ({} bytes) ===\n", transpiled.len());
+                println!("{}", transpiled);
+                eprintln!("\n=== END TRANSPILED OUTPUT ===");
+            }
+            Err(e) => {
+                eprintln!("ERROR transpiling plugin: {}", e);
+                return Err(e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> AnyhowResult<()> {
     // Parse command-line arguments
     let args = Args::parse();
@@ -658,6 +710,12 @@ fn main() -> AnyhowResult<()> {
                 anyhow::bail!("Failed to serialize config: {}", e);
             }
         }
+    }
+
+    // Handle --check-plugin early (no terminal setup needed)
+    #[cfg(feature = "plugins")]
+    if let Some(plugin_path) = &args.check_plugin {
+        return check_plugin_bundle(plugin_path);
     }
 
     let SetupState {

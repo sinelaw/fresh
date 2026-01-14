@@ -484,10 +484,17 @@ function findThemesDir(): string {
  */
 async function loadBuiltinThemes(): Promise<string[]> {
   try {
-    const builtinThemes = editor.getBuiltinThemes() as Record<string, string>;
+    editor.debug("[theme_editor] loadBuiltinThemes: calling editor.getBuiltinThemes()");
+    const rawThemes = editor.getBuiltinThemes();
+    editor.debug(`[theme_editor] loadBuiltinThemes: got rawThemes type=${typeof rawThemes}`);
+    // getBuiltinThemes returns a JSON string, need to parse it
+    const builtinThemes = typeof rawThemes === "string"
+      ? JSON.parse(rawThemes) as Record<string, string>
+      : rawThemes as Record<string, string>;
+    editor.debug(`[theme_editor] loadBuiltinThemes: parsed ${Object.keys(builtinThemes).length} themes`);
     return Object.keys(builtinThemes);
   } catch (e) {
-    editor.debug(`Failed to load built-in themes list: ${e}`);
+    editor.debug(`[theme_editor] Failed to load built-in themes list: ${e}`);
     throw e;
   }
 }
@@ -497,13 +504,17 @@ async function loadBuiltinThemes(): Promise<string[]> {
  */
 async function loadThemeFile(name: string): Promise<Record<string, unknown> | null> {
   try {
-    const builtinThemes = editor.getBuiltinThemes() as Record<string, string>;
+    const rawThemes = editor.getBuiltinThemes();
+    // getBuiltinThemes returns a JSON string, need to parse it
+    const builtinThemes = typeof rawThemes === "string"
+      ? JSON.parse(rawThemes) as Record<string, string>
+      : rawThemes as Record<string, string>;
     if (name in builtinThemes) {
       return JSON.parse(builtinThemes[name]);
     }
     return null;
   } catch (e) {
-    editor.debug(`Failed to load theme data for '${name}': ${e}`);
+    editor.debug(`[theme_editor] Failed to load theme data for '${name}': ${e}`);
     return null;
   }
 }
@@ -1190,7 +1201,12 @@ globalThis.onThemeSelectInitialPromptConfirmed = async function(args: {
   selected_index: number | null;
   input: string;
 }): Promise<boolean> {
-  if (args.prompt_type !== "theme-select-initial") return true;
+  editor.debug(`[theme_editor] onThemeSelectInitialPromptConfirmed called with: ${JSON.stringify(args)}`);
+  if (args.prompt_type !== "theme-select-initial") {
+    editor.debug(`[theme_editor] prompt_type mismatch, expected 'theme-select-initial', got '${args.prompt_type}'`);
+    return true;
+  }
+  editor.debug(`[theme_editor] prompt_type matched, processing selection...`);
 
   const value = args.input.trim();
 
@@ -1252,7 +1268,9 @@ globalThis.onThemeSelectInitialPromptConfirmed = async function(args: {
   }
 
   // Now open the editor with loaded theme
+  editor.debug(`[theme_editor] About to call doOpenThemeEditor()`);
   await doOpenThemeEditor();
+  editor.debug(`[theme_editor] doOpenThemeEditor() completed`);
 
   return true;
 };
@@ -1642,7 +1660,9 @@ globalThis.theme_editor_nav_prev_section = function(): void {
  * Open the theme editor - prompts user to select theme first
  */
 globalThis.open_theme_editor = async function(): Promise<void> {
+  editor.debug("[theme_editor] open_theme_editor called");
   if (isThemeEditorOpen()) {
+    editor.debug("[theme_editor] already open, focusing");
     // Focus the existing theme editor split
     if (state.splitId !== null) {
       editor.focusSplit(state.splitId);
@@ -1651,12 +1671,15 @@ globalThis.open_theme_editor = async function(): Promise<void> {
     return;
   }
 
+  editor.debug("[theme_editor] saving context");
   // Save context
   state.sourceSplitId = editor.getActiveSplitId();
   state.sourceBufferId = editor.getActiveBufferId();
 
+  editor.debug("[theme_editor] loading builtin themes...");
   // Load available themes
   state.builtinThemes = await loadBuiltinThemes();
+  editor.debug(`[theme_editor] loaded ${state.builtinThemes.length} builtin themes`);
 
   // Get current theme name from config
   const config = editor.getConfig() as Record<string, unknown>;
@@ -1704,10 +1727,13 @@ globalThis.open_theme_editor = async function(): Promise<void> {
  * Actually open the theme editor with loaded theme data
  */
 async function doOpenThemeEditor(): Promise<void> {
+  editor.debug("[theme_editor] doOpenThemeEditor: building display entries");
   // Build initial entries
   const entries = buildDisplayEntries();
+  editor.debug(`[theme_editor] doOpenThemeEditor: built ${entries.length} entries`);
 
   // Create virtual buffer in current split (no new split)
+  editor.debug("[theme_editor] doOpenThemeEditor: calling createVirtualBuffer...");
   const bufferId = await editor.createVirtualBuffer({
     name: "*Theme Editor*",
     mode: "theme-editor",
@@ -1717,13 +1743,20 @@ async function doOpenThemeEditor(): Promise<void> {
     show_cursors: true,
     editing_disabled: true,
   });
+  editor.debug(`[theme_editor] doOpenThemeEditor: createVirtualBuffer returned bufferId=${bufferId}`);
+  editor.debug(`[theme_editor] doOpenThemeEditor: checking if bufferId !== null...`);
 
   if (bufferId !== null) {
+    editor.debug(`[theme_editor] doOpenThemeEditor: bufferId is not null, setting state...`);
     state.bufferId = bufferId;
     state.splitId = null;
 
+    editor.debug(`[theme_editor] doOpenThemeEditor: calling applyHighlighting...`);
     applyHighlighting();
+    editor.debug(`[theme_editor] doOpenThemeEditor: applyHighlighting completed`);
+    editor.debug(`[theme_editor] doOpenThemeEditor: calling setStatus...`);
     editor.setStatus(editor.t("status.ready"));
+    editor.debug(`[theme_editor] doOpenThemeEditor: completed successfully`);
   } else {
     editor.setStatus(editor.t("status.open_failed"));
   }
@@ -2037,12 +2070,11 @@ globalThis.onThemeDeletePromptConfirmed = async function(args: {
 // Command Registration
 // =============================================================================
 
-// Main command to open theme editor (always available)
+// Main command to open theme editor (always available - no context restriction)
 editor.registerCommand(
   "%cmd.edit_theme",
   "%cmd.edit_theme_desc",
-  "open_theme_editor",
-  "normal"
+  "open_theme_editor"
 );
 
 // Buffer-scoped commands - only visible when a buffer with mode "theme-editor" is focused

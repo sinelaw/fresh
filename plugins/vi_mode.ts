@@ -2724,17 +2724,23 @@ editor.on("prompt_confirmed", "vi_command_handler");
 let viModeEnabled = false;
 
 globalThis.vi_mode_toggle = function (): void {
+  editor.debug("[vi_mode_toggle] called, viModeEnabled was: " + viModeEnabled);
   viModeEnabled = !viModeEnabled;
+  editor.debug("[vi_mode_toggle] viModeEnabled now: " + viModeEnabled);
 
   if (viModeEnabled) {
+    editor.debug("[vi_mode_toggle] enabling vi mode, calling switchMode('normal')");
     switchMode("normal");
+    editor.debug("[vi_mode_toggle] switchMode done, setting status");
     editor.setStatus(editor.t("status.enabled"));
   } else {
+    editor.debug("[vi_mode_toggle] disabling vi mode");
     editor.setEditorMode(null);
     state.mode = "normal";
     state.pendingOperator = null;
     editor.setStatus(editor.t("status.disabled"));
   }
+  editor.debug("[vi_mode_toggle] done");
 };
 
 editor.registerCommand(

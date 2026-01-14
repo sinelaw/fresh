@@ -38,7 +38,7 @@ editor.registerCommand(
   "%cmd.test",
   "%cmd.test_desc",
   "test_i18n_action",
-  "normal"
+  null
 );
 
 editor.setStatus("Test i18n plugin loaded");

@@ -15,14 +15,14 @@ editor.registerCommand(
   "%cmd.open_help",
   "%cmd.open_help_desc",
   "show_help",
-  "normal"
+  null
 );
 
 editor.registerCommand(
   "%cmd.save_file",
   "%cmd.save_file_desc",
   "save",
-  "normal"
+  null
 );
 
 // Register commands with custom TypeScript callbacks
@@ -36,7 +36,7 @@ editor.registerCommand(
   "%cmd.say_hello",
   "%cmd.say_hello_desc",
   "plugin_say_hello",
-  "normal"
+  null
 );
 
 globalThis.plugin_insert_time = function(): void {
@@ -50,7 +50,7 @@ editor.registerCommand(
   "%cmd.insert_time",
   "%cmd.insert_time_desc",
   "plugin_insert_time",
-  "normal"
+  null
 );
 
 globalThis.plugin_insert_comment = function(): void {
@@ -63,7 +63,7 @@ editor.registerCommand(
   "%cmd.insert_comment",
   "%cmd.insert_comment_desc",
   "plugin_insert_comment",
-  "normal"
+  null
 );
 
 // Debug output

@@ -1,7 +1,7 @@
 # .config/nextest.toml
 [profile.default]
 
-slow-timeout = { period = "2s", terminate-after = 60 }
+slow-timeout = { period = "30s", terminate-after = 3 }
 
 # Show output immediately for failing tests (including timeouts)
 failure-output = "immediate"
