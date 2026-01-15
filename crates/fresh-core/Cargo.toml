@@ -1,0 +1,19 @@
+[package]
+name = "fresh-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+anyhow.workspace = true
+lsp-types.workspace = true
+ts-rs.workspace = true
+crossterm = { workspace = true, optional = true }
+rquickjs = { workspace = true, optional = true }
+rquickjs-serde = { workspace = true, optional = true }
+
+[features]
+plugins = ["dep:crossterm", "dep:rquickjs", "dep:rquickjs-serde"]

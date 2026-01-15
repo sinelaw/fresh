@@ -1,0 +1,201 @@
+[package]
+name = "fresh-editor"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+default-run = "fresh"
+description = "A lightweight, fast terminal-based text editor with LSP support and TypeScript plugins"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["editor", "terminal", "tui", "text-editor", "lsp"]
+categories = ["command-line-utilities", "text-editors"]
+
+[[bin]]
+name = "fresh"
+path = "src/main.rs"
+required-features = ["runtime"]
+
+[[bin]]
+name = "generate_schema"
+path = "src/bin/generate_schema.rs"
+required-features = ["dev-bins"]
+
+[[bin]]
+name = "event_debug"
+path = "src/bin/event_debug.rs"
+required-features = ["dev-bins", "runtime"]
+
+[lib]
+name = "fresh"
+path = "src/lib.rs"
+
+[features]
+default = ["plugins", "runtime", "embed-plugins"]
+plugins = ["dep:fresh-plugin-runtime", "dep:fresh-parser-js", "dep:fresh-plugin-api-macros", "dep:ts-rs"]
+# Embed plugins into the binary as a fallback when no disk plugins are found
+embed-plugins = ["plugins", "dep:include_dir", "dep:dirs", "dep:trash"]
+# Feature for optional development binaries (generate_schema, event_debug)
+dev-bins = []
+# Runtime feature includes all heavy dependencies needed for the actual editor
+runtime = [
+    "dep:crossterm",
+    "dep:ratatui",
+    "dep:chrono",
+    "dep:clap",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "dep:fresh-languages",
+    "dep:lsp-types",
+    "dep:url",
+    "dep:tokio",
+    "dep:async-trait",
+    "dep:lru",
+    "dep:ignore",
+    "dep:regex",
+    "dep:libc",
+    "dep:libloading",
+    "dep:nix",
+    "dep:anyhow",
+    "dep:dirs",
+    "dep:pulldown-cmark",
+    "dep:sha2",
+    "dep:arboard",
+    "dep:syntect",
+    "dep:ureq",
+    "dep:unicode-width",
+    "dep:unicode-segmentation",
+    "dep:alacritty_terminal",
+    "dep:portable-pty",
+    "dep:trash",
+    "dep:open",
+]
+# Schema-only feature for minimal builds (just schema generation)
+schema-only = []
+
+[dependencies]
+# Local crates
+fresh-core = { path = "../fresh-core" }
+fresh-parser-js = { path = "../fresh-parser-js", optional = true }
+fresh-languages = { path = "../fresh-languages", optional = true, features = ["all-languages"] }
+fresh-plugin-runtime = { path = "../fresh-plugin-runtime", optional = true }
+
+# Always required (for schema generation and runtime)
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+rust-i18n.workspace = true
+once_cell.workspace = true
+
+# Runtime dependencies (optional, enabled by "runtime" feature)
+crossterm = { version = "0.29.0", features = ["osc52"], optional = true }
+ratatui = { version = "0.29.0", optional = true }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
+clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"], optional = true }
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+lsp-types = { workspace = true, optional = true }
+url = { version = "2.5", optional = true }
+tokio = { version = "1.49", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"], optional = true }
+async-trait = { version = "0.1", optional = true }
+lru = { version = "0.16", optional = true }
+ignore = { version = "0.4", default-features = false, optional = true }
+regex = { version = "1.12", optional = true }
+libc = { version = "0.2", optional = true }
+libloading = { version = "0.9", optional = true }
+nix = { version = "0.30", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
+
+# Plugin API proc macros for type-safe bindings
+fresh-plugin-api-macros = { path = "../fresh-plugin-api-macros", optional = true }
+# TypeScript type generation from Rust structs
+ts-rs = { version = "11.1", optional = true }
+
+anyhow = { workspace = true, optional = true }
+dirs = { version = "6.0", optional = true }
+pulldown-cmark = { version = "0.13", default-features = false, optional = true }
+sha2 = { version = "0.10", optional = true }
+arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"], optional = true }
+syntect = { version = "5.3", optional = true }
+ureq = { version = "2.12", default-features = false, features = ["tls"], optional = true }
+unicode-width = { version = "0.2", optional = true }
+unicode-segmentation = { version = "1.12", optional = true }
+
+# Terminal emulation (optional)
+alacritty_terminal = { version = "0.25", optional = true }
+portable-pty = { version = "0.9", optional = true }
+
+# Embedded plugins support (optional)
+include_dir = { version = "0.7", optional = true }
+tempfile = { version = "3.24", optional = true }
+trash = { version = "5.2.5", optional = true }
+open = { version = "5", optional = true }
+
+[dev-dependencies]
+proptest = "1.9"
+tempfile = "3.24.0"
+insta = { version = "1.45", features = ["yaml"] }
+vt100 = "0.15"  # Virtual terminal emulator for testing real ANSI output
+ctor = "0.6.3"
+tiny_http = "0.12"  # Lightweight HTTP server for testing release checker
+unicode-segmentation = "1.12"  # For grapheme cluster testing
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[build-dependencies]
+serde_json.workspace = true
+
+[package.metadata.dist]
+# Point dist at the changelog so GitHub Releases get populated
+changelog = "../../CHANGELOG.md"
+
+# Debian package configuration for cargo-deb
+[package.metadata.deb]
+maintainer = "Noam Lewis"
+section = "editors"
+priority = "optional"
+depends = "$auto"
+assets = [
+    # Binary goes in /usr/share/fresh-editor/ alongside plugins
+    ["../../target/release/fresh", "usr/share/fresh-editor/", "755"],
+    ["../../README.md", "usr/share/doc/fresh-editor/", "644"],
+    ["../../plugins/*", "usr/share/fresh-editor/plugins/", "644"],
+    ["../../plugins/lib/*", "usr/share/fresh-editor/plugins/lib/", "644"],
+    ["../../plugins/examples/*", "usr/share/fresh-editor/plugins/examples/", "644"],
+    ["../../themes/*", "usr/share/fresh-editor/themes/", "644"],
+]
+# Maintainer scripts to create/remove symlink at /usr/bin/fresh
+maintainer-scripts = "../../debian/"
+extended-description = """
+Fresh is a lightweight, fast terminal-based text editor with LSP support
+and TypeScript plugins. It provides syntax highlighting, code completion,
+and other IDE-like features in a minimal terminal interface."""
+
+# RPM package configuration for cargo-generate-rpm
+[package.metadata.generate-rpm]
+assets = [
+    # Binary goes in /usr/share/fresh-editor/ alongside plugins
+    { source = "../../target/release/fresh", dest = "/usr/share/fresh-editor/fresh", mode = "755" },
+    # Wrapper script in /usr/bin for PATH access
+    { source = "../../scripts/fresh-wrapper.sh", dest = "/usr/bin/fresh", mode = "755" },
+    { source = "../../README.md", dest = "/usr/share/doc/fresh-editor/README.md", mode = "644" },
+    { source = "../../plugins/*.ts", dest = "/usr/share/fresh-editor/plugins/", mode = "644" },
+    { source = "../../plugins/*.json", dest = "/usr/share/fresh-editor/plugins/", mode = "644" },
+    { source = "../../plugins/*.md", dest = "/usr/share/fresh-editor/plugins/", mode = "644" },
+    { source = "../../plugins/lib/*", dest = "/usr/share/fresh-editor/plugins/lib/", mode = "644" },
+    { source = "../../plugins/examples/*", dest = "/usr/share/fresh-editor/plugins/examples/", mode = "644" },
+    { source = "../../themes/*.json", dest = "/usr/share/fresh-editor/themes/", mode = "644" },
+]
+# posttrans runs after ALL transaction operations complete - needed because older versions
+# (<=0.1.56) had a preuninstall script that removes /usr/bin/fresh, which deletes our wrapper
+# during upgrades. This script restores it.
+post_trans_script = """
+if [ ! -e /usr/bin/fresh ]; then
+    cat > /usr/bin/fresh << 'WRAPPER'
+#!/bin/sh
+exec /usr/share/fresh-editor/fresh "$@"
+WRAPPER
+    chmod 755 /usr/bin/fresh
+fi
+"""

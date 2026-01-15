@@ -312,11 +312,7 @@ fn extract_inner_type(ty: &Type) -> Option<Type> {
 /// Get the final segment name from a type path (e.g., "Opt" from "rquickjs::function::Opt")
 fn get_type_name(ty: &Type) -> Option<String> {
     if let Type::Path(type_path) = ty {
-        type_path
-            .path
-            .segments
-            .last()
-            .map(|s| s.ident.to_string())
+        type_path.path.segments.last().map(|s| s.ident.to_string())
     } else {
         None
     }
@@ -434,14 +430,20 @@ fn rust_to_typescript(ty: &Type, attrs: &[Attribute]) -> String {
                 "HashMap" | "BTreeMap" => "Record<string, unknown>".to_string(),
 
                 // Known API types - pass through unchanged
-                "BufferInfo" | "CursorInfo" | "ViewportInfo" | "SpawnResult"
-                | "BackgroundProcessResult" | "DirEntry" | "FileStat"
-                | "CreateVirtualBufferResult" | "PromptSuggestion" | "TextPropertyEntry"
-                | "JsTextPropertyEntry" | "CreateVirtualBufferOptions"
+                "BufferInfo"
+                | "CursorInfo"
+                | "ViewportInfo"
+                | "SpawnResult"
+                | "BackgroundProcessResult"
+                | "DirEntry"
+                | "FileStat"
+                | "CreateVirtualBufferResult"
+                | "PromptSuggestion"
+                | "TextPropertyEntry"
+                | "JsTextPropertyEntry"
+                | "CreateVirtualBufferOptions"
                 | "CreateVirtualBufferInSplitOptions"
-                | "CreateVirtualBufferInExistingSplitOptions" => {
-                    type_name
-                }
+                | "CreateVirtualBufferInExistingSplitOptions" => type_name,
 
                 // Default: use type name as-is
                 _ => type_name,
@@ -568,7 +570,10 @@ fn generate_ts_method(method: &ApiMethod) -> String {
 
     let return_type = method.kind.wrap_return_type(&method.return_type);
 
-    lines.push(format!("  {}({}): {};", method.js_name, params, return_type));
+    lines.push(format!(
+        "  {}({}): {};",
+        method.js_name, params, return_type
+    ));
 
     lines.join("\n")
 }
@@ -625,9 +630,20 @@ fn generate_editor_api_interface(methods: &[ApiMethod]) -> String {
 
 /// Built-in TypeScript types that don't need to be collected
 const BUILTIN_TS_TYPES: &[&str] = &[
-    "number", "string", "boolean", "void", "unknown", "null", "undefined",
-    "Record", "Array", "Promise", "ProcessHandle", "PromiseLike",
-    "BufferId", "SplitId", // Defined in preamble
+    "number",
+    "string",
+    "boolean",
+    "void",
+    "unknown",
+    "null",
+    "undefined",
+    "Record",
+    "Array",
+    "Promise",
+    "ProcessHandle",
+    "PromiseLike",
+    "BufferId",
+    "SplitId", // Defined in preamble
 ];
 
 /// Extract type names from a TypeScript type string
@@ -714,7 +730,6 @@ fn collect_referenced_types(methods: &[ApiMethod]) -> Vec<String> {
     sorted.sort();
     sorted
 }
-
 
 // ============================================================================
 // Proc Macros
@@ -892,10 +907,7 @@ mod tests {
             Some("foo".to_string())
         );
         assert_eq!(parse_attr_string_value(r#"skip"#, "js_name"), None);
-        assert_eq!(
-            parse_attr_string_value(r#"js_name = 123"#, "js_name"),
-            None
-        );
+        assert_eq!(parse_attr_string_value(r#"js_name = 123"#, "js_name"), None);
     }
 
     #[test]
@@ -979,10 +991,7 @@ mod tests {
         );
 
         // Array type
-        assert_eq!(
-            extract_type_references("BufferInfo[]"),
-            vec!["BufferInfo"]
-        );
+        assert_eq!(extract_type_references("BufferInfo[]"), vec!["BufferInfo"]);
 
         // Built-in generics return empty
         assert!(extract_type_references("Record<string, unknown>").is_empty());
@@ -1071,6 +1080,8 @@ mod tests {
         };
 
         let ts = generate_ts_method(&method);
-        assert!(ts.contains("spawnProcess(command: string, args: string): ProcessHandle<SpawnResult>;"));
+        assert!(
+            ts.contains("spawnProcess(command: string, args: string): ProcessHandle<SpawnResult>;")
+        );
     }
 }

@@ -1,0 +1,24 @@
+[package]
+name = "fresh-plugin-runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+rquickjs.workspace = true
+rquickjs-serde.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+fresh-core = { path = "../fresh-core", features = ["plugins"] }
+fresh-parser-js = { path = "../fresh-parser-js" }
+fresh-plugin-api-macros = { path = "../fresh-plugin-api-macros" }
+ts-rs.workspace = true
+lsp-types.workspace = true
+oxc_allocator.workspace = true
+oxc_parser.workspace = true
+oxc_codegen.workspace = true
+oxc_span.workspace = true
+oxc_diagnostics.workspace = true

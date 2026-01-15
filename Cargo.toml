@@ -1,252 +1,54 @@
-[package]
-name = "fresh-editor"
+[workspace]
+resolver = "2"
+members = [
+    "crates/fresh-editor",
+    "crates/fresh-core",
+    "crates/fresh-parser-js",
+    "crates/fresh-languages",
+    "crates/fresh-plugin-runtime",
+    "crates/fresh-plugin-api-macros",
+]
+
+[workspace.package]
 version = "0.1.77"
 authors = ["Noam Lewis"]
 edition = "2021"
-default-run = "fresh"
-description = "A lightweight, fast terminal-based text editor with LSP support and TypeScript plugins"
 license = "GPL-2.0"
 repository = "https://github.com/sinelaw/fresh"
 homepage = "https://sinelaw.github.io/fresh/"
-keywords = ["editor", "terminal", "tui", "text-editor", "lsp"]
-categories = ["command-line-utilities", "text-editors"]
 
-[[bin]]
-name = "fresh"
-path = "src/main.rs"
-required-features = ["runtime"]
-
-[[bin]]
-name = "generate_schema"
-path = "src/bin/generate_schema.rs"
-required-features = ["dev-bins"]
-
-[[bin]]
-name = "event_debug"
-path = "src/bin/event_debug.rs"
-required-features = ["dev-bins", "runtime"]
-
-[lib]
-name = "fresh"
-path = "src/lib.rs"
-
-[features]
-default = ["plugins", "runtime", "embed-plugins"]
-plugins = ["dep:rquickjs", "dep:rquickjs-serde", "dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_parser", "dep:oxc_transformer", "dep:oxc_codegen", "dep:oxc_span", "dep:oxc_semantic", "dep:fresh-plugin-api-macros", "dep:ts-rs"]
-# Embed plugins into the binary as a fallback when no disk plugins are found
-embed-plugins = ["plugins", "dep:include_dir", "dep:dirs", "dep:trash"]
-# Feature for optional development binaries (generate_schema, event_debug)
-dev-bins = []
-# Runtime feature includes all heavy dependencies needed for the actual editor
-runtime = [
-    "dep:crossterm",
-    "dep:ratatui",
-    "dep:chrono",
-    "dep:clap",
-    "dep:tracing",
-    "dep:tracing-subscriber",
-    "dep:tree-sitter",
-    "dep:tree-sitter-highlight",
-    "dep:tree-sitter-rust",
-    "dep:tree-sitter-python",
-    "dep:tree-sitter-javascript",
-    "dep:tree-sitter-typescript",
-    "dep:tree-sitter-html",
-    "dep:tree-sitter-css",
-    "dep:tree-sitter-c",
-    "dep:tree-sitter-cpp",
-    "dep:tree-sitter-go",
-    "dep:tree-sitter-json",
-    "dep:tree-sitter-java",
-    "dep:tree-sitter-c-sharp",
-    "dep:tree-sitter-php",
-    "dep:tree-sitter-ruby",
-    "dep:tree-sitter-bash",
-    "dep:tree-sitter-lua",
-    "dep:tree-sitter-pascal",
-    "dep:tree-sitter-odin",
-    "dep:lsp-types",
-    "dep:url",
-    "dep:tokio",
-    "dep:async-trait",
-    "dep:lru",
-    "dep:ignore",
-    "dep:regex",
-    "dep:libc",
-    "dep:libloading",
-    "dep:nix",
-    "dep:anyhow",
-    "dep:dirs",
-    "dep:pulldown-cmark",
-    "dep:sha2",
-    "dep:arboard",
-    "dep:syntect",
-    "dep:ureq",
-    "dep:unicode-width",
-    "dep:unicode-segmentation",
-    "dep:alacritty_terminal",
-    "dep:portable-pty",
-    "dep:trash",
-    "dep:open",
-]
-# Schema-only feature for minimal builds (just schema generation)
-schema-only = []
-
-[dependencies]
-# Always required (for schema generation and runtime)
+[workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-schemars = { version = "1.2", features = ["preserve_order"] }  # JSON Schema generation for config editor
-rust-i18n = "3"  # Internationalization support
+anyhow = { version = "1.0.100", default-features = false }
+tokio = { version = "1.49", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"] }
 once_cell = "1.20"
-
-# Runtime dependencies (optional, enabled by "runtime" feature)
-crossterm = { version = "0.29.0", features = ["osc52"], optional = true }
-ratatui = { version = "0.29.0", optional = true }
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
-clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"], optional = true }
-tracing = { version = "0.1", optional = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
-
-tree-sitter = { version = "0.25.10", optional = true }
-tree-sitter-highlight = { version = "0.25.10", optional = true }
-tree-sitter-rust = { version = "0.24.0", optional = true }
-
-lsp-types = { version = "0.97", default-features = false, optional = true }
-url = { version = "2.5", optional = true }
-tokio = { version = "1.49", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"], optional = true }
-async-trait = { version = "0.1", optional = true }
-lru = { version = "0.16", optional = true }
-ignore = { version = "0.4", default-features = false, optional = true }
-regex = { version = "1.12", optional = true }
-libc = { version = "0.2", optional = true }
-libloading = { version = "0.9", optional = true }
-nix = { version = "0.30", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
-# QuickJS JavaScript runtime with oxc for TypeScript transpilation
-rquickjs = { version = "0.11", features = ["bindgen", "futures", "macro"], optional = true }
-rquickjs-serde = { version = "0.4", optional = true }
-oxc_allocator = { version = "0.108", optional = true }
-oxc_ast = { version = "0.108", optional = true }
-oxc_parser = { version = "0.108", optional = true }
-oxc_transformer = { version = "0.108", optional = true }
-oxc_codegen = { version = "0.108", optional = true }
-oxc_span = { version = "0.108", optional = true }
-oxc_semantic = { version = "0.108", optional = true }
-# Plugin API proc macros for type-safe bindings
-fresh-plugin-api-macros = { path = "crates/fresh-plugin-api-macros", optional = true }
-# TypeScript type generation from Rust structs
-ts-rs = { version = "11.1", optional = true }
-tree-sitter-python = { version = "0.25.0", optional = true }
-tree-sitter-javascript = { version = "0.25.0", optional = true }
-tree-sitter-typescript = { version = "0.23.2", optional = true }
-tree-sitter-html = { version = "0.23.2", optional = true }
-tree-sitter-css = { version = "0.25.0", optional = true }
-tree-sitter-c = { version = "0.24.1", optional = true }
-tree-sitter-cpp = { version = "0.23.4", optional = true }
-tree-sitter-go = { version = "0.25.0", optional = true }
-tree-sitter-json = { version = "0.24.8", optional = true }
-tree-sitter-java = { version = "0.23.5", optional = true }
-tree-sitter-c-sharp = { version = "0.23.1", optional = true }
-tree-sitter-php = { version = "0.24.2", optional = true }
-tree-sitter-ruby = { version = "0.23.1", optional = true }
-tree-sitter-bash = { version = "0.25.1", optional = true }
-tree-sitter-lua = { version = "0.4.1", optional = true }
-tree-sitter-pascal = { version = "0.10.2", optional = true }
-tree-sitter-odin = { version = "1.3.0", optional = true }
-anyhow = { version = "1.0.100", default-features = false, optional = true }
-dirs = { version = "6.0", optional = true }
-pulldown-cmark = { version = "0.13", default-features = false, optional = true }
-sha2 = { version = "0.10", optional = true }
-arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"], optional = true }
-syntect = { version = "5.3", optional = true }
-ureq = { version = "2.12", default-features = false, features = ["tls"], optional = true }
-unicode-width = { version = "0.2", optional = true }
-unicode-segmentation = { version = "1.12", optional = true }
-
-# Terminal emulation (optional)
-alacritty_terminal = { version = "0.25", optional = true }
-portable-pty = { version = "0.9", optional = true }
-
-# Embedded plugins support (optional)
-include_dir = { version = "0.7", optional = true }
-tempfile = { version = "3.24", optional = true }
-trash = { version = "5.2.5", optional = true }
-open = { version = "5", optional = true }
-
-[dev-dependencies]
-proptest = "1.9"
-tempfile = "3.24.0"
-insta = { version = "1.45", features = ["yaml"] }
-vt100 = "0.15"  # Virtual terminal emulator for testing real ANSI output
-ctor = "0.6.3"
-tiny_http = "0.12"  # Lightweight HTTP server for testing release checker
-unicode-segmentation = "1.12"  # For grapheme cluster testing
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
-
-[build-dependencies]
-serde_json = "1.0"
+tracing = "0.1"
+thiserror = "2.0"
+rust-i18n = "3"
+schemars = { version = "1.2", features = ["preserve_order"] }
+rquickjs = { version = "0.11", features = ["bindgen", "futures", "macro"] }
+rquickjs-serde = "0.4"
+oxc_allocator = "0.108"
+oxc_ast = "0.108"
+oxc_parser = "0.108"
+oxc_transformer = "0.108"
+oxc_codegen = "0.108"
+oxc_span = "0.108"
+oxc_semantic = "0.108"
+oxc_diagnostics = "0.108"
+tree-sitter = "0.25.10"
+tree-sitter-highlight = "0.25.10"
+crossterm = "0.28"
+lsp-types = "0.97"
+ts-rs = { version = "10.0", features = ["serde_json"] }
+# Add more as needed during refactor
 
 [profile.release]
-debug = true
-split-debuginfo = "packed"
+debug = 0
+codegen-units = 4
+lto = "off" # speed up the binary final build
 
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
-lto = "thin"
-
-[package.metadata.dist]
-# Point dist at the changelog so GitHub Releases get populated
-changelog = "CHANGELOG.md"
-
-# Debian package configuration for cargo-deb
-[package.metadata.deb]
-maintainer = "Noam Lewis"
-section = "editors"
-priority = "optional"
-depends = "$auto"
-assets = [
-    # Binary goes in /usr/share/fresh-editor/ alongside plugins
-    ["target/release/fresh", "usr/share/fresh-editor/", "755"],
-    ["README.md", "usr/share/doc/fresh-editor/", "644"],
-    ["plugins/*", "usr/share/fresh-editor/plugins/", "644"],
-    ["plugins/lib/*", "usr/share/fresh-editor/plugins/lib/", "644"],
-    ["plugins/examples/*", "usr/share/fresh-editor/plugins/examples/", "644"],
-    ["themes/*", "usr/share/fresh-editor/themes/", "644"],
-]
-# Maintainer scripts to create/remove symlink at /usr/bin/fresh
-maintainer-scripts = "debian/"
-extended-description = """
-Fresh is a lightweight, fast terminal-based text editor with LSP support
-and TypeScript plugins. It provides syntax highlighting, code completion,
-and other IDE-like features in a minimal terminal interface."""
-
-# RPM package configuration for cargo-generate-rpm
-[package.metadata.generate-rpm]
-assets = [
-    # Binary goes in /usr/share/fresh-editor/ alongside plugins
-    { source = "target/release/fresh", dest = "/usr/share/fresh-editor/fresh", mode = "755" },
-    # Wrapper script in /usr/bin for PATH access
-    { source = "scripts/fresh-wrapper.sh", dest = "/usr/bin/fresh", mode = "755" },
-    { source = "README.md", dest = "/usr/share/doc/fresh-editor/README.md", mode = "644" },
-    { source = "plugins/*.ts", dest = "/usr/share/fresh-editor/plugins/", mode = "644" },
-    { source = "plugins/*.json", dest = "/usr/share/fresh-editor/plugins/", mode = "644" },
-    { source = "plugins/*.md", dest = "/usr/share/fresh-editor/plugins/", mode = "644" },
-    { source = "plugins/lib/*", dest = "/usr/share/fresh-editor/plugins/lib/", mode = "644" },
-    { source = "plugins/examples/*", dest = "/usr/share/fresh-editor/plugins/examples/", mode = "644" },
-    { source = "themes/*.json", dest = "/usr/share/fresh-editor/themes/", mode = "644" },
-]
-# posttrans runs after ALL transaction operations complete - needed because older versions
-# (<=0.1.56) had a preuninstall script that removes /usr/bin/fresh, which deletes our wrapper
-# during upgrades. This script restores it.
-post_trans_script = """
-if [ ! -e /usr/bin/fresh ]; then
-    cat > /usr/bin/fresh << 'WRAPPER'
-#!/bin/sh
-exec /usr/share/fresh-editor/fresh "$@"
-WRAPPER
-    chmod 755 /usr/bin/fresh
-fi
-"""

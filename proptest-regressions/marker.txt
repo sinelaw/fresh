@@ -1,9 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 800720d432810ce520ffc73b285a7899f2b7926c8cd929be3a1707024f8f86a3 # shrinks to buffer_size = 10, ops = [Insert { position: 0, length: 1 }]
-cc 7185e67428aa7c251619c63ca88385724b93b79668991412cecef13cba21e95f # shrinks to buffer_size = 10, ops = [Insert { position: 0, length: 1 }]
-cc 0aee6336bd312adcac2e3e8d0dbbdb2a2fbaeb88fdd516c42ba23effa349ae4a # shrinks to initial_spacing = 10, ops = [Delete { position: 5, length: 16 }]
