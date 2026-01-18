@@ -1,6 +1,6 @@
-# Musl static builds without plugins support.
-# These builds use --no-default-features to disable the plugins feature,
-# which requires dynamic linking that musl doesn't support.
+# Musl static builds with full features (including plugins).
+# rquickjs ships pre-built bindings for musl targets and compiles QuickJS
+# statically, so plugins work correctly with musl.
 
 name: Musl Builds
 
@@ -46,12 +46,12 @@ jobs:
             cargo install cross --git https://github.com/cross-rs/cross
           fi
 
-      - name: Build release binary (no plugins)
+      - name: Build release binary
         run: |
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
-            cross build --release --target ${{ matrix.target }} --no-default-features --features runtime
+            cross build --release --target ${{ matrix.target }}
           else
-            cargo build --release --target ${{ matrix.target }} --no-default-features --features runtime
+            cargo build --release --target ${{ matrix.target }}
           fi
 
       - name: Get version from Cargo.toml
@@ -62,10 +62,11 @@ jobs:
 
       - name: Create archive
         run: |
-          ARCHIVE_NAME="fresh-editor-no-plugins-${{ matrix.target }}"
+          ARCHIVE_NAME="fresh-editor-${{ matrix.target }}"
           mkdir -p "${ARCHIVE_NAME}"
           cp target/${{ matrix.target }}/release/fresh "${ARCHIVE_NAME}/"
           cp README.md LICENSE "${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp -r plugins "${ARCHIVE_NAME}/" 2>/dev/null || true
           cp -r themes "${ARCHIVE_NAME}/" 2>/dev/null || true
 
           tar -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
@@ -76,7 +77,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: artifacts-musl-no-plugins-${{ matrix.target }}
+          name: artifacts-musl-${{ matrix.target }}
           path: |
-            fresh-editor-no-plugins-${{ matrix.target }}.tar.gz
-            fresh-editor-no-plugins-${{ matrix.target }}.tar.gz.sha256
+            fresh-editor-${{ matrix.target }}.tar.gz
+            fresh-editor-${{ matrix.target }}.tar.gz.sha256

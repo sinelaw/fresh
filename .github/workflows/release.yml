@@ -185,7 +185,7 @@ jobs:
             fresh-editor-${{ matrix.target }}.${{ matrix.archive_ext }}
             fresh-editor-${{ matrix.target }}.${{ matrix.archive_ext }}.sha256
 
-  # Build musl static binaries (no plugins)
+  # Build musl static binaries (with plugins)
   build-musl:
     needs: plan
     if: ${{ needs.plan.outputs.publishing == 'true' }}
