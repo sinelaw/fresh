@@ -65,6 +65,12 @@ jobs:
           fi
           ls -la target/${{ matrix.target }}/release/fresh
 
+      - name: Setup target symlink for packaging
+        run: |
+          # cargo-deb/generate-rpm configs use paths relative to crate dir
+          # Create symlink so target/release paths resolve to workspace target
+          ln -s ../../target crates/fresh-editor/target
+
       - name: Build .deb package
         run: |
           cargo deb --no-build --target ${{ matrix.target }}

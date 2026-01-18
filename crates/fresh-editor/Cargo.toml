@@ -157,8 +157,9 @@ section = "editors"
 priority = "optional"
 depends = "$auto"
 assets = [
-    # Binary goes in /usr/share/fresh-editor/ alongside plugins
-    ["../../target/release/fresh", "usr/share/fresh-editor/", "755"],
+    # Binary - path must start with "target/release/" for cargo-deb to auto-adjust for --target
+    # CI creates symlink: crates/fresh-editor/target -> ../../target
+    ["target/release/fresh", "usr/share/fresh-editor/", "755"],
     ["../../README.md", "usr/share/doc/fresh-editor/", "644"],
     ["plugins/*", "usr/share/fresh-editor/plugins/", "644"],
     ["plugins/lib/*", "usr/share/fresh-editor/plugins/lib/", "644"],
@@ -175,8 +176,8 @@ and other IDE-like features in a minimal terminal interface."""
 # RPM package configuration for cargo-generate-rpm
 [package.metadata.generate-rpm]
 assets = [
-    # Binary goes in /usr/share/fresh-editor/ alongside plugins
-    { source = "../../target/release/fresh", dest = "/usr/share/fresh-editor/fresh", mode = "755" },
+    # Binary - CI creates symlink: crates/fresh-editor/target -> ../../target
+    { source = "target/release/fresh", dest = "/usr/share/fresh-editor/fresh", mode = "755" },
     # Wrapper script in /usr/bin for PATH access
     { source = "scripts/fresh-wrapper.sh", dest = "/usr/bin/fresh", mode = "755" },
     { source = "../../README.md", dest = "/usr/share/doc/fresh-editor/README.md", mode = "644" },
