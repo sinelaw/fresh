@@ -4,7 +4,7 @@
 
 use super::Editor;
 use crate::app::types::HoverTarget;
-use crate::config::{generate_dynamic_items, Menu, MenuExt, MenuItem, MenuItemExt};
+use crate::config::{generate_dynamic_items, Menu, MenuExt, MenuItem};
 use crate::input::keybindings::Action;
 use crate::primitives::display_width::str_width;
 use anyhow::Result as AnyhowResult;

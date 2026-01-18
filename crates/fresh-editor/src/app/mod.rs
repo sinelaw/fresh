@@ -3544,9 +3544,13 @@ impl Editor {
                     self.terminal_manager.close(terminal_id);
                 }
 
-                // These async messages are handled via PluginAsyncMessage or not used yet
-                AsyncMessage::LspServerRequest { .. } => {
-                    // LSP server requests (from server to client) - handled elsewhere
+                AsyncMessage::LspServerRequest {
+                    language,
+                    server_command,
+                    method,
+                    params,
+                } => {
+                    self.handle_lsp_server_request(language, server_command, method, params);
                 }
                 AsyncMessage::PluginLspResponse {
                     language: _,

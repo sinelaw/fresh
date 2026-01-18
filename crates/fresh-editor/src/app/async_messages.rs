@@ -730,6 +730,7 @@ impl Editor {
     }
 
     /// Handle custom LSP notification
+    #[allow(dead_code)] // Prepared for future use when AsyncMessage::LspCustomNotification is added
     pub(super) fn handle_custom_notification(
         &mut self,
         language: String,

@@ -4,12 +4,11 @@
 //! TypeScript plugins. TypeScript is transpiled to JavaScript using oxc.
 
 use anyhow::{anyhow, Result};
-use fresh_core::action::Action;
 use fresh_core::api::{
     ActionPopupAction, ActionSpec, BufferInfo, EditorStateSnapshot, JsCallbackId, PluginCommand,
     PluginResponse,
 };
-use fresh_core::command::{Command, CommandSource};
+use fresh_core::command::Command;
 use fresh_core::overlay::OverlayNamespace;
 use fresh_core::text_property::TextPropertyEntry;
 use fresh_core::{BufferId, SplitId};
@@ -445,7 +444,7 @@ impl JsEditorApi {
     /// context is optional - can be omitted, null, undefined, or a string
     pub fn register_command<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        _ctx: rquickjs::Ctx<'js>,
         name: String,
         description: String,
         handler_name: String,
@@ -520,7 +519,7 @@ impl JsEditorApi {
     /// Args is optional - can be omitted, undefined, null, or an object
     pub fn t<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        _ctx: rquickjs::Ctx<'js>,
         key: String,
         args: rquickjs::function::Rest<Value<'js>>,
     ) -> String {
@@ -778,7 +777,7 @@ impl JsEditorApi {
     // === Event Handling ===
 
     /// Subscribe to an editor event
-    pub fn on<'js>(&self, ctx: rquickjs::Ctx<'js>, event_name: String, handler_name: String) {
+    pub fn on<'js>(&self, _ctx: rquickjs::Ctx<'js>, event_name: String, handler_name: String) {
         self.event_handlers
             .borrow_mut()
             .entry(event_name)
@@ -1578,7 +1577,7 @@ impl JsEditorApi {
     /// Set suggestions for the current prompt (takes array of suggestion objects)
     pub fn set_prompt_suggestions<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        _ctx: rquickjs::Ctx<'js>,
         suggestions_arr: Vec<rquickjs::Object<'js>>,
     ) -> rquickjs::Result<bool> {
         let suggestions: Vec<fresh_core::command::Suggestion> = suggestions_arr
@@ -1826,7 +1825,7 @@ impl JsEditorApi {
     /// Execute multiple actions in sequence
     pub fn execute_actions<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        _ctx: rquickjs::Ctx<'js>,
         actions: Vec<rquickjs::Object<'js>>,
     ) -> rquickjs::Result<bool> {
         let specs: Vec<ActionSpec> = actions
@@ -1845,7 +1844,7 @@ impl JsEditorApi {
     /// Show an action popup
     pub fn show_action_popup<'js>(
         &self,
-        ctx: rquickjs::Ctx<'js>,
+        _ctx: rquickjs::Ctx<'js>,
         opts: rquickjs::Object<'js>,
     ) -> rquickjs::Result<bool> {
         let popup_id: String = opts.get("popupId").unwrap_or_default();
@@ -1933,7 +1932,7 @@ impl JsEditorApi {
     #[qjs(rename = "_createVirtualBufferStart")]
     pub fn create_virtual_buffer_start(
         &self,
-        ctx: rquickjs::Ctx<'_>,
+        _ctx: rquickjs::Ctx<'_>,
         opts: fresh_core::api::CreateVirtualBufferOptions,
     ) -> rquickjs::Result<u64> {
         let id = {
@@ -1987,7 +1986,7 @@ impl JsEditorApi {
     #[qjs(rename = "_createVirtualBufferInSplitStart")]
     pub fn create_virtual_buffer_in_split_start(
         &self,
-        ctx: rquickjs::Ctx<'_>,
+        _ctx: rquickjs::Ctx<'_>,
         opts: fresh_core::api::CreateVirtualBufferInSplitOptions,
     ) -> rquickjs::Result<u64> {
         let id = {
@@ -2040,7 +2039,7 @@ impl JsEditorApi {
     #[qjs(rename = "_createVirtualBufferInExistingSplitStart")]
     pub fn create_virtual_buffer_in_existing_split_start(
         &self,
-        ctx: rquickjs::Ctx<'_>,
+        _ctx: rquickjs::Ctx<'_>,
         opts: fresh_core::api::CreateVirtualBufferInExistingSplitOptions,
     ) -> rquickjs::Result<u64> {
         let id = {
@@ -2117,7 +2116,7 @@ impl JsEditorApi {
     #[qjs(rename = "_spawnProcessStart")]
     pub fn spawn_process_start(
         &self,
-        ctx: rquickjs::Ctx<'_>,
+        _ctx: rquickjs::Ctx<'_>,
         command: String,
         args: Vec<String>,
         cwd: rquickjs::function::Opt<String>,
@@ -2158,7 +2157,7 @@ impl JsEditorApi {
     /// Wait for a process to complete and get its result (async)
     #[plugin_api(async_promise, js_name = "spawnProcessWait", ts_return = "SpawnResult")]
     #[qjs(rename = "_spawnProcessWaitStart")]
-    pub fn spawn_process_wait_start(&self, ctx: rquickjs::Ctx<'_>, process_id: u64) -> u64 {
+    pub fn spawn_process_wait_start(&self, _ctx: rquickjs::Ctx<'_>, process_id: u64) -> u64 {
         let id = {
             let mut id_ref = self.next_request_id.borrow_mut();
             let id = *id_ref;
@@ -2181,7 +2180,7 @@ impl JsEditorApi {
     #[qjs(rename = "_getBufferTextStart")]
     pub fn get_buffer_text_start(
         &self,
-        ctx: rquickjs::Ctx<'_>,
+        _ctx: rquickjs::Ctx<'_>,
         buffer_id: u32,
         start: u32,
         end: u32,
@@ -2208,7 +2207,7 @@ impl JsEditorApi {
     /// Delay/sleep (async, returns request_id)
     #[plugin_api(async_promise, js_name = "delay", ts_return = "void")]
     #[qjs(rename = "_delayStart")]
-    pub fn delay_start(&self, ctx: rquickjs::Ctx<'_>, duration_ms: u64) -> u64 {
+    pub fn delay_start(&self, _ctx: rquickjs::Ctx<'_>, duration_ms: u64) -> u64 {
         let id = {
             let mut id_ref = self.next_request_id.borrow_mut();
             let id = *id_ref;
@@ -2269,7 +2268,7 @@ impl JsEditorApi {
     #[qjs(rename = "_spawnBackgroundProcessStart")]
     pub fn spawn_background_process_start(
         &self,
-        ctx: rquickjs::Ctx<'_>,
+        _ctx: rquickjs::Ctx<'_>,
         command: String,
         args: Vec<String>,
         cwd: rquickjs::function::Opt<String>,
@@ -2337,7 +2336,8 @@ pub struct QuickJsBackend {
     state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
     /// Command sender for write operations
     command_sender: mpsc::Sender<PluginCommand>,
-    /// Pending response senders for async operations
+    /// Pending response senders for async operations (held to keep Arc alive)
+    #[allow(dead_code)]
     pending_responses: PendingResponses,
     /// Next request ID for async operations
     next_request_id: Rc<RefCell<u64>>,
@@ -4713,8 +4713,8 @@ mod tests {
                 let length: u32 = global.get("_length").unwrap();
                 // /tmp should exist and readDir should return an array
                 assert!(is_array);
-                // Length is checked (could be 0 or more)
-                assert!(length >= 0);
+                // Length is valid (u32 always >= 0)
+                let _ = length;
             });
     }
 
