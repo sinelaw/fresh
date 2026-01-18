@@ -817,7 +817,7 @@
       }
     },
     "PluginConfig": {
-      "description": "Configuration for an individual plugin",
+      "description": "Configuration for a single plugin",
       "type": "object",
       "properties": {
         "enabled": {
