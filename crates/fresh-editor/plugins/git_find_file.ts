@@ -27,7 +27,11 @@ async function loadGitFiles(): Promise<string[]> {
   const result = await editor.spawnProcess("git", ["ls-files"]);
 
   if (result.exit_code === 0) {
-    return result.stdout.split("\n").filter((line) => line.trim() !== "");
+    // Split by newline and trim each line to handle \r\n on Windows
+    return result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "");
   }
 
   editor.debug(`Failed to load git files: ${result.stderr}`);

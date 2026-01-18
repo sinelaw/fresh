@@ -1275,18 +1275,22 @@ fn test_color_suggestions_show_hex_format() {
     open_theme_editor(&mut harness);
 
     // Navigate down to a color field and open the prompt
-    for _ in 0..8 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
-    }
-
-    // Keep pressing Down until we're on a field that opens a prompt
+    // Use wait_for_async for robustness against async loading on slower systems (Windows CI)
     let mut prompt_opened = false;
-    for _ in 0..10 {
+    for _ in 0..30 {
+        // Navigate down - give time for the UI to update
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness
+            .wait_for_async(|h| h.screen_to_string().contains("Theme Editor"), 500)
+            .ok();
+
+        // Try to open a prompt
         harness
             .send_key(KeyCode::Enter, KeyModifiers::NONE)
             .unwrap();
-        harness.render().unwrap();
+        // Wait for prompt to potentially open
+        harness.sleep(std::time::Duration::from_millis(100));
+        harness.process_async_and_render().unwrap();
 
         let screen = harness.screen_to_string();
         if screen.contains("#RRGGBB") || screen.contains("(#RRGGBB or named)") {
@@ -1294,30 +1298,34 @@ fn test_color_suggestions_show_hex_format() {
             break;
         }
 
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
+        // If we opened something that's not a color prompt, close it and try next field
+        if screen.contains("Enter:") || screen.contains("select") {
+            harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+            harness.sleep(std::time::Duration::from_millis(50));
+            harness.process_async_and_render().unwrap();
+        }
     }
 
     assert!(prompt_opened, "Color prompt should appear");
 
-    // Wait for suggestions to appear - they may take a few render cycles
-    let mut screen = String::new();
-    let mut has_suggestions = false;
-    for _ in 0..10 {
-        harness.render().unwrap();
-        screen = harness.screen_to_string();
-        // Look for any color suggestions (hex or bracket format)
-        if screen.contains("#000000")
-            || screen.contains("#FF0000")
-            || screen.contains("[0, 0, 0]")
-            || screen.contains("[255, 0, 0]")
-            || screen.contains("black")
-            || screen.contains("white")
-        {
-            has_suggestions = true;
-            break;
-        }
-    }
+    // Wait for suggestions to appear using wait_for_async for robustness
+    let has_suggestions = harness
+        .wait_for_async(
+            |h| {
+                let screen = h.screen_to_string();
+                // Look for any color suggestions (hex or bracket format)
+                screen.contains("#000000")
+                    || screen.contains("#FF0000")
+                    || screen.contains("[0, 0, 0]")
+                    || screen.contains("[255, 0, 0]")
+                    || screen.contains("black")
+                    || screen.contains("white")
+            },
+            2000,
+        )
+        .unwrap_or(false);
+
+    let screen = harness.screen_to_string();
 
     // If no suggestions appeared, skip the format check - suggestions may not be implemented
     if !has_suggestions {

@@ -813,16 +813,52 @@ impl JsEditorApi {
     // === Path Operations ===
 
     /// Join path components (variadic - accepts multiple string arguments)
+    /// Always uses forward slashes for cross-platform consistency (like Node.js path.posix.join)
     pub fn path_join(&self, parts: rquickjs::function::Rest<String>) -> String {
-        let mut path = PathBuf::new();
-        for part in parts.0 {
-            if Path::new(&part).is_absolute() {
-                path = PathBuf::from(part);
-            } else {
-                path.push(part);
+        let mut result_parts: Vec<String> = Vec::new();
+        let mut has_leading_slash = false;
+
+        for part in &parts.0 {
+            // Normalize separators to forward slashes
+            let normalized = part.replace('\\', "/");
+
+            // Check if this is an absolute path (starts with / or has drive letter like C:/)
+            let is_absolute = normalized.starts_with('/')
+                || (normalized.len() >= 2
+                    && normalized
+                        .chars()
+                        .next()
+                        .map(|c| c.is_ascii_alphabetic())
+                        .unwrap_or(false)
+                    && normalized.chars().nth(1) == Some(':'));
+
+            if is_absolute {
+                // Reset for absolute paths
+                result_parts.clear();
+                has_leading_slash = normalized.starts_with('/');
+            }
+
+            // Split and add non-empty parts
+            for segment in normalized.split('/') {
+                if !segment.is_empty() && segment != "." {
+                    if segment == ".." {
+                        result_parts.pop();
+                    } else {
+                        result_parts.push(segment.to_string());
+                    }
+                }
             }
         }
-        path.to_string_lossy().to_string()
+
+        // Reconstruct with forward slashes
+        let joined = result_parts.join("/");
+
+        // Preserve leading slash for Unix absolute paths
+        if has_leading_slash && !joined.is_empty() {
+            format!("/{}", joined)
+        } else {
+            joined
+        }
     }
 
     /// Get directory name from path

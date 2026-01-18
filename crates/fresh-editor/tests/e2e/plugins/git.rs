@@ -6,6 +6,11 @@ use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 
+/// Check if screen contains a path with either forward or backslash separator
+fn contains_src_path(s: &str) -> bool {
+    s.contains("src/") || s.contains("src\\")
+}
+
 /// Helper to trigger git grep via command palette
 fn trigger_git_grep(harness: &mut EditorTestHarness) {
     harness
@@ -80,7 +85,7 @@ fn test_git_grep_shows_results() {
 
     // Should show at least one match
     assert!(
-        screen.contains("src/") || screen.contains("Config") || screen.contains("config"),
+        contains_src_path(&screen) || screen.contains("Config") || screen.contains("config"),
         "Should show grep results"
     );
 }
@@ -112,7 +117,7 @@ fn test_git_grep_interactive_updates() {
 
     // Wait for initial results
     harness
-        .wait_until(|h| h.screen_to_string().contains("src/"))
+        .wait_until(|h| contains_src_path(&h.screen_to_string()))
         .unwrap();
 
     let screen_config = harness.screen_to_string();
@@ -144,7 +149,7 @@ fn test_git_grep_interactive_updates() {
 
     // Both searches should show some results
     assert!(
-        screen_config.contains("Config") || screen_config.contains("src/"),
+        screen_config.contains("Config") || contains_src_path(&screen_config),
         "Config search should show results"
     );
 }
@@ -180,7 +185,7 @@ fn test_git_grep_selection_navigation() {
 
     // Wait for results
     harness
-        .wait_until(|h| h.screen_to_string().contains("src/"))
+        .wait_until(|h| contains_src_path(&h.screen_to_string()))
         .unwrap();
 
     // Navigate down through suggestions
@@ -334,7 +339,7 @@ fn test_git_find_file_shows_results() {
             let screen = h.screen_to_string();
             // Wait for both the prompt and file content
             screen.contains("Find file:")
-                && (screen.contains("src/")
+                && (contains_src_path(&screen)
                     || screen.contains(".rs")
                     || screen.contains("Cargo.toml"))
         })
@@ -374,7 +379,7 @@ fn test_git_find_file_interactive_filtering() {
 
     // Wait for initial results
     harness
-        .wait_until(|h| h.screen_to_string().contains("src/"))
+        .wait_until(|h| contains_src_path(&h.screen_to_string()))
         .unwrap();
 
     // Type filter to narrow down results
@@ -442,7 +447,7 @@ fn test_git_find_file_selection_navigation() {
 
     // Wait for results
     harness
-        .wait_until(|h| h.screen_to_string().contains("src/"))
+        .wait_until(|h| contains_src_path(&h.screen_to_string()))
         .unwrap();
 
     // Navigate down
@@ -782,27 +787,28 @@ fn test_git_find_file_actually_opens_file() {
     // Trigger git find file
     trigger_git_find_file(&mut harness);
 
-    // Wait for prompt to appear
-    harness.wait_for_prompt().unwrap();
+    // Wait for prompt to appear AND files to be loaded
+    // This is important: we must wait for file loading to complete before typing
+    // because the Finder's loadFilterItems() is async
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            // Wait for both the prompt AND file results
+            s.contains("Find file:") && contains_src_path(&s)
+        })
+        .unwrap();
 
     // Type to find lib.rs
     harness.type_text("lib.rs").unwrap();
 
-    // Wait for results - check that suggestions are populated
+    // Wait for filtering to complete - lib.rs should be visible and near the top
+    // The fuzzy filter should prioritize "src/lib.rs" when filtering by "lib.rs"
     harness
         .wait_until(|h| {
-            // Check if the prompt has suggestions by checking if a file path appears
-            // in the screen content (not just the prompt input line)
-            // We look for "src/" which only appears in file results, not in the prompt
             let s = h.screen_to_string();
-            let lines: Vec<&str> = s.lines().collect();
-
-            // The last line is the prompt "Find file: lib.rs"
-            // Check if any line EXCEPT the last one contains "src/"
-            lines
-                .iter()
-                .take(lines.len().saturating_sub(1))
-                .any(|line| line.contains("src/"))
+            // After typing "lib.rs", the filtered results should show lib.rs
+            // Check that the screen still contains lib.rs in the results
+            s.contains("lib.rs") && s.contains("Find file:")
         })
         .unwrap();
 

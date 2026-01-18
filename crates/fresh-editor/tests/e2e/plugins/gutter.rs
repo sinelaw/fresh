@@ -223,6 +223,25 @@ fn test_git_gutter_updates_after_save() {
     open_file(&mut harness, &repo.path, "src/main.rs");
     harness.render().unwrap();
 
+    // Wait for git gutter to stabilize - for an unmodified file, there should be
+    // 0 indicators. We need to wait because the git diff is async and might not
+    // have completed yet (or might show transient indicators during loading).
+    harness
+        .wait_until(|h| {
+            // Process async messages to allow git gutter to settle
+            let screen = h.screen_to_string();
+            // For unmodified file, should have 0 indicators once stabilized
+            // But we also accept any stable state for robustness
+            screen.contains("main.rs") && screen.contains("fn main")
+        })
+        .unwrap();
+
+    // Give git gutter extra time to settle since git diff is async
+    for _ in 0..5 {
+        harness.process_async_and_render().unwrap();
+        harness.sleep(std::time::Duration::from_millis(50));
+    }
+
     // Initially, there should be no git gutter indicators (file matches HEAD)
     let screen = harness.screen_to_string();
     let initial_indicators = count_gutter_indicators(&screen, "│");
