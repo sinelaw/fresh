@@ -7,12 +7,12 @@
 
 use crate::config_io::DirectoryContext;
 use crate::input::command_registry::CommandRegistry;
-#[cfg(feature = "plugins")]
-use fresh_plugin_runtime::PluginConfig;
+use fresh_core::config::PluginConfig;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
+#[cfg(feature = "plugins")]
 use super::bridge::EditorServiceBridge;
 #[cfg(feature = "plugins")]
 use fresh_plugin_runtime::PluginThreadHandle;
@@ -107,23 +107,27 @@ impl PluginManager {
     /// Load plugins from a directory with config support.
     /// Returns (errors, discovered_plugins) where discovered_plugins is a map of
     /// plugin name -> PluginConfig with paths populated.
+    #[cfg(feature = "plugins")]
     pub fn load_plugins_from_dir_with_config(
         &self,
         dir: &Path,
         plugin_configs: &HashMap<String, PluginConfig>,
     ) -> (Vec<String>, HashMap<String, PluginConfig>) {
-        #[cfg(feature = "plugins")]
-        {
-            if let Some(ref manager) = self.inner {
-                return manager.load_plugins_from_dir_with_config(dir, plugin_configs);
-            }
-            (Vec::new(), HashMap::new())
+        if let Some(ref manager) = self.inner {
+            return manager.load_plugins_from_dir_with_config(dir, plugin_configs);
         }
-        #[cfg(not(feature = "plugins"))]
-        {
-            let _ = (dir, plugin_configs);
-            (Vec::new(), HashMap::new())
-        }
+        (Vec::new(), HashMap::new())
+    }
+
+    /// Load plugins from a directory with config support (no-op when plugins disabled).
+    #[cfg(not(feature = "plugins"))]
+    pub fn load_plugins_from_dir_with_config(
+        &self,
+        dir: &Path,
+        plugin_configs: &HashMap<String, PluginConfig>,
+    ) -> (Vec<String>, HashMap<String, PluginConfig>) {
+        let _ = (dir, plugin_configs);
+        (Vec::new(), HashMap::new())
     }
 
     /// Unload a plugin by name.
@@ -263,11 +267,23 @@ impl PluginManager {
         }
     }
 
+    /// Resolve an async callback in the plugin runtime (no-op when plugins disabled)
+    #[cfg(not(feature = "plugins"))]
+    pub fn resolve_callback(&self, callback_id: fresh_core::api::JsCallbackId, result_json: String) {
+        let _ = (callback_id, result_json);
+    }
+
     /// Reject an async callback in the plugin runtime
     #[cfg(feature = "plugins")]
     pub fn reject_callback(&self, callback_id: super::api::JsCallbackId, error: String) {
         if let Some(inner) = &self.inner {
             inner.reject_callback(callback_id, error);
         }
+    }
+
+    /// Reject an async callback in the plugin runtime (no-op when plugins disabled)
+    #[cfg(not(feature = "plugins"))]
+    pub fn reject_callback(&self, callback_id: fresh_core::api::JsCallbackId, error: String) {
+        let _ = (callback_id, error);
     }
 }

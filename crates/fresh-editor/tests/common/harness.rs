@@ -13,6 +13,7 @@ fn init_test_environment() {
     fresh::services::signal_handler::install_signal_handlers();
 
     // Enable panicking on JS errors so plugin bugs surface immediately in tests
+    #[cfg(feature = "plugins")]
     fresh_plugin_runtime::backend::set_panic_on_js_errors(true);
 }
 
