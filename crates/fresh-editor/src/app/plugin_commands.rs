@@ -1035,7 +1035,8 @@ impl Editor {
             .collect();
 
         if let Some(prompt) = &mut self.prompt {
-            // Set original_suggestions for auto-filtering
+            // Set original_suggestions for Rust-side filtering (used by prompts that
+            // don't handle their own filtering like theme editor dropdowns)
             prompt.original_suggestions = Some(internal_suggestions.clone());
             prompt.suggestions = internal_suggestions;
             // Select first suggestion by default
@@ -1044,6 +1045,10 @@ impl Editor {
             } else {
                 Some(0)
             };
+            // Track that suggestions were set for this input value.
+            // If filter_suggestions is called with the same input, we skip filtering
+            // because the plugin has already provided filtered results.
+            prompt.suggestions_set_for_input = Some(prompt.input.clone());
         }
     }
 

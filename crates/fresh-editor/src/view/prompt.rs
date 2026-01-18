@@ -132,6 +132,9 @@ pub struct Prompt {
     /// Selection anchor position (for Shift+Arrow selection)
     /// When Some(pos), there's a selection from anchor to cursor_pos
     pub selection_anchor: Option<usize>,
+    /// Tracks the input value when suggestions were last set by a plugin.
+    /// Used to skip Rust-side filtering when plugin has already filtered for this input.
+    pub suggestions_set_for_input: Option<String>,
 }
 
 impl Prompt {
@@ -146,6 +149,7 @@ impl Prompt {
             original_suggestions: None,
             selected_suggestion: None,
             selection_anchor: None,
+            suggestions_set_for_input: None,
         }
     }
 
@@ -172,6 +176,7 @@ impl Prompt {
             suggestions,
             selected_suggestion,
             selection_anchor: None,
+            suggestions_set_for_input: None,
         }
     }
 
@@ -197,6 +202,7 @@ impl Prompt {
             original_suggestions: None,
             selected_suggestion: None,
             selection_anchor,
+            suggestions_set_for_input: None,
         }
     }
 
@@ -327,6 +333,15 @@ impl Prompt {
     /// Updates `suggestions` with filtered and sorted results.
     pub fn filter_suggestions(&mut self, match_description: bool) {
         use crate::input::fuzzy::{fuzzy_match, FuzzyMatch};
+
+        // Skip filtering if the plugin has already set suggestions for this exact input.
+        // This handles the race condition where run_hook("prompt_changed") is async:
+        // the plugin may have already responded with filtered results via setPromptSuggestions.
+        if let Some(ref set_for_input) = self.suggestions_set_for_input {
+            if set_for_input == &self.input {
+                return;
+            }
+        }
 
         let Some(original) = &self.original_suggestions else {
             return;

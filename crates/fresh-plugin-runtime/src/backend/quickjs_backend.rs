@@ -3742,8 +3742,9 @@ mod tests {
         let (mut backend, _rx) = create_test_backend();
 
         // Use platform-appropriate absolute path for isAbsolute test
+        // Note: On Windows, backslashes need to be escaped for JavaScript string literals
         #[cfg(windows)]
-        let absolute_path = r#"C:\foo\bar"#;
+        let absolute_path = r#"C:\\foo\\bar"#;
         #[cfg(not(windows))]
         let absolute_path = "/foo/bar";
 

@@ -3131,7 +3131,10 @@ impl Editor {
                         input,
                     },
                 );
-                // Apply fuzzy filtering if original_suggestions is set
+                // Apply fuzzy filtering if original_suggestions is set.
+                // Note: filter_suggestions checks suggestions_set_for_input to skip
+                // filtering if the plugin has already provided filtered results for
+                // this input (handles the async race condition with run_hook).
                 if let Some(prompt) = &mut self.prompt {
                     prompt.filter_suggestions(false);
                 }
