@@ -154,7 +154,8 @@ chmod +x "$APPDIR/AppRun"
 
 echo ""
 echo "=== AppDir structure ==="
-find "$APPDIR" \( -type f -o -type l \) | sed "s|$APPDIR|Fresh.AppDir|" | head -50
+# Use subshell to avoid pipefail issues with head truncating output
+(find "$APPDIR" \( -type f -o -type l \) | sed "s|$APPDIR|Fresh.AppDir|" | head -50) || true
 
 echo ""
 echo "=== Building AppImage ==="
