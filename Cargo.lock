@@ -996,7 +996,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-plugin-api-macros"
-version = "0.1.0"
+version = "0.1.77"
 dependencies = [
  "proc-macro2",
  "quote",

@@ -1,7 +1,8 @@
 [package]
 name = "fresh-plugin-api-macros"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description = "Proc macros for Fresh plugin API type-safe bindings"
 
 [lib]
