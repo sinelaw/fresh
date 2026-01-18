@@ -66,8 +66,8 @@ jobs:
           mkdir -p "${ARCHIVE_NAME}"
           cp target/${{ matrix.target }}/release/fresh "${ARCHIVE_NAME}/"
           cp README.md LICENSE "${ARCHIVE_NAME}/" 2>/dev/null || true
-          cp -r plugins "${ARCHIVE_NAME}/" 2>/dev/null || true
-          cp -r themes "${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp -r crates/fresh-editor/plugins "${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp -r crates/fresh-editor/themes "${ARCHIVE_NAME}/" 2>/dev/null || true
 
           tar -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
           sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"

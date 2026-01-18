@@ -50,14 +50,17 @@
             (lib.fileset.fileFilter (file: file.hasExt "js") unfilteredRoot)
             # Keep sublime-syntax grammar files (used by include_str! in grammar_registry.rs)
             (lib.fileset.fileFilter (file: file.hasExt "sublime-syntax") unfilteredRoot)
+            # Runtime assets in crates/fresh-editor
+            ./crates/fresh-editor/keymaps
+            ./crates/fresh-editor/locales
+            ./crates/fresh-editor/plugins
+            ./crates/fresh-editor/queries
+            ./crates/fresh-editor/themes
+            ./crates/fresh-editor/types
+            # Test files
+            ./crates/fresh-editor/tests
+            # Documentation
             ./docs
-            ./keymaps
-            ./locales
-            ./plugins
-            ./queries
-            ./tests
-            ./themes
-            ./types
           ];
         };
 
@@ -123,11 +126,10 @@
             # Include runtime assets
             postInstall = ''
               mkdir -p $out/share/fresh-editor
-
-                cp -r queries $out/share/fresh-editor/
-                cp -r themes $out/share/fresh-editor/
-                cp -r keymaps $out/share/fresh-editor/
-                cp -r plugins $out/share/fresh-editor/
+              cp -r crates/fresh-editor/queries $out/share/fresh-editor/
+              cp -r crates/fresh-editor/themes $out/share/fresh-editor/
+              cp -r crates/fresh-editor/keymaps $out/share/fresh-editor/
+              cp -r crates/fresh-editor/plugins $out/share/fresh-editor/
             '';
           }
         );

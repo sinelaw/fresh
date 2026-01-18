@@ -96,6 +96,10 @@ jobs:
             in_sha { next }
             { print }
           ' PKGBUILD > PKGBUILD.tmp && mv PKGBUILD.tmp PKGBUILD
+          # Update paths for workspace restructuring (plugins/keymaps/themes moved to crates/fresh-editor/)
+          sed -i 's|cp -r plugins |cp -r crates/fresh-editor/plugins |g' PKGBUILD
+          sed -i 's|cp -r keymaps |cp -r crates/fresh-editor/keymaps |g' PKGBUILD
+          sed -i 's|cp -r themes |cp -r crates/fresh-editor/themes |g' PKGBUILD
           echo "Updated PKGBUILD:"
           cat PKGBUILD
 

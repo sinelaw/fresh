@@ -28,27 +28,28 @@ jobs:
 
       - name: Extract pre-built binary
         run: |
-          mkdir -p target/release
+          # Flatpak manifest expects binary at crates/fresh-editor/target/release/
+          mkdir -p crates/fresh-editor/target/release
           cd artifacts
           tar -xJf fresh-editor-x86_64-unknown-linux-gnu.tar.xz
-          cp fresh-editor-x86_64-unknown-linux-gnu/fresh ../target/release/
+          cp fresh-editor-x86_64-unknown-linux-gnu/fresh ../crates/fresh-editor/target/release/
 
       - name: Strip binary
         run: |
-          strip --strip-all target/release/fresh
-          ls -lh target/release/fresh
+          strip --strip-all crates/fresh-editor/target/release/fresh
+          ls -lh crates/fresh-editor/target/release/fresh
 
       - name: Update metainfo version
         run: |
           VERSION="${{ inputs.version }}"
           DATE=$(date +%Y-%m-%d)
-          sed -i "s/<release version=\"[^\"]*\"/<release version=\"$VERSION\"/" flatpak/io.github.sinelaw.fresh.metainfo.xml
-          sed -i "s/date=\"[^\"]*\"/date=\"$DATE\"/" flatpak/io.github.sinelaw.fresh.metainfo.xml
+          sed -i "s/<release version=\"[^\"]*\"/<release version=\"$VERSION\"/" crates/fresh-editor/flatpak/io.github.sinelaw.fresh.metainfo.xml
+          sed -i "s/date=\"[^\"]*\"/date=\"$DATE\"/" crates/fresh-editor/flatpak/io.github.sinelaw.fresh.metainfo.xml
 
       - name: Build Flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          manifest-path: flatpak/io.github.sinelaw.fresh.yml
+          manifest-path: crates/fresh-editor/flatpak/io.github.sinelaw.fresh.yml
           bundle: fresh-editor-${{ inputs.version }}-x86_64.flatpak
           upload-artifact: false
 

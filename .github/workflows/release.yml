@@ -151,8 +151,8 @@ jobs:
           mkdir -p "${ARCHIVE_NAME}"
           cp target/${{ matrix.target }}/release/fresh "${ARCHIVE_NAME}/"
           cp README.md LICENSE CHANGELOG.md "${ARCHIVE_NAME}/"
-          cp -r plugins "${ARCHIVE_NAME}/"
-          cp -r themes "${ARCHIVE_NAME}/"
+          cp -r crates/fresh-editor/plugins "${ARCHIVE_NAME}/"
+          cp -r crates/fresh-editor/themes "${ARCHIVE_NAME}/"
 
           if [ "${{ matrix.archive_ext }}" = "tar.xz" ]; then
             tar -cJvf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}"
@@ -170,8 +170,8 @@ jobs:
           New-Item -ItemType Directory -Path $ARCHIVE_NAME -Force
           Copy-Item "target/${{ matrix.target }}/release/fresh.exe" "$ARCHIVE_NAME/"
           Copy-Item "README.md", "LICENSE", "CHANGELOG.md" "$ARCHIVE_NAME/"
-          Copy-Item -Recurse "plugins" "$ARCHIVE_NAME/"
-          Copy-Item -Recurse "themes" "$ARCHIVE_NAME/"
+          Copy-Item -Recurse "crates/fresh-editor/plugins" "$ARCHIVE_NAME/"
+          Copy-Item -Recurse "crates/fresh-editor/themes" "$ARCHIVE_NAME/"
 
           Compress-Archive -Path "$ARCHIVE_NAME/*" -DestinationPath "$ARCHIVE_NAME.zip"
           $hash = (Get-FileHash "$ARCHIVE_NAME.zip" -Algorithm SHA256).Hash.ToLower()
@@ -246,15 +246,15 @@ jobs:
         run: |
           # Copy JS files from npm-package template
           mkdir -p dist-npm
-          cp npm-package/*.js dist-npm/
+          cp crates/fresh-editor/npm-package/*.js dist-npm/
 
           # Create package.json from template with version
-          sed "s/VERSION_PLACEHOLDER/${VERSION}/g" npm-package/package.json.template > dist-npm/package.json
+          sed "s/VERSION_PLACEHOLDER/${VERSION}/g" crates/fresh-editor/npm-package/package.json.template > dist-npm/package.json
 
           # Copy supporting files
           cp README.md LICENSE CHANGELOG.md dist-npm/
-          cp -r plugins dist-npm/
-          cp -r themes dist-npm/
+          cp -r crates/fresh-editor/plugins dist-npm/
+          cp -r crates/fresh-editor/themes dist-npm/
 
           # Create the tarball
           cd dist-npm
@@ -500,15 +500,15 @@ jobs:
         run: |
           # Copy JS files from npm-package template
           mkdir -p dist-npm
-          cp npm-package/*.js dist-npm/
+          cp crates/fresh-editor/npm-package/*.js dist-npm/
 
           # Create package.json from template with version
-          sed "s/VERSION_PLACEHOLDER/${VERSION}/g" npm-package/package.json.template > dist-npm/package.json
+          sed "s/VERSION_PLACEHOLDER/${VERSION}/g" crates/fresh-editor/npm-package/package.json.template > dist-npm/package.json
 
           # Copy supporting files
           cp README.md LICENSE CHANGELOG.md dist-npm/
-          cp -r plugins dist-npm/
-          cp -r themes dist-npm/
+          cp -r crates/fresh-editor/plugins dist-npm/
+          cp -r crates/fresh-editor/themes dist-npm/
 
           # Create the tarball
           cd dist-npm
