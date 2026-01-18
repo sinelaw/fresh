@@ -1,10 +1,10 @@
 //! Generate JSON Schema for Fresh configuration
 //!
 //! This binary generates a JSON Schema from the Config struct using schemars.
-//! It's used to generate plugins/config-schema.json for the config editor.
+//! It's used to generate crates/fresh-editor/plugins/config-schema.json for the config editor.
 //!
 //! Usage:
-//!   cargo run --features dev-bins --bin generate_schema > plugins/config-schema.json
+//!   cargo run --features dev-bins --bin generate_schema > crates/fresh-editor/plugins/config-schema.json
 
 use fresh::config::Config;
 use schemars::schema_for;

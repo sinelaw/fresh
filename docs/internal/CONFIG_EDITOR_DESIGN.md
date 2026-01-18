@@ -927,7 +927,7 @@ fn main() {
 
 **Usage:**
 ```bash
-cargo run --features dev-bins --bin generate_schema > plugins/config-schema.json
+cargo run --features dev-bins --bin generate_schema > crates/fresh-editor/plugins/config-schema.json
 ```
 
 **CI verification** (in `.github/workflows/ci.yml`):
@@ -935,7 +935,7 @@ cargo run --features dev-bins --bin generate_schema > plugins/config-schema.json
 - name: Generate schema
   run: cargo run --features dev-bins --bin generate_schema > /tmp/config-schema.json
 - name: Check schema is up-to-date
-  run: diff -u plugins/config-schema.json /tmp/config-schema.json
+  run: diff -u crates/fresh-editor/plugins/config-schema.json /tmp/config-schema.json
 ```
 
 #### Benefits

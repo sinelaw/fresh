@@ -3741,21 +3741,26 @@ mod tests {
     fn test_api_path_functions() {
         let (mut backend, _rx) = create_test_backend();
 
+        // Use platform-appropriate absolute path for isAbsolute test
+        #[cfg(windows)]
+        let absolute_path = r#"C:\foo\bar"#;
+        #[cfg(not(windows))]
+        let absolute_path = "/foo/bar";
+
         // pathJoin takes an array of path parts
-        backend
-            .execute_js(
-                r#"
+        let js_code = format!(
+            r#"
             const editor = getEditor();
             globalThis._dirname = editor.pathDirname("/foo/bar/baz.txt");
             globalThis._basename = editor.pathBasename("/foo/bar/baz.txt");
             globalThis._extname = editor.pathExtname("/foo/bar/baz.txt");
-            globalThis._isAbsolute = editor.pathIsAbsolute("/foo/bar");
+            globalThis._isAbsolute = editor.pathIsAbsolute("{}");
             globalThis._isRelative = editor.pathIsAbsolute("foo/bar");
             globalThis._joined = editor.pathJoin("/foo", "bar", "baz");
         "#,
-                "test.js",
-            )
-            .unwrap();
+            absolute_path
+        );
+        backend.execute_js(&js_code, "test.js").unwrap();
 
         backend
             .plugin_contexts

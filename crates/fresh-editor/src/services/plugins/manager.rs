@@ -269,7 +269,11 @@ impl PluginManager {
 
     /// Resolve an async callback in the plugin runtime (no-op when plugins disabled)
     #[cfg(not(feature = "plugins"))]
-    pub fn resolve_callback(&self, callback_id: fresh_core::api::JsCallbackId, result_json: String) {
+    pub fn resolve_callback(
+        &self,
+        callback_id: fresh_core::api::JsCallbackId,
+        result_json: String,
+    ) {
         let _ = (callback_id, result_json);
     }
 
