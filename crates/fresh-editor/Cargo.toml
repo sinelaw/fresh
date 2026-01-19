@@ -89,7 +89,7 @@ once_cell.workspace = true
 
 # Runtime dependencies (optional, enabled by "runtime" feature)
 crossterm = { version = "0.29.0", features = ["osc52"], optional = true }
-ratatui = { version = "0.29.0", optional = true }
+ratatui = { version = "0.30.0", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
 clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"], optional = true }
 tracing = { workspace = true, optional = true }
