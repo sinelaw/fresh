@@ -1,11 +1,10 @@
 FROM ubuntu:20.04
 
 RUN apt-get update && apt-get install -y \
-    sudo curl \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m -s /bin/bash -G sudo testuser \
-    && echo 'testuser ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+RUN useradd -m -s /bin/bash testuser
 
-USER testuser
+# Start as root by default. Use "su - testuser" to switch.
 WORKDIR /work
