@@ -151,6 +151,7 @@
   "action.prompt_set_bookmark": "Nastavit záložku (vyžaduje registr)",
   "action.query_replace": "Interaktivní nahrazení (a/n/!/q pro každou shodu)",
   "action.quit": "Ukončit editor",
+  "action.force_quit": "Ukončit editor (zahodit neuložené změny)",
   "action.recenter": "Vycentrovat pohled na kurzor",
   "action.redo": "Znovu",
   "action.remove_secondary_cursors": "Odstranit sekundární kurzory",

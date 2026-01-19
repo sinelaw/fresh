@@ -151,6 +151,7 @@
   "action.prompt_set_bookmark": "Lesezeichen setzen (fragt nach Register)",
   "action.query_replace": "Interaktives Ersetzen (j/n/!/q für jeden Treffer)",
   "action.quit": "Editor beenden",
+  "action.force_quit": "Editor beenden (ungespeicherte Änderungen verwerfen)",
   "action.recenter": "Ansicht auf Cursor zentrieren",
   "action.redo": "Wiederholen",
   "action.remove_secondary_cursors": "Sekundäre Cursor entfernen",

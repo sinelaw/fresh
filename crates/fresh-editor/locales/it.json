@@ -151,6 +151,7 @@
   "action.prompt_set_bookmark": "Imposta segnalibro (richiede registro)",
   "action.query_replace": "Sostituzione interattiva (y/n/!/q per ogni occorrenza)",
   "action.quit": "Esci dall'editor",
+  "action.force_quit": "Esci dall'editor (scarta modifiche non salvate)",
   "action.recenter": "Ricentra vista sul cursore",
   "action.redo": "Ripristina",
   "action.remove_secondary_cursors": "Rimuovi cursori secondari",

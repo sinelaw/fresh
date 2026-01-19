@@ -178,12 +178,13 @@ pub fn write_fresh_dts() -> Result<(), String> {
     // Format the TypeScript
     let formatted = format_typescript(&content);
 
-    // Determine output path
+    // Determine output path - write to fresh-editor/plugins/lib/fresh.d.ts
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
     let output_path = std::path::Path::new(&manifest_dir)
-        .join("plugins")
-        .join("lib")
-        .join("fresh.d.ts");
+        .parent() // crates/
+        .and_then(|p| p.parent()) // workspace root
+        .map(|p| p.join("crates/fresh-editor/plugins/lib/fresh.d.ts"))
+        .unwrap_or_else(|| std::path::PathBuf::from("plugins/lib/fresh.d.ts"));
 
     // Only write if content changed
     let should_write = match std::fs::read_to_string(&output_path) {

@@ -1561,11 +1561,18 @@ editor.defineMode("vi-normal", null, [
 
   // Command mode
   [":", "vi_command_mode"],
+
+  // Pass through to standard editor shortcuts
+  ["C-p", "command_palette"],
+  ["C-q", "quit"],
 ], true); // read_only = true to prevent character insertion
 
 // Define vi-insert mode - only Escape is special, other keys insert text
 editor.defineMode("vi-insert", null, [
   ["Escape", "vi_escape"],
+  // Pass through to standard editor shortcuts
+  ["C-p", "command_palette"],
+  ["C-q", "quit"],
 ], false); // read_only = false to allow normal typing
 
 // Define vi-find-char mode - binds all printable chars to the handler
@@ -1769,6 +1776,10 @@ editor.defineMode("vi-visual", null, [
   // Exit
   ["Escape", "vi_vis_escape"],
   ["v", "vi_vis_escape"], // v again exits visual mode
+
+  // Pass through to standard editor shortcuts
+  ["C-p", "command_palette"],
+  ["C-q", "quit"],
 ], true);
 
 // Define vi-visual-line mode (line-wise)
@@ -1803,6 +1814,10 @@ editor.defineMode("vi-visual-line", null, [
   // Exit
   ["Escape", "vi_vis_escape"],
   ["V", "vi_vis_escape"], // V again exits visual-line mode
+
+  // Pass through to standard editor shortcuts
+  ["C-p", "command_palette"],
+  ["C-q", "quit"],
 ], true);
 
 // Define vi-visual-block mode (column/block selection)
@@ -1841,6 +1856,10 @@ editor.defineMode("vi-visual-block", null, [
   // Exit
   ["Escape", "vi_vblock_escape"],
   ["C-v", "vi_vblock_escape"], // Ctrl-v again exits visual-block mode
+
+  // Pass through to standard editor shortcuts
+  ["C-p", "command_palette"],
+  ["C-q", "quit"],
 ], true);
 
 // ============================================================================
@@ -2177,31 +2196,62 @@ async function executeCommand(
   switch (command) {
     case "write": {
       // :w - save current file
-      // :w filename - save as filename (not implemented yet)
+      // :w filename - save to specified filename
       if (args) {
-        return { error: editor.t("error.save_as_not_implemented") };
+        const bufferId = editor.getActiveBufferId();
+        // Resolve path (could be relative or absolute)
+        const path = args.startsWith("/") ? args : `${editor.getCwd()}/${args}`;
+        editor.saveBufferToPath(bufferId, path);
+        return { message: editor.t("status.file_saved") };
       }
       editor.executeAction("save");
       return { message: editor.t("status.file_saved") };
     }
 
     case "quit": {
-      // :q - quit (close buffer)
-      // :q! - force quit (discard changes)
-      const bufferId = editor.getActiveBufferId();
-      if (!force && editor.isBufferModified(bufferId)) {
+      // :q - quit editor (like vim)
+      // :q! - force quit (discard unsaved changes)
+      if (force) {
+        editor.executeAction("force_quit");
+        return {};
+      }
+      // Check ALL buffers for unsaved changes
+      const buffers = editor.listBuffers() as Array<{ id: number; modified: boolean }>;
+      const hasModified = buffers.some((b) => b.modified);
+      if (hasModified) {
         return { error: editor.t("error.no_write_since_change", { cmd: ":q!" }) };
       }
-      editor.executeAction("close_buffer");
+      editor.executeAction("force_quit");
       return {};
     }
 
     case "wq":
     case "xit":
     case "exit": {
-      // :wq or :x - save and quit
-      editor.executeAction("save");
-      editor.executeAction("close_buffer");
+      // :wq or :x - save current buffer and quit
+      // :wq filename - save to filename and quit
+      const wqBufferId = editor.getActiveBufferId();
+
+      if (args) {
+        // Save to specified filename
+        const path = args.startsWith("/") ? args : `${editor.getCwd()}/${args}`;
+        editor.saveBufferToPath(wqBufferId, path);
+      } else {
+        // Save to existing path
+        const wqPath = editor.getBufferPath(wqBufferId);
+        if (!wqPath) {
+          return { error: editor.t("error.no_file_name") };
+        }
+        editor.executeAction("save");
+      }
+
+      // Check if any OTHER buffers have unsaved changes
+      const allBuffers = editor.listBuffers() as Array<{ id: number; modified: boolean }>;
+      const otherModified = allBuffers.some((b: { id: number; modified: boolean }) => b.id !== wqBufferId && b.modified);
+      if (otherModified) {
+        return { error: editor.t("error.other_buffers_modified", { cmd: ":wqa" }) };
+      }
+      editor.executeAction("force_quit");
       return {};
     }
 
@@ -2215,16 +2265,15 @@ async function executeCommand(
       // :qa - quit all
       // :qa! - force quit all
       if (force) {
-        editor.executeAction("quit_all");
+        editor.executeAction("force_quit");
       } else {
         // Check if any buffer is modified
-        const buffers = editor.listBuffers();
-        for (const buf of buffers) {
-          if (buf.modified) {
-            return { error: editor.t("error.no_write_since_change", { cmd: ":qa!" }) };
-          }
+        const allBufs = editor.listBuffers() as Array<{ id: number; modified: boolean }>;
+        const anyModified = allBufs.some((b) => b.modified);
+        if (anyModified) {
+          return { error: editor.t("error.no_write_since_change", { cmd: ":qa!" }) };
         }
-        editor.executeAction("quit_all");
+        editor.executeAction("force_quit");
       }
       return {};
     }
@@ -2232,7 +2281,7 @@ async function executeCommand(
     case "wqall": {
       // :wqa or :xa - save all and quit
       editor.executeAction("save_all");
-      editor.executeAction("quit_all");
+      editor.executeAction("force_quit");
       return {};
     }
 
@@ -2307,7 +2356,7 @@ async function executeCommand(
       if (!force && editor.isBufferModified(bufferId)) {
         return { error: editor.t("error.no_write_since_change", { cmd: ":bd!" }) };
       }
-      editor.executeAction("close_buffer");
+      editor.executeAction("close");
       return {};
     }
 
@@ -2421,7 +2470,7 @@ async function executeCommand(
       if (!force && editor.isBufferModified(bufferId)) {
         return { error: editor.t("error.no_write_since_change", { cmd: ":close!" }) };
       }
-      editor.executeAction("close_buffer");
+      editor.executeAction("close");
       return {};
     }
 
@@ -2442,7 +2491,7 @@ async function executeCommand(
       if (!force && editor.isBufferModified(bufferId)) {
         return { error: editor.t("error.no_write_since_change", { cmd: ":tabclose!" }) };
       }
-      editor.executeAction("close_buffer");
+      editor.executeAction("close");
       return {};
     }
 

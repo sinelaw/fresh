@@ -151,6 +151,7 @@
   "action.prompt_set_bookmark": "Definir marcador (solicita registrador)",
   "action.query_replace": "Substituição interativa (s/n/!/q para cada correspondência)",
   "action.quit": "Sair do editor",
+  "action.force_quit": "Sair do editor (descartar alterações não salvas)",
   "action.recenter": "Recentralizar visualização no cursor",
   "action.redo": "Refazer",
   "action.remove_secondary_cursors": "Remover cursores secundários",

@@ -217,7 +217,7 @@ interface EditorAPI {
 	copyToClipboard(text: string): void;
 	setClipboard(text: string): void;
 	/**
-	* Register a command - reads plugin name from __currentPluginName__ global
+	* Register a command - reads plugin name from __pluginName__ global
 	* context is optional - can be omitted, null, undefined, or a string
 	*/
 	registerCommand(name: string, description: string, handlerName: string, context?: unknown): boolean;
@@ -234,7 +234,7 @@ interface EditorAPI {
 	*/
 	executeAction(actionName: string): boolean;
 	/**
-	* Translate a string - reads plugin name from __currentPluginName__ global
+	* Translate a string - reads plugin name from __pluginName__ global
 	* Args is optional - can be omitted, undefined, null, or an object
 	*/
 	t(key: string, ...args: unknown[]): string;
@@ -254,6 +254,11 @@ interface EditorAPI {
 	* Check if buffer has unsaved changes
 	*/
 	isBufferModified(bufferId: number): boolean;
+	/**
+	* Save a buffer to a specific file path
+	* Used by :w filename to save unnamed buffers or save-as
+	*/
+	saveBufferToPath(bufferId: number, path: string): boolean;
 	/**
 	* Get buffer info by ID
 	*/
@@ -332,6 +337,7 @@ interface EditorAPI {
 	getCwd(): string;
 	/**
 	* Join path components (variadic - accepts multiple string arguments)
+	* Always uses forward slashes for cross-platform consistency (like Node.js path.posix.join)
 	*/
 	pathJoin(...parts: string[]): string;
 	/**
@@ -409,7 +415,7 @@ interface EditorAPI {
 	/**
 	* Check if a background process is still running
 	*/
-	isProcessRunning(processId: number): boolean;
+	isProcessRunning(ProcessId: number): boolean;
 	/**
 	* Kill a process by ID (alias for killBackgroundProcess)
 	*/

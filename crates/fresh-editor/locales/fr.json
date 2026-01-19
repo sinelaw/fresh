@@ -151,6 +151,7 @@
   "action.prompt_set_bookmark": "Définir un signet (demande le registre)",
   "action.query_replace": "Remplacement interactif (o/n/!/q pour chaque correspondance)",
   "action.quit": "Quitter l'éditeur",
+  "action.force_quit": "Quitter l'éditeur (abandonner les modifications non enregistrées)",
   "action.recenter": "Recentrer la vue sur le curseur",
   "action.redo": "Refaire",
   "action.remove_secondary_cursors": "Supprimer les curseurs secondaires",

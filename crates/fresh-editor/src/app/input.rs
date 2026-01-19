@@ -219,6 +219,9 @@ impl Editor {
 
         match action {
             Action::Quit => self.quit(),
+            Action::ForceQuit => {
+                self.should_quit = true;
+            }
             Action::Save => {
                 // Check if buffer has a file path - if not, redirect to SaveAs
                 if self.active_state().buffer.file_path().is_none() {

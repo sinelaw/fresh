@@ -1097,6 +1097,15 @@ pub enum PluginCommand {
         /// The group ID returned by CreateScrollSyncGroup
         group_id: u32,
     },
+
+    /// Save a buffer to a specific file path
+    /// Used by :w filename command to save unnamed buffers or save-as
+    SaveBufferToPath {
+        /// Buffer ID to save
+        buffer_id: BufferId,
+        /// Path to save to
+        path: PathBuf,
+    },
 }
 
 /// Hunk status for Review Diff

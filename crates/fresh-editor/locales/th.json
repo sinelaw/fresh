@@ -151,6 +151,7 @@
   "action.prompt_set_bookmark": "ตั้งบุ๊คมาร์ค (ระบุเรจิสเตอร์)",
   "action.query_replace": "แทนที่แบบโต้ตอบ (ย/น/!/ข สำหรับแต่ละจุด)",
   "action.quit": "ออกจากโปรแกรม",
+  "action.force_quit": "ออกจากโปรแกรม (ละทิ้งการเปลี่ยนแปลงที่ไม่ได้บันทึก)",
   "action.recenter": "จัดมุมมองให้เคอร์เซอร์อยู่ตรงกลาง",
   "action.redo": "ทำซ้ำ",
   "action.remove_secondary_cursors": "เอาเคอร์เซอร์รองออก",

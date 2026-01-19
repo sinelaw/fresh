@@ -151,6 +151,7 @@
   "action.prompt_set_bookmark": "Установить закладку (запрашивает регистр)",
   "action.query_replace": "Интерактивная замена (y/n/!/q для каждого совпадения)",
   "action.quit": "Выйти из редактора",
+  "action.force_quit": "Выйти из редактора (отменить несохранённые изменения)",
   "action.recenter": "Центрировать вид на курсоре",
   "action.redo": "Повторить",
   "action.remove_secondary_cursors": "Удалить дополнительные курсоры",

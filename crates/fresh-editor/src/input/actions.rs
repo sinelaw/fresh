@@ -2089,6 +2089,7 @@ pub fn action_to_events(
 
         // Actions that don't generate events
         Action::Quit
+        | Action::ForceQuit
         | Action::Save
         | Action::SaveAs
         | Action::Open

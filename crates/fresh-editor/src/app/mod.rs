@@ -4855,8 +4855,36 @@ impl Editor {
             PluginCommand::CloseCompositeBuffer { buffer_id } => {
                 self.close_composite_buffer(buffer_id);
             }
+
+            // ==================== File Operations ====================
+            PluginCommand::SaveBufferToPath { buffer_id, path } => {
+                self.handle_save_buffer_to_path(buffer_id, path);
+            }
         }
         Ok(())
+    }
+
+    /// Save a buffer to a specific file path (for :w filename)
+    fn handle_save_buffer_to_path(&mut self, buffer_id: BufferId, path: std::path::PathBuf) {
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            // Save to the specified path
+            match state.buffer.save_to_file(&path) {
+                Ok(()) => {
+                    // Update the buffer's file path so future saves go to the same file
+                    state.buffer.set_file_path(path.clone());
+                    // Run on-save actions (formatting, etc.)
+                    let _ = self.finalize_save(Some(path));
+                    tracing::debug!("Saved buffer {:?} to path", buffer_id);
+                }
+                Err(e) => {
+                    self.handle_set_status(format!("Error saving: {}", e));
+                    tracing::error!("Failed to save buffer to path: {}", e);
+                }
+            }
+        } else {
+            self.handle_set_status(format!("Buffer {:?} not found", buffer_id));
+            tracing::warn!("SaveBufferToPath: buffer {:?} not found", buffer_id);
+        }
     }
 
     /// Execute an editor action by name (for vi mode plugin)

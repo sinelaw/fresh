@@ -151,6 +151,7 @@
   "action.prompt_set_bookmark": "设置书签（提示输入寄存器）",
   "action.query_replace": "交互式替换（对每个匹配使用 y/n/!/q）",
   "action.quit": "退出编辑器",
+  "action.force_quit": "退出编辑器（放弃未保存的更改）",
   "action.recenter": "重新居中视图到光标",
   "action.redo": "重做",
   "action.remove_secondary_cursors": "移除次要光标",

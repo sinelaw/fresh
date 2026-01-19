@@ -151,6 +151,7 @@
   "action.prompt_set_bookmark": "북마크 설정 (레지스터 입력)",
   "action.query_replace": "대화형 바꾸기 (각 일치에 y/n/!/q)",
   "action.quit": "편집기 종료",
+  "action.force_quit": "편집기 종료 (저장하지 않은 변경사항 삭제)",
   "action.recenter": "커서에 화면 중앙 맞추기",
   "action.redo": "다시 실행",
   "action.remove_secondary_cursors": "보조 커서 제거",

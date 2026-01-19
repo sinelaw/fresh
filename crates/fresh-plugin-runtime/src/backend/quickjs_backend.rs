@@ -598,6 +598,17 @@ impl JsEditorApi {
         false
     }
 
+    /// Save a buffer to a specific file path
+    /// Used by :w filename to save unnamed buffers or save-as
+    pub fn save_buffer_to_path(&self, buffer_id: u32, path: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::SaveBufferToPath {
+                buffer_id: BufferId(buffer_id as usize),
+                path: std::path::PathBuf::from(path),
+            })
+            .is_ok()
+    }
+
     /// Get buffer info by ID
     pub fn get_buffer_info<'js>(
         &self,

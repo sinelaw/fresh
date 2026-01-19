@@ -151,6 +151,7 @@
   "action.prompt_set_bookmark": "Встановити закладку (запит регістра)",
   "action.query_replace": "Інтерактивна заміна (y/n/!/q для кожного збігу)",
   "action.quit": "Вийти з редактора",
+  "action.force_quit": "Вийти з редактора (відхилити незбережені зміни)",
   "action.recenter": "Центрувати вигляд на курсорі",
   "action.redo": "Повторити",
   "action.remove_secondary_cursors": "Видалити додаткові курсори",

@@ -151,6 +151,7 @@
   "action.prompt_set_bookmark": "ブックマークを設定 (レジスタを入力)",
   "action.query_replace": "インタラクティブ置換 (各一致でy/n/!/q)",
   "action.quit": "エディタを終了",
+  "action.force_quit": "エディタを終了（未保存の変更を破棄）",
   "action.recenter": "カーソルを中央に表示",
   "action.redo": "やり直し",
   "action.remove_secondary_cursors": "セカンダリカーソルを削除",

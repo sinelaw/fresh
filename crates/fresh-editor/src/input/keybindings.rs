@@ -302,6 +302,7 @@ pub enum Action {
     Close,
     CloseTab,
     Quit,
+    ForceQuit,
     Revert,
     ToggleAutoRevert,
     FormatBuffer,
@@ -643,6 +644,7 @@ impl Action {
             "close" => Self::Close,
             "close_tab" => Self::CloseTab,
             "quit" => Self::Quit,
+            "force_quit" => Self::ForceQuit,
             "revert" => Self::Revert,
             "toggle_auto_revert" => Self::ToggleAutoRevert,
             "format_buffer" => Self::FormatBuffer,
@@ -1049,6 +1051,7 @@ impl KeybindingResolver {
         matches!(
             action,
             Action::Quit
+                | Action::ForceQuit
                 | Action::Save
                 | Action::SaveAs
                 | Action::ShowHelp
@@ -1072,6 +1075,7 @@ impl KeybindingResolver {
                 | Action::ShowHelp
                 | Action::ShowKeyboardShortcuts
                 | Action::Quit
+                | Action::ForceQuit
                 // Split navigation
                 | Action::NextSplit
                 | Action::PrevSplit
@@ -1577,6 +1581,7 @@ impl KeybindingResolver {
             Action::Close => t!("action.close"),
             Action::CloseTab => t!("action.close_tab"),
             Action::Quit => t!("action.quit"),
+            Action::ForceQuit => t!("action.force_quit"),
             Action::Revert => t!("action.revert"),
             Action::ToggleAutoRevert => t!("action.toggle_auto_revert"),
             Action::FormatBuffer => t!("action.format_buffer"),

@@ -151,6 +151,7 @@
   "action.prompt_set_bookmark": "Establecer marcador (solicita registro)",
   "action.query_replace": "Reemplazo interactivo (s/n/!/q para cada coincidencia)",
   "action.quit": "Salir del editor",
+  "action.force_quit": "Salir del editor (descartar cambios sin guardar)",
   "action.recenter": "Recentrar vista en cursor",
   "action.redo": "Rehacer",
   "action.remove_secondary_cursors": "Eliminar cursores secundarios",

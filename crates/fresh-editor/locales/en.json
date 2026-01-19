@@ -150,6 +150,7 @@
   "action.prompt_set_bookmark": "Set bookmark (prompts for register)",
   "action.query_replace": "Interactive replace (y/n/!/q for each match)",
   "action.quit": "Quit editor",
+  "action.force_quit": "Quit editor (discard unsaved changes)",
   "action.recenter": "Recenter view on cursor",
   "action.redo": "Redo",
   "action.remove_secondary_cursors": "Remove secondary cursors",
