@@ -41,7 +41,7 @@ tree-sitter = "0.25.10"
 tree-sitter-highlight = "0.25.10"
 crossterm = "0.28"
 lsp-types = "0.97"
-ts-rs = { version = "10.0", features = ["serde_json"] }
+ts-rs = { version = "11.1", features = ["serde_json"] }
 # Add more as needed during refactor
 
 [profile.release]
