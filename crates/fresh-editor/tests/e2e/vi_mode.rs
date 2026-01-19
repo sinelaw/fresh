@@ -62,10 +62,12 @@ fn enable_vi_mode(harness: &mut EditorTestHarness) {
         .unwrap();
     harness.render().unwrap();
 
-    // Type the localized command name
-    harness.type_text("Toggle Vi mode").unwrap();
+    // Type a PARTIAL query - if the command is hidden by context, the full name won't appear
+    // in suggestions (only our typed input "Toggle Vi" would show, not "Toggle Vi mode")
+    harness.type_text("Toggle Vi").unwrap();
 
-    // Wait for command to appear in palette
+    // Wait for the FULL command name to appear in suggestions on screen
+    // This verifies the command is visible (not hidden by context filtering)
     harness.wait_for_screen_contains("Toggle Vi mode").unwrap();
 
     // Press Enter to execute

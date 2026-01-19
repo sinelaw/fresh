@@ -677,21 +677,21 @@ editor.registerCommand(
   "%cmd.git_blame",
   "%cmd.git_blame_desc",
   "show_git_blame",
-  "normal"
+  null
 );
 
 editor.registerCommand(
   "%cmd.git_blame_close",
   "%cmd.git_blame_close_desc",
   "git_blame_close",
-  "normal"
+  null
 );
 
 editor.registerCommand(
   "%cmd.git_blame_go_back",
   "%cmd.git_blame_go_back_desc",
   "git_blame_go_back",
-  "normal"
+  null
 );
 
 // =============================================================================

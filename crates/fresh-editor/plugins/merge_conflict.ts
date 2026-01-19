@@ -1783,7 +1783,7 @@ const MERGE_MODE_COMMANDS = [
  */
 function registerMergeModeCommands(): void {
   for (const cmd of MERGE_MODE_COMMANDS) {
-    editor.registerCommand(cmd.name, cmd.desc, cmd.action, "normal");
+    editor.registerCommand(cmd.name, cmd.desc, cmd.action, null);
   }
 }
 
@@ -1801,7 +1801,7 @@ editor.registerCommand(
   "%cmd.start",
   "%cmd.start_desc",
   "start_merge_conflict",
-  "normal"
+  null  // Always visible - entry point command
 );
 
 // =============================================================================

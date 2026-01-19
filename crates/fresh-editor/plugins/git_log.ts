@@ -1253,21 +1253,21 @@ editor.registerCommand(
   "%cmd.git_log",
   "%cmd.git_log_desc",
   "show_git_log",
-  "normal"
+  null
 );
 
 editor.registerCommand(
   "%cmd.git_log_close",
   "%cmd.git_log_close_desc",
   "git_log_close",
-  "normal"
+  null
 );
 
 editor.registerCommand(
   "%cmd.git_log_refresh",
   "%cmd.git_log_refresh_desc",
   "git_log_refresh",
-  "normal"
+  null
 );
 
 // =============================================================================

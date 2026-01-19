@@ -2747,7 +2747,7 @@ editor.registerCommand(
   "%cmd.toggle_vi_mode",
   "%cmd.toggle_vi_mode_desc",
   "vi_mode_toggle",
-  "normal",
+  null,  // Always visible - needed to enable vi mode in the first place
 );
 
 // ============================================================================

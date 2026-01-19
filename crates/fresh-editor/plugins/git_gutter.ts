@@ -458,7 +458,7 @@ editor.registerCommand(
   "%cmd.refresh",
   "%cmd.refresh_desc",
   "git_gutter_refresh",
-  "normal"
+  null
 );
 
 // Initialize for the current buffer
