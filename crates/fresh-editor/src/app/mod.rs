@@ -176,7 +176,7 @@ pub struct Editor {
     dir_context: DirectoryContext,
 
     /// Grammar registry for TextMate syntax highlighting
-    grammar_registry: std::sync::Arc<crate::primitives::grammar_registry::GrammarRegistry>,
+    grammar_registry: std::sync::Arc<crate::primitives::grammar::GrammarRegistry>,
 
     /// Active theme
     theme: crate::view::theme::Theme,
@@ -679,7 +679,7 @@ impl Editor {
             dir_context,
             None,
             color_capability,
-            crate::primitives::grammar_registry::GrammarRegistry::for_editor(),
+            crate::primitives::grammar::GrammarRegistry::for_editor(),
         )
     }
 
@@ -706,7 +706,7 @@ impl Editor {
             dir_context,
             time_source,
             color_capability,
-            crate::primitives::grammar_registry::GrammarRegistry::empty(),
+            crate::primitives::grammar::GrammarRegistry::empty(),
         )
     }
 
@@ -724,7 +724,7 @@ impl Editor {
         dir_context: DirectoryContext,
         time_source: Option<SharedTimeSource>,
         color_capability: crate::view::color_support::ColorCapability,
-        grammar_registry: Arc<crate::primitives::grammar_registry::GrammarRegistry>,
+        grammar_registry: Arc<crate::primitives::grammar::GrammarRegistry>,
     ) -> AnyhowResult<Self> {
         // Use provided time_source or default to RealTimeSource
         let time_source = time_source.unwrap_or_else(RealTimeSource::shared);
@@ -739,7 +739,8 @@ impl Editor {
         let working_dir = working_dir.canonicalize().unwrap_or(working_dir);
 
         // Load theme from config
-        let theme = crate::view::theme::Theme::from_name(&config.theme)
+        let theme_loader = crate::view::theme::LocalThemeLoader::new();
+        let theme = crate::view::theme::Theme::load(&config.theme, &theme_loader)
             .ok_or_else(|| anyhow::anyhow!("Theme '{:?}' not found", config.theme))?;
 
         // Set terminal cursor color to match theme

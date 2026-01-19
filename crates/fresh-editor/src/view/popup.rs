@@ -8,7 +8,7 @@ use ratatui::{
 
 use super::markdown::{parse_markdown, wrap_styled_lines, wrap_text_lines, StyledLine};
 use super::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
-use crate::primitives::grammar_registry::GrammarRegistry;
+use crate::primitives::grammar::GrammarRegistry;
 
 /// Clamp a rectangle to fit within bounds, preventing out-of-bounds rendering panics.
 /// Returns a rectangle that is guaranteed to be fully contained within `bounds`.
@@ -1013,7 +1013,7 @@ mod tests {
 
     #[test]
     fn test_popup_selection() {
-        let theme = crate::view::theme::Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = crate::view::theme::Theme::load_builtin(theme::THEME_DARK).unwrap();
         let items = vec![
             PopupListItem::new("item1".to_string()),
             PopupListItem::new("item2".to_string()),
@@ -1045,7 +1045,7 @@ mod tests {
 
     #[test]
     fn test_popup_manager() {
-        let theme = crate::view::theme::Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = crate::view::theme::Theme::load_builtin(theme::THEME_DARK).unwrap();
         let mut manager = PopupManager::new();
 
         assert!(!manager.is_visible());
@@ -1072,7 +1072,7 @@ mod tests {
 
     #[test]
     fn test_popup_area_calculation() {
-        let theme = crate::view::theme::Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = crate::view::theme::Theme::load_builtin(theme::THEME_DARK).unwrap();
         let terminal_area = Rect {
             x: 0,
             y: 0,
@@ -1102,7 +1102,7 @@ mod tests {
 
     #[test]
     fn test_popup_fixed_position_clamping() {
-        let theme = crate::view::theme::Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = crate::view::theme::Theme::load_builtin(theme::THEME_DARK).unwrap();
         let terminal_area = Rect {
             x: 0,
             y: 0,

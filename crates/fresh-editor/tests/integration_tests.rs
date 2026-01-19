@@ -545,7 +545,7 @@ fn test_lsp_diagnostic_to_overlay() {
         data: None,
     };
 
-    let theme = fresh::view::theme::Theme::from_name(theme::THEME_DARK).unwrap();
+    let theme = fresh::view::theme::Theme::load_builtin(theme::THEME_DARK).unwrap();
     let result = diagnostic_to_overlay(&diagnostic, &buffer, &theme);
     assert!(result.is_some());
 

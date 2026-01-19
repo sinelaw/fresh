@@ -241,7 +241,7 @@ mod tests {
             data: None,
         };
 
-        let theme = crate::view::theme::Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = crate::view::theme::Theme::load_builtin(theme::THEME_DARK).unwrap();
         let result = diagnostic_to_overlay(&diagnostic, &buffer, &theme);
         assert!(result.is_some());
 
@@ -282,7 +282,7 @@ mod tests {
             data: None,
         };
 
-        let theme = crate::view::theme::Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = crate::view::theme::Theme::load_builtin(theme::THEME_DARK).unwrap();
         let result = diagnostic_to_overlay(&diagnostic, &buffer, &theme);
         assert!(result.is_some());
 
@@ -323,7 +323,7 @@ mod tests {
             data: None,
         };
 
-        let theme = crate::view::theme::Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = crate::view::theme::Theme::load_builtin(theme::THEME_DARK).unwrap();
         let result = diagnostic_to_overlay(&diagnostic, &buffer, &theme);
         assert!(result.is_some());
 

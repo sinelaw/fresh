@@ -492,7 +492,7 @@ mod tests {
         let backend = TestBackend::new(84, 10);
         let mut terminal = Terminal::new(backend).unwrap();
 
-        let theme = Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
 
         // This should NOT panic with the fix in place
         // Before the fix, this would panic with:
@@ -534,7 +534,7 @@ mod tests {
             for width in 20..100 {
                 let backend = TestBackend::new(width, 5);
                 let mut terminal = Terminal::new(backend).unwrap();
-                let theme = Theme::from_name(theme::THEME_DARK).unwrap();
+                let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
 
                 // Should never panic regardless of width
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

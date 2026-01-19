@@ -349,7 +349,7 @@ mod tests {
     fn test_highlighter_basic() {
         let buffer = Buffer::from_str_test("fn main() {\n    println!(\"Hello\");\n}");
         let mut highlighter = Highlighter::new(Language::Rust).unwrap();
-        let theme = Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
 
         // Highlight entire buffer
         let spans = highlighter.highlight_viewport(&buffer, 0, buffer.len(), &theme, 100_000);
@@ -372,7 +372,7 @@ mod tests {
         let buffer = Buffer::from_str_test(&content);
 
         let mut highlighter = Highlighter::new(Language::Rust).unwrap();
-        let theme = Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
 
         // Highlight only a small viewport in the middle
         let viewport_start = 10000;
@@ -398,7 +398,7 @@ mod tests {
     fn test_cache_invalidation() {
         let buffer = Buffer::from_str_test("fn main() {\n    println!(\"Hello\");\n}");
         let mut highlighter = Highlighter::new(Language::Rust).unwrap();
-        let theme = Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
 
         // First highlight
         highlighter.highlight_viewport(&buffer, 0, buffer.len(), &theme, 100_000);
@@ -423,12 +423,12 @@ mod tests {
         let mut highlighter = Highlighter::new(Language::Rust).unwrap();
 
         // Highlight with dark theme
-        let dark_theme = Theme::from_name(theme::THEME_DARK).unwrap();
+        let dark_theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
         let dark_spans =
             highlighter.highlight_viewport(&buffer, 0, buffer.len(), &dark_theme, 100_000);
 
         // Highlight with light theme (cache should still work, colors should change)
-        let light_theme = Theme::from_name(theme::THEME_LIGHT).unwrap();
+        let light_theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
         let light_spans =
             highlighter.highlight_viewport(&buffer, 0, buffer.len(), &light_theme, 100_000);
 

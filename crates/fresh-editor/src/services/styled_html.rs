@@ -128,7 +128,7 @@ mod tests {
     fn test_render_html_simple() {
         let text = "Hello, World!";
         let spans = vec![];
-        let theme = Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
 
         let html = render_styled_html(text, &spans, &theme);
 
@@ -141,7 +141,7 @@ mod tests {
     fn test_render_html_escapes_special_chars() {
         let text = "<script>&test</script>";
         let spans = vec![];
-        let theme = Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
 
         let html = render_styled_html(text, &spans, &theme);
 
@@ -159,7 +159,7 @@ mod tests {
             range: Range { start: 0, end: 2 },
             color: Color::Blue,
         }];
-        let theme = Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
 
         let html = render_styled_html(text, &spans, &theme);
 

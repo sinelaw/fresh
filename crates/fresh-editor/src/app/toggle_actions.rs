@@ -246,7 +246,9 @@ impl Editor {
 
         // Apply theme change if needed
         if old_theme != self.config.theme {
-            if let Some(theme) = crate::view::theme::Theme::from_name(&self.config.theme) {
+            let theme_loader = crate::view::theme::LocalThemeLoader::new();
+            if let Some(theme) = crate::view::theme::Theme::load(&self.config.theme, &theme_loader)
+            {
                 self.theme = theme;
                 tracing::info!("Theme changed to '{}'", self.config.theme.0);
             } else {

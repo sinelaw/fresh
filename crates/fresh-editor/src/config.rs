@@ -1114,7 +1114,8 @@ pub fn generate_dynamic_items(source: &str) -> Vec<MenuItem> {
     match source {
         "copy_with_theme" => {
             // Generate theme options from available themes
-            crate::view::theme::Theme::available_themes()
+            let theme_loader = crate::view::theme::LocalThemeLoader::new();
+            crate::view::theme::Theme::all_available(&theme_loader)
                 .into_iter()
                 .map(|theme_name| {
                     let mut args = HashMap::new();
@@ -2714,7 +2715,8 @@ mod tests {
             MenuItem::Submenu { label, items } => {
                 assert_eq!(label, "Test");
                 // Should have items for each available theme
-                let themes = crate::view::theme::Theme::available_themes();
+                let theme_loader = crate::view::theme::LocalThemeLoader::new();
+                let themes = crate::view::theme::Theme::all_available(&theme_loader);
                 assert_eq!(items.len(), themes.len());
 
                 // Each item should be an Action with copy_with_theme

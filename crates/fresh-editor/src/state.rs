@@ -8,7 +8,7 @@ use crate::model::event::{
     PopupPositionData,
 };
 use crate::model::marker::MarkerList;
-use crate::primitives::grammar_registry::GrammarRegistry;
+use crate::primitives::grammar::GrammarRegistry;
 use crate::primitives::highlight_engine::HighlightEngine;
 use crate::primitives::highlighter::Language;
 use crate::primitives::indent::IndentCalculator;

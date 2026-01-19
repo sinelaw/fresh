@@ -1,7 +1,11 @@
+//! Pure theme types without I/O operations.
+//!
+//! This module contains all theme-related data structures that can be used
+//! without filesystem access. This enables WASM compatibility and easier testing.
+
 use ratatui::style::Color;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 pub const THEME_DARK: &str = "dark";
 pub const THEME_LIGHT: &str = "light";
@@ -11,39 +15,41 @@ pub const THEME_DRACULA: &str = "dracula";
 pub const THEME_NORD: &str = "nord";
 pub const THEME_SOLARIZED_DARK: &str = "solarized-dark";
 
-struct BuiltinTheme {
-    name: &'static str,
-    json: &'static str,
+/// A builtin theme with its name and embedded JSON content.
+pub struct BuiltinTheme {
+    pub name: &'static str,
+    pub json: &'static str,
 }
 
-const BUILTIN_THEMES: &[BuiltinTheme] = &[
+/// All builtin themes embedded at compile time.
+pub const BUILTIN_THEMES: &[BuiltinTheme] = &[
     BuiltinTheme {
         name: THEME_DARK,
-        json: include_str!("../../themes/dark.json"),
+        json: include_str!("../../../themes/dark.json"),
     },
     BuiltinTheme {
         name: THEME_LIGHT,
-        json: include_str!("../../themes/light.json"),
+        json: include_str!("../../../themes/light.json"),
     },
     BuiltinTheme {
         name: THEME_HIGH_CONTRAST,
-        json: include_str!("../../themes/high-contrast.json"),
+        json: include_str!("../../../themes/high-contrast.json"),
     },
     BuiltinTheme {
         name: THEME_NOSTALGIA,
-        json: include_str!("../../themes/nostalgia.json"),
+        json: include_str!("../../../themes/nostalgia.json"),
     },
     BuiltinTheme {
         name: THEME_DRACULA,
-        json: include_str!("../../themes/dracula.json"),
+        json: include_str!("../../../themes/dracula.json"),
     },
     BuiltinTheme {
         name: THEME_NORD,
-        json: include_str!("../../themes/nord.json"),
+        json: include_str!("../../../themes/nord.json"),
     },
     BuiltinTheme {
         name: THEME_SOLARIZED_DARK,
-        json: include_str!("../../themes/solarized-dark.json"),
+        json: include_str!("../../../themes/solarized-dark.json"),
     },
 ];
 
@@ -74,7 +80,7 @@ pub fn color_to_rgb(color: Color) -> Option<(u8, u8, u8)> {
 
 /// Brighten a color by adding an amount to each RGB component.
 /// Clamps values to 255.
-fn brighten_color(color: Color, amount: u8) -> Color {
+pub fn brighten_color(color: Color, amount: u8) -> Color {
     if let Some((r, g, b)) = color_to_rgb(color) {
         Color::Rgb(
             r.saturating_add(amount),
@@ -1101,123 +1107,20 @@ impl From<Theme> for ThemeFile {
 }
 
 impl Theme {
-    /// Load theme from a JSON file
-    fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read theme file: {}", e))?;
-        let theme_file: ThemeFile = serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse theme file: {}", e))?;
+    /// Load a builtin theme by name (no I/O, uses embedded JSON).
+    pub fn load_builtin(name: &str) -> Option<Self> {
+        BUILTIN_THEMES
+            .iter()
+            .find(|t| t.name == name)
+            .and_then(|t| serde_json::from_str::<ThemeFile>(t.json).ok())
+            .map(|tf| tf.into())
+    }
+
+    /// Parse theme from JSON string (no I/O).
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        let theme_file: ThemeFile =
+            serde_json::from_str(json).map_err(|e| format!("Failed to parse theme JSON: {}", e))?;
         Ok(theme_file.into())
-    }
-
-    /// Load builtin theme from embedded JSON or themes directory
-    fn load_builtin_theme(name: &str) -> Option<Self> {
-        // 1. Check embedded themes first
-        if let Some(theme) = BUILTIN_THEMES.iter().find(|t| t.name == name) {
-            if let Ok(theme_file) = serde_json::from_str::<ThemeFile>(theme.json) {
-                return Some(theme_file.into());
-            }
-        }
-
-        // 2. Fall back to filesystem (for development or user themes in the themes dir)
-        // Build list of paths to search
-        let mut theme_paths = vec![
-            format!("themes/{}.json", name),
-            format!("../themes/{}.json", name),
-            format!("../../themes/{}.json", name),
-        ];
-
-        // Also check user config themes directory
-        if let Some(config_dir) = dirs::config_dir() {
-            let user_theme_path = config_dir
-                .join("fresh")
-                .join("themes")
-                .join(format!("{}.json", name));
-            theme_paths.insert(0, user_theme_path.to_string_lossy().to_string());
-        }
-
-        for path in &theme_paths {
-            if let Ok(theme) = Self::from_file(path) {
-                return Some(theme);
-            }
-        }
-
-        None
-    }
-
-    /// Get a theme by name.
-    /// Tries to load from JSON file first, falls back to embedded themes
-    pub fn from_name(name: &str) -> Option<Self> {
-        let normalized_name = name.to_lowercase().replace('_', "-");
-
-        Self::load_builtin_theme(&normalized_name)
-    }
-
-    /// Get all available theme names (builtin + user themes)
-    pub fn available_themes() -> Vec<String> {
-        let mut themes: Vec<String> = BUILTIN_THEMES.iter().map(|t| t.name.to_string()).collect();
-
-        // Scan built-in themes directory (themes/*.json in the project)
-        if let Ok(entries) = std::fs::read_dir("themes") {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().is_some_and(|ext| ext == "json") {
-                    if let Some(stem) = path.file_stem() {
-                        let name = stem.to_string_lossy().to_string();
-                        // Avoid duplicates
-                        if !themes.iter().any(|t| t == &name) {
-                            themes.push(name);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Scan user themes directory (user themes can override built-ins)
-        if let Some(config_dir) = dirs::config_dir() {
-            let user_themes_dir = config_dir.join("fresh").join("themes");
-            if let Ok(entries) = std::fs::read_dir(&user_themes_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_some_and(|ext| ext == "json") {
-                        if let Some(stem) = path.file_stem() {
-                            let name = stem.to_string_lossy().to_string();
-                            // Avoid duplicates (user theme overriding builtin)
-                            if !themes.iter().any(|t| t == &name) {
-                                themes.push(name);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        themes
-    }
-
-    /// Set the terminal cursor color using OSC 12 escape sequence.
-    /// This makes the hardware cursor visible on any background.
-    pub fn set_terminal_cursor_color(&self) {
-        use std::io::Write;
-        if let Some((r, g, b)) = color_to_rgb(self.cursor) {
-            // OSC 12 sets cursor color: \x1b]12;#RRGGBB\x07
-            let _ = write!(
-                std::io::stdout(),
-                "\x1b]12;#{:02x}{:02x}{:02x}\x07",
-                r,
-                g,
-                b
-            );
-            let _ = std::io::stdout().flush();
-        }
-    }
-
-    /// Reset the terminal cursor color to default.
-    pub fn reset_terminal_cursor_color() {
-        use std::io::Write;
-        // OSC 112 resets cursor color to default
-        let _ = write!(std::io::stdout(), "\x1b]112\x07");
-        let _ = std::io::stdout().flush();
     }
 }
 
@@ -1251,28 +1154,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_theme_creation() {
-        let dark = Theme::from_name(THEME_DARK).expect("Dark theme must exist");
+    fn test_load_builtin_theme() {
+        let dark = Theme::load_builtin(THEME_DARK).expect("Dark theme must exist");
         assert_eq!(dark.name, THEME_DARK);
 
-        let light = Theme::from_name(THEME_LIGHT).expect("Light theme must exist");
+        let light = Theme::load_builtin(THEME_LIGHT).expect("Light theme must exist");
         assert_eq!(light.name, THEME_LIGHT);
 
         let high_contrast =
-            Theme::from_name(THEME_HIGH_CONTRAST).expect("High contrast theme must exist");
+            Theme::load_builtin(THEME_HIGH_CONTRAST).expect("High contrast theme must exist");
         assert_eq!(high_contrast.name, THEME_HIGH_CONTRAST);
-    }
-
-    #[test]
-    fn test_theme_from_name() {
-        let theme = Theme::from_name(THEME_LIGHT).expect("Light theme must exist");
-        assert_eq!(theme.name, THEME_LIGHT);
-
-        let theme = Theme::from_name(THEME_HIGH_CONTRAST).expect("High contrast theme must exist");
-        assert_eq!(theme.name, THEME_HIGH_CONTRAST);
-
-        let theme = Theme::from_name("unknown");
-        assert!(theme.is_none());
     }
 
     #[test]
@@ -1284,20 +1175,10 @@ mod tests {
     }
 
     #[test]
-    fn test_available_themes() {
-        let themes = Theme::available_themes();
-        // At minimum, should have the 4 builtin themes
-        assert!(themes.len() >= 4);
-        assert!(themes.contains(&"dark".to_string()));
-        assert!(themes.contains(&"light".to_string()));
-        assert!(themes.contains(&"high-contrast".to_string()));
-        assert!(themes.contains(&"nostalgia".to_string()));
-    }
-
-    #[test]
-    fn test_default_theme() {
-        let theme = Theme::from_name(THEME_HIGH_CONTRAST).expect("Default theme must exist");
-        assert_eq!(theme.name, "high-contrast");
+    fn test_from_json() {
+        let json = r#"{"name":"test","editor":{},"ui":{},"search":{},"diagnostic":{},"syntax":{}}"#;
+        let theme = Theme::from_json(json).expect("Should parse minimal theme");
+        assert_eq!(theme.name, "test");
     }
 
     #[test]

@@ -118,7 +118,8 @@ impl Editor {
         use crate::services::styled_html::render_styled_html;
 
         // Load the requested theme
-        let theme = match crate::view::theme::Theme::from_name(theme_name) {
+        let theme_loader = crate::view::theme::LocalThemeLoader::new();
+        let theme = match crate::view::theme::Theme::load(theme_name, &theme_loader) {
             Some(t) => t,
             None => {
                 self.status_message = Some(format!("Theme '{}' not found", theme_name));
@@ -221,7 +222,8 @@ impl Editor {
     fn start_copy_with_formatting_prompt(&mut self) {
         use crate::view::prompt::PromptType;
 
-        let available_themes = crate::view::theme::Theme::available_themes();
+        let theme_loader = crate::view::theme::LocalThemeLoader::new();
+        let available_themes = crate::view::theme::Theme::all_available(&theme_loader);
         let current_theme_name = &self.theme.name;
 
         // Find the index of the current theme

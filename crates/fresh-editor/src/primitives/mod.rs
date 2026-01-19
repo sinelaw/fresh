@@ -6,8 +6,11 @@
 pub mod ansi;
 pub mod ansi_background;
 pub mod display_width;
-pub mod grammar_registry;
+pub mod grammar;
 pub mod grapheme;
+
+// Re-export for backward compatibility
+pub use grammar::GrammarRegistry;
 pub mod highlight_engine;
 pub mod highlighter;
 pub mod indent;

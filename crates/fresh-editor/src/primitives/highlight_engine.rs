@@ -17,7 +17,7 @@
 //! - Other syntax-aware features
 
 use crate::model::buffer::Buffer;
-use crate::primitives::grammar_registry::GrammarRegistry;
+use crate::primitives::grammar::GrammarRegistry;
 use crate::primitives::highlighter::{
     highlight_color, HighlightCategory, HighlightSpan, Highlighter, Language,
 };
@@ -858,7 +858,8 @@ mod tests {
 
     #[test]
     fn test_textmate_backend_selection() {
-        let registry = GrammarRegistry::load();
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
 
         // Languages with TextMate grammars use TextMate for highlighting
         let engine = HighlightEngine::for_file(Path::new("test.rs"), &registry);
@@ -886,7 +887,8 @@ mod tests {
 
     #[test]
     fn test_tree_sitter_explicit_preference() {
-        let registry = GrammarRegistry::load();
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
 
         // Force tree-sitter for highlighting
         let engine = HighlightEngine::for_file_with_preference(
@@ -899,7 +901,8 @@ mod tests {
 
     #[test]
     fn test_unknown_extension() {
-        let registry = GrammarRegistry::load();
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
 
         // Unknown extension
         let engine = HighlightEngine::for_file(Path::new("test.unknown_xyz_123"), &registry);
@@ -918,13 +921,14 @@ mod tests {
         // - viewport_start > context_bytes (so parse_start > 0 after saturating_sub)
         // - parse_end = min(viewport_end + context_bytes, buffer.len()) = 0
         // - parse_end - parse_start would underflow (0 - positive = overflow)
-        let registry = GrammarRegistry::load();
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
 
         let mut engine = HighlightEngine::for_file(Path::new("test.rs"), &registry);
 
         // Create empty buffer
         let buffer = Buffer::from_str("", 0);
-        let theme = Theme::from_name(theme::THEME_LIGHT).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
 
         // Test the specific case that triggered the overflow:
         // viewport_start=100, context_bytes=10 => parse_start=90, parse_end=0
@@ -941,7 +945,8 @@ mod tests {
     /// offset drift per line because it strips line terminators.
     #[test]
     fn test_textmate_engine_crlf_byte_offsets() {
-        let registry = GrammarRegistry::load();
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
 
         let mut engine = HighlightEngine::for_file(Path::new("test.java"), &registry);
 
@@ -952,7 +957,7 @@ mod tests {
         // Line 3: "public" at bytes 16-21 (after two "public\r\n" = 16 bytes)
         let content = b"public\r\npublic\r\npublic\r\n";
         let buffer = Buffer::from_bytes(content.to_vec());
-        let theme = Theme::from_name(theme::THEME_LIGHT).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
 
         if let HighlightEngine::TextMate(ref mut tm) = engine {
             // Highlight the entire content

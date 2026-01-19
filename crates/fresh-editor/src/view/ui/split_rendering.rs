@@ -4196,7 +4196,7 @@ mod tests {
             content.len().max(1),
             visible_count,
         );
-        let theme = Theme::from_name(theme::THEME_DARK).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
         let decorations = SplitRenderer::decoration_context(
             &mut state,
             viewport_start,

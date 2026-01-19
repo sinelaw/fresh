@@ -880,7 +880,7 @@ fn apply_test_diagnostics(
     diagnostics: Vec<lsp_types::Diagnostic>,
 ) {
     let state = harness.editor_mut().active_state_mut();
-    let theme = fresh::view::theme::Theme::from_name(theme::THEME_DARK).unwrap();
+    let theme = fresh::view::theme::Theme::load_builtin(theme::THEME_DARK).unwrap();
     fresh::services::lsp::diagnostics::apply_diagnostics_to_state(state, &diagnostics, &theme);
 }
 

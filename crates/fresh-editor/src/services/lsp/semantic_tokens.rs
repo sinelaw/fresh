@@ -108,7 +108,7 @@ mod tests {
             modifiers: Vec::new(),
         };
 
-        let theme = Theme::from_name(THEME_DARK).expect("dark theme must exist");
+        let theme = Theme::load_builtin(THEME_DARK).expect("dark theme must exist");
         apply_semantic_tokens_to_state(&mut state, &[span], &theme);
 
         let ns = lsp_semantic_tokens_namespace();
