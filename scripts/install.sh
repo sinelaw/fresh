@@ -47,6 +47,23 @@ log_error()   { printf "${RED}[ERROR]${NC} %s\n" "$1"; exit 1; }
 
 check_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+# Run a command with elevated privileges if needed
+run_privileged() {
+    if [ "$(id -u)" -eq 0 ]; then
+        # Already root
+        "$@"
+    elif check_cmd sudo && sudo -n true 2>/dev/null; then
+        # sudo available and works without password (or cached)
+        sudo "$@"
+    elif check_cmd sudo; then
+        # sudo available, may prompt for password
+        sudo "$@"
+    else
+        # No sudo, try direct execution (will fail if privileges needed)
+        "$@"
+    fi
+}
+
 # --- Specialized Installers ---
 
 install_macos() {
@@ -103,7 +120,7 @@ get_release_url() {
 install_debian() {
     log_info "Debian/Ubuntu detected. Looking for .deb..."
     if ! check_cmd curl; then log_error "curl is required."; fi
-    
+
     ARCH=$(dpkg --print-architecture)
     URL=$(get_release_url "\.deb" "$ARCH")
 
@@ -113,11 +130,15 @@ install_debian() {
         return
     fi
 
+    TEMP_DEB=$(mktemp --suffix=.deb)
     log_info "Downloading $URL..."
-    curl -sL "$URL" -o temp_install.deb
+    if ! curl -fSL "$URL" -o "$TEMP_DEB"; then
+        rm -f "$TEMP_DEB"
+        log_error "Failed to download .deb package."
+    fi
     log_info "Installing via dpkg..."
-    sudo dpkg -i temp_install.deb
-    rm temp_install.deb
+    run_privileged dpkg -i "$TEMP_DEB"
+    rm -f "$TEMP_DEB"
 }
 
 install_fedora() {
@@ -133,11 +154,15 @@ install_fedora() {
         return
     fi
 
+    TEMP_RPM=$(mktemp --suffix=.rpm)
     log_info "Downloading $URL..."
-    curl -sL "$URL" -o temp_install.rpm
+    if ! curl -fSL "$URL" -o "$TEMP_RPM"; then
+        rm -f "$TEMP_RPM"
+        log_error "Failed to download .rpm package."
+    fi
     log_info "Installing via rpm..."
-    sudo rpm -U temp_install.rpm
-    rm temp_install.rpm
+    run_privileged rpm -U "$TEMP_RPM"
+    rm -f "$TEMP_RPM"
 }
 
 # --- Universal Installers (Called by priority list) ---
@@ -223,8 +248,8 @@ do_install_npm() {
     if [ -w "$(npm root -g)" ]; then
         npm install -g "$PKG_NAME"
     else
-        log_warn "NPM requires sudo..."
-        sudo npm install -g "$PKG_NAME"
+        log_warn "NPM global install requires elevated privileges..."
+        run_privileged npm install -g "$PKG_NAME"
     fi
 }
 
