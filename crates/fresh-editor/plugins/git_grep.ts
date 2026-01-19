@@ -71,4 +71,3 @@ editor.registerCommand("%cmd.grep", "%cmd.grep_desc", "start_git_grep", null);
 
 // Log that plugin loaded successfully
 editor.debug("Git Grep plugin loaded (using Finder abstraction)");
-editor.setStatus(editor.t("status.ready"));

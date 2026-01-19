@@ -1808,5 +1808,4 @@ editor.registerCommand(
 // Plugin Initialization
 // =============================================================================
 
-editor.setStatus(editor.t("status.ready"));
 editor.debug("Merge plugin initialized - Use 'Merge: Start Resolution' for files with conflicts");

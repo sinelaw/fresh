@@ -162,4 +162,3 @@ globalThis.onPathCompletePromptChanged = function (args: { prompt_type: string; 
 // Register event handler
 editor.on("prompt_changed", "onPathCompletePromptChanged");
 
-editor.setStatus(editor.t("status.loaded"));

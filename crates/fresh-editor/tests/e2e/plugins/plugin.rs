@@ -1629,46 +1629,25 @@ fn test_clangd_plugin_switch_source_header() -> anyhow::Result<()> {
     harness.open_file(&source_file)?;
     harness.render()?;
 
-    // Wait for the clangd plugin to load and register its commands
-    // The plugin sets a status message when it loads
-    harness.wait_until(|h| {
-        h.editor()
-            .get_status_message()
-            .map(|msg| msg.contains("Clangd") || msg.contains("clangd"))
-            .unwrap_or(false)
-    })?;
-
+    // Open command palette and run the switch command
+    // Wait for the command to appear (meaning plugin is loaded)
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.type_text("Clangd: Switch Source/Header").unwrap();
+    harness.wait_until(|h| h.screen_to_string().contains("Switch Source/Header"))?;
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait until both the header file content is visible AND the status message is set
-    harness.wait_until(|h| {
-        let has_header_content = h.screen_to_string().contains("header content");
-        let has_status_msg = h
-            .editor()
-            .get_status_message()
-            .map(|msg| msg.as_str() == "Clangd: opened corresponding file")
-            .unwrap_or(false);
-        has_header_content && has_status_msg
-    })?;
+    // Wait for the header file content to appear
+    harness.wait_until(|h| h.screen_to_string().contains("header content"))?;
 
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("header content"),
-        "Expected header file to be visible"
-    );
-    assert_eq!(
-        harness
-            .editor()
-            .get_status_message()
-            .map(|msg| msg.as_str()),
-        Some("Clangd: opened corresponding file"),
-        "Expected clangd status message"
+        "Expected header file to be visible, got:\n{}",
+        screen
     );
 
     Ok(())

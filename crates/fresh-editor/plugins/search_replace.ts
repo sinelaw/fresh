@@ -483,4 +483,3 @@ editor.registerCommand(
 
 // Plugin initialization
 editor.debug("Search & Replace plugin loaded");
-editor.setStatus(editor.t("status.ready"));

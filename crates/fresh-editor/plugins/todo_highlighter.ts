@@ -203,5 +203,4 @@ editor.registerCommand(
 );
 
 // Initialization
-editor.setStatus(editor.t("status.loaded"));
 editor.debug("TODO Highlighter initialized with keywords: " + config.keywords.map(k => k.word).join(", "));

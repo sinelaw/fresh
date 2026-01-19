@@ -96,4 +96,3 @@ editor.registerCommand(
 );
 
 editor.debug("Live Grep plugin loaded (using Finder abstraction)");
-editor.setStatus(editor.t("status.ready"));

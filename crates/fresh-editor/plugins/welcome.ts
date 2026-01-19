@@ -8,7 +8,6 @@ const editor = getEditor();
  */
 
 // Show welcome message in status bar
-editor.setStatus(editor.t("status.loaded"));
 
 // Register commands that use built-in actions
 editor.registerCommand(

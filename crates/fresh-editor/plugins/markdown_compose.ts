@@ -611,4 +611,3 @@ editor.registerCommand(
 
 // Initialization
 editor.debug("Markdown Compose plugin loaded - use 'Markdown: Toggle Compose' command");
-editor.setStatus(editor.t("status.plugin_ready"));

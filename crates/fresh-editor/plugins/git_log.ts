@@ -1274,5 +1274,4 @@ editor.registerCommand(
 // Plugin Initialization
 // =============================================================================
 
-editor.setStatus(editor.t("status.ready", { count: "0" }));
 editor.debug("Git Log plugin initialized - Use 'Git Log' command to open");

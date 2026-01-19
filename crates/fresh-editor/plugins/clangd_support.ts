@@ -297,7 +297,6 @@ editor.registerCommand(
   null
 );
 
-setClangdStatus(editor.t("status.plugin_loaded"));
 
 globalThis.onClangdCustomNotification = function(payload: {
   language: string;

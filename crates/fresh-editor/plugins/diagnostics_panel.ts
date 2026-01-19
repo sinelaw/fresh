@@ -266,5 +266,4 @@ editor.registerCommand(
 );
 
 // Initialization
-editor.setStatus(editor.t("status.loaded"));
 editor.debug("Diagnostics Panel plugin initialized (using Finder abstraction)");

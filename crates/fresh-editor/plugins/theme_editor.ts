@@ -2097,5 +2097,4 @@ editor.registerCommand("%cmd.nav_prev", "%cmd.nav_prev_desc", "theme_editor_nav_
 // Plugin Initialization
 // =============================================================================
 
-editor.setStatus(editor.t("status.plugin_loaded"));
 editor.debug("Theme Editor plugin initialized - Use 'Edit Theme' command to open");

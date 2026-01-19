@@ -698,5 +698,4 @@ editor.registerCommand(
 // Plugin Initialization
 // =============================================================================
 
-editor.setStatus(editor.t("status.ready"));
 editor.debug("Git Blame plugin initialized - Use 'Git Blame' command to open");

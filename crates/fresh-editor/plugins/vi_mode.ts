@@ -2754,4 +2754,3 @@ editor.registerCommand(
 // Initialization
 // ============================================================================
 
-editor.setStatus(editor.t("status.loaded"));

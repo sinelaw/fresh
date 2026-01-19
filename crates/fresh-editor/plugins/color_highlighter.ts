@@ -303,5 +303,4 @@ editor.registerCommand(
 );
 
 // Initialization
-editor.setStatus(editor.t("status.loaded"));
 editor.debug("Color Highlighter initialized - supports hex, rgb, hsl, and Rust Color::Rgb");

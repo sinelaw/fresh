@@ -474,4 +474,3 @@ if (initPath && initPath !== "") {
 }
 
 editor.debug("Git Gutter plugin loaded");
-editor.setStatus(editor.t("status.ready"));

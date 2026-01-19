@@ -767,4 +767,3 @@ editor.on("mouse_move", "onCalculatorMouseMove");
 // Register main command
 editor.registerCommand("%cmd.calculator", "%cmd.calculator_desc", "calculator_open", null);
 
-editor.setStatus(editor.t("status.loaded"));

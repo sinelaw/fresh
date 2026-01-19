@@ -73,4 +73,3 @@ editor.registerCommand(
 );
 
 editor.debug("Git Find File plugin loaded (using Finder abstraction)");
-editor.setStatus(editor.t("status.ready"));
