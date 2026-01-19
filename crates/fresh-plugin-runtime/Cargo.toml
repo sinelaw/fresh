@@ -12,9 +12,9 @@ serde_json.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
-fresh-core = { path = "../fresh-core", features = ["plugins"] }
-fresh-parser-js = { path = "../fresh-parser-js" }
-fresh-plugin-api-macros = { path = "../fresh-plugin-api-macros" }
+fresh-core = { workspace = true, features = ["plugins"] }
+fresh-parser-js.workspace = true
+fresh-plugin-api-macros.workspace = true
 ts-rs.workspace = true
 lsp-types.workspace = true
 oxc_allocator.workspace = true

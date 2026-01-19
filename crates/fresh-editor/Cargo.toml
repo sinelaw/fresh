@@ -75,10 +75,10 @@ schema-only = []
 
 [dependencies]
 # Local crates
-fresh-core = { path = "../fresh-core" }
-fresh-parser-js = { path = "../fresh-parser-js", optional = true }
-fresh-languages = { path = "../fresh-languages", optional = true, features = ["all-languages"] }
-fresh-plugin-runtime = { path = "../fresh-plugin-runtime", optional = true }
+fresh-core.workspace = true
+fresh-parser-js = { workspace = true, optional = true }
+fresh-languages = { workspace = true, optional = true, features = ["all-languages"] }
+fresh-plugin-runtime = { workspace = true, optional = true }
 
 # Always required (for schema generation and runtime)
 serde.workspace = true
@@ -107,7 +107,7 @@ libloading = { version = "0.9", optional = true }
 nix = { version = "0.30", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
 
 # Plugin API proc macros for type-safe bindings
-fresh-plugin-api-macros = { path = "../fresh-plugin-api-macros", optional = true }
+fresh-plugin-api-macros = { workspace = true, optional = true }
 # TypeScript type generation from Rust structs
 ts-rs = { version = "11.1", optional = true }
 
