@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Literal, Optional
+from typing import List, Literal, Optional
 
 # ANSI color codes
 RED = "\033[0;31m"
@@ -16,23 +16,33 @@ NC = "\033[0m"
 
 BumpType = Literal["patch", "minor", "major"]
 
+# Local workspace crates that need version updates in [workspace.dependencies]
+LOCAL_CRATES = [
+    "fresh-core",
+    "fresh-parser-js",
+    "fresh-languages",
+    "fresh-plugin-runtime",
+    "fresh-plugin-api-macros",
+]
+
 def print_usage():
     """Prints the usage instructions."""
-    print("Usage: ./bump-version.py [patch|minor|major]")
+    print("Usage: ./scripts/bump-version.py [patch|minor|major]")
     print("")
     print("Examples:")
-    print("  ./bump-version.py          # Bump patch version (default): 0.1.0 -> 0.1.1")
-    print("  ./bump-version.py patch    # Bump patch version: 0.1.0 -> 0.1.1")
-    print("  ./bump-version.py minor    # Bump minor version: 0.1.0 -> 0.2.0")
-    print("  ./bump-version.py major    # Bump major version: 0.1.0 -> 1.0.0")
+    print("  ./scripts/bump-version.py          # Bump patch version (default): 0.1.0 -> 0.1.1")
+    print("  ./scripts/bump-version.py patch    # Bump patch version: 0.1.0 -> 0.1.1")
+    print("  ./scripts/bump-version.py minor    # Bump minor version: 0.1.0 -> 0.2.0")
+    print("  ./scripts/bump-version.py major    # Bump major version: 0.1.0 -> 1.0.0")
     print("")
     print("The script will:")
     print("  1. Read current version from Cargo.toml")
     print("  2. Calculate the new version")
     print("  3. Ask for confirmation")
-    print("  4. Update Cargo.toml and Cargo.lock")
-    print("  5. Optionally generate release notes")
-    print("  6. Ask to commit, tag, and push the changes")
+    print("  4. Update Cargo.toml (workspace.package and workspace.dependencies)")
+    print("  5. Update Cargo.lock")
+    print("  6. Optionally generate release notes")
+    print("  7. Ask to commit, tag, and push the changes")
     print("")
     print("GitHub Actions will then automatically:")
     print("  - Build binaries for all platforms")
@@ -69,8 +79,10 @@ def calculate_new_version(current_version: str, bump_type: BumpType) -> str:
     return f"{major}.{minor}.{patch}"
 
 def update_cargo_toml(cargo_toml_path: Path, current_version: str, new_version: str) -> None:
-    """Updates the version in Cargo.toml."""
+    """Updates the version in Cargo.toml (both workspace.package and workspace.dependencies)."""
     content = cargo_toml_path.read_text()
+
+    # Update [workspace.package] version
     pattern = rf'^version = "{re.escape(current_version)}"'
     new_content = re.sub(
         pattern,
@@ -79,6 +91,13 @@ def update_cargo_toml(cargo_toml_path: Path, current_version: str, new_version: 
         count=1,
         flags=re.MULTILINE,
     )
+
+    # Update local crate versions in [workspace.dependencies]
+    for crate in LOCAL_CRATES:
+        # Match pattern like: fresh-core = { version = "0.1.83", path = "..." }
+        pattern = rf'({re.escape(crate)} = \{{ version = "){re.escape(current_version)}(")'
+        new_content = re.sub(pattern, rf'\g<1>{new_version}\g<2>', new_content)
+
     cargo_toml_path.write_text(new_content)
 
 def update_cargo_lock() -> None:
@@ -173,7 +192,7 @@ def main() -> None:
         print("")
         print(f"{BLUE}Step 1:{NC} Updating Cargo.toml...")
         update_cargo_toml(cargo_toml_path, current_version, new_version)
-        print(f"{GREEN}✓{NC} Updated Cargo.toml")
+        print(f"{GREEN}✓{NC} Updated Cargo.toml (workspace.package and workspace.dependencies)")
 
         print("")
         print(f"{BLUE}Step 2:{NC} Updating Cargo.lock (running cargo build)...")
