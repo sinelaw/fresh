@@ -115,7 +115,24 @@ impl TerminalModes {
         modes.raw_mode = true;
         tracing::debug!("Enabled raw mode");
 
+        // Enable alternate screen BEFORE keyboard enhancement.
+        // This is critical: the Kitty keyboard protocol specifies that main and
+        // alternate screens maintain independent keyboard mode stacks. If we push
+        // keyboard enhancement before entering alternate screen, it goes to the
+        // main screen's stack. Then when we pop before leaving (in undo), we pop
+        // from the alternate screen's stack, leaving the main screen corrupted.
+        // See: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
+        if let Err(e) = stdout().execute(EnterAlternateScreen) {
+            tracing::error!("Failed to enter alternate screen: {}", e);
+            modes.undo();
+            return Err(e.into());
+        }
+        modes.alternate_screen = true;
+        tracing::debug!("Entered alternate screen");
+
         // Check and enable keyboard enhancement flags (if any are configured)
+        // This must happen AFTER entering alternate screen so the flags are pushed
+        // to the alternate screen's stack, not the main screen's stack.
         if keyboard_config.any_enabled() {
             match supports_keyboard_enhancement() {
                 Ok(true) => {
@@ -138,15 +155,6 @@ impl TerminalModes {
         } else {
             tracing::debug!("Keyboard enhancement disabled by config");
         }
-
-        // Enable alternate screen
-        if let Err(e) = stdout().execute(EnterAlternateScreen) {
-            tracing::error!("Failed to enter alternate screen: {}", e);
-            modes.undo();
-            return Err(e.into());
-        }
-        modes.alternate_screen = true;
-        tracing::debug!("Entered alternate screen");
 
         // Enable mouse capture
         if let Err(e) = stdout().execute(EnableMouseCapture) {
