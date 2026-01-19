@@ -3,6 +3,10 @@ name = "fresh-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Core types and utilities for the Fresh editor"
 
 [dependencies]
 serde.workspace = true

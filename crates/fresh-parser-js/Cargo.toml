@@ -3,6 +3,10 @@ name = "fresh-parser-js"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "JavaScript/TypeScript parser for Fresh editor plugins"
 
 [dependencies]
 anyhow.workspace = true

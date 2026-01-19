@@ -16,6 +16,7 @@ edition = "2021"
 license = "GPL-2.0"
 repository = "https://github.com/sinelaw/fresh"
 homepage = "https://sinelaw.github.io/fresh/"
+documentation = "https://docs.rs/fresh-editor"
 
 [workspace.dependencies]
 # Local crates

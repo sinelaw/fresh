@@ -3,6 +3,9 @@ name = "fresh-plugin-api-macros"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Proc macros for Fresh plugin API type-safe bindings"
 
 [lib]
