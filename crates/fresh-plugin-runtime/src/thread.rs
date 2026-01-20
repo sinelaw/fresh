@@ -305,10 +305,10 @@ impl PluginThreadHandle {
                 buffer_id,
                 split_id,
             } => {
-                // Return an object with buffer_id and split_id
+                // Return an object with bufferId and splitId (camelCase for JS)
                 let result = serde_json::json!({
-                    "buffer_id": buffer_id.0,
-                    "split_id": split_id.map(|s| s.0)
+                    "bufferId": buffer_id.0,
+                    "splitId": split_id.map(|s| s.0)
                 });
                 self.resolve_callback(JsCallbackId(request_id), result.to_string());
             }

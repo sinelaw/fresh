@@ -96,7 +96,8 @@ impl std::fmt::Display for JsCallbackId {
 
 /// Result of creating a virtual buffer
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
 pub struct VirtualBufferResult {
     /// The created buffer ID
     pub buffer_id: u64,

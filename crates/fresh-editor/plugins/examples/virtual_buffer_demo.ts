@@ -97,12 +97,12 @@ globalThis.show_virtual_buffer_demo = async () => {
     const bufferId = await editor.createVirtualBufferInSplit({
       name: "*Demo Diagnostics*",
       mode: "demo-list",
-      read_only: true,
+      readOnly: true,
       entries: entries,
       ratio: 0.7, // Original pane takes 70%, demo buffer takes 30%
-      panel_id: "demo-diagnostics",
-      show_line_numbers: false,
-      show_cursors: true,
+      panelId: "demo-diagnostics",
+      showLineNumbers: false,
+      showCursors: true,
     });
 
     editor.setStatus(`Created demo virtual buffer (ID: ${bufferId}) with ${entries.length} items - Press RET to jump to location`);

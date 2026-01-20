@@ -526,7 +526,7 @@ globalThis.onMarkdownViewTransform = function(data: {
   const info = editor.getBufferInfo(data.buffer_id);
   if (!info || !isMarkdownFile(info.path)) return;
 
-  editor.debug(`onMarkdownViewTransform: buffer=${data.buffer_id}, split=${data.split_id}, tokens=${data.tokens.length}`);
+  editor.debug(`onMarkdownViewTransform: buffer=${data.buffer_id}, split=${data.splitId}, tokens=${data.tokens.length}`);
 
   // Transform the incoming tokens with markdown-aware wrapping
   const transformedTokens = transformMarkdownTokens(
@@ -543,7 +543,7 @@ globalThis.onMarkdownViewTransform = function(data: {
 
   editor.submitViewTransform(
     data.buffer_id,
-    data.split_id,
+    data.splitId,
     data.viewport_start,
     data.viewport_end,
     transformedTokens,

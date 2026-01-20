@@ -41,14 +41,14 @@ interface EditorApi {
   createVirtualBufferInSplit(options: {
     name: string;
     mode: string;
-    read_only: boolean;
+    readOnly: boolean;
     entries: TextPropertyEntry[];
     ratio: number;
     direction: string;
-    panel_id: string;
-    show_line_numbers: boolean;
-    editing_disabled: boolean;
-  }): Promise<{ buffer_id: number; split_id?: number }>;
+    panelId: string;
+    showLineNumbers: boolean;
+    editingDisabled: boolean;
+  }): Promise<{ bufferId: number; splitId?: number }>;
   setVirtualBufferContent(bufferId: number, entries: TextPropertyEntry[]): void;
   closeBuffer(bufferId: number): void;
   closeSplit(splitId: number): void;
@@ -137,17 +137,17 @@ export class SearchPreview {
         const result = await this.editor.createVirtualBufferInSplit({
           name: "*Preview*",
           mode: this.modeName,
-          read_only: true,
+          readOnly: true,
           entries,
           ratio: 0.5,
           direction: "vertical",
-          panel_id: this.panelId,
-          show_line_numbers: false,
-          editing_disabled: true,
+          panelId: this.panelId,
+          showLineNumbers: false,
+          editingDisabled: true,
         });
 
-        this.bufferId = result.buffer_id;
-        this.splitId = result.split_id ?? null;
+        this.bufferId = result.bufferId;
+        this.splitId = result.splitId ?? null;
 
         // Return focus to original split so prompt stays active
         if (this.originalSplitId !== null) {

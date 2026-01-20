@@ -927,17 +927,17 @@ export class Finder<T> {
         const result = await this.editor.createVirtualBufferInSplit({
           name: "*Preview*",
           mode: this.previewModeName,
-          read_only: true,
+          readOnly: true,
           entries,
           ratio: 0.5,
           direction: "vertical",
-          panel_id: `${this.config.id}-preview`,
-          show_line_numbers: false,
-          editing_disabled: true,
+          panelId: `${this.config.id}-preview`,
+          showLineNumbers: false,
+          editingDisabled: true,
         });
 
-        this.previewState.bufferId = result.buffer_id;
-        this.previewState.splitId = result.split_id ?? null;
+        this.previewState.bufferId = result.bufferId;
+        this.previewState.splitId = result.splitId ?? null;
 
         // Return focus to original split
         if (this.promptState.originalSplitId !== null) {
@@ -1066,19 +1066,19 @@ export class Finder<T> {
       const result = await this.editor.createVirtualBufferInSplit({
         name: `*${this.config.id.charAt(0).toUpperCase() + this.config.id.slice(1)}*`,
         mode: this.modeName,
-        read_only: true,
+        readOnly: true,
         entries,
         ratio,
         direction: "horizontal",
-        panel_id: this.config.id,
-        show_line_numbers: false,
-        show_cursors: true,
-        editing_disabled: true,
+        panelId: this.config.id,
+        showLineNumbers: false,
+        showCursors: true,
+        editingDisabled: true,
       });
 
-      if (result.buffer_id !== null) {
-        this.panelState.bufferId = result.buffer_id;
-        this.panelState.splitId = result.split_id ?? null;
+      if (result.bufferId !== null) {
+        this.panelState.bufferId = result.bufferId;
+        this.panelState.splitId = result.splitId ?? null;
         this.applyPanelHighlighting();
 
         const count = this.panelState.items.length;

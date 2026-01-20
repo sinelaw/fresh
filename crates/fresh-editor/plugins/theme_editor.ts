@@ -1737,11 +1737,11 @@ async function doOpenThemeEditor(): Promise<void> {
   const bufferId = await editor.createVirtualBuffer({
     name: "*Theme Editor*",
     mode: "theme-editor",
-    read_only: true,
+    readOnly: true,
     entries: entries,
-    show_line_numbers: false,
-    show_cursors: true,
-    editing_disabled: true,
+    showLineNumbers: false,
+    showCursors: true,
+    editingDisabled: true,
   });
   editor.debug(`[theme_editor] doOpenThemeEditor: createVirtualBuffer returned bufferId=${bufferId}`);
   editor.debug(`[theme_editor] doOpenThemeEditor: checking if bufferId !== null...`);

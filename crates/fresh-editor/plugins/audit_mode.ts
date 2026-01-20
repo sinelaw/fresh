@@ -677,12 +677,12 @@ globalThis.on_viewport_changed = (data: any) => {
 
     const { oldSplitId, newSplitId, oldLineByteOffsets, newLineByteOffsets } = activeSideBySideState;
 
-    if (data.split_id === oldSplitId && newLineByteOffsets.length > 0) {
+    if (data.splitId === oldSplitId && newLineByteOffsets.length > 0) {
         // OLD pane scrolled - find which line it's on and sync NEW pane to same line
         const lineNum = findLineForByte(oldLineByteOffsets, data.top_byte);
         const targetByte = newLineByteOffsets[Math.min(lineNum, newLineByteOffsets.length - 1)];
         (editor as any).setSplitScroll(newSplitId, targetByte);
-    } else if (data.split_id === newSplitId && oldLineByteOffsets.length > 0) {
+    } else if (data.splitId === newSplitId && oldLineByteOffsets.length > 0) {
         // NEW pane scrolled - find which line it's on and sync OLD pane to same line
         const lineNum = findLineForByte(newLineByteOffsets, data.top_byte);
         const targetByte = oldLineByteOffsets[Math.min(lineNum, oldLineByteOffsets.length - 1)];

@@ -714,11 +714,11 @@ globalThis.calculator_open = async function (): Promise<void> {
   state.bufferId = await editor.createVirtualBuffer({
     name: "*Calculator*",
     mode: "calculator",
-    read_only: true,
+    readOnly: true,
     entries,
-    show_line_numbers: false,
-    show_cursors: false,
-    editing_disabled: true,
+    showLineNumbers: false,
+    showCursors: false,
+    editingDisabled: true,
   });
 
   state.splitId = editor.getActiveSplitId();

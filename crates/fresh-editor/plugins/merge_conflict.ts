@@ -1338,11 +1338,11 @@ async function createMergePanels(): Promise<void> {
   const oursId = await editor.createVirtualBuffer({
     name: `*OURS*${sourceExt}`,
     mode: "merge-conflict",
-    read_only: true,
+    readOnly: true,
     entries: buildFullFileEntries("ours"),
-    show_line_numbers: true,
-    show_cursors: true,
-    editing_disabled: true,
+    showLineNumbers: true,
+    showCursors: true,
+    editingDisabled: true,
   });
 
   if (oursId !== null) {
@@ -1354,19 +1354,19 @@ async function createMergePanels(): Promise<void> {
   const theirsResult = await editor.createVirtualBufferInSplit({
     name: `*THEIRS*${sourceExt}`,
     mode: "merge-conflict",
-    read_only: true,
+    readOnly: true,
     entries: buildFullFileEntries("theirs"),
     ratio: 0.5,  // Will be equalized by distributeSplitsEvenly
     direction: "vertical",
-    panel_id: "merge-theirs",
-    show_line_numbers: true,
-    show_cursors: true,
-    editing_disabled: true,
+    panelId: "merge-theirs",
+    showLineNumbers: true,
+    showCursors: true,
+    editingDisabled: true,
   });
 
   if (theirsResult !== null) {
-    mergeState.theirsPanelId = theirsResult.buffer_id;
-    mergeState.theirsSplitId = theirsResult.split_id ?? editor.getActiveSplitId();
+    mergeState.theirsPanelId = theirsResult.bufferId;
+    mergeState.theirsSplitId = theirsResult.splitId ?? editor.getActiveSplitId();
   }
 
   // Focus back on OURS and create RESULT in the middle
@@ -1377,19 +1377,19 @@ async function createMergePanels(): Promise<void> {
   const resultResult = await editor.createVirtualBufferInSplit({
     name: `*RESULT*${sourceExt}`,
     mode: "merge-result",
-    read_only: false,
+    readOnly: false,
     entries: buildResultFileEntries(),
     ratio: 0.5,  // Will be equalized by distributeSplitsEvenly
     direction: "vertical",
-    panel_id: "merge-result",
-    show_line_numbers: true,
-    show_cursors: true,
-    editing_disabled: false,
+    panelId: "merge-result",
+    showLineNumbers: true,
+    showCursors: true,
+    editingDisabled: false,
   });
 
   if (resultResult !== null) {
-    mergeState.resultPanelId = resultResult.buffer_id;
-    mergeState.resultSplitId = resultResult.split_id ?? editor.getActiveSplitId();
+    mergeState.resultPanelId = resultResult.bufferId;
+    mergeState.resultSplitId = resultResult.splitId ?? editor.getActiveSplitId();
   }
 
   // Distribute splits evenly so all three panels get equal width

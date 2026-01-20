@@ -110,20 +110,20 @@ export class PanelManager {
     const result = await this.editor.createVirtualBufferInSplit({
       name: this.panelName,
       mode: this.modeName,
-      read_only: true,
+      readOnly: true,
       entries,
       ratio,
-      panel_id: this.panelName,
-      show_line_numbers: showLineNumbers,
-      editing_disabled: editingDisabled,
+      panelId: this.panelName,
+      showLineNumbers: showLineNumbers,
+      editingDisabled: editingDisabled,
     });
 
     // Track state
-    this.state.bufferId = result.buffer_id;
-    this.state.splitId = result.split_id ?? this.editor.getActiveSplitId();
+    this.state.bufferId = result.bufferId;
+    this.state.splitId = result.splitId ?? this.editor.getActiveSplitId();
     this.state.isOpen = true;
 
-    return result.buffer_id;
+    return result.bufferId;
   }
 
   /**

@@ -229,15 +229,15 @@ async function showResultsPanel(): Promise<void> {
     const result = await editor.createVirtualBufferInSplit({
       name: "*Search/Replace*",
       mode: "search-replace-list",
-      read_only: true,
+      readOnly: true,
       entries: entries,
       ratio: 0.6, // 60/40 split
-      panel_id: "search-replace-panel",
-      show_line_numbers: false,
-      show_cursors: true,
+      panelId: "search-replace-panel",
+      showLineNumbers: false,
+      showCursors: true,
     });
-    resultsBufferId = result.buffer_id;
-    resultsSplitId = result.split_id ?? editor.getActiveSplitId();
+    resultsBufferId = result.bufferId;
+    resultsSplitId = result.splitId ?? editor.getActiveSplitId();
 
     panelOpen = true;
     editor.debug(`Search/Replace panel opened with buffer ID ${resultsBufferId}`);
