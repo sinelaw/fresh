@@ -303,10 +303,14 @@ impl PluginThreadHandle {
             PluginResponse::VirtualBufferCreated {
                 request_id,
                 buffer_id,
-                split_id: _,
+                split_id,
             } => {
-                // Return just the buffer_id number, not an object
-                self.resolve_callback(JsCallbackId(request_id), buffer_id.0.to_string());
+                // Return an object with buffer_id and split_id
+                let result = serde_json::json!({
+                    "buffer_id": buffer_id.0,
+                    "split_id": split_id.map(|s| s.0)
+                });
+                self.resolve_callback(JsCallbackId(request_id), result.to_string());
             }
             PluginResponse::LspRequest { request_id, result } => match result {
                 Ok(value) => {

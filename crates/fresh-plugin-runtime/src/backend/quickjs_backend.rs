@@ -1980,8 +1980,12 @@ impl JsEditorApi {
 
     // === Virtual Buffers ===
 
-    /// Create a virtual buffer in current split (async, returns buffer ID)
-    #[plugin_api(async_promise, js_name = "createVirtualBuffer", ts_return = "number")]
+    /// Create a virtual buffer in current split (async, returns buffer and split IDs)
+    #[plugin_api(
+        async_promise,
+        js_name = "createVirtualBuffer",
+        ts_return = "VirtualBufferResult"
+    )]
     #[qjs(rename = "_createVirtualBufferStart")]
     pub fn create_virtual_buffer_start(
         &self,
@@ -2030,11 +2034,11 @@ impl JsEditorApi {
         Ok(id)
     }
 
-    /// Create a virtual buffer in a new split (async, returns request_id)
+    /// Create a virtual buffer in a new split (async, returns buffer and split IDs)
     #[plugin_api(
         async_promise,
         js_name = "createVirtualBufferInSplit",
-        ts_return = "number"
+        ts_return = "VirtualBufferResult"
     )]
     #[qjs(rename = "_createVirtualBufferInSplitStart")]
     pub fn create_virtual_buffer_in_split_start(
@@ -2083,11 +2087,11 @@ impl JsEditorApi {
         Ok(id)
     }
 
-    /// Create a virtual buffer in an existing split (async, returns request_id)
+    /// Create a virtual buffer in an existing split (async, returns buffer and split IDs)
     #[plugin_api(
         async_promise,
         js_name = "createVirtualBufferInExistingSplit",
-        ts_return = "number"
+        ts_return = "VirtualBufferResult"
     )]
     #[qjs(rename = "_createVirtualBufferInExistingSplitStart")]
     pub fn create_virtual_buffer_in_existing_split_start(

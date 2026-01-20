@@ -94,6 +94,16 @@ impl std::fmt::Display for JsCallbackId {
     }
 }
 
+/// Result of creating a virtual buffer
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct VirtualBufferResult {
+    /// The created buffer ID
+    pub buffer_id: u64,
+    /// The split ID (if created in a new split)
+    pub split_id: Option<u64>,
+}
+
 /// Response from the editor for async plugin operations
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
