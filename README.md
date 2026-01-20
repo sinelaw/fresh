@@ -241,6 +241,10 @@ Thanks for contributing!
 
 7. **LSP**: Ensure LSP interactions follow the correct lifecycle (e.g., `didOpen` must always precede other requests to avoid server-side errors). Use the appropriate existing helpers for this pattern.
 
+8. **Regenerate plugin types**: After modifying the plugin API, run `cargo test -p fresh-plugin-runtime write_fresh_dts_file -- --ignored`
+
+9. **Type check plugins**: Run `crates/fresh-editor/plugins/check-types.sh` (requires `tsc`)
+
 **Tip**: You can use tmux + send-keys + render-pane to script ad-hoc tests on the UI, for example when trying to reproduce an issue.
 
 ## Privacy

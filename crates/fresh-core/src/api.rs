@@ -100,8 +100,10 @@ impl std::fmt::Display for JsCallbackId {
 #[ts(export, rename_all = "camelCase")]
 pub struct VirtualBufferResult {
     /// The created buffer ID
+    #[ts(type = "number")]
     pub buffer_id: u64,
     /// The split ID (if created in a new split)
+    #[ts(type = "number | null")]
     pub split_id: Option<u64>,
 }
 

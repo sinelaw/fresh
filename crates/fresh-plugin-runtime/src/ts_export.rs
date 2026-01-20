@@ -20,7 +20,7 @@ use fresh_core::api::{
     CreateCompositeBufferOptions, CreateVirtualBufferInExistingSplitOptions,
     CreateVirtualBufferInSplitOptions, CreateVirtualBufferOptions, CursorInfo, JsTextPropertyEntry,
     LayoutHints, SpawnResult, TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle,
-    ViewTokenWire, ViewTokenWireKind, ViewportInfo,
+    ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
 };
 
 /// Get the TypeScript declaration for a type by name
@@ -71,6 +71,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
 
         // Return types
         "TextPropertiesAtCursor" => Some(TextPropertiesAtCursor::decl()),
+        "VirtualBufferResult" => Some(VirtualBufferResult::decl()),
 
         _ => None,
     }

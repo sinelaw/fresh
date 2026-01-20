@@ -69,3 +69,4 @@ For plugin development guides, see:
 - **API Reference:** [`docs/plugin-api.md`](../docs/plugin-api.md)
 - **Examples:** [`examples/README.md`](examples/README.md)
 - **Clangd Plugin:** [`clangd_support.md`](clangd_support.md)
+

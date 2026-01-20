@@ -76,6 +76,7 @@ type TsCompositeSourceConfig = {
 type TsCompositePaneStyle = {
 	/**
 	* Background color for added lines (RGB)
+	* Using [u8; 3] instead of (u8, u8, u8) for better rquickjs_serde compatibility
 	*/
 	addBg: [number, number, number] | null;
 	/**
@@ -286,6 +287,16 @@ type TsHighlightSpan = {
 	color: [number, number, number];
 	bold: boolean;
 	italic: boolean;
+};
+type VirtualBufferResult = {
+	/**
+	* The created buffer ID
+	*/
+	bufferId: number;
+	/**
+	* The split ID (if created in a new split)
+	*/
+	splitId: number | null;
 };
 /**
 * Main editor API interface
@@ -699,17 +710,17 @@ interface EditorAPI {
 	*/
 	getHandlers(eventName: string): string[];
 	/**
-	* Create a virtual buffer in current split (async, returns buffer ID)
+	* Create a virtual buffer in current split (async, returns buffer and split IDs)
 	*/
-	createVirtualBuffer(opts: CreateVirtualBufferOptions): Promise<number>;
+	createVirtualBuffer(opts: CreateVirtualBufferOptions): Promise<VirtualBufferResult>;
 	/**
-	* Create a virtual buffer in a new split (async, returns request_id)
+	* Create a virtual buffer in a new split (async, returns buffer and split IDs)
 	*/
-	createVirtualBufferInSplit(opts: CreateVirtualBufferInSplitOptions): Promise<number>;
+	createVirtualBufferInSplit(opts: CreateVirtualBufferInSplitOptions): Promise<VirtualBufferResult>;
 	/**
-	* Create a virtual buffer in an existing split (async, returns request_id)
+	* Create a virtual buffer in an existing split (async, returns buffer and split IDs)
 	*/
-	createVirtualBufferInExistingSplit(opts: CreateVirtualBufferInExistingSplitOptions): Promise<number>;
+	createVirtualBufferInExistingSplit(opts: CreateVirtualBufferInExistingSplitOptions): Promise<VirtualBufferResult>;
 	/**
 	* Set virtual buffer content (takes array of entry objects)
 	*/
