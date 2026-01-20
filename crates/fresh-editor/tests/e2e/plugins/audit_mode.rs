@@ -5,6 +5,7 @@ use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
+use fresh::input::keybindings::Action::PluginAction;
 use std::fs;
 
 /// Helper to copy audit_mode plugin and its dependencies to the test repo
@@ -1132,6 +1133,68 @@ fn test_close_buffer_skips_hidden_buffers() {
     assert!(
         !first_lines.contains("*OLD:") && !first_lines.contains("*NEW:"),
         "Hidden buffers should not appear in tab bar. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test that the Side-by-Side Diff command is visible in the command palette.
+///
+/// This test verifies that the command is registered with null context (always visible)
+/// rather than a specific context like "global" which would hide it.
+///
+/// The test types a partial query and waits for the full command name to appear in
+/// suggestions. If the command has the wrong context, it won't appear in the palette.
+#[test]
+fn test_side_by_side_diff_command_visible_in_palette() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Wait for the audit_mode plugin command to be registered
+    // Check by action name which is stable across locales
+    harness
+        .wait_until(|h| {
+            let commands = h.editor().command_registry().read().unwrap().get_all();
+            commands
+                .iter()
+                .any(|c| c.action == PluginAction("side_by_side_diff_current_file".to_string()))
+        })
+        .unwrap();
+
+    // Open command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    // Type a PARTIAL query - if the command is hidden by context, the full name won't appear
+    // in suggestions (only our typed input would show, not the full "Side-by-Side Diff")
+    harness.type_text("Side-by-Side").unwrap();
+    harness.render().unwrap();
+
+    // Wait for the FULL command name to appear in suggestions on screen
+    // This verifies the command is visible (not hidden by context filtering)
+    // The command name is "Side-by-Side Diff" as defined in audit_mode.i18n.json
+    harness
+        .wait_for_screen_contains("Side-by-Side Diff")
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Command palette with Side-by-Side Diff:\n{}", screen);
+
+    // The command should be visible in the suggestions
+    assert!(
+        screen.contains("Side-by-Side Diff"),
+        "Side-by-Side Diff command should be visible in command palette. Screen:\n{}",
         screen
     );
 }
