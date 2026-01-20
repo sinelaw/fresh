@@ -5,4 +5,7 @@
 
 pub mod quickjs_backend;
 
-pub use quickjs_backend::{set_panic_on_js_errors, PendingResponses, QuickJsBackend, TsPluginInfo};
+pub use quickjs_backend::{
+    has_fatal_js_error, set_panic_on_js_errors, take_fatal_js_error, PendingResponses,
+    QuickJsBackend, TsPluginInfo,
+};

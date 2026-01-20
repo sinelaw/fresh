@@ -88,6 +88,30 @@ impl PluginManager {
         }
     }
 
+    /// Check if the plugin thread is still alive
+    pub fn is_alive(&self) -> bool {
+        #[cfg(feature = "plugins")]
+        {
+            self.inner.as_ref().map(|h| h.is_alive()).unwrap_or(false)
+        }
+        #[cfg(not(feature = "plugins"))]
+        {
+            false
+        }
+    }
+
+    /// Check thread health and panic if the plugin thread died due to a panic.
+    /// This propagates plugin thread panics to the calling thread.
+    /// Call this periodically (e.g., in wait loops) to fail fast on plugin errors.
+    pub fn check_thread_health(&mut self) {
+        #[cfg(feature = "plugins")]
+        {
+            if let Some(ref mut handle) = self.inner {
+                handle.check_thread_health();
+            }
+        }
+    }
+
     /// Load plugins from a directory.
     pub fn load_plugins_from_dir(&self, dir: &Path) -> Vec<String> {
         #[cfg(feature = "plugins")]

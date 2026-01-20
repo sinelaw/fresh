@@ -3012,6 +3012,11 @@ impl Editor {
         &self.plugin_manager
     }
 
+    /// Get mutable access to the plugin manager
+    pub fn plugin_manager_mut(&mut self) -> &mut PluginManager {
+        &mut self.plugin_manager
+    }
+
     /// Check if file explorer has focus
     pub fn file_explorer_is_focused(&self) -> bool {
         self.key_context == KeyContext::FileExplorer
@@ -3165,6 +3170,10 @@ impl Editor {
     /// - File system changes (future)
     /// - Git status updates
     pub fn process_async_messages(&mut self) -> bool {
+        // Check plugin thread health - will panic if thread died due to error
+        // This ensures plugin errors surface quickly instead of causing silent hangs
+        self.plugin_manager.check_thread_health();
+
         let Some(bridge) = &self.async_bridge else {
             return false;
         };

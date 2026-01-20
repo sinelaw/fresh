@@ -245,6 +245,42 @@ fn should_panic_on_js_errors() -> bool {
     PANIC_ON_JS_ERRORS.load(std::sync::atomic::Ordering::SeqCst)
 }
 
+/// Global flag indicating a fatal JS error occurred that should terminate the plugin thread.
+/// This is used because panicking inside rquickjs callbacks (FFI boundary) gets caught by
+/// rquickjs's catch_unwind, so we need an alternative mechanism to signal errors.
+static FATAL_JS_ERROR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Storage for the fatal error message
+static FATAL_JS_ERROR_MSG: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Set a fatal JS error - call this instead of panicking inside FFI callbacks
+fn set_fatal_js_error(msg: String) {
+    if let Ok(mut guard) = FATAL_JS_ERROR_MSG.write() {
+        if guard.is_none() {
+            // Only store the first error
+            *guard = Some(msg);
+        }
+    }
+    FATAL_JS_ERROR.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Check if a fatal JS error has occurred
+pub fn has_fatal_js_error() -> bool {
+    FATAL_JS_ERROR.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Get and clear the fatal JS error message (returns None if no error)
+pub fn take_fatal_js_error() -> Option<String> {
+    if !FATAL_JS_ERROR.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        return None;
+    }
+    if let Ok(mut guard) = FATAL_JS_ERROR_MSG.write() {
+        guard.take()
+    } else {
+        Some("Fatal JS error (message unavailable)".to_string())
+    }
+}
+
 /// Run all pending jobs and check for unhandled exceptions
 /// If panic_on_js_errors is enabled, this will panic on unhandled exceptions
 fn run_pending_jobs_checked(ctx: &rquickjs::Ctx<'_>, context: &str) -> usize {
@@ -2411,7 +2447,10 @@ impl QuickJsBackend {
                     tracing::error!("Unhandled Promise rejection: {}", error_msg);
 
                     if should_panic_on_js_errors() {
-                        panic!("Unhandled Promise rejection: {}", error_msg);
+                        // Don't panic here - we're inside an FFI callback and rquickjs catches panics.
+                        // Instead, set a fatal error flag that the plugin thread loop will check.
+                        let full_msg = format!("Unhandled Promise rejection: {}", error_msg);
+                        set_fatal_js_error(full_msg);
                     }
                 }
             },
