@@ -1100,7 +1100,7 @@ globalThis.review_drill_down = async () => {
         }));
 
         // Create source buffers (hidden from tabs, used by composite)
-        const oldBufferId = await editor.createVirtualBuffer({
+        const oldResult = await editor.createVirtualBuffer({
             name: `*OLD:${h.file}*`,
             mode: "normal",
             readOnly: true,
@@ -1109,8 +1109,9 @@ globalThis.review_drill_down = async () => {
             editingDisabled: true,
             hiddenFromTabs: true
         });
+        const oldBufferId = oldResult.bufferId;
 
-        const newBufferId = await editor.createVirtualBuffer({
+        const newResult = await editor.createVirtualBuffer({
             name: `*NEW:${h.file}*`,
             mode: "normal",
             readOnly: true,
@@ -1119,6 +1120,7 @@ globalThis.review_drill_down = async () => {
             editingDisabled: true,
             hiddenFromTabs: true
         });
+        const newBufferId = newResult.bufferId;
 
         // Convert hunks to composite buffer format (parse counts from git diff)
         const compositeHunks: TsCompositeHunk[] = fileHunks.map(fh => {
@@ -1663,7 +1665,7 @@ globalThis.side_by_side_diff_current_file = async () => {
     }));
 
     // Create source buffers (hidden from tabs, used by composite)
-    const oldBufferId = await editor.createVirtualBuffer({
+    const oldResult = await editor.createVirtualBuffer({
         name: `*OLD:${filePath}*`,
         mode: "normal",
         readOnly: true,
@@ -1672,8 +1674,9 @@ globalThis.side_by_side_diff_current_file = async () => {
         editingDisabled: true,
         hiddenFromTabs: true
     });
+    const oldBufferId = oldResult.bufferId;
 
-    const newBufferId = await editor.createVirtualBuffer({
+    const newResult = await editor.createVirtualBuffer({
         name: `*NEW:${filePath}*`,
         mode: "normal",
         readOnly: true,
@@ -1682,6 +1685,7 @@ globalThis.side_by_side_diff_current_file = async () => {
         editingDisabled: true,
         hiddenFromTabs: true
     });
+    const newBufferId = newResult.bufferId;
 
     // Convert hunks to composite buffer format
     const compositeHunks: TsCompositeHunk[] = fileHunks.map(h => ({

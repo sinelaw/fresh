@@ -478,7 +478,7 @@ globalThis.show_git_blame = async function(): Promise<void> {
   }
 
   // Create virtual buffer with the file content
-  const bufferId = await editor.createVirtualBufferInExistingSplit({
+  const result = await editor.createVirtualBufferInExistingSplit({
     name: bufferName,
     mode: "git-blame",
     readOnly: true,
@@ -489,9 +489,9 @@ globalThis.show_git_blame = async function(): Promise<void> {
     editingDisabled: true,
   });
 
-  if (bufferId !== null) {
+  if (result !== null) {
     blameState.isOpen = true;
-    blameState.bufferId = bufferId;
+    blameState.bufferId = result.bufferId;
 
     // Add virtual lines for blame headers (persistent state model)
     addBlameHeaders();

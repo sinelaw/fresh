@@ -711,7 +711,7 @@ globalThis.calculator_open = async function (): Promise<void> {
 
   const entries = renderCalculator();
 
-  state.bufferId = await editor.createVirtualBuffer({
+  const result = await editor.createVirtualBuffer({
     name: "*Calculator*",
     mode: "calculator",
     readOnly: true,
@@ -720,7 +720,7 @@ globalThis.calculator_open = async function (): Promise<void> {
     showCursors: false,
     editingDisabled: true,
   });
-
+  state.bufferId = result.bufferId;
   state.splitId = editor.getActiveSplitId();
 
   editor.setStatus(editor.t("status.opened"));

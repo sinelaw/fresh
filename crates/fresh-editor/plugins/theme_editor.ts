@@ -1734,7 +1734,7 @@ async function doOpenThemeEditor(): Promise<void> {
 
   // Create virtual buffer in current split (no new split)
   editor.debug("[theme_editor] doOpenThemeEditor: calling createVirtualBuffer...");
-  const bufferId = await editor.createVirtualBuffer({
+  const result = await editor.createVirtualBuffer({
     name: "*Theme Editor*",
     mode: "theme-editor",
     readOnly: true,
@@ -1743,6 +1743,7 @@ async function doOpenThemeEditor(): Promise<void> {
     showCursors: true,
     editingDisabled: true,
   });
+  const bufferId = result.bufferId;
   editor.debug(`[theme_editor] doOpenThemeEditor: createVirtualBuffer returned bufferId=${bufferId}`);
   editor.debug(`[theme_editor] doOpenThemeEditor: checking if bufferId !== null...`);
 

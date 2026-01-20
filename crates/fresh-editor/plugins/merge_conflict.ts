@@ -1335,7 +1335,7 @@ async function createMergePanels(): Promise<void> {
 
   // Create OURS panel first (takes over current view)
   // Include extension in name so tree-sitter can apply highlighting
-  const oursId = await editor.createVirtualBuffer({
+  const oursResult = await editor.createVirtualBuffer({
     name: `*OURS*${sourceExt}`,
     mode: "merge-conflict",
     readOnly: true,
@@ -1345,8 +1345,8 @@ async function createMergePanels(): Promise<void> {
     editingDisabled: true,
   });
 
-  if (oursId !== null) {
-    mergeState.oursPanelId = oursId;
+  if (oursResult !== null) {
+    mergeState.oursPanelId = oursResult.bufferId;
     mergeState.oursSplitId = editor.getActiveSplitId();
   }
 

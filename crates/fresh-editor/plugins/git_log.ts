@@ -763,7 +763,7 @@ globalThis.show_git_log = async function(): Promise<void> {
   gitLogState.cachedContent = entriesToContent(entries);
 
   // Create virtual buffer in the current split (replacing current buffer)
-  const bufferId = await editor.createVirtualBufferInExistingSplit({
+  const result = await editor.createVirtualBufferInExistingSplit({
     name: "*Git Log*",
     mode: "git-log",
     readOnly: true,
@@ -774,9 +774,9 @@ globalThis.show_git_log = async function(): Promise<void> {
     editingDisabled: true,
   });
 
-  if (bufferId !== null) {
+  if (result !== null) {
     gitLogState.isOpen = true;
-    gitLogState.bufferId = bufferId;
+    gitLogState.bufferId = result.bufferId;
 
     // Apply syntax highlighting
     applyGitLogHighlighting();
@@ -897,7 +897,7 @@ globalThis.git_log_show_commit = async function(): Promise<void> {
   commitDetailState.cachedContent = entriesToContent(entries);
 
   // Create virtual buffer in the current split (replacing git log view)
-  const bufferId = await editor.createVirtualBufferInExistingSplit({
+  const result = await editor.createVirtualBufferInExistingSplit({
     name: `*Commit: ${commit.shortHash}*`,
     mode: "git-commit-detail",
     readOnly: true,
@@ -908,9 +908,9 @@ globalThis.git_log_show_commit = async function(): Promise<void> {
     editingDisabled: true,
   });
 
-  if (bufferId !== null) {
+  if (result !== null) {
     commitDetailState.isOpen = true;
-    commitDetailState.bufferId = bufferId;
+    commitDetailState.bufferId = result.bufferId;
     commitDetailState.splitId = gitLogState.splitId;
     commitDetailState.commit = commit;
 
@@ -1210,7 +1210,7 @@ globalThis.git_commit_detail_open_file = async function(): Promise<void> {
       }
 
       // Create a read-only virtual buffer with the file content
-      const bufferId = await editor.createVirtualBufferInExistingSplit({
+      const result = await editor.createVirtualBufferInExistingSplit({
         name: `${file} @ ${commit.shortHash}`,
         mode: "git-file-view",
         readOnly: true,
@@ -1221,16 +1221,16 @@ globalThis.git_commit_detail_open_file = async function(): Promise<void> {
         editingDisabled: true,
       });
 
-      if (bufferId !== null) {
+      if (result !== null) {
         // Track file view state so we can navigate back
         fileViewState.isOpen = true;
-        fileViewState.bufferId = bufferId;
+        fileViewState.bufferId = result.bufferId;
         fileViewState.splitId = commitDetailState.splitId;
         fileViewState.filePath = file;
         fileViewState.commitHash = commit.hash;
 
         // Apply syntax highlighting based on file type
-        applyFileViewHighlighting(bufferId, content, file);
+        applyFileViewHighlighting(result.bufferId, content, file);
 
         const targetLine = line || 1;
         editor.setStatus(editor.t("status.file_view_ready", { file, hash: commit.shortHash, line: String(targetLine) }));

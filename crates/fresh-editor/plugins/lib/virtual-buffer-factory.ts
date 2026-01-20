@@ -59,7 +59,7 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         readOnly = true,
       } = options;
 
-      return await editor.createVirtualBuffer({
+      const result = await editor.createVirtualBuffer({
         name,
         mode,
         readOnly,
@@ -67,6 +67,7 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         showLineNumbers,
         editingDisabled,
       });
+      return result.bufferId;
     },
 
     /**
@@ -82,7 +83,7 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         readOnly = true,
       } = options;
 
-      return await editor.createVirtualBufferInExistingSplit({
+      const result = await editor.createVirtualBufferInExistingSplit({
         name,
         mode,
         readOnly,
@@ -91,6 +92,7 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         showLineNumbers,
         editingDisabled,
       });
+      return result.bufferId;
     },
 
     /**
@@ -108,7 +110,7 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         readOnly = true,
       } = options;
 
-      return await editor.createVirtualBufferInSplit({
+      const result = await editor.createVirtualBufferInSplit({
         name,
         mode,
         readOnly,
@@ -118,6 +120,7 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         showLineNumbers,
         editingDisabled,
       });
+      return result.bufferId;
     },
 
     /**
