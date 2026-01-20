@@ -584,15 +584,26 @@ impl Editor {
 
     /// Sync the EditorState cursor with CompositeViewState (for status bar display)
     fn sync_editor_cursor_from_composite(&mut self, split_id: SplitId, buffer_id: BufferId) {
-        let (cursor_row, cursor_column) = self
+        let (cursor_row, cursor_column, focused_pane) = self
             .composite_view_states
             .get(&(split_id, buffer_id))
-            .map(|vs| (vs.cursor_row, vs.cursor_column))
-            .unwrap_or((0, 0));
+            .map(|vs| (vs.cursor_row, vs.cursor_column, vs.focused_pane))
+            .unwrap_or((0, 0, 0));
+
+        // Look up the actual file line number from the alignment
+        // The cursor_row is an alignment row index, which may include hunk headers
+        // We want to display the actual source file line number
+        let display_line = self
+            .composite_buffers
+            .get(&buffer_id)
+            .and_then(|composite| composite.alignment.get_row(cursor_row))
+            .and_then(|row| row.get_pane_line(focused_pane))
+            .map(|line_ref| line_ref.line)
+            .unwrap_or(cursor_row); // Fall back to cursor_row if no source line
 
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             state.primary_cursor_line_number =
-                crate::model::buffer::LineNumber::Absolute(cursor_row);
+                crate::model::buffer::LineNumber::Absolute(display_line);
             state.cursors.primary_mut().position = cursor_column;
         }
     }
@@ -758,6 +769,7 @@ impl Editor {
                         view_state.cursor_row = view_state.scroll_row;
                     }
                 }
+                self.sync_editor_cursor_from_composite(split_id, buffer_id);
                 Some(true)
             }
 
@@ -774,6 +786,7 @@ impl Editor {
                         view_state.move_cursor_to_bottom(max_row, viewport_height);
                     }
                 }
+                self.sync_editor_cursor_from_composite(split_id, buffer_id);
                 Some(true)
             }
 
@@ -1006,7 +1019,8 @@ impl Editor {
             };
 
         // Calculate the clicked row (relative to scroll position)
-        let content_row = row.saturating_sub(content_rect.y) as usize;
+        // Subtract 1 for the header row ("OLD (HEAD)" / "NEW (Working)")
+        let content_row = row.saturating_sub(content_rect.y).saturating_sub(1) as usize;
 
         // Calculate column within the pane (accounting for gutter and horizontal scroll)
         let (pane_start_x, left_column) =
@@ -1087,6 +1101,9 @@ impl Editor {
         // Store state for potential text selection drag
         self.mouse_state.dragging_text_selection = false; // Disable regular text selection for composite
         self.mouse_state.drag_selection_split = Some(split_id);
+
+        // Sync cursor position to EditorState for status bar display
+        self.sync_editor_cursor_from_composite(split_id, buffer_id);
 
         Ok(())
     }

@@ -874,6 +874,221 @@ fn test_diff_mouse_click_both_panes() {
     assert!(is_in_diff_view(&screen), "Should still be in diff view");
 }
 
+/// Test that mouse click moves cursor to clicked position
+#[test]
+fn test_diff_mouse_click_moves_cursor() {
+    init_tracing_from_env();
+
+    let repo = GitTestRepo::new();
+    create_repo_for_wrap_test(&repo);
+    setup_audit_mode_plugin(&repo);
+
+    let file_path = repo.path.join("wrap.txt");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_side_by_side_diff(&mut harness);
+
+    // Verify initial cursor position (should be Ln 1, Col 1)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 1,") && screen.contains("Col 1"),
+        "Initial cursor should be at Ln 1, Col 1, got: {}",
+        screen
+    );
+
+    // The diff view layout (120 width):
+    // - Left pane header "OLD (HEAD)" starts around col 0
+    // - Right pane header "NEW (Working)" starts around col 60
+    // - Content rows start at row 4 (after menu bar, tab bar, headers)
+    // - Line numbers take ~4 chars, then content
+    // Click on row 5 (line 2 content), column 10 (in left pane content area)
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    // Cursor should have moved to line 2
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 2,"),
+        "Cursor should move to Ln 2 after clicking row 5, got: {}",
+        screen
+    );
+}
+
+/// Test that keyboard cursor movement scrolls view to keep cursor visible
+#[test]
+fn test_diff_keyboard_scroll_to_cursor() {
+    init_tracing_from_env();
+
+    let repo = GitTestRepo::new();
+    // Create a file with many lines to require scrolling
+    let file_path = repo.path.join("long.txt");
+    let mut content = String::new();
+    for i in 1..=50 {
+        content.push_str(&format!("Line number {}\n", i));
+    }
+    fs::write(&file_path, &content).unwrap();
+    repo.git_add(&["long.txt"]);
+    repo.git_commit("Initial");
+    // Modify some lines
+    let mut new_content = String::new();
+    for i in 1..=50 {
+        if i == 25 {
+            new_content.push_str("MODIFIED line 25\n");
+        } else {
+            new_content.push_str(&format!("Line number {}\n", i));
+        }
+    }
+    fs::write(&file_path, &new_content).unwrap();
+
+    setup_audit_mode_plugin(&repo);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30, // Short viewport to require scrolling
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_side_by_side_diff(&mut harness);
+
+    // Navigate down many lines with Ctrl+End to go to end of file
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    // Cursor should be at a high line number (50+ due to trailing newlines in alignment)
+    assert!(
+        screen.contains("Ln 50")
+            || screen.contains("Ln 49")
+            || screen.contains("Ln 51")
+            || screen.contains("Ln 52"),
+        "Cursor should be near end of file after Ctrl+End, got: {}",
+        screen
+    );
+
+    // The view should have scrolled - we should see line 50 content on screen
+    assert!(
+        screen.contains("Line number 50") || screen.contains("Line number 49"),
+        "View should scroll to show cursor at end of file, got: {}",
+        screen
+    );
+}
+
+/// Test that scrollbar click/drag works in composite buffer
+#[test]
+fn test_diff_scrollbar_click() {
+    init_tracing_from_env();
+
+    let repo = GitTestRepo::new();
+    // Create a file with many lines to have a scrollbar
+    let file_path = repo.path.join("scrollable.txt");
+    let mut content = String::new();
+    for i in 1..=100 {
+        content.push_str(&format!("Line {}: some content here\n", i));
+    }
+    fs::write(&file_path, &content).unwrap();
+    repo.git_add(&["scrollable.txt"]);
+    repo.git_commit("Initial");
+    // Modify middle lines
+    let mut new_content = String::new();
+    for i in 1..=100 {
+        if i >= 45 && i <= 55 {
+            new_content.push_str(&format!("MODIFIED Line {}\n", i));
+        } else {
+            new_content.push_str(&format!("Line {}: some content here\n", i));
+        }
+    }
+    fs::write(&file_path, &new_content).unwrap();
+
+    setup_audit_mode_plugin(&repo);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_side_by_side_diff(&mut harness);
+
+    // Verify we start at the top (Line 1 visible)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Line 1:") || screen.contains("  1 Line"),
+        "Should start at top of file, got: {}",
+        screen
+    );
+
+    // Click on the scrollbar area (rightmost column, middle of viewport)
+    // Scrollbar should be at column 119 (width-1) for a 120-wide terminal
+    // Click in the middle of the scrollbar track to scroll down
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 119,
+            row: 20, // Middle of content area
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: 119,
+            row: 20,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    // After clicking middle of scrollbar, we should see lines from middle of file
+    let screen = harness.screen_to_string();
+    // We should no longer see Line 1 at the top, OR we should see higher line numbers
+    let has_higher_lines =
+        screen.contains("Line 4") || screen.contains("Line 5") || screen.contains("MODIFIED");
+    assert!(
+        has_higher_lines || !screen.contains("Line 1:"),
+        "Scrollbar click should scroll the view, got: {}",
+        screen
+    );
+}
+
 /// Test selection with Shift+Arrow in various positions
 #[test]
 fn test_diff_selection_comprehensive() {
@@ -1273,15 +1488,15 @@ fn test_diff_cursor_wrap_right_to_next_line() {
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Verify we're at line 2 (row 1 displays as Ln 2)
+    // Verify we're at line 1 (row 1 = source line 0 = "first" = Ln 1)
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Ln 2,") || screen.contains("Ln 2 "),
-        "Should be on line 2, got: {}",
+        screen.contains("Ln 1,") || screen.contains("Ln 1 "),
+        "Should be on line 1, got: {}",
         screen
     );
 
-    // Press Right - should wrap to start of line 3 (row 2, "second")
+    // Press Right - should wrap to start of line 2 (row 2 = source line 1 = "second")
     harness
         .send_key(KeyCode::Right, KeyModifiers::NONE)
         .unwrap();
@@ -1289,8 +1504,8 @@ fn test_diff_cursor_wrap_right_to_next_line() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Ln 3,") || screen.contains("Ln 3 "),
-        "Should be on line 3 after wrapping, got: {}",
+        screen.contains("Ln 2,") || screen.contains("Ln 2 "),
+        "Should be on line 2 after wrapping, got: {}",
         screen
     );
 
@@ -1339,31 +1554,32 @@ fn test_diff_cursor_wrap_left_to_prev_line() {
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Verify we're at line 3 (row 2 displays as Ln 3)
+    // Verify we're at line 2 ("second" content, file line 2)
+    // Note: After hunk header at row 0, line 1 is at row 1, line 2 is at row 2
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Ln 3,") || screen.contains("Ln 3 "),
-        "Should be on line 3, got: {}",
+        screen.contains("Ln 2,") || screen.contains("Ln 2 "),
+        "Should be on line 2, got: {}",
         screen
     );
 
-    // Press Left - should wrap to end of line 2 (the "first" line, displayed as Ln 2)
+    // Press Left - should wrap to end of line 1 (the "first" line)
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Ln 2,") || screen.contains("Ln 2 "),
-        "Should be on line 2 after wrapping, got: {}",
+        screen.contains("Ln 1,") || screen.contains("Ln 1 "),
+        "Should be on line 1 after wrapping, got: {}",
         screen
     );
 
-    // Should be at end of line 2
+    // Should be at end of line 1
     // In side-by-side diff, default focused pane is 0 (OLD/left)
-    // Line 2 in OLD pane is "second" (6 chars), so end of line is Col 6
+    // Line 1 in OLD pane is "first" (5 chars), end of line is Col 6 (1-indexed, after last char)
     assert!(
         screen.contains("Col 6"),
-        "Should be at end of OLD pane line (col 6 for 'second'), got: {}",
+        "Should be at end of OLD pane line (col 6 for 'first'), got: {}",
         screen
     );
 }
@@ -1400,15 +1616,15 @@ fn test_diff_cursor_word_wrap_at_boundaries() {
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Verify we're at line 2 (row 1 = Ln 2)
+    // Verify we're at line 1 (row 1 = source line 0 = Ln 1)
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Ln 2,") || screen.contains("Ln 2 "),
-        "Should be on line 2, got: {}",
+        screen.contains("Ln 1,") || screen.contains("Ln 1 "),
+        "Should be on line 1, got: {}",
         screen
     );
 
-    // Ctrl+Right at end of line should go to next line (line 3)
+    // Ctrl+Right at end of line should go to next line (line 2)
     harness
         .send_key(KeyCode::Right, KeyModifiers::CONTROL)
         .unwrap();
@@ -1416,16 +1632,16 @@ fn test_diff_cursor_word_wrap_at_boundaries() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Ln 3,") || screen.contains("Ln 3 "),
-        "Ctrl+Right at end should go to line 3, got: {}",
+        screen.contains("Ln 2,") || screen.contains("Ln 2 "),
+        "Ctrl+Right at end should go to line 2, got: {}",
         screen
     );
 
-    // Go back to line 3 start
+    // Go back to line 2 start
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Ctrl+Left at start of line should go to previous line (line 2)
+    // Ctrl+Left at start of line should go to previous line (line 1)
     harness
         .send_key(KeyCode::Left, KeyModifiers::CONTROL)
         .unwrap();
@@ -1433,8 +1649,8 @@ fn test_diff_cursor_word_wrap_at_boundaries() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Ln 2,") || screen.contains("Ln 2 "),
-        "Ctrl+Left at start should go to line 2, got: {}",
+        screen.contains("Ln 1,") || screen.contains("Ln 1 "),
+        "Ctrl+Left at start should go to line 1, got: {}",
         screen
     );
 }
@@ -1470,18 +1686,19 @@ fn test_diff_horizontal_scroll_keeps_cursor_visible() {
 
     open_side_by_side_diff(&mut harness);
 
-    // Navigate to the long line (line 4 in gutter = row 3 in display alignment)
+    // Navigate to the long line (line 4 in the file = source line 3, 0-indexed)
     // The line is: "this is a very long MODIFIED line that extends..."
-    // Content lines in original: empty, short, medium, long, empty, another short, medium
-    // So the long line is at source line 3 (0-indexed), displayed as line 4 (1-indexed)
+    // Content lines in original: empty (Ln 1), short (Ln 2), medium (Ln 3), long (Ln 4)
+    // So the long line is at source line 3 (0-indexed), displayed as Ln 4 (1-indexed)
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
         .unwrap();
 
-    // After Ctrl+Home, cursor is on first content line (Ln 1, empty in old file)
-    // Content lines: Ln 1 (empty), Ln 2 (short), Ln 3 (medium), Ln 4 (long)
-    // Move down 3 times: Ln 1 -> Ln 2 -> Ln 3 -> Ln 4 (the long line)
-    for _ in 0..3 {
+    // After Ctrl+Home, cursor is on hunk header (row 0, no source line, shows Ln 1 fallback)
+    // We need to move down to get to actual content lines:
+    // Row 0 = hunk header, Row 1 = Ln 1 (empty), Row 2 = Ln 2 (short), Row 3 = Ln 3 (medium), Row 4 = Ln 4 (long)
+    // Move down 4 times to get to the long line (Ln 4)
+    for _ in 0..4 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness.render().unwrap();

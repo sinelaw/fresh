@@ -889,7 +889,7 @@ impl SplitRenderer {
                         // Render scrollbar for composite buffer
                         let total_rows = composite.row_count();
                         let content_height = layout.content_rect.height.saturating_sub(1) as usize; // -1 for header
-                        Self::render_composite_scrollbar(
+                        let (thumb_start, thumb_end) = Self::render_composite_scrollbar(
                             frame,
                             layout.scrollbar_rect,
                             total_rows,
@@ -897,6 +897,16 @@ impl SplitRenderer {
                             content_height,
                             is_active,
                         );
+
+                        // Store the areas for mouse handling
+                        split_areas.push((
+                            split_id,
+                            buffer_id,
+                            layout.content_rect,
+                            layout.scrollbar_rect,
+                            thumb_start,
+                            thumb_end,
+                        ));
                     }
                     view_line_mappings.insert(split_id, Vec::new());
                     continue;
@@ -1632,10 +1642,10 @@ impl SplitRenderer {
         scroll_row: usize,
         viewport_height: usize,
         is_active: bool,
-    ) {
+    ) -> (usize, usize) {
         let height = scrollbar_rect.height as usize;
         if height == 0 || total_rows == 0 {
-            return;
+            return (0, 0);
         }
 
         // Calculate thumb size based on viewport ratio to total document
@@ -1693,6 +1703,8 @@ impl SplitRenderer {
             let paragraph = Paragraph::new(" ").style(style);
             frame.render_widget(paragraph, cell_area);
         }
+
+        (thumb_start, thumb_end)
     }
 
     fn split_layout(split_area: Rect, tab_bar_visible: bool) -> SplitLayout {
