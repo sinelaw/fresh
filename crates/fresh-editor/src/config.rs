@@ -567,6 +567,13 @@ pub struct EditorConfig {
     /// Default: true
     #[serde(default = "default_true")]
     pub show_tab_bar: bool,
+
+    /// Use the terminal's default background color instead of the theme's editor background.
+    /// When enabled, the editor background inherits from the terminal emulator,
+    /// allowing transparency or custom terminal backgrounds to show through.
+    /// Default: false
+    #[serde(default = "default_false")]
+    pub use_terminal_bg: bool,
 }
 
 fn default_tab_size() -> usize {
@@ -663,6 +670,7 @@ impl Default for EditorConfig {
             quick_suggestions: true,
             show_menu_bar: true,
             show_tab_bar: true,
+            use_terminal_bg: false,
         }
     }
 }

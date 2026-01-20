@@ -161,6 +161,7 @@ pub struct PartialEditorConfig {
     pub quick_suggestions: Option<bool>,
     pub show_menu_bar: Option<bool>,
     pub show_tab_bar: Option<bool>,
+    pub use_terminal_bg: Option<bool>,
 }
 
 impl Merge for PartialEditorConfig {
@@ -214,6 +215,7 @@ impl Merge for PartialEditorConfig {
         self.quick_suggestions.merge_from(&other.quick_suggestions);
         self.show_menu_bar.merge_from(&other.show_menu_bar);
         self.show_tab_bar.merge_from(&other.show_tab_bar);
+        self.use_terminal_bg.merge_from(&other.use_terminal_bg);
     }
 }
 
@@ -391,6 +393,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             quick_suggestions: Some(cfg.quick_suggestions),
             show_menu_bar: Some(cfg.show_menu_bar),
             show_tab_bar: Some(cfg.show_tab_bar),
+            use_terminal_bg: Some(cfg.use_terminal_bg),
         }
     }
 }
@@ -467,6 +470,7 @@ impl PartialEditorConfig {
             quick_suggestions: self.quick_suggestions.unwrap_or(defaults.quick_suggestions),
             show_menu_bar: self.show_menu_bar.unwrap_or(defaults.show_menu_bar),
             show_tab_bar: self.show_tab_bar.unwrap_or(defaults.show_tab_bar),
+            use_terminal_bg: self.use_terminal_bg.unwrap_or(defaults.use_terminal_bg),
         }
     }
 }

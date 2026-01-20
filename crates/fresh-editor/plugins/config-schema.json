@@ -59,7 +59,8 @@
         "keyboard_report_all_keys_as_escape_codes": false,
         "quick_suggestions": true,
         "show_menu_bar": true,
-        "show_tab_bar": true
+        "show_tab_bar": true,
+        "use_terminal_bg": false
       }
     },
     "file_explorer": {
@@ -349,6 +350,11 @@
           "description": "Whether the tab bar is visible by default.\nThe tab bar shows open files in each split pane.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
           "type": "boolean",
           "default": true
+        },
+        "use_terminal_bg": {
+          "description": "Use the terminal's default background color instead of the theme's editor background.\nWhen enabled, the editor background inherits from the terminal emulator,\nallowing transparency or custom terminal backgrounds to show through.\nDefault: false",
+          "type": "boolean",
+          "default": false
         }
       }
     },

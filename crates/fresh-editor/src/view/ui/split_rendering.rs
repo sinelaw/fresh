@@ -719,6 +719,7 @@ impl SplitRenderer {
         is_maximized: bool,
         relative_line_numbers: bool,
         tab_bar_visible: bool,
+        use_terminal_bg: bool,
     ) -> (
         Vec<(
             crate::model::event::SplitId,
@@ -882,6 +883,7 @@ impl SplitRenderer {
                             theme,
                             is_active,
                             view_state,
+                            use_terminal_bg,
                         );
 
                         // Render scrollbar for composite buffer
@@ -952,6 +954,7 @@ impl SplitRenderer {
                     buffer_id,
                     hide_cursor,
                     relative_line_numbers,
+                    use_terminal_bg,
                 );
 
                 // Store view line mappings for mouse click handling
@@ -1065,8 +1068,16 @@ impl SplitRenderer {
         theme: &crate::view::theme::Theme,
         _is_active: bool,
         view_state: &mut crate::view::composite_view::CompositeViewState,
+        use_terminal_bg: bool,
     ) {
         use crate::model::composite_buffer::{CompositeLayout, RowType};
+
+        // Compute effective editor background: terminal default or theme-defined
+        let effective_editor_bg = if use_terminal_bg {
+            ratatui::style::Color::Reset
+        } else {
+            theme.editor_bg
+        };
 
         let scroll_row = view_state.scroll_row;
         let cursor_row = view_state.cursor_row;
@@ -1345,7 +1356,7 @@ impl SplitRenderer {
                     let bg = if is_cursor_row && is_focused_pane {
                         theme.current_line_bg
                     } else {
-                        row_bg.unwrap_or(theme.editor_bg)
+                        row_bg.unwrap_or(effective_editor_bg)
                     };
 
                     // Selection range for this row (only for focused pane)
@@ -1433,7 +1444,7 @@ impl SplitRenderer {
                     } else if is_cursor_row && is_focused_pane {
                         theme.current_line_bg
                     } else {
-                        row_bg.unwrap_or(theme.editor_bg)
+                        row_bg.unwrap_or(effective_editor_bg)
                     };
                     let style = Style::default().fg(theme.line_number_fg).bg(bg);
 
@@ -2708,6 +2719,7 @@ impl SplitRenderer {
         layout: &ComposeLayout,
         _view_mode: &ViewMode,
         theme: &crate::view::theme::Theme,
+        effective_editor_bg: ratatui::style::Color,
     ) {
         // Render margins if there are any pads (indicates compose layout is active)
         if layout.left_pad == 0 && layout.right_pad == 0 {
@@ -2719,7 +2731,7 @@ impl SplitRenderer {
         const PAPER_EDGE_WIDTH: u16 = 1;
 
         let desk_style = Style::default().bg(theme.compose_margin_bg);
-        let paper_style = Style::default().bg(theme.editor_bg);
+        let paper_style = Style::default().bg(effective_editor_bg);
 
         if layout.left_pad > 0 {
             let paper_edge = PAPER_EDGE_WIDTH.min(layout.left_pad);
@@ -3798,8 +3810,16 @@ impl SplitRenderer {
         _buffer_id: BufferId,
         hide_cursor: bool,
         relative_line_numbers: bool,
+        use_terminal_bg: bool,
     ) -> Vec<ViewLineMapping> {
         let _span = tracing::trace_span!("render_buffer_in_split").entered();
+
+        // Compute effective editor background: terminal default or theme-defined
+        let effective_editor_bg = if use_terminal_bg {
+            ratatui::style::Color::Reset
+        } else {
+            theme.editor_bg
+        };
 
         let line_wrap = viewport.line_wrap_enabled;
 
@@ -3855,7 +3875,14 @@ impl SplitRenderer {
         };
 
         let view_anchor = Self::calculate_view_anchor(&view_data.lines, viewport.top_byte);
-        Self::render_compose_margins(frame, area, &compose_layout, &view_mode, theme);
+        Self::render_compose_margins(
+            frame,
+            area,
+            &compose_layout,
+            &view_mode,
+            theme,
+            effective_editor_bg,
+        );
 
         let selection = Self::selection_context(state);
 
@@ -3965,7 +3992,7 @@ impl SplitRenderer {
                 &mut lines,
                 render_area.width,
                 bg,
-                theme.editor_bg,
+                effective_editor_bg,
                 theme.editor_fg,
                 background_fade,
                 background_x_offset,
@@ -3976,7 +4003,7 @@ impl SplitRenderer {
         frame.render_widget(Clear, render_area);
         let editor_block = Block::default()
             .borders(Borders::NONE)
-            .style(Style::default().bg(theme.editor_bg));
+            .style(Style::default().bg(effective_editor_bg));
         frame.render_widget(Paragraph::new(lines).block(editor_block), render_area);
 
         // Render column guides if present (for tables, etc.)

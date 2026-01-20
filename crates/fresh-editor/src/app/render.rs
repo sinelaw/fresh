@@ -380,6 +380,7 @@ impl Editor {
                 is_maximized,
                 self.config.editor.relative_line_numbers,
                 self.tab_bar_visible,
+                self.config.editor.use_terminal_bg,
             );
 
         // Detect viewport changes and fire hooks
