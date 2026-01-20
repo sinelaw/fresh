@@ -1130,10 +1130,10 @@ globalThis.review_drill_down = async () => {
                 else if (line.startsWith(' ')) { oldCount++; newCount++; }
             }
             return {
-                old_start: fh.oldRange.start - 1,  // Convert to 0-indexed
-                old_count: oldCount || 1,
-                new_start: fh.range.start - 1,     // Convert to 0-indexed
-                new_count: newCount || 1
+                oldStart: fh.oldRange.start - 1,  // Convert to 0-indexed
+                oldCount: oldCount || 1,
+                newStart: fh.range.start - 1,     // Convert to 0-indexed
+                newCount: newCount || 1
             };
         });
 
@@ -1142,27 +1142,27 @@ globalThis.review_drill_down = async () => {
             name: `*Diff: ${h.file}*`,
             mode: "diff-view",
             layout: {
-                layout_type: "side-by-side",
+                type: "side-by-side",
                 ratios: [0.5, 0.5],
-                show_separator: true
+                showSeparator: true
             },
             sources: [
                 {
-                    buffer_id: oldBufferId,
+                    bufferId: oldBufferId,
                     label: "OLD (HEAD)",
                     editable: false,
                     style: {
                         remove_bg: [80, 40, 40],
-                        gutter_style: "diff-markers"
+                        gutterStyle: "diff-markers"
                     }
                 },
                 {
-                    buffer_id: newBufferId,
+                    bufferId: newBufferId,
                     label: "NEW (Working)",
                     editable: false,
                     style: {
                         add_bg: [40, 80, 40],
-                        gutter_style: "diff-markers"
+                        gutterStyle: "diff-markers"
                     }
                 }
             ],
@@ -1685,10 +1685,10 @@ globalThis.side_by_side_diff_current_file = async () => {
 
     // Convert hunks to composite buffer format
     const compositeHunks: TsCompositeHunk[] = fileHunks.map(h => ({
-        old_start: h.oldRange.start - 1,  // Convert to 0-indexed
-        old_count: h.oldRange.end - h.oldRange.start + 1,
-        new_start: h.range.start - 1,     // Convert to 0-indexed
-        new_count: h.range.end - h.range.start + 1
+        oldStart: h.oldRange.start - 1,  // Convert to 0-indexed
+        oldCount: h.oldRange.end - h.oldRange.start + 1,
+        newStart: h.range.start - 1,     // Convert to 0-indexed
+        newCount: h.range.end - h.range.start + 1
     }));
 
     // Create composite buffer with side-by-side layout
@@ -1696,27 +1696,27 @@ globalThis.side_by_side_diff_current_file = async () => {
         name: `*Diff: ${filePath}*`,
         mode: "diff-view",
         layout: {
-            layout_type: "side-by-side",
+            type: "side-by-side",
             ratios: [0.5, 0.5],
-            show_separator: true
+            showSeparator: true
         },
         sources: [
             {
-                buffer_id: oldBufferId,
+                bufferId: oldBufferId,
                 label: "OLD (HEAD)",
                 editable: false,
                 style: {
                     remove_bg: [80, 40, 40],
-                    gutter_style: "diff-markers"
+                    gutterStyle: "diff-markers"
                 }
             },
             {
-                buffer_id: newBufferId,
+                bufferId: newBufferId,
                 label: "NEW (Working)",
                 editable: false,
                 style: {
                     add_bg: [40, 80, 40],
-                    gutter_style: "diff-markers"
+                    gutterStyle: "diff-markers"
                 }
             }
         ],

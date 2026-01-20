@@ -1198,3 +1198,164 @@ fn test_side_by_side_diff_command_visible_in_palette() {
         screen
     );
 }
+
+/// Test that diff lines have proper background highlighting colors.
+///
+/// This test verifies that added/removed/modified lines in the side-by-side diff
+/// view have visible background colors (not just the default editor background).
+#[test]
+fn test_side_by_side_diff_line_highlighting() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Modify a file with a clear change
+    let main_rs_path = repo.path.join("src/main.rs");
+    let modified_content = r#"fn main() {
+    println!("CHANGED LINE HERE");
+    let config = load_config();
+    start_server(config);
+}
+
+fn load_config() -> Config {
+    Config::default()
+}
+
+fn start_server(config: Config) {
+    println!("Starting server...");
+}
+"#;
+    fs::write(&main_rs_path, modified_content).expect("Failed to modify file");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        50,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("CHANGED"))
+        .unwrap();
+
+    // Open side-by-side diff
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Side-by-Side Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for side-by-side view to fully load
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            if screen.contains("TypeError")
+                || screen.contains("Error:")
+                || screen.contains("Failed")
+                || screen.contains("No changes")
+            {
+                panic!("Error loading side-by-side diff. Screen:\n{}", screen);
+            }
+            screen.contains("Side-by-side diff:") && !screen.contains("Loading side-by-side diff")
+        })
+        .unwrap();
+
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    println!("Side-by-side diff view:\n{}", screen);
+
+    // Find a context line OUTSIDE the hunk (line 8+, like "Config::default()")
+    // and a diff line INSIDE the hunk (like "Hello" or "CHANGED")
+    // The diff line should have a different (non-black) background color.
+
+    let mut context_bg: Option<ratatui::style::Color> = None;
+    let mut diff_bg: Option<ratatui::style::Color> = None;
+    let mut diff_row: Option<u16> = None;
+
+    for row in 0..harness.terminal_height() {
+        let line = harness.get_screen_row(row);
+
+        // Look for context line OUTSIDE the hunk - "Config::default()" is on line 8,
+        // well outside the hunk which spans lines 1-5
+        if line.contains("Config::default()") && context_bg.is_none() {
+            if let Some(style) = harness.get_cell_style(40, row as u16) {
+                context_bg = style.bg;
+                eprintln!(
+                    "Context line (outside hunk) at row {}: bg={:?}",
+                    row, context_bg
+                );
+            }
+        }
+
+        // Look for diff line INSIDE the hunk (CHANGED or Hello on line 2)
+        if (line.contains("CHANGED") || line.contains("Hello")) && diff_bg.is_none() {
+            if let Some(style) = harness.get_cell_style(40, row as u16) {
+                diff_bg = style.bg;
+                diff_row = Some(row as u16);
+                eprintln!(
+                    "Diff line (inside hunk) at row {}: bg={:?}, content: {}",
+                    row,
+                    diff_bg,
+                    line.trim()
+                );
+            }
+        }
+    }
+
+    // Print all row backgrounds for debugging
+    eprintln!("\n=== Row background colors ===");
+    for row in 0..harness.terminal_height().min(30) {
+        let line = harness.get_screen_row(row);
+        let bg = harness.get_cell_style(40, row as u16).and_then(|s| s.bg);
+        let truncated: String = line.chars().take(80).collect();
+        eprintln!("Row {:2}: bg={:?} | {}", row, bg, truncated);
+    }
+
+    // Verify we found both types of lines
+    assert!(
+        context_bg.is_some(),
+        "Should find a context line outside hunk (Config::default()). Screen:\n{}",
+        screen
+    );
+    assert!(
+        diff_bg.is_some() && diff_row.is_some(),
+        "Should find a diff line inside hunk (CHANGED or Hello). Screen:\n{}",
+        screen
+    );
+
+    // The key assertion: diff lines (inside hunk) should have a DIFFERENT background
+    // than context lines (outside hunk). This verifies diff highlighting is working.
+    assert_ne!(
+        context_bg, diff_bg,
+        "Diff lines should have different background than context lines.\n\
+         Context bg (outside hunk): {:?}\n\
+         Diff bg (inside hunk): {:?}\n\
+         This means diff highlighting is NOT working correctly.",
+        context_bg, diff_bg
+    );
+
+    // Also verify the diff background is not the default black (should be a diff color)
+    assert_ne!(
+        diff_bg,
+        Some(ratatui::style::Color::Black),
+        "Diff lines should have a colored background, not black. Got: {:?}",
+        diff_bg
+    );
+
+    eprintln!("\nDiff highlighting is working correctly:");
+    eprintln!("Context bg (outside hunk): {:?}", context_bg);
+    eprintln!("Diff bg (inside hunk): {:?}", diff_bg);
+}
