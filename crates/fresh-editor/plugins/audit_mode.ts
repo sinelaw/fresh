@@ -1746,10 +1746,10 @@ globalThis.side_by_side_diff_current_file = async () => {
 };
 
 // Register Modes and Commands
-editor.registerCommand("%cmd.review_diff", "%cmd.review_diff_desc", "start_review_diff", "global");
+editor.registerCommand("%cmd.review_diff", "%cmd.review_diff_desc", "start_review_diff", null);
 editor.registerCommand("%cmd.stop_review_diff", "%cmd.stop_review_diff_desc", "stop_review_diff", "review-mode");
 editor.registerCommand("%cmd.refresh_review_diff", "%cmd.refresh_review_diff_desc", "review_refresh", "review-mode");
-editor.registerCommand("%cmd.side_by_side_diff", "%cmd.side_by_side_diff_desc", "side_by_side_diff_current_file", "global");
+editor.registerCommand("%cmd.side_by_side_diff", "%cmd.side_by_side_diff_desc", "side_by_side_diff_current_file", null);
 
 // Review Comment Commands
 editor.registerCommand("%cmd.add_comment", "%cmd.add_comment_desc", "review_add_comment", "review-mode");
