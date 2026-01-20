@@ -295,6 +295,7 @@ pub struct LayoutHints {
 
 /// Layout configuration for composite buffers
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export, rename = "TsCompositeLayoutConfig")]
 pub struct CompositeLayoutConfig {
     /// Layout type: "side-by-side", "stacked", or "unified"
@@ -305,7 +306,8 @@ pub struct CompositeLayoutConfig {
     #[serde(default)]
     pub ratios: Option<Vec<f32>>,
     /// Show separator between panes
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", rename = "showSeparator")]
+    #[ts(rename = "showSeparator")]
     pub show_separator: bool,
     /// Spacing for stacked layout
     #[serde(default)]
@@ -318,9 +320,12 @@ fn default_true() -> bool {
 
 /// Source pane configuration for composite buffers
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export, rename = "TsCompositeSourceConfig")]
 pub struct CompositeSourceConfig {
-    /// Buffer ID of the source buffer
+    /// Buffer ID of the source buffer (required)
+    #[serde(rename = "bufferId")]
+    #[ts(rename = "bufferId")]
     pub buffer_id: usize,
     /// Label for this pane (e.g., "OLD", "NEW")
     pub label: String,
@@ -334,37 +339,68 @@ pub struct CompositeSourceConfig {
 
 /// Style configuration for a composite pane
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export, rename = "TsCompositePaneStyle")]
 pub struct CompositePaneStyle {
     /// Background color for added lines (RGB)
-    #[serde(default)]
-    #[ts(type = "[number, number, number] | null")]
+    #[serde(default, rename = "addBg")]
+    #[ts(rename = "addBg", type = "[number, number, number] | null")]
     pub add_bg: Option<(u8, u8, u8)>,
     /// Background color for removed lines (RGB)
-    #[serde(default)]
-    #[ts(type = "[number, number, number] | null")]
+    #[serde(default, rename = "removeBg")]
+    #[ts(rename = "removeBg", type = "[number, number, number] | null")]
     pub remove_bg: Option<(u8, u8, u8)>,
     /// Background color for modified lines (RGB)
-    #[serde(default)]
-    #[ts(type = "[number, number, number] | null")]
+    #[serde(default, rename = "modifyBg")]
+    #[ts(rename = "modifyBg", type = "[number, number, number] | null")]
     pub modify_bg: Option<(u8, u8, u8)>,
     /// Gutter style: "line-numbers", "diff-markers", "both", or "none"
-    #[serde(default)]
+    #[serde(default, rename = "gutterStyle")]
+    #[ts(rename = "gutterStyle")]
     pub gutter_style: Option<String>,
 }
 
 /// Diff hunk for composite buffer alignment
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export, rename = "TsCompositeHunk")]
 pub struct CompositeHunk {
     /// Starting line in old buffer (0-indexed)
+    #[serde(rename = "oldStart")]
+    #[ts(rename = "oldStart")]
     pub old_start: usize,
     /// Number of lines in old buffer
+    #[serde(rename = "oldCount")]
+    #[ts(rename = "oldCount")]
     pub old_count: usize,
     /// Starting line in new buffer (0-indexed)
+    #[serde(rename = "newStart")]
+    #[ts(rename = "newStart")]
     pub new_start: usize,
     /// Number of lines in new buffer
+    #[serde(rename = "newCount")]
+    #[ts(rename = "newCount")]
     pub new_count: usize,
+}
+
+/// Options for creating a composite buffer (used by plugin API)
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export, rename = "TsCreateCompositeBufferOptions")]
+pub struct CreateCompositeBufferOptions {
+    /// Buffer name (displayed in tabs/title)
+    #[serde(default)]
+    pub name: String,
+    /// Mode for keybindings
+    #[serde(default)]
+    pub mode: String,
+    /// Layout configuration
+    pub layout: CompositeLayoutConfig,
+    /// Source pane configurations
+    pub sources: Vec<CompositeSourceConfig>,
+    /// Diff hunks for alignment (optional)
+    #[serde(default)]
+    pub hunks: Option<Vec<CompositeHunk>>,
 }
 
 /// Wire-format view token kind (serialized for plugin transforms)
@@ -2091,5 +2127,67 @@ mod tests {
         assert_eq!(viewport.left_column, 5);
         assert_eq!(viewport.width, 80);
         assert_eq!(viewport.height, 24);
+    }
+
+    #[test]
+    fn test_composite_buffer_options_rejects_unknown_fields() {
+        // Valid JSON with correct field names
+        let valid_json = r#"{
+            "name": "test",
+            "mode": "diff",
+            "layout": {"type": "side-by-side", "ratios": [0.5, 0.5], "showSeparator": true},
+            "sources": [{"bufferId": 1, "label": "old"}]
+        }"#;
+        let result: Result<CreateCompositeBufferOptions, _> = serde_json::from_str(valid_json);
+        assert!(
+            result.is_ok(),
+            "Valid JSON should parse: {:?}",
+            result.err()
+        );
+
+        // Invalid JSON with unknown field (buffer_id instead of bufferId)
+        let invalid_json = r#"{
+            "name": "test",
+            "mode": "diff",
+            "layout": {"type": "side-by-side", "ratios": [0.5, 0.5], "showSeparator": true},
+            "sources": [{"buffer_id": 1, "label": "old"}]
+        }"#;
+        let result: Result<CreateCompositeBufferOptions, _> = serde_json::from_str(invalid_json);
+        assert!(
+            result.is_err(),
+            "JSON with unknown field should fail to parse"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("unknown field") || err.contains("buffer_id"),
+            "Error should mention unknown field: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_composite_hunk_rejects_unknown_fields() {
+        // Valid JSON with correct field names
+        let valid_json = r#"{"oldStart": 0, "oldCount": 5, "newStart": 0, "newCount": 7}"#;
+        let result: Result<CompositeHunk, _> = serde_json::from_str(valid_json);
+        assert!(
+            result.is_ok(),
+            "Valid JSON should parse: {:?}",
+            result.err()
+        );
+
+        // Invalid JSON with unknown field (old_start instead of oldStart)
+        let invalid_json = r#"{"old_start": 0, "oldCount": 5, "newStart": 0, "newCount": 7}"#;
+        let result: Result<CompositeHunk, _> = serde_json::from_str(invalid_json);
+        assert!(
+            result.is_err(),
+            "JSON with unknown field should fail to parse"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("unknown field") || err.contains("old_start"),
+            "Error should mention unknown field: {}",
+            err
+        );
     }
 }

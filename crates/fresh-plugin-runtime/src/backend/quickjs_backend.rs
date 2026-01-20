@@ -1108,16 +1108,18 @@ impl JsEditorApi {
     // === Composite Buffers ===
 
     /// Create a composite buffer (async)
+    ///
+    /// Uses serde deserialization with `deny_unknown_fields` to validate:
+    /// - All required fields are present
+    /// - No unknown/misspelled fields are passed
     #[plugin_api(async_promise, js_name = "createCompositeBuffer", ts_return = "number")]
     #[qjs(rename = "_createCompositeBufferStart")]
     pub fn create_composite_buffer_start<'js>(
         &self,
         _ctx: rquickjs::Ctx<'js>,
-        opts: rquickjs::Object<'js>,
+        opts: rquickjs::Value<'js>,
     ) -> rquickjs::Result<u64> {
-        use fresh_core::api::{
-            CompositeHunk, CompositeLayoutConfig, CompositePaneStyle, CompositeSourceConfig,
-        };
+        use fresh_core::api::CreateCompositeBufferOptions;
 
         let id = {
             let mut id_ref = self.next_request_id.borrow_mut();
@@ -1130,64 +1132,27 @@ impl JsEditorApi {
             id
         };
 
-        let name: String = opts.get("name").unwrap_or_default();
-        let mode: String = opts.get("mode").unwrap_or_default();
-
-        // Parse layout
-        let layout_obj: rquickjs::Object = opts.get("layout")?;
-        let layout = CompositeLayoutConfig {
-            layout_type: layout_obj
-                .get("type")
-                .unwrap_or_else(|_| "side-by-side".to_string()),
-            ratios: layout_obj.get("ratios").ok(),
-            show_separator: layout_obj.get("showSeparator").unwrap_or(true),
-            spacing: layout_obj.get("spacing").ok(),
-        };
-
-        // Parse sources
-        let sources_arr: Vec<rquickjs::Object> = opts.get("sources").unwrap_or_default();
-        let sources: Vec<CompositeSourceConfig> = sources_arr
-            .into_iter()
-            .map(|obj| {
-                let style_obj: Option<rquickjs::Object> = obj.get("style").ok();
-                let style = style_obj.map(|s| CompositePaneStyle {
-                    add_bg: None,
-                    remove_bg: None,
-                    modify_bg: None,
-                    gutter_style: s.get("gutterStyle").ok(),
-                });
-                CompositeSourceConfig {
-                    buffer_id: obj.get::<_, usize>("bufferId").unwrap_or(0),
-                    label: obj.get("label").unwrap_or_default(),
-                    editable: obj.get("editable").unwrap_or(false),
-                    style,
-                }
-            })
-            .collect();
-
-        // Parse hunks (optional)
-        let hunks: Option<Vec<CompositeHunk>> = opts
-            .get::<_, Vec<rquickjs::Object>>("hunks")
-            .ok()
-            .map(|arr| {
-                arr.into_iter()
-                    .map(|obj| CompositeHunk {
-                        old_start: obj.get("oldStart").unwrap_or(0),
-                        old_count: obj.get("oldCount").unwrap_or(0),
-                        new_start: obj.get("newStart").unwrap_or(0),
-                        new_count: obj.get("newCount").unwrap_or(0),
-                    })
-                    .collect()
-            });
+        // Deserialize using serde - this validates:
+        // 1. All required fields are present (missing field error)
+        // 2. No unknown fields exist (deny_unknown_fields)
+        // 3. Correct types for all fields
+        let parsed: CreateCompositeBufferOptions =
+            rquickjs_serde::from_value(opts).map_err(|e| {
+                rquickjs::Error::new_from_js_message(
+                    "createCompositeBuffer",
+                    "opts",
+                    &e.to_string(),
+                )
+            })?;
 
         let _ = self
             .command_sender
             .send(PluginCommand::CreateCompositeBuffer {
-                name,
-                mode,
-                layout,
-                sources,
-                hunks,
+                name: parsed.name,
+                mode: parsed.mode,
+                layout: parsed.layout,
+                sources: parsed.sources,
+                hunks: parsed.hunks,
                 request_id: Some(id),
             });
 
@@ -1195,29 +1160,32 @@ impl JsEditorApi {
     }
 
     /// Update alignment hunks for a composite buffer
+    ///
+    /// Uses serde deserialization with `deny_unknown_fields` to validate:
+    /// - All required fields are present
+    /// - No unknown/misspelled fields are passed
     pub fn update_composite_alignment<'js>(
         &self,
         _ctx: rquickjs::Ctx<'js>,
         buffer_id: u32,
-        hunks: Vec<rquickjs::Object<'js>>,
+        hunks: rquickjs::Value<'js>,
     ) -> rquickjs::Result<bool> {
         use fresh_core::api::CompositeHunk;
 
-        let hunks: Vec<CompositeHunk> = hunks
-            .into_iter()
-            .map(|obj| CompositeHunk {
-                old_start: obj.get("oldStart").unwrap_or(0),
-                old_count: obj.get("oldCount").unwrap_or(0),
-                new_start: obj.get("newStart").unwrap_or(0),
-                new_count: obj.get("newCount").unwrap_or(0),
-            })
-            .collect();
+        // Deserialize using serde - validates required fields and rejects unknown fields
+        let parsed_hunks: Vec<CompositeHunk> = rquickjs_serde::from_value(hunks).map_err(|e| {
+            rquickjs::Error::new_from_js_message(
+                "updateCompositeAlignment",
+                "hunks",
+                &e.to_string(),
+            )
+        })?;
 
         Ok(self
             .command_sender
             .send(PluginCommand::UpdateCompositeAlignment {
                 buffer_id: BufferId(buffer_id as usize),
-                hunks,
+                hunks: parsed_hunks,
             })
             .is_ok())
     }

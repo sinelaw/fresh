@@ -17,10 +17,10 @@ use ts_rs::TS;
 use fresh_core::api::{
     ActionPopupAction, ActionSpec, BackgroundProcessResult, BufferInfo, BufferSavedDiff,
     CompositeHunk, CompositeLayoutConfig, CompositePaneStyle, CompositeSourceConfig,
-    CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
-    CreateVirtualBufferOptions, CursorInfo, JsTextPropertyEntry, LayoutHints, SpawnResult,
-    TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind,
-    ViewportInfo,
+    CreateCompositeBufferOptions, CreateVirtualBufferInExistingSplitOptions,
+    CreateVirtualBufferInSplitOptions, CreateVirtualBufferOptions, CursorInfo, JsTextPropertyEntry,
+    LayoutHints, SpawnResult, TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle,
+    ViewTokenWire, ViewTokenWireKind, ViewportInfo,
 };
 
 /// Get the TypeScript declaration for a type by name
@@ -48,6 +48,9 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "TsCompositeSourceConfig" | "CompositeSourceConfig" => Some(CompositeSourceConfig::decl()),
         "TsCompositePaneStyle" | "CompositePaneStyle" => Some(CompositePaneStyle::decl()),
         "TsCompositeHunk" | "CompositeHunk" => Some(CompositeHunk::decl()),
+        "TsCreateCompositeBufferOptions" | "CreateCompositeBufferOptions" => {
+            Some(CreateCompositeBufferOptions::decl())
+        }
 
         // View transform types
         "ViewTokenWireKind" => Some(ViewTokenWireKind::decl()),
@@ -77,7 +80,12 @@ fn get_type_decl(type_name: &str) -> Option<String> {
 /// These are types referenced inside option structs or other complex types
 /// that aren't directly in method signatures.
 const DEPENDENCY_TYPES: &[&str] = &[
-    "TextPropertyEntry", // Used in CreateVirtualBuffer*Options.entries
+    "TextPropertyEntry",              // Used in CreateVirtualBuffer*Options.entries
+    "TsCompositeLayoutConfig",        // Used in createCompositeBuffer opts
+    "TsCompositeSourceConfig",        // Used in createCompositeBuffer opts.sources
+    "TsCompositePaneStyle",           // Used in TsCompositeSourceConfig.style
+    "TsCompositeHunk",                // Used in createCompositeBuffer opts.hunks
+    "TsCreateCompositeBufferOptions", // Options for createCompositeBuffer
 ];
 
 /// Collect TypeScript type declarations based on referenced types from proc macro

@@ -37,6 +37,100 @@ type TextPropertyEntry = {
 	*/
 	properties?: Record<string, unknown>;
 };
+type TsCompositeLayoutConfig = {
+	/**
+	* Layout type: "side-by-side", "stacked", or "unified"
+	*/
+	type: string;
+	/**
+	* Width ratios for side-by-side (e.g., [0.5, 0.5])
+	*/
+	ratios: Array<number> | null;
+	/**
+	* Show separator between panes
+	*/
+	showSeparator: boolean;
+	/**
+	* Spacing for stacked layout
+	*/
+	spacing: number | null;
+};
+type TsCompositeSourceConfig = {
+	/**
+	* Buffer ID of the source buffer (required)
+	*/
+	bufferId: number;
+	/**
+	* Label for this pane (e.g., "OLD", "NEW")
+	*/
+	label: string;
+	/**
+	* Whether this pane is editable
+	*/
+	editable: boolean;
+	/**
+	* Style configuration
+	*/
+	style: TsCompositePaneStyle | null;
+};
+type TsCompositePaneStyle = {
+	/**
+	* Background color for added lines (RGB)
+	*/
+	addBg: [number, number, number] | null;
+	/**
+	* Background color for removed lines (RGB)
+	*/
+	removeBg: [number, number, number] | null;
+	/**
+	* Background color for modified lines (RGB)
+	*/
+	modifyBg: [number, number, number] | null;
+	/**
+	* Gutter style: "line-numbers", "diff-markers", "both", or "none"
+	*/
+	gutterStyle: string | null;
+};
+type TsCompositeHunk = {
+	/**
+	* Starting line in old buffer (0-indexed)
+	*/
+	oldStart: number;
+	/**
+	* Number of lines in old buffer
+	*/
+	oldCount: number;
+	/**
+	* Starting line in new buffer (0-indexed)
+	*/
+	newStart: number;
+	/**
+	* Number of lines in new buffer
+	*/
+	newCount: number;
+};
+type TsCreateCompositeBufferOptions = {
+	/**
+	* Buffer name (displayed in tabs/title)
+	*/
+	name: string;
+	/**
+	* Mode for keybindings
+	*/
+	mode: string;
+	/**
+	* Layout configuration
+	*/
+	layout: TsCompositeLayoutConfig;
+	/**
+	* Source pane configurations
+	*/
+	sources: Array<TsCompositeSourceConfig>;
+	/**
+	* Diff hunks for alignment (optional)
+	*/
+	hunks: Array<TsCompositeHunk> | null;
+};
 type BackgroundProcessResult = {
 	/**
 	* Unique process ID for later reference
@@ -426,12 +520,20 @@ interface EditorAPI {
 	pluginTranslate(pluginName: string, key: string, args?: Record<string, unknown>): string;
 	/**
 	* Create a composite buffer (async)
+	* 
+	* Uses serde deserialization with `deny_unknown_fields` to validate:
+	* - All required fields are present
+	* - No unknown/misspelled fields are passed
 	*/
-	createCompositeBuffer(opts: Record<string, unknown>): Promise<number>;
+	createCompositeBuffer(opts: unknown): Promise<number>;
 	/**
 	* Update alignment hunks for a composite buffer
+	* 
+	* Uses serde deserialization with `deny_unknown_fields` to validate:
+	* - All required fields are present
+	* - No unknown/misspelled fields are passed
 	*/
-	updateCompositeAlignment(bufferId: number, hunks: Record<string, unknown>[]): boolean;
+	updateCompositeAlignment(bufferId: number, hunks: unknown): boolean;
 	/**
 	* Close a composite buffer
 	*/
