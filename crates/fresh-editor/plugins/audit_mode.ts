@@ -1152,7 +1152,7 @@ globalThis.review_drill_down = async () => {
                     label: "OLD (HEAD)",
                     editable: false,
                     style: {
-                        remove_bg: [80, 40, 40],
+                        removeBg: [80, 40, 40],
                         gutterStyle: "diff-markers"
                     }
                 },
@@ -1161,7 +1161,7 @@ globalThis.review_drill_down = async () => {
                     label: "NEW (Working)",
                     editable: false,
                     style: {
-                        add_bg: [40, 80, 40],
+                        addBg: [40, 80, 40],
                         gutterStyle: "diff-markers"
                     }
                 }
@@ -1706,7 +1706,7 @@ globalThis.side_by_side_diff_current_file = async () => {
                 label: "OLD (HEAD)",
                 editable: false,
                 style: {
-                    remove_bg: [80, 40, 40],
+                    removeBg: [80, 40, 40],
                     gutterStyle: "diff-markers"
                 }
             },
@@ -1715,7 +1715,7 @@ globalThis.side_by_side_diff_current_file = async () => {
                 label: "NEW (Working)",
                 editable: false,
                 style: {
-                    add_bg: [40, 80, 40],
+                    addBg: [40, 80, 40],
                     gutterStyle: "diff-markers"
                 }
             }

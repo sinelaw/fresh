@@ -343,17 +343,18 @@ pub struct CompositeSourceConfig {
 #[ts(export, rename = "TsCompositePaneStyle")]
 pub struct CompositePaneStyle {
     /// Background color for added lines (RGB)
+    /// Using [u8; 3] instead of (u8, u8, u8) for better rquickjs_serde compatibility
     #[serde(default, rename = "addBg")]
     #[ts(rename = "addBg", type = "[number, number, number] | null")]
-    pub add_bg: Option<(u8, u8, u8)>,
+    pub add_bg: Option<[u8; 3]>,
     /// Background color for removed lines (RGB)
     #[serde(default, rename = "removeBg")]
     #[ts(rename = "removeBg", type = "[number, number, number] | null")]
-    pub remove_bg: Option<(u8, u8, u8)>,
+    pub remove_bg: Option<[u8; 3]>,
     /// Background color for modified lines (RGB)
     #[serde(default, rename = "modifyBg")]
     #[ts(rename = "modifyBg", type = "[number, number, number] | null")]
-    pub modify_bg: Option<(u8, u8, u8)>,
+    pub modify_bg: Option<[u8; 3]>,
     /// Gutter style: "line-numbers", "diff-markers", "both", or "none"
     #[serde(default, rename = "gutterStyle")]
     #[ts(rename = "gutterStyle")]

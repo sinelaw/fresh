@@ -299,6 +299,16 @@ fn start_server(config: Config) {
 /// Test that the improved side-by-side diff shows aligned content with filler lines
 #[test]
 fn test_side_by_side_diff_shows_alignment() {
+    use tracing_subscriber::EnvFilter;
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::from_default_env()
+                .add_directive("fresh=debug".parse().unwrap())
+                .add_directive("fresh_plugin_runtime=debug".parse().unwrap()),
+        )
+        .with_test_writer()
+        .try_init();
+
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
     setup_audit_mode_plugin(&repo);

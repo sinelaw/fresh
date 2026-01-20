@@ -62,10 +62,10 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
       return await editor.createVirtualBuffer({
         name,
         mode,
-        read_only: readOnly,
+        readOnly,
         entries,
-        show_line_numbers: showLineNumbers,
-        editing_disabled: editingDisabled,
+        showLineNumbers,
+        editingDisabled,
       });
     },
 
@@ -85,11 +85,11 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
       return await editor.createVirtualBufferInExistingSplit({
         name,
         mode,
-        read_only: readOnly,
+        readOnly,
         entries,
-        split_id: splitId,
-        show_line_numbers: showLineNumbers,
-        editing_disabled: editingDisabled,
+        splitId,
+        showLineNumbers,
+        editingDisabled,
       });
     },
 
@@ -108,17 +108,16 @@ export function createVirtualBufferFactory(editor: EditorAPI) {
         readOnly = true,
       } = options;
 
-      const result = await editor.createVirtualBufferInSplit({
+      return await editor.createVirtualBufferInSplit({
         name,
         mode,
-        read_only: readOnly,
+        readOnly,
         entries,
         ratio,
-        panel_id: panelId,
-        show_line_numbers: showLineNumbers,
-        editing_disabled: editingDisabled,
+        panelId,
+        showLineNumbers,
+        editingDisabled,
       });
-      return result.buffer_id;
     },
 
     /**

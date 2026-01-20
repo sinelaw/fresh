@@ -889,10 +889,12 @@ impl Editor {
                         Some("none") => GutterStyle::None,
                         _ => GutterStyle::LineNumbers,
                     };
+                    // Convert [u8; 3] arrays to (u8, u8, u8) tuples
+                    let to_tuple = |arr: [u8; 3]| (arr[0], arr[1], arr[2]);
                     pane.style = PaneStyle {
-                        add_bg: style_config.add_bg,
-                        remove_bg: style_config.remove_bg,
-                        modify_bg: style_config.modify_bg,
+                        add_bg: style_config.add_bg.map(to_tuple),
+                        remove_bg: style_config.remove_bg.map(to_tuple),
+                        modify_bg: style_config.modify_bg.map(to_tuple),
                         gutter_style,
                     };
                 }

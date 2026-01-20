@@ -1168,18 +1168,20 @@ impl JsEditorApi {
             id
         };
 
-        // Deserialize using serde - this validates:
-        // 1. All required fields are present (missing field error)
-        // 2. No unknown fields exist (deny_unknown_fields)
-        // 3. Correct types for all fields
-        let parsed: CreateCompositeBufferOptions =
-            rquickjs_serde::from_value(opts).map_err(|e| {
-                rquickjs::Error::new_from_js_message(
-                    "createCompositeBuffer",
-                    "opts",
-                    &e.to_string(),
-                )
-            })?;
+        // Deserialize by going through serde_json::Value first.
+        // Direct deserialization with rquickjs_serde has issues with complex nested structures,
+        // but deserializing to Value works fine, so we use a two-step approach.
+        let json: serde_json::Value = rquickjs_serde::from_value(opts).map_err(|e| {
+            rquickjs::Error::new_from_js_message(
+                "createCompositeBuffer",
+                "opts",
+                &format!("Failed to convert to JSON: {}", e),
+            )
+        })?;
+
+        let parsed: CreateCompositeBufferOptions = serde_json::from_value(json).map_err(|e| {
+            rquickjs::Error::new_from_js_message("createCompositeBuffer", "opts", &e.to_string())
+        })?;
 
         let _ = self
             .command_sender
