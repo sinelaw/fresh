@@ -1,0 +1,162 @@
+%YAML 1.2
+---
+# Zig syntax highlighting for Fresh editor
+# Based on the Zig language specification
+# Reference: https://ziglang.org/documentation/master/
+name: Zig
+file_extensions:
+  - zig
+  - zon
+scope: source.zig
+
+variables:
+  identifier: '[A-Za-z_][A-Za-z0-9_]*'
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: characters
+    - include: numbers
+    - include: keywords
+    - include: builtins
+    - include: types
+    - include: operators
+    - include: punctuation
+
+  comments:
+    # Doc comments
+    - match: '///.*$'
+      scope: comment.line.documentation.zig
+    # Line comments
+    - match: '//.*$'
+      scope: comment.line.double-slash.zig
+
+  strings:
+    # Multi-line strings
+    - match: '\\\\'
+      scope: punctuation.definition.string.begin.zig
+      push:
+        - meta_scope: string.quoted.other.zig
+        - match: '$'
+          pop: true
+    # Regular strings
+    - match: '"'
+      scope: punctuation.definition.string.begin.zig
+      push:
+        - meta_scope: string.quoted.double.zig
+        - match: '"'
+          scope: punctuation.definition.string.end.zig
+          pop: true
+        - include: string-escapes
+
+  string-escapes:
+    - match: '\\[nrt\\''"]'
+      scope: constant.character.escape.zig
+    - match: '\\x[0-9a-fA-F]{2}'
+      scope: constant.character.escape.hex.zig
+    - match: '\\u\{[0-9a-fA-F]+\}'
+      scope: constant.character.escape.unicode.zig
+
+  characters:
+    - match: "'.'"
+      scope: string.quoted.single.zig
+    - match: "'\\\\[nrt\\\\'\"]'"
+      scope: string.quoted.single.zig
+    - match: "'\\\\x[0-9a-fA-F]{2}'"
+      scope: string.quoted.single.zig
+    - match: "'\\\\u\\{[0-9a-fA-F]+\\}'"
+      scope: string.quoted.single.zig
+
+  numbers:
+    # Binary
+    - match: '\b0b[01_]+\b'
+      scope: constant.numeric.binary.zig
+    # Octal
+    - match: '\b0o[0-7_]+\b'
+      scope: constant.numeric.octal.zig
+    # Hexadecimal
+    - match: '\b0x[0-9a-fA-F_]+(\.[0-9a-fA-F_]+)?([pP][+-]?[0-9_]+)?\b'
+      scope: constant.numeric.hex.zig
+    # Float
+    - match: '\b[0-9][0-9_]*\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?\b'
+      scope: constant.numeric.float.zig
+    # Integer with exponent
+    - match: '\b[0-9][0-9_]*[eE][+-]?[0-9_]+\b'
+      scope: constant.numeric.float.zig
+    # Integer
+    - match: '\b[0-9][0-9_]*\b'
+      scope: constant.numeric.integer.zig
+
+  keywords:
+    # Control flow
+    - match: '\b(if|else|switch|while|for|break|continue|return|unreachable)\b'
+      scope: keyword.control.zig
+    # Error handling
+    - match: '\b(try|catch|orelse)\b'
+      scope: keyword.control.zig
+    # Async
+    - match: '\b(async|await|suspend|resume|nosuspend)\b'
+      scope: keyword.control.zig
+    # Memory/execution
+    - match: '\b(defer|errdefer)\b'
+      scope: keyword.control.zig
+    # Declaration
+    - match: '\b(const|var|fn|pub|extern|export|inline|noinline|threadlocal|allowzero)\b'
+      scope: keyword.declaration.zig
+    # Type definition
+    - match: '\b(struct|enum|union|error|opaque|packed|align)\b'
+      scope: keyword.declaration.type.zig
+    # Compile-time
+    - match: '\b(comptime|test|usingnamespace)\b'
+      scope: keyword.other.zig
+    # Boolean operators
+    - match: '\b(and|or)\b'
+      scope: keyword.operator.logical.zig
+    # Constants
+    - match: '\b(true|false|null|undefined)\b'
+      scope: constant.language.zig
+    # Special
+    - match: '\b_\b'
+      scope: variable.language.blank.zig
+
+  builtins:
+    # Built-in functions (start with @)
+    - match: '@{{identifier}}'
+      scope: support.function.builtin.zig
+
+  types:
+    # Primitive integer types
+    - match: '\b(i8|i16|i32|i64|i128|isize)\b'
+      scope: storage.type.zig
+    - match: '\b(u8|u16|u32|u64|u128|usize)\b'
+      scope: storage.type.zig
+    # Floating point types
+    - match: '\b(f16|f32|f64|f80|f128)\b'
+      scope: storage.type.zig
+    # Other primitive types
+    - match: '\b(bool|void|noreturn|type|anyerror|anytype|anyframe|anyopaque)\b'
+      scope: storage.type.zig
+    # C interop types
+    - match: '\b(c_short|c_ushort|c_int|c_uint|c_long|c_ulong|c_longlong|c_ulonglong|c_longdouble|c_void)\b'
+      scope: storage.type.zig
+
+  operators:
+    # Arithmetic and comparison
+    - match: '(\+\+|--|\+%|-%)|\+|-|\*%|\*|/|%'
+      scope: keyword.operator.arithmetic.zig
+    - match: '(==|!=|<=|>=|<|>)'
+      scope: keyword.operator.comparison.zig
+    # Bitwise
+    - match: '(&|\\||\\^|~|<<|>>)'
+      scope: keyword.operator.bitwise.zig
+    # Assignment
+    - match: '(\+=|-=|\*=|/=|%=|&=|\|=|\^=|<<=|>>=|=)'
+      scope: keyword.operator.assignment.zig
+    # Other
+    - match: '(\.\.\.|\.\.|\.\*|\.|\?|\*\*)'
+      scope: keyword.operator.other.zig
+
+  punctuation:
+    - match: '(\(|\)|\{|\}|\[|\]|,|;|:)'
+      scope: punctuation.zig

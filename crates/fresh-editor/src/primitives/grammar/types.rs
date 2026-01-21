@@ -16,6 +16,9 @@ pub const TOML_GRAMMAR: &str = include_str!("../../grammars/toml.sublime-syntax"
 /// From: https://github.com/Tetralux/sublime-odin (MIT License)
 pub const ODIN_GRAMMAR: &str = include_str!("../../grammars/odin/Odin.sublime-syntax");
 
+/// Embedded Zig grammar (syntect doesn't include one)
+pub const ZIG_GRAMMAR: &str = include_str!("../../grammars/zig.sublime-syntax");
+
 /// Registry of all available TextMate grammars.
 ///
 /// This struct holds the compiled syntax set and provides lookup methods.
@@ -102,6 +105,17 @@ impl GrammarRegistry {
             }
             Err(e) => {
                 tracing::warn!("Failed to load embedded Odin grammar: {}", e);
+            }
+        }
+
+        // Zig grammar
+        match SyntaxDefinition::load_from_str(ZIG_GRAMMAR, true, Some("Zig")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded Zig grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded Zig grammar: {}", e);
             }
         }
     }
