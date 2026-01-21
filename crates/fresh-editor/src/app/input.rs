@@ -2012,8 +2012,6 @@ impl Editor {
             .position(|s| s.value.as_deref() == Some(&current_language))
             .unwrap_or(0);
 
-        let current_display = suggestions[current_index].text.clone();
-
         self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Language: ".to_string(),
             PromptType::SetLanguage,
@@ -2023,8 +2021,8 @@ impl Editor {
         if let Some(prompt) = self.prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
-                prompt.input = current_display;
-                prompt.cursor_pos = prompt.input.len();
+                // Don't set input - keep it empty so typing filters the list
+                // The selected suggestion shows the current language
             }
         }
     }
