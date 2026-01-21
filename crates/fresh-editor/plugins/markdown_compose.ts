@@ -334,7 +334,7 @@ function disableMarkdownCompose(bufferId: number): void {
     editor.setLineNumbers(bufferId, true);
 
     // Clear view transform to return to normal rendering
-    editor.clearViewTransform(bufferId);
+    editor.clearViewTransform(bufferId, null);
 
     editor.refreshLines(bufferId);
     editor.debug(`Markdown compose disabled for buffer ${bufferId}`);

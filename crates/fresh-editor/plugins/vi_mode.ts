@@ -795,7 +795,7 @@ globalThis.vi_visual_toggle_line = function (): void {
 };
 
 // Enter visual block mode (Ctrl-v)
-globalThis.vi_visual_block = function (): void {
+globalThis.vi_visual_block = async function (): Promise<void> {
   // Store anchor position for block selection
   state.visualAnchor = editor.getCursorPosition();
 
@@ -803,7 +803,7 @@ globalThis.vi_visual_block = function (): void {
   const cursorPos = editor.getCursorPosition();
   if (cursorPos !== null) {
     const line = editor.getCursorLine() ?? 1;
-    const lineStart = editor.getLineStartPosition(line);
+    const lineStart = await editor.getLineStartPosition(line);
     const col = lineStart !== null ? cursorPos - lineStart : 0;
     state.visualBlockAnchor = { line, col };
   }

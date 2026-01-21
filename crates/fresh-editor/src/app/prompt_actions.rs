@@ -366,6 +366,14 @@ impl Editor {
             PromptType::ShellCommand { replace } => {
                 self.handle_shell_command(&input, replace);
             }
+            PromptType::AsyncPrompt => {
+                // Resolve the pending async prompt callback with the input text
+                if let Some(callback_id) = self.pending_async_prompt_callback.take() {
+                    // Serialize the input as a JSON string
+                    let json = serde_json::to_string(&input).unwrap_or_else(|_| "null".to_string());
+                    self.plugin_manager.resolve_callback(callback_id, json);
+                }
+            }
         }
         PromptResult::Done
     }

@@ -424,6 +424,7 @@ impl JsEditorApi {
     }
 
     /// List all open buffers - returns array of BufferInfo objects
+    #[plugin_api(ts_return = "BufferInfo[]")]
     pub fn list_buffers<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
         let buffers: Vec<BufferInfo> = if let Ok(s) = self.state_snapshot.read() {
             s.buffers.values().cloned().collect()
@@ -646,6 +647,7 @@ impl JsEditorApi {
     }
 
     /// Get buffer info by ID
+    #[plugin_api(ts_return = "BufferInfo | null")]
     pub fn get_buffer_info<'js>(
         &self,
         ctx: rquickjs::Ctx<'js>,
@@ -697,6 +699,7 @@ impl JsEditorApi {
     }
 
     /// Get viewport info for active buffer
+    #[plugin_api(ts_return = "ViewportInfo | null")]
     pub fn get_viewport<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
         let viewport = if let Ok(s) = self.state_snapshot.read() {
             s.viewport.clone()
@@ -713,6 +716,36 @@ impl JsEditorApi {
         // For now, return 0 - proper implementation needs buffer access
         // TODO: Add line number tracking to EditorStateSnapshot
         0
+    }
+
+    /// Get the byte offset of the start of a line (0-indexed line number)
+    /// Returns null if the line number is out of range
+    #[plugin_api(
+        async_promise,
+        js_name = "getLineStartPosition",
+        ts_return = "number | null"
+    )]
+    #[qjs(rename = "_getLineStartPositionStart")]
+    pub fn get_line_start_position_start(&self, _ctx: rquickjs::Ctx<'_>, line: u32) -> u64 {
+        let id = {
+            let mut id_ref = self.next_request_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            // Record context for this callback
+            self.callback_contexts
+                .borrow_mut()
+                .insert(id, self.plugin_name.clone());
+            id
+        };
+        // Use buffer_id 0 for active buffer
+        let _ = self
+            .command_sender
+            .send(PluginCommand::GetLineStartPosition {
+                buffer_id: BufferId(0),
+                line,
+                request_id: id,
+            });
+        id
     }
 
     /// Find buffer by file path, returns buffer ID or 0 if not found
@@ -955,6 +988,7 @@ impl JsEditorApi {
     }
 
     /// Read directory contents (returns array of {name, is_file, is_dir})
+    #[plugin_api(ts_return = "DirEntry[]")]
     pub fn read_dir<'js>(
         &self,
         ctx: rquickjs::Ctx<'js>,
@@ -1599,6 +1633,36 @@ impl JsEditorApi {
 
     // === Prompts ===
 
+    /// Show a prompt and wait for user input (async)
+    /// Returns the user input or null if cancelled
+    #[plugin_api(async_promise, js_name = "prompt", ts_return = "string | null")]
+    #[qjs(rename = "_promptStart")]
+    pub fn prompt_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        label: String,
+        initial_value: String,
+    ) -> u64 {
+        let id = {
+            let mut id_ref = self.next_request_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            // Record context for this callback
+            self.callback_contexts
+                .borrow_mut()
+                .insert(id, self.plugin_name.clone());
+            id
+        };
+
+        let _ = self.command_sender.send(PluginCommand::StartPromptAsync {
+            label,
+            initial_value,
+            callback_id: JsCallbackId::new(id),
+        });
+
+        id
+    }
+
     /// Start an interactive prompt
     pub fn start_prompt(&self, label: String, prompt_type: String) -> bool {
         self.command_sender
@@ -1927,30 +1991,40 @@ impl JsEditorApi {
     }
 
     /// Get all diagnostics from LSP
+    #[plugin_api(ts_return = "JsDiagnostic[]")]
     pub fn get_all_diagnostics<'js>(
         &self,
         ctx: rquickjs::Ctx<'js>,
     ) -> rquickjs::Result<Value<'js>> {
+        use fresh_core::api::{JsDiagnostic, JsPosition, JsRange};
+
         let diagnostics = if let Ok(s) = self.state_snapshot.read() {
-            // Convert to a simpler format for JS
-            let mut result: Vec<serde_json::Value> = Vec::new();
+            // Convert to JsDiagnostic format for JS
+            let mut result: Vec<JsDiagnostic> = Vec::new();
             for (uri, diags) in &s.diagnostics {
                 for diag in diags {
-                    result.push(serde_json::json!({
-                        "uri": uri,
-                        "message": diag.message,
-                        "severity": diag.severity.map(|s| match s {
+                    result.push(JsDiagnostic {
+                        uri: uri.clone(),
+                        message: diag.message.clone(),
+                        severity: diag.severity.map(|s| match s {
                             lsp_types::DiagnosticSeverity::ERROR => 1,
                             lsp_types::DiagnosticSeverity::WARNING => 2,
                             lsp_types::DiagnosticSeverity::INFORMATION => 3,
                             lsp_types::DiagnosticSeverity::HINT => 4,
                             _ => 0,
                         }),
-                        "range": {
-                            "start": {"line": diag.range.start.line, "character": diag.range.start.character},
-                            "end": {"line": diag.range.end.line, "character": diag.range.end.character}
-                        }
-                    }));
+                        range: JsRange {
+                            start: JsPosition {
+                                line: diag.range.start.line,
+                                character: diag.range.start.character,
+                            },
+                            end: JsPosition {
+                                line: diag.range.end.line,
+                                character: diag.range.end.character,
+                            },
+                        },
+                        source: diag.source.clone(),
+                    });
                 }
             }
             result

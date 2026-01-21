@@ -342,6 +342,15 @@ impl PluginThreadHandle {
                 // Return just the buffer_id number, not an object
                 self.resolve_callback(JsCallbackId(request_id), buffer_id.0.to_string());
             }
+            PluginResponse::LineStartPosition {
+                request_id,
+                position,
+            } => {
+                // Return the position as a number or null
+                let result =
+                    serde_json::to_string(&position).unwrap_or_else(|_| "null".to_string());
+                self.resolve_callback(JsCallbackId(request_id), result);
+            }
         }
     }
 
@@ -603,6 +612,7 @@ fn respond_to_pending(
         fresh_core::api::PluginResponse::HighlightsComputed { request_id, .. } => *request_id,
         fresh_core::api::PluginResponse::BufferText { request_id, .. } => *request_id,
         fresh_core::api::PluginResponse::CompositeBufferCreated { request_id, .. } => *request_id,
+        fresh_core::api::PluginResponse::LineStartPosition { request_id, .. } => *request_id,
     };
 
     let sender = {

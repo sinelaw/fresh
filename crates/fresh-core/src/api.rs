@@ -133,6 +133,12 @@ pub enum PluginResponse {
         request_id: u64,
         text: Result<String, String>,
     },
+    /// Response to GetLineStartPosition with the byte offset
+    LineStartPosition {
+        request_id: u64,
+        /// None if line is out of range, Some(offset) for valid line
+        position: Option<usize>,
+    },
     /// Response to CreateCompositeBuffer with the created buffer ID
     CompositeBufferCreated {
         request_id: u64,
@@ -839,6 +845,14 @@ pub enum PluginCommand {
         initial_value: String,
     },
 
+    /// Start an async prompt that returns result via callback
+    /// The callback_id is used to resolve the promise when the prompt is confirmed or cancelled
+    StartPromptAsync {
+        label: String,
+        initial_value: String,
+        callback_id: JsCallbackId,
+    },
+
     /// Update the suggestions list for the current prompt
     /// Uses the editor's Suggestion type
     SetPromptSuggestions { suggestions: Vec<Suggestion> },
@@ -1098,6 +1112,17 @@ pub enum PluginCommand {
         request_id: u64,
     },
 
+    /// Get byte offset of the start of a line (async)
+    /// Line is 0-indexed (0 = first line)
+    GetLineStartPosition {
+        /// Buffer ID (0 for active buffer)
+        buffer_id: BufferId,
+        /// Line number (0-indexed)
+        line: u32,
+        /// Request ID for async response
+        request_id: u64,
+    },
+
     /// Set the global editor mode (for modal editing like vi mode)
     /// When set, the mode's keybindings take precedence over normal editing
     SetEditorMode {
@@ -1252,6 +1277,43 @@ pub struct DirEntry {
     pub is_file: bool,
     /// True if this is a directory
     pub is_dir: bool,
+}
+
+/// Position in a document (line and character)
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct JsPosition {
+    /// Zero-indexed line number
+    pub line: u32,
+    /// Zero-indexed character offset
+    pub character: u32,
+}
+
+/// Range in a document (start and end positions)
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct JsRange {
+    /// Start position
+    pub start: JsPosition,
+    /// End position
+    pub end: JsPosition,
+}
+
+/// Diagnostic from LSP
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct JsDiagnostic {
+    /// Document URI
+    pub uri: String,
+    /// Diagnostic message
+    pub message: String,
+    /// Severity: 1=Error, 2=Warning, 3=Info, 4=Hint, null=unknown
+    pub severity: Option<u8>,
+    /// Range in the document
+    pub range: JsRange,
+    /// Source of the diagnostic (e.g., "typescript", "eslint")
+    #[ts(optional)]
+    pub source: Option<String>,
 }
 
 /// Options for createVirtualBuffer

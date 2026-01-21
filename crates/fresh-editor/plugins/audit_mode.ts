@@ -1520,7 +1520,7 @@ globalThis.on_review_buffer_activated = (data: any) => {
 };
 
 globalThis.on_review_buffer_closed = (data: any) => {
-    if (data.buffer_id === state.reviewBufferId) stop_review_diff();
+    if (data.buffer_id === state.reviewBufferId) globalThis.stop_review_diff();
 };
 
 // Side-by-side diff for current file using composite buffers

@@ -1008,6 +1008,35 @@ impl Editor {
         );
     }
 
+    /// Handle StartPromptAsync command (for editor.prompt() API)
+    pub(super) fn handle_start_prompt_async(
+        &mut self,
+        label: String,
+        initial_value: String,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) {
+        // Store the callback for resolution when prompt completes
+        self.pending_async_prompt_callback = Some(callback_id);
+
+        // Create an async prompt (uses special prompt type)
+        use crate::view::prompt::{Prompt, PromptType};
+        self.prompt = Some(Prompt::with_initial_text(
+            label,
+            PromptType::AsyncPrompt,
+            initial_value.clone(),
+        ));
+
+        // Fire the prompt_changed hook
+        use crate::services::plugins::hooks::HookArgs;
+        self.plugin_manager.run_hook(
+            "prompt_changed",
+            HookArgs::PromptChanged {
+                prompt_type: "async_prompt".to_string(),
+                input: initial_value,
+            },
+        );
+    }
+
     /// Handle SetPromptSuggestions command
     pub(super) fn handle_set_prompt_suggestions(
         &mut self,

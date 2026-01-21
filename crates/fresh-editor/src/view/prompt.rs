@@ -110,6 +110,9 @@ pub enum PromptType {
     /// If replace is true, replace the input with the output
     /// If replace is false, output goes to a new buffer
     ShellCommand { replace: bool },
+    /// Async prompt from plugin (for editor.prompt() API)
+    /// The result is returned via callback resolution
+    AsyncPrompt,
 }
 
 /// Prompt state for the minibuffer

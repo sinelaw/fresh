@@ -237,6 +237,66 @@ type DirEntry = {
 	*/
 	is_dir: boolean;
 };
+type BufferInfo = {
+	/**
+	* Buffer ID
+	*/
+	id: number;
+	/**
+	* File path (if any)
+	*/
+	path: string;
+	/**
+	* Whether the buffer has been modified
+	*/
+	modified: boolean;
+	/**
+	* Length of buffer in bytes
+	*/
+	length: number;
+};
+type JsDiagnostic = {
+	/**
+	* Document URI
+	*/
+	uri: string;
+	/**
+	* Diagnostic message
+	*/
+	message: string;
+	/**
+	* Severity: 1=Error, 2=Warning, 3=Info, 4=Hint, null=unknown
+	*/
+	severity: number | null;
+	/**
+	* Range in the document
+	*/
+	range: JsRange;
+	/**
+	* Source of the diagnostic (e.g., "typescript", "eslint")
+	*/
+	source?: string;
+};
+type JsRange = {
+	/**
+	* Start position
+	*/
+	start: JsPosition;
+	/**
+	* End position
+	*/
+	end: JsPosition;
+};
+type JsPosition = {
+	/**
+	* Zero-indexed line number
+	*/
+	line: number;
+	/**
+	* Zero-indexed character offset
+	*/
+	character: number;
+};
 type BackgroundProcessResult = {
 	/**
 	* Unique process ID for later reference
@@ -418,7 +478,7 @@ interface EditorAPI {
 	/**
 	* List all open buffers - returns array of BufferInfo objects
 	*/
-	listBuffers(): unknown;
+	listBuffers(): BufferInfo[];
 	debug(msg: string): void;
 	info(msg: string): void;
 	warn(msg: string): void;
@@ -472,7 +532,7 @@ interface EditorAPI {
 	/**
 	* Get buffer info by ID
 	*/
-	getBufferInfo(bufferId: number): unknown;
+	getBufferInfo(bufferId: number): BufferInfo | null;
 	/**
 	* Get primary cursor info for active buffer
 	*/
@@ -488,11 +548,16 @@ interface EditorAPI {
 	/**
 	* Get viewport info for active buffer
 	*/
-	getViewport(): unknown;
+	getViewport(): ViewportInfo | null;
 	/**
 	* Get the line number (0-indexed) of the primary cursor
 	*/
 	getCursorLine(): number;
+	/**
+	* Get the byte offset of the start of a line (0-indexed line number)
+	* Returns null if the line number is out of range
+	*/
+	getLineStartPosition(line: number): Promise<number | null>;
 	/**
 	* Find buffer by file path, returns buffer ID or 0 if not found
 	*/
@@ -581,7 +646,7 @@ interface EditorAPI {
 	/**
 	* Read directory contents (returns array of {name, is_file, is_dir})
 	*/
-	readDir(path: string): unknown;
+	readDir(path: string): DirEntry[];
 	/**
 	* Get current config as JS object
 	*/
@@ -719,6 +784,11 @@ interface EditorAPI {
 	*/
 	addVirtualLine(bufferId: number, position: number, text: string, fgR: number, fgG: number, fgB: number, bgR: number, bgG: number, bgB: number, above: boolean, namespace: string, priority: number): boolean;
 	/**
+	* Show a prompt and wait for user input (async)
+	* Returns the user input or null if cancelled
+	*/
+	prompt(label: string, initialValue: string): Promise<string | null>;
+	/**
 	* Start an interactive prompt
 	*/
 	startPrompt(label: string, promptType: string): boolean;
@@ -809,7 +879,7 @@ interface EditorAPI {
 	/**
 	* Get all diagnostics from LSP
 	*/
-	getAllDiagnostics(): unknown;
+	getAllDiagnostics(): JsDiagnostic[];
 	/**
 	* Get registered event handlers for an event
 	*/

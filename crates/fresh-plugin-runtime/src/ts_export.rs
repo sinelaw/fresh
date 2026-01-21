@@ -19,8 +19,9 @@ use fresh_core::api::{
     CompositeHunk, CompositeLayoutConfig, CompositePaneStyle, CompositeSourceConfig,
     CreateCompositeBufferOptions, CreateVirtualBufferInExistingSplitOptions,
     CreateVirtualBufferInSplitOptions, CreateVirtualBufferOptions, CursorInfo, DirEntry,
-    JsTextPropertyEntry, LayoutHints, SpawnResult, TextPropertiesAtCursor, TsHighlightSpan,
-    ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
+    JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, LayoutHints, SpawnResult,
+    TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind,
+    ViewportInfo, VirtualBufferResult,
 };
 use fresh_core::command::Suggestion;
 
@@ -78,6 +79,11 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "PromptSuggestion" | "Suggestion" => Some(Suggestion::decl()),
         "DirEntry" => Some(DirEntry::decl()),
 
+        // Diagnostic types
+        "JsDiagnostic" => Some(JsDiagnostic::decl()),
+        "JsRange" => Some(JsRange::decl()),
+        "JsPosition" => Some(JsPosition::decl()),
+
         _ => None,
     }
 }
@@ -99,6 +105,10 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "ViewTokenStyle",                 // Used by ViewTokenWire
     "PromptSuggestion",               // Used by plugins for prompt suggestions
     "DirEntry",                       // Used by plugins for directory entries
+    "BufferInfo",                     // Used by listBuffers, getBufferInfo
+    "JsDiagnostic",                   // Used by getAllDiagnostics
+    "JsRange",                        // Used by JsDiagnostic
+    "JsPosition",                     // Used by JsRange
 ];
 
 /// Collect TypeScript type declarations based on referenced types from proc macro

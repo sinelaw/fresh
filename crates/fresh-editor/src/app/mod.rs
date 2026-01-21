@@ -433,6 +433,11 @@ pub struct Editor {
     /// This provides a generic history system that works for all prompt types including plugin prompts.
     prompt_histories: HashMap<String, crate::input::input_history::InputHistory>,
 
+    /// Pending async prompt callback ID (for editor.prompt() API)
+    /// When the prompt is confirmed, the callback is resolved with the input text.
+    /// When cancelled, the callback is resolved with null.
+    pending_async_prompt_callback: Option<fresh_core::api::JsCallbackId>,
+
     /// LSP progress tracking (token -> progress info)
     lsp_progress: std::collections::HashMap<String, LspProgressInfo>,
 
@@ -1035,6 +1040,7 @@ impl Editor {
                 }
                 histories
             },
+            pending_async_prompt_callback: None,
             lsp_progress: std::collections::HashMap::new(),
             lsp_server_statuses: std::collections::HashMap::new(),
             lsp_window_messages: Vec::new(),
@@ -2866,6 +2872,13 @@ impl Editor {
                     self.file_open_state = None;
                     self.file_browser_layout = None;
                 }
+                PromptType::AsyncPrompt => {
+                    // Resolve the pending async prompt callback with null (cancelled)
+                    if let Some(callback_id) = self.pending_async_prompt_callback.take() {
+                        self.plugin_manager
+                            .resolve_callback(callback_id, "null".to_string());
+                    }
+                }
                 _ => {}
             }
         }
@@ -4059,6 +4072,13 @@ impl Editor {
             } => {
                 self.handle_start_prompt_with_initial(label, prompt_type, initial_value);
             }
+            PluginCommand::StartPromptAsync {
+                label,
+                initial_value,
+                callback_id,
+            } => {
+                self.handle_start_prompt_async(label, initial_value, callback_id);
+            }
             PluginCommand::SetPromptSuggestions { suggestions } => {
                 self.handle_set_prompt_suggestions(suggestions);
             }
@@ -4714,6 +4734,13 @@ impl Editor {
             } => {
                 self.handle_get_buffer_text(buffer_id, start, end, request_id);
             }
+            PluginCommand::GetLineStartPosition {
+                buffer_id,
+                line,
+                request_id,
+            } => {
+                self.handle_get_line_start_position(buffer_id, line, request_id);
+            }
             PluginCommand::SetEditorMode { mode } => {
                 self.handle_set_editor_mode(mode);
             }
@@ -4984,6 +5011,55 @@ impl Editor {
     fn handle_set_editor_mode(&mut self, mode: Option<String>) {
         self.editor_mode = mode.clone();
         tracing::debug!("Set editor mode: {:?}", mode);
+    }
+
+    /// Get the byte offset of the start of a line in the active buffer
+    fn handle_get_line_start_position(&mut self, buffer_id: BufferId, line: u32, request_id: u64) {
+        // Use active buffer if buffer_id is 0
+        let actual_buffer_id = if buffer_id.0 == 0 {
+            self.active_buffer_id()
+        } else {
+            buffer_id
+        };
+
+        let result = if let Some(state) = self.buffers.get_mut(&actual_buffer_id) {
+            // Get line start position by iterating through the buffer content
+            let line_number = line as usize;
+            let buffer_len = state.buffer.len();
+
+            if line_number == 0 {
+                // First line always starts at 0
+                Some(0)
+            } else {
+                // Count newlines to find the start of the requested line
+                let mut current_line = 0;
+                let mut line_start = None;
+
+                // Read buffer content to find newlines using the BufferState's get_text_range
+                let content = state.get_text_range(0, buffer_len);
+                for (i, c) in content.chars().enumerate() {
+                    if c == '\n' {
+                        current_line += 1;
+                        if current_line == line_number {
+                            // Found the start of the requested line (byte after newline)
+                            // We need byte position, not char position
+                            let byte_pos = content[..=i].len();
+                            line_start = Some(byte_pos);
+                            break;
+                        }
+                    }
+                }
+                line_start
+            }
+        } else {
+            None
+        };
+
+        // Resolve the JavaScript Promise callback directly
+        let callback_id = fresh_core::api::JsCallbackId::from(request_id);
+        // Serialize as JSON (null for None, number for Some)
+        let json = serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string());
+        self.plugin_manager.resolve_callback(callback_id, json);
     }
 }
 

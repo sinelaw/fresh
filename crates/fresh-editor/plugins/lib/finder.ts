@@ -1343,12 +1343,12 @@ export class Finder<T> {
           colors.selected[0],
           colors.selected[1],
           colors.selected[2],
-          -1,
-          -1,
-          -1,
           false,
-          true,
           false,
+          false,
+          undefined,
+          undefined,
+          undefined,
           true
         );
       }
@@ -1363,12 +1363,12 @@ export class Finder<T> {
           colors.title[0],
           colors.title[1],
           colors.title[2],
-          -1,
-          -1,
-          -1,
           false,
           true,
           false,
+          undefined,
+          undefined,
+          undefined,
           false
         );
       }
@@ -1383,12 +1383,12 @@ export class Finder<T> {
           colors.fileHeader[0],
           colors.fileHeader[1],
           colors.fileHeader[2],
-          -1,
-          -1,
-          -1,
           false,
           true,
           false,
+          undefined,
+          undefined,
+          undefined,
           false
         );
       }
@@ -1423,12 +1423,12 @@ export class Finder<T> {
           color[0],
           color[1],
           color[2],
-          -1,
-          -1,
-          -1,
           false,
           true,
           false,
+          undefined,
+          undefined,
+          undefined,
           false
         );
       }
@@ -1443,12 +1443,12 @@ export class Finder<T> {
           colors.help[0],
           colors.help[1],
           colors.help[2],
-          -1,
-          -1,
-          -1,
           false,
           false,
           false,
+          undefined,
+          undefined,
+          undefined,
           false
         );
       }
