@@ -219,9 +219,21 @@ impl GrammarRegistry {
         self.syntax_set.find_syntax_by_scope(scope)
     }
 
-    /// Find syntax by name
+    /// Find syntax by name (case-insensitive)
+    ///
+    /// This allows config files to use lowercase grammar names like "go" while
+    /// matching syntect's actual names like "Go".
     pub fn find_syntax_by_name(&self, name: &str) -> Option<&SyntaxReference> {
-        self.syntax_set.find_syntax_by_name(name)
+        // Try exact match first
+        if let Some(syntax) = self.syntax_set.find_syntax_by_name(name) {
+            return Some(syntax);
+        }
+        // Fall back to case-insensitive match
+        let name_lower = name.to_lowercase();
+        self.syntax_set
+            .syntaxes()
+            .iter()
+            .find(|s| s.name.to_lowercase() == name_lower)
     }
 
     /// Get the underlying syntax set
