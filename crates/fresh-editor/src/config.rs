@@ -2317,6 +2317,89 @@ impl Config {
             },
         );
 
+        languages.insert(
+            "zig".to_string(),
+            LanguageConfig {
+                extensions: vec!["zig".to_string(), "zon".to_string()],
+                filenames: vec![],
+                grammar: "zig".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "java".to_string(),
+            LanguageConfig {
+                extensions: vec!["java".to_string()],
+                filenames: vec![],
+                grammar: "java".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "latex".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "tex".to_string(),
+                    "latex".to_string(),
+                    "ltx".to_string(),
+                    "sty".to_string(),
+                    "cls".to_string(),
+                    "bib".to_string(),
+                ],
+                filenames: vec![],
+                grammar: "latex".to_string(),
+                comment_prefix: Some("%".to_string()),
+                auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "templ".to_string(),
+            LanguageConfig {
+                extensions: vec!["templ".to_string()],
+                filenames: vec![],
+                grammar: "go".to_string(), // Templ uses Go-like syntax
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
         languages
     }
 
@@ -2484,6 +2567,76 @@ impl Config {
             LspServerConfig {
                 command: "ols".to_string(),
                 args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+            },
+        );
+
+        // zls - Zig Language Server (https://github.com/zigtools/zls)
+        // Install via package manager or download from releases
+        lsp.insert(
+            "zig".to_string(),
+            LspServerConfig {
+                command: "zls".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+            },
+        );
+
+        // jdtls - Eclipse JDT Language Server for Java
+        // Install via package manager or download from Eclipse
+        lsp.insert(
+            "java".to_string(),
+            LspServerConfig {
+                command: "jdtls".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+            },
+        );
+
+        // texlab - LaTeX Language Server (https://github.com/latex-lsp/texlab)
+        // Install via cargo install texlab or package manager
+        lsp.insert(
+            "latex".to_string(),
+            LspServerConfig {
+                command: "texlab".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+            },
+        );
+
+        // marksman - Markdown Language Server (https://github.com/artempyanykh/marksman)
+        // Install via package manager or download from releases
+        lsp.insert(
+            "markdown".to_string(),
+            LspServerConfig {
+                command: "marksman".to_string(),
+                args: vec!["server".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+            },
+        );
+
+        // templ - Templ Language Server (https://templ.guide)
+        // Install via go install github.com/a-h/templ/cmd/templ@latest
+        lsp.insert(
+            "templ".to_string(),
+            LspServerConfig {
+                command: "templ".to_string(),
+                args: vec!["lsp".to_string()],
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
