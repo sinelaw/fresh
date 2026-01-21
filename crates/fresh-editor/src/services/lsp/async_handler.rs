@@ -711,11 +711,15 @@ impl LspState {
             }]
         });
 
+        #[allow(deprecated)]
         let params = InitializeParams {
             process_id: Some(std::process::id()),
             capabilities: create_client_capabilities(),
             workspace_folders,
             initialization_options,
+            // Set the deprecated root_uri field for compatibility with LSP servers
+            // like csharp-ls that still require it (see issue #366)
+            root_uri: root_uri.clone(),
             ..Default::default()
         };
 
