@@ -551,7 +551,7 @@ async function renderReviewStream(): Promise<{ entries: TextPropertyEntry[], hig
  * Updates the buffer UI (text and highlights) based on current state.hunks
  */
 async function updateReviewUI() {
-  if (state.reviewBufferId !== null) {
+  if (state.reviewBufferId != null) {
     const { entries, highlights } = await renderReviewStream();
     editor.setVirtualBufferContent(state.reviewBufferId, entries);
     

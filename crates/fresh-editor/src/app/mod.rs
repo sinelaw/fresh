@@ -4440,11 +4440,14 @@ impl Editor {
                                 req_id,
                                 buffer_id
                             );
-                            // createVirtualBuffer returns just the buffer ID (number), not an object
-                            let result = buffer_id.0.to_string();
+                            // createVirtualBuffer returns VirtualBufferResult: { bufferId, splitId }
+                            let result = fresh_core::api::VirtualBufferResult {
+                                buffer_id: buffer_id.0 as u64,
+                                split_id: None,
+                            };
                             self.plugin_manager.resolve_callback(
                                 fresh_core::api::JsCallbackId::from(req_id),
-                                result,
+                                serde_json::to_string(&result).unwrap_or_default(),
                             );
                             tracing::info!("CreateVirtualBufferWithContent: resolve_callback sent for request_id={}", req_id);
                         }
@@ -4497,13 +4500,13 @@ impl Editor {
 
                             // Send response with existing buffer ID and split ID via callback resolution
                             if let Some(req_id) = request_id {
-                                let result = serde_json::json!({
-                                    "bufferId": existing_buffer_id.0,
-                                    "splitId": splits.first().map(|s| s.0)
-                                });
+                                let result = fresh_core::api::VirtualBufferResult {
+                                    buffer_id: existing_buffer_id.0 as u64,
+                                    split_id: splits.first().map(|s| s.0 as u64),
+                                };
                                 self.plugin_manager.resolve_callback(
                                     fresh_core::api::JsCallbackId::from(req_id),
-                                    result.to_string(),
+                                    serde_json::to_string(&result).unwrap_or_default(),
                                 );
                             }
                             return Ok(());
@@ -4597,16 +4600,16 @@ impl Editor {
                     };
 
                 // Send response with buffer ID and split ID via callback resolution
-                // NOTE: Use snake_case (buffer_id, split_id) to match TypeScript type definitions
+                // NOTE: Using VirtualBufferResult type for type-safe JSON serialization
                 if let Some(req_id) = request_id {
                     tracing::trace!("CreateVirtualBufferInSplit: resolving callback for request_id={}, buffer_id={:?}, split_id={:?}", req_id, buffer_id, created_split_id);
-                    let result = serde_json::json!({
-                        "buffer_id": buffer_id.0,
-                        "split_id": created_split_id.map(|s| s.0)
-                    });
+                    let result = fresh_core::api::VirtualBufferResult {
+                        buffer_id: buffer_id.0 as u64,
+                        split_id: created_split_id.map(|s| s.0 as u64),
+                    };
                     self.plugin_manager.resolve_callback(
                         fresh_core::api::JsCallbackId::from(req_id),
-                        result.to_string(),
+                        serde_json::to_string(&result).unwrap_or_default(),
                     );
                 }
             }
@@ -4692,12 +4695,15 @@ impl Editor {
                     );
                 }
 
-                // Send response with buffer ID via callback resolution
+                // Send response with buffer ID and split ID via callback resolution
                 if let Some(req_id) = request_id {
-                    // Return just the buffer ID as a number (consistent with TypeScript definition)
+                    let result = fresh_core::api::VirtualBufferResult {
+                        buffer_id: buffer_id.0 as u64,
+                        split_id: Some(split_id.0 as u64),
+                    };
                     self.plugin_manager.resolve_callback(
                         fresh_core::api::JsCallbackId::from(req_id),
-                        buffer_id.0.to_string(),
+                        serde_json::to_string(&result).unwrap_or_default(),
                     );
                 }
             }

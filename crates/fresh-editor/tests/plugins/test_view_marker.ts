@@ -116,7 +116,7 @@ async function open_test_view_marker(padLines: number, name: string): Promise<vo
     { text: "Line 3\n", properties: { type: "content", line: 3 } },
   ];
 
-  const bufferId = await editor.createVirtualBufferInExistingSplit({
+  const result = await editor.createVirtualBufferInExistingSplit({
     name,
     mode: "test-view-marker",
     readOnly: true,
@@ -126,8 +126,9 @@ async function open_test_view_marker(padLines: number, name: string): Promise<vo
     showCursors: true,
     editingDisabled: true,
   });
+  const bufferId = result.bufferId;
 
-  if (bufferId !== null) {
+  if (bufferId != null) {
     activeBufferId = bufferId;
     padLinesByBuffer.set(bufferId, padLines);
     interleavedModeByBuffer.set(bufferId, false);
