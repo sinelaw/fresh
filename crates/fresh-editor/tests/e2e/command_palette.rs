@@ -890,17 +890,17 @@ fn test_command_palette_description_fuzzy_matching() {
         .unwrap();
     harness.render().unwrap();
 
-    // Search for "language" which appears in the description of "Select Locale"
+    // Search for "UI language" which appears in the description of "Select Locale"
     // ("Choose the UI language for the editor")
     // but not in the command name itself
-    harness.type_text("language").unwrap();
+    harness.type_text("UI language").unwrap();
     harness.render().unwrap();
 
-    // Should find "Select Locale" because "language" is in its description
+    // Should find "Select Locale" because "UI language" is in its description
     harness.assert_screen_contains("Select Locale");
 
     // Clear and try another example
-    for _ in 0..8 {
+    for _ in 0..11 {
         harness
             .send_key(KeyCode::Backspace, KeyModifiers::NONE)
             .unwrap();

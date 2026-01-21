@@ -1,5 +1,6 @@
 ---
 source: crates/fresh-editor/tests/common/visual_testing.rs
+assertion_line: 69
 expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   LSP   Explorer   Help                                        
@@ -30,4 +31,4 @@ expression: "&screen_text"
 │                            │   24 │                                                               
 │                            │~                                                                     
 └────────────────────────────┘~                                                                     
-src/main.rs | Ln 6, Col 12 | E:1 | 3 cursors | Added cursor at match (3)        LF  Palette: Ctrl+P
+src/main.rs | Ln 6, Col 12 | E:1 | 3 cursors | Added cursor at match (3)  LF  rust  Palette: Ctrl+P

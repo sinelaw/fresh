@@ -82,8 +82,8 @@ fn test_horizontal_split_shares_same_buffer() {
         new_split_content
     );
 
-    // Screen should show "Split pane horizontally" message
-    harness.assert_screen_contains("Split pane horizontally");
+    // Screen should show "Split pane horizontally" message (may be truncated)
+    harness.assert_screen_contains("Split pane horiz");
 
     // Verify separator line exists (horizontal split uses ─)
     let screen = harness.screen_to_string();
@@ -603,8 +603,8 @@ fn test_split_with_minimal_height() {
     // Create horizontal split (splits the limited vertical space)
     split_horizontal(&mut harness);
 
-    // Should succeed without panic
-    harness.assert_screen_contains("Split pane horizontally");
+    // Should succeed without panic (message may be truncated on narrow terminals)
+    harness.assert_screen_contains("Split pane horiz");
 
     // Should be able to type in split (modifying shared buffer)
     harness.type_text(" - modified").unwrap();

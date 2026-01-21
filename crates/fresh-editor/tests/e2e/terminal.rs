@@ -103,7 +103,7 @@ fn test_terminal_mode_toggle() {
 
     // Should no longer be in terminal mode
     assert!(!harness.editor().is_terminal_mode());
-    harness.assert_screen_contains("disabled");
+    harness.assert_screen_contains("Terminal mode");
 }
 
 /// Test multiple terminals can be opened

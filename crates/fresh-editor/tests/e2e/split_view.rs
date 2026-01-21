@@ -21,9 +21,9 @@ fn test_split_horizontal() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Should see status message
+    // Should see status message (may be truncated on narrow terminals)
     harness.render().unwrap();
-    harness.assert_screen_contains("Split pane horizontally");
+    harness.assert_screen_contains("Split pane horiz");
 
     // New split should show the same buffer content (Emacs-style)
     harness.assert_buffer_content("Buffer 1");
@@ -92,9 +92,9 @@ fn test_split_navigation() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Should see status message
+    // Should see status message (may be truncated on narrow terminals)
     harness.render().unwrap();
-    harness.assert_screen_contains("Switched to next split");
+    harness.assert_screen_contains("Switched to next");
 
     // Navigate to previous split via command palette
     harness
@@ -106,9 +106,9 @@ fn test_split_navigation() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Should see status message
+    // Should see status message (may be truncated on narrow terminals)
     harness.render().unwrap();
-    harness.assert_screen_contains("Switched to previous split");
+    harness.assert_screen_contains("Switched to prev");
 }
 
 /// Test closing a split
