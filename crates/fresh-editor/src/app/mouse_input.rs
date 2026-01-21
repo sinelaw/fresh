@@ -187,8 +187,11 @@ impl Editor {
                 self.update_lsp_hover_state(col, row);
             }
             MouseEventKind::ScrollUp => {
-                // Check if file browser is active and should handle scroll
-                if self.is_file_open_active() && self.handle_file_open_scroll(-3) {
+                // Check if prompt with suggestions is active and should handle scroll
+                if self.handle_prompt_scroll(-3) {
+                    needs_render = true;
+                } else if self.is_file_open_active() && self.handle_file_open_scroll(-3) {
+                    // Check if file browser is active and should handle scroll
                     needs_render = true;
                 } else if self.is_mouse_over_any_popup(col, row) {
                     // Scroll the popup content (works for all popups including completion)
@@ -210,8 +213,10 @@ impl Editor {
                 }
             }
             MouseEventKind::ScrollDown => {
-                // Check if file browser is active and should handle scroll
-                if self.is_file_open_active() && self.handle_file_open_scroll(3) {
+                // Check if prompt with suggestions is active and should handle scroll
+                if self.handle_prompt_scroll(3) {
+                    needs_render = true;
+                } else if self.is_file_open_active() && self.handle_file_open_scroll(3) {
                     needs_render = true;
                 } else if self.is_mouse_over_any_popup(col, row) {
                     // Scroll the popup content (works for all popups including completion)

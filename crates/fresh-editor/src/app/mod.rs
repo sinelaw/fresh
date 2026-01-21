@@ -2893,6 +2893,42 @@ impl Editor {
         }
     }
 
+    /// Handle mouse wheel scroll in prompt with suggestions.
+    /// Returns true if scroll was handled, false if no prompt is active or has no suggestions.
+    pub fn handle_prompt_scroll(&mut self, delta: i32) -> bool {
+        if let Some(ref mut prompt) = self.prompt {
+            if prompt.suggestions.is_empty() {
+                return false;
+            }
+
+            let current = prompt.selected_suggestion.unwrap_or(0);
+            let len = prompt.suggestions.len();
+
+            // Calculate new position based on scroll direction
+            // delta < 0 = scroll up, delta > 0 = scroll down
+            let new_selected = if delta < 0 {
+                // Scroll up - move selection up (decrease index)
+                current.saturating_sub((-delta) as usize)
+            } else {
+                // Scroll down - move selection down (increase index)
+                (current + delta as usize).min(len.saturating_sub(1))
+            };
+
+            prompt.selected_suggestion = Some(new_selected);
+
+            // Update input to match selected suggestion for non-plugin prompts
+            if !matches!(prompt.prompt_type, PromptType::Plugin { .. }) {
+                if let Some(suggestion) = prompt.suggestions.get(new_selected) {
+                    prompt.input = suggestion.get_value().to_string();
+                    prompt.cursor_pos = prompt.input.len();
+                }
+            }
+
+            return true;
+        }
+        false
+    }
+
     /// Get the confirmed input and prompt type, consuming the prompt
     /// For command palette, returns the selected suggestion if available, otherwise the raw input
     /// Returns (input, prompt_type, selected_index)
@@ -3160,7 +3196,8 @@ impl Editor {
             }
             PromptType::SwitchToTab
             | PromptType::SelectTheme { .. }
-            | PromptType::StopLspServer => {
+            | PromptType::StopLspServer
+            | PromptType::SetLanguage => {
                 if let Some(prompt) = &mut self.prompt {
                     prompt.filter_suggestions(false);
                 }
