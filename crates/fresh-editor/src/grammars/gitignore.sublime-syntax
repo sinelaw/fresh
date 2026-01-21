@@ -1,0 +1,51 @@
+%YAML 1.2
+---
+# Gitignore syntax highlighting for Fresh editor
+# Also works for .dockerignore, .npmignore, etc.
+name: Gitignore
+file_extensions:
+  - gitignore
+  - dockerignore
+  - npmignore
+  - hgignore
+scope: source.gitignore
+
+contexts:
+  main:
+    - include: comments
+    - include: negation
+    - include: patterns
+
+  comments:
+    # Comment lines starting with #
+    - match: '^#.*$'
+      scope: comment.line.number-sign.gitignore
+
+  negation:
+    # Negated patterns starting with !
+    - match: '^(!)(.*)'
+      captures:
+        1: keyword.operator.negation.gitignore
+        2: string.unquoted.pattern.negated.gitignore
+
+  patterns:
+    # Directory patterns ending with /
+    - match: '^(.+)(/)$'
+      captures:
+        1: string.unquoted.pattern.gitignore
+        2: punctuation.separator.directory.gitignore
+
+    # Glob patterns with special characters
+    - match: '^[^#!\s].*$'
+      scope: string.unquoted.pattern.gitignore
+      push:
+        - match: '\*\*'
+          scope: keyword.operator.glob.doublestar.gitignore
+        - match: '\*'
+          scope: keyword.operator.glob.star.gitignore
+        - match: '\?'
+          scope: keyword.operator.glob.question.gitignore
+        - match: '\[([^\]]+)\]'
+          scope: keyword.operator.glob.bracket.gitignore
+        - match: '$'
+          pop: true

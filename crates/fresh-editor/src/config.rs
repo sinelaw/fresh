@@ -2400,6 +2400,112 @@ impl Config {
             },
         );
 
+        // Git-related file types
+        languages.insert(
+            "git-rebase".to_string(),
+            LanguageConfig {
+                extensions: vec![],
+                filenames: vec!["git-rebase-todo".to_string()],
+                grammar: "Git Rebase Todo".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "git-commit".to_string(),
+            LanguageConfig {
+                extensions: vec![],
+                filenames: vec![
+                    "COMMIT_EDITMSG".to_string(),
+                    "MERGE_MSG".to_string(),
+                    "SQUASH_MSG".to_string(),
+                    "TAG_EDITMSG".to_string(),
+                ],
+                grammar: "Git Commit Message".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "gitignore".to_string(),
+            LanguageConfig {
+                extensions: vec!["gitignore".to_string()],
+                filenames: vec![
+                    ".gitignore".to_string(),
+                    ".dockerignore".to_string(),
+                    ".npmignore".to_string(),
+                    ".hgignore".to_string(),
+                ],
+                grammar: "Gitignore".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "gitconfig".to_string(),
+            LanguageConfig {
+                extensions: vec!["gitconfig".to_string()],
+                filenames: vec![".gitconfig".to_string(), ".gitmodules".to_string()],
+                grammar: "Git Config".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
+        languages.insert(
+            "gitattributes".to_string(),
+            LanguageConfig {
+                extensions: vec!["gitattributes".to_string()],
+                filenames: vec![".gitattributes".to_string()],
+                grammar: "Git Attributes".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
         languages
     }
 

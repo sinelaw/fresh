@@ -19,6 +19,21 @@ pub const ODIN_GRAMMAR: &str = include_str!("../../grammars/odin/Odin.sublime-sy
 /// Embedded Zig grammar (syntect doesn't include one)
 pub const ZIG_GRAMMAR: &str = include_str!("../../grammars/zig.sublime-syntax");
 
+/// Embedded Git Rebase Todo grammar for interactive rebase
+pub const GIT_REBASE_GRAMMAR: &str = include_str!("../../grammars/git-rebase.sublime-syntax");
+
+/// Embedded Git Commit Message grammar for COMMIT_EDITMSG, MERGE_MSG, etc.
+pub const GIT_COMMIT_GRAMMAR: &str = include_str!("../../grammars/git-commit.sublime-syntax");
+
+/// Embedded Gitignore grammar for .gitignore and similar files
+pub const GITIGNORE_GRAMMAR: &str = include_str!("../../grammars/gitignore.sublime-syntax");
+
+/// Embedded Git Config grammar for .gitconfig, .gitmodules
+pub const GITCONFIG_GRAMMAR: &str = include_str!("../../grammars/gitconfig.sublime-syntax");
+
+/// Embedded Git Attributes grammar for .gitattributes
+pub const GITATTRIBUTES_GRAMMAR: &str = include_str!("../../grammars/gitattributes.sublime-syntax");
+
 /// Registry of all available TextMate grammars.
 ///
 /// This struct holds the compiled syntax set and provides lookup methods.
@@ -81,6 +96,32 @@ impl GrammarRegistry {
             map.insert(filename.to_string(), shell_scope.clone());
         }
 
+        // Git rebase todo files
+        let git_rebase_scope = "source.git-rebase-todo".to_string();
+        map.insert("git-rebase-todo".to_string(), git_rebase_scope);
+
+        // Git commit message files
+        let git_commit_scope = "source.git-commit".to_string();
+        for filename in ["COMMIT_EDITMSG", "MERGE_MSG", "SQUASH_MSG", "TAG_EDITMSG"] {
+            map.insert(filename.to_string(), git_commit_scope.clone());
+        }
+
+        // Gitignore and similar files
+        let gitignore_scope = "source.gitignore".to_string();
+        for filename in [".gitignore", ".dockerignore", ".npmignore", ".hgignore"] {
+            map.insert(filename.to_string(), gitignore_scope.clone());
+        }
+
+        // Git config files
+        let gitconfig_scope = "source.gitconfig".to_string();
+        for filename in [".gitconfig", ".gitmodules"] {
+            map.insert(filename.to_string(), gitconfig_scope.clone());
+        }
+
+        // Git attributes files
+        let gitattributes_scope = "source.gitattributes".to_string();
+        map.insert(".gitattributes".to_string(), gitattributes_scope);
+
         map
     }
 
@@ -116,6 +157,62 @@ impl GrammarRegistry {
             }
             Err(e) => {
                 tracing::warn!("Failed to load embedded Zig grammar: {}", e);
+            }
+        }
+
+        // Git Rebase Todo grammar
+        match SyntaxDefinition::load_from_str(GIT_REBASE_GRAMMAR, true, Some("Git Rebase Todo")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded Git Rebase Todo grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded Git Rebase Todo grammar: {}", e);
+            }
+        }
+
+        // Git Commit Message grammar
+        match SyntaxDefinition::load_from_str(GIT_COMMIT_GRAMMAR, true, Some("Git Commit Message"))
+        {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded Git Commit Message grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded Git Commit Message grammar: {}", e);
+            }
+        }
+
+        // Gitignore grammar
+        match SyntaxDefinition::load_from_str(GITIGNORE_GRAMMAR, true, Some("Gitignore")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded Gitignore grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded Gitignore grammar: {}", e);
+            }
+        }
+
+        // Git Config grammar
+        match SyntaxDefinition::load_from_str(GITCONFIG_GRAMMAR, true, Some("Git Config")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded Git Config grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded Git Config grammar: {}", e);
+            }
+        }
+
+        // Git Attributes grammar
+        match SyntaxDefinition::load_from_str(GITATTRIBUTES_GRAMMAR, true, Some("Git Attributes")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded Git Attributes grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded Git Attributes grammar: {}", e);
             }
         }
     }

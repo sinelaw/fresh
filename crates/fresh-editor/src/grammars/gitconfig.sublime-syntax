@@ -1,0 +1,78 @@
+%YAML 1.2
+---
+# Git Config syntax highlighting for Fresh editor
+# Supports .gitconfig, .gitmodules, and git config files
+name: Git Config
+file_extensions:
+  - gitconfig
+  - gitmodules
+scope: source.gitconfig
+
+contexts:
+  main:
+    - include: comments
+    - include: sections
+    - include: key-value
+
+  comments:
+    # Comment lines starting with # or ;
+    - match: '^[#;].*$'
+      scope: comment.line.gitconfig
+    # Inline comments
+    - match: '\s+[#;].*$'
+      scope: comment.line.gitconfig
+
+  sections:
+    # Section headers like [core] or [remote "origin"]
+    - match: '^\s*(\[)([^\]\s"]+)(?:\s+"([^"]+)")?(\])'
+      captures:
+        1: punctuation.definition.section.begin.gitconfig
+        2: entity.name.section.gitconfig
+        3: string.quoted.double.subsection.gitconfig
+        4: punctuation.definition.section.end.gitconfig
+
+  key-value:
+    # Key = value pairs
+    - match: '^\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*(=)'
+      captures:
+        1: variable.other.key.gitconfig
+        2: punctuation.separator.key-value.gitconfig
+      push: value
+
+  value:
+    - include: strings
+    - include: booleans
+    - include: numbers
+    - include: colors
+    - match: '$'
+      pop: true
+
+  strings:
+    # Double-quoted strings
+    - match: '"'
+      scope: punctuation.definition.string.begin.gitconfig
+      push:
+        - meta_scope: string.quoted.double.gitconfig
+        - match: '\\.'
+          scope: constant.character.escape.gitconfig
+        - match: '"'
+          scope: punctuation.definition.string.end.gitconfig
+          pop: true
+    # Unquoted values (rest of line)
+    - match: '\S+'
+      scope: string.unquoted.gitconfig
+
+  booleans:
+    # Boolean values
+    - match: '\b(true|false|yes|no|on|off)\b'
+      scope: constant.language.boolean.gitconfig
+
+  numbers:
+    # Numbers with optional unit suffixes
+    - match: '\b\d+[kKmMgG]?\b'
+      scope: constant.numeric.gitconfig
+
+  colors:
+    # Git color values
+    - match: '\b(normal|black|red|green|yellow|blue|magenta|cyan|white|default|bold|dim|ul|blink|reverse|italic|strike|bright\w+)\b'
+      scope: support.constant.color.gitconfig

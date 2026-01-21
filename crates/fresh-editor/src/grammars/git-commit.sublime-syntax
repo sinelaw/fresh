@@ -1,0 +1,78 @@
+%YAML 1.2
+---
+# Git Commit Message syntax highlighting for Fresh editor
+# Supports COMMIT_EDITMSG, MERGE_MSG, TAG_EDITMSG, etc.
+name: Git Commit Message
+file_extensions: []
+scope: source.git-commit
+
+contexts:
+  main:
+    - include: subject-line
+    - include: comments
+    - include: diff-stat
+    - include: body
+
+  subject-line:
+    # First line is the subject - highlight if over 50 chars
+    - match: '^(?!#)'
+      push:
+        - meta_scope: markup.heading.subject.git-commit
+        - match: '$'
+          pop: true
+
+  comments:
+    # Git comment lines (everything after #)
+    - match: '^#'
+      push:
+        - meta_scope: comment.line.number-sign.git-commit
+        - include: comment-keywords
+        - include: comment-branch
+        - include: comment-changes
+        - match: '$'
+          pop: true
+
+  comment-keywords:
+    # Keywords in comments
+    - match: '\b(On branch|Your branch|Changes to be committed|Changes not staged for commit|Untracked files|modified|new file|deleted|renamed|copied|Conflicts|Merge branch|Merge remote-tracking branch|Merge tag|Squash commit|interactive rebase in progress)\b'
+      scope: keyword.other.git-commit
+
+  comment-branch:
+    # Branch names in comments
+    - match: "(?<='|origin/)([^'\\s]+)"
+      scope: entity.name.branch.git-commit
+
+  comment-changes:
+    # File paths in change lists
+    - match: '^\s+(?:modified|new file|deleted|renamed|copied):\s+(.+)$'
+      captures:
+        1: string.unquoted.filepath.git-commit
+
+  diff-stat:
+    # Diff stat lines like "file.txt | 10 ++++----"
+    - match: '^\s*(\S+)\s*\|\s*(\d+)\s*([+-]+)?'
+      captures:
+        1: string.unquoted.filepath.git-commit
+        2: constant.numeric.git-commit
+        3: markup.inserted.git-commit
+
+  body:
+    # Body text (non-comment, non-subject lines)
+    - match: '^(?!#).+'
+      scope: text.plain.git-commit
+
+    # Trailers like "Signed-off-by:", "Co-authored-by:", etc.
+    - match: '^([\w-]+)(:)\s*(.+)$'
+      captures:
+        1: keyword.other.trailer.git-commit
+        2: punctuation.separator.git-commit
+        3: string.unquoted.git-commit
+
+    # Issue/PR references like #123, GH-123
+    - match: '(?:^|\s)(#\d+|GH-\d+|[A-Z]+-\d+)(?:\s|$)'
+      captures:
+        1: constant.other.reference.git-commit
+
+    # Commit hashes (7+ hex chars)
+    - match: '\b[0-9a-fA-F]{7,40}\b'
+      scope: constant.numeric.hash.git-commit

@@ -1009,4 +1009,74 @@ mod tests {
             panic!("Expected TextMate engine for .java file");
         }
     }
+
+    #[test]
+    fn test_git_rebase_todo_highlighting() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+
+        // git-rebase-todo files should use the Git Rebase Todo grammar
+        let engine = HighlightEngine::for_file(Path::new("git-rebase-todo"), &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+        assert!(engine.has_highlighting());
+    }
+
+    #[test]
+    fn test_git_commit_message_highlighting() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+
+        // COMMIT_EDITMSG should use the Git Commit Message grammar
+        let engine = HighlightEngine::for_file(Path::new("COMMIT_EDITMSG"), &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+        assert!(engine.has_highlighting());
+
+        // MERGE_MSG should also work
+        let engine = HighlightEngine::for_file(Path::new("MERGE_MSG"), &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+        assert!(engine.has_highlighting());
+    }
+
+    #[test]
+    fn test_gitignore_highlighting() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+
+        // .gitignore should use the Gitignore grammar
+        let engine = HighlightEngine::for_file(Path::new(".gitignore"), &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+        assert!(engine.has_highlighting());
+
+        // .dockerignore should also work
+        let engine = HighlightEngine::for_file(Path::new(".dockerignore"), &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+        assert!(engine.has_highlighting());
+    }
+
+    #[test]
+    fn test_gitconfig_highlighting() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+
+        // .gitconfig should use the Git Config grammar
+        let engine = HighlightEngine::for_file(Path::new(".gitconfig"), &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+        assert!(engine.has_highlighting());
+
+        // .gitmodules should also work
+        let engine = HighlightEngine::for_file(Path::new(".gitmodules"), &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+        assert!(engine.has_highlighting());
+    }
+
+    #[test]
+    fn test_gitattributes_highlighting() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+
+        // .gitattributes should use the Git Attributes grammar
+        let engine = HighlightEngine::for_file(Path::new(".gitattributes"), &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+        assert!(engine.has_highlighting());
+    }
 }

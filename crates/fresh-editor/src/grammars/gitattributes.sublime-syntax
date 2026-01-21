@@ -1,0 +1,51 @@
+%YAML 1.2
+---
+# Git Attributes syntax highlighting for Fresh editor
+# Supports .gitattributes files
+name: Git Attributes
+file_extensions:
+  - gitattributes
+scope: source.gitattributes
+
+contexts:
+  main:
+    - include: comments
+    - include: patterns
+
+  comments:
+    # Comment lines starting with #
+    - match: '^#.*$'
+      scope: comment.line.number-sign.gitattributes
+
+  patterns:
+    # Pattern followed by attributes
+    - match: '^(\S+)'
+      captures:
+        1: string.unquoted.pattern.gitattributes
+      push: attributes
+
+  attributes:
+    # Attribute with value: attr=value
+    - match: '\s+([\w-]+)(=)(\S+)'
+      captures:
+        1: variable.other.attribute.gitattributes
+        2: punctuation.separator.gitattributes
+        3: string.unquoted.value.gitattributes
+
+    # Negated attribute: -attr
+    - match: '\s+(-)([\w-]+)'
+      captures:
+        1: keyword.operator.negation.gitattributes
+        2: variable.other.attribute.gitattributes
+
+    # Set attribute: attr
+    - match: '\s+([\w-]+)'
+      captures:
+        1: variable.other.attribute.gitattributes
+
+    # Built-in attributes
+    - match: '\b(text|binary|auto|eol|crlf|ident|filter|diff|merge|whitespace|export-ignore|export-subst|delta|encoding|working-tree-encoding|linguist-vendored|linguist-generated|linguist-documentation|linguist-detectable|linguist-language)\b'
+      scope: support.constant.attribute.gitattributes
+
+    - match: '$'
+      pop: true
