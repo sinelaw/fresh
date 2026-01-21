@@ -6316,3 +6316,296 @@ fn test_hover_no_duplicate_popup_when_moving_within_symbol() -> anyhow::Result<(
 
     Ok(())
 }
+
+/// Test that clicking outside a hover popup dismisses it and doesn't move the cursor
+///
+/// This is a regression test for a bug where:
+/// 1. Click outside hover popup should dismiss the popup
+/// 2. Click inside hover popup should NOT move the editor cursor
+/// 3. Double-click should also respect these rules
+#[test]
+fn test_hover_popup_click_dismissal() -> anyhow::Result<()> {
+    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type some text on multiple lines to have different click targets
+    harness.type_text("line one\nline two\nline three")?;
+    harness.render()?;
+
+    // Move cursor to beginning of line 1
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL)?;
+    harness.render()?;
+
+    // Record initial cursor position (currently unused but kept for future assertions)
+    let _initial_cursor = harness.cursor_position();
+
+    // Show a transient hover popup (simulating LSP hover response)
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Hover Info".to_string()),
+            description: None,
+            transient: true, // This is key - hover popups are transient
+            content: PopupContentData::Text(vec![
+                "fn example() -> i32".to_string(),
+                "Returns an example value".to_string(),
+            ]),
+            position: PopupPositionData::Fixed { x: 20, y: 5 },
+            width: 30,
+            max_height: 10,
+            bordered: true,
+        },
+    });
+    harness.render()?;
+
+    // Verify popup is visible
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Hover Info"),
+        "Hover popup should be visible. Screen:\n{screen}"
+    );
+
+    // Click OUTSIDE the popup (at row 15, which is below the popup at y=5)
+    // This should dismiss the popup
+    harness.mouse_click(5, 15)?;
+
+    // Verify popup is dismissed
+    let screen_after_click = harness.screen_to_string();
+    assert!(
+        !screen_after_click.contains("Hover Info"),
+        "Hover popup should be dismissed after clicking outside. Screen:\n{screen_after_click}"
+    );
+
+    Ok(())
+}
+
+/// Test that clicking inside a hover popup does NOT move the editor cursor
+#[test]
+fn test_hover_popup_click_inside_does_not_move_cursor() -> anyhow::Result<()> {
+    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type some text
+    harness.type_text("line one\nline two\nline three")?;
+    harness.render()?;
+
+    // Move cursor to a known position (beginning of file)
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL)?;
+    harness.render()?;
+
+    let cursor_before = harness.cursor_position();
+
+    // Show a hover popup at a fixed position
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Hover Info".to_string()),
+            description: None,
+            transient: true,
+            content: PopupContentData::Text(vec![
+                "fn example() -> i32".to_string(),
+                "Returns an example value".to_string(),
+                "More documentation here".to_string(),
+            ]),
+            // Position the popup in the middle of the screen
+            position: PopupPositionData::Fixed { x: 10, y: 5 },
+            width: 40,
+            max_height: 10,
+            bordered: true,
+        },
+    });
+    harness.render()?;
+
+    // Verify popup is visible
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Hover Info"),
+        "Hover popup should be visible"
+    );
+
+    // Click INSIDE the popup (at position within the popup bounds)
+    // Popup is at x=10, y=5, width=40, so clicking at (25, 7) should be inside
+    harness.mouse_click(25, 7)?;
+
+    // Cursor should NOT have moved
+    let cursor_after = harness.cursor_position();
+    assert_eq!(
+        cursor_before, cursor_after,
+        "Cursor should not move when clicking inside hover popup. \
+         Before: {:?}, After: {:?}",
+        cursor_before, cursor_after
+    );
+
+    // Popup should still be visible (clicking inside doesn't dismiss)
+    let screen_after = harness.screen_to_string();
+    assert!(
+        screen_after.contains("Hover Info"),
+        "Hover popup should still be visible after clicking inside"
+    );
+
+    Ok(())
+}
+
+/// Test that double-clicking outside hover popup dismisses it
+#[test]
+fn test_hover_popup_double_click_dismissal() -> anyhow::Result<()> {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type some text
+    harness.type_text("hello world on line one")?;
+    harness.render()?;
+
+    // Show a transient hover popup
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Hover Info".to_string()),
+            description: None,
+            transient: true,
+            content: PopupContentData::Text(vec!["Test hover content".to_string()]),
+            position: PopupPositionData::Fixed { x: 30, y: 5 },
+            width: 30,
+            max_height: 10,
+            bordered: true,
+        },
+    });
+    harness.render()?;
+
+    // Verify popup is visible
+    assert!(
+        harness.screen_to_string().contains("Hover Info"),
+        "Hover popup should be visible"
+    );
+
+    // Simulate double-click OUTSIDE the popup by sending two quick clicks
+    // The harness double-click detection is time-based, so we send clicks in quick succession
+    let click_col = 5_u16;
+    let click_row = 15_u16; // Below the popup
+
+    // First click
+    harness.send_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: click_col,
+        row: click_row,
+        modifiers: KeyModifiers::empty(),
+    })?;
+    harness.send_mouse(MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        column: click_col,
+        row: click_row,
+        modifiers: KeyModifiers::empty(),
+    })?;
+
+    // Second click (double-click)
+    harness.send_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: click_col,
+        row: click_row,
+        modifiers: KeyModifiers::empty(),
+    })?;
+    harness.send_mouse(MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        column: click_col,
+        row: click_row,
+        modifiers: KeyModifiers::empty(),
+    })?;
+    harness.render()?;
+
+    // Popup should be dismissed after the double-click
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Hover Info"),
+        "Hover popup should be dismissed after double-clicking outside. Screen:\n{screen}"
+    );
+
+    Ok(())
+}
+
+/// Test that double-clicking inside hover popup does not affect editor
+#[test]
+fn test_hover_popup_double_click_inside_blocked() -> anyhow::Result<()> {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type some text with a word that could be selected by double-click
+    harness.type_text("hello world")?;
+    harness.render()?;
+
+    // Move cursor to start
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL)?;
+    harness.render()?;
+
+    let cursor_before = harness.cursor_position();
+
+    // Show a hover popup positioned over the text
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Hover".to_string()),
+            description: None,
+            transient: true,
+            content: PopupContentData::Text(vec!["Documentation".to_string()]),
+            // Position popup to overlap with text area
+            position: PopupPositionData::Fixed { x: 1, y: 2 },
+            width: 30,
+            max_height: 5,
+            bordered: true,
+        },
+    });
+    harness.render()?;
+
+    // Double-click inside the popup
+    let click_col = 10_u16; // Inside popup
+    let click_row = 3_u16; // Inside popup (popup is at y=2, height includes border)
+
+    // First click
+    harness.send_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: click_col,
+        row: click_row,
+        modifiers: KeyModifiers::empty(),
+    })?;
+    harness.send_mouse(MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        column: click_col,
+        row: click_row,
+        modifiers: KeyModifiers::empty(),
+    })?;
+
+    // Second click (double-click)
+    harness.send_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: click_col,
+        row: click_row,
+        modifiers: KeyModifiers::empty(),
+    })?;
+    harness.send_mouse(MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        column: click_col,
+        row: click_row,
+        modifiers: KeyModifiers::empty(),
+    })?;
+    harness.render()?;
+
+    // Cursor should not have moved (double-click should not select word in editor)
+    let cursor_after = harness.cursor_position();
+    assert_eq!(
+        cursor_before, cursor_after,
+        "Cursor should not move when double-clicking inside hover popup"
+    );
+
+    // Popup should still be visible
+    assert!(
+        harness.screen_to_string().contains("Hover"),
+        "Popup should still be visible after double-clicking inside"
+    );
+
+    Ok(())
+}

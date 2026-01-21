@@ -852,6 +852,15 @@ impl Editor {
     pub(super) fn handle_mouse_double_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         tracing::debug!("handle_mouse_double_click at col={}, row={}", col, row);
 
+        // Handle popups: dismiss if clicking outside, block if clicking inside
+        if self.is_mouse_over_any_popup(col, row) {
+            // Double-click inside popup - block from reaching editor
+            return Ok(());
+        } else {
+            // Double-click outside popup - dismiss transient popups
+            self.dismiss_transient_popups();
+        }
+
         // Is it in the file open dialog?
         if self.handle_file_open_double_click(col, row) {
             return Ok(());
@@ -959,6 +968,12 @@ impl Editor {
             if let Some(result) = self.handle_tab_context_menu_click(col, row) {
                 return result;
             }
+        }
+
+        // Dismiss transient popups (like hover) when clicking outside them
+        // This check must happen before we process the click elsewhere
+        if !self.is_mouse_over_any_popup(col, row) {
+            self.dismiss_transient_popups();
         }
 
         // Check if click is on suggestions (command palette, autocomplete)
@@ -1121,6 +1136,12 @@ impl Editor {
                     return Ok(());
                 }
             }
+        }
+
+        // If click is inside a popup's outer bounds but wasn't handled above,
+        // block it from reaching the editor (e.g., clicking on popup border)
+        if self.is_mouse_over_any_popup(col, row) {
+            return Ok(());
         }
 
         // Check if click is on the file browser popup
