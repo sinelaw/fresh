@@ -228,12 +228,68 @@ mod tests {
     use super::*;
 
     /// Generate, validate, format, and write fresh.d.ts
-    /// Run with: cargo test --features plugins write_fresh_dts_file -- --ignored --nocapture
+    /// Run with: cargo test -p fresh-plugin-runtime write_fresh_dts_file -- --ignored --nocapture
     #[test]
     #[ignore]
     fn write_fresh_dts_file() {
         // write_fresh_dts validates syntax and formats before writing
         write_fresh_dts().expect("Failed to write fresh.d.ts");
         println!("Successfully generated, validated, and formatted fresh.d.ts");
+    }
+
+    /// Type check all plugins using TypeScript compiler
+    /// Skips if tsc is not available in PATH
+    /// Run with: cargo test -p fresh-plugin-runtime type_check_plugins -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn type_check_plugins() {
+        // Check if tsc is available
+        let tsc_check = std::process::Command::new("tsc").arg("--version").output();
+
+        match tsc_check {
+            Ok(output) if output.status.success() => {
+                println!(
+                    "Found tsc: {}",
+                    String::from_utf8_lossy(&output.stdout).trim()
+                );
+            }
+            _ => {
+                println!("tsc not found in PATH, skipping type check test");
+                return;
+            }
+        }
+
+        // Find the check-types.sh script
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        let script_path = std::path::Path::new(&manifest_dir)
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("crates/fresh-editor/plugins/check-types.sh"))
+            .expect("Failed to find check-types.sh");
+
+        println!("Running type check script: {}", script_path.display());
+
+        // Run the check-types.sh script
+        let output = std::process::Command::new("bash")
+            .arg(&script_path)
+            .output()
+            .expect("Failed to run check-types.sh");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        println!("stdout:\n{}", stdout);
+        if !stderr.is_empty() {
+            println!("stderr:\n{}", stderr);
+        }
+
+        // The script outputs "X file(s) had type errors" if there are errors
+        if stdout.contains("had type errors") || !output.status.success() {
+            panic!(
+                "TypeScript type check failed. Run 'crates/fresh-editor/plugins/check-types.sh' to see details."
+            );
+        }
+
+        println!("All plugins type check successfully!");
     }
 }
