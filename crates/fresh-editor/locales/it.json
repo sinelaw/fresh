@@ -189,6 +189,7 @@
   "action.set_bookmark": "Imposta segnalibro '%{key}'",
   "action.set_compose_width": "Imposta larghezza composizione",
   "action.set_line_ending": "Imposta formato fine riga (LF/CRLF)",
+  "action.set_language": "Imposta lingua/evidenziazione sintassi",
   "action.set_mark": "Imposta marcatore (inizio selezione)",
   "action.set_tab_size": "Imposta dimensione tabulazione per il buffer",
   "action.settings_activate": "Attiva impostazione",

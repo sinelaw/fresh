@@ -60,6 +60,8 @@ pub enum PromptType {
     SetTabSize,
     /// Set line ending format for current buffer
     SetLineEnding,
+    /// Set language/syntax highlighting for current buffer
+    SetLanguage,
     /// Stop a running LSP server (select from list)
     StopLspServer,
     /// Select a theme (select from list)

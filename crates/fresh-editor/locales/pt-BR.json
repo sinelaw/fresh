@@ -189,6 +189,7 @@
   "action.set_bookmark": "Definir marcador '%{key}'",
   "action.set_compose_width": "Definir largura de composição",
   "action.set_line_ending": "Definir formato de fim de linha (LF/CRLF)",
+  "action.set_language": "Definir idioma/destaque de sintaxe",
   "action.set_mark": "Definir marca (iniciar seleção)",
   "action.set_tab_size": "Definir tamanho da tabulação para buffer atual",
   "action.settings_activate": "Ativar configuração",

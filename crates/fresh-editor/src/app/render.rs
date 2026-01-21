@@ -554,6 +554,9 @@ impl Editor {
                 Some(HoverTarget::StatusBarLineEndingIndicator) => {
                     StatusBarHover::LineEndingIndicator
                 }
+                Some(HoverTarget::StatusBarLanguageIndicator) => {
+                    StatusBarHover::LanguageIndicator
+                }
                 _ => StatusBarHover::None,
             };
 
@@ -582,6 +585,7 @@ impl Editor {
             self.cached_layout.status_bar_warning_area = status_bar_layout.warning_badge;
             self.cached_layout.status_bar_line_ending_area =
                 status_bar_layout.line_ending_indicator;
+            self.cached_layout.status_bar_language_area = status_bar_layout.language_indicator;
         }
 
         // Render search options bar when in search prompt

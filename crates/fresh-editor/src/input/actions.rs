@@ -2275,6 +2275,7 @@ pub fn action_to_events(
         | Action::SettingsDecrement
         | Action::SetTabSize
         | Action::SetLineEnding
+        | Action::SetLanguage
         | Action::ToggleIndentationStyle
         | Action::ToggleTabIndicators
         | Action::ToggleDebugHighlights

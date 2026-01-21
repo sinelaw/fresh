@@ -189,6 +189,7 @@
   "action.set_bookmark": "Установить закладку '%{key}'",
   "action.set_compose_width": "Установить ширину композиции",
   "action.set_line_ending": "Установить формат конца строки (LF/CRLF)",
+  "action.set_language": "Установить язык/подсветку синтаксиса",
   "action.set_mark": "Установить метку (начать выделение)",
   "action.set_tab_size": "Установить размер табуляции для текущего буфера",
   "action.settings_activate": "Активировать настройку",

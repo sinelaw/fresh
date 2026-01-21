@@ -645,6 +645,9 @@ impl Editor {
             Action::SetLineEnding => {
                 self.start_set_line_ending_prompt();
             }
+            Action::SetLanguage => {
+                self.start_set_language_prompt();
+            }
             Action::ToggleIndentationStyle => {
                 if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
                     state.use_tabs = !state.use_tabs;
@@ -1952,6 +1955,73 @@ impl Editor {
                 prompt.selected_suggestion = Some(current_index);
                 let (_, name, desc) = options[current_index];
                 prompt.input = format!("{} ({})", name, desc);
+                prompt.cursor_pos = prompt.input.len();
+            }
+        }
+    }
+
+    /// Start the language selection prompt
+    fn start_set_language_prompt(&mut self) {
+        let current_language = self.active_state().language.clone();
+
+        // Available languages with display names
+        let options = [
+            ("text", "Plain Text"),
+            ("rust", "Rust"),
+            ("python", "Python"),
+            ("javascript", "JavaScript"),
+            ("typescript", "TypeScript"),
+            ("html", "HTML"),
+            ("css", "CSS"),
+            ("c", "C"),
+            ("cpp", "C++"),
+            ("go", "Go"),
+            ("json", "JSON"),
+            ("java", "Java"),
+            ("c_sharp", "C#"),
+            ("php", "PHP"),
+            ("ruby", "Ruby"),
+            ("bash", "Bash"),
+            ("lua", "Lua"),
+            ("pascal", "Pascal"),
+            ("odin", "Odin"),
+        ];
+
+        let current_index = options
+            .iter()
+            .position(|(lang, _)| *lang == current_language)
+            .unwrap_or(0);
+
+        let suggestions: Vec<crate::input::commands::Suggestion> = options
+            .iter()
+            .map(|(lang, display_name)| {
+                let is_current = *lang == current_language;
+                crate::input::commands::Suggestion {
+                    text: display_name.to_string(),
+                    description: if is_current {
+                        Some("current".to_string())
+                    } else {
+                        None
+                    },
+                    value: Some(lang.to_string()),
+                    disabled: false,
+                    keybinding: None,
+                    source: None,
+                }
+            })
+            .collect();
+
+        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+            "Language: ".to_string(),
+            PromptType::SetLanguage,
+            suggestions,
+        ));
+
+        if let Some(prompt) = self.prompt.as_mut() {
+            if !prompt.suggestions.is_empty() {
+                prompt.selected_suggestion = Some(current_index);
+                let (_, display_name) = options[current_index];
+                prompt.input = display_name.to_string();
                 prompt.cursor_pos = prompt.input.len();
             }
         }

@@ -189,6 +189,7 @@
   "action.set_bookmark": "Définir le signet '%{key}'",
   "action.set_compose_width": "Définir la largeur de composition",
   "action.set_line_ending": "Définir le format de fin de ligne (LF/CRLF)",
+  "action.set_language": "Définir la langue/coloration syntaxique",
   "action.set_mark": "Définir la marque (démarrer la sélection)",
   "action.set_tab_size": "Définir la taille de tabulation pour le tampon actuel",
   "action.settings_activate": "Activer le paramètre",

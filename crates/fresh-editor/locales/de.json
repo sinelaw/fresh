@@ -189,6 +189,7 @@
   "action.set_bookmark": "Lesezeichen '%{key}' setzen",
   "action.set_compose_width": "Schreibbreite setzen",
   "action.set_line_ending": "Zeilenende-Format setzen (LF/CRLF)",
+  "action.set_language": "Sprache/Syntaxhervorhebung setzen",
   "action.set_mark": "Markierung setzen (Auswahl starten)",
   "action.set_tab_size": "Tab-Größe für aktuellen Buffer setzen",
   "action.settings_activate": "Einstellung aktivieren",

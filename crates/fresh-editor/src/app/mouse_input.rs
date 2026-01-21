@@ -810,6 +810,15 @@ impl Editor {
                     }
                 }
 
+                // Check language indicator area
+                if let Some((lang_row, lang_start, lang_end)) =
+                    self.cached_layout.status_bar_language_area
+                {
+                    if row == lang_row && col >= lang_start && col < lang_end {
+                        return Some(HoverTarget::StatusBarLanguageIndicator);
+                    }
+                }
+
                 // Check LSP indicator area
                 if let Some((lsp_row, lsp_start, lsp_end)) = self.cached_layout.status_bar_lsp_area
                 {
@@ -1235,6 +1244,15 @@ impl Editor {
                 {
                     if row == le_row && col >= le_start && col < le_end {
                         return self.handle_action(Action::SetLineEnding);
+                    }
+                }
+
+                // Check language indicator - click opens language selector
+                if let Some((lang_row, lang_start, lang_end)) =
+                    self.cached_layout.status_bar_language_area
+                {
+                    if row == lang_row && col >= lang_start && col < lang_end {
+                        return self.handle_action(Action::SetLanguage);
                     }
                 }
 

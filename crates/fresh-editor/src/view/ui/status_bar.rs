@@ -22,6 +22,8 @@ pub struct StatusBarLayout {
     pub warning_badge: Option<(u16, u16, u16)>,
     /// Line ending indicator area (row, start_col, end_col)
     pub line_ending_indicator: Option<(u16, u16, u16)>,
+    /// Language indicator area (row, start_col, end_col)
+    pub language_indicator: Option<(u16, u16, u16)>,
 }
 
 /// Status bar hover state for styling clickable indicators
@@ -35,6 +37,8 @@ pub enum StatusBarHover {
     WarningBadge,
     /// Mouse is over the line ending indicator
     LineEndingIndicator,
+    /// Mouse is over the language indicator
+    LanguageIndicator,
 }
 
 /// Which search option checkbox is being hovered
@@ -585,11 +589,15 @@ impl StatusBarRenderer {
         let left_status = format!("{base_status}{chord_display}{message_suffix}");
 
         // Build right-side indicators (these stay fixed on the right)
-        // Order: [Line ending] [LSP indicator] [warning badge] [update] [Palette]
+        // Order: [Line ending] [Language] [LSP indicator] [warning badge] [update] [Palette]
 
         // Line ending indicator (clickable to change format)
         let line_ending_text = format!(" {} ", state.buffer.line_ending().display_name());
         let line_ending_width = str_width(&line_ending_text);
+
+        // Language indicator (clickable to change language)
+        let language_text = format!(" {} ", &state.language);
+        let language_width = str_width(&language_text);
 
         // LSP indicator (right-aligned, with colored background if warning/error)
         let lsp_indicator = if !lsp_status.is_empty() {
@@ -624,10 +632,11 @@ impl StatusBarRenderer {
         let padded_cmd_palette = format!(" {} ", cmd_palette_indicator);
 
         // Calculate available width and right side width
-        // Right side: [Line ending] [LSP indicator] [warning badge] [update] [Palette]
+        // Right side: [Line ending] [Language] [LSP indicator] [warning badge] [update] [Palette]
         let available_width = area.width as usize;
         let cmd_palette_width = str_width(&padded_cmd_palette);
         let right_side_width = line_ending_width
+            + language_width
             + lsp_indicator_width
             + warning_badge_width
             + update_width
@@ -722,6 +731,25 @@ impl StatusBarRenderer {
                 }
                 spans.push(Span::styled(line_ending_text.clone(), style));
                 current_col += line_ending_width as u16;
+            }
+
+            // Add language indicator (clickable to change language)
+            {
+                let is_hovering = hover == StatusBarHover::LanguageIndicator;
+                // Record position for click detection
+                layout.language_indicator =
+                    Some((area.y, current_col, current_col + language_width as u16));
+                let (fg, bg) = if is_hovering {
+                    (theme.menu_hover_fg, theme.menu_hover_bg)
+                } else {
+                    (theme.status_bar_fg, theme.status_bar_bg)
+                };
+                let mut style = Style::default().fg(fg).bg(bg);
+                if is_hovering {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                spans.push(Span::styled(language_text.clone(), style));
+                current_col += language_width as u16;
             }
 
             // Add LSP indicator with colored background if warning/error

@@ -189,6 +189,7 @@
   "action.set_bookmark": "Встановити закладку '%{key}'",
   "action.set_compose_width": "Встановити ширину композиції",
   "action.set_line_ending": "Встановити формат кінця рядка (LF/CRLF)",
+  "action.set_language": "Встановити мову/підсвічування синтаксису",
   "action.set_mark": "Встановити позначку (почати виділення)",
   "action.set_tab_size": "Встановити розмір табуляції для поточного буфера",
   "action.settings_activate": "Активувати налаштування",

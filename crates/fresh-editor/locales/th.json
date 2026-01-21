@@ -189,6 +189,7 @@
   "action.set_bookmark": "ตั้งบุ๊คมาร์ค '%{key}'",
   "action.set_compose_width": "ตั้งค่าความกว้างการเขียน",
   "action.set_line_ending": "ตั้งค่ารูปแบบการสิ้นสุดบรรทัด",
+  "action.set_language": "ตั้งค่าภาษา/การเน้นไวยากรณ์",
   "action.set_mark": "ตั้งมาร์ค (เริ่มการเลือก)",
   "action.set_tab_size": "ตั้งค่าขนาดแท็บ",
   "action.settings_activate": "เปิดใช้งานการตั้งค่า",

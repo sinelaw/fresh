@@ -189,6 +189,7 @@
   "action.set_bookmark": "북마크 '%{key}' 설정",
   "action.set_compose_width": "작성 너비 설정",
   "action.set_line_ending": "줄 끝 형식 설정 (LF/CRLF)",
+  "action.set_language": "언어/구문 강조 설정",
   "action.set_mark": "마크 설정 (선택 시작)",
   "action.set_tab_size": "현재 버퍼의 탭 크기 설정",
   "action.settings_activate": "설정 활성화",

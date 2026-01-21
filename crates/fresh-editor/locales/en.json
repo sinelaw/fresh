@@ -188,6 +188,7 @@
   "action.set_bookmark": "Set bookmark '%{key}'",
   "action.set_compose_width": "Set compose width",
   "action.set_line_ending": "Set line ending format (LF/CRLF)",
+  "action.set_language": "Set language/syntax highlighting",
   "action.set_mark": "Set mark (start selection)",
   "action.set_tab_size": "Set tab size for current buffer",
   "action.settings_activate": "Activate setting",

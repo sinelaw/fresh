@@ -189,6 +189,7 @@
   "action.set_bookmark": "Nastavit záložku '%{key}'",
   "action.set_compose_width": "Nastavit šířku kompozice",
   "action.set_line_ending": "Nastavit formát konce řádku (LF/CRLF)",
+  "action.set_language": "Nastavit jazyk/zvýraznění syntaxe",
   "action.set_mark": "Nastavit značku (zahájit výběr)",
   "action.set_tab_size": "Nastavit velikost tabulátoru pro aktuální buffer",
   "action.settings_activate": "Aktivovat nastavení",

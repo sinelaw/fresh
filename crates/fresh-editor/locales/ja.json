@@ -189,6 +189,7 @@
   "action.set_bookmark": "ブックマーク '%{key}' を設定",
   "action.set_compose_width": "作成幅を設定",
   "action.set_line_ending": "行末形式を設定 (LF/CRLF)",
+  "action.set_language": "言語/構文ハイライトを設定",
   "action.set_mark": "マークを設定 (選択開始)",
   "action.set_tab_size": "現在のバッファのタブサイズを設定",
   "action.settings_activate": "設定をアクティブ化",
