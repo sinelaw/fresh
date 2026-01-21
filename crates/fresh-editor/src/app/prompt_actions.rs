@@ -594,27 +594,31 @@ impl Editor {
         if trimmed == "Plain Text" || trimmed.to_lowercase() == "text" {
             let buffer_id = self.active_buffer();
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                state.language = "text".to_string();
+                state.language = "Plain Text".to_string();
                 state.highlighter = HighlightEngine::None;
                 self.set_status_message("Language set to Plain Text".to_string());
             }
             return;
         }
 
-        // Try to find the language by display name or ID using the Language enum
-        let language = Language::all()
-            .iter()
-            .find(|lang| lang.display_name() == trimmed || lang.id() == trimmed.to_lowercase())
-            .copied()
-            .or_else(|| Language::from_id(trimmed));
+        // Try to find the syntax by name in the grammar registry
+        // This supports all syntect syntaxes (100+) plus user-configured grammars
+        if self.grammar_registry.find_syntax_by_name(trimmed).is_some() {
+            // Try to detect a tree-sitter language for non-highlighting features
+            // (indentation, semantic highlighting). This is best-effort since
+            // tree-sitter only supports ~18 languages while syntect supports 100+.
+            let ts_language = Language::from_name(trimmed);
 
-        if let Some(lang) = language {
             let buffer_id = self.active_buffer();
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                state.language = lang.id().to_string();
-                state.highlighter = HighlightEngine::for_language(lang);
-                state.reference_highlighter.set_language(&lang);
-                self.set_status_message(format!("Language set to {}", lang.display_name()));
+                state.language = trimmed.to_string();
+                state.highlighter =
+                    HighlightEngine::for_syntax_name(trimmed, &self.grammar_registry, ts_language);
+                // Update reference highlighter if tree-sitter language is available
+                if let Some(lang) = ts_language {
+                    state.reference_highlighter.set_language(&lang);
+                }
+                self.set_status_message(format!("Language set to {}", trimmed));
             }
         } else {
             self.set_status_message(format!("Unknown language: {}", input));

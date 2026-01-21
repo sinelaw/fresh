@@ -640,7 +640,7 @@ impl HighlightEngine {
         Self::None
     }
 
-    /// Create a highlighting engine for a specific language.
+    /// Create a highlighting engine for a specific tree-sitter language.
     ///
     /// This is useful when manually setting the language (e.g., from UI).
     /// Uses tree-sitter for the specified language.
@@ -650,6 +650,39 @@ impl HighlightEngine {
         } else {
             Self::None
         }
+    }
+
+    /// Create a highlighting engine for a syntax by name.
+    ///
+    /// This looks up the syntax in the grammar registry and creates a TextMate
+    /// highlighter for it. This supports all syntect syntaxes (100+) including
+    /// user-configured grammars.
+    ///
+    /// The `ts_language` parameter optionally provides a tree-sitter language
+    /// for non-highlighting features (indentation, semantic highlighting).
+    pub fn for_syntax_name(
+        name: &str,
+        registry: &GrammarRegistry,
+        ts_language: Option<Language>,
+    ) -> Self {
+        let syntax_set = registry.syntax_set_arc();
+
+        if let Some(syntax) = registry.find_syntax_by_name(name) {
+            // Find the index of this syntax in the set
+            if let Some(index) = syntax_set
+                .syntaxes()
+                .iter()
+                .position(|s| s.name == syntax.name)
+            {
+                return Self::TextMate(Box::new(TextMateEngine::with_language(
+                    syntax_set,
+                    index,
+                    ts_language,
+                )));
+            }
+        }
+
+        Self::None
     }
 
     /// Highlight the visible viewport

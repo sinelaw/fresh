@@ -585,6 +585,52 @@ impl Language {
             _ => None,
         }
     }
+
+    /// Try to map a syntect syntax name to a tree-sitter Language.
+    ///
+    /// This is used to get tree-sitter features (indentation, semantic highlighting)
+    /// when using a syntect grammar for syntax highlighting. This is best-effort since
+    /// tree-sitter only supports ~18 languages while syntect supports 100+.
+    ///
+    /// Syntect uses names like "Rust", "Python", "JavaScript", "JSON", "C++", "C#",
+    /// "Bourne Again Shell (bash)", etc.
+    pub fn from_name(name: &str) -> Option<Self> {
+        // First try exact display name match
+        for lang in Self::all() {
+            if lang.display_name() == name {
+                return Some(*lang);
+            }
+        }
+
+        // Then try case-insensitive matching and common aliases
+        let name_lower = name.to_lowercase();
+        match name_lower.as_str() {
+            "rust" => Some(Self::Rust),
+            "python" => Some(Self::Python),
+            "javascript" | "javascript (babel)" => Some(Self::JavaScript),
+            "typescript" | "typescriptreact" => Some(Self::TypeScript),
+            "html" => Some(Self::HTML),
+            "css" => Some(Self::CSS),
+            "c" => Some(Self::C),
+            "c++" => Some(Self::Cpp),
+            "go" | "golang" => Some(Self::Go),
+            "json" => Some(Self::Json),
+            "java" => Some(Self::Java),
+            "c#" => Some(Self::CSharp),
+            "php" => Some(Self::Php),
+            "ruby" => Some(Self::Ruby),
+            "lua" => Some(Self::Lua),
+            "pascal" => Some(Self::Pascal),
+            "odin" => Some(Self::Odin),
+            _ => {
+                // Try matching shell variants
+                if name_lower.contains("bash") || name_lower.contains("shell") {
+                    return Some(Self::Bash);
+                }
+                None
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for Language {

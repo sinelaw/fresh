@@ -1962,38 +1962,44 @@ impl Editor {
 
     /// Start the language selection prompt
     fn start_set_language_prompt(&mut self) {
-        use crate::primitives::highlighter::Language;
-
         let current_language = self.active_state().language.clone();
 
-        // Build suggestions from Language enum + Plain Text option
+        // Build suggestions from all available syntect syntaxes + Plain Text option
         let mut suggestions: Vec<crate::input::commands::Suggestion> = vec![
             // Plain Text option (no syntax highlighting)
             crate::input::commands::Suggestion {
                 text: "Plain Text".to_string(),
-                description: if current_language == "text" {
+                description: if current_language == "Plain Text" || current_language == "text" {
                     Some("current".to_string())
                 } else {
                     None
                 },
-                value: Some("text".to_string()),
+                value: Some("Plain Text".to_string()),
                 disabled: false,
                 keybinding: None,
                 source: None,
             },
         ];
 
-        // Add all languages from the Language enum
-        for lang in Language::all() {
-            let is_current = lang.id() == current_language;
+        // Add all available syntaxes from the grammar registry (100+ languages)
+        let mut syntax_names: Vec<&str> = self.grammar_registry.available_syntaxes();
+        // Sort alphabetically for easier navigation
+        syntax_names.sort_unstable_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+
+        for syntax_name in syntax_names {
+            // Skip "Plain Text" as we already added it at the top
+            if syntax_name == "Plain Text" {
+                continue;
+            }
+            let is_current = syntax_name == current_language;
             suggestions.push(crate::input::commands::Suggestion {
-                text: lang.display_name().to_string(),
+                text: syntax_name.to_string(),
                 description: if is_current {
                     Some("current".to_string())
                 } else {
                     None
                 },
-                value: Some(lang.id().to_string()),
+                value: Some(syntax_name.to_string()),
                 disabled: false,
                 keybinding: None,
                 source: None,
