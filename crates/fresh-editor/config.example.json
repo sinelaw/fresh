@@ -269,6 +269,63 @@
       "textmate_grammar": null,
       "show_whitespace_tabs": true,
       "use_tabs": false
+    },
+    "java": {
+      "extensions": [
+        "java"
+      ],
+      "filenames": [],
+      "grammar": "java",
+      "comment_prefix": "//",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true,
+      "use_tabs": false
+    },
+    "zig": {
+      "extensions": [
+        "zig"
+      ],
+      "filenames": [],
+      "grammar": "zig",
+      "comment_prefix": "//",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true,
+      "use_tabs": false
+    },
+    "latex": {
+      "extensions": [
+        "tex",
+        "latex",
+        "ltx",
+        "sty",
+        "cls",
+        "bib"
+      ],
+      "filenames": [],
+      "grammar": "latex",
+      "comment_prefix": "%",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true,
+      "use_tabs": false
+    },
+    "templ": {
+      "extensions": [
+        "templ"
+      ],
+      "filenames": [],
+      "grammar": "go",
+      "comment_prefix": "//",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true,
+      "use_tabs": false
     }
   },
   "lsp": {
@@ -428,6 +485,66 @@
     "go": {
       "command": "gopls",
       "args": [],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "java": {
+      "command": "jdtls",
+      "args": [],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "zig": {
+      "command": "zls",
+      "args": [],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "latex": {
+      "command": "texlab",
+      "args": [],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "markdown": {
+      "command": "marksman",
+      "args": ["server"],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "templ": {
+      "command": "templ",
+      "args": ["lsp"],
       "enabled": true,
       "auto_start": false,
       "process_limits": {
