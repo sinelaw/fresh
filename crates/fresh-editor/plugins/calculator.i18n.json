@@ -4,90 +4,90 @@
     "cmd.calculator_desc": "Open calculator",
     "status.loaded": "Calculator plugin loaded",
     "status.opened": "Calculator opened",
-    "status.copied": "Copied: {value}"
+    "status.copied": "Copied: %{value}"
   },
   "cs": {
     "cmd.calculator": "Kalkulacka",
     "cmd.calculator_desc": "Otevrit kalkulacku",
     "status.loaded": "Plugin kalkulacky nacten",
     "status.opened": "Kalkulacka otevrena",
-    "status.copied": "Zkopirovano: {value}"
+    "status.copied": "Zkopirovano: %{value}"
   },
   "de": {
     "cmd.calculator": "Taschenrechner",
     "cmd.calculator_desc": "Taschenrechner offnen",
     "status.loaded": "Taschenrechner-Plugin geladen",
     "status.opened": "Taschenrechner geoffnet",
-    "status.copied": "Kopiert: {value}"
+    "status.copied": "Kopiert: %{value}"
   },
   "es": {
     "cmd.calculator": "Calculadora",
     "cmd.calculator_desc": "Abrir calculadora",
     "status.loaded": "Plugin de calculadora cargado",
     "status.opened": "Calculadora abierta",
-    "status.copied": "Copiado: {value}"
+    "status.copied": "Copiado: %{value}"
   },
   "fr": {
     "cmd.calculator": "Calculatrice",
     "cmd.calculator_desc": "Ouvrir la calculatrice",
     "status.loaded": "Plugin calculatrice charge",
     "status.opened": "Calculatrice ouverte",
-    "status.copied": "Copie: {value}"
+    "status.copied": "Copie: %{value}"
   },
   "it": {
     "cmd.calculator": "Calcolatrice",
     "cmd.calculator_desc": "Apri calcolatrice",
     "status.loaded": "Plugin calcolatrice caricato",
     "status.opened": "Calcolatrice aperta",
-    "status.copied": "Copiato: {value}"
+    "status.copied": "Copiato: %{value}"
   },
   "ja": {
     "cmd.calculator": "電卓",
     "cmd.calculator_desc": "電卓を開く",
     "status.loaded": "電卓プラグインが読み込まれました",
     "status.opened": "電卓を開きました",
-    "status.copied": "コピーしました: {value}"
+    "status.copied": "コピーしました: %{value}"
   },
   "ko": {
     "cmd.calculator": "계산기",
     "cmd.calculator_desc": "계산기 열기",
     "status.loaded": "계산기 플러그인이 로드되었습니다",
     "status.opened": "계산기가 열렸습니다",
-    "status.copied": "복사됨: {value}"
+    "status.copied": "복사됨: %{value}"
   },
   "pt-BR": {
     "cmd.calculator": "Calculadora",
     "cmd.calculator_desc": "Abrir calculadora",
     "status.loaded": "Plugin de calculadora carregado",
     "status.opened": "Calculadora aberta",
-    "status.copied": "Copiado: {value}"
+    "status.copied": "Copiado: %{value}"
   },
   "ru": {
     "cmd.calculator": "Калькулятор",
     "cmd.calculator_desc": "Открыть калькулятор",
     "status.loaded": "Плагин калькулятора загружен",
     "status.opened": "Калькулятор открыт",
-    "status.copied": "Скопировано: {value}"
+    "status.copied": "Скопировано: %{value}"
   },
   "th": {
     "cmd.calculator": "เครื่องคิดเลข",
     "cmd.calculator_desc": "เปิดเครื่องคิดเลข",
     "status.loaded": "โหลดปลั๊กอินเครื่องคิดเลขแล้ว",
     "status.opened": "เปิดเครื่องคิดเลขแล้ว",
-    "status.copied": "คัดลอกแล้ว: {value}"
+    "status.copied": "คัดลอกแล้ว: %{value}"
   },
   "uk": {
     "cmd.calculator": "Калькулятор",
     "cmd.calculator_desc": "Відкрити калькулятор",
     "status.loaded": "Плагін калькулятора завантажено",
     "status.opened": "Калькулятор відкрито",
-    "status.copied": "Скопійовано: {value}"
+    "status.copied": "Скопійовано: %{value}"
   },
   "zh-CN": {
     "cmd.calculator": "计算器",
     "cmd.calculator_desc": "打开计算器",
     "status.loaded": "计算器插件已加载",
     "status.opened": "计算器已打开",
-    "status.copied": "已复制: {value}"
+    "status.copied": "已复制: %{value}"
   }
 }

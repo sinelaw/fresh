@@ -1,80 +1,80 @@
 {
   "cs": {
-    "status.restoring_packages": "Obnovuji balicky NuGet pro {project}...",
-    "status.restore_completed": "Obnoveni NuGet dokonceno pro {project}",
-    "status.restore_failed": "Obnoveni NuGet selhalo: {error}",
-    "status.restore_error": "Chyba obnoveni NuGet: {error}"
+    "status.restoring_packages": "Obnovuji balicky NuGet pro %{project}...",
+    "status.restore_completed": "Obnoveni NuGet dokonceno pro %{project}",
+    "status.restore_failed": "Obnoveni NuGet selhalo: %{error}",
+    "status.restore_error": "Chyba obnoveni NuGet: %{error}"
   },
   "de": {
-    "status.restoring_packages": "NuGet-Pakete werden fur {project} wiederhergestellt...",
-    "status.restore_completed": "NuGet-Wiederherstellung fur {project} abgeschlossen",
-    "status.restore_failed": "NuGet-Wiederherstellung fehlgeschlagen: {error}",
-    "status.restore_error": "NuGet-Wiederherstellungsfehler: {error}"
+    "status.restoring_packages": "NuGet-Pakete werden fur %{project} wiederhergestellt...",
+    "status.restore_completed": "NuGet-Wiederherstellung fur %{project} abgeschlossen",
+    "status.restore_failed": "NuGet-Wiederherstellung fehlgeschlagen: %{error}",
+    "status.restore_error": "NuGet-Wiederherstellungsfehler: %{error}"
   },
   "en": {
-    "status.restoring_packages": "Restoring NuGet packages for {project}...",
-    "status.restore_completed": "NuGet restore completed for {project}",
-    "status.restore_failed": "NuGet restore failed: {error}",
-    "status.restore_error": "NuGet restore error: {error}"
+    "status.restoring_packages": "Restoring NuGet packages for %{project}...",
+    "status.restore_completed": "NuGet restore completed for %{project}",
+    "status.restore_failed": "NuGet restore failed: %{error}",
+    "status.restore_error": "NuGet restore error: %{error}"
   },
   "es": {
-    "status.restoring_packages": "Restaurando paquetes NuGet para {project}...",
-    "status.restore_completed": "Restauracion de NuGet completada para {project}",
-    "status.restore_failed": "Restauracion de NuGet fallida: {error}",
-    "status.restore_error": "Error de restauracion de NuGet: {error}"
+    "status.restoring_packages": "Restaurando paquetes NuGet para %{project}...",
+    "status.restore_completed": "Restauracion de NuGet completada para %{project}",
+    "status.restore_failed": "Restauracion de NuGet fallida: %{error}",
+    "status.restore_error": "Error de restauracion de NuGet: %{error}"
   },
   "fr": {
-    "status.restoring_packages": "Restauration des paquets NuGet pour {project}...",
-    "status.restore_completed": "Restauration NuGet terminee pour {project}",
-    "status.restore_failed": "Echec de la restauration NuGet: {error}",
-    "status.restore_error": "Erreur de restauration NuGet: {error}"
+    "status.restoring_packages": "Restauration des paquets NuGet pour %{project}...",
+    "status.restore_completed": "Restauration NuGet terminee pour %{project}",
+    "status.restore_failed": "Echec de la restauration NuGet: %{error}",
+    "status.restore_error": "Erreur de restauration NuGet: %{error}"
   },
   "it": {
-    "status.restoring_packages": "Ripristino pacchetti NuGet per {project}...",
-    "status.restore_completed": "Ripristino NuGet completato per {project}",
-    "status.restore_failed": "Ripristino NuGet fallito: {error}",
-    "status.restore_error": "Errore ripristino NuGet: {error}"
+    "status.restoring_packages": "Ripristino pacchetti NuGet per %{project}...",
+    "status.restore_completed": "Ripristino NuGet completato per %{project}",
+    "status.restore_failed": "Ripristino NuGet fallito: %{error}",
+    "status.restore_error": "Errore ripristino NuGet: %{error}"
   },
   "ja": {
-    "status.restoring_packages": "{project}のNuGetパッケージを復元中...",
-    "status.restore_completed": "{project}のNuGet復元が完了しました",
-    "status.restore_failed": "NuGet復元に失敗しました: {error}",
-    "status.restore_error": "NuGet復元エラー: {error}"
+    "status.restoring_packages": "%{project}のNuGetパッケージを復元中...",
+    "status.restore_completed": "%{project}のNuGet復元が完了しました",
+    "status.restore_failed": "NuGet復元に失敗しました: %{error}",
+    "status.restore_error": "NuGet復元エラー: %{error}"
   },
   "ko": {
-    "status.restoring_packages": "{project}의 NuGet 패키지 복원 중...",
-    "status.restore_completed": "{project}의 NuGet 복원이 완료되었습니다",
-    "status.restore_failed": "NuGet 복원 실패: {error}",
-    "status.restore_error": "NuGet 복원 오류: {error}"
+    "status.restoring_packages": "%{project}의 NuGet 패키지 복원 중...",
+    "status.restore_completed": "%{project}의 NuGet 복원이 완료되었습니다",
+    "status.restore_failed": "NuGet 복원 실패: %{error}",
+    "status.restore_error": "NuGet 복원 오류: %{error}"
   },
   "pt-BR": {
-    "status.restoring_packages": "Restaurando pacotes NuGet para {project}...",
-    "status.restore_completed": "Restauracao do NuGet concluida para {project}",
-    "status.restore_failed": "Restauracao do NuGet falhou: {error}",
-    "status.restore_error": "Erro na restauracao do NuGet: {error}"
+    "status.restoring_packages": "Restaurando pacotes NuGet para %{project}...",
+    "status.restore_completed": "Restauracao do NuGet concluida para %{project}",
+    "status.restore_failed": "Restauracao do NuGet falhou: %{error}",
+    "status.restore_error": "Erro na restauracao do NuGet: %{error}"
   },
   "ru": {
-    "status.restoring_packages": "Восстановление пакетов NuGet для {project}...",
-    "status.restore_completed": "Восстановление NuGet завершено для {project}",
-    "status.restore_failed": "Ошибка восстановления NuGet: {error}",
-    "status.restore_error": "Ошибка восстановления NuGet: {error}"
+    "status.restoring_packages": "Восстановление пакетов NuGet для %{project}...",
+    "status.restore_completed": "Восстановление NuGet завершено для %{project}",
+    "status.restore_failed": "Ошибка восстановления NuGet: %{error}",
+    "status.restore_error": "Ошибка восстановления NuGet: %{error}"
   },
   "th": {
-    "status.restoring_packages": "กำลังกู้คืนแพ็คเกจ NuGet สำหรับ {project}...",
-    "status.restore_completed": "การกู้คืน NuGet สำหรับ {project} เสร็จสมบูรณ์",
-    "status.restore_failed": "การกู้คืน NuGet ล้มเหลว: {error}",
-    "status.restore_error": "ข้อผิดพลาดการกู้คืน NuGet: {error}"
+    "status.restoring_packages": "กำลังกู้คืนแพ็คเกจ NuGet สำหรับ %{project}...",
+    "status.restore_completed": "การกู้คืน NuGet สำหรับ %{project} เสร็จสมบูรณ์",
+    "status.restore_failed": "การกู้คืน NuGet ล้มเหลว: %{error}",
+    "status.restore_error": "ข้อผิดพลาดการกู้คืน NuGet: %{error}"
   },
   "uk": {
-    "status.restoring_packages": "Відновлення пакетів NuGet для {project}...",
-    "status.restore_completed": "Відновлення NuGet завершено для {project}",
-    "status.restore_failed": "Помилка відновлення NuGet: {error}",
-    "status.restore_error": "Помилка відновлення NuGet: {error}"
+    "status.restoring_packages": "Відновлення пакетів NuGet для %{project}...",
+    "status.restore_completed": "Відновлення NuGet завершено для %{project}",
+    "status.restore_failed": "Помилка відновлення NuGet: %{error}",
+    "status.restore_error": "Помилка відновлення NuGet: %{error}"
   },
   "zh-CN": {
-    "status.restoring_packages": "正在为{project}恢复NuGet包...",
-    "status.restore_completed": "{project}的NuGet恢复已完成",
-    "status.restore_failed": "NuGet恢复失败: {error}",
-    "status.restore_error": "NuGet恢复错误: {error}"
+    "status.restoring_packages": "正在为%{project}恢复NuGet包...",
+    "status.restore_completed": "%{project}的NuGet恢复已完成",
+    "status.restore_failed": "NuGet恢复失败: %{error}",
+    "status.restore_error": "NuGet恢复错误: %{error}"
   }
 }

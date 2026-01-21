@@ -11,10 +11,10 @@
     "status.unsupported_file_type": "Clangd: unsupported file type for switch header",
     "status.opened_corresponding_file": "Clangd: opened corresponding file",
     "status.no_matching_found": "Clangd: no matching header/source found",
-    "status.switch_failed": "Clangd switch source/header failed: {error}",
+    "status.switch_failed": "Clangd switch source/header failed: %{error}",
     "status.opened_config": "Opened .clangd configuration",
     "status.config_not_found": "Could not find .clangd configuration in workspace",
-    "status.file_status": "Clangd file status: {status}"
+    "status.file_status": "Clangd file status: %{status}"
   },
   "cs": {
     "cmd.project_setup": "Clangd: Nastaveni projektu",
@@ -28,10 +28,10 @@
     "status.unsupported_file_type": "Clangd: nepodporovany typ souboru pro prepnuti hlavicky",
     "status.opened_corresponding_file": "Clangd: odpovidajici soubor otevren",
     "status.no_matching_found": "Clangd: nenalezena odpovidajici hlavicka/zdroj",
-    "status.switch_failed": "Clangd prepnuti zdroj/hlavicka selhalo: {error}",
+    "status.switch_failed": "Clangd prepnuti zdroj/hlavicka selhalo: %{error}",
     "status.opened_config": "Konfigurace .clangd otevrena",
     "status.config_not_found": "Nelze najit konfiguraci .clangd v pracovnim prostoru",
-    "status.file_status": "Clangd stav souboru: {status}"
+    "status.file_status": "Clangd stav souboru: %{status}"
   },
   "de": {
     "cmd.project_setup": "Clangd: Projekteinrichtung",
@@ -45,10 +45,10 @@
     "status.unsupported_file_type": "Clangd: nicht unterstutzter Dateityp fur Header-Wechsel",
     "status.opened_corresponding_file": "Clangd: entsprechende Datei geoffnet",
     "status.no_matching_found": "Clangd: kein passendes Header/Quelle gefunden",
-    "status.switch_failed": "Clangd Quelle/Header-Wechsel fehlgeschlagen: {error}",
+    "status.switch_failed": "Clangd Quelle/Header-Wechsel fehlgeschlagen: %{error}",
     "status.opened_config": ".clangd-Konfiguration geoffnet",
     "status.config_not_found": "Konnte .clangd-Konfiguration im Arbeitsbereich nicht finden",
-    "status.file_status": "Clangd Dateistatus: {status}"
+    "status.file_status": "Clangd Dateistatus: %{status}"
   },
   "es": {
     "cmd.project_setup": "Clangd: Configuracion del Proyecto",
@@ -62,10 +62,10 @@
     "status.unsupported_file_type": "Clangd: tipo de archivo no soportado para alternar cabecera",
     "status.opened_corresponding_file": "Clangd: archivo correspondiente abierto",
     "status.no_matching_found": "Clangd: no se encontro cabecera/fuente coincidente",
-    "status.switch_failed": "Clangd alternar fuente/cabecera fallo: {error}",
+    "status.switch_failed": "Clangd alternar fuente/cabecera fallo: %{error}",
     "status.opened_config": "Configuracion .clangd abierta",
     "status.config_not_found": "No se pudo encontrar configuracion .clangd en el espacio de trabajo",
-    "status.file_status": "Estado del archivo Clangd: {status}"
+    "status.file_status": "Estado del archivo Clangd: %{status}"
   },
   "fr": {
     "cmd.project_setup": "Clangd: Configuration du Projet",
@@ -79,10 +79,10 @@
     "status.unsupported_file_type": "Clangd: type de fichier non supporte pour la bascule d'en-tete",
     "status.opened_corresponding_file": "Clangd: fichier correspondant ouvert",
     "status.no_matching_found": "Clangd: aucun en-tete/source correspondant trouve",
-    "status.switch_failed": "Clangd bascule source/en-tete echouee: {error}",
+    "status.switch_failed": "Clangd bascule source/en-tete echouee: %{error}",
     "status.opened_config": "Configuration .clangd ouverte",
     "status.config_not_found": "Impossible de trouver la configuration .clangd dans l'espace de travail",
-    "status.file_status": "Statut du fichier Clangd: {status}"
+    "status.file_status": "Statut du fichier Clangd: %{status}"
   },
   "it": {
     "cmd.project_setup": "Clangd: Configurazione progetto",
@@ -96,10 +96,10 @@
     "status.unsupported_file_type": "Clangd: tipo di file non supportato per il cambio header",
     "status.opened_corresponding_file": "Clangd: aperto file corrispondente",
     "status.no_matching_found": "Clangd: nessuna corrispondenza header/sorgente trovata",
-    "status.switch_failed": "Cambio sorgente/header Clangd fallito: {error}",
+    "status.switch_failed": "Cambio sorgente/header Clangd fallito: %{error}",
     "status.opened_config": "Configurazione .clangd aperta",
     "status.config_not_found": "Impossibile trovare la configurazione .clangd nell'area di lavoro",
-    "status.file_status": "Stato del file Clangd: {status}"
+    "status.file_status": "Stato del file Clangd: %{status}"
   },
   "ja": {
     "cmd.project_setup": "Clangd: プロジェクト設定",
@@ -113,10 +113,10 @@
     "status.unsupported_file_type": "Clangd: ヘッダー切り替えに対応していないファイル形式です",
     "status.opened_corresponding_file": "Clangd: 対応するファイルを開きました",
     "status.no_matching_found": "Clangd: 一致するヘッダー/ソースが見つかりません",
-    "status.switch_failed": "Clangdソース/ヘッダー切り替えに失敗しました: {error}",
+    "status.switch_failed": "Clangdソース/ヘッダー切り替えに失敗しました: %{error}",
     "status.opened_config": ".clangd設定を開きました",
     "status.config_not_found": "ワークスペース内に.clangd設定が見つかりません",
-    "status.file_status": "Clangdファイルステータス: {status}"
+    "status.file_status": "Clangdファイルステータス: %{status}"
   },
   "ko": {
     "cmd.project_setup": "Clangd: 프로젝트 설정",
@@ -130,10 +130,10 @@
     "status.unsupported_file_type": "Clangd: 헤더 전환에 지원되지 않는 파일 형식",
     "status.opened_corresponding_file": "Clangd: 해당 파일을 열었습니다",
     "status.no_matching_found": "Clangd: 일치하는 헤더/소스를 찾을 수 없습니다",
-    "status.switch_failed": "Clangd 소스/헤더 전환 실패: {error}",
+    "status.switch_failed": "Clangd 소스/헤더 전환 실패: %{error}",
     "status.opened_config": ".clangd 설정을 열었습니다",
     "status.config_not_found": "작업 공간에서 .clangd 설정을 찾을 수 없습니다",
-    "status.file_status": "Clangd 파일 상태: {status}"
+    "status.file_status": "Clangd 파일 상태: %{status}"
   },
   "pt-BR": {
     "cmd.project_setup": "Clangd: Configuracao do Projeto",
@@ -147,10 +147,10 @@
     "status.unsupported_file_type": "Clangd: tipo de arquivo nao suportado para alternar cabecalho",
     "status.opened_corresponding_file": "Clangd: arquivo correspondente aberto",
     "status.no_matching_found": "Clangd: nenhum cabecalho/fonte correspondente encontrado",
-    "status.switch_failed": "Clangd alternar fonte/cabecalho falhou: {error}",
+    "status.switch_failed": "Clangd alternar fonte/cabecalho falhou: %{error}",
     "status.opened_config": "Configuracao .clangd aberta",
     "status.config_not_found": "Nao foi possivel encontrar configuracao .clangd no espaco de trabalho",
-    "status.file_status": "Status do arquivo Clangd: {status}"
+    "status.file_status": "Status do arquivo Clangd: %{status}"
   },
   "ru": {
     "cmd.project_setup": "Clangd: Настройка проекта",
@@ -164,10 +164,10 @@
     "status.unsupported_file_type": "Clangd: неподдерживаемый тип файла для переключения заголовка",
     "status.opened_corresponding_file": "Clangd: соответствующий файл открыт",
     "status.no_matching_found": "Clangd: соответствующий заголовок/исходник не найден",
-    "status.switch_failed": "Clangd переключение исходник/заголовок не удалось: {error}",
+    "status.switch_failed": "Clangd переключение исходник/заголовок не удалось: %{error}",
     "status.opened_config": "Конфигурация .clangd открыта",
     "status.config_not_found": "Не удалось найти конфигурацию .clangd в рабочем пространстве",
-    "status.file_status": "Статус файла Clangd: {status}"
+    "status.file_status": "Статус файла Clangd: %{status}"
   },
   "th": {
     "cmd.project_setup": "Clangd: ตั้งค่าโปรเจกต์",
@@ -181,10 +181,10 @@
     "status.unsupported_file_type": "Clangd: ไม่รองรับประเภทไฟล์สำหรับสลับเฮดเดอร์",
     "status.opened_corresponding_file": "Clangd: เปิดไฟล์ที่เกี่ยวข้องแล้ว",
     "status.no_matching_found": "Clangd: ไม่พบเฮดเดอร์/ซอร์สที่ตรงกัน",
-    "status.switch_failed": "Clangd สลับซอร์ส/เฮดเดอร์ล้มเหลว: {error}",
+    "status.switch_failed": "Clangd สลับซอร์ส/เฮดเดอร์ล้มเหลว: %{error}",
     "status.opened_config": "เปิดการตั้งค่า .clangd แล้ว",
     "status.config_not_found": "ไม่พบการตั้งค่า .clangd ในพื้นที่ทำงาน",
-    "status.file_status": "สถานะไฟล์ Clangd: {status}"
+    "status.file_status": "สถานะไฟล์ Clangd: %{status}"
   },
   "uk": {
     "cmd.project_setup": "Clangd: Налаштування проекту",
@@ -198,10 +198,10 @@
     "status.unsupported_file_type": "Clangd: непідтримуваний тип файлу для перемикання заголовка",
     "status.opened_corresponding_file": "Clangd: відповідний файл відкрито",
     "status.no_matching_found": "Clangd: відповідний заголовок/вихідний файл не знайдено",
-    "status.switch_failed": "Clangd перемикання вихідний/заголовний файл не вдалося: {error}",
+    "status.switch_failed": "Clangd перемикання вихідний/заголовний файл не вдалося: %{error}",
     "status.opened_config": "Конфігурацію .clangd відкрито",
     "status.config_not_found": "Не вдалося знайти конфігурацію .clangd у робочому просторі",
-    "status.file_status": "Статус файлу Clangd: {status}"
+    "status.file_status": "Статус файлу Clangd: %{status}"
   },
   "zh-CN": {
     "cmd.project_setup": "Clangd: 项目设置",
@@ -215,9 +215,9 @@
     "status.unsupported_file_type": "Clangd: 不支持的文件类型，无法切换头文件",
     "status.opened_corresponding_file": "Clangd: 已打开对应文件",
     "status.no_matching_found": "Clangd: 未找到匹配的头文件/源文件",
-    "status.switch_failed": "Clangd切换源文件/头文件失败: {error}",
+    "status.switch_failed": "Clangd切换源文件/头文件失败: %{error}",
     "status.opened_config": "已打开.clangd配置",
     "status.config_not_found": "在工作区中找不到.clangd配置",
-    "status.file_status": "Clangd文件状态: {status}"
+    "status.file_status": "Clangd文件状态: %{status}"
   }
 }
