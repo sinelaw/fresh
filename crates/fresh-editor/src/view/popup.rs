@@ -379,7 +379,7 @@ impl Popup {
     /// Scroll by a delta amount (positive = down, negative = up)
     /// Used for mouse wheel scrolling
     pub fn scroll_by(&mut self, delta: i32) {
-        let content_len = self.item_count();
+        let content_len = self.wrapped_item_count();
         let visible = self.visible_height();
         let max_scroll = content_len.saturating_sub(visible);
 
@@ -409,6 +409,33 @@ impl Popup {
         match &self.content {
             PopupContent::Text(lines) => lines.len(),
             PopupContent::Markdown(lines) => lines.len(),
+            PopupContent::List { items, .. } => items.len(),
+            PopupContent::Custom(lines) => lines.len(),
+        }
+    }
+
+    /// Get the total number of wrapped lines in the popup
+    ///
+    /// This accounts for line wrapping based on the popup width,
+    /// which is necessary for correct scroll calculations.
+    fn wrapped_item_count(&self) -> usize {
+        // Calculate wrap width same as render: width - borders (2) - scrollbar (2)
+        let border_width = if self.bordered { 2 } else { 0 };
+        let scrollbar_width = 2; // 1 for scrollbar + 1 for spacing
+        let wrap_width = (self.width as usize)
+            .saturating_sub(border_width)
+            .saturating_sub(scrollbar_width);
+
+        if wrap_width == 0 {
+            return self.item_count();
+        }
+
+        match &self.content {
+            PopupContent::Text(lines) => wrap_text_lines(lines, wrap_width).len(),
+            PopupContent::Markdown(styled_lines) => {
+                wrap_styled_lines(styled_lines, wrap_width).len()
+            }
+            // Lists and custom content don't wrap
             PopupContent::List { items, .. } => items.len(),
             PopupContent::Custom(lines) => lines.len(),
         }

@@ -6609,3 +6609,124 @@ fn test_hover_popup_double_click_inside_blocked() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// Test that hover popup can scroll all the way to the bottom
+///
+/// This test verifies that when scrolling a hover popup with large content,
+/// the user can scroll all the way to see the last line of content.
+#[test]
+fn test_hover_popup_scroll_to_bottom() -> anyhow::Result<()> {
+    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(100, 30)?;
+
+    // Create markdown-like content similar to real LSP hover documentation
+    // This simulates a function signature with extensive documentation
+    let mut long_content: Vec<String> = vec![
+        "```rust".to_string(),
+        "pub fn process_data(".to_string(),
+        "    input: &[u8],".to_string(),
+        "    options: ProcessOptions,".to_string(),
+        ") -> Result<Output, Error>".to_string(),
+        "```".to_string(),
+        "".to_string(),
+        "# Description".to_string(),
+        "".to_string(),
+        "Processes the input data according to the specified options.".to_string(),
+        "This function performs several transformations on the data.".to_string(),
+        "".to_string(),
+        "# Arguments".to_string(),
+        "".to_string(),
+        "* `input` - The raw input bytes to process".to_string(),
+        "* `options` - Configuration options for processing".to_string(),
+        "".to_string(),
+        "# Returns".to_string(),
+        "".to_string(),
+        "Returns `Ok(Output)` on success, or `Err(Error)` if processing fails.".to_string(),
+        "".to_string(),
+        "# Examples".to_string(),
+        "".to_string(),
+        "```rust".to_string(),
+        "let data = b\"hello world\";".to_string(),
+        "let opts = ProcessOptions::default();".to_string(),
+        "let result = process_data(data, opts)?;".to_string(),
+        "```".to_string(),
+        "".to_string(),
+        "# Errors".to_string(),
+        "".to_string(),
+        "This function will return an error if:".to_string(),
+        "".to_string(),
+        "* The input is empty".to_string(),
+        "* The input contains invalid UTF-8 sequences".to_string(),
+        "* The options specify an unsupported encoding".to_string(),
+        "".to_string(),
+        "# Performance".to_string(),
+        "".to_string(),
+        "This function has O(n) time complexity where n is the input length.".to_string(),
+        "Memory usage is proportional to the input size.".to_string(),
+        "".to_string(),
+        "# Safety".to_string(),
+        "".to_string(),
+        "This function is safe to call from multiple threads.".to_string(),
+        "".to_string(),
+        "# See Also".to_string(),
+        "".to_string(),
+        "* [`process_data_async`] - Async version of this function".to_string(),
+        "* [`ProcessOptions`] - Configuration options".to_string(),
+        "".to_string(),
+    ];
+
+    // Add numbered lines at the end so we can verify scrolling reached the bottom
+    for i in 1..=100 {
+        long_content.push(format!("CONTENT_LINE_{:03}", i));
+    }
+    long_content.push("=== END OF DOCUMENTATION ===".to_string());
+
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Hover Info".to_string()),
+            description: None,
+            transient: true,
+            content: PopupContentData::Text(long_content),
+            position: PopupPositionData::Centered,
+            width: 60,
+            max_height: 12, // Only 10 lines visible after borders
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Verify initial state - first lines visible, last lines not
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("pub fn process_data"),
+        "First line should be visible initially. Screen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("END OF DOCUMENTATION"),
+        "Last line should not be visible initially. Screen:\n{screen}"
+    );
+
+    // Scroll down many times to reach the bottom
+    // Content is ~150 lines, visible is ~10, so need ~140+ scroll events
+    for _ in 0..200 {
+        harness.mouse_scroll_down(50, 15)?;
+        harness.render()?;
+    }
+
+    // After scrolling to bottom, the last line should be visible
+    let screen_after = harness.screen_to_string();
+    assert!(
+        screen_after.contains("END OF DOCUMENTATION"),
+        "Last line should be visible after scrolling to bottom. Screen:\n{screen_after}"
+    );
+    // First line should no longer be visible
+    assert!(
+        !screen_after.contains("pub fn process_data"),
+        "First line should not be visible after scrolling to bottom. Screen:\n{screen_after}"
+    );
+
+    Ok(())
+}
