@@ -554,9 +554,7 @@ impl Editor {
                 Some(HoverTarget::StatusBarLineEndingIndicator) => {
                     StatusBarHover::LineEndingIndicator
                 }
-                Some(HoverTarget::StatusBarLanguageIndicator) => {
-                    StatusBarHover::LanguageIndicator
-                }
+                Some(HoverTarget::StatusBarLanguageIndicator) => StatusBarHover::LanguageIndicator,
                 _ => StatusBarHover::None,
             };
 
