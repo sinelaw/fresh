@@ -12,6 +12,9 @@
     flake-utils = {
       url = "github:numtide/flake-utils";
       inputs.systems.follows = "systems";
+    flake-compat = {
+      url = "github:NixOS/flake-compat";
+      flake = false;
     };
   };
 
