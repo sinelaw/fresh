@@ -2947,6 +2947,7 @@ impl Editor {
                     | PromptType::SelectTheme { .. }
                     | PromptType::SelectLocale
                     | PromptType::SwitchToTab
+                    | PromptType::SetLanguage
                     | PromptType::Plugin { .. }
             ) {
                 // Use the selected suggestion if any
