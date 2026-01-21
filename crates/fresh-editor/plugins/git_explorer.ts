@@ -1,4 +1,4 @@
-/// <reference path="../types/fresh.d.ts" />
+/// <reference path="./lib/fresh.d.ts" />
 const editor = getEditor();
 
 /**

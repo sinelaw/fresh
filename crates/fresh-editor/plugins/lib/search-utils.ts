@@ -196,7 +196,7 @@ export class SearchPreview {
  * - Tracks search version to discard stale results
  */
 export class DebouncedSearch {
-  private currentSearch: ProcessHandle | null = null;
+  private currentSearch: ProcessHandle<SpawnResult> | null = null;
   private pendingKill: Promise<boolean> | null = null;
   private searchVersion = 0;
   private lastQuery = "";
@@ -216,7 +216,7 @@ export class DebouncedSearch {
    */
   async search(
     query: string,
-    executor: () => ProcessHandle,
+    executor: () => ProcessHandle<SpawnResult>,
     onResults: (result: SpawnResult) => void
   ): Promise<void> {
     const thisVersion = ++this.searchVersion;

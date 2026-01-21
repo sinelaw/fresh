@@ -960,12 +960,7 @@ impl JsEditorApi {
         ctx: rquickjs::Ctx<'js>,
         path: String,
     ) -> rquickjs::Result<Value<'js>> {
-        #[derive(serde::Serialize)]
-        struct DirEntry {
-            name: String,
-            is_file: bool,
-            is_dir: bool,
-        }
+        use fresh_core::api::DirEntry;
 
         let entries: Vec<DirEntry> = match std::fs::read_dir(&path) {
             Ok(entries) => entries
@@ -1639,7 +1634,7 @@ impl JsEditorApi {
                 text: obj.get("text").unwrap_or_default(),
                 description: obj.get("description").ok(),
                 value: obj.get("value").ok(),
-                disabled: obj.get("disabled").unwrap_or(false),
+                disabled: obj.get("disabled").ok(),
                 keybinding: obj.get("keybinding").ok(),
                 source: None,
             })

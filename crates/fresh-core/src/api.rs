@@ -280,7 +280,8 @@ pub struct BufferSavedDiff {
 
 /// Information about the viewport
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
 pub struct ViewportInfo {
     /// Byte position of the first visible line
     pub top_byte: usize,
@@ -294,7 +295,8 @@ pub struct ViewportInfo {
 
 /// Layout hints supplied by plugins (e.g., Compose mode)
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
 pub struct LayoutHints {
     /// Optional compose width for centering/wrapping
     pub compose_width: Option<u16>,
@@ -467,6 +469,7 @@ pub struct ViewTokenWire {
     pub kind: ViewTokenWireKind,
     /// Optional styling for injected content (only used when source_offset is None)
     #[serde(default)]
+    #[ts(optional)]
     pub style: Option<ViewTokenStyle>,
 }
 
@@ -1237,6 +1240,18 @@ pub struct JsTextPropertyEntry {
     #[serde(default)]
     #[ts(optional, type = "Record<string, unknown>")]
     pub properties: Option<HashMap<String, JsonValue>>,
+}
+
+/// Directory entry returned by readDir
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DirEntry {
+    /// File/directory name
+    pub name: String,
+    /// True if this is a file
+    pub is_file: bool,
+    /// True if this is a directory
+    pub is_dir: bool,
 }
 
 /// Options for createVirtualBuffer

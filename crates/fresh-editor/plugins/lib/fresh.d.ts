@@ -132,6 +132,111 @@ type TsCreateCompositeBufferOptions = {
 	*/
 	hunks: Array<TsCompositeHunk> | null;
 };
+type ViewportInfo = {
+	/**
+	* Byte position of the first visible line
+	*/
+	topByte: number;
+	/**
+	* Left column offset (horizontal scroll)
+	*/
+	leftColumn: number;
+	/**
+	* Viewport width
+	*/
+	width: number;
+	/**
+	* Viewport height
+	*/
+	height: number;
+};
+type LayoutHints = {
+	/**
+	* Optional compose width for centering/wrapping
+	*/
+	composeWidth: number | null;
+	/**
+	* Optional column guides for aligned tables
+	*/
+	columnGuides: Array<number> | null;
+};
+type ViewTokenWire = {
+	/**
+	* Source byte offset in the buffer. None for injected content (annotations).
+	*/
+	source_offset: number | null;
+	/**
+	* The token content
+	*/
+	kind: ViewTokenWireKind;
+	/**
+	* Optional styling for injected content (only used when source_offset is None)
+	*/
+	style?: ViewTokenStyle;
+};
+type ViewTokenWireKind = {
+	"Text": string;
+} | "Newline" | "Space" | "Break" | {
+	"BinaryByte": number;
+};
+type ViewTokenStyle = {
+	/**
+	* Foreground color as RGB tuple
+	*/
+	fg: [number, number, number] | null;
+	/**
+	* Background color as RGB tuple
+	*/
+	bg: [number, number, number] | null;
+	/**
+	* Whether to render in bold
+	*/
+	bold: boolean;
+	/**
+	* Whether to render in italic
+	*/
+	italic: boolean;
+};
+type PromptSuggestion = {
+	/**
+	* The text to display
+	*/
+	text: string;
+	/**
+	* Optional description
+	*/
+	description?: string;
+	/**
+	* The value to use when selected (defaults to text if None)
+	*/
+	value?: string;
+	/**
+	* Whether this suggestion is disabled (greyed out, defaults to false)
+	*/
+	disabled?: boolean;
+	/**
+	* Optional keyboard shortcut
+	*/
+	keybinding?: string;
+	/**
+	* Source of the command (for command palette)
+	*/
+	source?: CommandSource;
+};
+type DirEntry = {
+	/**
+	* File/directory name
+	*/
+	name: string;
+	/**
+	* True if this is a file
+	*/
+	is_file: boolean;
+	/**
+	* True if this is a directory
+	*/
+	is_dir: boolean;
+};
 type BackgroundProcessResult = {
 	/**
 	* Unique process ID for later reference

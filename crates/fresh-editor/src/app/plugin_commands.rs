@@ -1027,7 +1027,7 @@ impl Editor {
                     text: s.text,
                     description: s.description,
                     value: s.value,
-                    disabled: s.disabled,
+                    disabled: s.disabled.unwrap_or(false),
                     keybinding: s.keybinding,
                     source,
                 }

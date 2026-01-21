@@ -61,7 +61,7 @@ export interface DisplayEntry {
 export interface SearchSource<T> {
   mode: "search";
   /** Function that returns a ProcessHandle or Promise of results */
-  search: (query: string) => ProcessHandle | Promise<T[]>;
+  search: (query: string) => ProcessHandle<SpawnResult> | Promise<T[]>;
   /** Debounce delay in ms (default: 150) */
   debounceMs?: number;
   /** Minimum query length to trigger search (default: 2) */
@@ -328,7 +328,7 @@ interface PromptState<T> {
   entries: DisplayEntry[];
   lastQuery: string;
   searchVersion: number;
-  currentSearch: ProcessHandle | null;
+  currentSearch: ProcessHandle<SpawnResult> | null;
   pendingKill: Promise<boolean> | null;
   originalSplitId: number | null;
 }

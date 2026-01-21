@@ -526,7 +526,7 @@ globalThis.onMarkdownViewTransform = function(data: {
   const info = editor.getBufferInfo(data.buffer_id);
   if (!info || !isMarkdownFile(info.path)) return;
 
-  editor.debug(`onMarkdownViewTransform: buffer=${data.buffer_id}, split=${data.splitId}, tokens=${data.tokens.length}`);
+  editor.debug(`onMarkdownViewTransform: buffer=${data.buffer_id}, split=${data.split_id}, tokens=${data.tokens.length}`);
 
   // Transform the incoming tokens with markdown-aware wrapping
   const transformedTokens = transformMarkdownTokens(
@@ -535,15 +535,15 @@ globalThis.onMarkdownViewTransform = function(data: {
     data.viewport_start
   );
 
-  // Submit the transformed tokens - keep compose_width for margins/centering
+  // Submit the transformed tokens - keep composeWidth for margins/centering
   const layoutHints: LayoutHints = {
-    compose_width: config.composeWidth,
-    column_guides: null,
+    composeWidth: config.composeWidth,
+    columnGuides: null,
   };
 
   editor.submitViewTransform(
     data.buffer_id,
-    data.splitId,
+    data.split_id,
     data.viewport_start,
     data.viewport_end,
     transformedTokens,

@@ -29,19 +29,25 @@ pub struct Command {
 
 /// A single suggestion item for autocomplete
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
-#[ts(export)]
+#[ts(export, rename = "PromptSuggestion")]
 pub struct Suggestion {
     /// The text to display
     pub text: String,
     /// Optional description
+    #[ts(optional)]
     pub description: Option<String>,
     /// The value to use when selected (defaults to text if None)
+    #[ts(optional)]
     pub value: Option<String>,
-    /// Whether this suggestion is disabled (greyed out)
-    pub disabled: bool,
+    /// Whether this suggestion is disabled (greyed out, defaults to false)
+    #[serde(default)]
+    #[ts(optional)]
+    pub disabled: Option<bool>,
     /// Optional keyboard shortcut
+    #[ts(optional)]
     pub keybinding: Option<String>,
     /// Source of the command (for command palette)
+    #[ts(optional)]
     pub source: Option<CommandSource>,
 }
 
@@ -51,9 +57,14 @@ impl Suggestion {
             text,
             description: None,
             value: None,
-            disabled: false,
+            disabled: None,
             keybinding: None,
             source: None,
         }
+    }
+
+    /// Check if this suggestion is disabled
+    pub fn is_disabled(&self) -> bool {
+        self.disabled.unwrap_or(false)
     }
 }

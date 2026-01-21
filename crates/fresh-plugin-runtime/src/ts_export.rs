@@ -18,10 +18,11 @@ use fresh_core::api::{
     ActionPopupAction, ActionSpec, BackgroundProcessResult, BufferInfo, BufferSavedDiff,
     CompositeHunk, CompositeLayoutConfig, CompositePaneStyle, CompositeSourceConfig,
     CreateCompositeBufferOptions, CreateVirtualBufferInExistingSplitOptions,
-    CreateVirtualBufferInSplitOptions, CreateVirtualBufferOptions, CursorInfo, JsTextPropertyEntry,
-    LayoutHints, SpawnResult, TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle,
-    ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
+    CreateVirtualBufferInSplitOptions, CreateVirtualBufferOptions, CursorInfo, DirEntry,
+    JsTextPropertyEntry, LayoutHints, SpawnResult, TextPropertiesAtCursor, TsHighlightSpan,
+    ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
 };
+use fresh_core::command::Suggestion;
 
 /// Get the TypeScript declaration for a type by name
 ///
@@ -73,6 +74,10 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "TextPropertiesAtCursor" => Some(TextPropertiesAtCursor::decl()),
         "VirtualBufferResult" => Some(VirtualBufferResult::decl()),
 
+        // Prompt and directory types
+        "PromptSuggestion" | "Suggestion" => Some(Suggestion::decl()),
+        "DirEntry" => Some(DirEntry::decl()),
+
         _ => None,
     }
 }
@@ -87,6 +92,13 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "TsCompositePaneStyle",           // Used in TsCompositeSourceConfig.style
     "TsCompositeHunk",                // Used in createCompositeBuffer opts.hunks
     "TsCreateCompositeBufferOptions", // Options for createCompositeBuffer
+    "ViewportInfo",                   // Used by plugins for viewport queries
+    "LayoutHints",                    // Used by plugins for view transforms
+    "ViewTokenWire",                  // Used by plugins for view transforms
+    "ViewTokenWireKind",              // Used by ViewTokenWire
+    "ViewTokenStyle",                 // Used by ViewTokenWire
+    "PromptSuggestion",               // Used by plugins for prompt suggestions
+    "DirEntry",                       // Used by plugins for directory entries
 ];
 
 /// Collect TypeScript type declarations based on referenced types from proc macro
