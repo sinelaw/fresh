@@ -174,13 +174,12 @@ impl<'a> PopupHitTester<'a> {
                 && col < layout.inner_rect.x + layout.inner_rect.width
                 && row >= layout.inner_rect.y
                 && row < layout.inner_rect.y + layout.inner_rect.height
+                && layout.num_items > 0
             {
-                if layout.num_items > 0 {
-                    let relative_row = (row - layout.inner_rect.y) as usize;
-                    let item_idx = layout.scroll_offset + relative_row;
-                    if item_idx < layout.num_items {
-                        return Some((layout.popup_idx, item_idx));
-                    }
+                let relative_row = (row - layout.inner_rect.y) as usize;
+                let item_idx = layout.scroll_offset + relative_row;
+                if item_idx < layout.num_items {
+                    return Some((layout.popup_idx, item_idx));
                 }
             }
         }

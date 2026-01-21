@@ -62,7 +62,7 @@ fn extract_plugins() -> Result<PathBuf, std::io::Error> {
     })?;
 
     let content_hash = PLUGINS_CONTENT_HASH.trim();
-    let cache_dir = cache_base.join(&content_hash);
+    let cache_dir = cache_base.join(content_hash);
 
     // Check if already extracted
     if cache_dir.exists() && cache_dir.read_dir()?.next().is_some() {

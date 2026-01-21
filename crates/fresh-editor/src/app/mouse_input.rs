@@ -397,13 +397,13 @@ impl Editor {
 
         // Handle file explorer status indicator hover - show tooltip
         // Always dismiss existing tooltip first when target changes
-        if old_target != new_target {
-            if matches!(
+        if old_target != new_target
+            && matches!(
                 old_target,
                 Some(HoverTarget::FileExplorerStatusIndicator(_))
-            ) {
-                self.dismiss_file_explorer_status_tooltip();
-            }
+            )
+        {
+            self.dismiss_file_explorer_status_tooltip();
         }
 
         if let Some(HoverTarget::FileExplorerStatusIndicator(ref path)) = new_target {
@@ -1100,7 +1100,7 @@ impl Editor {
                 // For text/markdown popups, start text selection
                 let is_text_popup = {
                     let state = self.active_state();
-                    state.popups.top().map_or(false, |p| {
+                    state.popups.top().is_some_and(|p| {
                         matches!(
                             p.content,
                             crate::view::popup::PopupContent::Text(_)

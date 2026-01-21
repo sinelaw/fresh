@@ -268,10 +268,9 @@ impl FileExplorerRenderer {
         } else if let Some(decoration) = direct_decoration {
             let symbol = Self::decoration_symbol(&decoration.symbol);
             Some((symbol, Self::decoration_color(decoration)))
-        } else if let Some(decoration) = bubbled_decoration {
-            Some(("●".to_string(), Self::decoration_color(decoration)))
         } else {
-            None
+            bubbled_decoration
+                .map(|decoration| ("●".to_string(), Self::decoration_color(decoration)))
         };
 
         // Calculate right-side content width

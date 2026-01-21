@@ -39,7 +39,7 @@ fn js_to_json(ctx: &rquickjs::Ctx<'_>, val: Value<'_>) -> serde_json::Value {
             .unwrap_or(serde_json::Value::Null),
         Type::Float => val
             .as_float()
-            .and_then(|f| serde_json::Number::from_f64(f))
+            .and_then(serde_json::Number::from_f64)
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
         Type::String => val
@@ -472,7 +472,7 @@ impl JsEditorApi {
     pub fn set_clipboard(&self, text: String) {
         let _ = self
             .command_sender
-            .send(PluginCommand::SetClipboard { text: text });
+            .send(PluginCommand::SetClipboard { text });
     }
 
     // === Command Registration ===
@@ -566,11 +566,9 @@ impl JsEditorApi {
         let args_map: HashMap<String, String> = if let Some(first_arg) = args.0.first() {
             if let Some(obj) = first_arg.as_object() {
                 let mut map = HashMap::new();
-                for key_result in obj.keys::<String>() {
-                    if let Ok(k) = key_result {
-                        if let Ok(v) = obj.get::<_, String>(&k) {
-                            map.insert(k, v);
-                        }
+                for k in obj.keys::<String>().flatten() {
+                    if let Ok(v) = obj.get::<_, String>(&k) {
+                        map.insert(k, v);
                     }
                 }
                 map
@@ -1158,10 +1156,8 @@ impl JsEditorApi {
             .0
             .map(|obj| {
                 let mut map = HashMap::new();
-                for result in obj.props::<String, String>() {
-                    if let Ok((k, v)) = result {
-                        map.insert(k, v);
-                    }
+                for (k, v) in obj.props::<String, String>().flatten() {
+                    map.insert(k, v);
                 }
                 map
             })

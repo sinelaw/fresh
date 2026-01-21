@@ -5043,14 +5043,12 @@ impl Editor {
 
                 // Read buffer content to find newlines using the BufferState's get_text_range
                 let content = state.get_text_range(0, buffer_len);
-                for (i, c) in content.chars().enumerate() {
+                for (byte_idx, c) in content.char_indices() {
                     if c == '\n' {
                         current_line += 1;
                         if current_line == line_number {
                             // Found the start of the requested line (byte after newline)
-                            // We need byte position, not char position
-                            let byte_pos = content[..=i].len();
-                            line_start = Some(byte_pos);
+                            line_start = Some(byte_idx + 1);
                             break;
                         }
                     }

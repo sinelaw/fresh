@@ -343,12 +343,12 @@ fn is_ctx_type(ty: &Type) -> bool {
 
 /// Check if type is `Opt<T>` (optional parameter)
 fn is_opt_type(ty: &Type) -> bool {
-    get_type_name(ty).map_or(false, |n| n == "Opt")
+    get_type_name(ty).is_some_and(|n| n == "Opt")
 }
 
 /// Check if type is `Rest<T>` (variadic parameter)
 fn is_rest_type(ty: &Type) -> bool {
-    get_type_name(ty).map_or(false, |n| n == "Rest")
+    get_type_name(ty).is_some_and(|n| n == "Rest")
 }
 
 // ============================================================================
@@ -700,7 +700,7 @@ fn extract_type_references(ts_type: &str) -> Vec<String> {
         }
 
         // This looks like a custom type reference
-        if part.chars().next().map_or(false, |c| c.is_uppercase()) {
+        if part.chars().next().is_some_and(|c| c.is_uppercase()) {
             types.push(part.to_string());
         }
     }
