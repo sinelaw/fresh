@@ -507,6 +507,8 @@
   "cmd.set_bookmark_desc": "Definir um marcador na posição atual (0-9)",
   "cmd.set_line_ending": "Definir Fim de Linha",
   "cmd.set_line_ending_desc": "Definir o formato de fim de linha para o buffer atual",
+  "cmd.set_language": "Definir Idioma",
+  "cmd.set_language_desc": "Definir o idioma/destaque de sintaxe para o buffer atual",
   "cmd.set_mark": "Definir Marca",
   "cmd.set_mark_desc": "Definir âncora de seleção para iniciar uma seleção",
   "cmd.set_tab_size": "Definir Tamanho da Tabulação",

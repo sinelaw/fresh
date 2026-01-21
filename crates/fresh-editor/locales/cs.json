@@ -507,6 +507,8 @@
   "cmd.set_bookmark_desc": "Nastavit záložku na aktuální pozici (0-9)",
   "cmd.set_line_ending": "Nastavit konec řádku",
   "cmd.set_line_ending_desc": "Nastavit formát konce řádku pro aktuální buffer",
+  "cmd.set_language": "Nastavit jazyk",
+  "cmd.set_language_desc": "Nastavit jazyk/zvýraznění syntaxe pro aktuální buffer",
   "cmd.set_mark": "Nastavit značku",
   "cmd.set_mark_desc": "Nastavit kotvu výběru pro zahájení výběru",
   "cmd.set_tab_size": "Nastavit velikost tabulátoru",

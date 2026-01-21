@@ -507,6 +507,8 @@
   "cmd.set_bookmark_desc": "現在の位置にブックマークを設定します（0-9）",
   "cmd.set_line_ending": "行末を設定",
   "cmd.set_line_ending_desc": "現在のバッファの行末形式を設定します",
+  "cmd.set_language": "言語を設定",
+  "cmd.set_language_desc": "現在のバッファの言語/構文ハイライトを設定します",
   "cmd.set_mark": "マークを設定",
   "cmd.set_mark_desc": "選択を開始するための選択アンカーを設定します",
   "cmd.set_tab_size": "タブサイズを設定",

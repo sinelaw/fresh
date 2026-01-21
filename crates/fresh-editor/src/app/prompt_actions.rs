@@ -588,89 +588,33 @@ impl Editor {
         use crate::primitives::highlight_engine::HighlightEngine;
         use crate::primitives::highlighter::Language;
 
-        // Map display names to language IDs
-        let language_map = [
-            ("Plain Text", "text"),
-            ("Rust", "rust"),
-            ("Python", "python"),
-            ("JavaScript", "javascript"),
-            ("TypeScript", "typescript"),
-            ("HTML", "html"),
-            ("CSS", "css"),
-            ("C", "c"),
-            ("C++", "cpp"),
-            ("Go", "go"),
-            ("JSON", "json"),
-            ("Java", "java"),
-            ("C#", "c_sharp"),
-            ("PHP", "php"),
-            ("Ruby", "ruby"),
-            ("Bash", "bash"),
-            ("Lua", "lua"),
-            ("Pascal", "pascal"),
-            ("Odin", "odin"),
-        ];
-
         let trimmed = input.trim();
 
-        // Try to find the language by display name or language ID
-        let language_id = language_map
-            .iter()
-            .find(|(display, _)| *display == trimmed)
-            .map(|(_, id)| *id)
-            .or_else(|| {
-                // Also try matching by language ID directly
-                language_map
-                    .iter()
-                    .find(|(_, id)| *id == trimmed.to_lowercase())
-                    .map(|(_, id)| *id)
-            });
-
-        if let Some(lang_id) = language_id {
+        // Check for "Plain Text" (no highlighting)
+        if trimmed == "Plain Text" || trimmed.to_lowercase() == "text" {
             let buffer_id = self.active_buffer();
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                state.language = lang_id.to_string();
+                state.language = "text".to_string();
+                state.highlighter = HighlightEngine::None;
+                self.set_status_message("Language set to Plain Text".to_string());
+            }
+            return;
+        }
 
-                // Update the highlighter based on the language
-                if lang_id == "text" {
-                    state.highlighter = HighlightEngine::None;
-                } else {
-                    // Try to create a highlighter for the language
-                    let language = match lang_id {
-                        "rust" => Some(Language::Rust),
-                        "python" => Some(Language::Python),
-                        "javascript" => Some(Language::JavaScript),
-                        "typescript" => Some(Language::TypeScript),
-                        "html" => Some(Language::HTML),
-                        "css" => Some(Language::CSS),
-                        "c" => Some(Language::C),
-                        "cpp" => Some(Language::Cpp),
-                        "go" => Some(Language::Go),
-                        "json" => Some(Language::Json),
-                        "java" => Some(Language::Java),
-                        "c_sharp" => Some(Language::CSharp),
-                        "php" => Some(Language::Php),
-                        "ruby" => Some(Language::Ruby),
-                        "bash" => Some(Language::Bash),
-                        "lua" => Some(Language::Lua),
-                        "pascal" => Some(Language::Pascal),
-                        "odin" => Some(Language::Odin),
-                        _ => None,
-                    };
+        // Try to find the language by display name or ID using the Language enum
+        let language = Language::all()
+            .iter()
+            .find(|lang| lang.display_name() == trimmed || lang.id() == trimmed.to_lowercase())
+            .copied()
+            .or_else(|| Language::from_id(trimmed));
 
-                    if let Some(lang) = language {
-                        state.highlighter = HighlightEngine::for_language(lang);
-                        state.reference_highlighter.set_language(&lang);
-                    }
-                }
-
-                // Find display name for status message
-                let display_name = language_map
-                    .iter()
-                    .find(|(_, id)| *id == lang_id)
-                    .map(|(display, _)| *display)
-                    .unwrap_or(lang_id);
-                self.set_status_message(format!("Language set to {}", display_name));
+        if let Some(lang) = language {
+            let buffer_id = self.active_buffer();
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                state.language = lang.id().to_string();
+                state.highlighter = HighlightEngine::for_language(lang);
+                state.reference_highlighter.set_language(&lang);
+                self.set_status_message(format!("Language set to {}", lang.display_name()));
             }
         } else {
             self.set_status_message(format!("Unknown language: {}", input));

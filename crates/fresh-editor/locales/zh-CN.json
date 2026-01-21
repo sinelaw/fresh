@@ -507,6 +507,8 @@
   "cmd.set_bookmark_desc": "在当前位置设置书签（0-9）",
   "cmd.set_line_ending": "设置行结束符",
   "cmd.set_line_ending_desc": "设置当前缓冲区的行结束符格式",
+  "cmd.set_language": "设置语言",
+  "cmd.set_language_desc": "设置当前缓冲区的语言/语法高亮",
   "cmd.set_mark": "设置标记",
   "cmd.set_mark_desc": "设置选择锚点以开始选择",
   "cmd.set_tab_size": "设置制表符大小",

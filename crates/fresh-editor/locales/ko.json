@@ -507,6 +507,8 @@
   "cmd.set_bookmark_desc": "현재 위치에 북마크 설정 (0-9)",
   "cmd.set_line_ending": "줄 끝 설정",
   "cmd.set_line_ending_desc": "현재 버퍼의 줄 끝 형식 설정",
+  "cmd.set_language": "언어 설정",
+  "cmd.set_language_desc": "현재 버퍼의 언어/구문 강조 설정",
   "cmd.set_mark": "마크 설정",
   "cmd.set_mark_desc": "선택을 시작할 앵커 설정",
   "cmd.set_tab_size": "탭 크기 설정",

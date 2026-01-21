@@ -507,6 +507,8 @@
   "cmd.set_bookmark_desc": "Set a bookmark at current position (0-9)",
   "cmd.set_line_ending": "Set Line Ending",
   "cmd.set_line_ending_desc": "Set the line ending format for the current buffer",
+  "cmd.set_language": "Set Language",
+  "cmd.set_language_desc": "Set the language/syntax highlighting for the current buffer",
   "cmd.set_mark": "Set Mark",
   "cmd.set_mark_desc": "Set selection anchor to start a selection",
   "cmd.set_tab_size": "Set Tab Size",

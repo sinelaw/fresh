@@ -507,6 +507,8 @@
   "cmd.set_bookmark_desc": "Définir un signet à la position actuelle (0-9)",
   "cmd.set_line_ending": "Définir la fin de ligne",
   "cmd.set_line_ending_desc": "Définir le format de fin de ligne pour le tampon actuel",
+  "cmd.set_language": "Définir la langue",
+  "cmd.set_language_desc": "Définir la langue/coloration syntaxique pour le tampon actuel",
   "cmd.set_mark": "Définir la marque",
   "cmd.set_mark_desc": "Définir l'ancre de sélection pour démarrer une sélection",
   "cmd.set_tab_size": "Définir la taille de la tabulation",

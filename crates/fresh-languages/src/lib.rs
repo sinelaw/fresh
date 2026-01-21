@@ -487,9 +487,34 @@ impl Language {
     }
 }
 
-impl std::fmt::Display for Language {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
+impl Language {
+    /// Returns all available language variants
+    pub fn all() -> &'static [Language] {
+        &[
+            Language::Rust,
+            Language::Python,
+            Language::JavaScript,
+            Language::TypeScript,
+            Language::HTML,
+            Language::CSS,
+            Language::C,
+            Language::Cpp,
+            Language::Go,
+            Language::Json,
+            Language::Java,
+            Language::CSharp,
+            Language::Php,
+            Language::Ruby,
+            Language::Bash,
+            Language::Lua,
+            Language::Pascal,
+            Language::Odin,
+        ]
+    }
+
+    /// Returns the language ID (lowercase identifier used in config/internal)
+    pub fn id(&self) -> &'static str {
+        match self {
             Self::Rust => "rust",
             Self::Python => "python",
             Self::JavaScript => "javascript",
@@ -508,8 +533,63 @@ impl std::fmt::Display for Language {
             Self::Lua => "lua",
             Self::Pascal => "pascal",
             Self::Odin => "odin",
-        };
-        write!(f, "{}", s)
+        }
+    }
+
+    /// Returns the human-readable display name
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Rust => "Rust",
+            Self::Python => "Python",
+            Self::JavaScript => "JavaScript",
+            Self::TypeScript => "TypeScript",
+            Self::HTML => "HTML",
+            Self::CSS => "CSS",
+            Self::C => "C",
+            Self::Cpp => "C++",
+            Self::Go => "Go",
+            Self::Json => "JSON",
+            Self::Java => "Java",
+            Self::CSharp => "C#",
+            Self::Php => "PHP",
+            Self::Ruby => "Ruby",
+            Self::Bash => "Bash",
+            Self::Lua => "Lua",
+            Self::Pascal => "Pascal",
+            Self::Odin => "Odin",
+        }
+    }
+
+    /// Parse a language from its ID or display name
+    pub fn from_id(id: &str) -> Option<Self> {
+        let id_lower = id.to_lowercase();
+        match id_lower.as_str() {
+            "rust" => Some(Self::Rust),
+            "python" => Some(Self::Python),
+            "javascript" => Some(Self::JavaScript),
+            "typescript" => Some(Self::TypeScript),
+            "html" => Some(Self::HTML),
+            "css" => Some(Self::CSS),
+            "c" => Some(Self::C),
+            "cpp" | "c++" => Some(Self::Cpp),
+            "go" => Some(Self::Go),
+            "json" => Some(Self::Json),
+            "java" => Some(Self::Java),
+            "c_sharp" | "c#" | "csharp" => Some(Self::CSharp),
+            "php" => Some(Self::Php),
+            "ruby" => Some(Self::Ruby),
+            "bash" => Some(Self::Bash),
+            "lua" => Some(Self::Lua),
+            "pascal" => Some(Self::Pascal),
+            "odin" => Some(Self::Odin),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Language {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.id())
     }
 }
 

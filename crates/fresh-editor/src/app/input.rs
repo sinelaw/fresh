@@ -1962,54 +1962,51 @@ impl Editor {
 
     /// Start the language selection prompt
     fn start_set_language_prompt(&mut self) {
+        use crate::primitives::highlighter::Language;
+
         let current_language = self.active_state().language.clone();
 
-        // Available languages with display names
-        let options = [
-            ("text", "Plain Text"),
-            ("rust", "Rust"),
-            ("python", "Python"),
-            ("javascript", "JavaScript"),
-            ("typescript", "TypeScript"),
-            ("html", "HTML"),
-            ("css", "CSS"),
-            ("c", "C"),
-            ("cpp", "C++"),
-            ("go", "Go"),
-            ("json", "JSON"),
-            ("java", "Java"),
-            ("c_sharp", "C#"),
-            ("php", "PHP"),
-            ("ruby", "Ruby"),
-            ("bash", "Bash"),
-            ("lua", "Lua"),
-            ("pascal", "Pascal"),
-            ("odin", "Odin"),
+        // Build suggestions from Language enum + Plain Text option
+        let mut suggestions: Vec<crate::input::commands::Suggestion> = vec![
+            // Plain Text option (no syntax highlighting)
+            crate::input::commands::Suggestion {
+                text: "Plain Text".to_string(),
+                description: if current_language == "text" {
+                    Some("current".to_string())
+                } else {
+                    None
+                },
+                value: Some("text".to_string()),
+                disabled: false,
+                keybinding: None,
+                source: None,
+            },
         ];
 
-        let current_index = options
+        // Add all languages from the Language enum
+        for lang in Language::all() {
+            let is_current = lang.id() == current_language;
+            suggestions.push(crate::input::commands::Suggestion {
+                text: lang.display_name().to_string(),
+                description: if is_current {
+                    Some("current".to_string())
+                } else {
+                    None
+                },
+                value: Some(lang.id().to_string()),
+                disabled: false,
+                keybinding: None,
+                source: None,
+            });
+        }
+
+        // Find current language index
+        let current_index = suggestions
             .iter()
-            .position(|(lang, _)| *lang == current_language)
+            .position(|s| s.value.as_deref() == Some(&current_language))
             .unwrap_or(0);
 
-        let suggestions: Vec<crate::input::commands::Suggestion> = options
-            .iter()
-            .map(|(lang, display_name)| {
-                let is_current = *lang == current_language;
-                crate::input::commands::Suggestion {
-                    text: display_name.to_string(),
-                    description: if is_current {
-                        Some("current".to_string())
-                    } else {
-                        None
-                    },
-                    value: Some(lang.to_string()),
-                    disabled: false,
-                    keybinding: None,
-                    source: None,
-                }
-            })
-            .collect();
+        let current_display = suggestions[current_index].text.clone();
 
         self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Language: ".to_string(),
@@ -2020,8 +2017,7 @@ impl Editor {
         if let Some(prompt) = self.prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
-                let (_, display_name) = options[current_index];
-                prompt.input = display_name.to_string();
+                prompt.input = current_display;
                 prompt.cursor_pos = prompt.input.len();
             }
         }

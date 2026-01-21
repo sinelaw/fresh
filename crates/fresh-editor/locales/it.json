@@ -507,6 +507,8 @@
   "cmd.set_bookmark": "Imposta segnalibro",
   "cmd.set_line_ending_desc": "Imposta il formato di fine riga per il buffer corrente",
   "cmd.set_line_ending": "Imposta fine riga",
+  "cmd.set_language_desc": "Imposta la lingua/evidenziazione sintassi per il buffer corrente",
+  "cmd.set_language": "Imposta lingua",
   "cmd.set_mark_desc": "Imposta l'ancora di selezione per iniziare una selezione",
   "cmd.set_mark": "Imposta marcatore",
   "cmd.set_tab_size_desc": "Imposta la dimensione della tabulazione per il buffer corrente",
