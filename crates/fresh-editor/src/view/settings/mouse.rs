@@ -197,6 +197,13 @@ impl Editor {
                     state.sub_focus = None;
                 }
             }
+            SettingsHit::SearchResult(idx) => {
+                // Click on search result - select it and jump to it (same as Enter)
+                if let Some(ref mut state) = self.settings_state {
+                    state.selected_search_result = idx;
+                    state.jump_to_search_result();
+                }
+            }
             SettingsHit::Item(idx) => {
                 if let Some(ref mut state) = self.settings_state {
                     state.focus_panel = FocusPanel::Settings;

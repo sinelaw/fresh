@@ -139,6 +139,13 @@ impl SettingsLayout {
             }
         }
 
+        // Check search results (before regular items, since they replace the item list during search)
+        for (idx, result) in self.search_results.iter().enumerate() {
+            if self.contains(result.area, x, y) {
+                return Some(SettingsHit::SearchResult(idx));
+            }
+        }
+
         // Check setting items
         for item in &self.items {
             if self.contains(item.area, x, y) {
@@ -250,6 +257,8 @@ pub enum SettingsHit {
     Category(usize),
     /// Click on a setting item (index)
     Item(usize),
+    /// Click on a search result (index in search_results)
+    SearchResult(usize),
     /// Click on toggle control
     ControlToggle(usize),
     /// Click on number decrement button

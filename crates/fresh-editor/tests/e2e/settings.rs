@@ -738,6 +738,66 @@ fn test_settings_search_jump_scrolls() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
+/// Test that clicking on a search result navigates to that setting
+///
+/// When search results are displayed, clicking on one should:
+/// 1. Navigate to that setting (same as pressing Enter)
+/// 2. Exit search mode
+/// 3. Show the setting in the settings panel
+#[test]
+fn test_settings_search_result_click_navigates() {
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+
+    // Open settings
+    harness
+        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for "tab" which should match "Tab Size" in Editor category
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "tab".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Should show search results with "Tab Size"
+    harness.assert_screen_contains("Tab Size");
+
+    // Find the position of "Tab Size" on screen
+    let screen = harness.screen_to_string();
+    let result_pos = screen
+        .lines()
+        .enumerate()
+        .find_map(|(row, line)| line.find("Tab Size").map(|col| (col as u16, row as u16)))
+        .expect("Should find Tab Size in search results");
+
+    // Click on the search result
+    harness.mouse_click(result_pos.0 + 2, result_pos.1).unwrap();
+    harness.render().unwrap();
+
+    // After clicking, search mode should be closed
+    // "Type to search" appears in search mode - should not be visible now
+    assert!(
+        !harness.screen_to_string().contains("Type to search"),
+        "Search mode should be closed after clicking a result"
+    );
+
+    // The setting should be visible in the settings panel (not search results)
+    // We should see "Tab Size" as the selected setting with its control
+    harness.assert_screen_contains("Tab Size");
+
+    // We should be in the Editor category now (Tab Size is an Editor setting)
+    harness.assert_screen_contains("Editor");
+
+    // Close settings
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
 /// Test theme dropdown can be cycled with Enter or Right arrow
 /// BUG: Theme dropdown doesn't cycle - it stays on the same value
 #[test]
