@@ -1,5 +1,33 @@
 # Release Notes
 
+## 0.1.88
+
+### Features
+
+* **Status Bar Language Indicator**: Click the language name in the status bar to change syntax highlighting. Supports mouse wheel scrolling and type-to-filter.
+* **VS Code-like Completion UX**: Debounced completion triggers, Tab accepts completion, uppercase letters work in type-to-filter.
+* **Per-Language LSP Root URI**: LSP servers can now have per-language root URI detection. Includes automatic C# project root detection via `.csproj` files.
+* **Settings UI Improvements**: Settings organized by topic sections, improved focus colors, search navigates to setting, better Map control navigation.
+
+### Bug Fixes
+
+* **Tab Bar Mouse Events**: Fixed clicks on tabs not working when menu bar is hidden (#832).
+* **LSP Deadlock**: Fixed deadlock when LSP server sends requests while client is awaiting a response.
+* **LSP Root URI**: Include `root_uri` in LSP initialize params for server compatibility.
+* **Terminal Scrollback**: Fixed race condition truncating terminal backing file when PTY already wrote content.
+* **Plugin i18n**: Fixed placeholder format to use `%{variable}` syntax.
+* **Settings UI**: Fixed confirm dialog mouse clicks/Tab navigation, dropdown option selection, search result navigation, and content bleeding into footer.
+
+### Packaging
+
+* **Winget**: Added Windows Package Manager (winget) publishing to release pipeline.
+
+### Internal
+
+* **FileSystem Trait**: New IO abstraction layer enabling different backends (local, remote, WASM). All filesystem operations now use injectable `FileSystem` trait.
+
+---
+
 ## 0.1.87
 
 ### Features
