@@ -63,9 +63,12 @@ impl InputHandler for PopupManager {
                 InputResult::Consumed
             }
 
-            // Tab also navigates
+            // Tab confirms selection in completion popups, navigates in others
             KeyCode::Tab if event.modifiers.is_empty() => {
-                if let Some(popup) = self.top_mut() {
+                if self.is_completion_popup() {
+                    // Tab accepts the current completion
+                    ctx.defer(DeferredAction::ConfirmPopup);
+                } else if let Some(popup) = self.top_mut() {
                     popup.select_next();
                 }
                 InputResult::Consumed
