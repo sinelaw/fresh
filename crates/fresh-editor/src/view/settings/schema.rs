@@ -70,6 +70,8 @@ pub struct SettingSchema {
     pub default: Option<serde_json::Value>,
     /// Whether this field is read-only (cannot be edited by user)
     pub read_only: bool,
+    /// Section/group within the category (from x-section)
+    pub section: Option<String>,
 }
 
 /// Type of a setting, determines which control to render
@@ -172,6 +174,9 @@ struct RawSchema {
     /// Whether this Map should disallow adding new entries (entries are auto-managed)
     #[serde(rename = "x-no-add", default)]
     no_add: bool,
+    /// Section/group within the category for organizing related settings
+    #[serde(rename = "x-section")]
+    section: Option<String>,
 }
 
 /// An entry in the x-enum-values array
@@ -354,6 +359,9 @@ fn parse_setting(
     // Check for readOnly flag on schema or resolved ref
     let read_only = schema.read_only || resolved.read_only;
 
+    // Get section from schema or resolved ref
+    let section = schema.section.clone().or_else(|| resolved.section.clone());
+
     SettingSchema {
         path: path.to_string(),
         name: humanize_name(name),
@@ -361,6 +369,7 @@ fn parse_setting(
         setting_type,
         default: schema.default.clone(),
         read_only,
+        section,
     }
 }
 

@@ -239,6 +239,10 @@ pub struct SettingItem {
     pub read_only: bool,
     /// Whether this is an auto-managed map (no_add) that should never show as modified
     pub is_auto_managed: bool,
+    /// Section/group within the category (from x-section)
+    pub section: Option<String>,
+    /// Whether this item is the first in its section (for rendering section headers)
+    pub is_section_start: bool,
 }
 
 /// The type of control to render for a setting
@@ -315,18 +319,31 @@ impl SettingControl {
     }
 }
 
+/// Height of a section header (header line + gap)
+pub const SECTION_HEADER_HEIGHT: u16 = 2;
+
 impl SettingItem {
-    /// Calculate the total height needed for this item (control + description + spacing)
+    /// Calculate the total height needed for this item (control + description + spacing + section header if applicable)
     pub fn item_height(&self) -> u16 {
-        // Height = control + description (if any) + spacing
+        // Height = section header (if first in section) + control + description (if any) + spacing
+        let section_height = if self.is_section_start {
+            SECTION_HEADER_HEIGHT
+        } else {
+            0
+        };
         let description_height = if self.description.is_some() { 1 } else { 0 };
-        self.control.control_height() + description_height + 1
+        section_height + self.control.control_height() + description_height + 1
     }
 
     /// Calculate height with expanded description when focused
     pub fn item_height_expanded(&self, width: u16) -> u16 {
+        let section_height = if self.is_section_start {
+            SECTION_HEADER_HEIGHT
+        } else {
+            0
+        };
         let description_height = self.description_height_expanded(width);
-        self.control.control_height() + description_height + 1
+        section_height + self.control.control_height() + description_height + 1
     }
 
     /// Calculate description height when expanded (wrapped to width)
@@ -555,11 +572,32 @@ pub fn build_pages(
 
 /// Build a single page from a category
 fn build_page(category: &SettingCategory, ctx: &BuildContext) -> SettingsPage {
-    let items = category
+    let mut items: Vec<SettingItem> = category
         .settings
         .iter()
         .map(|s| build_item(s, ctx))
         .collect();
+
+    // Sort items: by section first (None comes last), then alphabetically by name
+    items.sort_by(|a, b| match (&a.section, &b.section) {
+        (Some(sec_a), Some(sec_b)) => sec_a.cmp(sec_b).then_with(|| a.name.cmp(&b.name)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.name.cmp(&b.name),
+    });
+
+    // Mark items that start a new section
+    let mut prev_section: Option<&String> = None;
+    for item in &mut items {
+        let is_new_section = match (&item.section, prev_section) {
+            (Some(sec), Some(prev)) => sec != prev,
+            (Some(_), None) => true,
+            (None, Some(_)) => false, // Unsectioned items after sectioned ones don't start a section
+            (None, None) => false,
+        };
+        item.is_section_start = is_new_section;
+        prev_section = item.section.as_ref();
+    }
 
     let subpages = category
         .subcategories
@@ -763,6 +801,8 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
         layer_source,
         read_only: schema.read_only,
         is_auto_managed,
+        section: schema.section.clone(),
+        is_section_start: false, // Set later in build_page after sorting
     }
 }
 
@@ -940,6 +980,8 @@ pub fn build_item_from_value(
         layer_source: ConfigLayer::System,
         read_only: schema.read_only,
         is_auto_managed,
+        section: schema.section.clone(),
+        is_section_start: false, // Not used in dialogs
     }
 }
 
@@ -1045,6 +1087,7 @@ mod tests {
             setting_type: SettingType::Boolean,
             default: Some(serde_json::Value::Bool(true)),
             read_only: false,
+            section: None,
         };
 
         let config = sample_config();
@@ -1073,6 +1116,7 @@ mod tests {
             setting_type: SettingType::Boolean,
             default: Some(serde_json::Value::Bool(true)),
             read_only: false,
+            section: None,
         };
 
         let config = sample_config();
@@ -1099,6 +1143,7 @@ mod tests {
             },
             default: Some(serde_json::Value::Number(4.into())),
             read_only: false,
+            section: None,
         };
 
         let config = sample_config();
@@ -1126,6 +1171,7 @@ mod tests {
             setting_type: SettingType::String,
             default: Some(serde_json::Value::String("high-contrast".to_string())),
             read_only: false,
+            section: None,
         };
 
         let config = sample_config();

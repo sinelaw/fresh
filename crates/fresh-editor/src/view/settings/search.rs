@@ -184,6 +184,8 @@ mod tests {
             layer_source: crate::config_io::ConfigLayer::System,
             read_only: false,
             is_auto_managed: false,
+            section: None,
+            is_section_start: false,
         }
     }
 

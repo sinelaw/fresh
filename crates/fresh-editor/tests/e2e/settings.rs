@@ -885,9 +885,10 @@ fn test_settings_from_terminal_mode_captures_input() {
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Editor category has "Auto Indent" which General doesn't have prominently
+    // Editor category has settings organized by sections - Completion section comes first
     // If Down key worked in Settings, we should now be viewing Editor settings
-    harness.assert_screen_contains("Auto Indent");
+    // Check for a setting in the visible Completion section
+    harness.assert_screen_contains("Quick Suggestions");
 
     // Clean up - close settings
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -1106,16 +1107,19 @@ fn test_settings_descriptions_render_properly() {
     );
 
     // Check that we can see some expected description content
-    // These descriptions should exist for Editor settings
+    // Settings are now organized by section, so we check for Completion section content
+    // (which comes first alphabetically)
     assert!(
-        screen.contains("indent") || screen.contains("Indent"),
-        "Should show indent-related description"
+        screen.contains("completion")
+            || screen.contains("Completion")
+            || screen.contains("suggest"),
+        "Should show completion-related description (first visible section)"
     );
 
-    // Verify descriptions are rendered (can be either case)
+    // Verify descriptions are rendered - check for section header or setting content
     assert!(
-        screen.contains("hether to enable"),
-        "Description containing 'whether to enable' should be visible"
+        screen.contains("Enter") || screen.contains("trigger") || screen.contains("suggestions"),
+        "Description containing completion behavior should be visible"
     );
 
     // Close settings

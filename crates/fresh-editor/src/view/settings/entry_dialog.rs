@@ -77,6 +77,8 @@ impl EntryDialogState {
             layer_source: crate::config_io::ConfigLayer::System,
             read_only: !is_new, // Key is editable only for new entries
             is_auto_managed: false,
+            section: None,
+            is_section_start: false,
         };
         items.push(key_item);
 
@@ -1113,6 +1115,7 @@ mod tests {
                         setting_type: SettingType::Boolean,
                         default: Some(serde_json::json!(true)),
                         read_only: false,
+                        section: None,
                     },
                     SettingSchema {
                         path: "/command".to_string(),
@@ -1121,11 +1124,13 @@ mod tests {
                         setting_type: SettingType::String,
                         default: Some(serde_json::json!("")),
                         read_only: false,
+                        section: None,
                     },
                 ],
             },
             default: None,
             read_only: false,
+            section: None,
         }
     }
 

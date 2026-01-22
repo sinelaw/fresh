@@ -675,6 +675,66 @@ fn render_setting_item_pure(
     theme: &Theme,
     label_width: Option<u16>,
 ) -> ControlLayoutInfo {
+    use super::items::SECTION_HEADER_HEIGHT;
+
+    // Handle section header if this item starts a new section
+    let (item_area, item_skip_top) = if item.is_section_start {
+        if let Some(ref section_name) = item.section {
+            // Calculate how much of the section header is visible
+            let header_visible_start = skip_top.min(SECTION_HEADER_HEIGHT);
+            let header_visible_height = SECTION_HEADER_HEIGHT.saturating_sub(skip_top);
+
+            // Render visible part of section header
+            if header_visible_height > 0 && area.height > 0 {
+                let header_y = area.y;
+                let _header_area_height = header_visible_height.min(area.height);
+
+                // First row: section title (bold, slightly dimmed)
+                if header_visible_start == 0 {
+                    let header_style = Style::default()
+                        .fg(theme.menu_active_fg)
+                        .add_modifier(Modifier::BOLD);
+                    // Render section name with underline characters
+                    let header_text = format!("── {} ", section_name);
+                    // Fill remaining width with underline
+                    let remaining = area.width.saturating_sub(header_text.len() as u16);
+                    let full_header = format!("{}{}", header_text, "─".repeat(remaining as usize));
+                    frame.render_widget(
+                        Paragraph::new(full_header).style(header_style),
+                        Rect::new(area.x, header_y, area.width, 1),
+                    );
+                }
+
+                // Second row is a blank spacer (already blank, no rendering needed)
+            }
+
+            // Adjust area for the item content (after header)
+            let item_y_offset = header_visible_height.min(area.height);
+            let item_area = Rect::new(
+                area.x,
+                area.y + item_y_offset,
+                area.width,
+                area.height.saturating_sub(item_y_offset),
+            );
+            // Skip top for the item content is reduced by the header height
+            let item_skip_top = skip_top.saturating_sub(SECTION_HEADER_HEIGHT);
+            (item_area, item_skip_top)
+        } else {
+            (area, skip_top)
+        }
+    } else {
+        (area, skip_top)
+    };
+
+    // If no space left for item content, return empty layout
+    if item_area.height == 0 {
+        return ControlLayoutInfo::default();
+    }
+
+    // Use adjusted area and skip_top for the rest of rendering
+    let area = item_area;
+    let skip_top = item_skip_top;
+
     let is_selected = ctx.settings_focused && idx == ctx.selected_item;
 
     // Check if this item or any of its controls is being hovered
@@ -1642,7 +1702,7 @@ fn render_keybinding_list_partial(
 }
 
 /// Layout info for a control (for hit testing)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum ControlLayoutInfo {
     Toggle(Rect),
     Number {
@@ -1665,6 +1725,7 @@ pub enum ControlLayoutInfo {
     Json {
         edit_area: Rect,
     },
+    #[default]
     Complex,
 }
 
