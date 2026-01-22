@@ -237,6 +237,47 @@ impl SettingsState {
                 map_state.init_focus(from_above);
             }
         }
+        // Update sub_focus to match the map's focus position
+        self.update_map_sub_focus();
+    }
+
+    /// Update the focus state of the current item's control.
+    /// This should be called when selection changes to ensure the control
+    /// knows whether it's focused (for proper "[Enter to edit]" hints, etc.)
+    fn update_control_focus(&mut self, focused: bool) {
+        let focus_state = if focused {
+            FocusState::Focused
+        } else {
+            FocusState::Normal
+        };
+        if let Some(item) = self.current_item_mut() {
+            match &mut item.control {
+                SettingControl::Map(ref mut state) => state.focus = focus_state,
+                SettingControl::TextList(ref mut state) => state.focus = focus_state,
+                SettingControl::ObjectArray(ref mut state) => state.focus = focus_state,
+                SettingControl::Toggle(ref mut state) => state.focus = focus_state,
+                SettingControl::Number(ref mut state) => state.focus = focus_state,
+                SettingControl::Dropdown(ref mut state) => state.focus = focus_state,
+                SettingControl::Text(ref mut state) => state.focus = focus_state,
+                SettingControl::Json(_) | SettingControl::Complex { .. } => {} // These don't have focus state
+            }
+        }
+    }
+
+    /// Update sub_focus based on the current Map control's focus position.
+    /// Maps focus_regions use: id=0 for label, id=1+i for entry i, id=1+len for add-new
+    fn update_map_sub_focus(&mut self) {
+        self.sub_focus = self.current_item().and_then(|item| {
+            if let SettingControl::Map(ref map_state) = item.control {
+                // Map focus_regions: id=0 (label), id=1+i (entry), id=1+len (add-new)
+                Some(match map_state.focused_entry {
+                    Some(i) => 1 + i,
+                    None => 1 + map_state.entries.len(), // add-new field
+                })
+            } else {
+                None
+            }
+        });
     }
 
     /// Move selection up
@@ -244,10 +285,12 @@ impl SettingsState {
         match self.focus_panel {
             FocusPanel::Categories => {
                 if self.selected_category > 0 {
+                    self.update_control_focus(false); // Unfocus old item
                     self.selected_category -= 1;
                     self.selected_item = 0;
                     self.scroll_panel = ScrollablePanel::new();
                     self.sub_focus = None;
+                    self.update_control_focus(true); // Focus new item
                 }
             }
             FocusPanel::Settings => {
@@ -260,10 +303,15 @@ impl SettingsState {
                     })
                     .unwrap_or(false);
 
-                if !handled && self.selected_item > 0 {
+                if handled {
+                    // Update sub_focus for Map navigation
+                    self.update_map_sub_focus();
+                } else if self.selected_item > 0 {
+                    self.update_control_focus(false); // Unfocus old item
                     self.selected_item -= 1;
                     self.sub_focus = None;
                     self.init_map_focus(false); // entering from below
+                    self.update_control_focus(true); // Focus new item
                 }
                 self.ensure_visible();
             }
@@ -281,10 +329,12 @@ impl SettingsState {
         match self.focus_panel {
             FocusPanel::Categories => {
                 if self.selected_category + 1 < self.pages.len() {
+                    self.update_control_focus(false); // Unfocus old item
                     self.selected_category += 1;
                     self.selected_item = 0;
                     self.scroll_panel = ScrollablePanel::new();
                     self.sub_focus = None;
+                    self.update_control_focus(true); // Focus new item
                 }
             }
             FocusPanel::Settings => {
@@ -297,14 +347,19 @@ impl SettingsState {
                     })
                     .unwrap_or(false);
 
-                if !handled {
+                if handled {
+                    // Update sub_focus for Map navigation
+                    self.update_map_sub_focus();
+                } else {
                     let can_move = self
                         .current_page()
                         .is_some_and(|page| self.selected_item + 1 < page.items.len());
                     if can_move {
+                        self.update_control_focus(false); // Unfocus old item
                         self.selected_item += 1;
                         self.sub_focus = None;
                         self.init_map_focus(true); // entering from above
+                        self.update_control_focus(true); // Focus new item
                     }
                 }
                 self.ensure_visible();
@@ -320,11 +375,17 @@ impl SettingsState {
 
     /// Switch focus between panels: Categories -> Settings -> Footer -> Categories
     pub fn toggle_focus(&mut self) {
+        let old_panel = self.focus_panel;
         self.focus_panel = match self.focus_panel {
             FocusPanel::Categories => FocusPanel::Settings,
             FocusPanel::Settings => FocusPanel::Footer,
             FocusPanel::Footer => FocusPanel::Categories,
         };
+
+        // Unfocus control when leaving Settings panel
+        if old_panel == FocusPanel::Settings {
+            self.update_control_focus(false);
+        }
 
         // Reset item selection when switching to settings
         if self.focus_panel == FocusPanel::Settings
@@ -336,6 +397,7 @@ impl SettingsState {
 
         if self.focus_panel == FocusPanel::Settings {
             self.init_map_focus(true); // entering from above
+            self.update_control_focus(true); // Focus the control
         }
 
         // Reset footer button to Save when entering Footer panel
@@ -630,21 +692,32 @@ impl SettingsState {
 
     /// Jump to the currently selected search result
     pub fn jump_to_search_result(&mut self) {
-        if let Some(result) = self.search_results.get(self.selected_search_result) {
-            self.selected_category = result.page_index;
-            self.selected_item = result.item_index;
-            self.focus_panel = FocusPanel::Settings;
-            // Reset scroll offset but preserve viewport for ensure_visible
-            self.scroll_panel.scroll.offset = 0;
-            // Update content height for the new category's items
-            if let Some(page) = self.pages.get(self.selected_category) {
-                self.scroll_panel.update_content_height(&page.items);
-            }
-            self.sub_focus = None;
-            self.init_map_focus(true);
-            self.ensure_visible();
-            self.cancel_search();
+        // Extract values first to avoid borrow issues
+        let Some(&SearchResult {
+            page_index,
+            item_index,
+            ..
+        }) = self.search_results.get(self.selected_search_result)
+        else {
+            return;
+        };
+
+        // Unfocus old item first
+        self.update_control_focus(false);
+        self.selected_category = page_index;
+        self.selected_item = item_index;
+        self.focus_panel = FocusPanel::Settings;
+        // Reset scroll offset but preserve viewport for ensure_visible
+        self.scroll_panel.scroll.offset = 0;
+        // Update content height for the new category's items
+        if let Some(page) = self.pages.get(self.selected_category) {
+            self.scroll_panel.update_content_height(&page.items);
         }
+        self.sub_focus = None;
+        self.init_map_focus(true);
+        self.update_control_focus(true); // Focus the new item
+        self.ensure_visible();
+        self.cancel_search();
     }
 
     /// Get the currently selected search result

@@ -465,6 +465,11 @@ impl ScrollItem for SettingItem {
                 });
                 y += 1;
 
+                // Column header row (if display_field is set)
+                if state.display_field.is_some() {
+                    y += 1;
+                }
+
                 // Each entry (id = 1 + entry_index)
                 for (i, (_, v)) in state.entries.iter().enumerate() {
                     let mut entry_height = 1u16;
