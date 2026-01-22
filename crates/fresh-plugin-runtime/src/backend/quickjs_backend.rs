@@ -1920,6 +1920,14 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Set the workspace root URI for a specific language's LSP server
+    /// This allows plugins to specify project roots (e.g., directory containing .csproj)
+    pub fn set_lsp_root_uri(&self, language: String, uri: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetLspRootUri { language, uri })
+            .is_ok()
+    }
+
     /// Get all diagnostics from LSP
     #[plugin_api(ts_return = "JsDiagnostic[]")]
     pub fn get_all_diagnostics<'js>(

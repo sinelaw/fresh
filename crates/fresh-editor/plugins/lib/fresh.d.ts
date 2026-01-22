@@ -867,10 +867,8 @@ interface EditorAPI {
 	clearViewTransform(bufferId: number, splitId: number | null): boolean;
 	/**
 	* Set file explorer decorations for a namespace
-	* 
-	* Uses typed Vec<FileExplorerDecoration> - serde validates field names at runtime
 	*/
-	setFileExplorerDecorations(namespace: string, decorations: FileExplorerDecoration[]): boolean;
+	setFileExplorerDecorations(namespace: string, decorations: Record<string, unknown>[]): boolean;
 	/**
 	* Clear file explorer decorations for a namespace
 	*/
@@ -998,6 +996,11 @@ interface EditorAPI {
 	* Disable LSP for a specific language
 	*/
 	disableLspForLanguage(language: string): boolean;
+	/**
+	* Set the workspace root URI for a specific language's LSP server
+	* This allows plugins to specify project roots (e.g., directory containing .csproj)
+	*/
+	setLspRootUri(language: string, uri: string): boolean;
 	/**
 	* Get all diagnostics from LSP
 	*/

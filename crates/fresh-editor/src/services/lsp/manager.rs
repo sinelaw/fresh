@@ -38,8 +38,11 @@ pub struct LspManager {
     /// Configuration for each language
     config: HashMap<String, LspServerConfig>,
 
-    /// Root URI for workspace
+    /// Default root URI for workspace (used if no per-language root is set)
     root_uri: Option<Uri>,
+
+    /// Per-language root URIs (allows plugins to specify project roots)
+    per_language_root_uris: HashMap<String, Uri>,
 
     /// Tokio runtime reference
     runtime: Option<tokio::runtime::Handle>,
@@ -87,6 +90,7 @@ impl LspManager {
             handles: HashMap::new(),
             config: HashMap::new(),
             root_uri,
+            per_language_root_uris: HashMap::new(),
             runtime: None,
             async_bridge: None,
             restart_attempts: HashMap::new(),
@@ -254,6 +258,40 @@ impl LspManager {
         self.root_uri = root_uri;
     }
 
+    /// Set a language-specific root URI
+    ///
+    /// This allows plugins to specify project roots for specific languages.
+    /// For example, a C# plugin can set the root to the directory containing .csproj.
+    /// Returns true if an existing server was restarted with the new root.
+    pub fn set_language_root_uri(&mut self, language: &str, uri: Uri) -> bool {
+        tracing::info!("Setting root URI for {}: {}", language, uri.as_str());
+        self.per_language_root_uris
+            .insert(language.to_string(), uri.clone());
+
+        // If there's an existing server for this language, restart it with the new root
+        if self.handles.contains_key(language) {
+            tracing::info!(
+                "Restarting {} LSP server with new root: {}",
+                language,
+                uri.as_str()
+            );
+            self.shutdown_server(language);
+            // The server will be respawned on next request with the new root
+            return true;
+        }
+        false
+    }
+
+    /// Get the effective root URI for a language
+    ///
+    /// Returns the language-specific root if set, otherwise the default root.
+    pub fn get_effective_root_uri(&self, language: &str) -> Option<Uri> {
+        self.per_language_root_uris
+            .get(language)
+            .cloned()
+            .or_else(|| self.root_uri.clone())
+    }
+
     /// Reset the manager for a new project
     ///
     /// This shuts down all servers and clears state, preparing for a fresh start.
@@ -350,8 +388,10 @@ impl LspManager {
             Ok(handle) => {
                 // Initialize the handle (non-blocking)
                 // The handle will become ready asynchronously
+                // Use per-language root URI if set, otherwise fall back to default
+                let effective_root = self.get_effective_root_uri(language);
                 if let Err(e) =
-                    handle.initialize(self.root_uri.clone(), config.initialization_options.clone())
+                    handle.initialize(effective_root, config.initialization_options.clone())
                 {
                     tracing::error!("Failed to send initialize command for {}: {}", language, e);
                     return None;

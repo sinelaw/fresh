@@ -4870,6 +4870,32 @@ impl Editor {
                 self.warning_domains.lsp.clear();
             }
 
+            PluginCommand::SetLspRootUri { language, uri } => {
+                tracing::info!("Plugin setting LSP root URI for {}: {}", language, uri);
+
+                // Parse the URI string into an lsp_types::Uri
+                match uri.parse::<lsp_types::Uri>() {
+                    Ok(parsed_uri) => {
+                        if let Some(ref mut lsp) = self.lsp {
+                            let restarted = lsp.set_language_root_uri(&language, parsed_uri);
+                            if restarted {
+                                self.status_message = Some(format!(
+                                    "LSP root updated for {} (restarting server)",
+                                    language
+                                ));
+                            } else {
+                                self.status_message =
+                                    Some(format!("LSP root set for {}", language));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Invalid LSP root URI '{}': {}", uri, e);
+                        self.status_message = Some(format!("Invalid LSP root URI: {}", e));
+                    }
+                }
+            }
+
             // ==================== Scroll Sync Commands ====================
             PluginCommand::CreateScrollSyncGroup {
                 group_id,

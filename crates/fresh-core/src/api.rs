@@ -1198,6 +1198,16 @@ pub enum PluginCommand {
         language: String,
     },
 
+    /// Set the workspace root URI for a specific language's LSP server
+    /// This allows plugins to specify project roots (e.g., directory containing .csproj)
+    /// If the LSP is already running, it will be restarted with the new root
+    SetLspRootUri {
+        /// The language to set root URI for (e.g., "csharp", "rust")
+        language: String,
+        /// The root URI (file:// URL format)
+        uri: String,
+    },
+
     /// Create a scroll sync group for anchor-based synchronized scrolling
     /// Used for side-by-side diff views where two panes need to scroll together
     /// The plugin provides the group ID (must be unique per plugin)
