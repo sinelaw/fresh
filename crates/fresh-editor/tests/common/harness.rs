@@ -1519,6 +1519,8 @@ impl EditorTestHarness {
     /// Useful for testing async features like git grep, file explorer, auto-revert, etc.
     pub fn process_async_and_render(&mut self) -> anyhow::Result<()> {
         let _ = self.editor.process_async_messages();
+        // Check debounced completion trigger timer (quick suggestions)
+        self.editor.check_completion_trigger_timer();
         self.render()?;
         Ok(())
     }
