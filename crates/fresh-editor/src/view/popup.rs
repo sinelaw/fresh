@@ -7,6 +7,8 @@ use ratatui::{
 };
 
 use super::markdown::{parse_markdown, wrap_styled_lines, wrap_text_lines, StyledLine};
+
+pub mod input;
 use super::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 use crate::primitives::grammar::GrammarRegistry;
 
@@ -45,6 +47,21 @@ pub enum PopupPosition {
     Centered,
     /// Bottom right corner (above status bar)
     BottomRight,
+}
+
+/// Kind of popup - determines input handling behavior
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PopupKind {
+    /// LSP completion popup - supports type-to-filter, Tab/Enter accept
+    Completion,
+    /// Hover/documentation popup - read-only, scroll, dismiss on keypress
+    Hover,
+    /// Action popup with selectable actions - navigate and execute
+    Action,
+    /// Generic list popup
+    List,
+    /// Generic text popup
+    Text,
 }
 
 /// Content of a popup window
@@ -149,6 +166,9 @@ impl PopupListItem {
 /// - Quick fixes / code actions
 #[derive(Debug, Clone, PartialEq)]
 pub struct Popup {
+    /// Kind of popup - determines input handling behavior
+    pub kind: PopupKind,
+
     /// Title of the popup (optional)
     pub title: Option<String>,
 
@@ -190,6 +210,7 @@ impl Popup {
     /// Create a new popup with text content using theme colors
     pub fn text(content: Vec<String>, theme: &crate::view::theme::Theme) -> Self {
         Self {
+            kind: PopupKind::Text,
             title: None,
             description: None,
             transient: false,
@@ -216,6 +237,7 @@ impl Popup {
     ) -> Self {
         let styled_lines = parse_markdown(markdown_text, theme, registry);
         Self {
+            kind: PopupKind::Text,
             title: None,
             description: None,
             transient: false,
@@ -234,6 +256,7 @@ impl Popup {
     /// Create a new popup with a list of items using theme colors
     pub fn list(items: Vec<PopupListItem>, theme: &crate::view::theme::Theme) -> Self {
         Self {
+            kind: PopupKind::List,
             title: None,
             description: None,
             transient: false,
@@ -252,6 +275,12 @@ impl Popup {
     /// Set the title
     pub fn with_title(mut self, title: String) -> Self {
         self.title = Some(title);
+        self
+    }
+
+    /// Set the popup kind (determines input handling behavior)
+    pub fn with_kind(mut self, kind: PopupKind) -> Self {
+        self.kind = kind;
         self
     }
 
@@ -1116,8 +1145,21 @@ impl PopupManager {
     /// Check if the topmost popup is a completion popup (supports type-to-filter)
     pub fn is_completion_popup(&self) -> bool {
         self.top()
-            .and_then(|p| p.title.as_ref())
-            .map(|title| title == "Completion")
+            .map(|p| p.kind == PopupKind::Completion)
+            .unwrap_or(false)
+    }
+
+    /// Check if the topmost popup is a hover popup
+    pub fn is_hover_popup(&self) -> bool {
+        self.top()
+            .map(|p| p.kind == PopupKind::Hover)
+            .unwrap_or(false)
+    }
+
+    /// Check if the topmost popup is an action popup
+    pub fn is_action_popup(&self) -> bool {
+        self.top()
+            .map(|p| p.kind == PopupKind::Action)
             .unwrap_or(false)
     }
 

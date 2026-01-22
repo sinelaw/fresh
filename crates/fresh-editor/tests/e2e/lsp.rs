@@ -4859,6 +4859,148 @@ fn test_completion_type_to_filter_basic() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Test type-to-filter with uppercase letters (Shift modifier)
+/// This verifies that uppercase letters can be typed to filter completions
+#[test]
+fn test_completion_type_to_filter_uppercase() -> anyhow::Result<()> {
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type initial prefix
+    harness.type_text("Console.")?;
+    harness.render()?;
+
+    // Set up completion items (simulating C# Console methods)
+    let completion_items = vec![
+        lsp_types::CompletionItem {
+            label: "WriteLine".to_string(),
+            kind: Some(lsp_types::CompletionItemKind::METHOD),
+            detail: Some("void Console.WriteLine()".to_string()),
+            insert_text: Some("WriteLine".to_string()),
+            ..Default::default()
+        },
+        lsp_types::CompletionItem {
+            label: "Write".to_string(),
+            kind: Some(lsp_types::CompletionItemKind::METHOD),
+            detail: Some("void Console.Write()".to_string()),
+            insert_text: Some("Write".to_string()),
+            ..Default::default()
+        },
+        lsp_types::CompletionItem {
+            label: "ReadLine".to_string(),
+            kind: Some(lsp_types::CompletionItemKind::METHOD),
+            detail: Some("string Console.ReadLine()".to_string()),
+            insert_text: Some("ReadLine".to_string()),
+            ..Default::default()
+        },
+    ];
+
+    // Store completion items for re-filtering
+    harness.editor_mut().set_completion_items(completion_items);
+
+    // Show completion popup with all items
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            description: None,
+            transient: false,
+            content: PopupContentData::List {
+                items: vec![
+                    PopupListItemData {
+                        text: "WriteLine".to_string(),
+                        detail: Some("void Console.WriteLine()".to_string()),
+                        icon: Some("λ".to_string()),
+                        data: Some("WriteLine".to_string()),
+                    },
+                    PopupListItemData {
+                        text: "Write".to_string(),
+                        detail: Some("void Console.Write()".to_string()),
+                        icon: Some("λ".to_string()),
+                        data: Some("Write".to_string()),
+                    },
+                    PopupListItemData {
+                        text: "ReadLine".to_string(),
+                        detail: Some("string Console.ReadLine()".to_string()),
+                        icon: Some("λ".to_string()),
+                        data: Some("ReadLine".to_string()),
+                    },
+                ],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 50,
+            max_height: 15,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Verify all items are visible initially
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("WriteLine"),
+        "WriteLine should be visible initially"
+    );
+    assert!(
+        screen.contains("ReadLine"),
+        "ReadLine should be visible initially"
+    );
+
+    // Type uppercase 'W' (with SHIFT modifier) to filter - should filter out ReadLine
+    harness.send_key(KeyCode::Char('W'), KeyModifiers::SHIFT)?;
+    harness.render()?;
+
+    // Verify buffer contains the typed character
+    let buffer = harness.get_buffer_content().unwrap();
+    assert_eq!(buffer, "Console.W", "Buffer should contain 'Console.W'");
+
+    // Verify popup is still visible with filtered items
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Popup should still be visible after typing uppercase letter"
+    );
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("WriteLine"),
+        "WriteLine should still be visible after typing 'W'"
+    );
+    assert!(
+        screen.contains("Write"),
+        "Write should still be visible after typing 'W'"
+    );
+    // ReadLine should be filtered out since it doesn't start with W
+    assert!(
+        !screen.contains("ReadLine"),
+        "ReadLine should be filtered out after typing 'W'"
+    );
+
+    // Type another uppercase letter to narrow down further
+    harness.send_key(KeyCode::Char('r'), KeyModifiers::NONE)?;
+    harness.render()?;
+
+    let buffer = harness.get_buffer_content().unwrap();
+    assert_eq!(buffer, "Console.Wr", "Buffer should contain 'Console.Wr'");
+
+    // Both Write and WriteLine start with "Wr", so both should be visible
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("WriteLine"),
+        "WriteLine should still be visible after typing 'Wr'"
+    );
+    assert!(
+        screen.contains("Write"),
+        "Write should still be visible after typing 'Wr'"
+    );
+
+    Ok(())
+}
+
 /// Test type-to-filter: popup closes when no items match
 #[test]
 fn test_completion_type_to_filter_closes_on_no_match() -> anyhow::Result<()> {

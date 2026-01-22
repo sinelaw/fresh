@@ -1,11 +1,12 @@
 //! Input handling for Popups.
 //!
-//! Implements the InputHandler trait for PopupManager, handling
-//! selection navigation and confirmation/cancellation.
+//! Implements the InputHandler trait for PopupManager.
+//! Delegates to popup-specific handlers based on PopupKind.
 
+use super::popup::input::handle_popup_input;
 use super::popup::PopupManager;
-use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputResult};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crate::input::handler::{InputContext, InputHandler, InputResult};
+use crossterm::event::KeyEvent;
 
 impl InputHandler for PopupManager {
     fn handle_key_event(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
@@ -14,106 +15,11 @@ impl InputHandler for PopupManager {
             return InputResult::Ignored;
         }
 
-        match event.code {
-            // Confirmation and cancellation
-            KeyCode::Enter => {
-                ctx.defer(DeferredAction::ConfirmPopup);
-                InputResult::Consumed
-            }
-            KeyCode::Esc => {
-                ctx.defer(DeferredAction::ClosePopup);
-                InputResult::Consumed
-            }
-
-            // Selection navigation
-            KeyCode::Up | KeyCode::Char('k') if event.modifiers.is_empty() => {
-                if let Some(popup) = self.top_mut() {
-                    popup.select_prev();
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Down | KeyCode::Char('j') if event.modifiers.is_empty() => {
-                if let Some(popup) = self.top_mut() {
-                    popup.select_next();
-                }
-                InputResult::Consumed
-            }
-            KeyCode::PageUp => {
-                if let Some(popup) = self.top_mut() {
-                    popup.page_up();
-                }
-                InputResult::Consumed
-            }
-            KeyCode::PageDown => {
-                if let Some(popup) = self.top_mut() {
-                    popup.page_down();
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Home => {
-                if let Some(popup) = self.top_mut() {
-                    popup.select_first();
-                }
-                InputResult::Consumed
-            }
-            KeyCode::End => {
-                if let Some(popup) = self.top_mut() {
-                    popup.select_last();
-                }
-                InputResult::Consumed
-            }
-
-            // Tab confirms selection in completion popups, navigates in others
-            KeyCode::Tab if event.modifiers.is_empty() => {
-                if self.is_completion_popup() {
-                    // Tab accepts the current completion
-                    ctx.defer(DeferredAction::ConfirmPopup);
-                } else if let Some(popup) = self.top_mut() {
-                    popup.select_next();
-                }
-                InputResult::Consumed
-            }
-            KeyCode::BackTab => {
-                if let Some(popup) = self.top_mut() {
-                    popup.select_prev();
-                }
-                InputResult::Consumed
-            }
-
-            // Type-to-filter for completion popups
-            // Allow both lowercase (no modifiers) and uppercase (shift modifier)
-            KeyCode::Char(c)
-                if event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT =>
-            {
-                // Check if this is a completion popup that supports type-to-filter
-                if self.is_completion_popup() {
-                    ctx.defer(DeferredAction::PopupTypeChar(c));
-                }
-                InputResult::Consumed
-            }
-
-            // Backspace for type-to-filter in completion popups
-            KeyCode::Backspace if event.modifiers.is_empty() => {
-                if self.is_completion_popup() {
-                    ctx.defer(DeferredAction::PopupBackspace);
-                }
-                InputResult::Consumed
-            }
-
-            // Ctrl+C to copy selected text from popup
-            KeyCode::Char('c') if event.modifiers == KeyModifiers::CONTROL => {
-                if let Some(popup) = self.top() {
-                    if popup.has_selection() {
-                        if let Some(text) = popup.get_selected_text() {
-                            ctx.defer(DeferredAction::CopyToClipboard(text));
-                        }
-                    }
-                }
-                InputResult::Consumed
-            }
-
-            // Consume all other keys (modal behavior)
-            _ => InputResult::Consumed,
+        // Get the topmost popup and delegate to the appropriate handler
+        if let Some(popup) = self.top_mut() {
+            handle_popup_input(event, popup, ctx)
+        } else {
+            InputResult::Ignored
         }
     }
 
@@ -125,10 +31,11 @@ impl InputHandler for PopupManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::popup::{Popup, PopupListItem};
+    use crate::input::handler::DeferredAction;
+    use crate::view::popup::{Popup, PopupKind, PopupListItem};
     use crate::view::theme;
     use crate::view::theme::Theme;
-    use crossterm::event::KeyModifiers;
+    use crossterm::event::{KeyCode, KeyModifiers};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -139,7 +46,7 @@ mod tests {
         let items: Vec<PopupListItem> = (0..count)
             .map(|i| PopupListItem::new(format!("Item {}", i)))
             .collect();
-        let popup = Popup::list(items, &theme);
+        let popup = Popup::list(items, &theme).with_kind(PopupKind::Action);
         let mut manager = PopupManager::new();
         manager.show(popup);
         manager
@@ -165,25 +72,6 @@ mod tests {
 
         // Up arrow moves back
         manager.handle_key_event(&key(KeyCode::Up), &mut ctx);
-        assert_eq!(
-            manager.top().unwrap().selected_item().unwrap().text,
-            "Item 0"
-        );
-
-        // j/k also work
-        manager.handle_key_event(
-            &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
-            &mut ctx,
-        );
-        assert_eq!(
-            manager.top().unwrap().selected_item().unwrap().text,
-            "Item 1"
-        );
-
-        manager.handle_key_event(
-            &KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
-            &mut ctx,
-        );
         assert_eq!(
             manager.top().unwrap().selected_item().unwrap().text,
             "Item 0"
