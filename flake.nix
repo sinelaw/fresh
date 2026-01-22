@@ -72,39 +72,12 @@
             ];
           };
 
-          # Prefetch rusty_v8 static library to avoid network access during build
-          # We validate the hash on the compressed download, then decompress for rusty_v8
-          librusty_v8 =
-            let
-              tag = "142.2.0";
-              target = pkgs.stdenv.hostPlatform.rust.rustcTarget;
-              hashes = {
-                x86_64-unknown-linux-gnu = "sha256-xHmofo8wTNg88/TuC2pX2OHDRYtHncoSvSBnTV65o+0=";
-                aarch64-unknown-linux-gnu = "sha256-24q6wX8RTRX1tMGqgcz9/wN3Y+hWxM2SEuVrYhECyS8=";
-                x86_64-apple-darwin = "sha256-u7fImeadycU1gS5m+m35WZA/G2SOdPrLOMafY54JwY4=";
-                aarch64-apple-darwin = "sha256-XvJ7M5XxOzmevv+nPpy/mvEDD1MfHr986bImvDG0o4U=";
-              };
-            in
-            pkgs.stdenv.mkDerivation {
-              name = "librusty_v8-${tag}";
-              src = pkgs.fetchurl {
-                url = "https://github.com/denoland/rusty_v8/releases/download/v${tag}/librusty_v8_release_${target}.a.gz";
-                hash = hashes.${target};
-              };
-              nativeBuildInputs = [ pkgs.gzip ];
-              dontUnpack = true;
-              installPhase = ''
-                gzip -d -c $src > $out
-              '';
-            };
-
           commonVars = {
             # Environment variables
             LIBCLANG_PATH = pkgs.lib.makeLibraryPath [
               pkgs.llvmPackages.libclang.lib
             ];
-            # Point to prefetched rusty_v8 library to avoid download during build
-            RUSTY_V8_ARCHIVE = librusty_v8;
+            RUSTY_V8_ARCHIVE = pkgs.deno.librusty_v8;
           };
 
           # Common arguments for crane builds
