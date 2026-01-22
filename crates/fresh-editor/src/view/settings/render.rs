@@ -148,20 +148,14 @@ pub fn render_settings(
     // Narrow mode when inner width < 60 columns
     let narrow_mode = inner_area.width < 60;
 
-    // Always render search bar at the top (1 line when inactive, 2 when active with results)
+    // Always render search bar at the top (1 line height to avoid layout jump)
     let search_area = Rect::new(inner_area.x, inner_area.y, inner_area.width, 1);
-    let search_header_height = if state.search_active {
-        render_search_header(
-            frame,
-            Rect::new(inner_area.x, inner_area.y, inner_area.width, 2),
-            state,
-            theme,
-        );
-        2
+    let search_header_height = 1;
+    if state.search_active {
+        render_search_header(frame, search_area, state, theme);
     } else {
         render_search_hint(frame, search_area, theme);
-        1
-    };
+    }
 
     // Footer height: 2 lines for horizontal (separator + buttons), 7 for vertical
     let footer_height = if narrow_mode { 7 } else { 2 };
@@ -2200,53 +2194,43 @@ fn render_footer_vertical(
 
 /// Render the search header with query input
 fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
-    // First line: Search input
-    let search_style = Style::default().fg(theme.popup_text_fg);
+    let search_style = Style::default().fg(theme.settings_selected_fg);
     let cursor_style = Style::default()
-        .fg(theme.menu_highlight_fg)
-        .add_modifier(Modifier::UNDERLINED);
+        .fg(theme.settings_selected_fg)
+        .add_modifier(Modifier::REVERSED);
+
+    // Show result count inline after cursor
+    let result_count = state.search_results.len();
+    let count_text = if state.search_query.is_empty() {
+        String::new()
+    } else if result_count == 0 {
+        " (no results)".to_string()
+    } else if result_count == 1 {
+        " (1 result)".to_string()
+    } else {
+        format!(" ({} results)", result_count)
+    };
+    let count_style = Style::default().fg(theme.line_number_fg);
 
     let spans = vec![
-        Span::styled("🔍 ", search_style),
+        Span::styled("> ", search_style),
         Span::styled(&state.search_query, search_style),
-        Span::styled("█", cursor_style), // Cursor
+        Span::styled(" ", cursor_style), // Cursor
+        Span::styled(count_text, count_style),
     ];
     let line = Line::from(spans);
-    frame.render_widget(
-        Paragraph::new(line),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
-
-    // Second line: Result count
-    let result_count = state.search_results.len();
-    let count_text = if result_count == 0 {
-        if state.search_query.is_empty() {
-            String::new()
-        } else {
-            "No results found".to_string()
-        }
-    } else if result_count == 1 {
-        "1 result".to_string()
-    } else {
-        format!("{} results", result_count)
-    };
-
-    let count_style = Style::default().fg(theme.line_number_fg);
-    frame.render_widget(
-        Paragraph::new(count_text).style(count_style),
-        Rect::new(area.x, area.y + 1, area.width, 1),
-    );
+    frame.render_widget(Paragraph::new(line), area);
 }
 
 /// Render search hint when search is not active
 fn render_search_hint(frame: &mut Frame, area: Rect, theme: &Theme) {
     let hint_style = Style::default().fg(theme.line_number_fg);
     let key_style = Style::default()
-        .fg(theme.menu_highlight_fg)
+        .fg(theme.menu_active_fg)
         .add_modifier(Modifier::BOLD);
 
     let spans = vec![
-        Span::styled("🔍 ", hint_style),
+        Span::styled("Press ", hint_style),
         Span::styled("/", key_style),
         Span::styled(" to search settings...", hint_style),
     ];
