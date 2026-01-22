@@ -467,8 +467,8 @@ enum LspCommand {
 
 /// Mutable state for LSP command processing
 struct LspState {
-    /// Stdin for sending messages
-    stdin: ChildStdin,
+    /// Stdin for sending messages (shared with stdout reader for server responses)
+    stdin: Arc<tokio::sync::Mutex<ChildStdin>>,
 
     /// Next request ID
     next_id: i64,
@@ -588,12 +588,13 @@ impl LspState {
 
         tracing::trace!("Writing LSP message to stdin ({} bytes)", content.len());
 
-        self.stdin
+        let mut stdin = self.stdin.lock().await;
+        stdin
             .write_all(content.as_bytes())
             .await
             .map_err(|e| format!("Failed to write to stdin: {}", e))?;
 
-        self.stdin
+        stdin
             .flush()
             .await
             .map_err(|e| format!("Failed to flush stdin: {}", e))?;
@@ -2068,7 +2069,7 @@ impl LspTask {
         async_tx: std_mpsc::Sender<AsyncMessage>,
         language: String,
         server_command: String,
-        server_response_tx: mpsc::Sender<JsonRpcResponse>,
+        stdin_writer: Arc<tokio::sync::Mutex<ChildStdin>>,
         stderr_log_path: std::path::PathBuf,
         shutting_down: Arc<AtomicBool>,
     ) {
@@ -2084,7 +2085,7 @@ impl LspTask {
                             &async_tx,
                             &language,
                             &server_command,
-                            &server_response_tx,
+                            &stdin_writer,
                         )
                         .await
                         {
@@ -2123,9 +2124,12 @@ impl LspTask {
     async fn run(self, mut command_rx: mpsc::Receiver<LspCommand>) {
         tracing::info!("LspTask::run() started for language: {}", self.language);
 
+        // Create shared stdin writer so both command processing and stdout reader can write
+        let stdin_writer = Arc::new(tokio::sync::Mutex::new(self.stdin));
+
         // Create state struct for command processing
         let mut state = LspState {
-            stdin: self.stdin,
+            stdin: stdin_writer.clone(),
             next_id: self.next_id,
             capabilities: self.capabilities,
             document_versions: self.document_versions,
@@ -2140,35 +2144,28 @@ impl LspTask {
         let async_tx = state.async_tx.clone();
         let language_clone = state.language.clone();
 
-        // Create channel for server-to-client request responses
-        let (server_response_tx, mut server_response_rx) = mpsc::channel::<JsonRpcResponse>(100);
-
         // Flag to indicate intentional shutdown (prevents spurious error messages)
         let shutting_down = Arc::new(AtomicBool::new(false));
 
-        // Spawn stdout reader task
+        // Spawn stdout reader task (shares stdin_writer for responding to server requests)
         Self::spawn_stdout_reader(
             self.stdout,
             pending.clone(),
             async_tx.clone(),
             language_clone.clone(),
             self.server_command.clone(),
-            server_response_tx,
+            stdin_writer.clone(),
             self.stderr_log_path,
             shutting_down.clone(),
         );
 
-        // Sequential command processing loop with server response handling
+        // Sequential command processing loop
+        // Note: Server responses (workspace/configuration, etc.) are now written directly
+        // by the stdout reader task using the shared stdin_writer, avoiding deadlocks
+        // when the main loop is blocked waiting for an LSP response.
         let mut pending_commands = Vec::new();
         loop {
             tokio::select! {
-                // Handle server-to-client responses (high priority)
-                Some(response) = server_response_rx.recv() => {
-                    tracing::trace!("Sending response to server request id={}", response.id);
-                    if let Err(e) = state.write_message(&response).await {
-                        tracing::error!("Failed to send response to server: {}", e);
-                    }
-                }
                 // Handle commands from the editor
                 Some(cmd) = command_rx.recv() => {
                     tracing::trace!("LspTask received command: {:?}", cmd);
@@ -2666,7 +2663,7 @@ async fn handle_message_dispatch(
     async_tx: &std_mpsc::Sender<AsyncMessage>,
     language: &str,
     server_command: &str,
-    server_response_tx: &mpsc::Sender<JsonRpcResponse>,
+    stdin_writer: &Arc<tokio::sync::Mutex<ChildStdin>>,
 ) -> Result<(), String> {
     match message {
         JsonRpcMessage::Response(response) => {
@@ -2789,10 +2786,20 @@ async fn handle_message_dispatch(
                 }
             };
 
-            // Send response through channel to be written to stdin
-            if let Err(e) = server_response_tx.send(response).await {
-                tracing::error!("Failed to queue server response: {}", e);
+            // Write response directly to stdin (avoids deadlock when main loop is waiting for LSP response)
+            let json = serde_json::to_string(&response)
+                .map_err(|e| format!("Failed to serialize response: {}", e))?;
+            let message = format!("Content-Length: {}\r\n\r\n{}", json.len(), json);
+
+            let mut stdin = stdin_writer.lock().await;
+            use tokio::io::AsyncWriteExt;
+            if let Err(e) = stdin.write_all(message.as_bytes()).await {
+                tracing::error!("Failed to write server response: {}", e);
             }
+            if let Err(e) = stdin.flush().await {
+                tracing::error!("Failed to flush server response: {}", e);
+            }
+            tracing::trace!("Sent response to server request id={}", response.id);
         }
     }
     Ok(())
