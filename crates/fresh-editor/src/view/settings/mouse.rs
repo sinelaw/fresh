@@ -5,6 +5,7 @@
 
 use crate::app::Editor;
 use anyhow::Result as AnyhowResult;
+use rust_i18n::t;
 
 use super::items::SettingControl;
 use super::{FocusPanel, SettingsHit, SettingsLayout};
@@ -317,7 +318,12 @@ impl Editor {
             SettingsHit::SaveButton => self.save_settings(),
             SettingsHit::CancelButton => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.visible = false;
+                    if state.has_changes() {
+                        state.showing_confirm_dialog = true;
+                        state.confirm_dialog_selection = 0;
+                    } else {
+                        state.visible = false;
+                    }
                 }
             }
             SettingsHit::ResetButton => {
@@ -621,9 +627,17 @@ impl Editor {
             return Ok(false);
         };
 
+        let changes_count = self
+            .settings_state
+            .as_ref()
+            .map(|s| s.get_change_descriptions().len())
+            .unwrap_or(0);
+
         // Calculate dialog dimensions (same as in render_confirm_dialog)
         let dialog_width = 50u16.min(modal_area.width.saturating_sub(4));
-        let dialog_height = 10u16;
+        let dialog_height = (7 + changes_count as u16)
+            .min(20)
+            .min(modal_area.height.saturating_sub(4));
         let dialog_x = modal_area.x + (modal_area.width.saturating_sub(dialog_width)) / 2;
         let dialog_y = modal_area.y + (modal_area.height.saturating_sub(dialog_height)) / 2;
 
@@ -636,14 +650,18 @@ impl Editor {
             return Ok(false);
         }
 
-        // Button labels and their widths
-        let options = ["Save and Exit", "Discard", "Cancel"];
+        // Button labels (must match render_confirm_dialog)
+        let options = [
+            t!("confirm.save_and_exit").to_string(),
+            t!("confirm.discard").to_string(),
+            t!("confirm.cancel").to_string(),
+        ];
         let total_width: u16 = options.iter().map(|o| o.len() as u16 + 4).sum::<u16>() + 4;
         let mut x = inner_x + (inner_width.saturating_sub(total_width)) / 2;
 
         for (idx, label) in options.iter().enumerate() {
-            let button_width = label.len() as u16 + 5; // +4 for "[ ]" + 1 for ">"
-            if col >= x && col < x + button_width {
+            let button_width = label.len() as u16 + 4;
+            if col >= x && col < x + button_width + 1 {
                 // Clicked on this button - execute its action
                 match idx {
                     0 => self.save_settings_and_close(),
@@ -657,7 +675,7 @@ impl Editor {
                 }
                 return Ok(true);
             }
-            x += button_width + 2;
+            x += button_width + 3;
         }
 
         Ok(false)
