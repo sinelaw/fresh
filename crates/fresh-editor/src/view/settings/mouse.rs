@@ -88,14 +88,27 @@ impl Editor {
             }
         }
 
-        // Handle confirm dialog mouse clicks
-        if let Some(ref mut state) = self.settings_state {
-            if state.showing_confirm_dialog {
-                if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+        // Handle confirm dialog mouse events
+        let showing_confirm = self
+            .settings_state
+            .as_ref()
+            .map(|s| s.showing_confirm_dialog)
+            .unwrap_or(false);
+        if showing_confirm {
+            match mouse_event.kind {
+                MouseEventKind::Moved => {
+                    let hover = self.get_confirm_dialog_button_at(col, row);
+                    if let Some(ref mut state) = self.settings_state {
+                        state.confirm_dialog_hover = hover;
+                    }
+                    return Ok(hover.is_some());
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
                     return self.handle_confirm_dialog_click(col, row);
                 }
-                return Ok(false);
+                _ => {}
             }
+            return Ok(false);
         }
 
         // Handle mouse events for entry dialog
@@ -618,14 +631,29 @@ impl Editor {
     }
 
     fn handle_confirm_dialog_click(&mut self, col: u16, row: u16) -> AnyhowResult<bool> {
-        let Some(ref modal_area) = self
+        if let Some(idx) = self.get_confirm_dialog_button_at(col, row) {
+            match idx {
+                0 => self.save_settings_and_close(),
+                1 => self.discard_settings_and_close(),
+                2 => {
+                    if let Some(ref mut state) = self.settings_state {
+                        state.showing_confirm_dialog = false;
+                    }
+                }
+                _ => {}
+            }
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Returns which confirm dialog button (0-2) is at the given position, if any
+    fn get_confirm_dialog_button_at(&self, col: u16, row: u16) -> Option<usize> {
+        let modal_area = self
             .cached_layout
             .settings_layout
             .as_ref()
-            .map(|l| l.modal_area)
-        else {
-            return Ok(false);
-        };
+            .map(|l| l.modal_area)?;
 
         let changes_count = self
             .settings_state
@@ -645,9 +673,9 @@ impl Editor {
         let inner_width = dialog_width.saturating_sub(4);
         let button_y = dialog_y + dialog_height - 3;
 
-        // Check if click is on button row
+        // Check if on button row
         if row != button_y {
-            return Ok(false);
+            return None;
         }
 
         // Button labels (must match render_confirm_dialog)
@@ -662,23 +690,12 @@ impl Editor {
         for (idx, label) in options.iter().enumerate() {
             let button_width = label.len() as u16 + 4;
             if col >= x && col < x + button_width + 1 {
-                // Clicked on this button - execute its action
-                match idx {
-                    0 => self.save_settings_and_close(),
-                    1 => self.discard_settings_and_close(),
-                    2 => {
-                        if let Some(ref mut state) = self.settings_state {
-                            state.showing_confirm_dialog = false;
-                        }
-                    }
-                    _ => {}
-                }
-                return Ok(true);
+                return Some(idx);
             }
             x += button_width + 3;
         }
 
-        Ok(false)
+        None
     }
 
     fn save_settings_and_close(&mut self) {

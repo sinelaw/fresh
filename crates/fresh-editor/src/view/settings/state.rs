@@ -78,6 +78,8 @@ pub struct SettingsState {
     pub showing_confirm_dialog: bool,
     /// Selected option in confirmation dialog (0=Save, 1=Discard, 2=Cancel)
     pub confirm_dialog_selection: usize,
+    /// Hovered option in confirmation dialog (for mouse hover feedback)
+    pub confirm_dialog_hover: Option<usize>,
     /// Whether the help overlay is showing
     pub showing_help: bool,
     /// Scrollable panel for settings items
@@ -133,6 +135,7 @@ impl SettingsState {
             selected_search_result: 0,
             showing_confirm_dialog: false,
             confirm_dialog_selection: 0,
+            confirm_dialog_hover: None,
             showing_help: false,
             scroll_panel: ScrollablePanel::new(),
             sub_focus: None,

@@ -2480,6 +2480,7 @@ fn render_confirm_dialog(
 
     for (idx, label) in options.iter().enumerate() {
         let is_selected = idx == state.confirm_dialog_selection;
+        let is_hovered = state.confirm_dialog_hover == Some(idx);
         let button_width = label.len() as u16 + 4;
 
         let style = if is_selected {
@@ -2487,6 +2488,10 @@ fn render_confirm_dialog(
                 .fg(theme.menu_highlight_fg)
                 .bg(theme.menu_highlight_bg)
                 .add_modifier(ratatui::style::Modifier::BOLD)
+        } else if is_hovered {
+            Style::default()
+                .fg(theme.menu_hover_fg)
+                .bg(theme.menu_hover_bg)
         } else {
             Style::default().fg(theme.popup_text_fg)
         };
