@@ -72,14 +72,6 @@
             ];
           };
 
-          commonVars = {
-            # Environment variables
-            LIBCLANG_PATH = pkgs.lib.makeLibraryPath [
-              pkgs.llvmPackages.libclang.lib
-            ];
-            RUSTY_V8_ARCHIVE = pkgs.deno.librusty_v8;
-          };
-
           # Common arguments for crane builds
           commonArgs = {
             inherit src pname version;
@@ -87,13 +79,13 @@
 
             nativeBuildInputs = with pkgs; [
               pkg-config
-              # For tree-sitter grammars that need C compilation
-              clang
+              rustPlatform.bindgenHook
             ];
 
             doCheck = false;
-          }
-          // commonVars;
+
+            RUSTY_V8_ARCHIVE = pkgs.deno.librusty_v8;
+          };
 
           # Build dependencies separately for better caching
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
