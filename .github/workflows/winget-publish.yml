@@ -1,0 +1,47 @@
+# Publish to Windows Package Manager (winget) after a release is created
+# Based on: https://github.com/github/copilot-cli/blob/v0.0.368-2/.github/workflows/winget.yml
+
+name: Publish to winget
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.1.87)'
+        required: true
+        type: string
+
+jobs:
+  publish-winget:
+    name: Submit to WinGet repository
+    runs-on: windows-latest
+
+    # wingetcreate reads this env var for the GitHub token needed for submitting a PR
+    # See https://aka.ms/winget-create-token
+    env:
+      WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Submit package using wingetcreate
+        shell: pwsh
+        run: |
+          $packageId = "sinelaw.fresh-editor"
+          $packageVersion = "${{ inputs.version }}"
+          $installerUrl = "https://github.com/sinelaw/fresh/releases/download/v${packageVersion}/fresh-editor-x86_64-pc-windows-msvc.zip"
+
+          # Download wingetcreate
+          curl.exe -JLO https://aka.ms/wingetcreate/latest
+
+          # Update package using wingetcreate
+          # Uses user scope by default (configured in existing manifest or via first manual submission)
+          .\wingetcreate.exe update $packageId `
+            --version $packageVersion `
+            --urls "$installerUrl|x64" `
+            --submit

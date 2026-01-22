@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.6.0.schema.json
+# Winget manifest for fresh-editor
+#
+# This template is used for the initial submission to winget-pkgs.
+# Replace VERSION_PLACEHOLDER with the version (e.g., 0.1.87) and
+# HASH_PLACEHOLDER with the SHA256 hash of the installer zip.
+#
+# Key configuration: Scope is set to "user" (no admin required).
+# Subsequent releases use wingetcreate update which preserves this setting.
+
+PackageIdentifier: sinelaw.fresh-editor
+PackageVersion: VERSION_PLACEHOLDER
+PackageLocale: en-US
+Publisher: sinelaw
+PublisherUrl: https://github.com/sinelaw
+PublisherSupportUrl: https://github.com/sinelaw/fresh/issues
+Author: Noam Lewis
+PackageName: fresh-editor
+PackageUrl: https://github.com/sinelaw/fresh
+License: GPL-2.0
+LicenseUrl: https://github.com/sinelaw/fresh/blob/main/LICENSE
+Copyright: Copyright (c) sinelaw
+ShortDescription: A modern terminal-based text editor with TypeScript plugin support
+Description: Fresh is a modern terminal-based text editor. It features LSP support, syntax highlighting, multi-cursor editing, TypeScript plugins, and an intuitive interface.
+Tags:
+  - editor
+  - terminal
+  - text-editor
+  - tui
+  - lsp
+  - syntax-highlighting
+  - plugins
+ReleaseNotesUrl: https://github.com/sinelaw/fresh/releases/tag/vVERSION_PLACEHOLDER
+Installers:
+  - Architecture: x64
+    InstallerType: zip
+    InstallerUrl: https://github.com/sinelaw/fresh/releases/download/vVERSION_PLACEHOLDER/fresh-editor-x86_64-pc-windows-msvc.zip
+    InstallerSha256: HASH_PLACEHOLDER
+    # Install to user scope by default (no admin required)
+    Scope: user
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: fresh-editor-x86_64-pc-windows-msvc\fresh.exe
+        PortableCommandAlias: fresh
+ManifestType: singleton
+ManifestVersion: 1.6.0
