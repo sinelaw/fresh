@@ -78,7 +78,10 @@ impl InputHandler for PopupManager {
             }
 
             // Type-to-filter for completion popups
-            KeyCode::Char(c) if event.modifiers.is_empty() => {
+            // Allow both lowercase (no modifiers) and uppercase (shift modifier)
+            KeyCode::Char(c)
+                if event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT =>
+            {
                 // Check if this is a completion popup that supports type-to-filter
                 if self.is_completion_popup() {
                     ctx.defer(DeferredAction::PopupTypeChar(c));
