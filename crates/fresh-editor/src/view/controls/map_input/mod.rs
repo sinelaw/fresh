@@ -338,7 +338,10 @@ pub struct MapColors {
     pub border: Color,
     pub remove_button: Color,
     pub add_button: Color,
+    /// Background color for focused entries
     pub focused: Color,
+    /// Foreground color for focused entries (text on focused background)
+    pub focused_fg: Color,
     pub cursor: Color,
     pub disabled: Color,
     pub expand_arrow: Color,
@@ -354,6 +357,7 @@ impl Default for MapColors {
             remove_button: Color::Red,
             add_button: Color::Green,
             focused: Color::Yellow,
+            focused_fg: Color::Black,
             cursor: Color::Yellow,
             disabled: Color::DarkGray,
             expand_arrow: Color::White,
@@ -365,12 +369,15 @@ impl MapColors {
     pub fn from_theme(theme: &crate::view::theme::Theme) -> Self {
         Self {
             label: theme.editor_fg,
-            key: theme.menu_highlight_fg,
+            // Use help_key_fg (cyan) for keys - visible on popup/editor background
+            key: theme.help_key_fg,
             value_preview: theme.line_number_fg,
             border: theme.line_number_fg,
             remove_button: theme.diagnostic_error_fg,
             add_button: theme.diagnostic_info_fg,
-            focused: theme.selection_bg,
+            // Use settings colors for focused items in settings UI
+            focused: theme.settings_selected_bg,
+            focused_fg: theme.settings_selected_fg,
             cursor: theme.cursor,
             disabled: theme.line_number_fg,
             expand_arrow: theme.editor_fg,

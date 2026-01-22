@@ -356,8 +356,10 @@ pub struct NumberInputColors {
     pub border: Color,
     /// Button color (increment/decrement)
     pub button: Color,
-    /// Focused highlight color
+    /// Focused highlight background color
     pub focused: Color,
+    /// Focused highlight foreground color (text on focused background)
+    pub focused_fg: Color,
     /// Disabled color
     pub disabled: Color,
 }
@@ -370,6 +372,7 @@ impl Default for NumberInputColors {
             border: Color::Gray,
             button: Color::Cyan,
             focused: Color::Cyan,
+            focused_fg: Color::Black,
             disabled: Color::DarkGray,
         }
     }
@@ -383,7 +386,8 @@ impl NumberInputColors {
             value: theme.help_key_fg,
             border: theme.line_number_fg,
             button: theme.menu_active_fg,
-            focused: theme.selection_bg,
+            focused: theme.settings_selected_bg,
+            focused_fg: theme.settings_selected_fg,
             disabled: theme.line_number_fg,
         }
     }

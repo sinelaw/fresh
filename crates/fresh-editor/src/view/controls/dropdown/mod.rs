@@ -240,8 +240,10 @@ pub struct DropdownColors {
     pub option: Color,
     /// Highlighted option background
     pub highlight_bg: Color,
-    /// Focused highlight color
+    /// Focused highlight background color
     pub focused: Color,
+    /// Focused highlight foreground color (text on focused background)
+    pub focused_fg: Color,
     /// Disabled color
     pub disabled: Color,
 }
@@ -256,6 +258,7 @@ impl Default for DropdownColors {
             option: Color::White,
             highlight_bg: Color::DarkGray,
             focused: Color::Cyan,
+            focused_fg: Color::Black,
             disabled: Color::DarkGray,
         }
     }
@@ -273,8 +276,9 @@ impl DropdownColors {
             arrow: theme.line_number_fg,
             option: theme.editor_fg,
             highlight_bg: theme.selection_bg,
-            // Use menu_highlight_fg for focus indicator (bright, visible color)
-            focused: theme.menu_highlight_fg,
+            // Use settings colors for focus indicators
+            focused: theme.settings_selected_bg,
+            focused_fg: theme.settings_selected_fg,
             disabled: theme.line_number_fg,
         }
     }

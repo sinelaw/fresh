@@ -767,8 +767,9 @@ fn render_setting_item_pure(
 
     // Draw selection or hover highlight background (only for content rows, not spacing)
     if is_focused_or_hovered {
+        // Use dedicated settings colors for selected items
         let bg_style = if is_selected {
-            Style::default().bg(theme.current_line_bg)
+            Style::default().bg(theme.settings_selected_bg)
         } else {
             Style::default().bg(theme.menu_hover_bg)
         };
@@ -781,7 +782,7 @@ fn render_setting_item_pure(
     // Render focus indicator ">" at position 0 for selected items
     if is_selected && skip_top == 0 {
         let indicator_style = Style::default()
-            .fg(theme.menu_highlight_fg)
+            .fg(theme.settings_selected_fg)
             .add_modifier(Modifier::BOLD);
         frame.render_widget(
             Paragraph::new(">").style(indicator_style),
@@ -791,7 +792,7 @@ fn render_setting_item_pure(
 
     // Render modified indicator "●" at position 1 for items defined in the target layer
     if item.modified && skip_top == 0 {
-        let modified_style = Style::default().fg(theme.menu_highlight_fg);
+        let modified_style = Style::default().fg(theme.settings_selected_fg);
         frame.render_widget(
             Paragraph::new("●").style(modified_style),
             Rect::new(area.x + 1, area.y, 1, 1),
@@ -1001,7 +1002,9 @@ fn render_control(
                 label_fg: theme.editor_fg,
                 key_fg: theme.help_key_fg,
                 action_fg: theme.syntax_function,
-                focused_bg: theme.selection_bg,
+                // Use settings colors for focused items in settings UI
+                focused_bg: theme.settings_selected_bg,
+                focused_fg: theme.settings_selected_fg,
                 delete_fg: theme.diagnostic_error_fg,
                 add_fg: theme.syntax_string,
             };
@@ -1218,9 +1221,10 @@ fn render_text_list_partial(
         return empty_layout;
     }
 
+    // Use focused_fg for label when focused (not focused, which is the bg color)
     let label_color = match state.focus {
-        FocusState::Focused => colors.focused,
-        FocusState::Hovered => colors.focused,
+        FocusState::Focused => colors.focused_fg,
+        FocusState::Hovered => colors.focused_fg,
         FocusState::Disabled => colors.disabled,
         FocusState::Normal => colors.label,
     };
@@ -1381,9 +1385,10 @@ fn render_map_partial(
         return empty_layout;
     }
 
+    // Use focused_fg for label when focused (not focused, which is the bg color)
     let label_color = match state.focus {
-        FocusState::Focused => colors.focused,
-        FocusState::Hovered => colors.focused,
+        FocusState::Focused => colors.focused_fg,
+        FocusState::Hovered => colors.focused_fg,
         FocusState::Disabled => colors.disabled,
         FocusState::Normal => colors.label,
     };
@@ -1473,7 +1478,8 @@ fn render_map_partial(
         }
 
         let (key_color, value_color) = if is_focused {
-            (colors.label, colors.value_preview)
+            // Use focused_fg for text on the focused background
+            (colors.focused_fg, colors.focused_fg)
         } else if state.focus == FocusState::Disabled {
             (colors.disabled, colors.disabled)
         } else {
@@ -1510,9 +1516,7 @@ fn render_map_partial(
         if is_focused {
             spans.push(Span::styled(
                 "  [Enter to edit]",
-                base_style
-                    .fg(colors.value_preview)
-                    .add_modifier(Modifier::DIM),
+                base_style.fg(colors.focused_fg).add_modifier(Modifier::DIM),
             ));
         }
 
@@ -1559,9 +1563,7 @@ fn render_map_partial(
         if is_focused {
             spans.push(Span::styled(
                 "  [Enter to add]",
-                base_style
-                    .fg(colors.value_preview)
-                    .add_modifier(Modifier::DIM),
+                base_style.fg(colors.focused_fg).add_modifier(Modifier::DIM),
             ));
         }
 
@@ -1652,15 +1654,33 @@ fn render_keybinding_list_partial(
                 .unwrap_or("(no action)");
 
             let indicator = if is_entry_focused { "> " } else { "  " };
+            // Use focused_fg for all text when entry is focused for good contrast
+            let (indicator_fg, key_fg, arrow_fg, action_fg, delete_fg) = if is_entry_focused {
+                (
+                    colors.focused_fg,
+                    colors.focused_fg,
+                    colors.focused_fg,
+                    colors.focused_fg,
+                    colors.focused_fg,
+                )
+            } else {
+                (
+                    colors.label_fg,
+                    colors.key_fg,
+                    colors.label_fg,
+                    colors.action_fg,
+                    colors.delete_fg,
+                )
+            };
             let line = Line::from(vec![
-                Span::styled(indicator, Style::default().fg(colors.label_fg).bg(bg)),
+                Span::styled(indicator, Style::default().fg(indicator_fg).bg(bg)),
                 Span::styled(
                     format!("{:<20}", key_combo),
-                    Style::default().fg(colors.key_fg).bg(bg),
+                    Style::default().fg(key_fg).bg(bg),
                 ),
-                Span::styled(" → ", Style::default().fg(colors.label_fg).bg(bg)),
-                Span::styled(action, Style::default().fg(colors.action_fg).bg(bg)),
-                Span::styled(" [x]", Style::default().fg(colors.delete_fg).bg(bg)),
+                Span::styled(" → ", Style::default().fg(arrow_fg).bg(bg)),
+                Span::styled(action, Style::default().fg(action_fg).bg(bg)),
+                Span::styled(" [x]", Style::default().fg(delete_fg).bg(bg)),
             ]);
             frame.render_widget(Paragraph::new(line), entry_area);
 
@@ -1683,9 +1703,15 @@ fn render_keybinding_list_partial(
         };
 
         let indicator = if is_add_focused { "> " } else { "  " };
+        // Use focused_fg for text when add row is focused
+        let (indicator_fg, add_fg) = if is_add_focused {
+            (colors.focused_fg, colors.focused_fg)
+        } else {
+            (colors.label_fg, colors.add_fg)
+        };
         let line = Line::from(vec![
-            Span::styled(indicator, Style::default().fg(colors.label_fg).bg(bg)),
-            Span::styled("[+] Add new", Style::default().fg(colors.add_fg).bg(bg)),
+            Span::styled(indicator, Style::default().fg(indicator_fg).bg(bg)),
+            Span::styled("[+] Add new", Style::default().fg(add_fg).bg(bg)),
         ]);
         let add_area = Rect::new(area.x + indent, y, area.width.saturating_sub(indent), 1);
         frame.render_widget(Paragraph::new(line), add_area);
@@ -2257,7 +2283,8 @@ fn render_search_result_item(
 ) {
     // Draw selection highlight background
     if is_selected {
-        let bg_style = Style::default().bg(theme.current_line_bg);
+        // Use dedicated settings colors for selected items
+        let bg_style = Style::default().bg(theme.settings_selected_bg);
         for row in 0..area.height.min(3) {
             let row_area = Rect::new(area.x, area.y + row, area.width, 1);
             frame.render_widget(Paragraph::new("").style(bg_style), row_area);
@@ -2266,7 +2293,7 @@ fn render_search_result_item(
 
     // First line: Setting name with highlighting
     let name_style = if is_selected {
-        Style::default().fg(theme.menu_highlight_fg)
+        Style::default().fg(theme.settings_selected_fg)
     } else {
         Style::default().fg(theme.popup_text_fg)
     };
@@ -2626,8 +2653,9 @@ fn render_entry_dialog(
 
         // Draw selection or hover highlight background (only for editable items)
         if is_focused || is_hovered {
+            // Use dedicated settings colors for focused items
             let bg_style = if is_focused {
-                Style::default().bg(theme.current_line_bg)
+                Style::default().bg(theme.settings_selected_bg)
             } else {
                 Style::default().bg(theme.menu_hover_bg)
             };
@@ -2644,7 +2672,7 @@ fn render_entry_dialog(
         // Render focus indicator ">" at position 0 for the focused item
         if is_focused && skip_rows == 0 {
             let indicator_style = Style::default()
-                .fg(theme.menu_highlight_fg)
+                .fg(theme.settings_selected_fg)
                 .add_modifier(Modifier::BOLD);
             frame.render_widget(
                 Paragraph::new(">").style(indicator_style),
@@ -2654,7 +2682,7 @@ fn render_entry_dialog(
 
         // Render modified indicator "●" at position 1 for modified items
         if item.modified && skip_rows == 0 {
-            let modified_style = Style::default().fg(theme.menu_highlight_fg);
+            let modified_style = Style::default().fg(theme.settings_selected_fg);
             frame.render_widget(
                 Paragraph::new("●").style(modified_style),
                 Rect::new(inner.x + 1, screen_y, 1, 1),

@@ -31,8 +31,8 @@ pub fn render_text_list(
     }
 
     let label_color = match state.focus {
-        FocusState::Focused => colors.focused,
-        FocusState::Hovered => colors.focused,
+        FocusState::Focused => colors.focused_fg,
+        FocusState::Hovered => colors.focused_fg,
         FocusState::Disabled => colors.disabled,
         FocusState::Normal => colors.label,
     };

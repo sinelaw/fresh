@@ -267,8 +267,10 @@ pub struct TextListColors {
     pub remove_button: Color,
     /// Add button color
     pub add_button: Color,
-    /// Focused item highlight
+    /// Focused item highlight background
     pub focused: Color,
+    /// Focused item foreground (text on focused background)
+    pub focused_fg: Color,
     /// Cursor color
     pub cursor: Color,
     /// Disabled color
@@ -284,6 +286,7 @@ impl Default for TextListColors {
             remove_button: Color::Red,
             add_button: Color::Green,
             focused: Color::Cyan,
+            focused_fg: Color::Black,
             cursor: Color::Yellow,
             disabled: Color::DarkGray,
         }
@@ -299,7 +302,8 @@ impl TextListColors {
             border: theme.line_number_fg,
             remove_button: theme.diagnostic_error_fg,
             add_button: theme.diagnostic_info_fg,
-            focused: theme.selection_bg,
+            focused: theme.settings_selected_bg,
+            focused_fg: theme.settings_selected_fg,
             cursor: theme.cursor,
             disabled: theme.line_number_fg,
         }

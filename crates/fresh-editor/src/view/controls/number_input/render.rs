@@ -51,8 +51,18 @@ pub fn render_number_input_aligned(
 
     let (label_color, value_color, border_color, button_color) = match state.focus {
         FocusState::Normal => (colors.label, colors.value, colors.border, colors.button),
-        FocusState::Focused => (colors.focused, colors.value, colors.focused, colors.focused),
-        FocusState::Hovered => (colors.focused, colors.value, colors.focused, colors.focused),
+        FocusState::Focused => (
+            colors.focused_fg,
+            colors.focused_fg,
+            colors.focused_fg,
+            colors.focused_fg,
+        ),
+        FocusState::Hovered => (
+            colors.focused_fg,
+            colors.focused_fg,
+            colors.focused_fg,
+            colors.focused_fg,
+        ),
         FocusState::Disabled => (
             colors.disabled,
             colors.disabled,

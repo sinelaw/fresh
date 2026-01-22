@@ -68,8 +68,10 @@ pub struct ToggleColors {
     pub checkmark: Color,
     /// Label text color
     pub label: Color,
-    /// Focused highlight color
+    /// Focused highlight background color
     pub focused: Color,
+    /// Focused highlight foreground color (text on focused background)
+    pub focused_fg: Color,
     /// Disabled color
     pub disabled: Color,
 }
@@ -81,6 +83,7 @@ impl Default for ToggleColors {
             checkmark: Color::Green,
             label: Color::White,
             focused: Color::Cyan,
+            focused_fg: Color::Black,
             disabled: Color::DarkGray,
         }
     }
@@ -93,7 +96,8 @@ impl ToggleColors {
             bracket: theme.line_number_fg,
             checkmark: theme.diagnostic_info_fg,
             label: theme.editor_fg,
-            focused: theme.selection_bg,
+            focused: theme.settings_selected_bg,
+            focused_fg: theme.settings_selected_fg,
             disabled: theme.line_number_fg,
         }
     }

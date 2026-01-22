@@ -27,8 +27,8 @@ pub fn render_map(
     }
 
     let label_color = match state.focus {
-        FocusState::Focused => colors.focused,
-        FocusState::Hovered => colors.focused,
+        FocusState::Focused => colors.focused_fg,
+        FocusState::Hovered => colors.focused_fg,
         FocusState::Disabled => colors.disabled,
         FocusState::Normal => colors.label,
     };
@@ -83,7 +83,8 @@ pub fn render_map(
 
         // Row content with appropriate colors
         let (arrow_color, key_color, value_color) = if is_focused {
-            (colors.label, colors.label, colors.value_preview)
+            // Use focused_fg for text on the focused background
+            (colors.focused_fg, colors.focused_fg, colors.focused_fg)
         } else {
             (colors.expand_arrow, colors.key, colors.value_preview)
         };
@@ -110,9 +111,7 @@ pub fn render_map(
         if is_focused {
             spans.push(Span::styled(
                 "  [Enter to edit]",
-                base_style
-                    .fg(colors.value_preview)
-                    .add_modifier(Modifier::DIM),
+                base_style.fg(colors.focused_fg).add_modifier(Modifier::DIM),
             ));
         }
 

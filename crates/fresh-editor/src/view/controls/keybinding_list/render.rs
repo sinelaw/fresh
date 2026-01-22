@@ -61,15 +61,33 @@ pub fn render_keybinding_list(
             .unwrap_or("(no action)");
 
         let indicator = if is_entry_focused { "> " } else { "  " };
+        // Use focused_fg for all text when entry is focused for good contrast
+        let (indicator_fg, key_fg, arrow_fg, action_fg, delete_fg) = if is_entry_focused {
+            (
+                colors.focused_fg,
+                colors.focused_fg,
+                colors.focused_fg,
+                colors.focused_fg,
+                colors.focused_fg,
+            )
+        } else {
+            (
+                colors.label_fg,
+                colors.key_fg,
+                colors.label_fg,
+                colors.action_fg,
+                colors.delete_fg,
+            )
+        };
         let line = Line::from(vec![
-            Span::styled(indicator, Style::default().fg(colors.label_fg).bg(bg)),
+            Span::styled(indicator, Style::default().fg(indicator_fg).bg(bg)),
             Span::styled(
                 format!("{:<20}", key_combo),
-                Style::default().fg(colors.key_fg).bg(bg),
+                Style::default().fg(key_fg).bg(bg),
             ),
-            Span::styled(" → ", Style::default().fg(colors.label_fg).bg(bg)),
-            Span::styled(action, Style::default().fg(colors.action_fg).bg(bg)),
-            Span::styled(" [x]", Style::default().fg(colors.delete_fg).bg(bg)),
+            Span::styled(" → ", Style::default().fg(arrow_fg).bg(bg)),
+            Span::styled(action, Style::default().fg(action_fg).bg(bg)),
+            Span::styled(" [x]", Style::default().fg(delete_fg).bg(bg)),
         ]);
         frame.render_widget(Paragraph::new(line), entry_area);
 
@@ -92,9 +110,15 @@ pub fn render_keybinding_list(
         };
 
         let indicator = if is_add_focused { "> " } else { "  " };
+        // Use focused_fg for text when add row is focused
+        let (indicator_fg, add_fg) = if is_add_focused {
+            (colors.focused_fg, colors.focused_fg)
+        } else {
+            (colors.label_fg, colors.add_fg)
+        };
         let line = Line::from(vec![
-            Span::styled(indicator, Style::default().fg(colors.label_fg).bg(bg)),
-            Span::styled("[+] Add new", Style::default().fg(colors.add_fg).bg(bg)),
+            Span::styled(indicator, Style::default().fg(indicator_fg).bg(bg)),
+            Span::styled("[+] Add new", Style::default().fg(add_fg).bg(bg)),
         ]);
         frame.render_widget(Paragraph::new(line), add_area);
     }

@@ -437,6 +437,12 @@ pub struct UiColors {
     /// Tab drop zone border during drag
     #[serde(default = "default_tab_drop_zone_border")]
     pub tab_drop_zone_border: ColorDef,
+    /// Settings UI selected item background
+    #[serde(default = "default_settings_selected_bg")]
+    pub settings_selected_bg: ColorDef,
+    /// Settings UI selected item foreground (text on selected background)
+    #[serde(default = "default_settings_selected_fg")]
+    pub settings_selected_fg: ColorDef,
 }
 
 // Default tab close hover color (for backward compatibility with existing themes)
@@ -634,6 +640,12 @@ fn default_tab_drop_zone_bg() -> ColorDef {
 }
 fn default_tab_drop_zone_border() -> ColorDef {
     ColorDef::Rgb(100, 149, 237) // Cornflower blue for border
+}
+fn default_settings_selected_bg() -> ColorDef {
+    ColorDef::Rgb(60, 60, 70) // Subtle highlight for selected settings item
+}
+fn default_settings_selected_fg() -> ColorDef {
+    ColorDef::Rgb(255, 255, 255) // White text on selected background
 }
 
 /// Search result highlighting colors
@@ -874,6 +886,10 @@ pub struct Theme {
     pub tab_drop_zone_bg: Color,
     pub tab_drop_zone_border: Color,
 
+    // Settings UI colors
+    pub settings_selected_bg: Color,
+    pub settings_selected_fg: Color,
+
     // Search colors
     pub search_match_bg: Color,
     pub search_match_fg: Color,
@@ -977,6 +993,8 @@ impl From<ThemeFile> for Theme {
             status_error_indicator_hover_fg: file.ui.status_error_indicator_hover_fg.into(),
             tab_drop_zone_bg: file.ui.tab_drop_zone_bg.into(),
             tab_drop_zone_border: file.ui.tab_drop_zone_border.into(),
+            settings_selected_bg: file.ui.settings_selected_bg.into(),
+            settings_selected_fg: file.ui.settings_selected_fg.into(),
             search_match_bg: file.search.match_bg.into(),
             search_match_fg: file.search.match_fg.into(),
             diagnostic_error_fg: file.diagnostic.error_fg.into(),
@@ -1077,6 +1095,8 @@ impl From<Theme> for ThemeFile {
                 status_error_indicator_hover_fg: theme.status_error_indicator_hover_fg.into(),
                 tab_drop_zone_bg: theme.tab_drop_zone_bg.into(),
                 tab_drop_zone_border: theme.tab_drop_zone_border.into(),
+                settings_selected_bg: theme.settings_selected_bg.into(),
+                settings_selected_fg: theme.settings_selected_fg.into(),
             },
             search: SearchColors {
                 match_bg: theme.search_match_bg.into(),

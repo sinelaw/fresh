@@ -191,7 +191,10 @@ pub struct KeybindingListColors {
     pub label_fg: Color,
     pub key_fg: Color,
     pub action_fg: Color,
+    /// Background color for focused entries
     pub focused_bg: Color,
+    /// Foreground color for focused entries (text on focused background)
+    pub focused_fg: Color,
     pub delete_fg: Color,
     pub add_fg: Color,
 }
@@ -203,6 +206,7 @@ impl Default for KeybindingListColors {
             key_fg: Color::Yellow,
             action_fg: Color::Cyan,
             focused_bg: Color::DarkGray,
+            focused_fg: Color::White,
             delete_fg: Color::Red,
             add_fg: Color::Green,
         }
