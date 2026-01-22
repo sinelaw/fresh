@@ -162,11 +162,16 @@ pub fn render_settings(
         render_search_hint(frame, search_area, theme);
         1
     };
+
+    // Footer height: 2 lines for horizontal (separator + buttons), 7 for vertical
+    let footer_height = if narrow_mode { 7 } else { 2 };
     let content_area = Rect::new(
         inner_area.x,
         inner_area.y + search_header_height,
         inner_area.width,
-        inner_area.height.saturating_sub(search_header_height),
+        inner_area
+            .height
+            .saturating_sub(search_header_height + footer_height),
     );
 
     // Create layout tracker
@@ -540,7 +545,7 @@ fn render_settings_panel(
     let items_start_y = y;
 
     // Calculate available height for items
-    let available_height = area.height.saturating_sub(header_height as u16 + 1);
+    let available_height = area.height.saturating_sub(header_height as u16);
 
     // Update scroll panel with current viewport and content
     let page = state.pages.get(state.selected_category).unwrap();
