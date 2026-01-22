@@ -220,7 +220,7 @@ fn render_horizontal_layout(
 ) {
     // Layout: [left panel (categories)] | [right panel (settings)]
     let chunks =
-        Layout::horizontal([Constraint::Length(25), Constraint::Min(40)]).split(content_area);
+        Layout::horizontal([Constraint::Length(20), Constraint::Min(40)]).split(content_area);
 
     let categories_area = chunks[0];
     let settings_area = chunks[1];
