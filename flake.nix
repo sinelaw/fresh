@@ -83,8 +83,6 @@
             ];
 
             doCheck = false;
-
-            RUSTY_V8_ARCHIVE = pkgs.deno.librusty_v8;
           };
 
           # Build dependencies separately for better caching
