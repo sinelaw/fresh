@@ -408,13 +408,13 @@ impl SettingsState {
         ctx: &mut InputContext,
     ) -> InputResult {
         match event.code {
-            KeyCode::Left => {
+            KeyCode::Left | KeyCode::BackTab => {
                 if self.confirm_dialog_selection > 0 {
                     self.confirm_dialog_selection -= 1;
                 }
                 InputResult::Consumed
             }
-            KeyCode::Right => {
+            KeyCode::Right | KeyCode::Tab => {
                 if self.confirm_dialog_selection < 2 {
                     self.confirm_dialog_selection += 1;
                 }

@@ -80,9 +80,19 @@ impl Editor {
         let col = mouse_event.column;
         let row = mouse_event.row;
 
-        // When confirm dialog or help overlay is open, consume all mouse events
+        // When help overlay is open, consume all mouse events
         if let Some(ref state) = self.settings_state {
-            if state.showing_confirm_dialog || state.showing_help {
+            if state.showing_help {
+                return Ok(false);
+            }
+        }
+
+        // Handle confirm dialog mouse clicks
+        if let Some(ref mut state) = self.settings_state {
+            if state.showing_confirm_dialog {
+                if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                    return self.handle_confirm_dialog_click(col, row);
+                }
                 return Ok(false);
             }
         }
@@ -185,7 +195,8 @@ impl Editor {
             if state.is_dropdown_open() {
                 let is_click_on_open_dropdown = matches!(
                     hit,
-                    SettingsHit::ControlDropdown(idx) if idx == state.selected_item
+                    SettingsHit::ControlDropdown(idx) | SettingsHit::ControlDropdownOption(idx, _)
+                        if idx == state.selected_item
                 );
                 if !is_click_on_open_dropdown {
                     state.dropdown_cancel();
@@ -598,5 +609,72 @@ impl Editor {
             _ => state.close_entry_dialog(),
         }
         Ok(true)
+    }
+
+    fn handle_confirm_dialog_click(&mut self, col: u16, row: u16) -> AnyhowResult<bool> {
+        let Some(ref modal_area) = self
+            .cached_layout
+            .settings_layout
+            .as_ref()
+            .map(|l| l.modal_area)
+        else {
+            return Ok(false);
+        };
+
+        // Calculate dialog dimensions (same as in render_confirm_dialog)
+        let dialog_width = 50u16.min(modal_area.width.saturating_sub(4));
+        let dialog_height = 10u16;
+        let dialog_x = modal_area.x + (modal_area.width.saturating_sub(dialog_width)) / 2;
+        let dialog_y = modal_area.y + (modal_area.height.saturating_sub(dialog_height)) / 2;
+
+        let inner_x = dialog_x + 2;
+        let inner_width = dialog_width.saturating_sub(4);
+        let button_y = dialog_y + dialog_height - 3;
+
+        // Check if click is on button row
+        if row != button_y {
+            return Ok(false);
+        }
+
+        // Button labels and their widths
+        let options = ["Save and Exit", "Discard", "Cancel"];
+        let total_width: u16 = options.iter().map(|o| o.len() as u16 + 4).sum::<u16>() + 4;
+        let mut x = inner_x + (inner_width.saturating_sub(total_width)) / 2;
+
+        for (idx, label) in options.iter().enumerate() {
+            let button_width = label.len() as u16 + 5; // +4 for "[ ]" + 1 for ">"
+            if col >= x && col < x + button_width {
+                // Clicked on this button - execute its action
+                match idx {
+                    0 => self.save_settings_and_close(),
+                    1 => self.discard_settings_and_close(),
+                    2 => {
+                        if let Some(ref mut state) = self.settings_state {
+                            state.showing_confirm_dialog = false;
+                        }
+                    }
+                    _ => {}
+                }
+                return Ok(true);
+            }
+            x += button_width + 2;
+        }
+
+        Ok(false)
+    }
+
+    fn save_settings_and_close(&mut self) {
+        self.save_settings();
+        if let Some(ref mut state) = self.settings_state {
+            state.visible = false;
+            state.showing_confirm_dialog = false;
+        }
+    }
+
+    fn discard_settings_and_close(&mut self) {
+        if let Some(ref mut state) = self.settings_state {
+            state.visible = false;
+            state.showing_confirm_dialog = false;
+        }
     }
 }

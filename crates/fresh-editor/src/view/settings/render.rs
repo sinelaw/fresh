@@ -2505,7 +2505,7 @@ fn render_confirm_dialog(
     }
 
     // Help text
-    let help = "←/→: Select   Enter: Confirm   Esc: Cancel";
+    let help = "←/→/Tab: Select   Enter: Confirm   Esc: Cancel";
     let help_style = Style::default().fg(theme.line_number_fg);
     frame.render_widget(
         Paragraph::new(help).style(help_style),
