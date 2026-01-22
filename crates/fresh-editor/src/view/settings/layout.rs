@@ -171,8 +171,21 @@ impl SettingsLayout {
                             return Some(SettingsHit::Item(item.index));
                         }
                     }
-                    ControlLayoutInfo::Dropdown(area) => {
-                        if self.contains(*area, x, y) {
+                    ControlLayoutInfo::Dropdown {
+                        button_area,
+                        option_areas,
+                        scroll_offset,
+                    } => {
+                        // Check option areas first (when dropdown is open)
+                        for (i, area) in option_areas.iter().enumerate() {
+                            if self.contains(*area, x, y) {
+                                return Some(SettingsHit::ControlDropdownOption(
+                                    item.index,
+                                    scroll_offset + i,
+                                ));
+                            }
+                        }
+                        if self.contains(*button_area, x, y) {
                             return Some(SettingsHit::ControlDropdown(item.index));
                         }
                     }
@@ -267,6 +280,8 @@ pub enum SettingsHit {
     ControlIncrement(usize),
     /// Click on dropdown button
     ControlDropdown(usize),
+    /// Click on dropdown option (item_idx, option_idx)
+    ControlDropdownOption(usize, usize),
     /// Click on text input
     ControlText(usize),
     /// Click on text list row (item_idx, row_idx)

@@ -41,6 +41,8 @@ pub struct DropdownState {
     pub scroll_offset: usize,
     /// Maximum visible options (set during render)
     pub max_visible: usize,
+    /// Hover index for mouse hover indication (when open)
+    pub hover_index: Option<usize>,
 }
 
 impl DropdownState {
@@ -56,6 +58,7 @@ impl DropdownState {
             original_selected: None,
             scroll_offset: 0,
             max_visible: 5, // Conservative default to ensure visibility
+            hover_index: None,
         }
     }
 
@@ -76,6 +79,7 @@ impl DropdownState {
             original_selected: None,
             scroll_offset: 0,
             max_visible: 5, // Conservative default to ensure visibility
+            hover_index: None,
         }
     }
 
@@ -240,6 +244,8 @@ pub struct DropdownColors {
     pub option: Color,
     /// Highlighted option background
     pub highlight_bg: Color,
+    /// Hovered option background
+    pub hover_bg: Color,
     /// Focused highlight background color
     pub focused: Color,
     /// Focused highlight foreground color (text on focused background)
@@ -257,6 +263,7 @@ impl Default for DropdownColors {
             arrow: Color::DarkGray,
             option: Color::White,
             highlight_bg: Color::DarkGray,
+            hover_bg: Color::DarkGray,
             focused: Color::Cyan,
             focused_fg: Color::Black,
             disabled: Color::DarkGray,
@@ -276,6 +283,7 @@ impl DropdownColors {
             arrow: theme.line_number_fg,
             option: theme.editor_fg,
             highlight_bg: theme.selection_bg,
+            hover_bg: theme.menu_hover_bg,
             // Use settings colors for focus indicators
             focused: theme.settings_selected_bg,
             focused_fg: theme.settings_selected_fg,

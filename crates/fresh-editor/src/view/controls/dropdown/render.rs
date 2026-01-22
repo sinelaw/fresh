@@ -129,8 +129,11 @@ pub fn render_dropdown_aligned(
             option_areas.push(option_area);
 
             let is_selected = actual_index == state.selected;
+            let is_hovered = state.hover_index == Some(actual_index);
             let (bg, fg) = if is_selected {
                 (colors.highlight_bg, colors.selected)
+            } else if is_hovered {
+                (colors.hover_bg, colors.option)
             } else {
                 (Color::Reset, colors.option)
             };

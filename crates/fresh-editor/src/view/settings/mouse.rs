@@ -131,7 +131,15 @@ impl Editor {
                     let old_hit = state.hover_hit;
                     state.hover_position = Some((col, row));
                     state.hover_hit = hover_hit;
-                    return Ok(old_hit != hover_hit);
+
+                    // Update dropdown hover index when hovering over options
+                    let new_hover_idx = match hover_hit {
+                        Some(SettingsHit::ControlDropdownOption(_, opt_idx)) => Some(opt_idx),
+                        _ => None,
+                    };
+                    let hover_changed = state.set_dropdown_hover(new_hover_idx);
+
+                    return Ok(old_hit != hover_hit || hover_changed);
                 }
                 return Ok(false);
             }
@@ -216,6 +224,14 @@ impl Editor {
                     state.selected_item = idx;
                 }
                 self.settings_activate_current();
+            }
+            SettingsHit::ControlDropdownOption(idx, option_idx) => {
+                // Click on a dropdown option - select it and close dropdown
+                if let Some(ref mut state) = self.settings_state {
+                    state.focus_panel = FocusPanel::Settings;
+                    state.selected_item = idx;
+                    state.dropdown_select(option_idx);
+                }
             }
             SettingsHit::ControlDecrement(idx) => {
                 if let Some(ref mut state) = self.settings_state {

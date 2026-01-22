@@ -937,11 +937,19 @@ fn render_control(
 
         SettingControl::Dropdown(state) => {
             if skip_rows > 0 {
-                return ControlLayoutInfo::Dropdown(Rect::default());
+                return ControlLayoutInfo::Dropdown {
+                    button_area: Rect::default(),
+                    option_areas: Vec::new(),
+                    scroll_offset: 0,
+                };
             }
             let colors = DropdownColors::from_theme(theme);
             let drop_layout = render_dropdown_aligned(frame, area, state, &colors, label_width);
-            ControlLayoutInfo::Dropdown(drop_layout.button_area)
+            ControlLayoutInfo::Dropdown {
+                button_area: drop_layout.button_area,
+                option_areas: drop_layout.option_areas,
+                scroll_offset: drop_layout.scroll_offset,
+            }
         }
 
         SettingControl::Text(state) => {
@@ -1735,7 +1743,11 @@ pub enum ControlLayoutInfo {
         increment: Rect,
         value: Rect,
     },
-    Dropdown(Rect),
+    Dropdown {
+        button_area: Rect,
+        option_areas: Vec<Rect>,
+        scroll_offset: usize,
+    },
     Text(Rect),
     TextList {
         rows: Vec<Rect>,

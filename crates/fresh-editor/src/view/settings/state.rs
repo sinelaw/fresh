@@ -1483,6 +1483,33 @@ impl SettingsState {
         }
     }
 
+    /// Select a specific dropdown option by index and confirm
+    pub fn dropdown_select(&mut self, option_idx: usize) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Dropdown(ref mut d) = item.control {
+                if option_idx < d.options.len() {
+                    d.selected = option_idx;
+                    d.confirm();
+                }
+            }
+        }
+        self.on_value_changed();
+    }
+
+    /// Set dropdown hover index (for mouse hover indication)
+    /// Returns true if the hover index changed
+    pub fn set_dropdown_hover(&mut self, hover_idx: Option<usize>) -> bool {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Dropdown(ref mut d) = item.control {
+                if d.open && d.hover_index != hover_idx {
+                    d.hover_index = hover_idx;
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Scroll open dropdown by delta (positive = down, negative = up)
     pub fn dropdown_scroll(&mut self, delta: i32) {
         if let Some(item) = self.current_item_mut() {
