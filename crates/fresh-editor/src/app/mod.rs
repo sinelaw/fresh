@@ -330,6 +330,10 @@ pub struct Editor {
     /// Stored when completion popup is shown, used for re-filtering as user types
     completion_items: Option<Vec<lsp_types::CompletionItem>>,
 
+    /// Scheduled completion trigger time (for debounced quick suggestions)
+    /// When Some, completion will be triggered when this instant is reached
+    scheduled_completion_trigger: Option<Instant>,
+
     /// Pending LSP go-to-definition request ID (if any)
     pending_goto_definition_request: Option<u64>,
 
@@ -991,6 +995,7 @@ impl Editor {
             next_lsp_request_id: 0,
             pending_completion_request: None,
             completion_items: None,
+            scheduled_completion_trigger: None,
             pending_goto_definition_request: None,
             pending_hover_request: None,
             pending_references_request: None,
@@ -1537,6 +1542,39 @@ impl Editor {
             }
         }
         false
+    }
+
+    /// Check if completion trigger timer has expired and trigger completion if so
+    ///
+    /// This implements debounced completion - we wait for quick_suggestions_delay_ms
+    /// before sending the completion request to avoid spamming the LSP server.
+    /// Returns true if a completion request was triggered.
+    pub fn check_completion_trigger_timer(&mut self) -> bool {
+        // Check if we have a scheduled completion trigger
+        let Some(trigger_time) = self.scheduled_completion_trigger else {
+            return false;
+        };
+
+        // Check if the timer has expired
+        if Instant::now() < trigger_time {
+            return false;
+        }
+
+        // Clear the scheduled trigger
+        self.scheduled_completion_trigger = None;
+
+        // Don't trigger if a popup is already visible
+        if self.active_state().popups.is_visible() {
+            return false;
+        }
+
+        // Trigger the completion request
+        if let Err(e) = self.request_completion() {
+            tracing::debug!("Failed to trigger debounced completion: {}", e);
+            return false;
+        }
+
+        true
     }
 
     /// Load an ANSI background image from a user-provided path

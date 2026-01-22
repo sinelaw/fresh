@@ -58,6 +58,9 @@
         "keyboard_report_alternate_keys": true,
         "keyboard_report_all_keys_as_escape_codes": false,
         "quick_suggestions": true,
+        "quick_suggestions_delay_ms": 10,
+        "suggest_on_trigger_characters": true,
+        "accept_suggestion_on_enter": "on",
         "show_menu_bar": true,
         "show_tab_bar": true,
         "use_terminal_bg": false
@@ -341,6 +344,23 @@
           "type": "boolean",
           "default": true
         },
+        "quick_suggestions_delay_ms": {
+          "description": "Delay in milliseconds before showing completion suggestions.\nLower values (10-50ms) feel more responsive but may be distracting.\nHigher values (100-500ms) reduce noise while typing.\nTrigger characters (like `.`) bypass this delay.\nDefault: 10 (matches VS Code)",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 10
+        },
+        "suggest_on_trigger_characters": {
+          "description": "Whether trigger characters (like `.`, `::`, `->`) immediately show completions.\nWhen true, typing a trigger character bypasses quick_suggestions_delay_ms.\nDefault: true",
+          "type": "boolean",
+          "default": true
+        },
+        "accept_suggestion_on_enter": {
+          "description": "Controls whether pressing Enter accepts the selected completion.\n- \"on\": Enter always accepts the completion\n- \"off\": Enter inserts a newline (use Tab to accept)\n- \"smart\": Enter accepts only if the completion text differs from typed text\nDefault: \"on\"",
+          "$ref": "#/$defs/AcceptSuggestionOnEnter",
+          "default": "on"
+        },
         "show_menu_bar": {
           "description": "Whether the menu bar is visible by default.\nThe menu bar provides access to menus (File, Edit, View, etc.) at the top of the screen.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
           "type": "boolean",
@@ -380,6 +400,16 @@
         "blinking_underline",
         "steady_underline"
       ]
+    },
+    "AcceptSuggestionOnEnter": {
+      "description": "Controls whether Enter accepts a completion suggestion",
+      "type": "string",
+      "enum": [
+        "on",
+        "off",
+        "smart"
+      ],
+      "default": "on"
     },
     "FileExplorerConfig": {
       "description": "File explorer configuration",

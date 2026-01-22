@@ -125,6 +125,8 @@ pub enum DeferredAction {
     // Popup actions
     ClosePopup,
     ConfirmPopup,
+    /// Enter key in completion popup - may confirm or insert newline based on config
+    CompletionEnterKey,
     /// Type a character while completion popup is open (for type-to-filter)
     PopupTypeChar(char),
     /// Backspace while completion popup is open (for type-to-filter)

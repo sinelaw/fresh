@@ -4,9 +4,9 @@
 //! enabling a 4-level overlay architecture (System → User → Project → Session).
 
 use crate::config::{
-    CursorStyle, FileBrowserConfig, FileExplorerConfig, FormatterConfig, HighlighterPreference,
-    Keybinding, KeybindingMapName, KeymapConfig, LanguageConfig, LineEndingOption, OnSaveAction,
-    PluginConfig, TerminalConfig, ThemeName, WarningsConfig,
+    AcceptSuggestionOnEnter, CursorStyle, FileBrowserConfig, FileExplorerConfig, FormatterConfig,
+    HighlighterPreference, Keybinding, KeybindingMapName, KeymapConfig, LanguageConfig,
+    LineEndingOption, OnSaveAction, PluginConfig, TerminalConfig, ThemeName, WarningsConfig,
 };
 use crate::types::LspServerConfig;
 use serde::{Deserialize, Serialize};
@@ -159,6 +159,9 @@ pub struct PartialEditorConfig {
     pub keyboard_report_alternate_keys: Option<bool>,
     pub keyboard_report_all_keys_as_escape_codes: Option<bool>,
     pub quick_suggestions: Option<bool>,
+    pub quick_suggestions_delay_ms: Option<u64>,
+    pub suggest_on_trigger_characters: Option<bool>,
+    pub accept_suggestion_on_enter: Option<AcceptSuggestionOnEnter>,
     pub show_menu_bar: Option<bool>,
     pub show_tab_bar: Option<bool>,
     pub use_terminal_bg: Option<bool>,
@@ -213,6 +216,12 @@ impl Merge for PartialEditorConfig {
         self.keyboard_report_all_keys_as_escape_codes
             .merge_from(&other.keyboard_report_all_keys_as_escape_codes);
         self.quick_suggestions.merge_from(&other.quick_suggestions);
+        self.quick_suggestions_delay_ms
+            .merge_from(&other.quick_suggestions_delay_ms);
+        self.suggest_on_trigger_characters
+            .merge_from(&other.suggest_on_trigger_characters);
+        self.accept_suggestion_on_enter
+            .merge_from(&other.accept_suggestion_on_enter);
         self.show_menu_bar.merge_from(&other.show_menu_bar);
         self.show_tab_bar.merge_from(&other.show_tab_bar);
         self.use_terminal_bg.merge_from(&other.use_terminal_bg);
@@ -391,6 +400,9 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
                 cfg.keyboard_report_all_keys_as_escape_codes,
             ),
             quick_suggestions: Some(cfg.quick_suggestions),
+            quick_suggestions_delay_ms: Some(cfg.quick_suggestions_delay_ms),
+            suggest_on_trigger_characters: Some(cfg.suggest_on_trigger_characters),
+            accept_suggestion_on_enter: Some(cfg.accept_suggestion_on_enter),
             show_menu_bar: Some(cfg.show_menu_bar),
             show_tab_bar: Some(cfg.show_tab_bar),
             use_terminal_bg: Some(cfg.use_terminal_bg),
@@ -468,6 +480,15 @@ impl PartialEditorConfig {
                 .keyboard_report_all_keys_as_escape_codes
                 .unwrap_or(defaults.keyboard_report_all_keys_as_escape_codes),
             quick_suggestions: self.quick_suggestions.unwrap_or(defaults.quick_suggestions),
+            quick_suggestions_delay_ms: self
+                .quick_suggestions_delay_ms
+                .unwrap_or(defaults.quick_suggestions_delay_ms),
+            suggest_on_trigger_characters: self
+                .suggest_on_trigger_characters
+                .unwrap_or(defaults.suggest_on_trigger_characters),
+            accept_suggestion_on_enter: self
+                .accept_suggestion_on_enter
+                .unwrap_or(defaults.accept_suggestion_on_enter),
             show_menu_bar: self.show_menu_bar.unwrap_or(defaults.show_menu_bar),
             show_tab_bar: self.show_tab_bar.unwrap_or(defaults.show_tab_bar),
             use_terminal_bg: self.use_terminal_bg.unwrap_or(defaults.use_terminal_bg),

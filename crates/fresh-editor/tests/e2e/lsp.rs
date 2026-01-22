@@ -5282,6 +5282,169 @@ fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Test accept_suggestion_on_enter: "off" makes Enter insert newline instead of accepting
+#[test]
+fn test_completion_accept_on_enter_off() -> anyhow::Result<()> {
+    use fresh::config::AcceptSuggestionOnEnter;
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    // Configure accept_suggestion_on_enter to "off"
+    let mut config = fresh::config::Config::default();
+    config.editor.accept_suggestion_on_enter = AcceptSuggestionOnEnter::Off;
+    let mut harness = EditorTestHarness::with_config(80, 24, config)?;
+
+    // Type initial text
+    harness.type_text("test")?;
+    harness.render()?;
+
+    // Set up completion items
+    let completion_items = vec![lsp_types::CompletionItem {
+        label: "test_function".to_string(),
+        kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+        insert_text: Some("test_function".to_string()),
+        ..Default::default()
+    }];
+
+    harness.editor_mut().set_completion_items(completion_items);
+
+    // Show completion popup
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            description: None,
+            transient: false,
+            content: PopupContentData::List {
+                items: vec![PopupListItemData {
+                    text: "test_function".to_string(),
+                    detail: None,
+                    icon: Some("λ".to_string()),
+                    data: Some("test_function".to_string()),
+                }],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 50,
+            max_height: 15,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Verify popup is visible
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Popup should be visible"
+    );
+
+    // Press Enter - should close popup and insert newline, NOT accept completion
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify popup is closed
+    assert!(
+        !harness.editor().active_state().popups.is_visible(),
+        "Popup should be closed after Enter with accept_on_enter=off"
+    );
+
+    // Verify buffer contains original text + newline, NOT the completion
+    let buffer = harness.get_buffer_content().unwrap();
+    assert!(
+        buffer.contains("test\n"),
+        "Buffer should contain 'test' followed by newline, got: {:?}",
+        buffer
+    );
+    assert!(
+        !buffer.contains("test_function"),
+        "Buffer should NOT contain completion 'test_function', got: {:?}",
+        buffer
+    );
+
+    Ok(())
+}
+
+/// Test accept_suggestion_on_enter: "on" (default) makes Enter accept completion
+#[test]
+fn test_completion_accept_on_enter_on() -> anyhow::Result<()> {
+    use fresh::config::AcceptSuggestionOnEnter;
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    };
+
+    // Ensure accept_suggestion_on_enter is "on" (default)
+    let mut config = fresh::config::Config::default();
+    config.editor.accept_suggestion_on_enter = AcceptSuggestionOnEnter::On;
+    let mut harness = EditorTestHarness::with_config(80, 24, config)?;
+
+    // Type initial text
+    harness.type_text("test")?;
+    harness.render()?;
+
+    // Set up completion items
+    let completion_items = vec![lsp_types::CompletionItem {
+        label: "test_function".to_string(),
+        kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+        insert_text: Some("test_function".to_string()),
+        ..Default::default()
+    }];
+
+    harness.editor_mut().set_completion_items(completion_items);
+
+    // Show completion popup
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            description: None,
+            transient: false,
+            content: PopupContentData::List {
+                items: vec![PopupListItemData {
+                    text: "test_function".to_string(),
+                    detail: None,
+                    icon: Some("λ".to_string()),
+                    data: Some("test_function".to_string()),
+                }],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 50,
+            max_height: 15,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Verify popup is visible
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Popup should be visible"
+    );
+
+    // Press Enter - should accept completion
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify popup is closed
+    assert!(
+        !harness.editor().active_state().popups.is_visible(),
+        "Popup should be closed after Enter"
+    );
+
+    // Verify buffer contains the completion
+    let buffer = harness.get_buffer_content().unwrap();
+    assert!(
+        buffer.contains("test_function"),
+        "Buffer should contain completion 'test_function', got: {:?}",
+        buffer
+    );
+
+    Ok(())
+}
+
 /// Test LSP snippet expansion: function with $0 places cursor inside parens
 #[test]
 fn test_completion_snippet_cursor_position() -> anyhow::Result<()> {

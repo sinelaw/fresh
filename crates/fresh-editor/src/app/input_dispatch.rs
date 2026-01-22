@@ -256,6 +256,42 @@ impl Editor {
             DeferredAction::ConfirmPopup => {
                 self.handle_action(Action::PopupConfirm)?;
             }
+            DeferredAction::CompletionEnterKey => {
+                use crate::config::AcceptSuggestionOnEnter;
+                match self.config.editor.accept_suggestion_on_enter {
+                    AcceptSuggestionOnEnter::On => {
+                        // Enter always accepts
+                        self.handle_action(Action::PopupConfirm)?;
+                    }
+                    AcceptSuggestionOnEnter::Off => {
+                        // Enter inserts newline - close popup and insert newline
+                        self.hide_popup();
+                        self.handle_action(Action::InsertNewline)?;
+                    }
+                    AcceptSuggestionOnEnter::Smart => {
+                        // Accept if completion differs from typed text
+                        // For now, we check if there's a selected item with data
+                        // that differs from what's in the buffer
+                        let should_accept = self
+                            .active_state()
+                            .popups
+                            .top()
+                            .and_then(|p| p.selected_item())
+                            .map(|item| {
+                                // If there's selection data, accept the completion
+                                item.data.is_some()
+                            })
+                            .unwrap_or(false);
+
+                        if should_accept {
+                            self.handle_action(Action::PopupConfirm)?;
+                        } else {
+                            self.hide_popup();
+                            self.handle_action(Action::InsertNewline)?;
+                        }
+                    }
+                }
+            }
             DeferredAction::PopupTypeChar(c) => {
                 self.handle_popup_type_char(c);
             }

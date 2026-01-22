@@ -942,6 +942,11 @@ where
             needs_render = true;
         }
 
+        // Check completion trigger timer (debounced quick suggestions)
+        if editor.check_completion_trigger_timer() {
+            needs_render = true;
+        }
+
         // Check for warnings and open warning log if any occurred
         if editor.check_warning_log() {
             needs_render = true;

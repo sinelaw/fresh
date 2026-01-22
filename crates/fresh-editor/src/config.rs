@@ -284,6 +284,34 @@ impl JsonSchema for LineEndingOption {
     }
 }
 
+/// Controls whether Enter accepts a completion suggestion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AcceptSuggestionOnEnter {
+    /// Enter always accepts the completion
+    #[default]
+    On,
+    /// Enter inserts a newline (use Tab to accept)
+    Off,
+    /// Enter accepts only if the completion differs from typed text
+    Smart,
+}
+
+impl JsonSchema for AcceptSuggestionOnEnter {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("AcceptSuggestionOnEnter")
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "Controls whether Enter accepts a completion suggestion",
+            "type": "string",
+            "enum": ["on", "off", "smart"],
+            "default": "on"
+        })
+    }
+}
+
 impl PartialEq<KeybindingMapName> for str {
     fn eq(&self, other: &KeybindingMapName) -> bool {
         self == other.0
@@ -554,6 +582,28 @@ pub struct EditorConfig {
     #[serde(default = "default_true")]
     pub quick_suggestions: bool,
 
+    /// Delay in milliseconds before showing completion suggestions.
+    /// Lower values (10-50ms) feel more responsive but may be distracting.
+    /// Higher values (100-500ms) reduce noise while typing.
+    /// Trigger characters (like `.`) bypass this delay.
+    /// Default: 10 (matches VS Code)
+    #[serde(default = "default_quick_suggestions_delay")]
+    pub quick_suggestions_delay_ms: u64,
+
+    /// Whether trigger characters (like `.`, `::`, `->`) immediately show completions.
+    /// When true, typing a trigger character bypasses quick_suggestions_delay_ms.
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub suggest_on_trigger_characters: bool,
+
+    /// Controls whether pressing Enter accepts the selected completion.
+    /// - "on": Enter always accepts the completion
+    /// - "off": Enter inserts a newline (use Tab to accept)
+    /// - "smart": Enter accepts only if the completion text differs from typed text
+    /// Default: "on"
+    #[serde(default = "default_accept_suggestion_on_enter")]
+    pub accept_suggestion_on_enter: AcceptSuggestionOnEnter,
+
     /// Whether the menu bar is visible by default.
     /// The menu bar provides access to menus (File, Edit, View, etc.) at the top of the screen.
     /// Can be toggled at runtime via command palette or keybinding.
@@ -595,6 +645,14 @@ fn default_true() -> bool {
 
 fn default_false() -> bool {
     false
+}
+
+fn default_quick_suggestions_delay() -> u64 {
+    10 // 10ms like VS Code
+}
+
+fn default_accept_suggestion_on_enter() -> AcceptSuggestionOnEnter {
+    AcceptSuggestionOnEnter::On
 }
 
 fn default_scroll_offset() -> usize {
@@ -668,6 +726,9 @@ impl Default for EditorConfig {
             keyboard_report_alternate_keys: true,
             keyboard_report_all_keys_as_escape_codes: false,
             quick_suggestions: true,
+            quick_suggestions_delay_ms: default_quick_suggestions_delay(),
+            suggest_on_trigger_characters: true,
+            accept_suggestion_on_enter: default_accept_suggestion_on_enter(),
             show_menu_bar: true,
             show_tab_bar: true,
             use_terminal_bg: false,
