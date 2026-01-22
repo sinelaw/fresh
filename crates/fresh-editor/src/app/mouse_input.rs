@@ -656,8 +656,8 @@ impl Editor {
             }
         }
 
-        // Check menu bar (row 0)
-        if row == 0 {
+        // Check menu bar (row 0, only when visible)
+        if self.menu_bar_visible && row == 0 {
             let all_menus: Vec<crate::config::Menu> = self
                 .menus
                 .menus
@@ -1163,8 +1163,8 @@ impl Editor {
             return Ok(());
         }
 
-        // Check if click is on menu bar (row 0)
-        if row == 0 {
+        // Check if click is on menu bar (row 0, only when visible)
+        if self.menu_bar_visible && row == 0 {
             let all_menus: Vec<crate::config::Menu> = self
                 .menus
                 .menus

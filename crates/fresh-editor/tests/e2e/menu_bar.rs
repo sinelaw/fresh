@@ -702,3 +702,160 @@ fn test_toggle_menu_bar_visibility_and_auto_show() {
     harness.assert_screen_contains("File");
     harness.assert_screen_contains("Edit");
 }
+
+/// Test that mouse events on tabs work correctly when menu bar is hidden
+/// Issue #832: After hiding the menu bar, clicking tabs and close buttons doesn't work
+/// because the hardcoded `row == 0` check for menu bar intercepts the clicks.
+#[test]
+fn test_tab_click_works_with_menu_bar_hidden() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // Create two buffers so we have 2 tabs
+    harness.new_buffer().unwrap();
+    harness.render().unwrap();
+
+    // Verify we have 2 tabs visible (two × symbols in tab bar)
+    let screen = harness.screen_to_string();
+    let close_button_count = screen.lines().nth(1).unwrap_or("").matches('×').count();
+    assert_eq!(
+        close_button_count, 2,
+        "Should have 2 tabs (2 close buttons) before hiding menu bar"
+    );
+
+    // Hide the menu bar
+    harness.editor_mut().toggle_menu_bar();
+    harness.render().unwrap();
+
+    // Verify menu bar is hidden (row 0 should NOT contain "File")
+    let first_line = harness
+        .screen_to_string()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        !first_line.contains("File"),
+        "Menu bar should be hidden. First line: {}",
+        first_line
+    );
+
+    // Now the tab bar is at row 0 (where menu bar used to be)
+    // Find the × position for the second tab
+    let tab_row = harness
+        .screen_to_string()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    println!("Tab row (now at row 0): '{}'", tab_row);
+
+    // Find positions of close buttons
+    let x_positions: Vec<usize> = tab_row.match_indices('×').map(|(i, _)| i).collect();
+    println!("Close button positions: {:?}", x_positions);
+
+    assert_eq!(
+        x_positions.len(),
+        2,
+        "Should have 2 close buttons in tab bar. Tab row: {}",
+        tab_row
+    );
+
+    // Get double click delay to avoid issues
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+    harness.sleep(double_click_delay);
+
+    // Click on the second tab's close button (the active tab)
+    // This should close the tab, leaving only 1 tab
+    let second_close_x = x_positions[1] as u16;
+    println!("Clicking close button at column {}, row 0", second_close_x);
+
+    harness.mouse_click(second_close_x, 0).unwrap();
+    harness.render().unwrap();
+
+    // Verify we now have only 1 tab
+    let screen_after = harness.screen_to_string();
+    let first_line_after = screen_after.lines().next().unwrap_or("");
+    let close_button_count_after = first_line_after.matches('×').count();
+
+    println!("After click - first line: '{}'", first_line_after);
+    println!("Close button count after: {}", close_button_count_after);
+
+    assert_eq!(
+        close_button_count_after, 1,
+        "BUG #832: Clicking tab close button at row 0 with hidden menu bar should close the tab. \
+         Expected 1 close button after click, got {}. \
+         The click was intercepted by the menu bar handler instead of reaching the tab.",
+        close_button_count_after
+    );
+}
+
+/// Test that clicking to select a tab works when menu bar is hidden
+/// Issue #832: Tab selection via mouse click doesn't work with hidden menu bar
+#[test]
+fn test_tab_selection_click_works_with_menu_bar_hidden() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create temp files to have distinguishable tabs
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("first.txt");
+    let file2 = temp_dir.path().join("second.txt");
+    std::fs::write(&file1, "First file content").unwrap();
+    std::fs::write(&file2, "Second file content").unwrap();
+
+    // Open both files
+    harness.open_file(&file1).unwrap();
+    harness.open_file(&file2).unwrap();
+    harness.render().unwrap();
+
+    // Verify we're on second.txt (last opened file is active)
+    harness.assert_screen_contains("Second file content");
+
+    // Hide the menu bar
+    harness.editor_mut().toggle_menu_bar();
+    harness.render().unwrap();
+
+    // Find the first tab's position (should contain "first.txt")
+    let tab_row = harness
+        .screen_to_string()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    println!("Tab row at row 0: '{}'", tab_row);
+
+    // Find "first" in the tab row to click on it
+    let first_tab_pos = tab_row.find("first");
+    assert!(
+        first_tab_pos.is_some(),
+        "Should find 'first' in tab row. Tab row: {}",
+        tab_row
+    );
+
+    let click_col = first_tab_pos.unwrap() as u16 + 2; // Click in middle of tab name
+
+    // Get double click delay to avoid issues
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+    harness.sleep(double_click_delay);
+
+    // Click on the first tab to select it
+    println!(
+        "Clicking at column {}, row 0 to select first tab",
+        click_col
+    );
+    harness.mouse_click(click_col, 0).unwrap();
+    harness.render().unwrap();
+
+    // Verify we switched to first.txt
+    let screen_after = harness.screen_to_string();
+    println!("Screen after click:\n{}", screen_after);
+
+    assert!(
+        screen_after.contains("First file content"),
+        "BUG #832: Clicking tab at row 0 with hidden menu bar should switch to that tab. \
+         Expected to see 'First file content' but it's not visible. \
+         The click was intercepted by the menu bar handler instead of reaching the tab."
+    );
+}
