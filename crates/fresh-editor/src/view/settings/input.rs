@@ -775,6 +775,16 @@ impl SettingsState {
                 self.dropdown_next();
                 InputResult::Consumed
             }
+            KeyCode::Left => {
+                // Left arrow also navigates up in dropdown
+                self.dropdown_prev();
+                InputResult::Consumed
+            }
+            KeyCode::Right => {
+                // Right arrow also navigates down in dropdown
+                self.dropdown_next();
+                InputResult::Consumed
+            }
             KeyCode::Home => {
                 self.dropdown_home();
                 InputResult::Consumed

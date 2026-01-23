@@ -77,14 +77,16 @@ impl CommandRegistry {
 
     /// Register a command
     pub fn register(&self, command: Command) {
-        let mut commands = self.commands.write().unwrap();
+        let mut commands = self.commands.write()
+            .expect("Command registry lock poisoned - this indicates a bug in the editor");
         commands.retain(|c| c.name != command.name);
         commands.push(command);
     }
 
     /// Unregister a command by name  
     pub fn unregister(&self, name: &str) {
-        let mut commands = self.commands.write().unwrap();
+        let mut commands = self.commands.write()
+            .expect("Command registry lock poisoned - this indicates a bug in the editor");
         commands.retain(|c| c.name != name);
     }
 }
@@ -2001,43 +2003,50 @@ impl PluginApi {
 
     /// Get the currently active buffer ID
     pub fn get_active_buffer_id(&self) -> BufferId {
-        let snapshot = self.state_snapshot.read().unwrap();
+        let snapshot = self.state_snapshot.read()
+            .expect("State snapshot lock poisoned - this indicates a bug in the editor");
         snapshot.active_buffer_id
     }
 
     /// Get the currently active split ID
     pub fn get_active_split_id(&self) -> usize {
-        let snapshot = self.state_snapshot.read().unwrap();
+        let snapshot = self.state_snapshot.read()
+            .expect("State snapshot lock poisoned - this indicates a bug in the editor");
         snapshot.active_split_id
     }
 
     /// Get information about a specific buffer
     pub fn get_buffer_info(&self, buffer_id: BufferId) -> Option<BufferInfo> {
-        let snapshot = self.state_snapshot.read().unwrap();
+        let snapshot = self.state_snapshot.read()
+            .expect("State snapshot lock poisoned - this indicates a bug in the editor");
         snapshot.buffers.get(&buffer_id).cloned()
     }
 
     /// Get all buffer IDs
     pub fn list_buffers(&self) -> Vec<BufferInfo> {
-        let snapshot = self.state_snapshot.read().unwrap();
+        let snapshot = self.state_snapshot.read()
+            .expect("State snapshot lock poisoned - this indicates a bug in the editor");
         snapshot.buffers.values().cloned().collect()
     }
 
     /// Get primary cursor information for the active buffer
     pub fn get_primary_cursor(&self) -> Option<CursorInfo> {
-        let snapshot = self.state_snapshot.read().unwrap();
+        let snapshot = self.state_snapshot.read()
+            .expect("State snapshot lock poisoned - this indicates a bug in the editor");
         snapshot.primary_cursor.clone()
     }
 
     /// Get all cursor information for the active buffer
     pub fn get_all_cursors(&self) -> Vec<CursorInfo> {
-        let snapshot = self.state_snapshot.read().unwrap();
+        let snapshot = self.state_snapshot.read()
+            .expect("State snapshot lock poisoned - this indicates a bug in the editor");
         snapshot.all_cursors.clone()
     }
 
     /// Get viewport information for the active buffer
     pub fn get_viewport(&self) -> Option<ViewportInfo> {
-        let snapshot = self.state_snapshot.read().unwrap();
+        let snapshot = self.state_snapshot.read()
+            .expect("State snapshot lock poisoned - this indicates a bug in the editor");
         snapshot.viewport.clone()
     }
 

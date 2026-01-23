@@ -34,6 +34,7 @@ pub enum SplitDirection {
 }
 
 pub mod action;
+pub mod error;
 pub mod api;
 pub mod command;
 pub mod hooks;
