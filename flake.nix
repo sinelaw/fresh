@@ -33,10 +33,7 @@
           ...
         }:
         let
-          cargoToml = lib.importTOML "${src}/Cargo.toml";
-
           pname = "fresh";
-          version = cargoToml.workspace.package.version;
 
           rust-manifest = pkgs.fetchurl {
             url = "https://static.rust-lang.org/dist/channel-rust-1.91.0.toml";
@@ -71,6 +68,9 @@
               ./docs
             ];
           };
+
+          cargoToml = lib.importTOML "${src}/Cargo.toml";
+          version = cargoToml.workspace.package.version;
 
           # Common arguments for crane builds
           commonArgs = {
@@ -145,7 +145,7 @@
           devShells.default = craneLib.devShell (
             commonArgs
             // {
-              # inherit (self') checks;
+              inherit (self') checks;
 
               # Additional development tools
               buildInputs = with pkgs; [
