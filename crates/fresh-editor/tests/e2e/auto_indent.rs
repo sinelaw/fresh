@@ -846,3 +846,845 @@ fn test_indent_after_empty_line_in_function_body() {
         line3_indent, content
     );
 }
+
+// ============================================================================
+// Bracket Expansion Tests (Issue #629)
+// When cursor is between opening and closing brackets (e.g., {|}), pressing Enter
+// should expand to:
+//   {
+//       |
+//   }
+// Instead of the current behavior:
+//   {
+//       |}
+// ============================================================================
+
+/// Test basic bracket expansion in C - issue #629
+/// Input: `int main() {<cursor>}`
+/// Expected after Enter:
+/// ```
+/// int main() {
+///     <cursor>
+/// }
+/// ```
+#[test]
+fn test_bracket_expansion_c_function() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.c");
+    // Write content with cursor position between { and }
+    std::fs::write(&file_path, "int main() {}").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor to end and then left to be between { and }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Press Enter - should expand brackets
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Should have 3 lines: opening, cursor line (indented), closing
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 lines after bracket expansion, got {}. Content:\n{}",
+        lines.len(),
+        content
+    );
+
+    // Line 1: int main() {
+    assert!(
+        lines[0].contains("int main() {"),
+        "First line should have opening brace"
+    );
+
+    // Line 2: should be indented (4 spaces) and where cursor is
+    let line2_indent = lines[1].chars().take_while(|&c| c == ' ').count();
+    assert_eq!(
+        line2_indent, 4,
+        "Second line (cursor line) should have 4 spaces indent, got {}",
+        line2_indent
+    );
+
+    // Line 3: should be the closing brace at column 0
+    let line3 = lines[2];
+    assert!(
+        line3.trim() == "}",
+        "Third line should be closing brace, got: {:?}",
+        line3
+    );
+    let line3_indent = line3.chars().take_while(|&c| c == ' ').count();
+    assert_eq!(
+        line3_indent, 0,
+        "Closing brace should be at column 0, got {} spaces",
+        line3_indent
+    );
+}
+
+/// Test bracket expansion in Rust - issue #629
+#[test]
+fn test_bracket_expansion_rust_function() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "fn main() {}").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between { and }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 lines, got {}. Content:\n{}",
+        lines.len(),
+        content
+    );
+
+    // Verify structure
+    assert!(lines[0].ends_with("{"), "First line should end with {{");
+    assert_eq!(
+        lines[1].chars().take_while(|&c| c == ' ').count(),
+        4,
+        "Cursor line should have 4 spaces"
+    );
+    assert_eq!(lines[2].trim(), "}", "Third line should be closing brace");
+}
+
+/// Test bracket expansion in JavaScript - issue #629
+#[test]
+fn test_bracket_expansion_javascript_function() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.js");
+    std::fs::write(&file_path, "function test() {}").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between { and }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 lines. Content:\n{}",
+        content
+    );
+    assert!(lines[0].ends_with("{"), "First line should end with {{");
+    assert_eq!(
+        lines[1].chars().take_while(|&c| c == ' ').count(),
+        4,
+        "Cursor line should have 4 spaces"
+    );
+    assert_eq!(lines[2].trim(), "}", "Third line should be closing brace");
+}
+
+/// Test bracket expansion in TypeScript interface - issue #629
+#[test]
+fn test_bracket_expansion_typescript_interface() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.ts");
+    std::fs::write(&file_path, "interface User {}").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between { and }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 lines. Content:\n{}",
+        content
+    );
+    assert_eq!(lines[2].trim(), "}", "Third line should be closing brace");
+}
+
+/// Test bracket expansion in Go (uses tabs) - issue #629
+#[test]
+fn test_bracket_expansion_go_function() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.go");
+    std::fs::write(&file_path, "func main() {}").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between { and }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 lines. Content:\n{}",
+        content
+    );
+
+    // Go uses tabs for indentation
+    assert!(
+        lines[1].starts_with('\t'),
+        "Go should use tab for indent, got: {:?}",
+        lines[1]
+    );
+    assert_eq!(lines[2].trim(), "}", "Third line should be closing brace");
+}
+
+/// Test square bracket expansion for arrays - issue #629
+#[test]
+fn test_bracket_expansion_square_brackets_rust() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "let arr = []").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between [ and ]
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 lines for array expansion. Content:\n{}",
+        content
+    );
+    assert!(lines[0].ends_with("["), "First line should end with [");
+    assert_eq!(lines[2].trim(), "]", "Third line should be closing bracket");
+}
+
+/// Test JSON object bracket expansion - issue #629
+#[test]
+fn test_bracket_expansion_json_object() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.json");
+    std::fs::write(&file_path, "{}").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between { and }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 lines. Content:\n{}",
+        content
+    );
+    assert_eq!(lines[0], "{", "First line should be {{");
+    assert_eq!(lines[2].trim(), "}", "Third line should be }}");
+}
+
+/// Test JSON array bracket expansion - issue #629
+#[test]
+fn test_bracket_expansion_json_array() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.json");
+    std::fs::write(&file_path, "[]").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between [ and ]
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 lines. Content:\n{}",
+        content
+    );
+    assert_eq!(lines[0], "[", "First line should be [");
+    assert_eq!(lines[2].trim(), "]", "Third line should be ]");
+}
+
+/// Test nested bracket expansion - issue #629
+/// When inside nested braces like `fn main() { if true {<cursor>} }`,
+/// the inner brace should expand properly
+#[test]
+fn test_bracket_expansion_nested_braces() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    // Outer function has content, inner if block is empty
+    std::fs::write(&file_path, "fn main() {\n    if true {}\n}").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to line 2 (if true {}), then to position between { and }
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap(); // Now between { and }
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Should have:
+    // fn main() {
+    //     if true {
+    //         <cursor>
+    //     }
+    // }
+    assert!(
+        lines.len() >= 5,
+        "Expected at least 5 lines for nested expansion. Content:\n{}",
+        content
+    );
+
+    // The new cursor line should have 8 spaces (2 levels of indent)
+    let cursor_line = lines[2]; // Line after "if true {"
+    let cursor_indent = cursor_line.chars().take_while(|&c| c == ' ').count();
+    assert_eq!(
+        cursor_indent, 8,
+        "Cursor line in nested block should have 8 spaces, got {}",
+        cursor_indent
+    );
+
+    // The inner closing brace should have 4 spaces
+    let inner_close = lines[3];
+    assert!(
+        inner_close.trim() == "}",
+        "Inner closing brace line should be }}"
+    );
+    let inner_close_indent = inner_close.chars().take_while(|&c| c == ' ').count();
+    assert_eq!(
+        inner_close_indent, 4,
+        "Inner closing brace should have 4 spaces, got {}",
+        inner_close_indent
+    );
+}
+
+/// Test bracket expansion with trailing content - issue #629
+/// `{<cursor>} // comment` should preserve the comment after closing brace
+#[test]
+fn test_bracket_expansion_with_trailing_comment() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "fn main() {} // entry point").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between { and }
+    // First go to end, then find the } position
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    // Navigate to position right after {
+    for _ in 0..12 {
+        // "fn main() {" is 11 chars, position 12 is between { and }
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 lines. Content:\n{}",
+        content
+    );
+
+    // The comment should be preserved with the closing brace
+    assert!(
+        content.contains("// entry point"),
+        "Comment should be preserved. Content:\n{}",
+        content
+    );
+}
+
+/// Test bracket expansion with whitespace inside - issue #629
+/// `{ <cursor> }` (with spaces) should still expand properly
+#[test]
+fn test_bracket_expansion_with_whitespace_inside() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "fn main() {  }").unwrap(); // Two spaces inside
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between the spaces (after { and before })
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap(); // Before }
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap(); // Before the second space
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Should expand, though exact behavior with whitespace may vary
+    assert!(
+        lines.len() >= 2,
+        "Expected expansion. Content:\n{}",
+        content
+    );
+}
+
+/// Test parenthesis expansion for function calls - issue #629
+/// `foo(<cursor>)` - parentheses should also expand
+#[test]
+fn test_bracket_expansion_parentheses() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "let x = foo()").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between ( and )
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Parentheses should expand similarly to braces
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 lines for parenthesis expansion. Content:\n{}",
+        content
+    );
+    assert!(lines[0].ends_with("("), "First line should end with (");
+    assert_eq!(lines[2].trim(), ")", "Third line should be closing paren");
+}
+
+/// Test mixed bracket types - issue #629
+/// `foo({<cursor>})` - should expand the inner braces
+#[test]
+fn test_bracket_expansion_mixed_brackets() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.js");
+    std::fs::write(&file_path, "callback({})").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between { and }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap(); // Before )
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap(); // Before }
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+
+    // The inner brace should expand
+    assert!(
+        content.contains("callback({"),
+        "Should have opening. Content:\n{}",
+        content
+    );
+}
+
+/// Test deeply nested bracket expansion - issue #629
+/// `{{{<cursor>}}}` - innermost braces should expand
+#[test]
+fn test_bracket_expansion_deeply_nested() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.json");
+    std::fs::write(&file_path, "{{{}}}").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor to the innermost position (between the third { and first })
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert!(
+        lines.len() >= 3,
+        "Expected expansion. Content:\n{}",
+        content
+    );
+}
+
+/// Test C++ class with empty body bracket expansion - issue #629
+#[test]
+fn test_bracket_expansion_cpp_class() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.cpp");
+    std::fs::write(&file_path, "class Foo {};").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between { and }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap(); // Before ;
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap(); // Before }
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 lines. Content:\n{}",
+        content
+    );
+}
+
+/// Test bracket expansion with assignment - issue #629
+/// `let x = {<cursor>}`
+#[test]
+fn test_bracket_expansion_with_assignment() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.js");
+    std::fs::write(&file_path, "let obj = {}").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between { and }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 lines. Content:\n{}",
+        content
+    );
+    assert!(
+        lines[0].contains("let obj = {"),
+        "First line should have assignment"
+    );
+    assert_eq!(lines[2].trim(), "}", "Third line should be closing brace");
+}
+
+/// Test that bracket expansion does NOT occur when not between matching brackets
+/// `{text<cursor>}` should not expand specially
+#[test]
+fn test_no_bracket_expansion_with_content_between() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "fn main() {return 0;}").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between "return 0;" and "}"
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Press Enter - should add newline but not do special expansion
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Should have 2 lines, not 3 (no special expansion)
+    assert!(
+        lines.len() == 2,
+        "Expected 2 lines (no special expansion when content exists). Content:\n{}",
+        content
+    );
+}
+
+/// Test bracket expansion preserves file modifications - issue #629
+/// Verifies the file is properly marked as modified after expansion
+#[test]
+fn test_bracket_expansion_marks_file_modified() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "fn main() {}").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Verify file is not modified initially
+    assert!(
+        !harness.editor().active_state().buffer.is_modified(),
+        "File should not be modified initially"
+    );
+
+    // Move cursor between { and }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify file is now modified
+    assert!(
+        harness.editor().active_state().buffer.is_modified(),
+        "File should be modified after bracket expansion"
+    );
+}
+
+/// Test undo after bracket expansion - issue #629
+/// A single undo should revert the entire bracket expansion
+#[test]
+fn test_bracket_expansion_undo() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "fn main() {}").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    let original_content = harness.get_buffer_content().unwrap();
+
+    // Move cursor between { and }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify expansion happened
+    let expanded_content = harness.get_buffer_content().unwrap();
+    assert_ne!(
+        expanded_content, original_content,
+        "Content should have changed"
+    );
+
+    // Undo
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should be back to original
+    let after_undo = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        after_undo, original_content,
+        "Undo should restore original content"
+    );
+}
+
+/// Test arrow key expansion with existing struct definition - issue #629
+/// struct Foo {<cursor>}
+#[test]
+fn test_bracket_expansion_rust_struct() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "struct Point {}").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between { and }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 lines. Content:\n{}",
+        content
+    );
+    assert!(
+        lines[0].contains("struct Point {"),
+        "First line should have struct"
+    );
+    assert_eq!(lines[2].trim(), "}", "Third line should be closing brace");
+}
+
+/// Test bracket expansion in HTML-like syntax (JSX) - issue #629
+#[test]
+fn test_bracket_expansion_jsx_component() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.jsx");
+    std::fs::write(&file_path, "const App = () => {}").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor between { and }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Press Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 lines. Content:\n{}",
+        content
+    );
+}
