@@ -2,7 +2,7 @@
 //!
 //! This module is split into:
 //! - `types`: Pure data types (WASM-compatible, no filesystem access)
-//! - `loader`: ThemeLoader creates ThemeRegistry from embedded + user themes
+//! - `loader`: ThemeLoader creates ThemeRegistry from embedded + user themes (runtime only)
 //!
 //! # Example
 //!
@@ -20,12 +20,15 @@
 //! let themes = registry.list();
 //! ```
 
+// Loader requires filesystem access - runtime only
+#[cfg(feature = "runtime")]
 mod loader;
 mod types;
 #[cfg(feature = "runtime")]
 mod validate;
 
 // Re-export all public items for backward compatibility
+#[cfg(feature = "runtime")]
 pub use loader::*;
 pub use types::*;
 #[cfg(feature = "runtime")]

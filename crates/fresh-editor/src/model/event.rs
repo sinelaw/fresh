@@ -1,5 +1,5 @@
 use crate::model::piece_tree::PieceTree;
-use crate::view::overlay::{OverlayHandle, OverlayNamespace};
+pub use fresh_core::overlay::{OverlayHandle, OverlayNamespace};
 pub use fresh_core::{BufferId, CursorId, SplitDirection, SplitId};
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
@@ -544,7 +544,8 @@ pub struct EventLog {
     /// How often to create snapshots (every N events)
     snapshot_interval: usize,
 
-    /// Optional file for streaming events to disk
+    /// Optional file for streaming events to disk (runtime only)
+    #[cfg(feature = "runtime")]
     stream_file: Option<std::fs::File>,
 
     /// Index at which the buffer was last saved (for tracking modified status)
@@ -560,6 +561,7 @@ impl EventLog {
             current_index: 0,
             snapshots: Vec::new(),
             snapshot_interval: 100,
+            #[cfg(feature = "runtime")]
             stream_file: None,
             saved_at_index: Some(0), // New buffer starts at "saved" state (index 0)
         }
@@ -595,7 +597,8 @@ impl EventLog {
         }
     }
 
-    /// Enable streaming events to a file
+    /// Enable streaming events to a file (runtime only)
+    #[cfg(feature = "runtime")]
     pub fn enable_streaming<P: AsRef<std::path::Path>>(&mut self, path: P) -> std::io::Result<()> {
         use std::io::Write;
 
@@ -615,12 +618,14 @@ impl EventLog {
         Ok(())
     }
 
-    /// Disable streaming
+    /// Disable streaming (runtime only)
+    #[cfg(feature = "runtime")]
     pub fn disable_streaming(&mut self) {
         self.stream_file = None;
     }
 
-    /// Log rendering state (for debugging)
+    /// Log rendering state (for debugging, runtime only)
+    #[cfg(feature = "runtime")]
     pub fn log_render_state(
         &mut self,
         cursor_pos: usize,
@@ -648,7 +653,8 @@ impl EventLog {
         }
     }
 
-    /// Log keystroke (for debugging)
+    /// Log keystroke (for debugging, runtime only)
+    #[cfg(feature = "runtime")]
     pub fn log_keystroke(&mut self, key_code: &str, modifiers: &str) {
         if let Some(ref mut file) = self.stream_file {
             use std::io::Write;
@@ -683,7 +689,8 @@ impl EventLog {
             }
         }
 
-        // Stream event to file if enabled
+        // Stream event to file if enabled (runtime only)
+        #[cfg(feature = "runtime")]
         if let Some(ref mut file) = self.stream_file {
             use std::io::Write;
 

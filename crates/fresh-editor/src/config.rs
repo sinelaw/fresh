@@ -154,7 +154,8 @@ impl CursorStyle {
         "_ Solid underline",
     ];
 
-    /// Convert to crossterm cursor style
+    /// Convert to crossterm cursor style (runtime only)
+    #[cfg(feature = "runtime")]
     pub fn to_crossterm_style(self) -> crossterm::cursor::SetCursorStyle {
         use crossterm::cursor::SetCursorStyle;
         match self {
@@ -1220,7 +1221,8 @@ impl MenuItemExt for MenuItem {
     }
 }
 
-/// Generate menu items for a dynamic source
+/// Generate menu items for a dynamic source (runtime only - requires view::theme)
+#[cfg(feature = "runtime")]
 pub fn generate_dynamic_items(source: &str) -> Vec<MenuItem> {
     match source {
         "copy_with_theme" => {
@@ -1247,6 +1249,13 @@ pub fn generate_dynamic_items(source: &str) -> Vec<MenuItem> {
             info: format!("Unknown source: {}", source),
         }],
     }
+}
+
+/// Generate menu items for a dynamic source (WASM stub - returns empty)
+#[cfg(not(feature = "runtime"))]
+pub fn generate_dynamic_items(_source: &str) -> Vec<MenuItem> {
+    // Theme loading not available in WASM builds
+    vec![]
 }
 
 impl Default for Config {
@@ -2615,6 +2624,7 @@ impl Config {
     }
 
     /// Create default LSP configurations
+    #[cfg(feature = "runtime")]
     fn default_lsp_config() -> HashMap<String, LspServerConfig> {
         let mut lsp = HashMap::new();
 
@@ -2624,6 +2634,19 @@ impl Config {
             .to_string_lossy()
             .to_string();
 
+        Self::populate_lsp_config(&mut lsp, ra_log_path);
+        lsp
+    }
+
+    /// Create empty LSP configurations for WASM builds
+    #[cfg(not(feature = "runtime"))]
+    fn default_lsp_config() -> HashMap<String, LspServerConfig> {
+        // LSP is not available in WASM builds
+        HashMap::new()
+    }
+
+    #[cfg(feature = "runtime")]
+    fn populate_lsp_config(lsp: &mut HashMap<String, LspServerConfig>, ra_log_path: String) {
         // Minimal performance config for rust-analyzer:
         // - checkOnSave: false - disables cargo check on every save (the #1 cause of slowdowns)
         // - cachePriming.enable: false - disables background indexing of entire crate graph
@@ -2854,8 +2877,6 @@ impl Config {
                 initialization_options: None,
             },
         );
-
-        lsp
     }
 
     /// Validate the configuration

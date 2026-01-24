@@ -34,16 +34,16 @@ path = "src/lib.rs"
 default = ["plugins", "runtime", "embed-plugins"]
 plugins = ["dep:fresh-plugin-runtime", "dep:fresh-parser-js", "dep:fresh-plugin-api-macros", "dep:ts-rs"]
 # Embed plugins into the binary as a fallback when no disk plugins are found
-embed-plugins = ["plugins", "dep:include_dir", "dep:dirs", "dep:trash"]
+embed-plugins = ["plugins", "dep:include_dir", "dep:trash"]
 # Feature for optional development binaries (generate_schema, event_debug)
 dev-bins = []
 # Runtime feature includes all heavy dependencies needed for the actual editor
 runtime = [
     "dep:crossterm",
     "dep:ratatui",
+    "ratatui/crossterm",  # Enable ratatui's crossterm backend for native terminal
     "dep:chrono",
     "dep:clap",
-    "dep:tracing",
     "dep:tracing-subscriber",
     "dep:fresh-languages",
     "dep:lsp-types",
@@ -52,19 +52,22 @@ runtime = [
     "dep:async-trait",
     "dep:lru",
     "dep:ignore",
-    "dep:regex",
     "dep:libc",
     "dep:libloading",
     "dep:nix",
-    "dep:anyhow",
-    "dep:dirs",
     "dep:pulldown-cmark",
     "dep:sha2",
     "dep:arboard",
     "dep:syntect",
+    # Use onig regex engine for runtime (faster than fancy-regex)
+    "syntect/regex-onig",
+    "syntect/parsing",
+    "syntect/dump-load",
+    "syntect/dump-create",
+    "syntect/yaml-load",  # Needed for SyntaxDefinition::load_from_str
+    "syntect/default-syntaxes",
+    "syntect/default-themes",
     "dep:ureq",
-    "dep:unicode-width",
-    "dep:unicode-segmentation",
     "dep:alacritty_terminal",
     "dep:portable-pty",
     "dep:trash",
@@ -73,6 +76,20 @@ runtime = [
 ]
 # Schema-only feature for minimal builds (just schema generation)
 schema-only = []
+# WASM browser build - shared editor core without native dependencies
+# Enables the same pure Rust modules as runtime but without platform-specific deps
+wasm = [
+    "dep:ratatui",  # ratatui core is WASM-compatible (no crossterm backend)
+    "dep:crossterm",  # crossterm event types are pure Rust data structures
+    "dep:syntect",
+    # Use fancy-regex instead of onig for WASM (pure Rust, no C dependencies)
+    "syntect/regex-fancy",
+    "syntect/parsing",
+    "syntect/dump-load",
+    "syntect/yaml-load",  # yaml-rust is pure Rust, WASM-compatible
+    "syntect/default-syntaxes",
+    "syntect/default-themes",
+]
 
 [dependencies]
 # Local crates
@@ -90,10 +107,13 @@ once_cell.workspace = true
 
 # Runtime dependencies (optional, enabled by "runtime" feature)
 crossterm = { version = "0.29.0", features = ["osc52"], optional = true }
-ratatui = { version = "0.30.0", optional = true }
+# ratatui with default-features=false is WASM-compatible (no crossterm backend)
+# Runtime feature adds the crossterm backend for native terminal rendering
+ratatui = { version = "0.30.0", default-features = false, features = ["std", "underline-color"], optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
 clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"], optional = true }
-tracing = { workspace = true, optional = true }
+# tracing is always needed for logging throughout the codebase
+tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 lsp-types = { workspace = true, optional = true }
@@ -102,7 +122,8 @@ tokio = { version = "1.49", features = ["fs", "io-util", "process", "rt", "rt-mu
 async-trait = { version = "0.1", optional = true }
 lru = { version = "0.16", optional = true }
 ignore = { version = "0.4", default-features = false, optional = true }
-regex = { version = "1.12", optional = true }
+# regex is always needed for model::buffer search functionality
+regex = { version = "1.12" }
 libc = { version = "0.2", optional = true }
 libloading = { version = "0.9", optional = true }
 nix = { version = "0.30", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
@@ -112,16 +133,21 @@ fresh-plugin-api-macros = { workspace = true, optional = true }
 # TypeScript type generation from Rust structs
 ts-rs = { version = "11.1", optional = true }
 
-anyhow = { workspace = true, optional = true }
-dirs = { version = "6.0", optional = true }
+# anyhow is always needed for model error handling
+anyhow = { workspace = true }
+# dirs is always needed for path_utils home directory expansion
+dirs = { version = "6.0" }
 pulldown-cmark = { version = "0.13", default-features = false, optional = true }
 sha2 = { version = "0.10", optional = true }
 arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"], optional = true }
-syntect = { version = "5.3", optional = true }
+# syntect with default-features=false so we can choose regex engine per build target
+# runtime uses onig (faster), wasm uses fancy-regex (pure Rust, WASM-compatible)
+syntect = { version = "5.3", default-features = false, optional = true }
 jsonschema = { version = "0.29", optional = true }
 ureq = { version = "2.12", default-features = false, features = ["tls"], optional = true }
-unicode-width = { version = "0.2", optional = true }
-unicode-segmentation = { version = "1.12", optional = true }
+# Unicode handling - always needed for primitives
+unicode-width = { version = "0.2" }
+unicode-segmentation = { version = "1.12" }
 
 # Terminal emulation (optional)
 alacritty_terminal = { version = "0.25", optional = true }

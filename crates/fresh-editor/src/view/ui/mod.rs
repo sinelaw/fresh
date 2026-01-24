@@ -12,30 +12,49 @@
 //! - `scroll_panel` - Reusable scrollable panel for variable-height items
 //! - `file_browser` - File open dialog popup
 
-pub mod file_browser;
-pub mod file_explorer;
-pub mod menu;
-pub mod menu_input;
+// WASM-compatible modules (pure rendering, no runtime deps)
 pub mod scroll_panel;
 pub mod scrollbar;
-pub mod split_rendering;
-pub mod status_bar;
-pub mod suggestions;
-pub mod tabs;
 pub mod text_edit;
 pub mod view_pipeline;
 
+// Runtime-only modules (depend on state, services, input, etc.)
+#[cfg(feature = "runtime")]
+pub mod file_browser;
+#[cfg(feature = "runtime")]
+pub mod file_explorer;
+#[cfg(feature = "runtime")]
+pub mod menu;
+#[cfg(feature = "runtime")]
+pub mod menu_input;
+#[cfg(feature = "runtime")]
+pub mod split_rendering;
+#[cfg(feature = "runtime")]
+pub mod status_bar;
+#[cfg(feature = "runtime")]
+pub mod suggestions;
+#[cfg(feature = "runtime")]
+pub mod tabs;
+
 // Re-export main types for convenience
+#[cfg(feature = "runtime")]
 pub use file_browser::{FileBrowserLayout, FileBrowserRenderer};
+#[cfg(feature = "runtime")]
 pub use file_explorer::FileExplorerRenderer;
+#[cfg(feature = "runtime")]
 pub use menu::{context_keys, MenuContext, MenuRenderer, MenuState};
+#[cfg(feature = "runtime")]
 pub use menu_input::MenuInputHandler;
 pub use scroll_panel::{
     FocusRegion, RenderInfo, ScrollItem, ScrollState, ScrollablePanel, ScrollablePanelLayout,
 };
 pub use scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
+#[cfg(feature = "runtime")]
 pub use split_rendering::SplitRenderer;
+#[cfg(feature = "runtime")]
 pub use status_bar::{truncate_path, StatusBarLayout, StatusBarRenderer, TruncatedPath};
+#[cfg(feature = "runtime")]
 pub use suggestions::SuggestionsRenderer;
+#[cfg(feature = "runtime")]
 pub use tabs::TabsRenderer;
 pub use text_edit::TextEdit;

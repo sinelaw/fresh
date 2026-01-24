@@ -2,7 +2,7 @@
 //!
 //! This module is split into:
 //! - `types`: Pure data types and lookup methods (WASM-compatible, no filesystem access)
-//! - `loader`: I/O operations with `GrammarLoader` trait abstraction
+//! - `loader`: I/O operations with `GrammarLoader` trait abstraction (runtime only)
 //!
 //! # Example
 //!
@@ -15,17 +15,21 @@
 //! // Create default registry with embedded grammars only
 //! let registry = GrammarRegistry::default();
 //!
-//! // Load registry with user grammars using default loader
-//! let registry = GrammarRegistry::for_editor();
-//!
-//! // Load registry with custom loader (for testing)
-//! let loader = LocalGrammarLoader::new();
-//! let registry = GrammarRegistry::load(&loader);
+//! // Load registry with user grammars using default loader (runtime only)
+//! #[cfg(feature = "runtime")]
+//! {
+//!     let registry = GrammarRegistry::for_editor();
+//!     let loader = LocalGrammarLoader::new();
+//!     let registry = GrammarRegistry::load(&loader);
+//! }
 //! ```
 
+// Loader requires filesystem access - runtime only
+#[cfg(feature = "runtime")]
 mod loader;
 mod types;
 
 // Re-export all public items for backward compatibility
+#[cfg(feature = "runtime")]
 pub use loader::*;
 pub use types::*;

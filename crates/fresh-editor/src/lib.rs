@@ -18,16 +18,24 @@ pub mod session;
 #[cfg(feature = "runtime")]
 pub mod state;
 
-// Organized modules (runtime-only)
+// Core modules - always available (pure Rust, no platform dependencies)
+// Submodules within primitives that need ratatui/syntect are internally gated
+pub mod model;
+pub mod primitives;
+
+// Runtime-only modules (heavy dependencies, platform-specific)
 #[cfg(feature = "runtime")]
 pub mod app;
 #[cfg(feature = "runtime")]
 pub mod input;
 #[cfg(feature = "runtime")]
-pub mod model;
-#[cfg(feature = "runtime")]
-pub mod primitives;
-#[cfg(feature = "runtime")]
 pub mod services;
-#[cfg(feature = "runtime")]
+
+// View module - available for both runtime and WASM
+// Most submodules are runtime-only, but theme types are WASM-compatible
+#[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod view;
+
+// WASM-specific modules
+#[cfg(feature = "wasm")]
+pub mod wasm;

@@ -716,11 +716,12 @@ impl FileSystem for StdFileSystem {
 
     // Utility
     fn current_uid(&self) -> u32 {
-        #[cfg(unix)]
+        #[cfg(all(unix, feature = "runtime"))]
         {
+            // SAFETY: getuid() is a simple syscall with no arguments
             unsafe { libc::getuid() }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(all(unix, feature = "runtime")))]
         {
             0
         }
