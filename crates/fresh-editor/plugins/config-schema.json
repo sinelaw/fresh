@@ -152,9 +152,12 @@
       "type": "string",
       "enum": [
         "dark",
-        "light",
+        "dracula",
         "high-contrast",
-        "nostalgia"
+        "light",
+        "nord",
+        "nostalgia",
+        "solarized-dark"
       ]
     },
     "LocaleOptions": {

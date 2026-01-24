@@ -77,14 +77,16 @@ impl CommandRegistry {
 
     /// Register a command
     pub fn register(&self, command: Command) {
-        let mut commands = self.commands.write().unwrap();
+    let snapshot = self.state_snapshot.read()
+            .expect("State snapshot lock poisoned - this indicates a bug in the editor");
         commands.retain(|c| c.name != command.name);
         commands.push(command);
     }
 
     /// Unregister a command by name  
     pub fn unregister(&self, name: &str) {
-        let mut commands = self.commands.write().unwrap();
+    let snapshot = self.state_snapshot.read()
+            .expect("State snapshot lock poisoned - this indicates a bug in the editor");
         commands.retain(|c| c.name != name);
     }
 }

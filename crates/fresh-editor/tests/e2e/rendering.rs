@@ -282,7 +282,6 @@ fn test_cursor_position_with_large_line_numbers() {
 
 /// Test that line numbers are rendered correctly for files of various sizes
 #[test]
-#[ignore] // TODO: Fix line numbering with trailing newlines
 fn test_line_numbers_rendered_correctly() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use tempfile::TempDir;
@@ -352,19 +351,22 @@ fn test_line_numbers_rendered_correctly() {
             let line_num: usize = line_num_part.parse().unwrap_or(0);
             println!("Parsed line number: {line_num}");
 
+            // Files ending with \n have an empty line at the end, so total lines = line_count + 1
+            let expected_total = line_count + 1;
+
             // For files with more than 20 lines, we should see a line number
             // close to the total line count (within visible range)
-            let expected_min = if line_count > 20 { line_count - 20 } else { 1 };
+            let expected_min = if expected_total > 20 { expected_total - 20 } else { 1 };
 
             assert!(
-                line_num >= expected_min && line_num <= line_count,
-                "{description}: Expected to see line numbers between {expected_min} and {line_count}, but got line {line_num}"
+                line_num >= expected_min && line_num <= expected_total,
+                "{description}: Expected to see line numbers between {expected_min} and {expected_total}, but got line {line_num}"
             );
 
             // Verify the last visible line matches the expected line number
             assert_eq!(
-                line_num, line_count,
-                "{description}: Expected last visible line to be {line_count}, but got {line_num}"
+                line_num, expected_total,
+                "{description}: Expected last visible line to be {expected_total}, but got {line_num}"
             );
         } else {
             panic!("{description}: No content lines found on screen!");
@@ -376,8 +378,8 @@ fn test_line_numbers_rendered_correctly() {
 /// This test loads a buffer with more lines than visible, presses page down twice,
 /// and verifies that the top line number is updated correctly and content changes
 #[test]
-#[ignore] // TODO: Fix line numbering edge cases
 fn test_page_down_line_numbers() {
+    
     use crossterm::event::{KeyCode, KeyModifiers};
     use tempfile::TempDir;
 

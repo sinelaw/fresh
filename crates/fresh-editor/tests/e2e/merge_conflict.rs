@@ -271,7 +271,6 @@ fn setup_git_merge_conflict(project_root: &std::path::Path) -> std::path::PathBu
 
 /// Test that Merge: Start Resolution command works
 #[test]
-#[ignore]
 fn test_merge_start_resolution_command() {
     // Enable tracing for debugging
     let _ = tracing_subscriber::fmt()
@@ -858,9 +857,7 @@ fn setup_diff3_merge_conflict(project_root: &std::path::Path) -> std::path::Path
 }
 
 /// Test diff3-style conflict with base section (|||||||) is detected correctly
-// TODO: Fix flakiness in this test
 #[test]
-#[ignore]
 fn test_diff3_conflict_with_base_section() {
     use crate::common::tracing::init_tracing_from_env;
     use std::process::Command;
