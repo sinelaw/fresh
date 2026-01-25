@@ -922,6 +922,43 @@ impl IndentCalculator {
         indent
     }
 
+    /// Get the indent of the line containing the given position
+    /// This is a public API used for bracket expansion
+    pub fn get_line_indent_at_position(buffer: &Buffer, position: usize, tab_size: usize) -> usize {
+        // Find start of the line containing position
+        let mut line_start = position;
+        while line_start > 0 {
+            if Self::byte_at(buffer, line_start.saturating_sub(1)) == Some(b'\n') {
+                break;
+            }
+            line_start = line_start.saturating_sub(1);
+        }
+
+        // Find end of line or buffer
+        let mut line_end = position;
+        while line_end < buffer.len() {
+            if Self::byte_at(buffer, line_end) == Some(b'\n') {
+                break;
+            }
+            line_end += 1;
+        }
+
+        // Count leading whitespace on the line
+        let mut indent = 0;
+        let mut pos = line_start;
+        while pos < line_end {
+            match Self::byte_at(buffer, pos) {
+                Some(b' ') => indent += 1,
+                Some(b'\t') => indent += tab_size,
+                Some(_) => break, // Hit non-whitespace
+                None => break,
+            }
+            pos += 1;
+        }
+
+        indent
+    }
+
     /// Get the indent of the previous line (line before cursor's line)
     #[cfg(test)]
     fn get_previous_line_indent(buffer: &Buffer, position: usize, tab_size: usize) -> usize {

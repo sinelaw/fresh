@@ -1261,11 +1261,10 @@ fn test_bracket_expansion_with_trailing_comment() {
     harness.open_file(&file_path).unwrap();
 
     // Move cursor between { and }
-    // First go to end, then find the } position
+    // "fn main() {}" is 12 chars, { is at position 10, } is at position 11
+    // We need cursor at position 11 (between { and })
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
-    // Navigate to position right after {
-    for _ in 0..12 {
-        // "fn main() {" is 11 chars, position 12 is between { and }
+    for _ in 0..11 {
         harness
             .send_key(KeyCode::Right, KeyModifiers::NONE)
             .unwrap();

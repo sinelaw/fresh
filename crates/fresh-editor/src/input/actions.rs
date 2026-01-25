@@ -738,6 +738,39 @@ pub fn action_to_events(
                 // Calculate indent for new line
                 let mut text = line_ending.to_string();
 
+                // Check for bracket expansion: cursor between matching brackets like {|}
+                // Only applies to braces, brackets, and parentheses (not quotes)
+                let bracket_expansion = if auto_indent && indent_position > 0 {
+                    let char_before = state
+                        .buffer
+                        .slice_bytes(indent_position.saturating_sub(1)..indent_position)
+                        .first()
+                        .copied();
+                    let char_after = if indent_position < state.buffer.len() {
+                        state
+                            .buffer
+                            .slice_bytes(indent_position..indent_position + 1)
+                            .first()
+                            .copied()
+                    } else {
+                        None
+                    };
+
+                    // Check if we're between matching brackets (not quotes)
+                    matches!(
+                        (char_before, char_after),
+                        (Some(b'('), Some(b')'))
+                            | (Some(b'['), Some(b']'))
+                            | (Some(b'{'), Some(b'}'))
+                    )
+                } else {
+                    false
+                };
+
+                // Track cursor line position for bracket expansion
+                // After bracket expansion, cursor should be at end of cursor line, not at end of closing bracket line
+                let mut cursor_line_end_position: Option<usize> = None;
+
                 if auto_indent {
                     let use_tabs = state.use_tabs;
                     if let Some(language) = state.highlighter.language() {
@@ -747,7 +780,30 @@ pub fn action_to_events(
                             .borrow_mut()
                             .calculate_indent(&state.buffer, indent_position, language, tab_size)
                         {
-                            text.push_str(&indent_to_string(indent_width, use_tabs, tab_size));
+                            let indent_str = indent_to_string(indent_width, use_tabs, tab_size);
+                            text.push_str(&indent_str);
+
+                            // For bracket expansion, add another newline with dedented closing bracket
+                            if bracket_expansion {
+                                // Record where cursor should end up (end of cursor line)
+                                cursor_line_end_position =
+                                    Some(indent_position + line_ending.len() + indent_str.len());
+
+                                // Calculate the dedent for the closing bracket line
+                                // It should match the indent of the line containing the opening bracket
+                                let opening_bracket_indent =
+                                    crate::primitives::indent::IndentCalculator::get_line_indent_at_position(
+                                        &state.buffer,
+                                        indent_position.saturating_sub(1),
+                                        tab_size,
+                                    );
+                                text.push_str(line_ending);
+                                text.push_str(&indent_to_string(
+                                    opening_bracket_indent,
+                                    use_tabs,
+                                    tab_size,
+                                ));
+                            }
                         }
                     } else {
                         // Fallback for files without syntax highlighting (e.g., .txt)
@@ -757,15 +813,56 @@ pub fn action_to_events(
                                 indent_position,
                                 tab_size,
                             );
-                        text.push_str(&indent_to_string(indent_width, use_tabs, tab_size));
+                        let indent_str = indent_to_string(indent_width, use_tabs, tab_size);
+                        text.push_str(&indent_str);
+
+                        // For bracket expansion in non-language files
+                        if bracket_expansion {
+                            // Record where cursor should end up (end of cursor line)
+                            cursor_line_end_position =
+                                Some(indent_position + line_ending.len() + indent_str.len());
+
+                            let opening_bracket_indent =
+                                crate::primitives::indent::IndentCalculator::get_line_indent_at_position(
+                                    &state.buffer,
+                                    indent_position.saturating_sub(1),
+                                    tab_size,
+                                );
+                            text.push_str(line_ending);
+                            text.push_str(&indent_to_string(
+                                opening_bracket_indent,
+                                use_tabs,
+                                tab_size,
+                            ));
+                        }
                     }
                 }
+
+                // Calculate where cursor will end up after insert
+                let cursor_after_insert = indent_position + text.len();
 
                 events.push(Event::Insert {
                     position: indent_position,
                     text,
                     cursor_id,
                 });
+
+                // For bracket expansion, move cursor back to the cursor line
+                // (not the closing bracket line where it ends up after insert)
+                if let Some(cursor_line_end) = cursor_line_end_position {
+                    // Get current cursor state to build the MoveCursor event
+                    if let Some(cursor) = state.cursors.get(cursor_id) {
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            old_position: cursor_after_insert,
+                            new_position: cursor_line_end,
+                            old_anchor: None, // No selection after bracket expansion
+                            new_anchor: None,
+                            old_sticky_column: cursor.sticky_column,
+                            new_sticky_column: cursor_line_end, // Reset sticky column
+                        });
+                    }
+                }
             }
         }
 
