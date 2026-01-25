@@ -6,7 +6,7 @@
 use anyhow::{anyhow, Result};
 use fresh_core::api::{
     ActionSpec, BufferInfo, CompositeHunk, CreateCompositeBufferOptions, EditorStateSnapshot,
-    JsCallbackId, PluginCommand, PluginResponse,
+    JsCallbackId, OverlayOptions, PluginCommand, PluginResponse,
 };
 use fresh_core::command::Command;
 use fresh_core::overlay::OverlayNamespace;
@@ -1259,55 +1259,73 @@ impl JsEditorApi {
 
     // === Overlays ===
 
-    /// Add an overlay with styling
-    #[allow(clippy::too_many_arguments)]
-    pub fn add_overlay(
+    /// Add an overlay with styling options
+    ///
+    /// Colors can be specified as RGB arrays `[r, g, b]` or theme key strings.
+    /// Theme keys are resolved at render time, so overlays update with theme changes.
+    ///
+    /// Theme key examples: "ui.status_bar_fg", "editor.selection_bg", "syntax.keyword"
+    ///
+    /// Example usage in TypeScript:
+    /// ```typescript
+    /// editor.addOverlay(bufferId, "my-namespace", 0, 10, {
+    ///   fg: "syntax.keyword",           // theme key
+    ///   bg: [40, 40, 50],               // RGB array
+    ///   bold: true,
+    /// });
+    /// ```
+    pub fn add_overlay<'js>(
         &self,
+        _ctx: rquickjs::Ctx<'js>,
         buffer_id: u32,
         namespace: String,
         start: u32,
         end: u32,
-        r: i32,
-        g: i32,
-        b: i32,
-        underline: rquickjs::function::Opt<bool>,
-        bold: rquickjs::function::Opt<bool>,
-        italic: rquickjs::function::Opt<bool>,
-        bg_r: rquickjs::function::Opt<i32>,
-        bg_g: rquickjs::function::Opt<i32>,
-        bg_b: rquickjs::function::Opt<i32>,
-        extend_to_line_end: rquickjs::function::Opt<bool>,
-    ) -> bool {
-        // -1 means use default color (white)
-        let color = if r >= 0 && g >= 0 && b >= 0 {
-            (r as u8, g as u8, b as u8)
-        } else {
-            (255, 255, 255)
-        };
+        options: rquickjs::Object<'js>,
+    ) -> rquickjs::Result<bool> {
+        use fresh_core::api::OverlayColorSpec;
 
-        // -1 for bg means no background, also None if not provided
-        let bg_r = bg_r.0.unwrap_or(-1);
-        let bg_g = bg_g.0.unwrap_or(-1);
-        let bg_b = bg_b.0.unwrap_or(-1);
-        let bg_color = if bg_r >= 0 && bg_g >= 0 && bg_b >= 0 {
-            Some((bg_r as u8, bg_g as u8, bg_b as u8))
-        } else {
+        // Parse color spec from JS value (can be [r,g,b] array or "theme.key" string)
+        fn parse_color_spec(key: &str, obj: &rquickjs::Object<'_>) -> Option<OverlayColorSpec> {
+            // Try as string first (theme key)
+            if let Ok(theme_key) = obj.get::<_, String>(key) {
+                if !theme_key.is_empty() {
+                    return Some(OverlayColorSpec::ThemeKey(theme_key));
+                }
+            }
+            // Try as array [r, g, b]
+            if let Ok(arr) = obj.get::<_, Vec<u8>>(key) {
+                if arr.len() >= 3 {
+                    return Some(OverlayColorSpec::Rgb(arr[0], arr[1], arr[2]));
+                }
+            }
             None
+        }
+
+        let fg = parse_color_spec("fg", &options);
+        let bg = parse_color_spec("bg", &options);
+        let underline: bool = options.get("underline").unwrap_or(false);
+        let bold: bool = options.get("bold").unwrap_or(false);
+        let italic: bool = options.get("italic").unwrap_or(false);
+        let extend_to_line_end: bool = options.get("extendToLineEnd").unwrap_or(false);
+
+        let options = OverlayOptions {
+            fg,
+            bg,
+            underline,
+            bold,
+            italic,
+            extend_to_line_end,
         };
 
-        self.command_sender
-            .send(PluginCommand::AddOverlay {
-                buffer_id: BufferId(buffer_id as usize),
-                namespace: Some(OverlayNamespace::from_string(namespace)),
-                range: (start as usize)..(end as usize),
-                color,
-                bg_color,
-                underline: underline.0.unwrap_or(false),
-                bold: bold.0.unwrap_or(false),
-                italic: italic.0.unwrap_or(false),
-                extend_to_line_end: extend_to_line_end.0.unwrap_or(false),
-            })
-            .is_ok()
+        let _ = self.command_sender.send(PluginCommand::AddOverlay {
+            buffer_id: BufferId(buffer_id as usize),
+            namespace: Some(OverlayNamespace::from_string(namespace)),
+            range: (start as usize)..(end as usize),
+            options,
+        });
+
+        Ok(true)
     }
 
     /// Clear all overlays in a namespace
@@ -2785,7 +2803,7 @@ impl QuickJsBackend {
     /// Emit an event to all registered handlers
     pub async fn emit(&mut self, event_name: &str, event_data: &serde_json::Value) -> Result<bool> {
         let _event_data_str = event_data.to_string();
-        tracing::debug!("emit: event '{}' with data: {:?}", event_name, event_data);
+        tracing::trace!("emit: event '{}' with data: {:?}", event_name, event_data);
 
         // Track execution state for signal handler debugging
         self.services
@@ -4199,10 +4217,19 @@ mod tests {
     fn test_api_add_overlay() {
         let (mut backend, rx) = create_test_backend();
 
-        backend.execute_js(r#"
+        backend
+            .execute_js(
+                r#"
             const editor = getEditor();
-            editor.addOverlay(1, "highlight", 10, 20, 255, 128, 0, false, true, false, 50, 50, 50, false);
-        "#, "test.js").unwrap();
+            editor.addOverlay(1, "highlight", 10, 20, {
+                fg: [255, 128, 0],
+                bg: [50, 50, 50],
+                bold: true,
+            });
+        "#,
+                "test.js",
+            )
+            .unwrap();
 
         let cmd = rx.try_recv().unwrap();
         match cmd {
@@ -4210,23 +4237,73 @@ mod tests {
                 buffer_id,
                 namespace,
                 range,
-                color,
-                bg_color,
-                underline,
-                bold,
-                italic,
-                extend_to_line_end,
+                options,
             } => {
+                use fresh_core::api::OverlayColorSpec;
                 assert_eq!(buffer_id.0, 1);
                 assert!(namespace.is_some());
                 assert_eq!(namespace.unwrap().as_str(), "highlight");
                 assert_eq!(range, 10..20);
-                assert_eq!(color, (255, 128, 0));
-                assert_eq!(bg_color, Some((50, 50, 50)));
-                assert!(!underline);
-                assert!(bold);
-                assert!(!italic);
-                assert!(!extend_to_line_end);
+                assert!(matches!(
+                    options.fg,
+                    Some(OverlayColorSpec::Rgb(255, 128, 0))
+                ));
+                assert!(matches!(
+                    options.bg,
+                    Some(OverlayColorSpec::Rgb(50, 50, 50))
+                ));
+                assert!(!options.underline);
+                assert!(options.bold);
+                assert!(!options.italic);
+                assert!(!options.extend_to_line_end);
+            }
+            _ => panic!("Expected AddOverlay, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn test_api_add_overlay_with_theme_keys() {
+        let (mut backend, rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            // Test with theme keys for colors
+            editor.addOverlay(1, "themed", 0, 10, {
+                fg: "ui.status_bar_fg",
+                bg: "editor.selection_bg",
+            });
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            PluginCommand::AddOverlay {
+                buffer_id,
+                namespace,
+                range,
+                options,
+            } => {
+                use fresh_core::api::OverlayColorSpec;
+                assert_eq!(buffer_id.0, 1);
+                assert!(namespace.is_some());
+                assert_eq!(namespace.unwrap().as_str(), "themed");
+                assert_eq!(range, 0..10);
+                assert!(matches!(
+                    &options.fg,
+                    Some(OverlayColorSpec::ThemeKey(k)) if k == "ui.status_bar_fg"
+                ));
+                assert!(matches!(
+                    &options.bg,
+                    Some(OverlayColorSpec::ThemeKey(k)) if k == "editor.selection_bg"
+                ));
+                assert!(!options.underline);
+                assert!(!options.bold);
+                assert!(!options.italic);
+                assert!(!options.extend_to_line_end);
             }
             _ => panic!("Expected AddOverlay, got {:?}", cmd),
         }
