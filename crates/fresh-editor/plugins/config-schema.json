@@ -152,12 +152,15 @@
       "type": "string",
       "enum": [
         "dark",
-        "dracula",
-        "high-contrast",
         "light",
-        "nord",
+        "high-contrast",
         "nostalgia",
-        "solarized-dark"
+        "solarized-dark",
+        "dracula",
+        "nord",
+        "tokyo_night",
+        "tokyo_night_storm",
+        "tokyo_night_light"
       ]
     },
     "LocaleOptions": {

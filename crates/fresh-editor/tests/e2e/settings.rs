@@ -798,7 +798,7 @@ fn test_settings_search_result_click_navigates() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
-/// Test theme dropdown can be cycled with Enter or Right arrow
+/// Test theme dropdown can be cycled with Enter or Down/Up keys
 #[test]
 fn test_settings_theme_dropdown_cycle() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
@@ -837,9 +837,7 @@ fn test_settings_theme_dropdown_cycle() {
     harness.render().unwrap();
 
     // Press Down to select next theme
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Press Enter to confirm selection
@@ -1283,24 +1281,16 @@ fn test_map_control_add_new_shows_text_input() {
     harness.assert_screen_contains("vim");
 
     // Press Esc to exit text editing mode (required before Tab can navigate)
-    harness
-        .send_key(KeyCode::Esc, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Tab to the Save button (focus order: Key -> Bindings -> Inherits -> Save -> Cancel)
     // After exiting edit mode, we're still on Key field, so Tab 3 times to reach Save
-    harness
-        .send_key(KeyCode::Tab, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    harness
-        .send_key(KeyCode::Tab, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    harness
-        .send_key(KeyCode::Tab, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Press Enter on Save button to commit the entry and close dialog
@@ -1332,7 +1322,6 @@ fn test_map_control_add_new_shows_text_input() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 }
-
 
 /// Test changing File Explorer Width (a percentage/float setting) and saving
 ///
