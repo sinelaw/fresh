@@ -1728,7 +1728,8 @@ async function openPackageManager(): Promise<void> {
   pkgState.bufferId = result.bufferId;
   pkgState.isOpen = true;
 
-  // Load package data
+  // Auto-sync registry in background, then load package data
+  await syncRegistry();
   pkgState.items = buildPackageList();
   pkgState.isLoading = false;
 
@@ -1804,14 +1805,10 @@ function getCurrentFocusIndex(): number {
 globalThis.pkg_nav_up = function(): void {
   if (!pkgState.isOpen) return;
 
-  // Only navigate in list when focus is on list or action buttons
-  if (pkgState.focus.type !== "list" && pkgState.focus.type !== "action") {
-    return;
-  }
-
   const items = getFilteredItems();
   if (items.length === 0) return;
 
+  // Always focus list and navigate (auto-focus behavior)
   pkgState.selectedIndex = Math.max(0, pkgState.selectedIndex - 1);
   pkgState.focus = { type: "list" };
   updatePkgManagerView();
@@ -1820,14 +1817,10 @@ globalThis.pkg_nav_up = function(): void {
 globalThis.pkg_nav_down = function(): void {
   if (!pkgState.isOpen) return;
 
-  // Only navigate in list when focus is on list or action buttons
-  if (pkgState.focus.type !== "list" && pkgState.focus.type !== "action") {
-    return;
-  }
-
   const items = getFilteredItems();
   if (items.length === 0) return;
 
+  // Always focus list and navigate (auto-focus behavior)
   pkgState.selectedIndex = Math.min(items.length - 1, pkgState.selectedIndex + 1);
   pkgState.focus = { type: "list" };
   updatePkgManagerView();
@@ -2258,16 +2251,13 @@ globalThis.pkg_install_lock = async function(): Promise<void> {
 // Command Registration
 // =============================================================================
 
-editor.registerCommand("%cmd.install_plugin", "%cmd.install_plugin_desc", "pkg_install_plugin", null);
-editor.registerCommand("%cmd.install_theme", "%cmd.install_theme_desc", "pkg_install_theme", null);
-editor.registerCommand("%cmd.install_url", "%cmd.install_url_desc", "pkg_install_url", null);
+// Main entry point - opens the package manager UI
 editor.registerCommand("%cmd.list", "%cmd.list_desc", "pkg_list", null);
-editor.registerCommand("%cmd.update_all", "%cmd.update_all_desc", "pkg_update_all", null);
-editor.registerCommand("%cmd.update", "%cmd.update_desc", "pkg_update", null);
-editor.registerCommand("%cmd.remove", "%cmd.remove_desc", "pkg_remove", null);
-editor.registerCommand("%cmd.sync", "%cmd.sync_desc", "pkg_sync", null);
-editor.registerCommand("%cmd.outdated", "%cmd.outdated_desc", "pkg_outdated", null);
-editor.registerCommand("%cmd.lock", "%cmd.lock_desc", "pkg_lock", null);
-editor.registerCommand("%cmd.install_lock", "%cmd.install_lock_desc", "pkg_install_lock", null);
+
+// Install from URL - for packages not in registry
+editor.registerCommand("%cmd.install_url", "%cmd.install_url_desc", "pkg_install_url", null);
+
+// Note: Other commands (install_plugin, install_theme, update, remove, sync, etc.)
+// are available via the package manager UI and don't need global command palette entries.
 
 editor.debug("Package Manager plugin loaded");
