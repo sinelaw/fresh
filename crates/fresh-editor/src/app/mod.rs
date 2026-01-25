@@ -5088,11 +5088,16 @@ impl Editor {
             PluginCommand::ReloadPlugin { name, callback_id } => {
                 self.handle_reload_plugin(name, callback_id);
             }
+            #[cfg(feature = "plugins")]
+            PluginCommand::ListPlugins { callback_id } => {
+                self.handle_list_plugins(callback_id);
+            }
             // When plugins feature is disabled, these commands are no-ops
             #[cfg(not(feature = "plugins"))]
             PluginCommand::LoadPlugin { .. }
             | PluginCommand::UnloadPlugin { .. }
-            | PluginCommand::ReloadPlugin { .. } => {
+            | PluginCommand::ReloadPlugin { .. }
+            | PluginCommand::ListPlugins { .. } => {
                 tracing::warn!("Plugin management commands require the 'plugins' feature");
             }
         }
@@ -5171,6 +5176,25 @@ impl Editor {
                     .reject_callback(callback_id, format!("{}", e));
             }
         }
+    }
+
+    /// List all loaded plugins
+    #[cfg(feature = "plugins")]
+    fn handle_list_plugins(&mut self, callback_id: JsCallbackId) {
+        let plugins = self.plugin_manager.list_plugins();
+        // Serialize to JSON array of { name, path, enabled }
+        let json_array: Vec<serde_json::Value> = plugins
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "name": p.name,
+                    "path": p.path.to_string_lossy(),
+                    "enabled": p.enabled
+                })
+            })
+            .collect();
+        let json_str = serde_json::to_string(&json_array).unwrap_or_else(|_| "[]".to_string());
+        self.plugin_manager.resolve_callback(callback_id, json_str);
     }
 
     /// Execute an editor action by name (for vi mode plugin)

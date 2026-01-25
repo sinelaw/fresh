@@ -768,7 +768,16 @@ async function updatePackage(pkg: InstalledPackage): Promise<boolean> {
       editor.setStatus(`${pkg.name} is already up to date`);
     } else {
       // Reload the plugin to apply changes
-      await editor.reloadPlugin(pkg.name);
+      // Use listPlugins to find the correct runtime plugin name
+      if (pkg.type === "plugin") {
+        const loadedPlugins = await editor.listPlugins();
+        const plugin = loadedPlugins.find((p: { path: string }) => p.path.startsWith(pkg.path));
+        if (plugin) {
+          await editor.reloadPlugin(plugin.name);
+        }
+      } else if (pkg.type === "theme") {
+        editor.reloadThemes();
+      }
       editor.setStatus(`Updated and reloaded ${pkg.name}`);
     }
     return true;
@@ -790,11 +799,13 @@ async function removePackage(pkg: InstalledPackage): Promise<boolean> {
   editor.setStatus(`Removing ${pkg.name}...`);
 
   // Unload the plugin first (ignore errors - plugin might not be loaded)
-  // The plugin name is derived from the entry file (e.g., main.ts -> main)
+  // Use listPlugins to find the correct runtime plugin name by matching path
   if (pkg.type === "plugin") {
-    const entryFile = pkg.manifest?.fresh?.entry || "main.ts";
-    const pluginName = entryFile.replace(/\.(ts|js)$/, "");
-    await editor.unloadPlugin(pluginName).catch(() => {});
+    const loadedPlugins = await editor.listPlugins();
+    const plugin = loadedPlugins.find((p: { path: string }) => p.path.startsWith(pkg.path));
+    if (plugin) {
+      await editor.unloadPlugin(plugin.name).catch(() => {});
+    }
   }
 
   // Use trash if available, otherwise rm -rf

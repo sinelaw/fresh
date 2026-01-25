@@ -1088,17 +1088,23 @@ interface EditorAPI {
 	getCurrentLocale(): string;
 	/**
 	* Load a plugin from a file path (async)
-	* The plugin will be initialized and start receiving events
 	*/
 	loadPlugin(path: string): Promise<boolean>;
 	/**
 	* Unload a plugin by name (async)
-	* The plugin will stop receiving events and be removed from memory
 	*/
 	unloadPlugin(name: string): Promise<boolean>;
 	/**
 	* Reload a plugin by name (async)
-	* Useful for development when plugin code changes
 	*/
 	reloadPlugin(name: string): Promise<boolean>;
+	/**
+	* List all loaded plugins (async)
+	* Returns array of { name: string, path: string, enabled: boolean }
+	*/
+	listPlugins(): Promise<Array<{
+		name: string;
+		path: string;
+		enabled: boolean;
+	}>>;
 }

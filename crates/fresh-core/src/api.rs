@@ -1369,6 +1369,13 @@ pub enum PluginCommand {
         callback_id: JsCallbackId,
     },
 
+    /// List all loaded plugins
+    /// Returns plugin info (name, path, enabled) for all loaded plugins
+    ListPlugins {
+        /// Callback ID for async response (JSON array of plugin info)
+        callback_id: JsCallbackId,
+    },
+
     /// Reload the theme registry from disk
     /// Call this after installing a theme package or saving a new theme
     ReloadThemes,

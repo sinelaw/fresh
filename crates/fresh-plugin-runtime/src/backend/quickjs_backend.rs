@@ -2471,6 +2471,30 @@ impl JsEditorApi {
         });
         id
     }
+
+    /// List all loaded plugins (async)
+    /// Returns array of { name: string, path: string, enabled: boolean }
+    #[plugin_api(
+        async_promise,
+        js_name = "listPlugins",
+        ts_return = "Array<{name: string, path: string, enabled: boolean}>"
+    )]
+    #[qjs(rename = "_listPluginsStart")]
+    pub fn list_plugins_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+        let id = {
+            let mut id_ref = self.next_request_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            self.callback_contexts
+                .borrow_mut()
+                .insert(id, self.plugin_name.clone());
+            id
+        };
+        let _ = self.command_sender.send(PluginCommand::ListPlugins {
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
 }
 
 /// QuickJS-based JavaScript runtime for plugins
@@ -2738,6 +2762,7 @@ impl QuickJsBackend {
                 editor.loadPlugin = _wrapAsync("_loadPluginStart", "loadPlugin");
                 editor.unloadPlugin = _wrapAsync("_unloadPluginStart", "unloadPlugin");
                 editor.reloadPlugin = _wrapAsync("_reloadPluginStart", "reloadPlugin");
+                editor.listPlugins = _wrapAsync("_listPluginsStart", "listPlugins");
 
                 // Wrapper for deleteTheme - wraps sync function in Promise
                 editor.deleteTheme = function(name) {
@@ -3309,6 +3334,7 @@ mod tests {
         fn register_command(&self, _command: fresh_core::command::Command) {}
         fn unregister_command(&self, _name: &str) {}
         fn unregister_commands_by_prefix(&self, _prefix: &str) {}
+        fn unregister_commands_by_plugin(&self, _plugin_name: &str) {}
         fn plugins_dir(&self) -> std::path::PathBuf {
             std::path::PathBuf::from("/tmp/plugins")
         }
