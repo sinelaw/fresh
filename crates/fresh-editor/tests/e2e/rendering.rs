@@ -356,7 +356,11 @@ fn test_line_numbers_rendered_correctly() {
 
             // For files with more than 20 lines, we should see a line number
             // close to the total line count (within visible range)
-            let expected_min = if expected_total > 20 { expected_total - 20 } else { 1 };
+            let expected_min = if expected_total > 20 {
+                expected_total - 20
+            } else {
+                1
+            };
 
             assert!(
                 line_num >= expected_min && line_num <= expected_total,
@@ -379,7 +383,6 @@ fn test_line_numbers_rendered_correctly() {
 /// and verifies that the top line number is updated correctly and content changes
 #[test]
 fn test_page_down_line_numbers() {
-
     use crossterm::event::{KeyCode, KeyModifiers};
     use tempfile::TempDir;
 
