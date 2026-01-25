@@ -44,6 +44,9 @@ pub trait PluginServiceBridge: Send + Sync + 'static {
     /// Unregister all commands with a given prefix
     fn unregister_commands_by_prefix(&self, prefix: &str);
 
+    /// Unregister all commands registered by a specific plugin
+    fn unregister_commands_by_plugin(&self, plugin_name: &str);
+
     /// Get the plugins directory path
     fn plugins_dir(&self) -> std::path::PathBuf;
 
@@ -82,6 +85,7 @@ impl PluginServiceBridge for NoopServiceBridge {
     fn register_command(&self, _command: crate::command::Command) {}
     fn unregister_command(&self, _name: &str) {}
     fn unregister_commands_by_prefix(&self, _prefix: &str) {}
+    fn unregister_commands_by_plugin(&self, _plugin_name: &str) {}
     fn plugins_dir(&self) -> std::path::PathBuf {
         std::path::PathBuf::from("/tmp/plugins")
     }

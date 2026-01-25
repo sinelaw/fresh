@@ -790,7 +790,9 @@ async function removePackage(pkg: InstalledPackage): Promise<boolean> {
   editor.setStatus(`Removing ${pkg.name}...`);
 
   // Unload the plugin first (ignore errors - plugin might not be loaded)
-  await editor.unloadPlugin(pkg.name).catch(() => {});
+  if (pkg.type === "plugin") {
+    await editor.unloadPlugin(pkg.name).catch(() => {});
+  }
 
   // Use trash if available, otherwise rm -rf
   let result = await editor.spawnProcess("trash", [pkg.path]);
@@ -799,6 +801,10 @@ async function removePackage(pkg: InstalledPackage): Promise<boolean> {
   }
 
   if (result.exit_code === 0) {
+    // Reload themes if we removed a theme so Select Theme list is updated
+    if (pkg.type === "theme") {
+      editor.reloadThemes();
+    }
     editor.setStatus(`Removed ${pkg.name}`);
     return true;
   } else {

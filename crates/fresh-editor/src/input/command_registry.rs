@@ -97,10 +97,31 @@ impl CommandRegistry {
         commands.retain(|c| c.name != name);
     }
 
-    /// Unregister all commands registered by a specific plugin
+    /// Unregister all commands whose name starts with a prefix
     pub fn unregister_by_prefix(&self, prefix: &str) {
         let mut commands = self.plugin_commands.write().unwrap();
         commands.retain(|c| !c.name.starts_with(prefix));
+    }
+
+    /// Unregister all commands registered by a specific plugin
+    pub fn unregister_by_plugin(&self, plugin_name: &str) {
+        let mut commands = self.plugin_commands.write().unwrap();
+        let before = commands.len();
+        commands.retain(|c| {
+            if let super::commands::CommandSource::Plugin(ref name) = c.source {
+                name != plugin_name
+            } else {
+                true
+            }
+        });
+        let removed = before - commands.len();
+        if removed > 0 {
+            tracing::debug!(
+                "Unregistered {} commands from plugin '{}'",
+                removed,
+                plugin_name
+            );
+        }
     }
 
     /// Get all commands (built-in + plugin)

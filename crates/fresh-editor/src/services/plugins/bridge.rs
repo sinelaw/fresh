@@ -85,6 +85,13 @@ impl PluginServiceBridge for EditorServiceBridge {
             .unregister_by_prefix(prefix);
     }
 
+    fn unregister_commands_by_plugin(&self, plugin_name: &str) {
+        self.command_registry
+            .read()
+            .unwrap()
+            .unregister_by_plugin(plugin_name);
+    }
+
     fn plugins_dir(&self) -> PathBuf {
         self.dir_context.plugins_dir()
     }

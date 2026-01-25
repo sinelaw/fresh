@@ -1182,12 +1182,11 @@ fn unload_plugin_internal(
             .services
             .unregister_plugin_strings(name);
 
-        // Remove plugin's commands (assuming they're prefixed with plugin name)
-        let prefix = format!("{}:", name);
+        // Remove all commands registered by this plugin
         runtime
             .borrow()
             .services
-            .unregister_commands_by_prefix(&prefix);
+            .unregister_commands_by_plugin(name);
 
         Ok(())
     } else {
