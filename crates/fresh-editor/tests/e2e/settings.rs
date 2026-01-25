@@ -798,10 +798,8 @@ fn test_settings_search_result_click_navigates() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
-/// Test theme dropdown can be cycled with Enter or Right arrow
-/// BUG: Theme dropdown doesn't cycle - it stays on the same value
+/// Test theme dropdown can be cycled with Enter or Down/Up keys
 #[test]
-#[ignore] // TODO: Fix theme dropdown cycling - currently broken
 fn test_settings_theme_dropdown_cycle() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
@@ -833,9 +831,9 @@ fn test_settings_theme_dropdown_cycle() {
     let initial_screen = harness.screen_to_string();
     let has_high_contrast = initial_screen.contains("high-contrast");
 
-    // Press Enter to cycle to next theme option
+    // Press Down to select next theme option
     harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
@@ -1240,7 +1238,6 @@ fn test_settings_consumes_global_shortcuts() {
 
 /// Test Map control "[+] Add new" shows text input when Enter is pressed
 #[test]
-#[ignore] // TODO: Entry dialog now requires pressing Enter to start editing the Key field
 fn test_map_control_add_new_shows_text_input() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
