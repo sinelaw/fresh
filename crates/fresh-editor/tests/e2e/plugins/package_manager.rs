@@ -598,9 +598,10 @@ fn test_pkg_manager_ui_split_view_and_tab_navigation() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait for package manager UI to appear
+    // Wait for package manager UI to appear and loading to complete
+    // (AVAILABLE appears after registry sync finishes)
     harness
-        .wait_until(|h| h.screen_to_string().contains("Packages"))
+        .wait_until(|h| h.screen_to_string().contains("AVAILABLE"))
         .unwrap();
 
     let screen = harness.screen_to_string();
@@ -628,7 +629,7 @@ fn test_pkg_manager_ui_split_view_and_tab_navigation() {
         screen
     );
 
-    // Verify available packages appear in the list
+    // Verify available packages appear in the list (already checked in wait_until)
     assert!(
         screen.contains("AVAILABLE"),
         "Should show AVAILABLE section with registry packages. Screen:\n{}",
@@ -910,9 +911,28 @@ fn test_uninstall_plugin_removes_commands() {
     copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "pkg");
 
-    // Create a test plugin that registers a command
+    // Create fake registry so syncRegistry doesn't try to hit the network
     let packages_dir = dir_context.config_dir.join("plugins").join("packages");
     fs::create_dir_all(&packages_dir).unwrap();
+    let index_dir = packages_dir.join(".index");
+    fs::create_dir_all(&index_dir).unwrap();
+
+    // Create a fake registry source directory (djb2 hash for default registry)
+    let fake_registry_dir = index_dir.join("193934da");
+    fs::create_dir_all(&fake_registry_dir).unwrap();
+    fs::write(
+        fake_registry_dir.join("plugins.json"),
+        r#"{"schema_version": 1, "updated": "2024-01-01", "packages": {}}"#,
+    )
+    .unwrap();
+    fs::write(
+        fake_registry_dir.join("themes.json"),
+        r#"{"schema_version": 1, "updated": "2024-01-01", "packages": {}}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(fake_registry_dir.join(".git")).unwrap();
+
+    // Create a test plugin that registers a command
     let test_plugin_dir = packages_dir.join("uninstall-test-plugin");
     fs::create_dir_all(&test_plugin_dir).unwrap();
 
@@ -986,43 +1006,36 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait for package manager UI
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Packages"))
-        .unwrap();
-
-    // Navigate to Installed filter
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Installed"))
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-
-    // Find and select the test plugin
+    // Wait for package manager UI and plugin to appear in list
     harness
         .wait_until(|h| h.screen_to_string().contains("uninstall-test"))
         .unwrap();
+
+    // The package should already be visible in the "All" view
+    // Use Down arrow to select it (auto-focuses the list)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
 
-    // Tab to Uninstall button and press Enter
-    for _ in 0..5 {
-        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    }
+    // Press Enter to focus action buttons for the selected package
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait for uninstall to complete
+    // Wait for the Uninstall button to appear (should be in action buttons area)
     harness
-        .wait_for_async(
-            |h| {
-                let screen = h.screen_to_string();
-                screen.contains("Removed") || !screen.contains("uninstall-test")
-            },
-            5000,
-        )
+        .wait_until(|h| h.screen_to_string().contains("Uninstall"))
+        .unwrap();
+
+    // Press Enter to activate the Uninstall action
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for uninstall to complete (semantic wait, no timeout per README)
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Removed") || !screen.contains("uninstall-test")
+        })
         .unwrap();
 
     // Close package manager
@@ -1035,8 +1048,10 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
     harness.wait_for_prompt().unwrap();
     harness.type_text("Uninstall Test").unwrap();
 
-    // Wait a moment for suggestions to update
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    // Wait for command palette suggestions to update (semantic wait)
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .unwrap();
 
     let screen = harness.screen_to_string();
     // The command should be gone, or if shown, should have translated name (not raw keys)

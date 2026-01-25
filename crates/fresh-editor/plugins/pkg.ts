@@ -790,8 +790,11 @@ async function removePackage(pkg: InstalledPackage): Promise<boolean> {
   editor.setStatus(`Removing ${pkg.name}...`);
 
   // Unload the plugin first (ignore errors - plugin might not be loaded)
+  // The plugin name is derived from the entry file (e.g., main.ts -> main)
   if (pkg.type === "plugin") {
-    await editor.unloadPlugin(pkg.name).catch(() => {});
+    const entryFile = pkg.manifest?.fresh?.entry || "main.ts";
+    const pluginName = entryFile.replace(/\.(ts|js)$/, "");
+    await editor.unloadPlugin(pluginName).catch(() => {});
   }
 
   // Use trash if available, otherwise rm -rf
