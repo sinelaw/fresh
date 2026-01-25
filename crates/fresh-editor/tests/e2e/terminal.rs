@@ -1088,7 +1088,7 @@ fn test_keyboard_capture_toggle() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Command:");
+    harness.assert_screen_contains(">command");
     // Close the command palette
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
@@ -1111,7 +1111,7 @@ fn test_keyboard_capture_toggle() {
         .unwrap();
     harness.render().unwrap();
     assert!(
-        !harness.screen_to_string().contains("Command:"),
+        !harness.screen_to_string().contains(">command"),
         "Command palette should NOT open when keyboard capture is ON"
     );
 
@@ -1131,7 +1131,7 @@ fn test_keyboard_capture_toggle() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Command:");
+    harness.assert_screen_contains(">command");
 }
 
 /// Test that UI bindings (like next_split with Alt+]) work in terminal mode
@@ -1251,8 +1251,8 @@ fn test_command_palette_works_in_terminal_mode() {
     harness.render().unwrap();
 
     // The command palette should be open now
-    // The prompt shows "Command:"
-    harness.assert_screen_contains("Command:");
+    // The prompt shows ">command"
+    harness.assert_screen_contains(">command");
 }
 
 /// Test that typing in prompts works correctly when terminal buffer is active.
@@ -1274,7 +1274,7 @@ fn test_prompt_typing_works_in_terminal_mode() {
     harness.render().unwrap();
 
     // Verify command palette is open
-    harness.assert_screen_contains("Command:");
+    harness.assert_screen_contains(">command");
 
     // Type something in the prompt - this should go to the prompt, not the terminal
     harness.type_text("quit").unwrap();

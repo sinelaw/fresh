@@ -962,7 +962,7 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
     let _guard = DirGuard::new(original_dir);
 
     let mut harness = EditorTestHarness::with_shared_dir_context(
-        100,
+        120,
         30,
         Default::default(),
         repo.path.clone(),
@@ -970,14 +970,13 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
     )
     .unwrap();
 
-    // Verify the command is available initially
+    // Verify the command is available initially via Quick Open
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.wait_for_prompt().unwrap();
     harness.type_text("Uninstall Test").unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Uninstall Test"))
+        .wait_until(|h| h.screen_to_string().contains("Uninstall Test: Hello"))
         .unwrap();
 
     let screen = harness.screen_to_string();
@@ -987,17 +986,14 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
         screen
     );
 
-    // Close command palette
+    // Close Quick Open
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness
-        .wait_until(|h| !h.screen_to_string().contains("Command:"))
-        .unwrap();
+    harness.render().unwrap();
 
     // Open package manager and uninstall the plugin
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.wait_for_prompt().unwrap();
     harness.type_text("Package: Packages").unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Package: Packages"))
@@ -1006,31 +1002,29 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait for package manager UI and plugin to appear in list
+    // Wait for package manager UI to finish loading
     harness
-        .wait_until(|h| h.screen_to_string().contains("uninstall-test"))
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("*Packages*") && !screen.contains("Loading...")
+        })
         .unwrap();
 
-    // The package should already be visible in the "All" view
-    // Use Down arrow to select it (auto-focuses the list)
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    let screen_after_load = harness.screen_to_string();
+    assert!(
+        screen_after_load.contains("uninstall-test"),
+        "Plugin should be visible in package manager"
+    );
 
-    // Press Enter to focus action buttons for the selected package
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-
-    // Wait for the Uninstall button to appear (should be in action buttons area)
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Uninstall"))
-        .unwrap();
-
-    // Press Enter to activate the Uninstall action
+    // Press Tab to move focus to the Uninstall button and activate it
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    harness.render().unwrap();
 
-    // Wait for uninstall to complete (semantic wait, no timeout per README)
+    // Wait for uninstall to complete
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
@@ -1040,21 +1034,19 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
 
     // Close package manager
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
 
     // Verify the command is no longer available
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.wait_for_prompt().unwrap();
     harness.type_text("Uninstall Test").unwrap();
-
-    // Wait for command palette suggestions to update (semantic wait)
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .wait_until(|h| h.screen_to_string().contains(">Uninstall Test"))
         .unwrap();
 
     let screen = harness.screen_to_string();
-    // The command should be gone, or if shown, should have translated name (not raw keys)
+    // The command should be gone - it should NOT appear as a suggestion
     assert!(
         !screen.contains("Uninstall Test: Hello") && !screen.contains("uninstall_test_hello"),
         "Command should be removed after uninstall, not show untranslated keys. Screen: {}",

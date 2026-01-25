@@ -368,9 +368,9 @@ fn test_case_conversion_from_command_palette() {
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    // Wait for command palette to appear (shows "Command:" prompt at bottom)
+    // Wait for Quick Open to appear (shows ">command" in hints line)
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .wait_until(|h| h.screen_to_string().contains(">command"))
         .unwrap();
 
     // Type to search for uppercase command

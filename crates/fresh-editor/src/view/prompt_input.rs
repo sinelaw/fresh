@@ -138,10 +138,11 @@ impl InputHandler for Prompt {
                     if let Some(selected) = self.selected_suggestion {
                         let new_selected = if selected == 0 { 0 } else { selected - 1 };
                         self.selected_suggestion = Some(new_selected);
-                        // For non-plugin prompts, update input to match selected suggestion
+                        // For non-plugin prompts (except QuickOpen), update input to match selected suggestion
                         if !matches!(
                             self.prompt_type,
                             crate::view::prompt::PromptType::Plugin { .. }
+                                | crate::view::prompt::PromptType::QuickOpen
                         ) {
                             if let Some(suggestion) = self.suggestions.get(new_selected) {
                                 self.input = suggestion.get_value().to_string();
@@ -177,10 +178,11 @@ impl InputHandler for Prompt {
                     if let Some(selected) = self.selected_suggestion {
                         let new_selected = (selected + 1).min(self.suggestions.len() - 1);
                         self.selected_suggestion = Some(new_selected);
-                        // For non-plugin prompts, update input to match selected suggestion
+                        // For non-plugin prompts (except QuickOpen), update input to match selected suggestion
                         if !matches!(
                             self.prompt_type,
                             crate::view::prompt::PromptType::Plugin { .. }
+                                | crate::view::prompt::PromptType::QuickOpen
                         ) {
                             if let Some(suggestion) = self.suggestions.get(new_selected) {
                                 self.input = suggestion.get_value().to_string();
@@ -230,7 +232,25 @@ impl InputHandler for Prompt {
                 if let Some(selected) = self.selected_suggestion {
                     if let Some(suggestion) = self.suggestions.get(selected) {
                         if !suggestion.disabled {
-                            self.input = suggestion.get_value().to_string();
+                            let value = suggestion.get_value().to_string();
+                            // For QuickOpen mode, preserve the prefix character
+                            if matches!(
+                                self.prompt_type,
+                                crate::view::prompt::PromptType::QuickOpen
+                            ) {
+                                let prefix = self
+                                    .input
+                                    .chars()
+                                    .next()
+                                    .filter(|c| *c == '>' || *c == '#' || *c == ':');
+                                if let Some(p) = prefix {
+                                    self.input = format!("{}{}", p, value);
+                                } else {
+                                    self.input = value;
+                                }
+                            } else {
+                                self.input = value;
+                            }
                             self.cursor_pos = self.input.len();
                             self.clear_selection();
                         }
@@ -285,7 +305,8 @@ impl Prompt {
                 ctx.defer(DeferredAction::UpdatePromptSuggestions);
                 InputResult::Consumed
             }
-            _ => InputResult::Consumed,
+            // Pass through other Ctrl+key combinations to global keybindings (e.g., Ctrl+P to toggle Quick Open)
+            _ => InputResult::Ignored,
         }
     }
 }
@@ -407,5 +428,29 @@ mod tests {
     fn test_prompt_is_modal() {
         let prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
         assert!(prompt.is_modal());
+    }
+
+    #[test]
+    fn test_prompt_ctrl_p_returns_ignored() {
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        let mut ctx = InputContext::new();
+
+        // Ctrl+P should return Ignored so it can be handled by global keybindings
+        let result = prompt.handle_key_event(&key_with_ctrl('p'), &mut ctx);
+        assert_eq!(result, InputResult::Ignored, "Ctrl+P should return Ignored");
+    }
+
+    #[test]
+    fn test_prompt_ctrl_p_dispatch_returns_ignored() {
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        let mut ctx = InputContext::new();
+
+        // dispatch_input should also return Ignored for Ctrl+P (not Consumed by modal behavior)
+        let result = prompt.dispatch_input(&key_with_ctrl('p'), &mut ctx);
+        assert_eq!(
+            result,
+            InputResult::Ignored,
+            "dispatch_input should return Ignored for Ctrl+P"
+        );
     }
 }

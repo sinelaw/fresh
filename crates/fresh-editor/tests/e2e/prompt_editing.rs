@@ -20,7 +20,7 @@ fn test_command_palette_delete_word_backward() {
     harness.render().unwrap();
 
     // Verify the text is there
-    harness.assert_screen_contains("Command: open file");
+    harness.assert_screen_contains(">open file");
 
     // Try to delete the word "file" using Ctrl+Backspace
     println!("About to send Ctrl+Backspace...");
@@ -40,8 +40,8 @@ fn test_command_palette_delete_word_backward() {
     // The word "file" should be deleted, leaving "open "
     // After "open file" + Ctrl+Backspace, we expect "open " (with trailing space)
     assert!(
-        screen.contains("Command: open "),
-        "Expected 'Command: open ' but screen was:\n{}",
+        screen.contains(">open "),
+        "Expected '>open ' but screen was:\n{}",
         screen
     );
 
@@ -151,7 +151,7 @@ fn test_command_palette_cut() {
     harness.type_text("new file").unwrap();
     harness.render().unwrap();
 
-    harness.assert_screen_contains("Command: new file");
+    harness.assert_screen_contains(">new file");
 
     // Try to cut with Ctrl+X
     harness
@@ -264,7 +264,7 @@ fn test_editing_actions_consistency() {
         .unwrap();
     harness.type_text("save file").unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Command: save file");
+    harness.assert_screen_contains(">save file");
 
     // Cancel
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -461,7 +461,7 @@ fn test_command_palette_selection_with_arrows() {
     println!("Screen after Shift+Right selection:\n{screen}");
 
     // Should still see "hello world" in the prompt
-    harness.assert_screen_contains("Command: hello world");
+    harness.assert_screen_contains(">hello world");
 }
 
 /// Test copy and paste with selection
@@ -520,7 +520,7 @@ fn test_selection_copy_paste_workflow() {
     println!("Screen after paste:\n{screen}");
 
     // Should see "this" in the new prompt
-    harness.assert_screen_contains("Command: this");
+    harness.assert_screen_contains(">this");
 }
 
 /// Test cut with selection
@@ -563,7 +563,7 @@ fn test_selection_cut_workflow() {
     println!("Screen after cut:\n{screen}");
 
     // Should see "cut part" (without "this ")
-    harness.assert_screen_contains("Command: cut part");
+    harness.assert_screen_contains(">cut part");
 
     // Cancel and open new prompt to paste
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -581,7 +581,7 @@ fn test_selection_cut_workflow() {
     println!("Screen after paste cut text:\n{screen}");
 
     // Should see "this " in the new prompt
-    harness.assert_screen_contains("Command: this ");
+    harness.assert_screen_contains(">this ");
 }
 
 /// Test Ctrl+A to select all in prompt
@@ -618,14 +618,16 @@ fn test_select_all_in_prompt() {
         .unwrap();
 
     // Clear the prompt by typing new text (which should replace selection)
+    // Note: When select-all replaces everything including the ">" prefix,
+    // the typed text appears without the prefix
     harness.type_text("replaced").unwrap();
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
     println!("Screen after replacing selection:\n{screen}");
 
-    // Should see only "replaced"
-    harness.assert_screen_contains("Command: replaced");
+    // Should see only "replaced" (without prefix since select-all included the ">")
+    harness.assert_screen_contains("replaced");
 }
 
 /// Test typing deletes selection
@@ -633,17 +635,20 @@ fn test_select_all_in_prompt() {
 fn test_typing_deletes_selection() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    // Open command palette
+    // Open command palette (Quick Open starts with ">" prefix)
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
 
-    // Type some text
+    // Type some text (input becomes ">replace me")
     harness.type_text("replace me").unwrap();
     harness.render().unwrap();
 
-    // Select "replace" (7 characters)
+    // Move to start, skip the ">" prefix, then select "replace" (7 characters)
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap(); // Skip ">"
     for _ in 0..7 {
         harness
             .send_key(KeyCode::Right, KeyModifiers::SHIFT)
@@ -657,8 +662,8 @@ fn test_typing_deletes_selection() {
     let screen = harness.screen_to_string();
     println!("Screen after typing over selection:\n{screen}");
 
-    // Should see "fixed me" (replaced "replace" with "fixed")
-    harness.assert_screen_contains("Command: fixed me");
+    // Should see ">fixed me" (replaced "replace" with "fixed", keeping ">" prefix)
+    harness.assert_screen_contains(">fixed me");
 }
 
 /// Test selection in different prompt types
@@ -823,8 +828,8 @@ fn test_bug_word_movement_doesnt_work() {
     // If Ctrl+Left worked, we should see "one two " (without "three")
     // If it didn't work, we'll see "one " (deleted "three" from end position)
     // Uncomment when bug is fixed:
-    // harness.assert_screen_contains("Command: one two ");
+    // harness.assert_screen_contains(">one two ");
 
     // Currently this is what we see (cursor didn't move):
-    harness.assert_screen_contains("Command: one two ");
+    harness.assert_screen_contains(">one two ");
 }

@@ -2256,6 +2256,7 @@ pub fn action_to_events(
         | Action::AddCursorAbove
         | Action::AddCursorBelow
         | Action::CommandPalette
+        | Action::QuickOpen
         | Action::ShowHelp
         | Action::ToggleLineWrap
         | Action::ToggleComposeMode

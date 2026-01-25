@@ -2,10 +2,10 @@
   "inherits": null,
   "bindings": [
     {
-      "comment": "Global bindings (work in all contexts)",
+      "comment": "Quick Open - files, commands (>), buffers (#), go to line (:)",
       "key": "p",
       "modifiers": ["ctrl"],
-      "action": "command_palette",
+      "action": "quick_open",
       "args": {},
       "when": "global"
     },

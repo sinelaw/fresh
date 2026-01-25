@@ -49,7 +49,7 @@ fn test_toggle_tab_bar_via_command_palette() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Command:");
+    harness.assert_screen_contains(">command");
 
     // Type "toggle tab bar" to find the command
     harness.type_text("Toggle Tab Bar").unwrap();

@@ -1893,7 +1893,7 @@ fn test_diff_move_without_shift_clears_selection() {
     let screen = harness.screen_to_string();
     let prompt_line = screen
         .lines()
-        .find(|l| l.contains("Command:"))
+        .find(|l| l.contains(">command"))
         .unwrap_or("");
     assert!(
         !prompt_line.contains("fir"),
@@ -1979,11 +1979,12 @@ fn test_diff_copy_no_empty_lines() {
     harness.render().unwrap();
 
     // Check the prompt shows the pasted content
-    // The content should have "line one" and "line two" without extra blank lines between
+    // Quick Open starts with ">" prefix, so pasted content goes into ">pasted_content" format
     let screen = harness.screen_to_string();
+    // Find the prompt input line (starts with ">" and not part of hints)
     let prompt_line = screen
         .lines()
-        .find(|l| l.contains("Command:"))
+        .find(|l| l.starts_with(">") && !l.contains(">command"))
         .unwrap_or("");
 
     // Should contain line content (verifies copy worked)
@@ -2076,10 +2077,12 @@ fn test_diff_copy_preserves_selection() {
     harness.render().unwrap();
 
     // Should have copied 4 characters: "firs" (first 4 chars of "first")
+    // Quick Open starts with ">" prefix, so pasted content goes into ">pasted_content" format
     let screen = harness.screen_to_string();
+    // Find the prompt input line (starts with ">" and not part of hints)
     let prompt_line = screen
         .lines()
-        .find(|l| l.contains("Command:"))
+        .find(|l| l.starts_with(">") && !l.contains(">command"))
         .unwrap_or("");
     assert!(
         prompt_line.contains("firs"),

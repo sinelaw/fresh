@@ -628,13 +628,20 @@ impl StatusBarRenderer {
             .map(|version| format!(" {} ", t!("status.update_available", version = version)));
         let update_width = update_indicator.as_ref().map(|s| s.len()).unwrap_or(0);
 
-        // Build Command Palette indicator for right side
-        // Always show Command Palette indicator on the right side
+        // Build Quick Open / Command Palette indicator for right side
+        // Always show the indicator on the right side
+        // Try QuickOpen first (new unified prompt), fall back to CommandPalette
         let cmd_palette_shortcut = keybindings
             .get_keybinding_for_action(
-                &crate::input::keybindings::Action::CommandPalette,
+                &crate::input::keybindings::Action::QuickOpen,
                 crate::input::keybindings::KeyContext::Global,
             )
+            .or_else(|| {
+                keybindings.get_keybinding_for_action(
+                    &crate::input::keybindings::Action::CommandPalette,
+                    crate::input::keybindings::KeyContext::Global,
+                )
+            })
             .unwrap_or_else(|| "?".to_string());
         let cmd_palette_indicator = t!("status.palette", shortcut = cmd_palette_shortcut);
         let padded_cmd_palette = format!(" {} ", cmd_palette_indicator);

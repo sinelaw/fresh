@@ -1019,10 +1019,7 @@ fn test_theme_applied_immediately_after_save() {
 
     // Save the theme with Ctrl+Shift+S (Save As) since it's a builtin
     harness
-        .send_key(
-            KeyCode::Char('s'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
@@ -2406,16 +2403,14 @@ editor.registerCommand(
     "Test: Delete Theme",
     "Delete the to-be-deleted theme",
     "test_delete_theme",
-    "normal",
-    "test"
+    null
 );
 
 editor.registerCommand(
     "Test: Check Result",
     "Check delete result",
     "test_check_result",
-    "normal",
-    "test"
+    null
 );
 
 editor.setStatus("Delete theme test plugin loaded");
@@ -2437,22 +2432,14 @@ editor.setStatus("Delete theme test plugin loaded");
 
     harness.render().unwrap();
 
-    // Wait for plugin to load
-    harness
-        .wait_until(|h| {
-            h.screen_to_string()
-                .contains("Delete theme test plugin loaded")
-        })
-        .unwrap();
-
-    // Run the delete command via command palette
+    // Run the delete command via Quick Open
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
-
     harness.type_text("Test: Delete Theme").unwrap();
-    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Delete Theme"))
+        .unwrap();
 
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)

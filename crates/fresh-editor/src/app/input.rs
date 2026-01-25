@@ -422,6 +422,18 @@ impl Editor {
                     suggestions,
                 );
             }
+            Action::QuickOpen => {
+                // Toggle Quick Open: close if already open, otherwise open it
+                if let Some(prompt) = &self.prompt {
+                    if prompt.prompt_type == PromptType::QuickOpen {
+                        self.cancel_prompt();
+                        return Ok(());
+                    }
+                }
+
+                // Start Quick Open with file suggestions (default mode)
+                self.start_quick_open();
+            }
             Action::ToggleLineWrap => {
                 self.config.editor.line_wrap = !self.config.editor.line_wrap;
 

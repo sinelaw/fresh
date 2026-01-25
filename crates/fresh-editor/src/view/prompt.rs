@@ -29,6 +29,9 @@ pub enum PromptType {
     QueryReplaceConfirm,
     /// Execute a command by name (M-x)
     Command,
+    /// Quick Open - unified prompt with prefix-based provider routing
+    /// Supports file finding (default), commands (>), buffers (#), goto line (:)
+    QuickOpen,
     /// Go to a specific line number
     GotoLine,
     /// Choose an ANSI background file

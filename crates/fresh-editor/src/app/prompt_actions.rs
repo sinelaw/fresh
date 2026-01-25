@@ -140,6 +140,10 @@ impl Editor {
                     self.set_status_message(t!("error.invalid_line", input = &input).to_string());
                 }
             },
+            PromptType::QuickOpen => {
+                // Handle Quick Open confirmation based on prefix
+                return self.handle_quick_open_confirm(&input, selected_index);
+            }
             PromptType::SetBackgroundFile => {
                 if let Err(e) = self.load_ansi_background(&input) {
                     self.set_status_message(
@@ -732,5 +736,169 @@ impl Editor {
                 );
             }
         }
+    }
+
+    /// Handle Quick Open prompt confirmation based on prefix routing
+    fn handle_quick_open_confirm(
+        &mut self,
+        input: &str,
+        selected_index: Option<usize>,
+    ) -> PromptResult {
+        // Determine the mode based on prefix
+        if input.starts_with('>') {
+            // Command mode - find and execute the selected command
+            let query = &input[1..];
+            return self.handle_quick_open_command(query, selected_index);
+        }
+
+        if input.starts_with('#') {
+            // Buffer mode - switch to selected buffer
+            let query = &input[1..];
+            return self.handle_quick_open_buffer(query, selected_index);
+        }
+
+        if input.starts_with(':') {
+            // Go to line mode
+            let line_str = &input[1..];
+            if let Ok(line_num) = line_str.parse::<usize>() {
+                if line_num > 0 {
+                    self.goto_line_col(line_num, None);
+                    self.set_status_message(t!("goto.jumped", line = line_num).to_string());
+                } else {
+                    self.set_status_message(t!("goto.line_must_be_positive").to_string());
+                }
+            } else {
+                self.set_status_message(t!("error.invalid_line", input = line_str).to_string());
+            }
+            return PromptResult::Done;
+        }
+
+        // Default: file mode - open the selected file
+        self.handle_quick_open_file(input, selected_index)
+    }
+
+    /// Handle Quick Open command selection
+    fn handle_quick_open_command(
+        &mut self,
+        query: &str,
+        selected_index: Option<usize>,
+    ) -> PromptResult {
+        let suggestions = {
+            let registry = self.command_registry.read().unwrap();
+            let selection_active = self.has_active_selection();
+            let active_buffer_mode = self
+                .buffer_metadata
+                .get(&self.active_buffer())
+                .and_then(|m| m.virtual_mode());
+
+            registry.filter(
+                query,
+                self.key_context,
+                &self.keybindings,
+                selection_active,
+                &self.active_custom_contexts,
+                active_buffer_mode,
+            )
+        };
+
+        if let Some(idx) = selected_index {
+            if let Some(suggestion) = suggestions.get(idx) {
+                if suggestion.disabled {
+                    self.set_status_message(t!("status.command_not_available").to_string());
+                    return PromptResult::Done;
+                }
+
+                // Find and execute the command
+                let commands = self.command_registry.read().unwrap().get_all();
+                if let Some(cmd) = commands
+                    .iter()
+                    .find(|c| c.get_localized_name() == suggestion.text)
+                {
+                    let action = cmd.action.clone();
+                    let cmd_name = cmd.get_localized_name();
+                    self.command_registry
+                        .write()
+                        .unwrap()
+                        .record_usage(&cmd_name);
+                    return PromptResult::ExecuteAction(action);
+                }
+            }
+        }
+
+        self.set_status_message(t!("status.no_selection").to_string());
+        PromptResult::Done
+    }
+
+    /// Handle Quick Open buffer selection
+    fn handle_quick_open_buffer(
+        &mut self,
+        query: &str,
+        selected_index: Option<usize>,
+    ) -> PromptResult {
+        // Regenerate buffer suggestions since prompt was already taken by confirm_prompt
+        let suggestions = self.get_buffer_suggestions(query);
+
+        if let Some(idx) = selected_index {
+            if let Some(suggestion) = suggestions.get(idx) {
+                if let Some(value) = &suggestion.value {
+                    if let Ok(buffer_id) = value.parse::<usize>() {
+                        let buffer_id = crate::model::event::BufferId(buffer_id);
+                        if self.buffers.contains_key(&buffer_id) {
+                            self.set_active_buffer(buffer_id);
+                            if let Some(name) = self.active_state().buffer.file_path() {
+                                self.set_status_message(
+                                    t!("buffer.switched", name = name.display().to_string())
+                                        .to_string(),
+                                );
+                            }
+                            return PromptResult::Done;
+                        }
+                    }
+                }
+            }
+        }
+
+        self.set_status_message(t!("status.no_selection").to_string());
+        PromptResult::Done
+    }
+
+    /// Handle Quick Open file selection
+    fn handle_quick_open_file(
+        &mut self,
+        input: &str,
+        selected_index: Option<usize>,
+    ) -> PromptResult {
+        // Regenerate file suggestions since prompt was already taken by confirm_prompt
+        let suggestions = self.get_file_suggestions(input);
+
+        if let Some(idx) = selected_index {
+            if let Some(suggestion) = suggestions.get(idx) {
+                if let Some(path_str) = &suggestion.value {
+                    let path = std::path::PathBuf::from(path_str);
+                    let full_path = if path.is_absolute() {
+                        path
+                    } else {
+                        self.working_dir.join(&path)
+                    };
+
+                    // Record file access for frecency
+                    self.file_provider.record_access(path_str);
+
+                    if let Err(e) = self.open_file(&full_path) {
+                        self.set_status_message(
+                            t!("file.error_opening", error = e.to_string()).to_string(),
+                        );
+                    } else {
+                        self.set_status_message(
+                            t!("buffer.opened", name = full_path.display().to_string()).to_string(),
+                        );
+                    }
+                    return PromptResult::Done;
+                }
+            }
+        }
+
+        self.set_status_message(t!("status.no_selection").to_string());
+        PromptResult::Done
     }
 }

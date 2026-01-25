@@ -208,7 +208,14 @@ pub trait InputHandler {
             return InputResult::Consumed;
         }
 
-        // If modal, consume even if we didn't handle it
+        // If explicitly ignored, pass through (even for modal handlers)
+        // This allows modal handlers to opt-out of consuming specific keys
+        // (e.g., Ctrl+P to toggle Quick Open while it's open)
+        if result == InputResult::Ignored {
+            return InputResult::Ignored;
+        }
+
+        // If modal and result is not explicitly Ignored, consume to prevent leaking
         if self.is_modal() {
             return InputResult::Consumed;
         }
@@ -262,5 +269,58 @@ mod tests {
     fn test_is_consumed() {
         assert!(InputResult::Consumed.is_consumed());
         assert!(!InputResult::Ignored.is_consumed());
+    }
+
+    /// Test handler that tracks what it returns
+    struct TestModalHandler {
+        returns_ignored: bool,
+    }
+
+    impl InputHandler for TestModalHandler {
+        fn handle_key_event(&mut self, _event: &KeyEvent, _ctx: &mut InputContext) -> InputResult {
+            if self.returns_ignored {
+                InputResult::Ignored
+            } else {
+                InputResult::Consumed
+            }
+        }
+
+        fn is_modal(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn test_modal_handler_respects_ignored() {
+        // When modal handler returns Ignored, dispatch_input should also return Ignored
+        let mut handler = TestModalHandler {
+            returns_ignored: true,
+        };
+        let mut ctx = InputContext::new();
+        let event = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
+
+        let result = handler.dispatch_input(&event, &mut ctx);
+        assert_eq!(
+            result,
+            InputResult::Ignored,
+            "Modal handler should respect Ignored result"
+        );
+    }
+
+    #[test]
+    fn test_modal_handler_consumes_unknown_keys() {
+        // When modal handler returns Consumed, dispatch_input should also return Consumed
+        let mut handler = TestModalHandler {
+            returns_ignored: false,
+        };
+        let mut ctx = InputContext::new();
+        let event = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+
+        let result = handler.dispatch_input(&event, &mut ctx);
+        assert_eq!(
+            result,
+            InputResult::Consumed,
+            "Modal handler should consume handled keys"
+        );
     }
 }

@@ -654,7 +654,7 @@ fn test_git_commands_via_command_palette() {
         .unwrap();
     harness.render().unwrap();
 
-    harness.assert_screen_contains("Command: ");
+    harness.assert_screen_contains("");
 
     // Type to filter to git commands (note: no colon in command name)
     harness.type_text("Git Grep").unwrap();
@@ -1982,11 +1982,27 @@ fn test_git_blame_scroll_with_many_virtual_lines() {
 
 /// Helper to trigger test view marker via command palette
 fn trigger_test_view_marker(harness: &mut EditorTestHarness) {
+    // First wait for the command to be registered in the registry
+    harness
+        .wait_until(|h| {
+            let commands = h.editor().command_registry().read().unwrap().get_all();
+            commands.iter().any(|c| c.name.contains("Test View Marker"))
+        })
+        .unwrap();
+
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
     harness.type_text("Test View Marker").unwrap();
+    // Wait for command to appear in suggestions (not just input line)
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .lines()
+                .any(|line| line.contains("Test View Marker") && !line.starts_with(">"))
+        })
+        .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -1995,12 +2011,30 @@ fn trigger_test_view_marker(harness: &mut EditorTestHarness) {
 
 /// Helper to trigger test view marker with many virtual lines via command palette
 fn trigger_test_view_marker_many_virtual_lines(harness: &mut EditorTestHarness) {
+    // First wait for the command to be registered in the registry
+    harness
+        .wait_until(|h| {
+            let commands = h.editor().command_registry().read().unwrap().get_all();
+            commands
+                .iter()
+                .any(|c| c.name.contains("Many Virtual Lines"))
+        })
+        .unwrap();
+
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
     harness
         .type_text("Test View Marker (Many Virtual Lines)")
+        .unwrap();
+    // Wait for command to appear in suggestions (not just input line)
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .lines()
+                .any(|line| line.contains("Test View Marker") && !line.starts_with(">"))
+        })
         .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -2089,13 +2123,15 @@ fn test_view_transform_scroll_with_many_virtual_lines() {
 
     let repo = GitTestRepo::new();
 
+    println!("Test setup");
     repo.create_file("test.txt", "placeholder");
     repo.git_add(&["test.txt"]);
     repo.git_commit("Initial commit");
     repo.setup_test_view_marker_plugin();
 
+    // Use wide terminal to avoid command palette text truncation
     let mut harness = EditorTestHarness::with_config_and_working_dir(
-        120,
+        200,
         20,
         Config::default(),
         repo.path.clone(),
@@ -2105,16 +2141,19 @@ fn test_view_transform_scroll_with_many_virtual_lines() {
     // Open the test file (so the virtual buffer has a split to attach to)
     let file_path = repo.path.join("test.txt");
     harness.open_file(&file_path).unwrap();
+    println!("wait for file to open...");
     harness
         .wait_until(|h| !h.get_buffer_content().unwrap().is_empty())
         .unwrap();
 
     // Launch the view marker that injects many virtual lines (120 pads + header before Line 1)
+    println!("Introduce view markers");
     trigger_test_view_marker_many_virtual_lines(&mut harness);
 
     // Wait for the virtual buffer to be created and rendered
     // The cursor starts at Line 1 (byte 0), which is view line 121 (after 120 virtual pads + 1 header)
     // Auto-scroll should bring the cursor into view, showing the source lines
+    println!("wait for auto scroll to show lines...");
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();

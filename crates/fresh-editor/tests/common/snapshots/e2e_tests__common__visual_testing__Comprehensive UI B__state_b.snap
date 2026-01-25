@@ -1,5 +1,5 @@
 ---
-source: tests/common/visual_testing.rs
+source: crates/fresh-editor/tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   LSP   Explorer   Help                                                            
@@ -24,11 +24,11 @@ expression: "&screen_text"
     3 │     let x = 42;                                                                                                 
     4 │     let y = x * 2;                                                                                              
     5 │     println!("Result: {}", y);                                                                                  
-    6 │ }                                                                                                               
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │  Plugin Demo: Open Help                        Open the editor help page (uses built-in action)               welcome│
 │  Show Signature Help                           Show function parameter hints                                  builtin│
 │  Shell Command (Replace)         Alt+Shift+|   Run shell command on buffer/selection, replace con...          builtin│
 │  Search and Replace in Project                 Search and replace text across all git-tracked files    search_replace│
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-Command: help
+  file  |  >command  |  :line  |  #buffer                                                                               
+>help

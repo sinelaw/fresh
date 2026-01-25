@@ -7,14 +7,14 @@ fn test_command_palette_trigger() {
     use crossterm::event::{KeyCode, KeyModifiers};
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    // Trigger the command palette with Ctrl+P
+    // Trigger Quick Open with Ctrl+P (defaults to command mode with > prefix)
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
-    // Check that the command prompt is visible
-    harness.assert_screen_contains("Command:");
+    // Check that the Quick Open hints line is visible
+    harness.assert_screen_contains(">command");
 
     // Check that suggestions are visible (commands sorted alphabetically, so Add Cursor commands appear first)
     harness.assert_screen_contains("Add Cursor Above");
@@ -33,7 +33,7 @@ fn test_command_palette_autocomplete() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
 
-    // Type "open" to filter commands
+    // Type "open" to filter commands (Quick Open already starts with > prefix)
     harness.type_text("open").unwrap();
 
     // Should show filtered results
@@ -54,7 +54,7 @@ fn test_command_palette_navigation() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Command:");
+    harness.assert_screen_contains(">command");
 
     // Navigate down
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -86,8 +86,8 @@ fn test_command_palette_tab_completion() {
     harness.render().unwrap();
 
     // The input should be completed to "Open File"
-    harness.assert_screen_contains("Command: Open File");
-    // Note: The prompt shows "Command:" followed by the input text
+    harness.assert_screen_contains(">Open File");
+    // Note: The prompt shows ">command" followed by the input text
 }
 
 /// Test command palette cancel with Escape
@@ -101,14 +101,14 @@ fn test_command_palette_cancel() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Command:");
+    harness.assert_screen_contains(">command");
 
     // Cancel with Escape
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Prompt should be gone
-    harness.assert_screen_not_contains("Command:");
+    harness.assert_screen_not_contains(">command");
     harness.assert_screen_contains("cancelled");
 }
 
@@ -178,7 +178,7 @@ fn test_command_palette_tab_skip_disabled() {
     harness.render().unwrap();
 
     // The input should be completed (should work with available commands)
-    harness.assert_screen_contains("Command: Save File");
+    harness.assert_screen_contains(">Save File");
 }
 
 /// Test Tab completion doesn't accept disabled suggestions
@@ -201,7 +201,7 @@ fn test_command_palette_tab_on_disabled() {
     harness.render().unwrap();
 
     // The input should be completed
-    harness.assert_screen_contains("Command: Undo");
+    harness.assert_screen_contains(">Undo");
 
     // Now clear and try a different command
     // Clear input
@@ -229,7 +229,7 @@ fn test_command_palette_tab_on_disabled() {
     println!("Screen after Tab on 'focus e': {screen}");
 
     // For now, just assert we still have the command palette open
-    harness.assert_screen_contains("Command:");
+    harness.assert_screen_contains(">command");
 }
 
 /// Test Tab completion doesn't work when all suggestions are disabled
@@ -260,7 +260,7 @@ fn test_command_palette_tab_all_disabled() {
     println!("Screen after Tab on disabled 'focus ed': {screen}");
 
     // Check that input didn't change (tab should do nothing on disabled suggestions)
-    harness.assert_screen_contains("Command: focus ed");
+    harness.assert_screen_contains("focus ed");
 }
 
 /// Test Enter executes the selected (highlighted) command, not the typed text
@@ -500,7 +500,7 @@ fn test_command_palette_from_file_explorer() {
     harness.render().unwrap();
 
     // Should show the command palette
-    harness.assert_screen_contains("Command:");
+    harness.assert_screen_contains(">command");
 
     // Should show commands (Calibrate Keyboard appears early alphabetically)
     harness.assert_screen_contains("Calibrate Keyboard");
@@ -589,7 +589,7 @@ fn test_command_palette_down_no_wraparound() {
     // If we wrapped around, we'd be back at "Save File"
     // If we stayed at the end, we'd still be at "Save File As"
     // The tab should complete to the selected command
-    harness.assert_screen_contains("Command: Save File As");
+    harness.assert_screen_contains(">Save File As");
 }
 
 /// Test that PageUp stops at the beginning of the list instead of wrapping
@@ -688,7 +688,7 @@ fn test_command_palette_shows_shortcuts() {
     harness.render().unwrap();
 
     // Check that the command palette is visible
-    harness.assert_screen_contains("Command:");
+    harness.assert_screen_contains(">command");
 
     // Check that commands with shortcuts are visible (commands sorted alphabetically)
     // Add Cursor Above should show Ctrl+Alt+↑ (or ⌘+⌥+↑ on macOS)
@@ -785,8 +785,8 @@ fn test_show_keyboard_shortcuts_command() {
         .unwrap();
     harness.render().unwrap();
 
-    // Type to filter for "Show Keyboard Shortcuts"
-    harness.type_text("keyboard").unwrap();
+    // Type to filter for "Show Keyboard Shortcuts" (more specific to avoid "Calibrate Keyboard")
+    harness.type_text("show keyboard").unwrap();
     harness.render().unwrap();
 
     // Should see the command in the palette
@@ -832,7 +832,7 @@ fn test_show_keyboard_shortcuts_open_close_reopen() {
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.type_text("keyboard").unwrap();
+    harness.type_text("show keyboard").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -862,7 +862,7 @@ fn test_show_keyboard_shortcuts_open_close_reopen() {
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.type_text("keyboard").unwrap();
+    harness.type_text("show keyboard").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();

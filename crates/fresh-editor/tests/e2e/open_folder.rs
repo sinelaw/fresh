@@ -30,7 +30,7 @@ fn test_switch_project_command_in_palette() {
 
     // Wait for palette to appear
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .wait_until(|h| h.screen_to_string().contains(">command"))
         .expect("Command palette should appear");
 
     // Type "switch project" to search
@@ -69,7 +69,7 @@ fn test_switch_project_shows_folder_browser() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .wait_until(|h| h.screen_to_string().contains(">command"))
         .expect("Command palette should appear");
 
     harness.type_text("switch project").unwrap();
@@ -136,7 +136,7 @@ fn test_switch_project_changes_working_dir() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .wait_until(|h| h.screen_to_string().contains(">command"))
         .expect("Command palette should appear");
     tracing::info!("Command palette opened");
 
@@ -224,7 +224,7 @@ fn test_switch_project_select_current_directory() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .wait_until(|h| h.screen_to_string().contains(">command"))
         .expect("Command palette should appear");
     tracing::info!("Command palette opened");
 
@@ -291,7 +291,7 @@ fn test_switch_project_cancel_preserves_directory() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .wait_until(|h| h.screen_to_string().contains(">command"))
         .expect("Command palette should appear");
 
     harness.type_text("switch project").unwrap();
@@ -338,7 +338,7 @@ fn test_switch_project_backspace_goes_parent() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .wait_until(|h| h.screen_to_string().contains(">command"))
         .expect("Command palette should appear");
 
     harness.type_text("switch project").unwrap();
@@ -497,7 +497,7 @@ fn test_switch_project_restart_flow_with_sessions() {
             .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
             .unwrap();
         harness
-            .wait_until(|h| h.screen_to_string().contains("Command:"))
+            .wait_until(|h| h.screen_to_string().contains(">command"))
             .expect("Command palette should appear");
 
         harness.type_text("switch project").unwrap();
@@ -624,7 +624,7 @@ fn switch_to_project(harness: &mut EditorTestHarness, project_path: &std::path::
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .wait_until(|h| h.screen_to_string().contains(">command"))
         .expect("Command palette should appear");
 
     // Search for Switch Project

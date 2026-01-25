@@ -387,7 +387,7 @@ fn test_close_last_buffer_in_split_closes_split() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .wait_until(|h| h.screen_to_string().contains(">command"))
         .unwrap();
     harness.type_text("split vert").unwrap();
     harness
@@ -444,7 +444,7 @@ fn test_close_unique_buffer_in_split_closes_split() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .wait_until(|h| h.screen_to_string().contains(">command"))
         .unwrap();
     harness.type_text("split vert").unwrap();
     harness
@@ -545,7 +545,7 @@ fn test_close_terminal_in_split_closes_split() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .wait_until(|h| h.screen_to_string().contains(">command"))
         .unwrap();
     harness.type_text("split vert").unwrap();
     harness

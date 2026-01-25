@@ -836,8 +836,8 @@ fn test_viewport_31_rows() {
         .unwrap();
     harness.render().unwrap();
 
-    // Command palette should be visible
-    harness.assert_screen_contains("Command:");
+    // Quick Open should be visible (shows ">command" in hints)
+    harness.assert_screen_contains(">command");
 
     // Suggestions popup should be visible with commands (alphabetically sorted, starting with A/C)
     harness.assert_screen_contains("Add Cursor");

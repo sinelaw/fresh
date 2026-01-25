@@ -272,7 +272,7 @@ fn test_open_file_dialog_create_new_file() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .wait_until(|h| h.screen_to_string().contains(">command"))
         .unwrap();
 
     // Type to search for Open File command
@@ -399,7 +399,7 @@ fn test_save_as_tilde_expansion() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Command:"))
+        .wait_until(|h| h.screen_to_string().contains(">command"))
         .unwrap();
 
     // Type to search for Save As command

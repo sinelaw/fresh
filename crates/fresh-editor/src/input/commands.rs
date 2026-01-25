@@ -856,6 +856,14 @@ pub fn get_all_commands() -> Vec<Command> {
             source: CommandSource::Builtin,
         },
         Command {
+            name: t!("cmd.quick_open").to_string(),
+            description: t!("cmd.quick_open_desc").to_string(),
+            action: Action::QuickOpen,
+            contexts: vec![KeyContext::Normal, KeyContext::Global],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
             name: t!("cmd.smart_home").to_string(),
             description: t!("cmd.smart_home_desc").to_string(),
             action: Action::SmartHome,

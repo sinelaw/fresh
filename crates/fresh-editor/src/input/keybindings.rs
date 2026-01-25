@@ -361,6 +361,8 @@ pub enum Action {
     ShowLspStatus,
     ClearWarnings,
     CommandPalette,
+    /// Quick Open - unified prompt with prefix-based provider routing
+    QuickOpen,
     ToggleLineWrap,
     ToggleComposeMode,
     SetComposeWidth,
@@ -700,6 +702,7 @@ impl Action {
             "show_lsp_status" => Self::ShowLspStatus,
             "clear_warnings" => Self::ClearWarnings,
             "command_palette" => Self::CommandPalette,
+            "quick_open" => Self::QuickOpen,
             "toggle_line_wrap" => Self::ToggleLineWrap,
             "toggle_compose_mode" => Self::ToggleComposeMode,
             "set_compose_width" => Self::SetComposeWidth,
@@ -1076,6 +1079,7 @@ impl KeybindingResolver {
             action,
             // Global UI actions
             Action::CommandPalette
+                | Action::QuickOpen
                 | Action::OpenSettings
                 | Action::MenuActivate
                 | Action::MenuOpen(_)
@@ -1631,6 +1635,7 @@ impl KeybindingResolver {
             Action::ShowLspStatus => t!("action.show_lsp_status"),
             Action::ClearWarnings => t!("action.clear_warnings"),
             Action::CommandPalette => t!("action.command_palette"),
+            Action::QuickOpen => t!("action.quick_open"),
             Action::ToggleLineWrap => t!("action.toggle_line_wrap"),
             Action::ToggleComposeMode => t!("action.toggle_compose_mode"),
             Action::SetComposeWidth => t!("action.set_compose_width"),

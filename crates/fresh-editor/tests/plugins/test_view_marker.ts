@@ -18,7 +18,7 @@ const TEST_NAMESPACE = "test-view-marker";
 // Define a simple mode for testing
 editor.defineMode(
   "test-view-marker",
-  "normal",
+  "normal",  // parent mode
   [
     ["q", "test_view_marker_close"],
   ],
@@ -218,21 +218,21 @@ editor.registerCommand(
   "Test View Marker",
   "Test virtual lines with header at byte 0",
   "show_test_view_marker",
-  "normal"
+  null
 );
 
 editor.registerCommand(
   "Test View Marker (Many Virtual Lines)",
   "Test virtual lines with many header lines",
   "show_test_view_marker_many_virtual_lines",
-  "normal"
+  null
 );
 
 editor.registerCommand(
   "Test View Marker (Interleaved)",
   "Test virtual lines with headers between each source line",
   "show_test_view_marker_interleaved",
-  "normal"
+  null
 );
 
 editor.setStatus("Test View Marker plugin loaded (virtual lines)");

@@ -1372,7 +1372,8 @@ fn test_status_bar_hidden_during_suggestions() {
     let screen_before = harness.screen_to_string();
     assert!(
         screen_before.contains("Palette:"),
-        "Status bar should show 'Palette:' indicator before command palette"
+        "Status bar should show 'Palette:' indicator before command palette. Screen:\n{}",
+        screen_before
     );
 
     // Open command palette (which has suggestions)
@@ -1381,8 +1382,8 @@ fn test_status_bar_hidden_during_suggestions() {
         .unwrap();
     harness.render().unwrap();
 
-    // Verify suggestions are shown
-    harness.assert_screen_contains("Command:");
+    // Verify suggestions are shown (Quick Open uses ">" prefix in hints)
+    harness.assert_screen_contains(">command");
 
     // Status bar should be hidden when suggestions are visible
     // The "Palette:" indicator should not be visible
@@ -1398,7 +1399,8 @@ fn test_status_bar_hidden_during_suggestions() {
     let screen_after = harness.screen_to_string();
     assert!(
         screen_after.contains("Palette:"),
-        "Status bar should show 'Palette:' indicator after closing command palette"
+        "Status bar should show 'Palette:' indicator after closing command palette. Screen:\n{}",
+        screen_after
     );
 }
 

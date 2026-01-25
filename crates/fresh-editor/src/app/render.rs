@@ -492,15 +492,18 @@ impl Editor {
                 // For other prompts, render suggestions as before
                 // Calculate overlay area: position above prompt line (which is below status bar)
                 let suggestion_count = prompt.suggestions.len().min(10);
-                let height = suggestion_count as u16 + 2; // +2 for borders
+                let is_quick_open =
+                    prompt.prompt_type == crate::view::prompt::PromptType::QuickOpen;
+                let hints_height: u16 = if is_quick_open { 1 } else { 0 };
+                let height = suggestion_count as u16 + 2 + hints_height; // +2 for borders, +1 for hints if QuickOpen
 
-                // Position suggestions above the prompt line
-                // The prompt line is at main_chunks[3], so suggestions go above it
+                // Position suggestions above the prompt line (and hints line if present)
+                // The prompt line is at main_chunks[prompt_line_idx], so suggestions go above it
                 let suggestions_area = ratatui::layout::Rect {
                     x: 0,
                     y: main_chunks[prompt_line_idx].y.saturating_sub(height),
                     width: size.width,
-                    height,
+                    height: height - hints_height,
                 };
 
                 // Clear the area behind the suggestions to obscure underlying text
@@ -513,6 +516,18 @@ impl Editor {
                     &self.theme,
                     self.mouse_state.hover_target.as_ref(),
                 );
+
+                // Render hints line for QuickOpen between suggestions and prompt
+                if is_quick_open {
+                    let hints_area = ratatui::layout::Rect {
+                        x: 0,
+                        y: main_chunks[prompt_line_idx].y.saturating_sub(hints_height),
+                        width: size.width,
+                        height: hints_height,
+                    };
+                    frame.render_widget(ratatui::widgets::Clear, hints_area);
+                    Self::render_quick_open_hints(frame, hints_area, &self.theme);
+                }
             }
         }
 
@@ -881,6 +896,35 @@ impl Editor {
             frame.buffer_mut(),
             self.color_capability,
         );
+    }
+
+    /// Render the Quick Open hints line showing available mode prefixes
+    fn render_quick_open_hints(
+        frame: &mut Frame,
+        area: ratatui::layout::Rect,
+        theme: &crate::view::theme::Theme,
+    ) {
+        use ratatui::style::{Modifier, Style};
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::Paragraph;
+        use rust_i18n::t;
+
+        let hints_style = Style::default()
+            .fg(theme.line_number_fg)
+            .bg(theme.suggestion_selected_bg)
+            .add_modifier(Modifier::DIM);
+        let hints_text = t!("quick_open.mode_hints");
+        // Left-align with small margin
+        let left_margin = 2;
+        let hints_width = crate::primitives::display_width::str_width(&hints_text);
+        let mut spans = Vec::new();
+        spans.push(Span::styled(" ".repeat(left_margin), hints_style));
+        spans.push(Span::styled(hints_text.to_string(), hints_style));
+        let remaining = (area.width as usize).saturating_sub(left_margin + hints_width);
+        spans.push(Span::styled(" ".repeat(remaining), hints_style));
+
+        let paragraph = Paragraph::new(Line::from(spans));
+        frame.render_widget(paragraph, area);
     }
 
     /// Apply dimming effect to UI elements outside the focused terminal area
