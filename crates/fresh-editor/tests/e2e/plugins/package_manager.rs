@@ -886,3 +886,163 @@ globalThis.beta_cmd = function() { editor.setStatus("Beta plugin works!"); };
          The entire monorepo was cloned instead of just the subdirectory."
     );
 }
+
+/// Test that uninstalling a plugin removes its commands from the command palette.
+/// This verifies that commands registered by a plugin are properly unregistered
+/// when the plugin is unloaded, not just showing untranslated keys.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_uninstall_plugin_removes_commands() {
+    use fresh::config_io::DirectoryContext;
+    use tempfile::TempDir;
+
+    init_tracing_from_env();
+
+    let temp_dir = TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+
+    // Setup plugins directory
+    let plugins_dir = repo.path.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "pkg");
+
+    // Create a test plugin that registers a command
+    let packages_dir = dir_context.config_dir.join("plugins").join("packages");
+    fs::create_dir_all(&packages_dir).unwrap();
+    let test_plugin_dir = packages_dir.join("uninstall-test-plugin");
+    fs::create_dir_all(&test_plugin_dir).unwrap();
+
+    fs::write(
+        test_plugin_dir.join("main.ts"),
+        r#"
+/// <reference path="../../../plugins/lib/fresh.d.ts" />
+const editor = getEditor();
+editor.registerCommand("Uninstall Test: Hello", "Test command for uninstall", "uninstall_test_hello", null);
+globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from uninstall test!"); };
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        test_plugin_dir.join("package.json"),
+        r#"{
+    "name": "uninstall-test-plugin",
+    "version": "1.0.0",
+    "type": "plugin",
+    "fresh": { "entry": "main.ts" }
+}"#,
+    )
+    .unwrap();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        100,
+        30,
+        Default::default(),
+        repo.path.clone(),
+        dir_context,
+    )
+    .unwrap();
+
+    // Verify the command is available initially
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Uninstall Test").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Uninstall Test"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Uninstall Test: Hello"),
+        "Command should be available before uninstall. Screen: {}",
+        screen
+    );
+
+    // Close command palette
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("Command:"))
+        .unwrap();
+
+    // Open package manager and uninstall the plugin
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Package: Packages").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Package: Packages"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for package manager UI
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Packages"))
+        .unwrap();
+
+    // Navigate to Installed filter
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Installed"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Find and select the test plugin
+    harness
+        .wait_until(|h| h.screen_to_string().contains("uninstall-test"))
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+
+    // Tab to Uninstall button and press Enter
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for uninstall to complete
+    harness
+        .wait_for_async(
+            |h| {
+                let screen = h.screen_to_string();
+                screen.contains("Removed") || !screen.contains("uninstall-test")
+            },
+            5000,
+        )
+        .unwrap();
+
+    // Close package manager
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+
+    // Verify the command is no longer available
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Uninstall Test").unwrap();
+
+    // Wait a moment for suggestions to update
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    let screen = harness.screen_to_string();
+    // The command should be gone, or if shown, should have translated name (not raw keys)
+    assert!(
+        !screen.contains("Uninstall Test: Hello") && !screen.contains("uninstall_test_hello"),
+        "Command should be removed after uninstall, not show untranslated keys. Screen: {}",
+        screen
+    );
+}
