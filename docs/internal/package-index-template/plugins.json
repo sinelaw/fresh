@@ -1,0 +1,18 @@
+{
+  "$schema": "./schemas/registry.schema.json",
+  "schema_version": 1,
+  "updated": "2025-01-01T00:00:00Z",
+  "packages": {
+    "example-plugin": {
+      "description": "An example plugin to demonstrate the registry format",
+      "repository": "https://github.com/fresh-editor/example-plugin",
+      "author": "Fresh Editor Team",
+      "license": "MIT",
+      "keywords": ["example", "demo"],
+      "stars": 0,
+      "downloads": 0,
+      "latest_version": "1.0.0",
+      "fresh_min_version": "0.1.80"
+    }
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fresh-editor.dev/schemas/blocklist.schema.json",
+  "title": "Fresh Package Blocklist",
+  "description": "Schema for known malicious or unsafe packages",
+  "type": "object",
+  "required": ["schema_version", "blocked"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "description": "Blocklist schema version",
+      "minimum": 1
+    },
+    "updated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last update timestamp in ISO 8601 format"
+    },
+    "blocked": {
+      "type": "array",
+      "description": "List of blocked packages",
+      "items": {
+        "type": "object",
+        "required": ["repository", "reason", "blocked_at"],
+        "properties": {
+          "repository": {
+            "type": "string",
+            "format": "uri",
+            "description": "Git repository URL of the blocked package"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Reason for blocking"
+          },
+          "blocked_at": {
+            "type": "string",
+            "format": "date",
+            "description": "Date when the package was blocked"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "critical"],
+            "description": "Severity of the security issue"
+          }
+        }
+      }
+    }
+  }
+}

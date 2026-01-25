@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fresh-editor.dev/schemas/package.schema.json",
+  "title": "Fresh Package Manifest",
+  "description": "Schema for Fresh plugin and theme package.json files",
+  "type": "object",
+  "required": ["name", "version", "description", "type"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "Package name (lowercase, hyphens allowed)"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+",
+      "description": "Semantic version (e.g., 1.0.0)"
+    },
+    "description": {
+      "type": "string",
+      "description": "Short package description"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["plugin", "theme", "theme-pack"],
+      "description": "Package type"
+    },
+    "author": {
+      "type": "string",
+      "description": "Author name and optional email (e.g., 'Name <email>')"
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX license identifier"
+    },
+    "repository": {
+      "type": "string",
+      "format": "uri",
+      "description": "Git repository URL"
+    },
+    "keywords": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Search keywords"
+    },
+    "fresh": {
+      "type": "object",
+      "description": "Fresh-specific configuration",
+      "properties": {
+        "min_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+",
+          "description": "Minimum required Fresh version"
+        },
+        "entry": {
+          "type": "string",
+          "description": "Plugin entry point file (for plugins)"
+        },
+        "themes": {
+          "type": "array",
+          "description": "Theme definitions (for theme packs)",
+          "items": {
+            "type": "object",
+            "required": ["file", "name"],
+            "properties": {
+              "file": {
+                "type": "string",
+                "description": "Theme JSON file path"
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name for the theme"
+              },
+              "variant": {
+                "type": "string",
+                "enum": ["dark", "light"],
+                "description": "Theme variant (dark or light)"
+              }
+            }
+          }
+        },
+        "config_schema": {
+          "type": "object",
+          "description": "JSON Schema for plugin configuration options"
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "description": "Package dependencies (reserved for future use)",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

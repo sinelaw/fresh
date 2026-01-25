@@ -1,0 +1,6 @@
+{
+  "$schema": "./schemas/blocklist.schema.json",
+  "schema_version": 1,
+  "updated": "2025-01-01T00:00:00Z",
+  "blocked": []
+}

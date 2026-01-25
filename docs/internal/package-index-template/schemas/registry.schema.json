@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fresh-editor.dev/schemas/registry.schema.json",
+  "title": "Fresh Package Registry",
+  "description": "Schema for Fresh plugin and theme registry files",
+  "type": "object",
+  "required": ["schema_version", "packages"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "description": "Registry schema version",
+      "minimum": 1
+    },
+    "updated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last update timestamp in ISO 8601 format"
+    },
+    "packages": {
+      "type": "object",
+      "description": "Map of package names to package metadata",
+      "additionalProperties": {
+        "$ref": "#/$defs/packageEntry"
+      }
+    }
+  },
+  "$defs": {
+    "packageEntry": {
+      "type": "object",
+      "required": ["description", "repository"],
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "Short description of the package"
+        },
+        "repository": {
+          "type": "string",
+          "format": "uri",
+          "description": "Git repository URL"
+        },
+        "author": {
+          "type": "string",
+          "description": "Package author name or email"
+        },
+        "license": {
+          "type": "string",
+          "description": "SPDX license identifier"
+        },
+        "keywords": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Search keywords"
+        },
+        "stars": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "GitHub stars count"
+        },
+        "downloads": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Download count"
+        },
+        "latest_version": {
+          "type": "string",
+          "description": "Latest release version"
+        },
+        "fresh_min_version": {
+          "type": "string",
+          "description": "Minimum required Fresh version"
+        },
+        "variants": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Theme variants (for theme packages)"
+        }
+      }
+    }
+  }
+}
