@@ -474,7 +474,16 @@ async function installFromRepo(
   const manifestPath = editor.pathJoin(targetDir, "package.json");
   const manifest = readJsonFile<PackageManifest>(manifestPath);
 
-  editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}. Restart to activate.`);
+  // Dynamically load the plugin
+  const entryFile = manifest?.fresh?.entry || `${packageName}.ts`;
+  const pluginPath = editor.pathJoin(targetDir, entryFile);
+
+  if (editor.fileExists(pluginPath)) {
+    await editor.loadPlugin(pluginPath);
+    editor.setStatus(`Installed and activated ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+  } else {
+    editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+  }
   return true;
 }
 
@@ -551,9 +560,16 @@ async function installFromMonorepo(
     const manifestPath = editor.pathJoin(targetDir, "package.json");
     const manifest = readJsonFile<PackageManifest>(manifestPath);
 
-    editor.setStatus(
-      `Installed ${packageName}${manifest ? ` v${manifest.version}` : ""} from monorepo. Restart to activate.`
-    );
+    // Try to dynamically load the plugin
+    const entryFile = manifest?.fresh?.entry || `${packageName}.ts`;
+    const pluginPath = editor.pathJoin(targetDir, entryFile);
+
+    if (editor.fileExists(pluginPath)) {
+      await editor.loadPlugin(pluginPath);
+      editor.setStatus(`Installed and activated ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    } else {
+      editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    }
     return true;
   } finally {
     // Cleanup temp directory
@@ -636,7 +652,9 @@ async function updatePackage(pkg: InstalledPackage): Promise<boolean> {
     if (result.stdout.includes("Already up to date")) {
       editor.setStatus(`${pkg.name} is already up to date`);
     } else {
-      editor.setStatus(`Updated ${pkg.name}. Restart to apply changes.`);
+      // Reload the plugin to apply changes
+      await editor.reloadPlugin(pkg.name);
+      editor.setStatus(`Updated and reloaded ${pkg.name}`);
     }
     return true;
   } else {
@@ -656,6 +674,9 @@ async function updatePackage(pkg: InstalledPackage): Promise<boolean> {
 async function removePackage(pkg: InstalledPackage): Promise<boolean> {
   editor.setStatus(`Removing ${pkg.name}...`);
 
+  // Unload the plugin first (ignore errors - plugin might not be loaded)
+  await editor.unloadPlugin(pkg.name).catch(() => {});
+
   // Use trash if available, otherwise rm -rf
   let result = await editor.spawnProcess("trash", [pkg.path]);
   if (result.exit_code !== 0) {
@@ -663,7 +684,7 @@ async function removePackage(pkg: InstalledPackage): Promise<boolean> {
   }
 
   if (result.exit_code === 0) {
-    editor.setStatus(`Removed ${pkg.name}. Restart to apply changes.`);
+    editor.setStatus(`Removed ${pkg.name}`);
     return true;
   } else {
     editor.setStatus(`Failed to remove ${pkg.name}: ${result.stderr}`);
@@ -989,7 +1010,7 @@ function buildPackageList(): PackageListItem[] {
         items.push({
           type: "available",
           name,
-          description: entry.description,
+          description: entry.description || "No description",
           version: entry.latest_version || "latest",
           installed: false,
           updateAvailable: false,
@@ -1011,7 +1032,7 @@ function buildPackageList(): PackageListItem[] {
         items.push({
           type: "available",
           name,
-          description: entry.description,
+          description: entry.description || "No description",
           version: entry.latest_version || "latest",
           installed: false,
           updateAvailable: false,
@@ -1051,12 +1072,12 @@ function getFilteredItems(): PackageListItem[] {
       break;
   }
 
-  // Apply search
+  // Apply search (case insensitive)
   if (pkgState.searchQuery) {
     const query = pkgState.searchQuery.toLowerCase();
     items = items.filter(i =>
       i.name.toLowerCase().includes(query) ||
-      i.description.toLowerCase().includes(query) ||
+      (i.description && i.description.toLowerCase().includes(query)) ||
       (i.keywords && i.keywords.some(k => k.toLowerCase().includes(query)))
     );
   }
@@ -1149,6 +1170,9 @@ function buildListViewEntries(): TextPropertyEntry[] {
     text: " Packages\n",
     properties: { type: "header" },
   });
+
+  // Empty line after header
+  entries.push({ text: "\n", properties: { type: "blank" } });
 
   // === FILTER BAR with focusable buttons ===
   const filters: Array<{ id: string; label: string }> = [
@@ -1294,6 +1318,19 @@ function buildListViewEntries(): TextPropertyEntry[] {
     if (selectedItem.keywords && selectedItem.keywords.length > 0) {
       const kwText = selectedItem.keywords.slice(0, 4).join(", ");
       rightLines.push({ text: `Tags: ${kwText}`, type: "detail-tags" });
+      rightLines.push({ text: "", type: "blank" });
+    }
+
+    // Repository URL
+    if (selectedItem.repository) {
+      // Shorten URL for display (remove protocol, truncate if needed)
+      let displayUrl = selectedItem.repository
+        .replace(/^https?:\/\//, "")
+        .replace(/\.git$/, "");
+      if (displayUrl.length > DETAIL_WIDTH - 2) {
+        displayUrl = displayUrl.slice(0, DETAIL_WIDTH - 5) + "...";
+      }
+      rightLines.push({ text: displayUrl, type: "detail-url" });
       rightLines.push({ text: "", type: "blank" });
     }
 
@@ -1475,6 +1512,7 @@ function applyPkgManagerHighlighting(): void {
 
       case "detail-meta":
       case "detail-tags":
+      case "detail-url":
         themeStyle = pkgTheme.infoLabel;
         break;
 
@@ -1809,9 +1847,9 @@ globalThis.pkg_search = function(): void {
 
   // Pre-fill with current search query so typing replaces it
   if (pkgState.searchQuery) {
-    editor.startPromptWithInitial("Search packages:", "pkg-search", pkgState.searchQuery);
+    editor.startPromptWithInitial("Search packages: ", "pkg-search", pkgState.searchQuery);
   } else {
-    editor.startPrompt("Search packages:", "pkg-search");
+    editor.startPrompt("Search packages: ", "pkg-search");
   }
 };
 

@@ -687,3 +687,216 @@ fn test_pkg_manager_ui_split_view_and_tab_navigation() {
         screen_after_close
     );
 }
+
+/// Test installing a plugin from a monorepo with subpath (e.g., repo#packages/my-plugin).
+/// This verifies that only the specific subdirectory is installed, not the entire repo,
+/// and that the package.json is at the correct location so version can be read.
+#[test]
+#[cfg_attr(windows, ignore)] // file:// URLs don't work reliably on Windows
+fn test_pkg_install_from_monorepo_with_subpath() {
+    use fresh::config_io::DirectoryContext;
+    use tempfile::TempDir;
+
+    init_tracing_from_env();
+
+    // Create temp directories for test isolation
+    let temp_dir = TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Create a "remote" monorepo with multiple plugins
+    let monorepo = GitTestRepo::new();
+
+    // Create plugin-alpha in subdirectory
+    let alpha_dir = monorepo.path.join("plugin-alpha");
+    fs::create_dir_all(&alpha_dir).unwrap();
+    fs::write(
+        alpha_dir.join("main.ts"),
+        r#"
+/// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
+editor.registerCommand("alpha_cmd", "Alpha: Command", "alpha_cmd", null);
+globalThis.alpha_cmd = function() { editor.setStatus("Alpha plugin works!"); };
+"#,
+    )
+    .unwrap();
+    fs::write(
+        alpha_dir.join("package.json"),
+        r#"{
+    "name": "plugin-alpha",
+    "version": "2.0.0",
+    "description": "Alpha plugin from monorepo",
+    "type": "plugin",
+    "fresh": { "entry": "main.ts" }
+}"#,
+    )
+    .unwrap();
+
+    // Create plugin-beta in another subdirectory
+    let beta_dir = monorepo.path.join("plugin-beta");
+    fs::create_dir_all(&beta_dir).unwrap();
+    fs::write(
+        beta_dir.join("main.ts"),
+        r#"
+/// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
+editor.registerCommand("beta_cmd", "Beta: Command", "beta_cmd", null);
+globalThis.beta_cmd = function() { editor.setStatus("Beta plugin works!"); };
+"#,
+    )
+    .unwrap();
+    fs::write(
+        beta_dir.join("package.json"),
+        r#"{
+    "name": "plugin-beta",
+    "version": "3.0.0",
+    "description": "Beta plugin from monorepo",
+    "type": "plugin",
+    "fresh": { "entry": "main.ts" }
+}"#,
+    )
+    .unwrap();
+
+    // Add a root file to distinguish from subdirectory
+    fs::write(monorepo.path.join("README.md"), "# Monorepo").unwrap();
+
+    // Commit the monorepo
+    monorepo.git_add_all();
+    monorepo.git_commit("Initial monorepo with plugins");
+
+    // Create the main project repo
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+
+    let plugins_dir = repo.path.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "pkg");
+
+    // Create the packages directory in config dir
+    let config_plugins_dir = dir_context.config_dir.join("plugins");
+    fs::create_dir_all(&config_plugins_dir).unwrap();
+    let packages_dir = config_plugins_dir.join("packages");
+    fs::create_dir_all(&packages_dir).unwrap();
+
+    // Create empty registry so sync doesn't interfere
+    let index_dir = packages_dir.join(".index");
+    fs::create_dir_all(&index_dir).unwrap();
+    let fake_registry_dir = index_dir.join("193934da");
+    fs::create_dir_all(&fake_registry_dir).unwrap();
+    fs::write(
+        fake_registry_dir.join("plugins.json"),
+        r#"{"schema_version": 1, "updated": "2024-01-01", "packages": {}}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(fake_registry_dir.join(".git")).unwrap();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        120,
+        35,
+        Default::default(),
+        repo.path.clone(),
+        dir_context.clone(),
+    )
+    .unwrap();
+
+    // Open command palette and install from URL with subpath
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness.type_text("pkg: Install from URL").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Install from URL"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for the URL prompt
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Git URL"))
+        .unwrap();
+
+    // Enter monorepo URL with subpath fragment (note: # for subpath)
+    let monorepo_url = format!("file://{}#plugin-alpha", monorepo.path.display());
+    harness.type_text(&monorepo_url).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for installation to complete
+    harness
+        .wait_for_async(
+            |h| {
+                let screen = h.screen_to_string();
+                screen.contains("Installed")
+                    || screen.contains("Failed")
+                    || screen.contains("already")
+                    || screen.contains("activated")
+            },
+            15000,
+        )
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("After monorepo install:\n{}", screen);
+
+    // Verify the plugin directory structure is correct
+    let installed_plugin_dir = packages_dir.join("plugin-alpha");
+
+    // Check that the package.json exists at the root of the installed plugin
+    let package_json_path = installed_plugin_dir.join("package.json");
+    assert!(
+        package_json_path.exists(),
+        "package.json should be at the root of installed plugin directory. \
+         Expected: {:?}, Directory contents: {:?}",
+        package_json_path,
+        fs::read_dir(&installed_plugin_dir)
+            .map(|entries| entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name())
+                .collect::<Vec<_>>())
+            .unwrap_or_default()
+    );
+
+    // Verify it's the correct package.json (from subdirectory, not a root one)
+    let package_json_content = fs::read_to_string(&package_json_path).unwrap();
+    assert!(
+        package_json_content.contains("\"version\": \"2.0.0\""),
+        "package.json should have version 2.0.0 from plugin-alpha. Content: {}",
+        package_json_content
+    );
+    assert!(
+        package_json_content.contains("plugin-alpha"),
+        "package.json should be for plugin-alpha. Content: {}",
+        package_json_content
+    );
+
+    // Check that main.ts exists
+    let main_ts_path = installed_plugin_dir.join("main.ts");
+    assert!(
+        main_ts_path.exists(),
+        "main.ts should exist at root of installed plugin. Path: {:?}",
+        main_ts_path
+    );
+
+    // Verify the monorepo root files are NOT present (README.md, plugin-beta directory)
+    let readme_path = installed_plugin_dir.join("README.md");
+    assert!(
+        !readme_path.exists(),
+        "README.md from monorepo root should NOT be in installed plugin. \
+         The entire monorepo was cloned instead of just the subdirectory."
+    );
+
+    let beta_in_alpha = installed_plugin_dir.join("plugin-beta");
+    assert!(
+        !beta_in_alpha.exists(),
+        "plugin-beta directory should NOT be in installed plugin-alpha. \
+         The entire monorepo was cloned instead of just the subdirectory."
+    );
+}

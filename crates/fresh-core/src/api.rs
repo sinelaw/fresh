@@ -1341,6 +1341,33 @@ pub enum PluginCommand {
         /// Path to save to
         path: PathBuf,
     },
+
+    /// Load a plugin from a file path
+    /// The plugin will be initialized and start receiving events
+    LoadPlugin {
+        /// Path to the plugin file (.ts or .js)
+        path: PathBuf,
+        /// Callback ID for async response (success/failure)
+        callback_id: JsCallbackId,
+    },
+
+    /// Unload a plugin by name
+    /// The plugin will stop receiving events and be removed from memory
+    UnloadPlugin {
+        /// Plugin name (as registered)
+        name: String,
+        /// Callback ID for async response (success/failure)
+        callback_id: JsCallbackId,
+    },
+
+    /// Reload a plugin by name (unload + load)
+    /// Useful for development when plugin code changes
+    ReloadPlugin {
+        /// Plugin name (as registered)
+        name: String,
+        /// Callback ID for async response (success/failure)
+        callback_id: JsCallbackId,
+    },
 }
 
 /// Hunk status for Review Diff

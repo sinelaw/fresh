@@ -104,6 +104,8 @@ use crate::view::ui::{
 use crossterm::event::{KeyCode, KeyModifiers};
 #[cfg(feature = "plugins")]
 use fresh_core::api::BufferSavedDiff;
+#[cfg(feature = "plugins")]
+use fresh_core::api::JsCallbackId;
 use fresh_core::api::PluginCommand;
 use lsp_types::{Position, Range as LspRange, TextDocumentContentChangeEvent};
 use ratatui::{
@@ -5043,6 +5045,27 @@ impl Editor {
             PluginCommand::SaveBufferToPath { buffer_id, path } => {
                 self.handle_save_buffer_to_path(buffer_id, path);
             }
+
+            // ==================== Plugin Management ====================
+            #[cfg(feature = "plugins")]
+            PluginCommand::LoadPlugin { path, callback_id } => {
+                self.handle_load_plugin(path, callback_id);
+            }
+            #[cfg(feature = "plugins")]
+            PluginCommand::UnloadPlugin { name, callback_id } => {
+                self.handle_unload_plugin(name, callback_id);
+            }
+            #[cfg(feature = "plugins")]
+            PluginCommand::ReloadPlugin { name, callback_id } => {
+                self.handle_reload_plugin(name, callback_id);
+            }
+            // When plugins feature is disabled, these commands are no-ops
+            #[cfg(not(feature = "plugins"))]
+            PluginCommand::LoadPlugin { .. }
+            | PluginCommand::UnloadPlugin { .. }
+            | PluginCommand::ReloadPlugin { .. } => {
+                tracing::warn!("Plugin management commands require the 'plugins' feature");
+            }
         }
         Ok(())
     }
@@ -5067,6 +5090,57 @@ impl Editor {
         } else {
             self.handle_set_status(format!("Buffer {:?} not found", buffer_id));
             tracing::warn!("SaveBufferToPath: buffer {:?} not found", buffer_id);
+        }
+    }
+
+    /// Load a plugin from a file path
+    #[cfg(feature = "plugins")]
+    fn handle_load_plugin(&mut self, path: std::path::PathBuf, callback_id: JsCallbackId) {
+        match self.plugin_manager.load_plugin(&path) {
+            Ok(()) => {
+                tracing::info!("Loaded plugin from {:?}", path);
+                self.plugin_manager
+                    .resolve_callback(callback_id, "true".to_string());
+            }
+            Err(e) => {
+                tracing::error!("Failed to load plugin from {:?}: {}", path, e);
+                self.plugin_manager
+                    .reject_callback(callback_id, format!("{}", e));
+            }
+        }
+    }
+
+    /// Unload a plugin by name
+    #[cfg(feature = "plugins")]
+    fn handle_unload_plugin(&mut self, name: String, callback_id: JsCallbackId) {
+        match self.plugin_manager.unload_plugin(&name) {
+            Ok(()) => {
+                tracing::info!("Unloaded plugin: {}", name);
+                self.plugin_manager
+                    .resolve_callback(callback_id, "true".to_string());
+            }
+            Err(e) => {
+                tracing::error!("Failed to unload plugin '{}': {}", name, e);
+                self.plugin_manager
+                    .reject_callback(callback_id, format!("{}", e));
+            }
+        }
+    }
+
+    /// Reload a plugin by name
+    #[cfg(feature = "plugins")]
+    fn handle_reload_plugin(&mut self, name: String, callback_id: JsCallbackId) {
+        match self.plugin_manager.reload_plugin(&name) {
+            Ok(()) => {
+                tracing::info!("Reloaded plugin: {}", name);
+                self.plugin_manager
+                    .resolve_callback(callback_id, "true".to_string());
+            }
+            Err(e) => {
+                tracing::error!("Failed to reload plugin '{}': {}", name, e);
+                self.plugin_manager
+                    .reject_callback(callback_id, format!("{}", e));
+            }
         }
     }
 

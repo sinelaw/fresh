@@ -2403,6 +2403,68 @@ impl JsEditorApi {
     pub fn get_current_locale(&self) -> String {
         self.services.current_locale()
     }
+
+    // === Plugin Management ===
+
+    /// Load a plugin from a file path (async)
+    #[plugin_api(async_promise, js_name = "loadPlugin", ts_return = "boolean")]
+    #[qjs(rename = "_loadPluginStart")]
+    pub fn load_plugin_start(&self, _ctx: rquickjs::Ctx<'_>, path: String) -> u64 {
+        let id = {
+            let mut id_ref = self.next_request_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            self.callback_contexts
+                .borrow_mut()
+                .insert(id, self.plugin_name.clone());
+            id
+        };
+        let _ = self.command_sender.send(PluginCommand::LoadPlugin {
+            path: std::path::PathBuf::from(path),
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
+    /// Unload a plugin by name (async)
+    #[plugin_api(async_promise, js_name = "unloadPlugin", ts_return = "boolean")]
+    #[qjs(rename = "_unloadPluginStart")]
+    pub fn unload_plugin_start(&self, _ctx: rquickjs::Ctx<'_>, name: String) -> u64 {
+        let id = {
+            let mut id_ref = self.next_request_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            self.callback_contexts
+                .borrow_mut()
+                .insert(id, self.plugin_name.clone());
+            id
+        };
+        let _ = self.command_sender.send(PluginCommand::UnloadPlugin {
+            name,
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
+    /// Reload a plugin by name (async)
+    #[plugin_api(async_promise, js_name = "reloadPlugin", ts_return = "boolean")]
+    #[qjs(rename = "_reloadPluginStart")]
+    pub fn reload_plugin_start(&self, _ctx: rquickjs::Ctx<'_>, name: String) -> u64 {
+        let id = {
+            let mut id_ref = self.next_request_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            self.callback_contexts
+                .borrow_mut()
+                .insert(id, self.plugin_name.clone());
+            id
+        };
+        let _ = self.command_sender.send(PluginCommand::ReloadPlugin {
+            name,
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
 }
 
 /// QuickJS-based JavaScript runtime for plugins
@@ -2667,6 +2729,9 @@ impl QuickJsBackend {
                 editor.getBufferText = _wrapAsync("_getBufferTextStart", "getBufferText");
                 editor.createCompositeBuffer = _wrapAsync("_createCompositeBufferStart", "createCompositeBuffer");
                 editor.getHighlights = _wrapAsync("_getHighlightsStart", "getHighlights");
+                editor.loadPlugin = _wrapAsync("_loadPluginStart", "loadPlugin");
+                editor.unloadPlugin = _wrapAsync("_unloadPluginStart", "unloadPlugin");
+                editor.reloadPlugin = _wrapAsync("_reloadPluginStart", "reloadPlugin");
 
                 // Wrapper for deleteTheme - wraps sync function in Promise
                 editor.deleteTheme = function(name) {
@@ -4948,5 +5013,189 @@ mod tests {
         if JSEDITORAPI_JS_METHODS.len() > 20 {
             println!("  ... and {} more", JSEDITORAPI_JS_METHODS.len() - 20);
         }
+    }
+
+    // ==================== Plugin Management API Tests ====================
+
+    #[test]
+    fn test_api_load_plugin_sends_command() {
+        let (mut backend, rx) = create_test_backend();
+
+        // Call loadPlugin - this returns a Promise and sends the command
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis._loadPromise = editor.loadPlugin("/path/to/plugin.ts");
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        // Verify the LoadPlugin command was sent
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            PluginCommand::LoadPlugin { path, callback_id } => {
+                assert_eq!(path.to_str().unwrap(), "/path/to/plugin.ts");
+                assert!(callback_id.0 > 0); // Should have a valid callback ID
+            }
+            _ => panic!("Expected LoadPlugin, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn test_api_unload_plugin_sends_command() {
+        let (mut backend, rx) = create_test_backend();
+
+        // Call unloadPlugin - this returns a Promise and sends the command
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis._unloadPromise = editor.unloadPlugin("my-plugin");
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        // Verify the UnloadPlugin command was sent
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            PluginCommand::UnloadPlugin { name, callback_id } => {
+                assert_eq!(name, "my-plugin");
+                assert!(callback_id.0 > 0); // Should have a valid callback ID
+            }
+            _ => panic!("Expected UnloadPlugin, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn test_api_reload_plugin_sends_command() {
+        let (mut backend, rx) = create_test_backend();
+
+        // Call reloadPlugin - this returns a Promise and sends the command
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis._reloadPromise = editor.reloadPlugin("my-plugin");
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        // Verify the ReloadPlugin command was sent
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            PluginCommand::ReloadPlugin { name, callback_id } => {
+                assert_eq!(name, "my-plugin");
+                assert!(callback_id.0 > 0); // Should have a valid callback ID
+            }
+            _ => panic!("Expected ReloadPlugin, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn test_api_load_plugin_resolves_callback() {
+        let (mut backend, rx) = create_test_backend();
+
+        // Call loadPlugin and set up a handler for when it resolves
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis._loadResult = null;
+            editor.loadPlugin("/path/to/plugin.ts").then(result => {
+                globalThis._loadResult = result;
+            });
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        // Get the callback_id from the command
+        let callback_id = match rx.try_recv().unwrap() {
+            PluginCommand::LoadPlugin { callback_id, .. } => callback_id,
+            cmd => panic!("Expected LoadPlugin, got {:?}", cmd),
+        };
+
+        // Simulate the editor responding with success
+        backend.resolve_callback(callback_id, "true");
+
+        // Drive the Promise to completion
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                run_pending_jobs_checked(&ctx, "test async loadPlugin");
+            });
+
+        // Verify the Promise resolved with true
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                let result: bool = global.get("_loadResult").unwrap();
+                assert!(result);
+            });
+    }
+
+    #[test]
+    fn test_api_unload_plugin_rejects_on_error() {
+        let (mut backend, rx) = create_test_backend();
+
+        // Call unloadPlugin and set up handlers for resolve/reject
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis._unloadError = null;
+            editor.unloadPlugin("nonexistent-plugin").catch(err => {
+                globalThis._unloadError = err.message || String(err);
+            });
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        // Get the callback_id from the command
+        let callback_id = match rx.try_recv().unwrap() {
+            PluginCommand::UnloadPlugin { callback_id, .. } => callback_id,
+            cmd => panic!("Expected UnloadPlugin, got {:?}", cmd),
+        };
+
+        // Simulate the editor responding with an error
+        backend.reject_callback(callback_id, "Plugin 'nonexistent-plugin' not found");
+
+        // Drive the Promise to completion
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                run_pending_jobs_checked(&ctx, "test async unloadPlugin");
+            });
+
+        // Verify the Promise rejected with the error
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                let error: String = global.get("_unloadError").unwrap();
+                assert!(error.contains("nonexistent-plugin"));
+            });
     }
 }
