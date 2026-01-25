@@ -1283,6 +1283,21 @@ function buildListViewEntries(): TextPropertyEntry[] {
   // Empty line after header
   entries.push({ text: "\n", properties: { type: "blank" } });
 
+  // === SEARCH BAR (input-style) ===
+  const searchFocused = isButtonFocused("search");
+  const searchInputWidth = 30;
+  const searchText = pkgState.searchQuery || "";
+  const searchDisplay = searchText.length > searchInputWidth - 1
+    ? searchText.slice(0, searchInputWidth - 2) + "…"
+    : searchText.padEnd(searchInputWidth);
+
+  entries.push({ text: " Search: ", properties: { type: "search-label" } });
+  entries.push({
+    text: searchFocused ? `[${searchDisplay}]` : ` ${searchDisplay} `,
+    properties: { type: "search-input", focused: searchFocused },
+  });
+  entries.push({ text: "\n", properties: { type: "newline" } });
+
   // === FILTER BAR with focusable buttons ===
   const filters: Array<{ id: string; label: string }> = [
     { id: "all", label: "All" },
@@ -1317,13 +1332,6 @@ function buildListViewEntries(): TextPropertyEntry[] {
   const syncLeft = syncFocused ? "[" : " ";
   const syncRight = syncFocused ? "]" : " ";
   filterBarParts.push({ text: `${syncLeft} Sync ${syncRight}`, type: "sync-btn", focused: syncFocused });
-
-  // Search button - always reserve space for brackets
-  const searchFocused = isButtonFocused("search");
-  const searchLeft = searchFocused ? "[" : " ";
-  const searchRight = searchFocused ? "]" : " ";
-  const searchLabel = pkgState.searchQuery ? `Search: ${pkgState.searchQuery}` : "Search";
-  filterBarParts.push({ text: `${searchLeft} ${searchLabel} ${searchRight}`, type: "search-btn", focused: searchFocused });
 
   // Emit each filter bar part as separate entry for individual styling
   for (const part of filterBarParts) {
@@ -1591,8 +1599,12 @@ function applyPkgManagerHighlighting(): void {
         themeStyle = props.focused ? pkgTheme.buttonFocused : pkgTheme.button;
         break;
 
-      case "search-btn":
-        // Search box has distinct input field styling
+      case "search-label":
+        themeStyle = pkgTheme.infoLabel;
+        break;
+
+      case "search-input":
+        // Search input field styling - distinct background
         themeStyle = props.focused ? pkgTheme.searchBoxFocused : pkgTheme.searchBox;
         break;
 
@@ -1765,12 +1777,12 @@ function closePackageManager(): void {
  */
 function getFocusOrder(): FocusTarget[] {
   const order: FocusTarget[] = [
+    { type: "search" },
     { type: "filter", index: 0 },
     { type: "filter", index: 1 },
     { type: "filter", index: 2 },
     { type: "filter", index: 3 },
     { type: "sync" },
-    { type: "search" },
     { type: "list" },
   ];
 
