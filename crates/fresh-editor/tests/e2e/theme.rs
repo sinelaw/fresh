@@ -72,8 +72,7 @@ fn test_theme_loading_from_config_high_contrast() {
 }
 
 #[test]
-#[ignore = "Theme loading now errors instead of falling back - behavior change from json theme refactor"]
-fn test_invalid_theme_falls_back_to_dark() {
+fn test_invalid_theme_falls_back_to_default() {
     let config = Config {
         theme: "nonexistent-theme".into(),
         ..Default::default()
@@ -81,9 +80,9 @@ fn test_invalid_theme_falls_back_to_dark() {
 
     let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 
-    // Should fall back to dark theme
+    // Should fall back to default theme (high-contrast)
     let theme = harness.editor().theme();
-    assert_eq!(theme.name, "dark");
+    assert_eq!(theme.name, "high-contrast");
 }
 
 #[test]

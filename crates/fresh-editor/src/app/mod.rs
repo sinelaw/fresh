@@ -762,10 +762,18 @@ impl Editor {
         let theme_loader = crate::view::theme::ThemeLoader::new();
         let theme_registry = theme_loader.load_all();
 
-        // Get active theme from registry
-        let theme = theme_registry
-            .get_cloned(&config.theme)
-            .ok_or_else(|| anyhow::anyhow!("Theme '{}' not found", config.theme.0))?;
+        // Get active theme from registry, falling back to default if not found
+        let theme = theme_registry.get_cloned(&config.theme).unwrap_or_else(|| {
+            tracing::warn!(
+                "Theme '{}' not found, falling back to default theme",
+                config.theme.0
+            );
+            theme_registry
+                .get_cloned(&crate::config::ThemeName(
+                    crate::view::theme::THEME_HIGH_CONTRAST.to_string(),
+                ))
+                .expect("Default theme must exist")
+        });
 
         // Set terminal cursor color to match theme
         theme.set_terminal_cursor_color();
