@@ -4203,6 +4203,9 @@ impl Editor {
             PluginCommand::ReloadConfig => {
                 self.reload_config();
             }
+            PluginCommand::ReloadThemes => {
+                self.reload_themes();
+            }
             PluginCommand::StartPrompt { label, prompt_type } => {
                 self.handle_start_prompt(label, prompt_type);
             }

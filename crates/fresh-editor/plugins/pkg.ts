@@ -581,10 +581,13 @@ async function installFromRepo(
 
   const manifest = validation.manifest;
 
-  // Dynamically load plugins
+  // Dynamically load plugins or reload themes
   if (manifest?.type === "plugin" && validation.entryPath) {
     await editor.loadPlugin(validation.entryPath);
     editor.setStatus(`Installed and activated ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+  } else if (manifest?.type === "theme") {
+    editor.reloadThemes();
+    editor.setStatus(`Installed theme ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
   } else {
     editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
   }
@@ -672,10 +675,13 @@ async function installFromMonorepo(
 
     const manifest = validation.manifest;
 
-    // Dynamically load plugins
+    // Dynamically load plugins or reload themes
     if (manifest?.type === "plugin" && validation.entryPath) {
       await editor.loadPlugin(validation.entryPath);
       editor.setStatus(`Installed and activated ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    } else if (manifest?.type === "theme") {
+      editor.reloadThemes();
+      editor.setStatus(`Installed theme ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
     } else {
       editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
     }

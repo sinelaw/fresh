@@ -774,6 +774,11 @@ interface EditorAPI {
 	*/
 	reloadConfig(): void;
 	/**
+	* Reload theme registry from disk
+	* Call this after installing theme packages or saving new themes
+	*/
+	reloadThemes(): void;
+	/**
 	* Get config directory path
 	*/
 	getConfigDir(): string;

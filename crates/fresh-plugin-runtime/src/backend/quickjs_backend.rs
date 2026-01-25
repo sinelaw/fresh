@@ -1047,6 +1047,12 @@ impl JsEditorApi {
         let _ = self.command_sender.send(PluginCommand::ReloadConfig);
     }
 
+    /// Reload theme registry from disk
+    /// Call this after installing theme packages or saving new themes
+    pub fn reload_themes(&self) {
+        let _ = self.command_sender.send(PluginCommand::ReloadThemes);
+    }
+
     /// Get config directory path
     pub fn get_config_dir(&self) -> String {
         self.services.config_dir().to_string_lossy().to_string()

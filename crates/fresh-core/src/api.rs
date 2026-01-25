@@ -1368,6 +1368,10 @@ pub enum PluginCommand {
         /// Callback ID for async response (success/failure)
         callback_id: JsCallbackId,
     },
+
+    /// Reload the theme registry from disk
+    /// Call this after installing a theme package or saving a new theme
+    ReloadThemes,
 }
 
 /// Hunk status for Review Diff

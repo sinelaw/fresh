@@ -274,4 +274,28 @@ impl Editor {
             }),
         );
     }
+
+    /// Reload the theme registry from disk.
+    ///
+    /// Call this after installing new theme packages or saving new themes.
+    /// This rescans all theme directories and updates the available themes list.
+    pub fn reload_themes(&mut self) {
+        use crate::view::theme::ThemeLoader;
+
+        let theme_loader = ThemeLoader::new();
+        self.theme_registry = theme_loader.load_all();
+
+        // Re-apply current theme if it still exists, otherwise it might have been updated
+        if let Some(theme) = self.theme_registry.get_cloned(&self.config.theme) {
+            self.theme = theme;
+        }
+
+        tracing::info!(
+            "Theme registry reloaded ({} themes)",
+            self.theme_registry.len()
+        );
+
+        // Emit event so plugins know themes changed
+        self.emit_event("themes_changed", serde_json::json!({}));
+    }
 }

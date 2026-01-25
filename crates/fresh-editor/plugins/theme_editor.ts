@@ -1333,7 +1333,8 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
       moveCursorToField(restorePath);
     }
 
-    // Automatically apply the saved theme
+    // Reload themes so the new/updated theme is available, then apply it
+    editor.reloadThemes();
     editor.applyTheme(themeName);
     editor.setStatus(editor.t("status.saved_and_applied", { name: themeName }));
     return true;
