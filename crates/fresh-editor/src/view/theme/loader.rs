@@ -327,7 +327,7 @@ mod tests {
         let registry = loader.load_all();
 
         // Should have loaded all embedded themes
-        assert!(registry.len() >= 17); // 7 root + 10 xscriptor
+        assert!(registry.len() >= 7); // 7 root themes (xscriptor moved to external repo)
 
         // Verify theme content is correct
         let dark = registry.get("dark").unwrap();

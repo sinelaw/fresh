@@ -207,6 +207,7 @@
   "action.show_lsp_status": "Показати статус LSP",
   "action.show_macro": "Показати макрос '%{key}' у буфері",
   "action.show_warnings": "Показати попередження",
+  "action.show_status_log": "Показати журнал повідомлень стану",
   "action.smart_home": "Розумний Home (перемкнути початок рядка / перший непробільний символ)",
   "action.split_horizontal": "Розділити горизонтально",
   "action.split_vertical": "Розділити вертикально",

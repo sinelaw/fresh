@@ -207,6 +207,7 @@
   "action.show_lsp_status": "LSPステータスを表示",
   "action.show_macro": "マクロ '%{key}' をバッファに表示",
   "action.show_warnings": "警告を表示",
+  "action.show_status_log": "ステータスメッセージログを表示",
   "action.smart_home": "スマートホーム (行頭/最初の非空白文字を切り替え)",
   "action.split_horizontal": "水平に分割",
   "action.split_vertical": "垂直に分割",

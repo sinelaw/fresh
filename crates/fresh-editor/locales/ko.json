@@ -207,6 +207,7 @@
   "action.show_lsp_status": "LSP 상태 표시",
   "action.show_macro": "버퍼에 매크로 '%{key}' 표시",
   "action.show_warnings": "경고 표시",
+  "action.show_status_log": "상태 메시지 로그 표시",
   "action.smart_home": "스마트 홈 (줄 시작 / 첫 비공백 문자 전환)",
   "action.split_horizontal": "가로로 분할",
   "action.split_vertical": "세로로 분할",

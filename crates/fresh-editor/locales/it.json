@@ -207,6 +207,7 @@
   "action.show_lsp_status": "Mostra stato LSP",
   "action.show_macro": "Mostra macro '%{key}' nel buffer",
   "action.show_warnings": "Mostra avvisi",
+  "action.show_status_log": "Mostra registro messaggi di stato",
   "action.smart_home": "Inizio riga intelligente (alterna inizio riga / primo carattere non vuoto)",
   "action.split_horizontal": "Dividi orizzontalmente",
   "action.split_vertical": "Dividi verticalmente",

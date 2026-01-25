@@ -207,6 +207,7 @@
   "action.show_lsp_status": "แสดงสถานะ LSP",
   "action.show_macro": "แสดงมาโคร '%{key}' ในบัฟเฟอร์",
   "action.show_warnings": "แสดงคำเตือน",
+  "action.show_status_log": "แสดงบันทึกข้อความสถานะ",
   "action.smart_home": "สมาร์ทโฮม (สลับต้นบรรทัด / ตัวแรก)",
   "action.split_horizontal": "แบ่งแนวนอน",
   "action.split_vertical": "แบ่งแนวตั้ง",

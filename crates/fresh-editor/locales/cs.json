@@ -207,6 +207,7 @@
   "action.show_lsp_status": "Zobrazit stav LSP",
   "action.show_macro": "Zobrazit makro '%{key}' v bufferu",
   "action.show_warnings": "Zobrazit varování",
+  "action.show_status_log": "Zobrazit protokol stavových zpráv",
   "action.smart_home": "Chytrý začátek (přepínat začátek řádku / první neprázdný znak)",
   "action.split_horizontal": "Rozdělit vodorovně",
   "action.split_vertical": "Rozdělit svisle",

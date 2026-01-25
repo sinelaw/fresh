@@ -207,6 +207,7 @@
   "action.show_lsp_status": "Afficher l'état du LSP",
   "action.show_macro": "Afficher la macro '%{key}' dans le tampon",
   "action.show_warnings": "Afficher les avertissements",
+  "action.show_status_log": "Afficher le journal des messages d'état",
   "action.smart_home": "Début intelligent (basculer entre début de ligne / premier caractère non-blanc)",
   "action.split_horizontal": "Diviser horizontalement",
   "action.split_vertical": "Diviser verticalement",
