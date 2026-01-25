@@ -1,4 +1,5 @@
 use crate::model::piece_tree::PieceTree;
+pub use fresh_core::api::{OverlayColorSpec, OverlayOptions};
 pub use fresh_core::overlay::{OverlayHandle, OverlayNamespace};
 pub use fresh_core::{BufferId, CursorId, SplitDirection, SplitId};
 use serde::{Deserialize, Serialize};
@@ -228,14 +229,20 @@ pub enum OverlayFace {
     Foreground {
         color: (u8, u8, u8),
     },
-    /// Full style with multiple attributes
+    /// Full style with theme-aware colors
+    ///
+    /// Uses OverlayOptions which supports both RGB colors and theme keys.
+    /// Theme keys are resolved at render time.
     Style {
-        color: (u8, u8, u8),
-        bg_color: Option<(u8, u8, u8)>,
-        bold: bool,
-        italic: bool,
-        underline: bool,
+        options: OverlayOptions,
     },
+}
+
+impl OverlayFace {
+    /// Create an OverlayFace from OverlayOptions
+    pub fn from_options(options: OverlayOptions) -> Self {
+        OverlayFace::Style { options }
+    }
 }
 
 /// Underline style for overlays

@@ -357,6 +357,105 @@ pub struct LayoutHints {
 }
 
 // ============================================================================
+// Overlay Types with Theme Support
+// ============================================================================
+
+/// Color specification that can be either RGB values or a theme key.
+///
+/// Theme keys reference colors from the current theme, e.g.:
+/// - "ui.status_bar_bg" - UI status bar background
+/// - "editor.selection_bg" - Editor selection background
+/// - "syntax.keyword" - Syntax highlighting for keywords
+/// - "diagnostic.error" - Error diagnostic color
+///
+/// When a theme key is used, the color is resolved at render time,
+/// so overlays automatically update when the theme changes.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(untagged)]
+#[ts(export)]
+pub enum OverlayColorSpec {
+    /// RGB color as [r, g, b] array
+    #[ts(type = "[number, number, number]")]
+    Rgb(u8, u8, u8),
+    /// Theme key reference (e.g., "ui.status_bar_bg")
+    ThemeKey(String),
+}
+
+impl OverlayColorSpec {
+    /// Create an RGB color spec
+    pub fn rgb(r: u8, g: u8, b: u8) -> Self {
+        Self::Rgb(r, g, b)
+    }
+
+    /// Create a theme key color spec
+    pub fn theme_key(key: impl Into<String>) -> Self {
+        Self::ThemeKey(key.into())
+    }
+
+    /// Convert to RGB if this is an RGB spec, None if it's a theme key
+    pub fn as_rgb(&self) -> Option<(u8, u8, u8)> {
+        match self {
+            Self::Rgb(r, g, b) => Some((*r, *g, *b)),
+            Self::ThemeKey(_) => None,
+        }
+    }
+
+    /// Get the theme key if this is a theme key spec
+    pub fn as_theme_key(&self) -> Option<&str> {
+        match self {
+            Self::ThemeKey(key) => Some(key),
+            Self::Rgb(_, _, _) => None,
+        }
+    }
+}
+
+/// Options for adding an overlay with theme support.
+///
+/// This struct provides a type-safe way to specify overlay styling
+/// with optional theme key references for colors.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct OverlayOptions {
+    /// Foreground color - RGB array or theme key string
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fg: Option<OverlayColorSpec>,
+
+    /// Background color - RGB array or theme key string
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bg: Option<OverlayColorSpec>,
+
+    /// Whether to render with underline
+    #[serde(default)]
+    pub underline: bool,
+
+    /// Whether to render in bold
+    #[serde(default)]
+    pub bold: bool,
+
+    /// Whether to render in italic
+    #[serde(default)]
+    pub italic: bool,
+
+    /// Whether to extend background color to end of line
+    #[serde(default)]
+    pub extend_to_line_end: bool,
+}
+
+impl Default for OverlayOptions {
+    fn default() -> Self {
+        Self {
+            fg: None,
+            bg: None,
+            underline: false,
+            bold: false,
+            italic: false,
+            extend_to_line_end: false,
+        }
+    }
+}
+
+// ============================================================================
 // Composite Buffer Configuration (for multi-buffer single-tab views)
 // ============================================================================
 
@@ -648,16 +747,15 @@ pub enum PluginCommand {
     },
 
     /// Add an overlay to a buffer, returns handle via response channel
+    ///
+    /// Colors can be specified as RGB tuples or theme keys. When theme keys
+    /// are provided, they take precedence and are resolved at render time.
     AddOverlay {
         buffer_id: BufferId,
         namespace: Option<OverlayNamespace>,
         range: Range<usize>,
-        color: (u8, u8, u8),
-        bg_color: Option<(u8, u8, u8)>,
-        underline: bool,
-        bold: bool,
-        italic: bool,
-        extend_to_line_end: bool,
+        /// Overlay styling options (colors, modifiers, etc.)
+        options: OverlayOptions,
     },
 
     /// Remove an overlay by its opaque handle
@@ -1752,30 +1850,24 @@ impl PluginApi {
     }
 
     /// Add an overlay (decoration) to a buffer
-    /// Returns an opaque handle that can be used to remove the overlay later
-    #[allow(clippy::too_many_arguments)]
+    /// Add an overlay to a buffer with styling options
+    ///
+    /// Returns an opaque handle that can be used to remove the overlay later.
+    ///
+    /// Colors can be specified as RGB arrays or theme key strings.
+    /// Theme keys are resolved at render time, so overlays update with theme changes.
     pub fn add_overlay(
         &self,
         buffer_id: BufferId,
         namespace: Option<String>,
         range: Range<usize>,
-        color: (u8, u8, u8),
-        bg_color: Option<(u8, u8, u8)>,
-        underline: bool,
-        bold: bool,
-        italic: bool,
-        extend_to_line_end: bool,
+        options: OverlayOptions,
     ) -> Result<(), String> {
         self.send_command(PluginCommand::AddOverlay {
             buffer_id,
             namespace: namespace.map(OverlayNamespace::from_string),
             range,
-            color,
-            bg_color,
-            underline,
-            bold,
-            italic,
-            extend_to_line_end,
+            options,
         })
     }
 
@@ -2133,12 +2225,14 @@ mod tests {
             BufferId(1),
             Some("test-overlay".to_string()),
             0..10,
-            (255, 0, 0),
-            None,
-            true,
-            false,
-            false,
-            false,
+            OverlayOptions {
+                fg: Some(OverlayColorSpec::ThemeKey("ui.status_bar_fg".to_string())),
+                bg: None,
+                underline: true,
+                bold: false,
+                italic: false,
+                extend_to_line_end: false,
+            },
         );
         assert!(result.is_ok());
 
@@ -2148,22 +2242,20 @@ mod tests {
                 buffer_id,
                 namespace,
                 range,
-                color,
-                bg_color,
-                underline,
-                bold,
-                italic,
-                extend_to_line_end,
+                options,
             } => {
                 assert_eq!(buffer_id.0, 1);
                 assert_eq!(namespace.as_ref().map(|n| n.as_str()), Some("test-overlay"));
                 assert_eq!(range, 0..10);
-                assert_eq!(color, (255, 0, 0));
-                assert_eq!(bg_color, None);
-                assert!(underline);
-                assert!(!bold);
-                assert!(!italic);
-                assert!(!extend_to_line_end);
+                assert!(matches!(
+                    options.fg,
+                    Some(OverlayColorSpec::ThemeKey(ref k)) if k == "ui.status_bar_fg"
+                ));
+                assert!(options.bg.is_none());
+                assert!(options.underline);
+                assert!(!options.bold);
+                assert!(!options.italic);
+                assert!(!options.extend_to_line_end);
             }
             _ => panic!("Wrong command type"),
         }

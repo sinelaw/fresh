@@ -557,19 +557,12 @@ async function updateReviewUI() {
     
     editor.clearNamespace(state.reviewBufferId, "review-diff");
     highlights.forEach((h) => {
-        const bg = h.bg || [-1, -1, -1];
-        // addOverlay signature: bufferId, namespace, start, end, r, g, b, underline, bold, italic, bg_r, bg_g, bg_b
-        editor.addOverlay(
-            state.reviewBufferId!,
-            "review-diff",
-            h.range[0],
-            h.range[1],
-            h.fg[0], h.fg[1], h.fg[2],  // foreground color
-            false,                       // underline
-            h.bold || false,             // bold
-            h.italic || false,           // italic
-            bg[0], bg[1], bg[2]          // background color
-        );
+        editor.addOverlay(state.reviewBufferId!, "review-diff", h.range[0], h.range[1], {
+            fg: h.fg,
+            bg: h.bg,
+            bold: h.bold || false,
+            italic: h.italic || false,
+        });
     });
   }
 }

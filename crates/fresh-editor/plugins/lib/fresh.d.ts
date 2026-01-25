@@ -835,9 +835,23 @@ interface EditorAPI {
 	*/
 	getHighlights(bufferId: number, start: number, end: number): Promise<TsHighlightSpan[]>;
 	/**
-	* Add an overlay with styling
+	* Add an overlay with styling options
+	* 
+	* Colors can be specified as RGB arrays `[r, g, b]` or theme key strings.
+	* Theme keys are resolved at render time, so overlays update with theme changes.
+	* 
+	* Theme key examples: "ui.status_bar_fg", "editor.selection_bg", "syntax.keyword"
+	* 
+	* Example usage in TypeScript:
+	* ```typescript
+	* editor.addOverlay(bufferId, "my-namespace", 0, 10, {
+	* fg: "syntax.keyword",           // theme key
+	* bg: [40, 40, 50],               // RGB array
+	* bold: true,
+	* });
+	* ```
 	*/
-	addOverlay(bufferId: number, namespace: string, start: number, end: number, r: number, g: number, b: number, underline?: boolean, bold?: boolean, italic?: boolean, bgR?: number, bgG?: number, bgB?: number, extendToLineEnd?: boolean): boolean;
+	addOverlay(bufferId: number, namespace: string, start: number, end: number, options: Record<string, unknown>): boolean;
 	/**
 	* Clear all overlays in a namespace
 	*/

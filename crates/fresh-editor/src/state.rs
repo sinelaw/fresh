@@ -775,32 +775,63 @@ fn convert_event_face_to_overlay_face(event_face: &EventOverlayFace) -> OverlayF
         EventOverlayFace::Foreground { color } => OverlayFace::Foreground {
             color: Color::Rgb(color.0, color.1, color.2),
         },
-        EventOverlayFace::Style {
-            color,
-            bg_color,
-            bold,
-            italic,
-            underline,
-        } => {
+        EventOverlayFace::Style { options } => {
             use ratatui::style::Modifier;
-            let mut style = Style::default().fg(Color::Rgb(color.0, color.1, color.2));
-            if let Some(bg) = bg_color {
-                style = style.bg(Color::Rgb(bg.0, bg.1, bg.2));
+
+            // Build fallback style from RGB values
+            let mut style = Style::default();
+
+            // Extract foreground color (RGB fallback or default white)
+            if let Some(ref fg) = options.fg {
+                if let Some((r, g, b)) = fg.as_rgb() {
+                    style = style.fg(Color::Rgb(r, g, b));
+                }
             }
+
+            // Extract background color (RGB fallback)
+            if let Some(ref bg) = options.bg {
+                if let Some((r, g, b)) = bg.as_rgb() {
+                    style = style.bg(Color::Rgb(r, g, b));
+                }
+            }
+
+            // Apply modifiers
             let mut modifiers = Modifier::empty();
-            if *bold {
+            if options.bold {
                 modifiers |= Modifier::BOLD;
             }
-            if *italic {
+            if options.italic {
                 modifiers |= Modifier::ITALIC;
             }
-            if *underline {
+            if options.underline {
                 modifiers |= Modifier::UNDERLINED;
             }
             if !modifiers.is_empty() {
                 style = style.add_modifier(modifiers);
             }
-            OverlayFace::Style { style }
+
+            // Extract theme keys
+            let fg_theme = options
+                .fg
+                .as_ref()
+                .and_then(|c| c.as_theme_key())
+                .map(String::from);
+            let bg_theme = options
+                .bg
+                .as_ref()
+                .and_then(|c| c.as_theme_key())
+                .map(String::from);
+
+            // If theme keys are provided, use ThemedStyle for runtime resolution
+            if fg_theme.is_some() || bg_theme.is_some() {
+                OverlayFace::ThemedStyle {
+                    fallback_style: style,
+                    fg_theme,
+                    bg_theme,
+                }
+            } else {
+                OverlayFace::Style { style }
+            }
         }
     }
 }

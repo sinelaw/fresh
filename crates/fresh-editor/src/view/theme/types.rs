@@ -1152,6 +1152,99 @@ impl Theme {
             serde_json::from_str(json).map_err(|e| format!("Failed to parse theme JSON: {}", e))?;
         Ok(theme_file.into())
     }
+
+    /// Resolve a theme key to a Color.
+    ///
+    /// Theme keys use dot notation: "section.field"
+    /// Examples:
+    /// - "ui.status_bar_fg" -> status_bar_fg
+    /// - "editor.selection_bg" -> selection_bg
+    /// - "syntax.keyword" -> syntax_keyword
+    /// - "diagnostic.error_fg" -> diagnostic_error_fg
+    ///
+    /// Returns None if the key is not recognized.
+    pub fn resolve_theme_key(&self, key: &str) -> Option<Color> {
+        // Parse "section.field" format
+        let parts: Vec<&str> = key.split('.').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+
+        let (section, field) = (parts[0], parts[1]);
+
+        match section {
+            "editor" => match field {
+                "bg" => Some(self.editor_bg),
+                "fg" => Some(self.editor_fg),
+                "cursor" => Some(self.cursor),
+                "inactive_cursor" => Some(self.inactive_cursor),
+                "selection_bg" => Some(self.selection_bg),
+                "current_line_bg" => Some(self.current_line_bg),
+                "line_number_fg" => Some(self.line_number_fg),
+                "line_number_bg" => Some(self.line_number_bg),
+                "diff_add_bg" => Some(self.diff_add_bg),
+                "diff_remove_bg" => Some(self.diff_remove_bg),
+                "diff_modify_bg" => Some(self.diff_modify_bg),
+                _ => None,
+            },
+            "ui" => match field {
+                "tab_active_fg" => Some(self.tab_active_fg),
+                "tab_active_bg" => Some(self.tab_active_bg),
+                "tab_inactive_fg" => Some(self.tab_inactive_fg),
+                "tab_inactive_bg" => Some(self.tab_inactive_bg),
+                "status_bar_fg" => Some(self.status_bar_fg),
+                "status_bar_bg" => Some(self.status_bar_bg),
+                "prompt_fg" => Some(self.prompt_fg),
+                "prompt_bg" => Some(self.prompt_bg),
+                "prompt_selection_fg" => Some(self.prompt_selection_fg),
+                "prompt_selection_bg" => Some(self.prompt_selection_bg),
+                "popup_bg" => Some(self.popup_bg),
+                "popup_border_fg" => Some(self.popup_border_fg),
+                "popup_selection_bg" => Some(self.popup_selection_bg),
+                "popup_selection_fg" => Some(self.popup_selection_fg),
+                "popup_text_fg" => Some(self.popup_text_fg),
+                "menu_bg" => Some(self.menu_bg),
+                "menu_fg" => Some(self.menu_fg),
+                "menu_active_bg" => Some(self.menu_active_bg),
+                "menu_active_fg" => Some(self.menu_active_fg),
+                "help_bg" => Some(self.help_bg),
+                "help_fg" => Some(self.help_fg),
+                "help_key_fg" => Some(self.help_key_fg),
+                "split_separator_fg" => Some(self.split_separator_fg),
+                "scrollbar_thumb_fg" => Some(self.scrollbar_thumb_fg),
+                "semantic_highlight_bg" => Some(self.semantic_highlight_bg),
+                _ => None,
+            },
+            "syntax" => match field {
+                "keyword" => Some(self.syntax_keyword),
+                "string" => Some(self.syntax_string),
+                "comment" => Some(self.syntax_comment),
+                "function" => Some(self.syntax_function),
+                "type" => Some(self.syntax_type),
+                "variable" => Some(self.syntax_variable),
+                "constant" => Some(self.syntax_constant),
+                "operator" => Some(self.syntax_operator),
+                _ => None,
+            },
+            "diagnostic" => match field {
+                "error_fg" => Some(self.diagnostic_error_fg),
+                "error_bg" => Some(self.diagnostic_error_bg),
+                "warning_fg" => Some(self.diagnostic_warning_fg),
+                "warning_bg" => Some(self.diagnostic_warning_bg),
+                "info_fg" => Some(self.diagnostic_info_fg),
+                "info_bg" => Some(self.diagnostic_info_bg),
+                "hint_fg" => Some(self.diagnostic_hint_fg),
+                "hint_bg" => Some(self.diagnostic_hint_bg),
+                _ => None,
+            },
+            "search" => match field {
+                "match_bg" => Some(self.search_match_bg),
+                "match_fg" => Some(self.search_match_fg),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
 }
 
 // =============================================================================

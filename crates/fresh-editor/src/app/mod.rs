@@ -875,6 +875,8 @@ impl Editor {
         // 1. Next to the executable (for cargo-dist installations)
         // 2. In the working directory (for development/local usage)
         // 3. From embedded plugins (for cargo-binstall, when embed-plugins feature is enabled)
+        // 4. User plugins directory (~/.config/fresh/plugins)
+        // 5. Package manager installed plugins (~/.config/fresh/plugins/packages/*)
         if plugin_manager.is_active() {
             let mut plugin_dirs: Vec<std::path::PathBuf> = vec![];
 
@@ -902,6 +904,32 @@ impl Editor {
                 {
                     tracing::info!("Using embedded plugins from: {:?}", embedded_dir);
                     plugin_dirs.push(embedded_dir.clone());
+                }
+            }
+
+            // Always check user config plugins directory (~/.config/fresh/plugins)
+            let user_plugins_dir = dir_context.config_dir.join("plugins");
+            if user_plugins_dir.exists() && !plugin_dirs.contains(&user_plugins_dir) {
+                tracing::info!("Found user plugins directory: {:?}", user_plugins_dir);
+                plugin_dirs.push(user_plugins_dir.clone());
+            }
+
+            // Check for package manager installed plugins (~/.config/fresh/plugins/packages/*)
+            let packages_dir = dir_context.config_dir.join("plugins").join("packages");
+            if packages_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&packages_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        // Skip hidden directories (like .index for registry cache)
+                        if path.is_dir() {
+                            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                                if !name.starts_with('.') {
+                                    tracing::info!("Found package manager plugin: {:?}", path);
+                                    plugin_dirs.push(path);
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -3949,24 +3977,9 @@ impl Editor {
                 buffer_id,
                 namespace,
                 range,
-                color,
-                bg_color,
-                underline,
-                bold,
-                italic,
-                extend_to_line_end,
+                options,
             } => {
-                self.handle_add_overlay(
-                    buffer_id,
-                    namespace,
-                    range,
-                    color,
-                    bg_color,
-                    underline,
-                    bold,
-                    italic,
-                    extend_to_line_end,
-                );
+                self.handle_add_overlay(buffer_id, namespace, range, options);
             }
             PluginCommand::RemoveOverlay { buffer_id, handle } => {
                 self.handle_remove_overlay(buffer_id, handle);

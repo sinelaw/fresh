@@ -49,16 +49,9 @@ globalThis.highlight_region = function (): void {
   const end = cursorPos + 5;
 
   // Use namespace "demo" for batch operations
-  const success = editor.addOverlay(
-    bufferId,
-    "demo",  // namespace
-    start,
-    end,
-    255, // Red
-    255, // Green
-    0, // Blue (yellow highlight)
-    false // No underline
-  );
+  const success = editor.addOverlay(bufferId, "demo", start, end, {
+    fg: [255, 255, 0],  // Yellow highlight
+  });
 
   if (success) {
     editor.setStatus(`Highlighted region ${start}-${end}`);

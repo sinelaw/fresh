@@ -98,16 +98,10 @@ globalThis.bookmark_add = function (): void {
 
   // Add visual indicator with bookmark namespace
   const bufferId = editor.getActiveBufferId();
-  editor.addOverlay(
-    bufferId,
-    "bookmark",  // namespace for all bookmarks
-    position,
-    position + 1,
-    0, // Red
-    128, // Green (teal color)
-    255, // Blue
-    true // Underline
-  );
+  editor.addOverlay(bufferId, "bookmark", position, position + 1, {
+    fg: [0, 128, 255],  // Teal color
+    underline: true,
+  });
 
   editor.setStatus(`Added ${name} at ${path}:${line}:${column}`);
   editor.debug(`Bookmark ${id} created: ${JSON.stringify(bookmark)}`);

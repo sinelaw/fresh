@@ -88,6 +88,7 @@ pub struct PartialConfig {
     pub lsp: Option<HashMap<String, LspServerConfig>>,
     pub warnings: Option<PartialWarningsConfig>,
     pub plugins: Option<HashMap<String, PartialPluginConfig>>,
+    pub packages: Option<PartialPackagesConfig>,
 }
 
 impl Merge for PartialConfig {
@@ -103,6 +104,7 @@ impl Merge for PartialConfig {
         merge_partial(&mut self.file_browser, &other.file_browser);
         merge_partial(&mut self.terminal, &other.terminal);
         merge_partial(&mut self.warnings, &other.warnings);
+        merge_partial(&mut self.packages, &other.packages);
 
         // Lists: higher precedence replaces (per design doc)
         self.keybindings.merge_from(&other.keybindings);
@@ -288,6 +290,19 @@ impl Merge for PartialWarningsConfig {
     fn merge_from(&mut self, other: &Self) {
         self.show_status_indicator
             .merge_from(&other.show_status_indicator);
+    }
+}
+
+/// Partial packages configuration for plugin/theme package management.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PartialPackagesConfig {
+    pub sources: Option<Vec<String>>,
+}
+
+impl Merge for PartialPackagesConfig {
+    fn merge_from(&mut self, other: &Self) {
+        self.sources.merge_from(&other.sources);
     }
 }
 
@@ -574,6 +589,25 @@ impl PartialWarningsConfig {
     }
 }
 
+impl From<&crate::config::PackagesConfig> for PartialPackagesConfig {
+    fn from(cfg: &crate::config::PackagesConfig) -> Self {
+        Self {
+            sources: Some(cfg.sources.clone()),
+        }
+    }
+}
+
+impl PartialPackagesConfig {
+    pub fn resolve(
+        self,
+        defaults: &crate::config::PackagesConfig,
+    ) -> crate::config::PackagesConfig {
+        crate::config::PackagesConfig {
+            sources: self.sources.unwrap_or_else(|| defaults.sources.clone()),
+        }
+    }
+}
+
 impl From<&PluginConfig> for PartialPluginConfig {
     fn from(cfg: &PluginConfig) -> Self {
         Self {
@@ -686,6 +720,7 @@ impl From<&crate::config::Config> for PartialConfig {
                     Some(non_default_plugins)
                 }
             },
+            packages: Some(PartialPackagesConfig::from(&cfg.packages)),
         }
     }
 }
@@ -787,6 +822,10 @@ impl PartialConfig {
                 .map(|e| e.resolve(&defaults.warnings))
                 .unwrap_or_else(|| defaults.warnings.clone()),
             plugins,
+            packages: self
+                .packages
+                .map(|e| e.resolve(&defaults.packages))
+                .unwrap_or_else(|| defaults.packages.clone()),
         }
     }
 }

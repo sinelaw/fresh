@@ -14,8 +14,21 @@ pub enum OverlayFace {
     Background { color: Color },
     /// Foreground (text) color
     Foreground { color: Color },
-    /// Combined style with multiple attributes
+    /// Combined style with multiple attributes (fully resolved colors)
     Style { style: Style },
+    /// Style with theme key references - resolved at render time
+    ///
+    /// Theme keys like "ui.status_bar_fg" or "editor.selection_bg"
+    /// are resolved when rendering, so overlays automatically update
+    /// when the theme changes.
+    ThemedStyle {
+        /// Fallback style with RGB colors (used if theme keys don't resolve)
+        fallback_style: Style,
+        /// Theme key for foreground color (e.g., "ui.status_bar_fg")
+        fg_theme: Option<String>,
+        /// Theme key for background color (e.g., "editor.selection_bg")
+        bg_theme: Option<String>,
+    },
 }
 
 /// Style of underline

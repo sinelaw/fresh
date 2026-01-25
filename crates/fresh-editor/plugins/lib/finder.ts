@@ -1335,62 +1335,26 @@ export class Finder<T> {
 
       // Highlight current line if it's an item line
       if (isCurrentLine && isItemLine && line.trim() !== "") {
-        this.editor.addOverlay(
-          bufferId,
-          namespace,
-          lineStart,
-          lineEnd,
-          colors.selected[0],
-          colors.selected[1],
-          colors.selected[2],
-          false,
-          false,
-          false,
-          undefined,
-          undefined,
-          undefined,
-          true
-        );
+        this.editor.addOverlay(bufferId, namespace, lineStart, lineEnd, {
+          fg: colors.selected,
+          extendToLineEnd: true,
+        });
       }
 
       // Title line
       if (lineNumber === 1) {
-        this.editor.addOverlay(
-          bufferId,
-          namespace,
-          lineStart,
-          lineEnd,
-          colors.title[0],
-          colors.title[1],
-          colors.title[2],
-          false,
-          true,
-          false,
-          undefined,
-          undefined,
-          undefined,
-          false
-        );
+        this.editor.addOverlay(bufferId, namespace, lineStart, lineEnd, {
+          fg: colors.title,
+          bold: true,
+        });
       }
 
       // File header (ends with : but isn't title)
       if (line.endsWith(":") && lineNumber > 1 && !line.startsWith(" ")) {
-        this.editor.addOverlay(
-          bufferId,
-          namespace,
-          lineStart,
-          lineEnd,
-          colors.fileHeader[0],
-          colors.fileHeader[1],
-          colors.fileHeader[2],
-          false,
-          true,
-          false,
-          undefined,
-          undefined,
-          undefined,
-          false
-        );
+        this.editor.addOverlay(bufferId, namespace, lineStart, lineEnd, {
+          fg: colors.fileHeader,
+          bold: true,
+        });
       }
 
       // Severity icon highlighting
@@ -1415,42 +1379,17 @@ export class Finder<T> {
             color = colors.hint;
         }
 
-        this.editor.addOverlay(
-          bufferId,
-          namespace,
-          lineStart,
-          iconEnd,
-          color[0],
-          color[1],
-          color[2],
-          false,
-          true,
-          false,
-          undefined,
-          undefined,
-          undefined,
-          false
-        );
+        this.editor.addOverlay(bufferId, namespace, lineStart, iconEnd, {
+          fg: color,
+          bold: true,
+        });
       }
 
       // Help line (dimmed)
       if (line.startsWith("Enter:") || line.includes("|")) {
-        this.editor.addOverlay(
-          bufferId,
-          namespace,
-          lineStart,
-          lineEnd,
-          colors.help[0],
-          colors.help[1],
-          colors.help[2],
-          false,
-          false,
-          false,
-          undefined,
-          undefined,
-          undefined,
-          false
-        );
+        this.editor.addOverlay(bufferId, namespace, lineStart, lineEnd, {
+          fg: colors.help,
+        });
       }
 
       byteOffset += line.length + 1;

@@ -402,6 +402,10 @@ pub struct Config {
     #[serde(default)]
     #[schemars(extend("x-standalone-category" = true, "x-no-add" = true))]
     pub plugins: HashMap<String, PluginConfig>,
+
+    /// Package manager settings for plugin/theme installation
+    #[serde(default)]
+    pub packages: PackagesConfig,
 }
 
 fn default_keybinding_map_name() -> KeybindingMapName {
@@ -841,6 +845,27 @@ impl Default for WarningsConfig {
     }
 }
 
+/// Package manager configuration for plugins and themes
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PackagesConfig {
+    /// Registry sources (git repository URLs containing plugin/theme indices)
+    /// Default: ["https://github.com/sinelaw/fresh-plugins-registry"]
+    #[serde(default = "default_package_sources")]
+    pub sources: Vec<String>,
+}
+
+fn default_package_sources() -> Vec<String> {
+    vec!["https://github.com/sinelaw/fresh-plugins-registry".to_string()]
+}
+
+impl Default for PackagesConfig {
+    fn default() -> Self {
+        Self {
+            sources: default_package_sources(),
+        }
+    }
+}
+
 // Re-export PluginConfig from fresh-core for shared type usage
 pub use fresh_core::config::PluginConfig;
 
@@ -1276,6 +1301,7 @@ impl Default for Config {
             lsp: Self::default_lsp_config(),
             warnings: WarningsConfig::default(),
             plugins: HashMap::new(), // Populated when scanning for plugins
+            packages: PackagesConfig::default(),
         }
     }
 }

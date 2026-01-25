@@ -6,5 +6,6 @@ pub mod diff_cursor;
 pub mod git;
 pub mod gutter;
 pub mod lsp_find_references;
+pub mod package_manager;
 pub mod plugin;
 pub mod theme_editor;

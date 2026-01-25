@@ -2,11 +2,13 @@
 //!
 //! This module groups plugin commands by domain for better maintainability.
 
-use crate::model::event::{BufferId, CursorId, Event, SplitId};
+use crate::model::event::{BufferId, CursorId, Event, OverlayFace, SplitId};
 use crate::view::overlay::{OverlayHandle, OverlayNamespace};
 use crate::view::split::SplitViewState;
 use anyhow::Result as AnyhowResult;
-use fresh_core::api::{LayoutHints, MenuPosition, PluginResponse, ViewTransformPayload};
+use fresh_core::api::{
+    LayoutHints, MenuPosition, OverlayOptions, PluginResponse, ViewTransformPayload,
+};
 
 use super::Editor;
 
@@ -29,34 +31,25 @@ impl Editor {
     // ==================== Overlay Commands ====================
 
     /// Handle AddOverlay command
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// Colors can be RGB arrays or theme key strings. Theme keys are resolved
+    /// at render time, so overlays update with theme changes.
     pub(super) fn handle_add_overlay(
         &mut self,
         buffer_id: BufferId,
         namespace: Option<OverlayNamespace>,
         range: std::ops::Range<usize>,
-        color: (u8, u8, u8),
-        bg_color: Option<(u8, u8, u8)>,
-        underline: bool,
-        bold: bool,
-        italic: bool,
-        extend_to_line_end: bool,
+        options: OverlayOptions,
     ) {
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
-            let face = crate::model::event::OverlayFace::Style {
-                color,
-                bg_color,
-                bold,
-                italic,
-                underline,
-            };
+            let face = OverlayFace::from_options(options.clone());
             let event = Event::AddOverlay {
                 namespace,
                 range,
                 face,
                 priority: 10,
                 message: None,
-                extend_to_line_end,
+                extend_to_line_end: options.extend_to_line_end,
             };
             state.apply(&event);
             // Note: Overlays are ephemeral, not added to event log for undo/redo

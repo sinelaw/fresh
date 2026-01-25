@@ -144,6 +144,15 @@
       "x-standalone-category": true,
       "x-no-add": true,
       "default": {}
+    },
+    "packages": {
+      "description": "Package manager settings for plugin/theme installation",
+      "$ref": "#/$defs/PackagesConfig",
+      "default": {
+        "sources": [
+          "https://github.com/sinelaw/fresh-plugins-registry"
+        ]
+      }
     }
   },
   "$defs": {
@@ -905,6 +914,22 @@
         }
       },
       "x-display-field": "/enabled"
+    },
+    "PackagesConfig": {
+      "description": "Package manager configuration for plugins and themes",
+      "type": "object",
+      "properties": {
+        "sources": {
+          "description": "Registry sources (git repository URLs containing plugin/theme indices)\nDefault: [\"https://github.com/sinelaw/fresh-plugins-registry\"]",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "https://github.com/sinelaw/fresh-plugins-registry"
+          ]
+        }
+      }
     }
   }
 }

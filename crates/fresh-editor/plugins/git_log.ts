@@ -336,18 +336,11 @@ function applyGitLogHighlighting(): void {
 
     // Highlight section header
     if (line === editor.t("panel.commits_header")) {
-      editor.addOverlay(
-        bufferId,
-        "gitlog",
-        lineStart,
-        lineEnd,
-        colors.header[0],
-        colors.header[1],
-        colors.header[2],
-        true,  // underline
-        true,  // bold
-        false  // italic
-      );
+      editor.addOverlay(bufferId, "gitlog", lineStart, lineEnd, {
+        fg: colors.header,
+        underline: true,
+        bold: true,
+      });
       byteOffset += line.length + 1;
       continue;
     }
@@ -364,35 +357,19 @@ function applyGitLogHighlighting(): void {
 
     // Highlight entire line if cursor is on it (using selected color with underline)
     if (isCurrentLine) {
-      editor.addOverlay(
-        bufferId,
-        "gitlog",
-        lineStart,
-        lineEnd,
-        colors.selected[0],
-        colors.selected[1],
-        colors.selected[2],
-        true,  // underline to make it visible
-        true,  // bold
-        false  // italic
-      );
+      editor.addOverlay(bufferId, "gitlog", lineStart, lineEnd, {
+        fg: colors.selected,
+        underline: true,
+        bold: true,
+      });
     }
 
     // Parse the line format: "shortHash (author, relativeDate) subject [refs]"
     // Highlight hash (first 7+ chars until space)
     const hashEnd = commit.shortHash.length;
-    editor.addOverlay(
-      bufferId,
-      "gitlog",
-      lineStart,
-      lineStart + hashEnd,
-      colors.hash[0],
-      colors.hash[1],
-      colors.hash[2],
-      false, // underline
-      false, // bold
-      false  // italic
-    );
+    editor.addOverlay(bufferId, "gitlog", lineStart, lineStart + hashEnd, {
+      fg: colors.hash,
+    });
 
     // Highlight author name (inside parentheses)
     const authorPattern = "(" + commit.author + ",";
@@ -400,18 +377,9 @@ function applyGitLogHighlighting(): void {
     if (authorStartInLine >= 0) {
       const authorStart = lineStart + authorStartInLine + 1; // skip "("
       const authorEnd = authorStart + commit.author.length;
-      editor.addOverlay(
-        bufferId,
-        "gitlog",
-        authorStart,
-        authorEnd,
-        colors.author[0],
-        colors.author[1],
-        colors.author[2],
-        false, // underline
-        false, // bold
-        false  // italic
-      );
+      editor.addOverlay(bufferId, "gitlog", authorStart, authorEnd, {
+        fg: colors.author,
+      });
     }
 
     // Highlight relative date
@@ -420,18 +388,9 @@ function applyGitLogHighlighting(): void {
     if (dateStartInLine >= 0) {
       const dateStart = lineStart + dateStartInLine + 2; // skip ", "
       const dateEnd = dateStart + commit.relativeDate.length;
-      editor.addOverlay(
-        bufferId,
-        "gitlog",
-        dateStart,
-        dateEnd,
-        colors.date[0],
-        colors.date[1],
-        colors.date[2],
-        false, // underline
-        false, // bold
-        false  // italic
-      );
+      editor.addOverlay(bufferId, "gitlog", dateStart, dateEnd, {
+        fg: colors.date,
+      });
     }
 
     // Highlight refs (branches/tags) at end of line if present
@@ -449,18 +408,10 @@ function applyGitLogHighlighting(): void {
           refColor = colors.remote;
         }
 
-        editor.addOverlay(
-          bufferId,
-          "gitlog",
-          refsStart,
-          refsEnd,
-          refColor[0],
-          refColor[1],
-          refColor[2],
-          false, // underline
-          true,  // bold (make refs stand out)
-          false  // italic
-        );
+        editor.addOverlay(bufferId, "gitlog", refsStart, refsEnd, {
+          fg: refColor,
+          bold: true,
+        });
       }
     }
 
@@ -621,112 +572,52 @@ function applyCommitDetailHighlighting(): void {
 
     // Highlight diff additions (green)
     if (line.startsWith("+") && !line.startsWith("+++")) {
-      editor.addOverlay(
-        bufferId,
-        "gitdetail",
-        lineStart,
-        lineEnd,
-        colors.diffAdd[0],
-        colors.diffAdd[1],
-        colors.diffAdd[2],
-        false, // underline
-        false, // bold
-        false  // italic
-      );
+      editor.addOverlay(bufferId, "gitdetail", lineStart, lineEnd, {
+        fg: colors.diffAdd,
+      });
     }
     // Highlight diff deletions (red)
     else if (line.startsWith("-") && !line.startsWith("---")) {
-      editor.addOverlay(
-        bufferId,
-        "gitdetail",
-        lineStart,
-        lineEnd,
-        colors.diffDel[0],
-        colors.diffDel[1],
-        colors.diffDel[2],
-        false, // underline
-        false, // bold
-        false  // italic
-      );
+      editor.addOverlay(bufferId, "gitdetail", lineStart, lineEnd, {
+        fg: colors.diffDel,
+      });
     }
     // Highlight hunk headers (cyan/blue)
     else if (line.startsWith("@@")) {
-      editor.addOverlay(
-        bufferId,
-        "gitdetail",
-        lineStart,
-        lineEnd,
-        colors.diffHunk[0],
-        colors.diffHunk[1],
-        colors.diffHunk[2],
-        false, // underline
-        true,  // bold
-        false  // italic
-      );
+      editor.addOverlay(bufferId, "gitdetail", lineStart, lineEnd, {
+        fg: colors.diffHunk,
+        bold: true,
+      });
     }
     // Highlight commit hash in "commit <hash>" line (git show format)
     else if (line.startsWith("commit ")) {
       const hashMatch = line.match(/^commit ([a-f0-9]+)/);
       if (hashMatch) {
         const hashStart = lineStart + 7; // "commit " is 7 chars
-        editor.addOverlay(
-          bufferId,
-          "gitdetail",
-          hashStart,
-          hashStart + hashMatch[1].length,
-          colors.hash[0],
-          colors.hash[1],
-          colors.hash[2],
-          false, // underline
-          true,  // bold
-          false  // italic
-        );
+        editor.addOverlay(bufferId, "gitdetail", hashStart, hashStart + hashMatch[1].length, {
+          fg: colors.hash,
+          bold: true,
+        });
       }
     }
     // Highlight author line
     else if (line.startsWith("Author:")) {
-      editor.addOverlay(
-        bufferId,
-        "gitdetail",
-        lineStart + 8, // "Author: " is 8 chars
-        lineEnd,
-        colors.author[0],
-        colors.author[1],
-        colors.author[2],
-        false, // underline
-        false, // bold
-        false  // italic
-      );
+      editor.addOverlay(bufferId, "gitdetail", lineStart + 8, lineEnd, {
+        fg: colors.author,
+      });
     }
     // Highlight date line
     else if (line.startsWith("Date:")) {
-      editor.addOverlay(
-        bufferId,
-        "gitdetail",
-        lineStart + 6, // "Date: " is 6 chars (with trailing spaces it's 8)
-        lineEnd,
-        colors.date[0],
-        colors.date[1],
-        colors.date[2],
-        false, // underline
-        false, // bold
-        false  // italic
-      );
+      editor.addOverlay(bufferId, "gitdetail", lineStart + 6, lineEnd, {
+        fg: colors.date,
+      });
     }
     // Highlight diff file headers
     else if (line.startsWith("diff --git")) {
-      editor.addOverlay(
-        bufferId,
-        "gitdetail",
-        lineStart,
-        lineEnd,
-        colors.header[0],
-        colors.header[1],
-        colors.header[2],
-        false, // underline
-        true,  // bold
-        false  // italic
-      );
+      editor.addOverlay(bufferId, "gitdetail", lineStart, lineEnd, {
+        fg: colors.header,
+        bold: true,
+      });
     }
 
     byteOffset += line.length + 1;
@@ -1080,7 +971,10 @@ function applyFileViewHighlighting(bufferId: number, content: string, filePath: 
         inMultilineComment = true;
       }
       if (inMultilineComment) {
-        editor.addOverlay(bufferId, "syntax", lineStart, lineStart + line.length, colors.syntaxComment[0], colors.syntaxComment[1], colors.syntaxComment[2], false, false, true);
+        editor.addOverlay(bufferId, "syntax", lineStart, lineStart + line.length, {
+          fg: colors.syntaxComment,
+          italic: true,
+        });
         if (line.includes("*/")) {
           inMultilineComment = false;
         }
@@ -1099,7 +993,9 @@ function applyFileViewHighlighting(bufferId: number, content: string, filePath: 
       }
     }
     if (inMultilineString) {
-      editor.addOverlay(bufferId, "syntax", lineStart, lineStart + line.length, colors.syntaxString[0], colors.syntaxString[1], colors.syntaxString[2], false, false, false);
+      editor.addOverlay(bufferId, "syntax", lineStart, lineStart + line.length, {
+        fg: colors.syntaxString,
+      });
       byteOffset += line.length + 1;
       continue;
     }
@@ -1113,12 +1009,14 @@ function applyFileViewHighlighting(bufferId: number, content: string, filePath: 
     }
 
     if (commentStart >= 0) {
-      editor.addOverlay(bufferId, "syntax", lineStart + commentStart, lineStart + line.length, colors.syntaxComment[0], colors.syntaxComment[1], colors.syntaxComment[2], false, false, true);
+      editor.addOverlay(bufferId, "syntax", lineStart + commentStart, lineStart + line.length, {
+        fg: colors.syntaxComment,
+        italic: true,
+      });
     }
 
     // String highlighting (simple: find "..." and '...')
     let i = 0;
-    let stringCount = 0;
     while (i < line.length) {
       const ch = line[i];
       if (ch === '"' || ch === "'") {
@@ -1132,7 +1030,9 @@ function applyFileViewHighlighting(bufferId: number, content: string, filePath: 
         if (i < line.length) i++; // Include closing quote
         const end = i;
         if (commentStart < 0 || start < commentStart) {
-          editor.addOverlay(bufferId, "syntax", lineStart + start, lineStart + end, colors.syntaxString[0], colors.syntaxString[1], colors.syntaxString[2], false, false, false);
+          editor.addOverlay(bufferId, "syntax", lineStart + start, lineStart + end, {
+            fg: colors.syntaxString,
+          });
         }
       } else {
         i++;
@@ -1142,25 +1042,30 @@ function applyFileViewHighlighting(bufferId: number, content: string, filePath: 
     // Keyword highlighting
     for (const keyword of keywords) {
       const regex = new RegExp(`\\b${keyword}\\b`, "g");
-      let match;
+      let match: RegExpExecArray | null;
       while ((match = regex.exec(line)) !== null) {
         const kwStart = match.index;
         const kwEnd = kwStart + keyword.length;
         // Don't highlight if inside comment
         if (commentStart < 0 || kwStart < commentStart) {
-          editor.addOverlay(bufferId, "syntax", lineStart + kwStart, lineStart + kwEnd, colors.syntaxKeyword[0], colors.syntaxKeyword[1], colors.syntaxKeyword[2], false, true, false);
+          editor.addOverlay(bufferId, "syntax", lineStart + kwStart, lineStart + kwEnd, {
+            fg: colors.syntaxKeyword,
+            bold: true,
+          });
         }
       }
     }
 
     // Number highlighting
     const numberRegex = /\b\d+(\.\d+)?\b/g;
-    let numMatch;
+    let numMatch: RegExpExecArray | null;
     while ((numMatch = numberRegex.exec(line)) !== null) {
       const numStart = numMatch.index;
       const numEnd = numStart + numMatch[0].length;
       if (commentStart < 0 || numStart < commentStart) {
-        editor.addOverlay(bufferId, "syntax", lineStart + numStart, lineStart + numEnd, colors.syntaxNumber[0], colors.syntaxNumber[1], colors.syntaxNumber[2], false, false, false);
+        editor.addOverlay(bufferId, "syntax", lineStart + numStart, lineStart + numEnd, {
+          fg: colors.syntaxNumber,
+        });
       }
     }
 

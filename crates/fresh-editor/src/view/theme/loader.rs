@@ -83,7 +83,7 @@ impl ThemeLoader {
         self.user_themes_dir.as_deref()
     }
 
-    /// Load all themes (embedded + user) into a registry.
+    /// Load all themes (embedded + user + packages) into a registry.
     pub fn load_all(&self) -> ThemeRegistry {
         let mut themes = HashMap::new();
         let mut theme_list = Vec::new();
@@ -102,7 +102,102 @@ impl ThemeLoader {
             self.scan_directory(user_dir, "user", &mut themes, &mut theme_list);
         }
 
+        // Load theme packages from ~/.config/fresh/themes/packages/*/
+        // Each package directory may contain multiple theme JSON files
+        if let Some(ref user_dir) = self.user_themes_dir {
+            let packages_dir = user_dir.join("packages");
+            if packages_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&packages_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                                // Skip hidden directories (like .index)
+                                if !name.starts_with('.') {
+                                    // Check for package.json to get theme metadata
+                                    let manifest_path = path.join("package.json");
+                                    if manifest_path.exists() {
+                                        self.load_package_themes(
+                                            &path,
+                                            name,
+                                            &mut themes,
+                                            &mut theme_list,
+                                        );
+                                    } else {
+                                        // Fallback: scan directory for JSON files
+                                        let pack_name = format!("pkg/{}", name);
+                                        self.scan_directory(
+                                            &path,
+                                            &pack_name,
+                                            &mut themes,
+                                            &mut theme_list,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         ThemeRegistry { themes, theme_list }
+    }
+
+    /// Load themes from a package with package.json manifest.
+    fn load_package_themes(
+        &self,
+        pkg_dir: &Path,
+        pkg_name: &str,
+        themes: &mut HashMap<String, Theme>,
+        theme_list: &mut Vec<ThemeInfo>,
+    ) {
+        let manifest_path = pkg_dir.join("package.json");
+        let manifest_content = match std::fs::read_to_string(&manifest_path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        // Parse manifest to find theme entries
+        let manifest: serde_json::Value = match serde_json::from_str(&manifest_content) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+
+        // Check for fresh.themes array in manifest
+        if let Some(fresh) = manifest.get("fresh") {
+            if let Some(theme_entries) = fresh.get("themes").and_then(|t| t.as_array()) {
+                for entry in theme_entries {
+                    if let (Some(file), Some(name)) = (
+                        entry.get("file").and_then(|f| f.as_str()),
+                        entry.get("name").and_then(|n| n.as_str()),
+                    ) {
+                        let theme_path = pkg_dir.join(file);
+                        if theme_path.exists() {
+                            if let Ok(content) = std::fs::read_to_string(&theme_path) {
+                                if let Ok(theme_file) = serde_json::from_str::<ThemeFile>(&content)
+                                {
+                                    let theme: Theme = theme_file.into();
+                                    let normalized_name = name.to_lowercase().replace(' ', "-");
+                                    // Don't overwrite existing themes
+                                    if !themes.contains_key(&normalized_name) {
+                                        themes.insert(normalized_name.clone(), theme);
+                                        let pack_name = format!("pkg/{}", pkg_name);
+                                        theme_list
+                                            .push(ThemeInfo::new(normalized_name, &pack_name));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+        }
+
+        // Fallback: if no fresh.themes, scan for JSON files
+        let pack_name = format!("pkg/{}", pkg_name);
+        self.scan_directory(pkg_dir, &pack_name, themes, theme_list);
     }
 
     /// Recursively scan a directory for theme files.

@@ -253,6 +253,7 @@ impl DebugSpanTracker {
                         crate::view::overlay::OverlayFace::Background { .. } => "bg",
                         crate::view::overlay::OverlayFace::Foreground { .. } => "fg",
                         crate::view::overlay::OverlayFace::Style { .. } => "st",
+                        crate::view::overlay::OverlayFace::ThemedStyle { .. } => "ts",
                     };
                     tags.push(format!("<{}:{}-{}>", overlay_type, range.start, range.end));
                     self.active_overlays.push(range.clone());
@@ -633,6 +634,24 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                 style: overlay_style,
             } => {
                 style = style.patch(*overlay_style);
+            }
+            OverlayFace::ThemedStyle {
+                fallback_style,
+                fg_theme,
+                bg_theme,
+            } => {
+                let mut themed_style = *fallback_style;
+                if let Some(fg_key) = fg_theme {
+                    if let Some(color) = ctx.theme.resolve_theme_key(fg_key) {
+                        themed_style = themed_style.fg(color);
+                    }
+                }
+                if let Some(bg_key) = bg_theme {
+                    if let Some(color) = ctx.theme.resolve_theme_key(bg_key) {
+                        themed_style = themed_style.bg(color);
+                    }
+                }
+                style = style.patch(themed_style);
             }
         }
     }
@@ -3571,6 +3590,18 @@ impl SplitRenderer {
                                         // Extract background from style if present
                                         // Set fg to same as bg for invisible text
                                         style.bg.map(|bg| Style::default().fg(bg).bg(bg))
+                                    }
+                                    crate::view::overlay::OverlayFace::ThemedStyle {
+                                        fallback_style,
+                                        bg_theme,
+                                        ..
+                                    } => {
+                                        // Try theme key first, fall back to style's bg
+                                        let bg = bg_theme
+                                            .as_ref()
+                                            .and_then(|key| theme.resolve_theme_key(key))
+                                            .or(fallback_style.bg);
+                                        bg.map(|bg| Style::default().fg(bg).bg(bg))
                                     }
                                     _ => None,
                                 }

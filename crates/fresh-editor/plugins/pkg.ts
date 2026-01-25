@@ -1,0 +1,2126 @@
+/// <reference path="./lib/fresh.d.ts" />
+
+/**
+ * Fresh Package Manager Plugin
+ *
+ * A decentralized, git-based package manager for Fresh plugins and themes.
+ * Inspired by Emacs straight.el and Neovim lazy.nvim.
+ *
+ * Features:
+ * - Install plugins/themes from any git repository
+ * - Update packages via git pull
+ * - Optional curated registry (also a git repo)
+ * - Version pinning with tags, branches, or commits
+ * - Lockfile for reproducibility
+ */
+
+import { Finder } from "./lib/finder.ts";
+
+const editor = getEditor();
+
+// =============================================================================
+// Configuration
+// =============================================================================
+
+const CONFIG_DIR = editor.getConfigDir();
+const PACKAGES_DIR = editor.pathJoin(CONFIG_DIR, "plugins", "packages");
+const THEMES_PACKAGES_DIR = editor.pathJoin(CONFIG_DIR, "themes", "packages");
+const INDEX_DIR = editor.pathJoin(PACKAGES_DIR, ".index");
+const LOCKFILE_PATH = editor.pathJoin(CONFIG_DIR, "fresh.lock");
+
+// Default registry source
+const DEFAULT_REGISTRY = "https://github.com/sinelaw/fresh-plugins-registry";
+
+// =============================================================================
+// Types
+// =============================================================================
+
+interface PackageManifest {
+  name: string;
+  version: string;
+  description: string;
+  type: "plugin" | "theme" | "theme-pack";
+  author?: string;
+  license?: string;
+  repository?: string;
+  fresh?: {
+    min_version?: string;
+    entry?: string;
+    themes?: Array<{
+      file: string;
+      name: string;
+      variant?: "dark" | "light";
+    }>;
+    config_schema?: Record<string, unknown>;
+  };
+  keywords?: string[];
+}
+
+interface RegistryEntry {
+  description: string;
+  repository: string;
+  author?: string;
+  license?: string;
+  keywords?: string[];
+  stars?: number;
+  downloads?: number;
+  latest_version?: string;
+  fresh_min_version?: string;
+  variants?: string[];
+}
+
+interface RegistryData {
+  schema_version: number;
+  updated: string;
+  packages: Record<string, RegistryEntry>;
+}
+
+interface InstalledPackage {
+  name: string;
+  path: string;
+  type: "plugin" | "theme";
+  source: string;
+  version: string;
+  commit?: string;
+  manifest?: PackageManifest;
+}
+
+interface LockfileEntry {
+  source: string;
+  commit: string;
+  version: string;
+  integrity?: string;
+}
+
+interface Lockfile {
+  lockfile_version: number;
+  generated: string;
+  packages: Record<string, LockfileEntry>;
+}
+
+// =============================================================================
+// Types for URL parsing
+// =============================================================================
+
+interface ParsedPackageUrl {
+  /** The base git repository URL (without fragment) */
+  repoUrl: string;
+  /** Optional path within the repository (from fragment) */
+  subpath: string | null;
+  /** Extracted package name */
+  name: string;
+}
+
+// =============================================================================
+// Utility Functions
+// =============================================================================
+
+/**
+ * Ensure a directory exists
+ */
+async function ensureDir(path: string): Promise<boolean> {
+  if (editor.fileExists(path)) {
+    return true;
+  }
+  const result = await editor.spawnProcess("mkdir", ["-p", path]);
+  return result.exit_code === 0;
+}
+
+/**
+ * Hash a string (simple djb2 hash for source identification)
+ */
+function hashString(str: string): string {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) + str.charCodeAt(i);
+  }
+  return Math.abs(hash).toString(16).slice(0, 8);
+}
+
+/**
+ * Run a git command without prompting for credentials.
+ * Uses git config options to prevent interactive prompts (cross-platform).
+ */
+async function gitCommand(args: string[]): Promise<{ exit_code: number; stdout: string; stderr: string }> {
+  // Use git config options to disable credential prompts (works on Windows and Unix)
+  // -c credential.helper= disables credential helper
+  // -c core.askPass= disables askpass program
+  const gitArgs = [
+    "-c", "credential.helper=",
+    "-c", "core.askPass=",
+    ...args
+  ];
+  const result = await editor.spawnProcess("git", gitArgs);
+  return result;
+}
+
+/**
+ * Parse a package URL that may contain a subpath fragment.
+ *
+ * Supported formats:
+ * - `https://github.com/user/repo` - standard repo
+ * - `https://github.com/user/repo#path/to/plugin` - monorepo with subpath
+ * - `https://github.com/user/repo.git#packages/my-plugin` - with .git suffix
+ *
+ * The fragment (after #) specifies a subdirectory within the repo.
+ */
+function parsePackageUrl(url: string): ParsedPackageUrl {
+  // Split on # to get subpath
+  const hashIndex = url.indexOf("#");
+  let repoUrl: string;
+  let subpath: string | null = null;
+
+  if (hashIndex !== -1) {
+    repoUrl = url.slice(0, hashIndex);
+    subpath = url.slice(hashIndex + 1);
+    // Clean up subpath - remove leading/trailing slashes
+    subpath = subpath.replace(/^\/+|\/+$/g, "");
+    if (subpath === "") {
+      subpath = null;
+    }
+  } else {
+    repoUrl = url;
+  }
+
+  // Extract package name
+  let name: string;
+  if (subpath) {
+    // For monorepo, use the last component of the subpath
+    const parts = subpath.split("/");
+    name = parts[parts.length - 1].replace(/^fresh-/, "");
+  } else {
+    // For regular repo, use repo name
+    const match = repoUrl.match(/\/([^\/]+?)(\.git)?$/);
+    name = match ? match[1].replace(/^fresh-/, "") : "unknown";
+  }
+
+  return { repoUrl, subpath, name };
+}
+
+/**
+ * Extract package name from git URL (legacy helper)
+ */
+function extractPackageName(url: string): string {
+  return parsePackageUrl(url).name;
+}
+
+/**
+ * Get registry sources from config
+ */
+function getRegistrySources(): string[] {
+  const config = editor.getConfig() as Record<string, unknown>;
+  const packages = config?.packages as Record<string, unknown> | undefined;
+  const sources = packages?.sources as string[] | undefined;
+  return sources && sources.length > 0 ? sources : [DEFAULT_REGISTRY];
+}
+
+/**
+ * Read and parse a JSON file
+ */
+function readJsonFile<T>(path: string): T | null {
+  try {
+    const content = editor.readFile(path);
+    if (content) {
+      return JSON.parse(content) as T;
+    }
+  } catch (e) {
+    editor.debug(`[pkg] Failed to read JSON file ${path}: ${e}`);
+  }
+  return null;
+}
+
+/**
+ * Write a JSON file
+ */
+async function writeJsonFile(path: string, data: unknown): Promise<boolean> {
+  try {
+    const content = JSON.stringify(data, null, 2);
+    return editor.writeFile(path, content);
+  } catch (e) {
+    editor.debug(`[pkg] Failed to write JSON file ${path}: ${e}`);
+    return false;
+  }
+}
+
+// =============================================================================
+// Registry Operations
+// =============================================================================
+
+/**
+ * Sync registry sources
+ */
+async function syncRegistry(): Promise<void> {
+  editor.setStatus("Syncing package registry...");
+
+  await ensureDir(INDEX_DIR);
+
+  const sources = getRegistrySources();
+  let synced = 0;
+  const errors: string[] = [];
+
+  for (const source of sources) {
+    const indexPath = editor.pathJoin(INDEX_DIR, hashString(source));
+
+    if (editor.fileExists(indexPath)) {
+      // Update existing
+      editor.setStatus(`Updating registry: ${source}...`);
+      const result = await gitCommand(["-C", `${indexPath}`, "pull", "--ff-only"]);
+      if (result.exit_code === 0) {
+        synced++;
+      } else {
+        const errorMsg = result.stderr.includes("Could not resolve host")
+          ? "Network error"
+          : result.stderr.includes("Authentication") || result.stderr.includes("403")
+          ? "Authentication failed (check if repo is public)"
+          : result.stderr.split("\n")[0] || "Unknown error";
+        errors.push(`${source}: ${errorMsg}`);
+        editor.debug(`[pkg] Failed to update registry ${source}: ${result.stderr}`);
+      }
+    } else {
+      // Clone new
+      editor.setStatus(`Cloning registry: ${source}...`);
+      const result = await gitCommand(["clone", "--depth", "1", `${source}`, `${indexPath}`]);
+      if (result.exit_code === 0) {
+        synced++;
+      } else {
+        const errorMsg = result.stderr.includes("Could not resolve host")
+          ? "Network error"
+          : result.stderr.includes("not found") || result.stderr.includes("404")
+          ? "Repository not found"
+          : result.stderr.includes("Authentication") || result.stderr.includes("403")
+          ? "Authentication failed (check if repo is public)"
+          : result.stderr.split("\n")[0] || "Unknown error";
+        errors.push(`${source}: ${errorMsg}`);
+        editor.debug(`[pkg] Failed to clone registry ${source}: ${result.stderr}`);
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    editor.setStatus(`Registry: ${synced}/${sources.length} synced. Errors: ${errors.join("; ")}`);
+  } else {
+    editor.setStatus(`Registry synced (${synced}/${sources.length} sources)`);
+  }
+}
+
+/**
+ * Load merged registry data
+ */
+function loadRegistry(type: "plugins" | "themes"): RegistryData {
+  editor.debug(`[pkg] loadRegistry called for ${type}`);
+  const sources = getRegistrySources();
+  editor.debug(`[pkg] sources: ${JSON.stringify(sources)}`);
+  const merged: RegistryData = {
+    schema_version: 1,
+    updated: new Date().toISOString(),
+    packages: {}
+  };
+
+  for (const source of sources) {
+    const indexPath = editor.pathJoin(INDEX_DIR, hashString(source), `${type}.json`);
+    editor.debug(`[pkg] checking index path: ${indexPath}`);
+    const data = readJsonFile<RegistryData>(indexPath);
+    editor.debug(`[pkg] data loaded: ${data ? 'yes' : 'no'}, packages: ${data?.packages ? Object.keys(data.packages).length : 0}`);
+    if (data?.packages) {
+      Object.assign(merged.packages, data.packages);
+    }
+  }
+
+  editor.debug(`[pkg] total merged packages: ${Object.keys(merged.packages).length}`);
+  return merged;
+}
+
+/**
+ * Check if registry has been synced (index directory exists)
+ */
+function isRegistrySynced(): boolean {
+  const sources = getRegistrySources();
+  for (const source of sources) {
+    const indexPath = editor.pathJoin(INDEX_DIR, hashString(source));
+    if (editor.fileExists(indexPath)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// =============================================================================
+// Package Operations
+// =============================================================================
+
+/**
+ * Get list of installed packages
+ */
+function getInstalledPackages(type: "plugin" | "theme"): InstalledPackage[] {
+  const packagesDir = type === "plugin" ? PACKAGES_DIR : THEMES_PACKAGES_DIR;
+  const packages: InstalledPackage[] = [];
+
+  if (!editor.fileExists(packagesDir)) {
+    return packages;
+  }
+
+  try {
+    const entries = editor.readDir(packagesDir);
+    for (const entry of entries) {
+      if (entry.is_dir && !entry.name.startsWith(".")) {
+        const pkgPath = editor.pathJoin(packagesDir, entry.name);
+        const manifestPath = editor.pathJoin(pkgPath, "package.json");
+        const manifest = readJsonFile<PackageManifest>(manifestPath);
+
+        // Try to get git remote
+        const gitConfigPath = editor.pathJoin(pkgPath, ".git", "config");
+        let source = "";
+        if (editor.fileExists(gitConfigPath)) {
+          const gitConfig = editor.readFile(gitConfigPath);
+          if (gitConfig) {
+            const match = gitConfig.match(/url\s*=\s*(.+)/);
+            if (match) {
+              source = match[1].trim();
+            }
+          }
+        }
+
+        packages.push({
+          name: entry.name,
+          path: pkgPath,
+          type,
+          source,
+          version: manifest?.version || "unknown",
+          manifest
+        });
+      }
+    }
+  } catch (e) {
+    editor.debug(`[pkg] Failed to list packages: ${e}`);
+  }
+
+  return packages;
+}
+
+/**
+ * Install a package from git URL.
+ *
+ * Supports monorepo URLs with subpath fragments:
+ * - `https://github.com/user/repo#packages/my-plugin`
+ *
+ * For subpath packages, clones to temp directory and copies the subdirectory.
+ */
+async function installPackage(
+  url: string,
+  name?: string,
+  type: "plugin" | "theme" = "plugin",
+  version?: string
+): Promise<boolean> {
+  const parsed = parsePackageUrl(url);
+  const packageName = name || parsed.name;
+  const packagesDir = type === "plugin" ? PACKAGES_DIR : THEMES_PACKAGES_DIR;
+  const targetDir = editor.pathJoin(packagesDir, packageName);
+
+  if (editor.fileExists(targetDir)) {
+    editor.setStatus(`Package '${packageName}' is already installed`);
+    return false;
+  }
+
+  await ensureDir(packagesDir);
+
+  editor.setStatus(`Installing ${packageName}...`);
+
+  if (parsed.subpath) {
+    // Monorepo installation: clone to temp, copy subdirectory
+    return await installFromMonorepo(parsed, packageName, targetDir, version);
+  } else {
+    // Standard installation: clone directly
+    return await installFromRepo(parsed.repoUrl, packageName, targetDir, version);
+  }
+}
+
+/**
+ * Install from a standard git repository (no subpath)
+ */
+async function installFromRepo(
+  repoUrl: string,
+  packageName: string,
+  targetDir: string,
+  version?: string
+): Promise<boolean> {
+  // Clone the repository
+  const cloneArgs = ["clone"];
+  if (!version || version === "latest") {
+    cloneArgs.push("--depth", "1");
+  }
+  cloneArgs.push(`${repoUrl}`, `${targetDir}`);
+
+  const result = await gitCommand(cloneArgs);
+
+  if (result.exit_code !== 0) {
+    const errorMsg = result.stderr.includes("not found") || result.stderr.includes("404")
+      ? "Repository not found"
+      : result.stderr.includes("Authentication") || result.stderr.includes("403")
+      ? "Access denied (repository may be private)"
+      : result.stderr.split("\n")[0] || "Clone failed";
+    editor.setStatus(`Failed to install ${packageName}: ${errorMsg}`);
+    return false;
+  }
+
+  // Checkout specific version if requested
+  if (version && version !== "latest") {
+    const checkoutResult = await checkoutVersion(targetDir, version);
+    if (!checkoutResult) {
+      editor.setStatus(`Installed ${packageName} but failed to checkout version ${version}`);
+    }
+  }
+
+  // Read manifest to determine type
+  const manifestPath = editor.pathJoin(targetDir, "package.json");
+  const manifest = readJsonFile<PackageManifest>(manifestPath);
+
+  editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}. Restart to activate.`);
+  return true;
+}
+
+/**
+ * Install from a monorepo (URL with subpath fragment)
+ *
+ * Strategy:
+ * 1. Clone the repo to a temp directory
+ * 2. Copy the subdirectory to the target location
+ * 3. Initialize a new git repo in the target (for updates)
+ * 4. Store the original URL for reference
+ */
+async function installFromMonorepo(
+  parsed: ParsedPackageUrl,
+  packageName: string,
+  targetDir: string,
+  version?: string
+): Promise<boolean> {
+  const tempDir = `/tmp/fresh-pkg-${hashString(parsed.repoUrl)}-${Date.now()}`;
+
+  try {
+    // Clone the full repo to temp
+    editor.setStatus(`Cloning ${parsed.repoUrl}...`);
+    const cloneArgs = ["clone"];
+    if (!version || version === "latest") {
+      cloneArgs.push("--depth", "1");
+    }
+    cloneArgs.push(`${parsed.repoUrl}`, `${tempDir}`);
+
+    const cloneResult = await gitCommand(cloneArgs);
+    if (cloneResult.exit_code !== 0) {
+      const errorMsg = cloneResult.stderr.includes("not found") || cloneResult.stderr.includes("404")
+        ? "Repository not found"
+        : cloneResult.stderr.includes("Authentication") || cloneResult.stderr.includes("403")
+        ? "Access denied (repository may be private)"
+        : cloneResult.stderr.split("\n")[0] || "Clone failed";
+      editor.setStatus(`Failed to clone repository: ${errorMsg}`);
+      return false;
+    }
+
+    // Checkout specific version if requested
+    if (version && version !== "latest") {
+      await checkoutVersion(tempDir, version);
+    }
+
+    // Verify subpath exists
+    const subpathDir = editor.pathJoin(tempDir, parsed.subpath!);
+    if (!editor.fileExists(subpathDir)) {
+      editor.setStatus(`Subpath '${parsed.subpath}' not found in repository`);
+      await editor.spawnProcess("rm", ["-rf", tempDir]);
+      return false;
+    }
+
+    // Copy subdirectory to target
+    editor.setStatus(`Installing ${packageName} from ${parsed.subpath}...`);
+    const copyResult = await editor.spawnProcess("cp", ["-r", subpathDir, targetDir]);
+    if (copyResult.exit_code !== 0) {
+      editor.setStatus(`Failed to copy package: ${copyResult.stderr}`);
+      await editor.spawnProcess("rm", ["-rf", tempDir]);
+      return false;
+    }
+
+    // Initialize git in target for future updates
+    // Store the original monorepo URL in a .fresh-source file
+    const sourceInfo = {
+      repository: parsed.repoUrl,
+      subpath: parsed.subpath,
+      installed_from: `${parsed.repoUrl}#${parsed.subpath}`,
+      installed_at: new Date().toISOString()
+    };
+    await writeJsonFile(editor.pathJoin(targetDir, ".fresh-source.json"), sourceInfo);
+
+    // Read manifest
+    const manifestPath = editor.pathJoin(targetDir, "package.json");
+    const manifest = readJsonFile<PackageManifest>(manifestPath);
+
+    editor.setStatus(
+      `Installed ${packageName}${manifest ? ` v${manifest.version}` : ""} from monorepo. Restart to activate.`
+    );
+    return true;
+  } finally {
+    // Cleanup temp directory
+    await editor.spawnProcess("rm", ["-rf", tempDir]);
+  }
+}
+
+/**
+ * Checkout a specific version in a package directory
+ */
+async function checkoutVersion(pkgPath: string, version: string): Promise<boolean> {
+  let target: string;
+
+  if (version === "latest") {
+    // Get latest tag
+    const tagsResult = await gitCommand(["-C", `${pkgPath}`, "tag", "--sort=-v:refname"]);
+    const tags = tagsResult.stdout.split("\n").filter(t => t.trim());
+    target = tags[0] || "HEAD";
+  } else if (version.startsWith("^") || version.startsWith("~")) {
+    // Semver matching - find best matching tag
+    target = await findMatchingSemver(pkgPath, version);
+  } else if (version.match(/^[0-9a-f]{7,40}$/)) {
+    // Commit hash
+    target = version;
+  } else {
+    // Exact version or branch
+    target = version.startsWith("v") ? version : `v${version}`;
+  }
+
+  // Fetch if needed
+  await gitCommand(["-C", `${pkgPath}`, "fetch", "--tags"]);
+
+  // Checkout
+  const result = await gitCommand(["-C", `${pkgPath}`, "checkout", target]);
+  return result.exit_code === 0;
+}
+
+/**
+ * Find best semver matching version
+ */
+async function findMatchingSemver(pkgPath: string, spec: string): Promise<string> {
+  const tagsResult = await gitCommand(["-C", `${pkgPath}`, "tag", "--sort=-v:refname"]);
+  const tags = tagsResult.stdout.split("\n").filter(t => t.trim());
+
+  // Simple semver matching (^ means compatible, ~ means patch only)
+  const prefix = spec.startsWith("^") ? "^" : "~";
+  const baseVersion = spec.slice(1);
+  const [major, minor] = baseVersion.split(".").map(n => parseInt(n, 10));
+
+  for (const tag of tags) {
+    const version = tag.replace(/^v/, "");
+    const [tagMajor, tagMinor] = version.split(".").map(n => parseInt(n, 10));
+
+    if (prefix === "^") {
+      // Compatible: same major
+      if (tagMajor === major && !isNaN(tagMinor)) {
+        return tag;
+      }
+    } else {
+      // Patch: same major.minor
+      if (tagMajor === major && tagMinor === minor) {
+        return tag;
+      }
+    }
+  }
+
+  // Fallback to latest
+  return tags[0] || "HEAD";
+}
+
+/**
+ * Update a package
+ */
+async function updatePackage(pkg: InstalledPackage): Promise<boolean> {
+  editor.setStatus(`Updating ${pkg.name}...`);
+
+  const result = await gitCommand(["-C", `${pkg.path}`, "pull", "--ff-only"]);
+
+  if (result.exit_code === 0) {
+    if (result.stdout.includes("Already up to date")) {
+      editor.setStatus(`${pkg.name} is already up to date`);
+    } else {
+      editor.setStatus(`Updated ${pkg.name}. Restart to apply changes.`);
+    }
+    return true;
+  } else {
+    const errorMsg = result.stderr.includes("Could not resolve host")
+      ? "Network error"
+      : result.stderr.includes("Authentication") || result.stderr.includes("403")
+      ? "Authentication failed"
+      : result.stderr.split("\n")[0] || "Update failed";
+    editor.setStatus(`Failed to update ${pkg.name}: ${errorMsg}`);
+    return false;
+  }
+}
+
+/**
+ * Remove a package
+ */
+async function removePackage(pkg: InstalledPackage): Promise<boolean> {
+  editor.setStatus(`Removing ${pkg.name}...`);
+
+  // Use trash if available, otherwise rm -rf
+  let result = await editor.spawnProcess("trash", [pkg.path]);
+  if (result.exit_code !== 0) {
+    result = await editor.spawnProcess("rm", ["-rf", pkg.path]);
+  }
+
+  if (result.exit_code === 0) {
+    editor.setStatus(`Removed ${pkg.name}. Restart to apply changes.`);
+    return true;
+  } else {
+    editor.setStatus(`Failed to remove ${pkg.name}: ${result.stderr}`);
+    return false;
+  }
+}
+
+/**
+ * Update all packages
+ */
+async function updateAllPackages(): Promise<void> {
+  const plugins = getInstalledPackages("plugin");
+  const themes = getInstalledPackages("theme");
+  const all = [...plugins, ...themes];
+
+  if (all.length === 0) {
+    editor.setStatus("No packages installed");
+    return;
+  }
+
+  let updated = 0;
+  let failed = 0;
+
+  for (const pkg of all) {
+    editor.setStatus(`Updating ${pkg.name} (${updated + failed + 1}/${all.length})...`);
+    const result = await gitCommand(["-C", `${pkg.path}`, "pull", "--ff-only"]);
+
+    if (result.exit_code === 0) {
+      if (!result.stdout.includes("Already up to date")) {
+        updated++;
+      }
+    } else {
+      failed++;
+    }
+  }
+
+  editor.setStatus(`Update complete: ${updated} updated, ${all.length - updated - failed} unchanged, ${failed} failed`);
+}
+
+// =============================================================================
+// Lockfile Operations
+// =============================================================================
+
+/**
+ * Generate lockfile from current state
+ */
+async function generateLockfile(): Promise<void> {
+  editor.setStatus("Generating lockfile...");
+
+  const plugins = getInstalledPackages("plugin");
+  const themes = getInstalledPackages("theme");
+  const all = [...plugins, ...themes];
+
+  const lockfile: Lockfile = {
+    lockfile_version: 1,
+    generated: new Date().toISOString(),
+    packages: {}
+  };
+
+  for (const pkg of all) {
+    // Get current commit
+    const commitResult = await gitCommand(["-C", `${pkg.path}`, "rev-parse", "HEAD"]);
+    const commit = commitResult.stdout.trim();
+
+    lockfile.packages[pkg.name] = {
+      source: pkg.source,
+      commit,
+      version: pkg.version
+    };
+  }
+
+  if (await writeJsonFile(LOCKFILE_PATH, lockfile)) {
+    editor.setStatus(`Lockfile generated with ${all.length} packages`);
+  } else {
+    editor.setStatus("Failed to write lockfile");
+  }
+}
+
+/**
+ * Install packages from lockfile
+ */
+async function installFromLockfile(): Promise<void> {
+  const lockfile = readJsonFile<Lockfile>(LOCKFILE_PATH);
+  if (!lockfile) {
+    editor.setStatus("No lockfile found");
+    return;
+  }
+
+  editor.setStatus("Installing from lockfile...");
+
+  let installed = 0;
+  let failed = 0;
+
+  for (const [name, entry] of Object.entries(lockfile.packages)) {
+    editor.setStatus(`Installing ${name} (${installed + failed + 1}/${Object.keys(lockfile.packages).length})...`);
+
+    // Check if already installed
+    const pluginPath = editor.pathJoin(PACKAGES_DIR, name);
+    const themePath = editor.pathJoin(THEMES_PACKAGES_DIR, name);
+
+    if (editor.fileExists(pluginPath) || editor.fileExists(themePath)) {
+      // Already installed, just checkout the commit
+      const path = editor.fileExists(pluginPath) ? pluginPath : themePath;
+      await gitCommand(["-C", `${path}`, "fetch"]);
+      const result = await gitCommand(["-C", `${path}`, "checkout", entry.commit]);
+      if (result.exit_code === 0) {
+        installed++;
+      } else {
+        failed++;
+      }
+    } else {
+      // Need to clone
+      await ensureDir(PACKAGES_DIR);
+      const result = await gitCommand(["clone", `${entry.source}`, `${pluginPath}`]);
+
+      if (result.exit_code === 0) {
+        await gitCommand(["-C", `${pluginPath}`, "checkout", entry.commit]);
+        installed++;
+      } else {
+        failed++;
+      }
+    }
+  }
+
+  editor.setStatus(`Lockfile install complete: ${installed} installed, ${failed} failed`);
+}
+
+// =============================================================================
+// Package Manager UI (VSCode-style virtual buffer)
+// =============================================================================
+
+// UI State
+interface PackageListItem {
+  type: "installed" | "available";
+  name: string;
+  description: string;
+  version: string;
+  installed: boolean;
+  updateAvailable: boolean;
+  latestVersion?: string;
+  author?: string;
+  license?: string;
+  repository?: string;
+  stars?: number;
+  downloads?: number;
+  keywords?: string[];
+  packageType: "plugin" | "theme";
+  // For installed packages
+  installedPackage?: InstalledPackage;
+  // For available packages
+  registryEntry?: RegistryEntry;
+}
+
+// Focus target types for Tab navigation
+type FocusTarget =
+  | { type: "filter"; index: number }  // 0=All, 1=Installed, 2=Plugins, 3=Themes
+  | { type: "sync" }
+  | { type: "search" }
+  | { type: "list" }  // Package list (use arrows to navigate)
+  | { type: "action"; index: number };  // Action buttons for selected package
+
+interface PkgManagerState {
+  isOpen: boolean;
+  bufferId: number | null;
+  splitId: number | null;
+  sourceBufferId: number | null;
+  filter: "all" | "installed" | "plugins" | "themes";
+  searchQuery: string;
+  items: PackageListItem[];
+  selectedIndex: number;
+  focus: FocusTarget;  // What element has Tab focus
+  isLoading: boolean;
+}
+
+const pkgState: PkgManagerState = {
+  isOpen: false,
+  bufferId: null,
+  splitId: null,
+  sourceBufferId: null,
+  filter: "all",
+  searchQuery: "",
+  items: [],
+  selectedIndex: 0,
+  focus: { type: "list" },
+  isLoading: false,
+};
+
+// Theme-aware color configuration
+// Maps UI elements to theme keys with RGB fallbacks
+interface ThemeColor {
+  fg?: { theme?: string; rgb: [number, number, number] };
+  bg?: { theme?: string; rgb: [number, number, number] };
+}
+
+const pkgTheme: Record<string, ThemeColor> = {
+  // Headers and titles
+  header: { fg: { theme: "syntax.keyword", rgb: [100, 180, 255] } },
+  sectionTitle: { fg: { theme: "syntax.function", rgb: [180, 140, 80] } },
+
+  // Package items
+  installed: { fg: { theme: "syntax.string", rgb: [100, 200, 120] } },
+  available: { fg: { theme: "editor.fg", rgb: [200, 200, 210] } },
+  selected: {
+    fg: { theme: "ui.menu_active_fg", rgb: [255, 255, 255] },
+    bg: { theme: "ui.menu_active_bg", rgb: [50, 80, 120] }
+  },
+
+  // Descriptions and details
+  description: { fg: { theme: "syntax.comment", rgb: [140, 140, 150] } },
+  infoRow: { fg: { theme: "editor.fg", rgb: [180, 180, 190] } },
+  infoLabel: { fg: { theme: "syntax.comment", rgb: [120, 120, 130] } },
+  infoValue: { fg: { theme: "editor.fg", rgb: [200, 200, 210] } },
+
+  // UI elements
+  separator: { fg: { rgb: [60, 60, 65] } },
+  divider: { fg: { rgb: [50, 50, 55] } },
+  help: { fg: { theme: "syntax.comment", rgb: [100, 100, 110] } },
+  emptyState: { fg: { theme: "syntax.comment", rgb: [120, 120, 130] } },
+
+  // Filter buttons
+  filterActive: {
+    fg: { rgb: [255, 255, 255] },
+    bg: { theme: "syntax.keyword", rgb: [60, 100, 160] }
+  },
+  filterInactive: {
+    fg: { rgb: [160, 160, 170] },
+  },
+  filterFocused: {
+    fg: { rgb: [255, 255, 255] },
+    bg: { rgb: [80, 80, 90] }
+  },
+
+  // Action buttons
+  button: {
+    fg: { rgb: [180, 180, 190] },
+  },
+  buttonFocused: {
+    fg: { rgb: [255, 255, 255] },
+    bg: { theme: "syntax.keyword", rgb: [60, 110, 180] }
+  },
+
+  // Search box - distinct input field appearance
+  searchBox: {
+    fg: { rgb: [200, 200, 210] },
+    bg: { rgb: [40, 42, 48] }
+  },
+  searchBoxFocused: {
+    fg: { rgb: [255, 255, 255] },
+    bg: { theme: "syntax.keyword", rgb: [60, 110, 180] }
+  },
+
+  // Status indicators
+  statusOk: { fg: { rgb: [100, 200, 120] } },
+  statusUpdate: { fg: { rgb: [220, 180, 80] } },
+};
+
+// Define pkg-manager mode with arrow key navigation
+editor.defineMode(
+  "pkg-manager",
+  "normal",
+  [
+    ["Up", "pkg_nav_up"],
+    ["Down", "pkg_nav_down"],
+    ["Return", "pkg_activate"],
+    ["Tab", "pkg_next_button"],
+    ["S-Tab", "pkg_prev_button"],
+    ["Escape", "pkg_back_or_close"],
+    ["/", "pkg_search"],
+  ],
+  true // read-only
+);
+
+// Define pkg-detail mode for package details view
+editor.defineMode(
+  "pkg-detail",
+  "normal",
+  [
+    ["Up", "pkg_scroll_up"],
+    ["Down", "pkg_scroll_down"],
+    ["Return", "pkg_activate"],
+    ["Tab", "pkg_next_button"],
+    ["S-Tab", "pkg_prev_button"],
+    ["Escape", "pkg_back_or_close"],
+  ],
+  true // read-only
+);
+
+/**
+ * Build package list from installed and registry data
+ */
+function buildPackageList(): PackageListItem[] {
+  const items: PackageListItem[] = [];
+
+  // Get installed packages
+  const installedPlugins = getInstalledPackages("plugin");
+  const installedThemes = getInstalledPackages("theme");
+  const installedMap = new Map<string, InstalledPackage>();
+
+  for (const pkg of [...installedPlugins, ...installedThemes]) {
+    installedMap.set(pkg.name, pkg);
+    items.push({
+      type: "installed",
+      name: pkg.name,
+      description: pkg.manifest?.description || "No description",
+      version: pkg.version,
+      installed: true,
+      updateAvailable: false, // TODO: Check for updates
+      author: pkg.manifest?.author,
+      license: pkg.manifest?.license,
+      repository: pkg.source,
+      packageType: pkg.type,
+      installedPackage: pkg,
+    });
+  }
+
+  // Get available packages from registry
+  if (isRegistrySynced()) {
+    const pluginRegistry = loadRegistry("plugins");
+    const themeRegistry = loadRegistry("themes");
+
+    for (const [name, entry] of Object.entries(pluginRegistry.packages)) {
+      if (!installedMap.has(name)) {
+        items.push({
+          type: "available",
+          name,
+          description: entry.description,
+          version: entry.latest_version || "latest",
+          installed: false,
+          updateAvailable: false,
+          latestVersion: entry.latest_version,
+          author: entry.author,
+          license: entry.license,
+          repository: entry.repository,
+          stars: entry.stars,
+          downloads: entry.downloads,
+          keywords: entry.keywords,
+          packageType: "plugin",
+          registryEntry: entry,
+        });
+      }
+    }
+
+    for (const [name, entry] of Object.entries(themeRegistry.packages)) {
+      if (!installedMap.has(name)) {
+        items.push({
+          type: "available",
+          name,
+          description: entry.description,
+          version: entry.latest_version || "latest",
+          installed: false,
+          updateAvailable: false,
+          latestVersion: entry.latest_version,
+          author: entry.author,
+          license: entry.license,
+          repository: entry.repository,
+          stars: entry.stars,
+          downloads: entry.downloads,
+          keywords: entry.keywords,
+          packageType: "theme",
+          registryEntry: entry,
+        });
+      }
+    }
+  }
+
+  return items;
+}
+
+/**
+ * Filter items based on current filter and search query
+ */
+function getFilteredItems(): PackageListItem[] {
+  let items = pkgState.items;
+
+  // Apply filter
+  switch (pkgState.filter) {
+    case "installed":
+      items = items.filter(i => i.installed);
+      break;
+    case "plugins":
+      items = items.filter(i => i.packageType === "plugin");
+      break;
+    case "themes":
+      items = items.filter(i => i.packageType === "theme");
+      break;
+  }
+
+  // Apply search
+  if (pkgState.searchQuery) {
+    const query = pkgState.searchQuery.toLowerCase();
+    items = items.filter(i =>
+      i.name.toLowerCase().includes(query) ||
+      i.description.toLowerCase().includes(query) ||
+      (i.keywords && i.keywords.some(k => k.toLowerCase().includes(query)))
+    );
+  }
+
+  // Sort: installed first, then by name
+  items.sort((a, b) => {
+    if (a.installed !== b.installed) {
+      return a.installed ? -1 : 1;
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+  return items;
+}
+
+/**
+ * Format number with K/M suffix
+ */
+function formatNumber(n: number | undefined): string {
+  if (n === undefined) return "";
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+  return n.toString();
+}
+
+// Layout constants
+const LIST_WIDTH = 36;  // Width of left panel (package list)
+const TOTAL_WIDTH = 88; // Total width of UI
+const DETAIL_WIDTH = TOTAL_WIDTH - LIST_WIDTH - 3; // Right panel width (minus divider)
+
+/**
+ * Helper to check if a button is focused
+ */
+function isButtonFocused(type: FocusTarget["type"], index?: number): boolean {
+  if (pkgState.focus.type !== type) return false;
+  if (index !== undefined && "index" in pkgState.focus) {
+    return pkgState.focus.index === index;
+  }
+  return true;
+}
+
+/**
+ * Get action buttons for the selected package
+ */
+function getActionButtons(): string[] {
+  const items = getFilteredItems();
+  if (items.length === 0 || pkgState.selectedIndex >= items.length) return [];
+  const item = items[pkgState.selectedIndex];
+
+  if (item.installed) {
+    return item.updateAvailable ? ["Update", "Uninstall"] : ["Uninstall"];
+  } else {
+    return ["Install"];
+  }
+}
+
+/**
+ * Word-wrap text to fit within a given width
+ */
+function wrapText(text: string, maxWidth: number): string[] {
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let currentLine = "";
+
+  for (const word of words) {
+    if (currentLine.length + word.length + 1 <= maxWidth) {
+      currentLine += (currentLine ? " " : "") + word;
+    } else {
+      if (currentLine) lines.push(currentLine);
+      currentLine = word.length > maxWidth ? word.slice(0, maxWidth - 1) + "…" : word;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  return lines.length > 0 ? lines : [""];
+}
+
+/**
+ * Build virtual buffer entries for the package manager (split-view layout)
+ */
+function buildListViewEntries(): TextPropertyEntry[] {
+  const entries: TextPropertyEntry[] = [];
+  const items = getFilteredItems();
+  const selectedItem = items.length > 0 && pkgState.selectedIndex < items.length
+    ? items[pkgState.selectedIndex] : null;
+  const installedItems = items.filter(i => i.installed);
+  const availableItems = items.filter(i => !i.installed);
+
+  // === HEADER ===
+  entries.push({
+    text: " Packages\n",
+    properties: { type: "header" },
+  });
+
+  // === FILTER BAR with focusable buttons ===
+  const filters: Array<{ id: string; label: string }> = [
+    { id: "all", label: "All" },
+    { id: "installed", label: "Installed" },
+    { id: "plugins", label: "Plugins" },
+    { id: "themes", label: "Themes" },
+  ];
+
+  // Build filter buttons with position tracking
+  let filterBarParts: Array<{ text: string; type: string; focused?: boolean; active?: boolean }> = [];
+  filterBarParts.push({ text: " ", type: "spacer" });
+
+  for (let i = 0; i < filters.length; i++) {
+    const f = filters[i];
+    const isActive = pkgState.filter === f.id;
+    const isFocused = isButtonFocused("filter", i);
+    // Always reserve space for brackets - show [ ] when focused, spaces when not
+    const leftBracket = isFocused ? "[" : " ";
+    const rightBracket = isFocused ? "]" : " ";
+    filterBarParts.push({
+      text: `${leftBracket} ${f.label} ${rightBracket}`,
+      type: "filter-btn",
+      focused: isFocused,
+      active: isActive,
+    });
+  }
+
+  filterBarParts.push({ text: "  ", type: "spacer" });
+
+  // Sync button - always reserve space for brackets
+  const syncFocused = isButtonFocused("sync");
+  const syncLeft = syncFocused ? "[" : " ";
+  const syncRight = syncFocused ? "]" : " ";
+  filterBarParts.push({ text: `${syncLeft} Sync ${syncRight}`, type: "sync-btn", focused: syncFocused });
+
+  // Search button - always reserve space for brackets
+  const searchFocused = isButtonFocused("search");
+  const searchLeft = searchFocused ? "[" : " ";
+  const searchRight = searchFocused ? "]" : " ";
+  const searchLabel = pkgState.searchQuery ? `Search: ${pkgState.searchQuery}` : "Search";
+  filterBarParts.push({ text: `${searchLeft} ${searchLabel} ${searchRight}`, type: "search-btn", focused: searchFocused });
+
+  // Emit each filter bar part as separate entry for individual styling
+  for (const part of filterBarParts) {
+    entries.push({
+      text: part.text,
+      properties: {
+        type: part.type,
+        focused: part.focused,
+        active: part.active,
+      },
+    });
+  }
+  entries.push({ text: "\n", properties: { type: "newline" } });
+
+  // === TOP SEPARATOR ===
+  entries.push({
+    text: " " + "─".repeat(TOTAL_WIDTH - 2) + "\n",
+    properties: { type: "separator" },
+  });
+
+  // === SPLIT VIEW: Package list on left, Details on right ===
+
+  // Build left panel lines (package list)
+  const leftLines: Array<{ text: string; type: string; selected?: boolean; installed?: boolean }> = [];
+
+  // Installed section
+  if (installedItems.length > 0) {
+    leftLines.push({ text: `INSTALLED (${installedItems.length})`, type: "section-title" });
+
+    let idx = 0;
+    for (const item of installedItems) {
+      const isSelected = idx === pkgState.selectedIndex;
+      const listFocused = pkgState.focus.type === "list";
+      const prefix = isSelected && listFocused ? "▸" : " ";
+      const status = item.updateAvailable ? "↑" : "✓";
+      const ver = item.version.length > 7 ? item.version.slice(0, 6) + "…" : item.version;
+      const name = item.name.length > 18 ? item.name.slice(0, 17) + "…" : item.name;
+      const line = `${prefix} ${name.padEnd(18)} ${ver.padEnd(7)} ${status}`;
+      leftLines.push({ text: line, type: "package-row", selected: isSelected, installed: true });
+      idx++;
+    }
+  }
+
+  // Available section
+  if (availableItems.length > 0) {
+    if (leftLines.length > 0) leftLines.push({ text: "", type: "blank" });
+    leftLines.push({ text: `AVAILABLE (${availableItems.length})`, type: "section-title" });
+
+    let idx = installedItems.length;
+    for (const item of availableItems) {
+      const isSelected = idx === pkgState.selectedIndex;
+      const listFocused = pkgState.focus.type === "list";
+      const prefix = isSelected && listFocused ? "▸" : " ";
+      const typeTag = item.packageType === "theme" ? "T" : "P";
+      const name = item.name.length > 22 ? item.name.slice(0, 21) + "…" : item.name;
+      const line = `${prefix} ${name.padEnd(22)} [${typeTag}]`;
+      leftLines.push({ text: line, type: "package-row", selected: isSelected, installed: false });
+      idx++;
+    }
+  }
+
+  // Empty state for left panel
+  if (items.length === 0) {
+    if (pkgState.isLoading) {
+      leftLines.push({ text: "Loading...", type: "empty-state" });
+    } else if (!isRegistrySynced()) {
+      leftLines.push({ text: "Registry not synced", type: "empty-state" });
+      leftLines.push({ text: "Tab to Sync button", type: "empty-state" });
+    } else {
+      leftLines.push({ text: "No packages found", type: "empty-state" });
+    }
+  }
+
+  // Build right panel lines (details for selected package)
+  const rightLines: Array<{ text: string; type: string; focused?: boolean; btnIndex?: number }> = [];
+
+  if (selectedItem) {
+    // Package name
+    rightLines.push({ text: selectedItem.name, type: "detail-title" });
+    rightLines.push({ text: "─".repeat(Math.min(selectedItem.name.length + 2, DETAIL_WIDTH - 2)), type: "detail-sep" });
+
+    // Version / Author / License on one line
+    let metaLine = `v${selectedItem.version}`;
+    if (selectedItem.author) metaLine += ` • ${selectedItem.author}`;
+    if (selectedItem.license) metaLine += ` • ${selectedItem.license}`;
+    if (metaLine.length > DETAIL_WIDTH - 2) metaLine = metaLine.slice(0, DETAIL_WIDTH - 5) + "...";
+    rightLines.push({ text: metaLine, type: "detail-meta" });
+
+    rightLines.push({ text: "", type: "blank" });
+
+    // Description (wrapped)
+    const descText = selectedItem.description || "No description available";
+    const descLines = wrapText(descText, DETAIL_WIDTH - 2);
+    for (const line of descLines) {
+      rightLines.push({ text: line, type: "detail-desc" });
+    }
+
+    rightLines.push({ text: "", type: "blank" });
+
+    // Keywords
+    if (selectedItem.keywords && selectedItem.keywords.length > 0) {
+      const kwText = selectedItem.keywords.slice(0, 4).join(", ");
+      rightLines.push({ text: `Tags: ${kwText}`, type: "detail-tags" });
+      rightLines.push({ text: "", type: "blank" });
+    }
+
+    // Action buttons - always reserve space for brackets
+    const actions = getActionButtons();
+    for (let i = 0; i < actions.length; i++) {
+      const focused = isButtonFocused("action", i);
+      const leftBracket = focused ? "[" : " ";
+      const rightBracket = focused ? "]" : " ";
+      const btnText = `${leftBracket} ${actions[i]} ${rightBracket}`;
+      rightLines.push({ text: btnText, type: "action-btn", focused, btnIndex: i });
+    }
+  } else {
+    rightLines.push({ text: "Select a package", type: "empty-state" });
+    rightLines.push({ text: "to view details", type: "empty-state" });
+  }
+
+  // Merge left and right panels into rows
+  const maxRows = Math.max(leftLines.length, rightLines.length, 8);
+  for (let i = 0; i < maxRows; i++) {
+    const leftItem = leftLines[i];
+    const rightItem = rightLines[i];
+
+    // Left side (padded to fixed width)
+    const leftText = leftItem ? (" " + leftItem.text) : "";
+    entries.push({
+      text: leftText.padEnd(LIST_WIDTH),
+      properties: {
+        type: leftItem?.type || "blank",
+        selected: leftItem?.selected,
+        installed: leftItem?.installed,
+      },
+    });
+
+    // Divider
+    entries.push({ text: "│", properties: { type: "divider" } });
+
+    // Right side
+    const rightText = rightItem ? (" " + rightItem.text) : "";
+    entries.push({
+      text: rightText,
+      properties: {
+        type: rightItem?.type || "blank",
+        focused: rightItem?.focused,
+        btnIndex: rightItem?.btnIndex,
+      },
+    });
+
+    entries.push({ text: "\n", properties: { type: "newline" } });
+  }
+
+  // === BOTTOM SEPARATOR ===
+  entries.push({
+    text: " " + "─".repeat(TOTAL_WIDTH - 2) + "\n",
+    properties: { type: "separator" },
+  });
+
+  // === HELP LINE ===
+  let helpText = " ↑↓ Navigate  Tab Next  / Search  Enter ";
+  if (pkgState.focus.type === "action") {
+    helpText += "Activate";
+  } else if (pkgState.focus.type === "filter") {
+    helpText += "Filter";
+  } else if (pkgState.focus.type === "sync") {
+    helpText += "Sync";
+  } else if (pkgState.focus.type === "search") {
+    helpText += "Search";
+  } else {
+    helpText += "Select";
+  }
+  helpText += "  Esc Close\n";
+
+  entries.push({
+    text: helpText,
+    properties: { type: "help" },
+  });
+
+  return entries;
+}
+
+/**
+ * Calculate UTF-8 byte length of a string.
+ * Needed because string.length returns character count, not byte count.
+ * Unicode chars like ▸ and ─ are 1 char but 3 bytes in UTF-8.
+ */
+function utf8ByteLength(str: string): number {
+  let bytes = 0;
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xD800 && code <= 0xDBFF) {
+      // Surrogate pair = 4 bytes, skip low surrogate
+      bytes += 4;
+      i++;
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+}
+
+/**
+ * Apply theme-aware highlighting to the package manager view
+ */
+function applyPkgManagerHighlighting(): void {
+  if (pkgState.bufferId === null) return;
+
+  // Clear existing overlays
+  editor.clearNamespace(pkgState.bufferId, "pkg");
+
+  const entries = buildListViewEntries();
+  let byteOffset = 0;
+
+  for (const entry of entries) {
+    const props = entry.properties as Record<string, unknown>;
+    const len = utf8ByteLength(entry.text);
+
+    // Determine theme colors based on entry type
+    let themeStyle: ThemeColor | null = null;
+
+    switch (props.type) {
+      case "header":
+        themeStyle = pkgTheme.header;
+        break;
+
+      case "section-title":
+        themeStyle = pkgTheme.sectionTitle;
+        break;
+
+      case "filter-btn":
+        if (props.focused && props.active) {
+          // Both focused and active - use focused style
+          themeStyle = pkgTheme.buttonFocused;
+        } else if (props.focused) {
+          // Only focused (not the active filter)
+          themeStyle = pkgTheme.filterFocused;
+        } else if (props.active) {
+          // Active filter but not focused
+          themeStyle = pkgTheme.filterActive;
+        } else {
+          themeStyle = pkgTheme.filterInactive;
+        }
+        break;
+
+      case "sync-btn":
+        themeStyle = props.focused ? pkgTheme.buttonFocused : pkgTheme.button;
+        break;
+
+      case "search-btn":
+        // Search box has distinct input field styling
+        themeStyle = props.focused ? pkgTheme.searchBoxFocused : pkgTheme.searchBox;
+        break;
+
+      case "package-row":
+        if (props.selected) {
+          themeStyle = pkgTheme.selected;
+        } else if (props.installed) {
+          themeStyle = pkgTheme.installed;
+        } else {
+          themeStyle = pkgTheme.available;
+        }
+        break;
+
+      case "detail-title":
+        themeStyle = pkgTheme.header;
+        break;
+
+      case "detail-sep":
+      case "separator":
+        themeStyle = pkgTheme.separator;
+        break;
+
+      case "divider":
+        themeStyle = pkgTheme.divider;
+        break;
+
+      case "detail-meta":
+      case "detail-tags":
+        themeStyle = pkgTheme.infoLabel;
+        break;
+
+      case "detail-desc":
+        themeStyle = pkgTheme.description;
+        break;
+
+      case "action-btn":
+        themeStyle = props.focused ? pkgTheme.buttonFocused : pkgTheme.button;
+        break;
+
+      case "help":
+        themeStyle = pkgTheme.help;
+        break;
+
+      case "empty-state":
+        themeStyle = pkgTheme.emptyState;
+        break;
+    }
+
+    if (themeStyle) {
+      const fg = themeStyle.fg;
+      const bg = themeStyle.bg;
+
+      // Build overlay options - prefer theme keys, fallback to RGB
+      const options: Record<string, unknown> = {};
+
+      if (fg?.theme) {
+        options.fg = fg.theme;
+      } else if (fg?.rgb) {
+        options.fg = fg.rgb;
+      }
+
+      if (bg?.theme) {
+        options.bg = bg.theme;
+      } else if (bg?.rgb) {
+        options.bg = bg.rgb;
+      }
+
+      if (Object.keys(options).length > 0) {
+        editor.addOverlay(
+          pkgState.bufferId,
+          "pkg",
+          byteOffset,
+          byteOffset + len,
+          options
+        );
+      }
+    }
+
+    byteOffset += len;
+  }
+}
+
+/**
+ * Update the package manager view
+ */
+function updatePkgManagerView(): void {
+  if (pkgState.bufferId === null) return;
+
+  const entries = buildListViewEntries();
+  editor.setVirtualBufferContent(pkgState.bufferId, entries);
+  applyPkgManagerHighlighting();
+}
+
+/**
+ * Open the package manager
+ */
+async function openPackageManager(): Promise<void> {
+  if (pkgState.isOpen) {
+    // Already open, just focus it
+    if (pkgState.bufferId !== null) {
+      editor.showBuffer(pkgState.bufferId);
+    }
+    return;
+  }
+
+  // Store current buffer
+  pkgState.sourceBufferId = editor.getActiveBufferId();
+  pkgState.splitId = editor.getActiveSplitId();
+
+  // Reset state
+  pkgState.filter = "all";
+  pkgState.searchQuery = "";
+  pkgState.selectedIndex = 0;
+  pkgState.focus = { type: "list" };
+  pkgState.isLoading = true;
+
+  // Build initial entries (loading state)
+  const entries = buildListViewEntries();
+
+  // Create virtual buffer
+  const result = await editor.createVirtualBufferInExistingSplit({
+    name: "*Packages*",
+    mode: "pkg-manager",
+    readOnly: true,
+    editingDisabled: true,
+    showCursors: false,
+    entries: entries,
+    splitId: pkgState.splitId!,
+    showLineNumbers: false,
+  });
+
+  pkgState.bufferId = result.bufferId;
+  pkgState.isOpen = true;
+
+  // Load package data
+  pkgState.items = buildPackageList();
+  pkgState.isLoading = false;
+
+  // Update view
+  updatePkgManagerView();
+}
+
+/**
+ * Close the package manager
+ */
+function closePackageManager(): void {
+  if (!pkgState.isOpen) return;
+
+  // Close the buffer
+  if (pkgState.bufferId !== null) {
+    editor.closeBuffer(pkgState.bufferId);
+  }
+
+  // Restore previous buffer if possible
+  if (pkgState.sourceBufferId !== null && pkgState.splitId !== null) {
+    editor.showBuffer(pkgState.sourceBufferId);
+  }
+
+  // Reset state
+  pkgState.isOpen = false;
+  pkgState.bufferId = null;
+  pkgState.splitId = null;
+  pkgState.sourceBufferId = null;
+}
+
+/**
+ * Get all focusable elements in order for Tab navigation
+ */
+function getFocusOrder(): FocusTarget[] {
+  const order: FocusTarget[] = [
+    { type: "filter", index: 0 },
+    { type: "filter", index: 1 },
+    { type: "filter", index: 2 },
+    { type: "filter", index: 3 },
+    { type: "sync" },
+    { type: "search" },
+    { type: "list" },
+  ];
+
+  // Add action buttons for selected package
+  const actions = getActionButtons();
+  for (let i = 0; i < actions.length; i++) {
+    order.push({ type: "action", index: i });
+  }
+
+  return order;
+}
+
+/**
+ * Find current focus index in the focus order
+ */
+function getCurrentFocusIndex(): number {
+  const order = getFocusOrder();
+  for (let i = 0; i < order.length; i++) {
+    const target = order[i];
+    if (target.type === pkgState.focus.type) {
+      if ("index" in target && "index" in pkgState.focus) {
+        if (target.index === pkgState.focus.index) return i;
+      } else if (!("index" in target) && !("index" in pkgState.focus)) {
+        return i;
+      }
+    }
+  }
+  return 6; // Default to list
+}
+
+// Navigation commands
+globalThis.pkg_nav_up = function(): void {
+  if (!pkgState.isOpen) return;
+
+  // Only navigate in list when focus is on list or action buttons
+  if (pkgState.focus.type !== "list" && pkgState.focus.type !== "action") {
+    return;
+  }
+
+  const items = getFilteredItems();
+  if (items.length === 0) return;
+
+  pkgState.selectedIndex = Math.max(0, pkgState.selectedIndex - 1);
+  pkgState.focus = { type: "list" };
+  updatePkgManagerView();
+};
+
+globalThis.pkg_nav_down = function(): void {
+  if (!pkgState.isOpen) return;
+
+  // Only navigate in list when focus is on list or action buttons
+  if (pkgState.focus.type !== "list" && pkgState.focus.type !== "action") {
+    return;
+  }
+
+  const items = getFilteredItems();
+  if (items.length === 0) return;
+
+  pkgState.selectedIndex = Math.min(items.length - 1, pkgState.selectedIndex + 1);
+  pkgState.focus = { type: "list" };
+  updatePkgManagerView();
+};
+
+globalThis.pkg_next_button = function(): void {
+  if (!pkgState.isOpen) return;
+
+  const order = getFocusOrder();
+  const currentIdx = getCurrentFocusIndex();
+  const nextIdx = (currentIdx + 1) % order.length;
+  pkgState.focus = order[nextIdx];
+  updatePkgManagerView();
+};
+
+globalThis.pkg_prev_button = function(): void {
+  if (!pkgState.isOpen) return;
+
+  const order = getFocusOrder();
+  const currentIdx = getCurrentFocusIndex();
+  const prevIdx = (currentIdx - 1 + order.length) % order.length;
+  pkgState.focus = order[prevIdx];
+  updatePkgManagerView();
+};
+
+globalThis.pkg_activate = async function(): Promise<void> {
+  if (!pkgState.isOpen) return;
+
+  const focus = pkgState.focus;
+
+  // Handle filter button activation
+  if (focus.type === "filter") {
+    const filters = ["all", "installed", "plugins", "themes"] as const;
+    pkgState.filter = filters[focus.index];
+    pkgState.selectedIndex = 0;
+    pkgState.items = buildPackageList();
+    updatePkgManagerView();
+    return;
+  }
+
+  // Handle sync button
+  if (focus.type === "sync") {
+    await syncRegistry();
+    pkgState.items = buildPackageList();
+    updatePkgManagerView();
+    return;
+  }
+
+  // Handle search button - open search prompt with current query
+  if (focus.type === "search") {
+    globalThis.pkg_search();
+    return;
+  }
+
+  // Handle list selection - move focus to action buttons
+  if (focus.type === "list") {
+    const items = getFilteredItems();
+    if (items.length === 0) {
+      if (!isRegistrySynced()) {
+        await syncRegistry();
+        pkgState.items = buildPackageList();
+        updatePkgManagerView();
+      }
+      return;
+    }
+    // Move focus to action button
+    pkgState.focus = { type: "action", index: 0 };
+    updatePkgManagerView();
+    return;
+  }
+
+  // Handle action button activation
+  if (focus.type === "action") {
+    const items = getFilteredItems();
+    if (items.length === 0 || pkgState.selectedIndex >= items.length) return;
+
+    const item = items[pkgState.selectedIndex];
+    const actions = getActionButtons();
+    const actionName = actions[focus.index];
+
+    if (actionName === "Update" && item.installedPackage) {
+      await updatePackage(item.installedPackage);
+      pkgState.items = buildPackageList();
+      updatePkgManagerView();
+    } else if (actionName === "Uninstall" && item.installedPackage) {
+      await removePackage(item.installedPackage);
+      pkgState.items = buildPackageList();
+      const newItems = getFilteredItems();
+      pkgState.selectedIndex = Math.min(pkgState.selectedIndex, Math.max(0, newItems.length - 1));
+      pkgState.focus = { type: "list" };
+      updatePkgManagerView();
+    } else if (actionName === "Install" && item.registryEntry) {
+      await installPackage(item.registryEntry.repository, item.name, item.packageType);
+      pkgState.items = buildPackageList();
+      updatePkgManagerView();
+    }
+  }
+};
+
+globalThis.pkg_back_or_close = function(): void {
+  if (!pkgState.isOpen) return;
+
+  // If focus is on action buttons, go back to list
+  if (pkgState.focus.type === "action") {
+    pkgState.focus = { type: "list" };
+    updatePkgManagerView();
+    return;
+  }
+
+  // Otherwise close
+  closePackageManager();
+};
+
+globalThis.pkg_scroll_up = function(): void {
+  // Just move cursor up in detail view
+  editor.executeAction("move_up");
+};
+
+globalThis.pkg_scroll_down = function(): void {
+  // Just move cursor down in detail view
+  editor.executeAction("move_down");
+};
+
+globalThis.pkg_search = function(): void {
+  if (!pkgState.isOpen) return;
+
+  // Pre-fill with current search query so typing replaces it
+  if (pkgState.searchQuery) {
+    editor.startPromptWithInitial("Search packages:", "pkg-search", pkgState.searchQuery);
+  } else {
+    editor.startPrompt("Search packages:", "pkg-search");
+  }
+};
+
+globalThis.onPkgSearchConfirmed = function(args: {
+  prompt_type: string;
+  selected_index: number | null;
+  input: string;
+}): boolean {
+  if (args.prompt_type !== "pkg-search") return true;
+
+  pkgState.searchQuery = args.input.trim();
+  pkgState.selectedIndex = 0;
+  pkgState.focus = { type: "list" };
+  updatePkgManagerView();
+
+  return true;
+};
+
+editor.on("prompt_confirmed", "onPkgSearchConfirmed");
+
+// Legacy Finder-based UI (kept for backwards compatibility)
+const registryFinder = new Finder<[string, RegistryEntry]>(editor, {
+  id: "pkg-registry",
+  format: ([name, entry]) => ({
+    label: name,
+    description: entry.description,
+    metadata: { name, entry }
+  }),
+  preview: false,
+  maxResults: 100,
+  onSelect: async ([name, entry]) => {
+    await installPackage(entry.repository, name, "plugin");
+  }
+});
+
+// =============================================================================
+// Commands
+// =============================================================================
+
+/**
+ * Browse and install plugins from registry
+ */
+globalThis.pkg_install_plugin = async function(): Promise<void> {
+  editor.debug("[pkg] pkg_install_plugin called");
+  try {
+    // Always sync registry to ensure latest plugins are available
+    await syncRegistry();
+
+    const registry = loadRegistry("plugins");
+    editor.debug(`[pkg] loaded registry with ${Object.keys(registry.packages).length} packages`);
+    const entries = Object.entries(registry.packages);
+    editor.debug(`[pkg] entries.length = ${entries.length}`);
+
+    if (entries.length === 0) {
+      editor.debug("[pkg] No plugins found, setting status");
+      editor.setStatus("No plugins in registry (registry may be empty)");
+      editor.debug("[pkg] setStatus called");
+      return;
+    }
+    editor.debug("[pkg] About to show finder");
+
+    registryFinder.prompt({
+      title: "Install Plugin:",
+      source: {
+        mode: "filter",
+        load: async () => entries
+      }
+    });
+  } catch (e) {
+    editor.debug(`[pkg] Error in pkg_install_plugin: ${e}`);
+    editor.setStatus(`Error: ${e}`);
+  }
+};
+
+/**
+ * Browse and install themes from registry
+ */
+globalThis.pkg_install_theme = async function(): Promise<void> {
+  editor.debug("[pkg] pkg_install_theme called");
+  try {
+    // Always sync registry to ensure latest themes are available
+    await syncRegistry();
+
+    const registry = loadRegistry("themes");
+    editor.debug(`[pkg] loaded registry with ${Object.keys(registry.packages).length} themes`);
+    const entries = Object.entries(registry.packages);
+
+    if (entries.length === 0) {
+      editor.setStatus("No themes in registry (registry may be empty)");
+      return;
+    }
+
+    registryFinder.prompt({
+      title: "Install Theme:",
+      source: {
+        mode: "filter",
+        load: async () => entries
+      }
+    });
+  } catch (e) {
+    editor.debug(`[pkg] Error in pkg_install_theme: ${e}`);
+    editor.setStatus(`Error: ${e}`);
+  }
+};
+
+/**
+ * Install from git URL
+ */
+globalThis.pkg_install_url = function(): void {
+  editor.startPrompt("Git URL:", "pkg-install-url");
+};
+
+globalThis.onPkgInstallUrlConfirmed = async function(args: {
+  prompt_type: string;
+  selected_index: number | null;
+  input: string;
+}): Promise<boolean> {
+  if (args.prompt_type !== "pkg-install-url") return true;
+
+  const url = args.input.trim();
+  if (url) {
+    await installPackage(url);
+  } else {
+    editor.setStatus("No URL provided");
+  }
+
+  return true;
+};
+
+editor.on("prompt_confirmed", "onPkgInstallUrlConfirmed");
+
+/**
+ * Open the package manager UI
+ */
+globalThis.pkg_list = async function(): Promise<void> {
+  await openPackageManager();
+};
+
+/**
+ * Update all packages
+ */
+globalThis.pkg_update_all = async function(): Promise<void> {
+  await updateAllPackages();
+};
+
+/**
+ * Update a specific package
+ */
+globalThis.pkg_update = function(): void {
+  const plugins = getInstalledPackages("plugin");
+  const themes = getInstalledPackages("theme");
+  const all = [...plugins, ...themes];
+
+  if (all.length === 0) {
+    editor.setStatus("No packages installed");
+    return;
+  }
+
+  const finder = new Finder<InstalledPackage>(editor, {
+    id: "pkg-update",
+    format: (pkg) => ({
+      label: pkg.name,
+      description: `${pkg.type} | ${pkg.version}`,
+      metadata: pkg
+    }),
+    preview: false,
+    onSelect: async (pkg) => {
+      await updatePackage(pkg);
+    }
+  });
+
+  finder.prompt({
+    title: "Update Package:",
+    source: {
+      mode: "filter",
+      load: async () => all
+    }
+  });
+};
+
+/**
+ * Remove a package
+ */
+globalThis.pkg_remove = function(): void {
+  const plugins = getInstalledPackages("plugin");
+  const themes = getInstalledPackages("theme");
+  const all = [...plugins, ...themes];
+
+  if (all.length === 0) {
+    editor.setStatus("No packages installed");
+    return;
+  }
+
+  const finder = new Finder<InstalledPackage>(editor, {
+    id: "pkg-remove",
+    format: (pkg) => ({
+      label: pkg.name,
+      description: `${pkg.type} | ${pkg.version}`,
+      metadata: pkg
+    }),
+    preview: false,
+    onSelect: async (pkg) => {
+      await removePackage(pkg);
+    }
+  });
+
+  finder.prompt({
+    title: "Remove Package:",
+    source: {
+      mode: "filter",
+      load: async () => all
+    }
+  });
+};
+
+/**
+ * Sync registry
+ */
+globalThis.pkg_sync = async function(): Promise<void> {
+  await syncRegistry();
+};
+
+/**
+ * Show outdated packages
+ */
+globalThis.pkg_outdated = async function(): Promise<void> {
+  const plugins = getInstalledPackages("plugin");
+  const themes = getInstalledPackages("theme");
+  const all = [...plugins, ...themes];
+
+  if (all.length === 0) {
+    editor.setStatus("No packages installed");
+    return;
+  }
+
+  editor.setStatus("Checking for updates...");
+
+  const outdated: Array<{ pkg: InstalledPackage; behind: number }> = [];
+
+  for (const pkg of all) {
+    // Fetch latest
+    await gitCommand(["-C", `${pkg.path}`, "fetch"]);
+
+    // Check how many commits behind
+    const result = await gitCommand([
+      "-C", `${pkg.path}`, "rev-list", "--count", "HEAD..origin/HEAD"
+    ]);
+
+    const behind = parseInt(result.stdout.trim(), 10);
+    if (behind > 0) {
+      outdated.push({ pkg, behind });
+    }
+  }
+
+  if (outdated.length === 0) {
+    editor.setStatus("All packages are up to date");
+    return;
+  }
+
+  const finder = new Finder<{ pkg: InstalledPackage; behind: number }>(editor, {
+    id: "pkg-outdated",
+    format: (item) => ({
+      label: item.pkg.name,
+      description: `${item.behind} commits behind`,
+      metadata: item
+    }),
+    preview: false,
+    onSelect: async (item) => {
+      await updatePackage(item.pkg);
+    }
+  });
+
+  finder.prompt({
+    title: `Outdated Packages (${outdated.length}):`,
+    source: {
+      mode: "filter",
+      load: async () => outdated
+    }
+  });
+};
+
+/**
+ * Generate lockfile
+ */
+globalThis.pkg_lock = async function(): Promise<void> {
+  await generateLockfile();
+};
+
+/**
+ * Install from lockfile
+ */
+globalThis.pkg_install_lock = async function(): Promise<void> {
+  await installFromLockfile();
+};
+
+// =============================================================================
+// Command Registration
+// =============================================================================
+
+editor.registerCommand("%cmd.install_plugin", "%cmd.install_plugin_desc", "pkg_install_plugin", null);
+editor.registerCommand("%cmd.install_theme", "%cmd.install_theme_desc", "pkg_install_theme", null);
+editor.registerCommand("%cmd.install_url", "%cmd.install_url_desc", "pkg_install_url", null);
+editor.registerCommand("%cmd.list", "%cmd.list_desc", "pkg_list", null);
+editor.registerCommand("%cmd.update_all", "%cmd.update_all_desc", "pkg_update_all", null);
+editor.registerCommand("%cmd.update", "%cmd.update_desc", "pkg_update", null);
+editor.registerCommand("%cmd.remove", "%cmd.remove_desc", "pkg_remove", null);
+editor.registerCommand("%cmd.sync", "%cmd.sync_desc", "pkg_sync", null);
+editor.registerCommand("%cmd.outdated", "%cmd.outdated_desc", "pkg_outdated", null);
+editor.registerCommand("%cmd.lock", "%cmd.lock_desc", "pkg_lock", null);
+editor.registerCommand("%cmd.install_lock", "%cmd.install_lock_desc", "pkg_install_lock", null);
+
+editor.debug("Package Manager plugin loaded");

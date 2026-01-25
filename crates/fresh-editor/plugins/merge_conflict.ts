@@ -961,16 +961,10 @@ function highlightPanel(bufferId: number, side: "ours" | "theirs"): void {
 
     // Highlight conflict header lines
     if (line.includes("--- Conflict")) {
-      editor.addOverlay(
-        bufferId,
-        `merge-conflict-header-${lineIdx}`,
-        lineStart,
-        lineEnd,
-        conflictColor[0],
-        conflictColor[1],
-        conflictColor[2],
-        true // underline
-      );
+      editor.addOverlay(bufferId, `merge-conflict-header-${lineIdx}`, lineStart, lineEnd, {
+        fg: conflictColor,
+        underline: true,
+      });
     }
 
     byteOffset = lineEnd + 1;
@@ -996,16 +990,10 @@ function highlightResultPanel(bufferId: number): void {
 
     // Highlight conflict markers
     if (line.startsWith("<<<<<<<") || line.startsWith("=======") || line.startsWith(">>>>>>>")) {
-      editor.addOverlay(
-        bufferId,
-        `merge-marker-${lineIdx}`,
-        lineStart,
-        lineEnd,
-        colors.unresolved[0],
-        colors.unresolved[1],
-        colors.unresolved[2],
-        true // underline
-      );
+      editor.addOverlay(bufferId, `merge-marker-${lineIdx}`, lineStart, lineEnd, {
+        fg: colors.unresolved,
+        underline: true,
+      });
     }
 
     byteOffset = lineEnd + 1;

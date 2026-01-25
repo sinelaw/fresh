@@ -1179,3 +1179,163 @@ editor.setStatus("Test diagnostics plugin loaded");
 
     Ok(())
 }
+
+/// Test theme-aware overlay support
+///
+/// Verifies that overlays with theme keys resolve to the correct colors
+/// from the current theme at render time.
+#[test]
+fn test_theme_aware_overlay() {
+    init_tracing_from_env();
+
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    // Create a simple plugin that adds theme-aware overlays
+    let test_plugin = r###"
+const editor = getEditor();
+
+globalThis.test_theme_overlay = function(): void {
+    const bufferId = editor.getActiveBufferId();
+    // bufferId is a valid non-negative number (0 is the first buffer)
+    if (bufferId === null || bufferId === undefined) {
+        editor.setStatus("No active buffer");
+        return;
+    }
+
+    // Clear any existing overlays
+    editor.clearNamespace(bufferId, "test-theme");
+
+    // Add overlay with theme key for foreground (syntax.keyword)
+    editor.addOverlay(bufferId, "test-theme", 0, 4, {
+        fg: "syntax.keyword",  // theme key - should resolve to keyword color
+    });
+
+    // Add overlay with theme key for background
+    editor.addOverlay(bufferId, "test-theme", 5, 9, {
+        fg: [255, 255, 255],  // RGB fallback white
+        bg: "editor.selection_bg",  // theme key for background
+    });
+
+    editor.setStatus("Theme overlays applied");
+};
+
+editor.registerCommand(
+    "Test: Apply Theme Overlay",
+    "Apply overlays with theme keys",
+    "test_theme_overlay",
+    "normal"
+);
+
+editor.debug("Theme overlay test plugin loaded");
+"###;
+
+    let test_plugin_path = plugins_dir.join("test_theme_overlay.ts");
+    fs::write(&test_plugin_path, test_plugin).unwrap();
+
+    // Create test file with some content
+    let test_file_content = "TEST WORD here\nSecond line\n";
+    let fixture = TestFixture::new("test_theme.txt", test_file_content).unwrap();
+
+    // Create harness with the project directory
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Execute the theme overlay command
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Test: Apply Theme Overlay").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Apply Theme Overlay"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for overlays to be applied
+    harness
+        .wait_until(|h| {
+            if let Some(status) = h.editor().get_status_message() {
+                status.contains("Theme overlays applied")
+            } else {
+                false
+            }
+        })
+        .unwrap();
+
+    harness.render().unwrap();
+
+    // Find the screen position of "TEST" - it's not at (0,0) due to menu bar and tabs
+    let screen = harness.screen_to_string();
+    println!("Screen content:\n{}", screen);
+
+    // Find the line containing "TEST" and get its y position
+    let mut test_y: Option<u16> = None;
+    let mut test_x: Option<u16> = None;
+    for (y, line) in screen.lines().enumerate() {
+        if let Some(x) = line.find("TEST") {
+            test_y = Some(y as u16);
+            test_x = Some(x as u16);
+            println!("Found 'TEST' at screen position ({}, {})", x, y);
+            break;
+        }
+    }
+
+    let (x, y) = match (test_x, test_y) {
+        (Some(x), Some(y)) => (x, y),
+        _ => panic!("Could not find 'TEST' on screen"),
+    };
+
+    // Check that the overlay was applied with a real color
+    // The first character of "TEST" should have the syntax.keyword color
+    let style_at_test = harness.get_cell_style(x, y);
+    println!("Style at 'T' position ({}, {}): {:?}", x, y, style_at_test);
+
+    // Get the overlays from the buffer to verify they exist
+    let overlays = harness.editor().active_state().overlays.all();
+    println!("Number of overlays: {}", overlays.len());
+
+    for (i, overlay) in overlays.iter().enumerate() {
+        println!("Overlay {}: face={:?}", i, overlay.face);
+    }
+
+    // Verify overlays were created
+    assert!(
+        overlays.len() >= 2,
+        "Expected at least 2 overlays to be created, got {}",
+        overlays.len()
+    );
+
+    // Check that the foreground color at "T" is a themed color
+    let style = style_at_test.expect("Should have style at TEST position");
+    println!("Foreground color at T: {:?}", style.fg);
+
+    // The color should be resolved from the theme (syntax.keyword)
+    // It should NOT be the default editor foreground (White) - it should be themed
+    let fg = style.fg.expect("Should have foreground color");
+
+    // The theme's syntax.keyword color should be different from the default White
+    // (high-contrast theme uses Cyan for syntax.keyword)
+    assert!(
+        !matches!(fg, ratatui::style::Color::White),
+        "Theme key 'syntax.keyword' was not resolved - still showing default White. \
+         Got {:?}, expected a themed color like Cyan or RGB.",
+        fg
+    );
+    println!("Theme overlay resolved to: {:?}", fg);
+
+    let screen = harness.screen_to_string();
+    println!("Final screen:\n{}", screen);
+}
