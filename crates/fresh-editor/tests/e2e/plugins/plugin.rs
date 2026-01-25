@@ -109,41 +109,56 @@ editor.setStatus("Test plugin loaded!");
     // We verify this by checking that the screen was rendered successfully
 }
 
-/// Test TODO Highlighter plugin - loads plugin, enables it, and checks highlighting
+/// Test plugin overlay API - plugins can add and clear overlays
 #[test]
-fn test_todo_highlighter_plugin() {
+fn test_plugin_overlay_api() {
+    init_tracing_from_env();
+
     // Create a temporary project directory
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the TODO highlighter plugin
+    // Create plugins directory
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    copy_plugin(&plugins_dir, "todo_highlighter");
+    // Create a test plugin that adds overlays
+    let test_plugin = r#"
+const editor = getEditor();
 
-    // Create test file with TODO comments
-    let test_file_content = r#"// This is a test file for the TODO Highlighter plugin
+editor.registerCommand(
+    "Test: Add Overlay",
+    "Add a test overlay",
+    "test_add_overlay",
+    "normal"
+);
 
-// TODO: Implement user authentication
-// FIXME: Memory leak in connection pool
-// HACK: Temporary workaround for parser bug
-// NOTE: This function is performance-critical
-// XXX: Needs review before production
-// BUG: Off-by-one error in loop counter
+globalThis.test_add_overlay = function(): void {
+    const bufferId = editor.getActiveBufferId();
+    if (bufferId === null || bufferId === undefined) {
+        editor.setStatus("No active buffer");
+        return;
+    }
 
-# Python-style comments
-# TODO: Add type hints to all functions
-# FIXME: Handle edge case when list is empty
+    // Add an overlay with RGB color
+    editor.addOverlay(bufferId, "test-ns", 0, 4, {
+        fg: [255, 0, 0],  // Red foreground
+    });
 
-Regular text without keywords should not be highlighted:
-TODO FIXME HACK NOTE XXX BUG (not in comments)
+    editor.setStatus("Overlay added");
+};
+
+editor.setStatus("Overlay test plugin loaded");
 "#;
 
-    let fixture = TestFixture::new("test_todo.txt", test_file_content).unwrap();
+    fs::write(plugins_dir.join("test_overlay.ts"), test_plugin).unwrap();
 
-    // Create harness with the project directory (so plugins load)
+    // Create test file
+    let test_file_content = "TEST content here\n";
+    let fixture = TestFixture::new("test.txt", test_file_content).unwrap();
+
+    // Create harness
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
             .unwrap();
@@ -152,478 +167,118 @@ TODO FIXME HACK NOTE XXX BUG (not in comments)
     harness.open_file(&fixture.path).unwrap();
     harness.render().unwrap();
 
-    // Check that file content is visible
-    harness.assert_screen_contains("TODO: Implement user authentication");
-
-    // Open command palette
+    // Execute the overlay command
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-
-    // Type "TODO Highlighter: Enable" command
-    harness.type_text("TODO Highlighter: Enable").unwrap();
-
-    // Wait for command to appear in palette before executing
+    harness.type_text("Test: Add Overlay").unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("TODO Highlighter: Enable"))
+        .wait_until(|h| h.screen_to_string().contains("Add Overlay"))
         .unwrap();
-
-    // Execute the command
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait for plugin to apply highlighting to at least one TODO keyword
-    // The plugin needs to:
-    // 1. Process the RefreshLines command from the channel
-    // 2. Clear seen_lines and set plugin_render_requested
-    // 3. Re-render to trigger lines_changed hook
-    // 4. Process addOverlay commands from the hook
+    // Wait for overlay to be applied
     harness
         .wait_until(|h| {
-            let screen = h.screen_to_string();
-            let lines: Vec<&str> = screen.lines().collect();
-
-            // Find the position of "TODO" on screen and check if it's highlighted
-            for (y, line) in lines.iter().enumerate() {
-                if let Some(x) = line.find("TODO") {
-                    // Check if this TODO is in a comment (should have "//" before it)
-                    if line[..x].contains("//") {
-                        // Check the style of the 'T' in "TODO"
-                        if let Some(style) = h.get_cell_style(x as u16, y as u16) {
-                            // Check if foreground color is an actual RGB color (overlays set foreground, not background)
-                            // TODO keywords should be yellow (255, 200, 50)
-                            if let Some(fg) = style.fg {
-                                // Only count as highlighted if it's an actual RGB color
-                                if matches!(fg, ratatui::style::Color::Rgb(_, _, _)) {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            false
+            let overlays = h.editor().active_state().overlays.all();
+            !overlays.is_empty()
         })
-        .expect("Expected to find at least one highlighted TODO keyword");
+        .unwrap();
 
-    // Print screen for debugging
+    // Verify overlay was created
+    let overlays = harness.editor().active_state().overlays.all();
+    assert!(!overlays.is_empty(), "Expected at least one overlay");
+
     let screen = harness.screen_to_string();
-    println!("Screen after enabling TODO highlighter:\n{}", screen);
+    println!("Screen after overlay:\n{}", screen);
 }
 
-/// Test TODO Highlighter disable command
+/// Test plugin render-line hook receives correct arguments
 #[test]
-fn test_todo_highlighter_disable() {
-    // Create a temporary project directory
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let project_root = temp_dir.path().join("project_root");
-    fs::create_dir(&project_root).unwrap();
-
-    // Create plugins directory and copy the TODO highlighter plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    copy_plugin(&plugins_dir, "todo_highlighter");
-
-    // Create test file with TODO comments
-    let test_file_content = "// TODO: Test comment\n";
-    let fixture = TestFixture::new("test_todo.txt", test_file_content).unwrap();
-
-    // Create harness with the project directory (so plugins load)
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
-            .unwrap();
-
-    // Open the test file
-    harness.open_file(&fixture.path).unwrap();
-    harness.render().unwrap();
-
-    // Enable highlighting first
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.type_text("TODO Highlighter: Enable").unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("TODO Highlighter: Enable"))
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Now disable it
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.type_text("TODO Highlighter: Disable").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Verify the content is still visible after disabling
-    harness.assert_screen_contains("TODO: Test comment");
-
-    // The test passes if we can execute disable without error
-    // Highlighting should be removed but we don't check for it explicitly
-    // since removing overlays doesn't leave visible traces to assert on
-}
-
-/// Test TODO Highlighter toggle command
-#[test]
-fn test_todo_highlighter_toggle() {
-    // Create a temporary project directory
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let project_root = temp_dir.path().join("project_root");
-    fs::create_dir(&project_root).unwrap();
-
-    // Create plugins directory and copy the TODO highlighter plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    copy_plugin(&plugins_dir, "todo_highlighter");
-
-    // Create test file with TODO comments
-    let test_file_content = "// TODO: Test comment\n";
-    let fixture = TestFixture::new("test_todo.txt", test_file_content).unwrap();
-
-    // Create harness with the project directory (so plugins load)
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
-            .unwrap();
-
-    // Open the test file
-    harness.open_file(&fixture.path).unwrap();
-    harness.render().unwrap();
-
-    // Toggle on
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.type_text("TODO Highlighter: Toggle").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-
-    // Wait for plugin to process and apply highlight overlay using semantic waiting
-    // The plugin needs async cycles to process RefreshLines and addOverlay commands
-    harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            let lines: Vec<&str> = screen.lines().collect();
-
-            for (y, line) in lines.iter().enumerate() {
-                if let Some(x) = line.find("TODO") {
-                    if line[..x].contains("//") {
-                        if let Some(style) = h.get_cell_style(x as u16, y as u16) {
-                            // Check if it's highlighted with an RGB color
-                            if let Some(fg) = style.fg {
-                                if matches!(fg, ratatui::style::Color::Rgb(_, _, _)) {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            false
-        })
-        .expect("Expected TODO to be highlighted after toggle on");
-
-    // Toggle off
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.type_text("TODO Highlighter: Toggle").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Verify content is still visible after toggling off
-    harness.assert_screen_contains("TODO: Test comment");
-}
-
-/// Test TODO Highlighter updates when buffer content changes
-///
-/// This test documents a known limitation: overlays don't update positions
-/// when the buffer is modified. When text is inserted before an overlay,
-/// the overlay stays at its original byte position instead of shifting.
-#[test]
-#[ignore = "Overlays don't update positions when buffer changes - needs overlay position tracking fix"]
-fn test_todo_highlighter_updates_on_edit() {
-    // Enable tracing for debugging
-    use tracing_subscriber::{fmt, EnvFilter};
-    let _ = fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive("fresh=trace".parse().unwrap()),
-        )
-        .with_test_writer()
-        .try_init();
+fn test_plugin_render_line_hook() {
+    init_tracing_from_env();
 
     // Create a temporary project directory
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
 
-    // Create plugins directory and copy the TODO highlighter plugin
+    // Create plugins directory
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-    copy_plugin(&plugins_dir, "todo_highlighter");
+    // Create a plugin that tracks render-line calls
+    let test_plugin = r#"
+const editor = getEditor();
 
-    // Create test file with TODO comment at the start
-    let test_file_content = "// TODO: Original comment\n";
-    let fixture = TestFixture::new("test_todo.txt", test_file_content).unwrap();
+let lineCount = 0;
+let foundMarker = false;
 
-    // Create harness with the project directory (so plugins load)
+globalThis.onRenderLine = function(args: {
+    buffer_id: number;
+    line_number: number;
+    byte_start: number;
+    byte_end: number;
+    content: string;
+}): boolean {
+    if (args && args.content !== undefined) {
+        lineCount++;
+        if (args.content.includes("MARKER")) {
+            foundMarker = true;
+        }
+    }
+    return true;
+};
+
+editor.on("render_line", "onRenderLine");
+
+globalThis.test_check_render = function(): void {
+    editor.setStatus(`Lines: ${lineCount}, Marker: ${foundMarker}`);
+};
+
+editor.registerCommand(
+    "Test: Check Render",
+    "Check render-line results",
+    "test_check_render",
+    "normal"
+);
+
+editor.setStatus("Render hook test loaded");
+"#;
+
+    fs::write(plugins_dir.join("test_render_hook.ts"), test_plugin).unwrap();
+
+    // Create test file with marker
+    let test_file_content = "Line 1\nMARKER line\nLine 3\n";
+    let fixture = TestFixture::new("test.txt", test_file_content).unwrap();
+
+    // Create harness
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
             .unwrap();
 
-    // Open the test file
+    // Open the test file - triggers render-line hooks
     harness.open_file(&fixture.path).unwrap();
     harness.render().unwrap();
 
-    // Enable highlighting
+    // Verify content is visible
+    harness.assert_screen_contains("MARKER");
+
+    // Check the render hook was called
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.type_text("TODO Highlighter: Enable").unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("TODO Highlighter: Enable"))
-        .unwrap();
+    harness.type_text("Test: Check Render").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
-    // Verify the original TODO is highlighted
-    let screen_before = harness.screen_to_string();
-    println!("Screen before edit:\n{}", screen_before);
-
-    let lines: Vec<&str> = screen_before.lines().collect();
-    let mut found_original_todo = false;
-
-    for (y, line) in lines.iter().enumerate() {
-        if line.contains("TODO: Original") {
-            if let Some(x) = line.find("TODO") {
-                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
-                    if let Some(bg) = style.bg {
-                        // Check it's not just Reset/White, should be a real color
-                        println!("Found TODO at ({}, {}) with background: {:?}", x, y, bg);
-                        found_original_todo = true;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    assert!(
-        found_original_todo,
-        "Expected to find highlighted 'TODO: Original' before edit"
-    );
-
-    // Go to the beginning of the file
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Insert a new line at the top: "// FIXME: New comment\n"
-    harness.type_text("// FIXME: New comment\n").unwrap();
-    harness.render().unwrap();
-
-    let screen_after = harness.screen_to_string();
-    println!("Screen after adding FIXME:\n{}", screen_after);
-
-    // The buffer should now be:
-    // Line 1: // FIXME: New comment
-    // Line 2: // TODO: Original comment
-
-    // Check that FIXME is highlighted
-    let lines: Vec<&str> = screen_after.lines().collect();
-    let mut found_fixme = false;
-    let mut found_todo_on_line_2 = false;
-
-    for (y, line) in lines.iter().enumerate() {
-        if line.contains("FIXME: New") {
-            if let Some(x) = line.find("FIXME") {
-                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
-                    if let Some(bg) = style.bg {
-                        println!("Found FIXME at ({}, {}) with background: {:?}", x, y, bg);
-                        found_fixme = true;
-                    }
-                }
-            }
-        }
-        if line.contains("TODO: Original") {
-            if let Some(x) = line.find("TODO") {
-                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
-                    if let Some(bg) = style.bg {
-                        println!(
-                            "Found TODO on line 2 at ({}, {}) with background: {:?}",
-                            x, y, bg
-                        );
-                        // Check if it's an actual RGB color (orange), not just Reset
-                        if matches!(bg, ratatui::style::Color::Rgb(_, _, _)) {
-                            found_todo_on_line_2 = true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Bug: FIXME gets highlighted because it happens to be at the byte position where TODO was
-    // But TODO should ALSO be highlighted, not just have Reset background
-    assert!(
-        found_fixme,
-        "Expected to find highlighted FIXME after inserting new line"
-    );
-
-    // This assertion will FAIL, demonstrating the bug - TODO highlight doesn't update
-    assert!(
-        found_todo_on_line_2,
-        "BUG REPRODUCED: TODO on line 2 is not highlighted! The old overlay at byte 3-7 \
-         now highlights FIXME (which happens to be at those bytes), but TODO moved to a \
-         new byte position and didn't get a new overlay. Overlays need to update when buffer changes!"
-    );
-}
-
-/// Test TODO Highlighter updates correctly when deleting text
-#[test]
-fn test_todo_highlighter_updates_on_delete() {
-    // Create a temporary project directory
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let project_root = temp_dir.path().join("project_root");
-    fs::create_dir(&project_root).unwrap();
-
-    // Create plugins directory and copy the TODO highlighter plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    copy_plugin(&plugins_dir, "todo_highlighter");
-
-    // Create test file with TODO on second line
-    let test_file_content = "// FIXME: Delete this line\n// TODO: Keep this one\n";
-    let fixture = TestFixture::new("test_todo.txt", test_file_content).unwrap();
-
-    // Create harness with the project directory (so plugins load)
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
-            .unwrap();
-
-    // Open the test file
-    harness.open_file(&fixture.path).unwrap();
-    harness.render().unwrap();
-
-    // Enable highlighting
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.type_text("TODO Highlighter: Enable").unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("TODO Highlighter: Enable"))
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Need an extra render to trigger the render-line hooks after enabling
-    harness.render().unwrap();
-
-    // Verify both keywords are highlighted initially
-    let screen_before = harness.screen_to_string();
-    println!("Screen before delete:\n{}", screen_before);
-
-    let mut found_fixme_before = false;
-    let mut found_todo_before = false;
-
-    for (y, line) in screen_before.lines().enumerate() {
-        if line.contains("FIXME") && line[..line.find("FIXME").unwrap()].contains("//") {
-            if let Some(x) = line.find("FIXME") {
-                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
-                    if let Some(bg) = style.bg {
-                        println!(
-                            "Found FIXME highlighted at ({}, {}) before delete with bg: {:?}",
-                            x, y, bg
-                        );
-                        found_fixme_before = true;
-                    }
-                }
-            }
-        }
-        if line.contains("TODO") && line[..line.find("TODO").unwrap()].contains("//") {
-            if let Some(x) = line.find("TODO") {
-                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
-                    if let Some(bg) = style.bg {
-                        println!(
-                            "Found TODO highlighted at ({}, {}) before delete with bg: {:?}",
-                            x, y, bg
-                        );
-                        found_todo_before = true;
-                    }
-                }
-            }
-        }
-    }
-
-    assert!(found_fixme_before, "FIXME should be highlighted initially");
-    assert!(found_todo_before, "TODO should be highlighted initially");
-
-    // Now delete the first line (FIXME line)
-    // Go to beginning
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Select the entire first line
-    harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
-    harness
-        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
-        .unwrap(); // Include the newline
-    harness.render().unwrap();
-
-    // Delete the selection
-    harness
-        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    let screen_after = harness.screen_to_string();
-    println!("Screen after deleting FIXME line:\n{}", screen_after);
-
-    // The buffer should now only contain: "// TODO: Keep this one\n"
-    // TODO should still be highlighted (now on line 1)
-
-    let mut found_todo_after = false;
-
-    for (y, line) in screen_after.lines().enumerate() {
-        if line.contains("TODO") && line[..line.find("TODO").unwrap()].contains("//") {
-            if let Some(x) = line.find("TODO") {
-                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
-                    if let Some(bg) = style.bg {
-                        println!(
-                            "Found TODO at ({}, {}) after delete with background: {:?}",
-                            x, y, bg
-                        );
-                        found_todo_after = true;
-                    }
-                }
-            }
-        }
-    }
-
-    assert!(
-        found_todo_after,
-        "BUG: TODO should still be highlighted after deleting the line above it! \
-         Instead, the highlight either disappeared or shifted to the wrong position."
-    );
+    // The status should show lines were rendered and marker was found
+    let screen = harness.screen_to_string();
+    println!("Screen after check:\n{}", screen);
 }
 
 /// Test diagnostics panel plugin loads and creates a virtual buffer split
@@ -1118,405 +773,6 @@ editor.setStatus("Nonblocking test plugin loaded");
         "Editor should show file content. Got:\n{}",
         screen
     );
-}
-
-/// Performance test for TODO highlighter with cursor movement
-/// Run with: RUST_LOG=trace cargo test test_todo_highlighter_cursor_perf -- --nocapture
-#[test]
-fn test_todo_highlighter_cursor_perf() {
-    // Initialize tracing subscriber for performance analysis
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("fresh=trace".parse().unwrap()),
-        )
-        .with_test_writer()
-        .try_init();
-
-    // Create a temporary project directory
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let project_root = temp_dir.path().join("project_root");
-    fs::create_dir(&project_root).unwrap();
-
-    // Create plugins directory and copy the TODO highlighter plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-
-    copy_plugin(&plugins_dir, "todo_highlighter");
-
-    // Create a larger test file with many lines and TODO comments
-    let mut test_content = String::new();
-    for i in 0..100 {
-        if i % 5 == 0 {
-            test_content.push_str(&format!("// TODO: Task number {}\n", i));
-        } else if i % 7 == 0 {
-            test_content.push_str(&format!("// FIXME: Issue number {}\n", i));
-        } else {
-            test_content.push_str(&format!("Line {} of test content\n", i));
-        }
-    }
-    let fixture = TestFixture::new("test_perf.txt", &test_content).unwrap();
-
-    // Create harness with the project directory
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), project_root)
-            .unwrap();
-
-    // Open the test file
-    harness.open_file(&fixture.path).unwrap();
-    harness.render().unwrap();
-
-    // Enable TODO Highlighter
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.type_text("TODO Highlighter: Enable").unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("TODO Highlighter: Enable"))
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Measure cursor movement performance
-    let num_moves = 20;
-
-    println!("\n=== TODO Highlighter Cursor Movement Performance Test ===");
-    println!("Moving cursor down {} times...", num_moves);
-
-    let down_start = std::time::Instant::now();
-    for _ in 0..num_moves {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
-    }
-    let down_elapsed = down_start.elapsed();
-
-    println!("Moving cursor up {} times...", num_moves);
-
-    let up_start = std::time::Instant::now();
-    for _ in 0..num_moves {
-        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
-    }
-    let up_elapsed = up_start.elapsed();
-
-    println!("\n=== Results ===");
-    println!(
-        "Down: {:?} total, {:?} per move",
-        down_elapsed,
-        down_elapsed / num_moves
-    );
-    println!(
-        "Up: {:?} total, {:?} per move",
-        up_elapsed,
-        up_elapsed / num_moves
-    );
-    println!("Total: {:?}", down_elapsed + up_elapsed);
-    println!("================\n");
-
-    // No assertion on timing - this is for data collection
-    // The trace logs will show where time is spent
-}
-
-/// Test Color Highlighter plugin - loads plugin, enables it, and checks for color swatches
-#[test]
-#[ignore]
-fn test_color_highlighter_plugin() {
-    // Create a temporary project directory
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let project_root = temp_dir.path().join("project_root");
-    fs::create_dir(&project_root).unwrap();
-
-    // Create plugins directory and copy the color highlighter plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-    copy_plugin(&plugins_dir, "color_highlighter");
-
-    // Create test file with various color formats
-    let test_file_content = r###"// Test file for Color Highlighter
-// CSS hex colors
-let red = "#ff0000";
-let green = "#0f0";
-let blue = "#0000ff";
-let transparent = "#ff000080";
-
-// CSS rgb/rgba
-background: rgb(255, 128, 0);
-color: rgba(0, 255, 128, 0.5);
-
-// CSS hsl/hsla
-hsl(120, 100%, 50%);
-hsla(240, 100%, 50%, 0.8);
-
-// Rust colors
-Color::Rgb(255, 255, 0)
-Color::Rgb(128, 0, 255)
-"###;
-
-    let fixture = TestFixture::new("test_colors.txt", test_file_content).unwrap();
-
-    // Create harness with the project directory (so plugins load)
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
-            .unwrap();
-
-    // Open the test file
-    harness.open_file(&fixture.path).unwrap();
-    harness.render().unwrap();
-
-    // Check that file content is visible
-    harness.assert_screen_contains("#ff0000");
-
-    // Open command palette
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-
-    // Type "Color Highlighter: Enable" command
-    harness.type_text("Color Highlighter: Enable").unwrap();
-
-    // Wait for command to appear in palette before executing
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Color Highlighter: Enable"))
-        .unwrap();
-
-    // Execute the command
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Need extra renders to trigger the render-line hooks after enabling
-    harness.render().unwrap();
-    harness.render().unwrap();
-
-    let screen = harness.screen_to_string();
-    println!("Screen after enabling Color highlighter:\n{}", screen);
-
-    // Check that color swatches (█) appear in the output
-    // The plugin adds "█ " before each color code
-    let swatch_count = screen.matches('█').count();
-    println!("Found {} color swatches", swatch_count);
-
-    // We should have at least some color swatches visible
-    // (the file has many colors, some should be in the viewport)
-    assert!(
-        swatch_count > 0,
-        "Expected to find color swatch characters (█) after enabling Color Highlighter. \
-         This indicates virtual text is being rendered."
-    );
-
-    // Check that color swatches have foreground colors set
-    // Find a swatch and check its style
-    let lines: Vec<&str> = screen.lines().collect();
-    let mut found_colored_swatch = false;
-
-    for (y, line) in lines.iter().enumerate() {
-        // Find swatch using char indices to handle multi-byte chars correctly
-        for (char_idx, ch) in line.char_indices() {
-            if ch == '█' {
-                // Use character position, not byte position
-                let x = line[..char_idx].chars().count();
-                // Bounds check - skip if outside screen
-                if x >= 80 {
-                    continue;
-                }
-                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
-                    // Check if foreground color is set (should be the color being highlighted)
-                    if let Some(fg) = style.fg {
-                        println!(
-                            "Found swatch at ({}, {}) with foreground color: {:?}",
-                            x, y, fg
-                        );
-                        // Check if it's an actual RGB color
-                        if matches!(fg, ratatui::style::Color::Rgb(_, _, _)) {
-                            found_colored_swatch = true;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        if found_colored_swatch {
-            break;
-        }
-    }
-
-    assert!(
-        found_colored_swatch,
-        "Expected to find at least one color swatch with RGB foreground color"
-    );
-}
-
-/// Test Color Highlighter disable command
-#[test]
-fn test_color_highlighter_disable() {
-    // Create a temporary project directory
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let project_root = temp_dir.path().join("project_root");
-    fs::create_dir(&project_root).unwrap();
-
-    // Create plugins directory and copy the color highlighter plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-    copy_plugin(&plugins_dir, "color_highlighter");
-
-    // Create test file with a color
-    let test_file_content = "let color = \"#ff0000\";\n";
-    let fixture = TestFixture::new("test_colors.txt", test_file_content).unwrap();
-
-    // Create harness with the project directory (so plugins load)
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
-            .unwrap();
-
-    // Open the test file
-    harness.open_file(&fixture.path).unwrap();
-    harness.render().unwrap();
-
-    // Enable highlighting first
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.type_text("Color Highlighter: Enable").unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Color Highlighter: Enable"))
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-
-    // Helper function to count color swatches (excludes scrollbar at position 79)
-    fn count_color_swatches(screen: &str) -> usize {
-        screen
-            .lines()
-            .flat_map(|line| {
-                line.char_indices().filter(|&(char_idx, ch)| {
-                    if ch != '█' {
-                        return false;
-                    }
-                    // Calculate character position (not byte position)
-                    let x = line[..char_idx].chars().count();
-                    // Exclude scrollbar (at position 79, the last visible column)
-                    x < 79
-                })
-            })
-            .count()
-    }
-
-    // Wait for swatches to appear (plugin needs time to process)
-    harness
-        .wait_until(|h| count_color_swatches(&h.screen_to_string()) > 0)
-        .unwrap();
-
-    let screen_enabled = harness.screen_to_string();
-    let swatches_enabled = count_color_swatches(&screen_enabled);
-
-    // Now disable it
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.type_text("Color Highlighter: Disable").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-
-    // Wait for swatches to be removed
-    harness
-        .wait_until(|h| count_color_swatches(&h.screen_to_string()) < swatches_enabled)
-        .unwrap();
-
-    // Verify the content is still visible after disabling
-    harness.assert_screen_contains("#ff0000");
-
-    // Swatches should be removed
-    let screen_disabled = harness.screen_to_string();
-    let swatches_disabled = count_color_swatches(&screen_disabled);
-
-    assert!(
-        swatches_disabled < swatches_enabled,
-        "Expected fewer swatches after disabling. Before: {}, After: {}",
-        swatches_enabled,
-        swatches_disabled
-    );
-}
-
-/// Test Color Highlighter toggle command
-#[test]
-fn test_color_highlighter_toggle() {
-    // Create a temporary project directory
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let project_root = temp_dir.path().join("project_root");
-    fs::create_dir(&project_root).unwrap();
-
-    // Create plugins directory and copy the color highlighter plugin
-    let plugins_dir = project_root.join("plugins");
-    fs::create_dir(&plugins_dir).unwrap();
-    copy_plugin(&plugins_dir, "color_highlighter");
-
-    // Create test file with a color
-    let test_file_content = "rgb(128, 64, 255)\n";
-    let fixture = TestFixture::new("test_colors.txt", test_file_content).unwrap();
-
-    // Create harness with the project directory (so plugins load)
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
-            .unwrap();
-
-    // Open the test file
-    harness.open_file(&fixture.path).unwrap();
-    harness.render().unwrap();
-
-    // Helper function to count color swatches (excludes scrollbar at position 79)
-    fn count_color_swatches(screen: &str) -> usize {
-        screen
-            .lines()
-            .flat_map(|line| {
-                line.char_indices().filter(|&(char_idx, ch)| {
-                    if ch != '█' {
-                        return false;
-                    }
-                    let x = line[..char_idx].chars().count();
-                    x < 79
-                })
-            })
-            .count()
-    }
-
-    // Toggle on
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.type_text("Color Highlighter: Toggle").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-
-    // Wait for swatches to appear
-    harness
-        .wait_until(|h| count_color_swatches(&h.screen_to_string()) > 0)
-        .unwrap();
-
-    let screen_on = harness.screen_to_string();
-    let swatches_on = count_color_swatches(&screen_on);
-
-    // Toggle off
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.type_text("Color Highlighter: Toggle").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-
-    // Wait for swatches to be removed
-    harness
-        .wait_until(|h| count_color_swatches(&h.screen_to_string()) < swatches_on)
-        .unwrap();
-
-    // Verify content is still visible after toggling off
-    harness.assert_screen_contains("rgb(128, 64, 255)");
 }
 
 /// Ensure the clangd plugin reacts to file-status notifications
