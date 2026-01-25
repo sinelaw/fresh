@@ -1,31 +1,3 @@
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Config",
-  "description": "Main configuration structure",
-  "type": "object",
-  "properties": {
-    "version": {
-      "description": "Configuration version (for migration support)\nConfigs without this field are treated as version 0",
-      "type": "integer",
-      "format": "uint32",
-      "minimum": 0,
-      "default": 0
-    },
-    "theme": {
-      "description": "Color theme name",
-      "$ref": "#/$defs/ThemeOptions",
-      "default": "high-contrast"
-    },
-    "locale": {
-      "description": "UI locale (language) for translations\nIf not set, auto-detected from environment (LC_ALL, LC_MESSAGES, LANG)",
-      "$ref": "#/$defs/LocaleOptions",
-      "default": null
-    },
-    "check_for_updates": {
-      "description": "Check for new versions on startup (default: true).\nWhen enabled, also sends basic anonymous telemetry (version, OS, terminal type).",
-      "type": "boolean",
-      "default": true
-    },
     "editor": {
       "description": "Editor behavior settings (indentation, line numbers, wrapping, etc.)",
       "$ref": "#/$defs/EditorConfig",
