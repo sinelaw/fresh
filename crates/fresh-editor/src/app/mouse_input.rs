@@ -1298,6 +1298,15 @@ impl Editor {
                         return self.handle_action(Action::ShowWarnings);
                     }
                 }
+
+                // Check message area - click opens status log
+                if let Some((msg_row, msg_start, msg_end)) =
+                    self.cached_layout.status_bar_message_area
+                {
+                    if row == msg_row && col >= msg_start && col < msg_end {
+                        return self.handle_action(Action::ShowStatusLog);
+                    }
+                }
             }
         }
 

@@ -86,6 +86,13 @@ pub fn warnings_log_path() -> PathBuf {
     log_dir().join(format!("warnings-{}.log", std::process::id()))
 }
 
+/// Get the path for the status message log file for this process.
+///
+/// Returns `{log_dir}/status-{PID}.log`
+pub fn status_log_path() -> PathBuf {
+    log_dir().join(format!("status-{}.log", std::process::id()))
+}
+
 /// Get the directory for LSP-related logs.
 ///
 /// Returns `{log_dir}/lsp/`, creating it if necessary.

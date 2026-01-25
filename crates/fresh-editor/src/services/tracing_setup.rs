@@ -9,32 +9,45 @@ use std::sync::Arc;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
 
+use super::status_log::{StatusLogHandle, StatusLogLayer};
 use super::warning_log::{WarningLogHandle, WarningLogLayer};
 
-/// Initialize the global tracing subscriber with file logging and warning capture.
+/// Combined handles for all log layers
+pub struct TracingHandles {
+    pub warning: WarningLogHandle,
+    pub status: StatusLogHandle,
+}
+
+/// Initialize the global tracing subscriber with file logging and warning/status capture.
 ///
 /// This sets up:
 /// - File-based logging with the given log file
 /// - Environment-based filtering (RUST_LOG) with DEBUG default
 /// - Warning log layer that captures WARN+ to a separate file
+/// - Status log layer that captures status messages to a separate file
 ///
-/// Returns the warning log handle if successful, None if setup failed.
-pub fn init_global(log_file_path: &Path) -> Option<WarningLogHandle> {
+/// Returns the tracing handles if successful, None if setup failed.
+pub fn init_global(log_file_path: &Path) -> Option<TracingHandles> {
     let (warning_layer, warning_handle) = super::warning_log::create().ok()?;
+    let (status_layer, status_handle) = super::status_log::create().ok()?;
     let log_file = File::create(log_file_path).ok()?;
 
-    let subscriber = build_subscriber(log_file, Some(warning_layer));
+    let subscriber = build_subscriber(log_file, Some(warning_layer), Some(status_layer));
     subscriber.init();
 
-    Some(warning_handle)
+    Some(TracingHandles {
+        warning: warning_handle,
+        status: status_handle,
+    })
 }
 
-/// Build a subscriber with file logging and optional warning layer.
+/// Build a subscriber with file logging and optional warning/status layers.
 ///
 /// This is the core subscriber configuration shared between production and tests.
 pub fn build_subscriber(
     log_file: File,
     warning_layer: Option<WarningLogLayer>,
+    status_layer: Option<StatusLogLayer>,
 ) -> impl tracing::Subscriber + Send + Sync {
     let env_filter = EnvFilter::from_default_env()
         .add_directive(tracing::Level::DEBUG.into())
@@ -48,6 +61,7 @@ pub fn build_subscriber(
         .with(fmt_layer)
         .with(env_filter)
         .with(warning_layer)
+        .with(status_layer)
 }
 
 #[cfg(test)]
@@ -62,23 +76,33 @@ mod tests {
         // Keep tempfiles alive so they don't get deleted
         _log_file: NamedTempFile,
         _warning_log_path: TempPath,
+        _status_log_path: TempPath,
     }
 
     fn create_test_subscriber() -> TestSubscriber {
         let log_file = NamedTempFile::new().unwrap();
         let warning_log_file = NamedTempFile::new().unwrap();
         let warning_log_path = warning_log_file.into_temp_path();
+        let status_log_file = NamedTempFile::new().unwrap();
+        let status_log_path = status_log_file.into_temp_path();
 
         let (warning_layer, warning_handle) =
             super::super::warning_log::create_with_path(warning_log_path.to_path_buf()).unwrap();
+        let (status_layer, _status_handle) =
+            super::super::status_log::create_with_path(status_log_path.to_path_buf()).unwrap();
 
-        let subscriber = build_subscriber(log_file.reopen().unwrap(), Some(warning_layer));
+        let subscriber = build_subscriber(
+            log_file.reopen().unwrap(),
+            Some(warning_layer),
+            Some(status_layer),
+        );
 
         TestSubscriber {
             subscriber: Box::new(subscriber),
             warning_handle,
             _log_file: log_file,
             _warning_log_path: warning_log_path,
+            _status_log_path: status_log_path,
         }
     }
 

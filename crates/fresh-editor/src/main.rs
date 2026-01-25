@@ -11,7 +11,7 @@ use fresh::services::terminal_modes::{self, KeyboardConfig, TerminalModes};
 use fresh::services::tracing_setup;
 use fresh::{
     app::Editor, config, config_io::DirectoryContext, model::filesystem::StdFileSystem,
-    services::release_checker, services::signal_handler, services::warning_log::WarningLogHandle,
+    services::release_checker, services::signal_handler, services::tracing_setup::TracingHandles,
 };
 use ratatui::Terminal;
 use std::{
@@ -95,7 +95,7 @@ struct IterationOutcome {
 
 struct SetupState {
     config: config::Config,
-    warning_log_handle: Option<WarningLogHandle>,
+    tracing_handles: Option<TracingHandles>,
     terminal: Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     terminal_size: (u16, u16),
     file_locations: Vec<FileLocation>,
@@ -250,7 +250,7 @@ fn handle_first_run_setup(
     file_locations: &[FileLocation],
     show_file_explorer: bool,
     stdin_stream: &mut Option<StdinStreamState>,
-    warning_log_handle: &mut Option<WarningLogHandle>,
+    tracing_handles: &mut Option<TracingHandles>,
     session_enabled: bool,
 ) -> AnyhowResult<()> {
     if let Some(log_path) = &args.event_log {
@@ -258,8 +258,9 @@ fn handle_first_run_setup(
         editor.enable_event_streaming(log_path)?;
     }
 
-    if let Some(handle) = warning_log_handle.take() {
-        editor.set_warning_log(handle.receiver, handle.path);
+    if let Some(handles) = tracing_handles.take() {
+        editor.set_warning_log(handles.warning.receiver, handles.warning.path);
+        editor.set_status_log_path(handles.status.path);
     }
 
     if session_enabled {
@@ -416,7 +417,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
         .log_file
         .clone()
         .unwrap_or_else(fresh::services::log_dirs::main_log_path);
-    let warning_log_handle = tracing_setup::init_global(&log_file);
+    let tracing_handles = tracing_setup::init_global(&log_file);
 
     // Clean up stale log files from dead processes on startup
     fresh::services::log_dirs::cleanup_stale_logs();
@@ -574,7 +575,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 
     Ok(SetupState {
         config,
-        warning_log_handle,
+        tracing_handles,
         terminal,
         terminal_size: (size.width, size.height),
         file_locations,
@@ -766,7 +767,7 @@ fn main() -> AnyhowResult<()> {
 
     let SetupState {
         config,
-        mut warning_log_handle,
+        mut tracing_handles,
         mut terminal,
         terminal_size,
         file_locations,
@@ -827,7 +828,7 @@ fn main() -> AnyhowResult<()> {
                 &file_locations,
                 show_file_explorer,
                 &mut stdin_stream,
-                &mut warning_log_handle,
+                &mut tracing_handles,
                 session_enabled,
             )
             .context("Failed first run setup")?;

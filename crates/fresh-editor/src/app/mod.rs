@@ -570,6 +570,9 @@ pub struct Editor {
     /// Warning log receiver and path (for tracking warnings)
     warning_log: Option<(std::sync::mpsc::Receiver<()>, PathBuf)>,
 
+    /// Status message log path (for viewing full status history)
+    status_log_path: Option<PathBuf>,
+
     /// Warning domain registry for extensible warning indicators
     /// Contains LSP warnings, general warnings, and can be extended by plugins
     warning_domains: WarningDomainRegistry,
@@ -1145,6 +1148,7 @@ impl Editor {
             active_custom_contexts: HashSet::new(),
             editor_mode: None,
             warning_log: None,
+            status_log_path: None,
             warning_domains: WarningDomainRegistry::new(),
             update_checker,
             terminal_manager: crate::services::terminal::TerminalManager::new(),
@@ -1451,6 +1455,27 @@ impl Editor {
     /// and the editor will be notified via the receiver.
     pub fn set_warning_log(&mut self, receiver: std::sync::mpsc::Receiver<()>, path: PathBuf) {
         self.warning_log = Some((receiver, path));
+    }
+
+    /// Set the status message log path
+    pub fn set_status_log_path(&mut self, path: PathBuf) {
+        self.status_log_path = Some(path);
+    }
+
+    /// Get the status log path
+    pub fn get_status_log_path(&self) -> Option<&PathBuf> {
+        self.status_log_path.as_ref()
+    }
+
+    /// Open the status log file (user clicked on status message)
+    pub fn open_status_log(&mut self) {
+        if let Some(path) = self.status_log_path.clone() {
+            if let Err(e) = self.open_file(&path) {
+                tracing::error!("Failed to open status log: {}", e);
+            }
+        } else {
+            self.set_status_message("Status log not available".to_string());
+        }
     }
 
     /// Check for and handle any new warnings in the warning log

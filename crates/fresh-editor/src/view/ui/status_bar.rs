@@ -590,6 +590,10 @@ impl StatusBarRenderer {
             col + 1
         );
 
+        // Track where the message starts for click detection
+        let base_and_chord_width = str_width(&base_status) + str_width(&chord_display);
+        let message_width = str_width(&message_suffix);
+
         let left_status = format!("{base_status}{chord_display}{message_suffix}");
 
         // Build right-side indicators (these stay fixed on the right)
@@ -685,6 +689,17 @@ impl StatusBarRenderer {
             };
 
             let displayed_left_len = str_width(&displayed_left);
+
+            // Track message area for click detection (if there's a message)
+            if message_width > 0 {
+                // The message starts after base_and_chord, but might be truncated
+                let msg_start = base_and_chord_width.min(displayed_left_len);
+                let msg_end = displayed_left_len;
+                if msg_end > msg_start {
+                    layout.message_area =
+                        Some((area.y, area.x + msg_start as u16, area.x + msg_end as u16));
+                }
+            }
 
             spans.push(Span::styled(
                 displayed_left.clone(),

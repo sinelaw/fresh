@@ -659,6 +659,8 @@ pub(crate) struct CachedLayout {
     pub status_bar_line_ending_area: Option<(u16, u16, u16)>,
     /// Status bar language indicator area (row, start_col, end_col)
     pub status_bar_language_area: Option<(u16, u16, u16)>,
+    /// Status bar message area (row, start_col, end_col) - clickable to show status log
+    pub status_bar_message_area: Option<(u16, u16, u16)>,
     /// Search options layout for checkbox hit testing
     pub search_options_layout: Option<crate::view::ui::status_bar::SearchOptionsLayout>,
 }

@@ -2270,6 +2270,7 @@ pub fn action_to_events(
         | Action::JumpToPreviousError
         | Action::ShowKeyboardShortcuts
         | Action::ShowWarnings
+        | Action::ShowStatusLog
         | Action::ShowLspStatus
         | Action::ClearWarnings
         | Action::SmartHome
