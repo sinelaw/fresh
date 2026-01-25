@@ -12,6 +12,20 @@
  * - Optional curated registry (also a git repo)
  * - Version pinning with tags, branches, or commits
  * - Lockfile for reproducibility
+ *
+ * TODO: Plugin UI Component Library
+ * ---------------------------------
+ * The UI code in this plugin manually constructs buttons, lists, split views,
+ * and focus management using raw text property entries. This is verbose and
+ * error-prone. We need a shared UI component library that plugins can use to
+ * build interfaces in virtual buffers:
+ *
+ * - Buttons, lists, scroll bars, tabs, split views, text inputs, etc.
+ * - Automatic keyboard navigation and focus management
+ * - Theme-aware styling
+ *
+ * The editor's settings UI already implements similar components - these could
+ * be unified into a shared framework. See PLUGIN_MARKETPLACE_DESIGN.md for details.
  */
 
 import { Finder } from "./lib/finder.ts";

@@ -952,6 +952,51 @@ globalThis.pkg_preview_theme = async function(): Promise<void> {
 
 ---
 
+## Future Work
+
+### TODO: Plugin UI Component Library
+
+Currently, plugins that need rich UI (like the package manager) must manually construct their interface using raw text property entries. This is verbose, error-prone, and leads to code duplication.
+
+We need a **UI component library** that plugins can use to build interfaces in virtual buffers:
+
+- **Buttons**: Focusable, clickable elements with keyboard navigation
+- **Lists**: Scrollable, selectable item lists with highlighting
+- **Scroll bars**: Visual scroll indicators for long content
+- **Text inputs**: In-buffer text entry fields
+- **Tabs/Tab bars**: Switchable content panels
+- **Split views**: Side-by-side or stacked layouts
+- **Progress indicators**: Loading spinners, progress bars
+- **Dialogs/Modals**: Overlay prompts for confirmations
+
+This would allow plugins to declaratively define UI:
+
+```typescript
+// Hypothetical API
+const ui = editor.createUI(bufferId);
+ui.header("Package Manager");
+ui.tabBar(["All", "Installed", "Plugins", "Themes"], activeTab, onTabChange);
+ui.splitView({
+  left: ui.list(items, { onSelect, onActivate }),
+  right: ui.panel([
+    ui.title(selected.name),
+    ui.text(selected.description),
+    ui.button("Install", onInstall),
+  ]),
+});
+```
+
+Benefits:
+- Consistent look and feel across plugins
+- Automatic keyboard navigation and focus management
+- Theme-aware styling
+- Reduced boilerplate in plugin code
+- Accessibility support built-in
+
+Note: The editor's settings UI already implements many of these UI elements (dropdowns, toggles, input fields, sections, etc.) but they are not organized into a reusable library. A shared component framework could unify the settings UI implementation with plugin UI needs, reducing duplication and ensuring consistency.
+
+---
+
 ## Conclusion
 
 This design provides a **simple, decentralized, git-based package system** that:
