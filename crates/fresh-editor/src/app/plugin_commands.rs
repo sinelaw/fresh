@@ -936,6 +936,8 @@ impl Editor {
         if message.trim().is_empty() {
             self.plugin_status_message = None;
         } else {
+            // Log status message for history
+            tracing::info!(target: "status", "{}", message);
             // Detect plugin errors and collect them for test assertions
             // Error patterns: "Plugin error", "JS error", "handler error"
             let lower = message.to_lowercase();
@@ -946,7 +948,9 @@ impl Editor {
             {
                 self.plugin_errors.push(message.clone());
             }
-            self.plugin_status_message = Some(message);
+            // Clear core status message so only plugin message shows
+            self.status_message = None;
+            self.plugin_status_message = Some(message.clone());
         }
     }
 

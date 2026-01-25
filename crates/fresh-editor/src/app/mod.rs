@@ -3185,6 +3185,7 @@ impl Editor {
 
     /// Set a status message to display in the status bar
     pub fn set_status_message(&mut self, message: String) {
+        tracing::info!(target: "status", "{}", message);
         self.plugin_status_message = None;
         self.status_message = Some(message);
     }

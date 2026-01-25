@@ -288,7 +288,7 @@ async function syncRegistry(): Promise<void> {
           ? "Authentication failed (check if repo is public)"
           : result.stderr.split("\n")[0] || "Unknown error";
         errors.push(`${source}: ${errorMsg}`);
-        editor.debug(`[pkg] Failed to update registry ${source}: ${result.stderr}`);
+        editor.warn(`[pkg] Failed to update registry ${source}: ${result.stderr}`);
       }
     } else {
       // Clone new
@@ -305,7 +305,7 @@ async function syncRegistry(): Promise<void> {
           ? "Authentication failed (check if repo is public)"
           : result.stderr.split("\n")[0] || "Unknown error";
         errors.push(`${source}: ${errorMsg}`);
-        editor.debug(`[pkg] Failed to clone registry ${source}: ${result.stderr}`);
+        editor.warn(`[pkg] Failed to clone registry ${source}: ${result.stderr}`);
       }
     }
   }

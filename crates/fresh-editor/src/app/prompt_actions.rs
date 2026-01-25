@@ -117,7 +117,6 @@ impl Editor {
                 if let Some(cmd) = commands.iter().find(|c| c.get_localized_name() == input) {
                     let action = cmd.action.clone();
                     let cmd_name = cmd.get_localized_name();
-                    self.set_status_message(t!("error.executing", cmd = &cmd_name).to_string());
                     self.command_registry
                         .write()
                         .unwrap()

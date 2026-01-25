@@ -24,6 +24,8 @@ pub struct StatusBarLayout {
     pub line_ending_indicator: Option<(u16, u16, u16)>,
     /// Language indicator area (row, start_col, end_col)
     pub language_indicator: Option<(u16, u16, u16)>,
+    /// Status message area (row, start_col, end_col) - clickable to show full history
+    pub message_area: Option<(u16, u16, u16)>,
 }
 
 /// Status bar hover state for styling clickable indicators
@@ -39,6 +41,8 @@ pub enum StatusBarHover {
     LineEndingIndicator,
     /// Mouse is over the language indicator
     LanguageIndicator,
+    /// Mouse is over the status message area
+    MessageArea,
 }
 
 /// Which search option checkbox is being hovered
