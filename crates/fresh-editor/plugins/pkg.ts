@@ -412,6 +412,91 @@ function getInstalledPackages(type: "plugin" | "theme"): InstalledPackage[] {
 }
 
 /**
+ * Validation result for a package
+ */
+interface ValidationResult {
+  valid: boolean;
+  error?: string;
+  manifest?: PackageManifest;
+  entryPath?: string;
+}
+
+/**
+ * Validate a package directory has correct structure
+ *
+ * Checks:
+ * 1. package.json exists
+ * 2. package.json has required fields (name, type)
+ * 3. Entry file exists (for plugins)
+ */
+function validatePackage(packageDir: string, packageName: string): ValidationResult {
+  const manifestPath = editor.pathJoin(packageDir, "package.json");
+
+  // Check package.json exists
+  if (!editor.fileExists(manifestPath)) {
+    return {
+      valid: false,
+      error: `Missing package.json - expected at ${manifestPath}`
+    };
+  }
+
+  // Read and validate manifest
+  const manifest = readJsonFile<PackageManifest>(manifestPath);
+  if (!manifest) {
+    return {
+      valid: false,
+      error: "Invalid package.json - could not parse JSON"
+    };
+  }
+
+  // Validate required fields
+  if (!manifest.name) {
+    return {
+      valid: false,
+      error: "Invalid package.json - missing 'name' field"
+    };
+  }
+
+  if (!manifest.type) {
+    return {
+      valid: false,
+      error: "Invalid package.json - missing 'type' field (should be 'plugin' or 'theme')"
+    };
+  }
+
+  if (manifest.type !== "plugin" && manifest.type !== "theme") {
+    return {
+      valid: false,
+      error: `Invalid package.json - 'type' must be 'plugin' or 'theme', got '${manifest.type}'`
+    };
+  }
+
+  // For plugins, validate entry file exists
+  if (manifest.type === "plugin") {
+    const entryFile = manifest.fresh?.entry || `${manifest.name}.ts`;
+    const entryPath = editor.pathJoin(packageDir, entryFile);
+
+    if (!editor.fileExists(entryPath)) {
+      // Try .js as fallback
+      const jsEntryPath = entryPath.replace(/\.ts$/, ".js");
+      if (editor.fileExists(jsEntryPath)) {
+        return { valid: true, manifest, entryPath: jsEntryPath };
+      }
+
+      return {
+        valid: false,
+        error: `Missing entry file '${entryFile}' - check fresh.entry in package.json`
+      };
+    }
+
+    return { valid: true, manifest, entryPath };
+  }
+
+  // Themes don't need entry file validation
+  return { valid: true, manifest };
+}
+
+/**
  * Install a package from git URL.
  *
  * Supports monorepo URLs with subpath fragments:
@@ -484,16 +569,21 @@ async function installFromRepo(
     }
   }
 
-  // Read manifest to determine type
-  const manifestPath = editor.pathJoin(targetDir, "package.json");
-  const manifest = readJsonFile<PackageManifest>(manifestPath);
+  // Validate package structure
+  const validation = validatePackage(targetDir, packageName);
+  if (!validation.valid) {
+    editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
+    editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
+    // Clean up the invalid package
+    await editor.spawnProcess("rm", ["-rf", targetDir]);
+    return false;
+  }
 
-  // Dynamically load the plugin
-  const entryFile = manifest?.fresh?.entry || `${packageName}.ts`;
-  const pluginPath = editor.pathJoin(targetDir, entryFile);
+  const manifest = validation.manifest;
 
-  if (editor.fileExists(pluginPath)) {
-    await editor.loadPlugin(pluginPath);
+  // Dynamically load plugins
+  if (manifest?.type === "plugin" && validation.entryPath) {
+    await editor.loadPlugin(validation.entryPath);
     editor.setStatus(`Installed and activated ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
   } else {
     editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
@@ -560,6 +650,16 @@ async function installFromMonorepo(
       return false;
     }
 
+    // Validate package structure
+    const validation = validatePackage(targetDir, packageName);
+    if (!validation.valid) {
+      editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
+      editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
+      // Clean up the invalid package
+      await editor.spawnProcess("rm", ["-rf", targetDir]);
+      return false;
+    }
+
     // Initialize git in target for future updates
     // Store the original monorepo URL in a .fresh-source file
     const sourceInfo = {
@@ -570,16 +670,11 @@ async function installFromMonorepo(
     };
     await writeJsonFile(editor.pathJoin(targetDir, ".fresh-source.json"), sourceInfo);
 
-    // Read manifest
-    const manifestPath = editor.pathJoin(targetDir, "package.json");
-    const manifest = readJsonFile<PackageManifest>(manifestPath);
+    const manifest = validation.manifest;
 
-    // Try to dynamically load the plugin
-    const entryFile = manifest?.fresh?.entry || `${packageName}.ts`;
-    const pluginPath = editor.pathJoin(targetDir, entryFile);
-
-    if (editor.fileExists(pluginPath)) {
-      await editor.loadPlugin(pluginPath);
+    // Dynamically load plugins
+    if (manifest?.type === "plugin" && validation.entryPath) {
+      await editor.loadPlugin(validation.entryPath);
       editor.setStatus(`Installed and activated ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
     } else {
       editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
