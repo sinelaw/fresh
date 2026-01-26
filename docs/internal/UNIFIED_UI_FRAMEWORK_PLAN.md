@@ -83,10 +83,12 @@ Extract patterns from Settings into shared modules, then all components use them
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │                    ui/ (SHARED LIBRARY)                       │   │
 │  │                                                               │   │
-│  │  layout.rs (NEW)     - HitTest trait, CompositeLayout<H>     │   │
-│  │  focus.rs (NEW)      - FocusManager<T>                       │   │
-│  │  scroll_panel.rs     - ScrollItem, ScrollablePanel (EXISTS)  │   │
-│  │  scrollbar.rs        - ScrollbarState (EXISTS)               │   │
+│  │  layout.rs      - point_in_rect() helper                     │   │
+│  │  focus.rs       - FocusManager<T>                            │   │
+│  │  menu.rs        - MenuLayout, MenuHit, MenuRenderer          │   │
+│  │  tabs.rs        - TabLayout, TabHit, TabsRenderer            │   │
+│  │  scroll_panel.rs - ScrollItem, ScrollablePanel               │   │
+│  │  scrollbar.rs    - ScrollbarState                            │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                              │                                       │
 │            ┌─────────────────┼─────────────────┐                    │
@@ -95,21 +97,18 @@ Extract patterns from Settings into shared modules, then all components use them
 │  │                    controls/ (EXISTING)                       │   │
 │  │  Button, Dropdown, Toggle, TextInput, NumberInput, ...        │   │
 │  │  Pattern: *State + *Layout + *Colors + render_*()             │   │
-│  │  ADD: impl HitTest for *Layout                                │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                              │                                       │
 │       ┌──────────────────────┼──────────────────────┐               │
 │       ▼                      ▼                      ▼               │
 │  ┌──────────┐  ┌──────────────────┐  ┌──────────────────────────┐  │
-│  │ settings │  │ menu.rs, tabs.rs │  │ Plugin TypeScript API    │  │
-│  │ (USES)   │  │ (MIGRATE TO)     │  │ (NEW BINDINGS)           │  │
+│  │ settings │  │ app/ (mouse      │  │ Plugin TypeScript API    │  │
+│  │ (USES)   │  │ handlers)        │  │ (FUTURE)                 │  │
 │  └──────────┘  └──────────────────┘  └──────────────────────────┘  │
-│                                                                      │
-│  DELETE: settings/layout.rs (moves to ui/layout.rs)                 │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Key change:** Settings UI is no longer special - it uses the same shared library as everyone else.
+**Key pattern:** Each UI component (Menu, Tabs, Settings) has its own `*Layout` struct returned by render, with a `hit_test()` method returning a typed `*Hit` enum. Mouse handlers use these concrete types directly - no trait abstraction needed.
 
 ## Part 1: Generalizing Existing Patterns (Rust)
 
@@ -1167,43 +1166,39 @@ The **Layout DSL** (Part 5) is a future direction that adds compositional UI bui
 
 | File | Purpose | Lines (est.) |
 |------|---------|--------------|
-| `src/view/ui/layout.rs` | `HitTest` trait, `CompositeLayout<H>`, `point_in_rect()` | ~80 |
+| `src/view/ui/layout.rs` | `point_in_rect()` helper | ~30 |
 | `src/view/ui/focus.rs` | `FocusManager<T>` | ~60 |
 | `plugins/lib/controls.ts` | `ButtonControl`, `ListControl`, `FocusManager` | ~200 |
 | `plugins/lib/vbuffer.ts` | `VirtualBufferBuilder` | ~100 |
 
-**Total new code: ~440 lines** (mostly TypeScript for plugins)
+**Total new code: ~390 lines** (mostly TypeScript for plugins)
 
 ## Files to Modify
 
 | File | Change | Complexity |
 |------|--------|------------|
 | `src/view/settings/state.rs` | Use `FocusManager<FocusPanel>` | Low |
-| `src/view/settings/render.rs` | Return `CompositeLayout<SettingsHit>`, simplify `ControlLayoutInfo` | Medium |
+| `src/view/settings/layout.rs` | Use shared `point_in_rect()` | Low |
 | `src/view/ui/menu.rs` | Add `MenuLayout`, delete `get_menu_at_position()` | Medium |
 | `src/view/ui/tabs.rs` | Return `TabLayout` instead of tuple Vec | Low |
-| `src/view/controls/*/mod.rs` | Add `impl HitTest for *Layout` | Low |
-| `plugins/pkg.ts` | Use controls library | Medium (but simplifies) |
-
-## Files to Delete
-
-| File | Why |
-|------|-----|
-| `src/view/settings/layout.rs` | Functionality moves to `ui/layout.rs` |
+| `plugins/pkg.ts` | Use controls library (future) | Medium (but simplifies) |
 
 ## Files NOT Changed
 
 | File | Why |
 |------|-----|
-| `src/view/controls/` (state/render) | Already well-designed; just add `HitTest` impls |
+| `src/view/controls/` (state/render) | Already well-designed |
 | `src/view/ui/scroll_panel.rs` | Already reusable |
 | `src/input/handler.rs` | Input handling is orthogonal to layout |
 
+## Resolved Questions
+
+1. ~~**Should `FocusManager` replace `FocusPanel`?**~~ ✅ Settings now uses `FocusManager<FocusPanel>` with a `focus_panel()` helper method
+2. ~~**Should we add a `HitTest` trait?**~~ ❌ No. Each layout type (`MenuLayout`, `TabLayout`, `SettingsLayout`) has its own `hit_test()` method returning a typed enum. A trait would only be useful if we had generic code that needed to work with unknown layout types polymorphically - we don't have that use case.
+
 ## Open Questions
 
-1. **Should controls implement `HitTest`?** Optional - the existing `*Layout::is_*()` methods work fine
-2. ~~**Should `FocusManager` replace `FocusPanel`?**~~ ✅ Resolved: Settings now uses `FocusManager<FocusPanel>` with a `focus_panel()` helper method
-3. **Plugin mouse support?** Currently pkg.ts is keyboard-only; adding mouse would need more work
+1. **Plugin mouse support?** Currently pkg.ts is keyboard-only; adding mouse would need more work
 
 ## Implementation Plan: Extract First, Then Adopt
 
@@ -1214,13 +1209,12 @@ The key principle: **extract existing code into shared modules first**, then hav
 | Step | Description | Status |
 |------|-------------|--------|
 | 1 | Extract `point_in_rect()` to `ui/layout.rs` | ✅ Done |
-| 2 | Add `HitTest` trait to `ui/layout.rs` | ✅ Done |
-| 3 | Extract `FocusManager` to `ui/focus.rs` | ✅ Done |
-| 4 | Update `ui/mod.rs` exports | ✅ Done |
-| 5 | Migrate `settings/layout.rs` to use `point_in_rect` | ✅ Done |
-| 6 | Migrate `settings/state.rs` to use `FocusManager` | ✅ Done |
-| 7 | Add `MenuLayout` to `menu.rs` | ✅ Done |
-| 8 | Add `TabLayout` to `tabs.rs` | ✅ Done |
+| 2 | Extract `FocusManager` to `ui/focus.rs` | ✅ Done |
+| 3 | Update `ui/mod.rs` exports | ✅ Done |
+| 4 | Migrate `settings/layout.rs` to use `point_in_rect` | ✅ Done |
+| 5 | Migrate `settings/state.rs` to use `FocusManager` | ✅ Done |
+| 6 | Add `MenuLayout` + `MenuHit` to `menu.rs` | ✅ Done |
+| 7 | Add `TabLayout` + `TabHit` to `tabs.rs` | ✅ Done |
 
 ---
 
@@ -1678,11 +1672,17 @@ impl Element for Column {
 
 Once the Rust patterns are validated:
 
-1. **Add `impl HitTest` for control layouts** (optional, additive)
-2. **Create TypeScript controls library** for plugins
-3. **Migrate pkg.ts** to use the TypeScript controls
-4. **Consider `CompositeLayout<H>`** if Settings/Menu/Tabs want to share more structure
-5. **Implement Layout DSL** (`Column`, `Row`, `Stack`, `Custom`) as described in Part 5
+1. **Create TypeScript controls library** for plugins (`plugins/lib/controls.ts`)
+2. **Migrate pkg.ts** to use the TypeScript controls
+3. **Implement Layout DSL** (`Column`, `Row`, `Stack`, `Custom`) as described in Part 5
+
+### Deferred Ideas
+
+These were considered but not needed:
+
+- **`HitTest` trait**: A generic trait for hit testing was considered but removed. Each layout type (`MenuLayout`, `TabLayout`, `SettingsLayout`) has its own concrete `hit_test()` method returning a typed enum (`MenuHit`, `TabHit`, `SettingsHit`). A trait would only add value if we needed polymorphic code like `fn handle<L: HitTest>(layout: &L)` - we don't have that use case since each mouse handler knows exactly which layout type it's dealing with.
+
+- **`CompositeLayout<H>`**: A generic layout aggregator was considered but isn't needed. Settings already has `SettingsLayout` which works fine. Menu and Tabs have their own specialized layouts. Generalizing would add abstraction without reducing code.
 
 ---
 

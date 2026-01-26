@@ -44,7 +44,7 @@ pub use file_browser::{FileBrowserLayout, FileBrowserRenderer};
 #[cfg(feature = "runtime")]
 pub use file_explorer::FileExplorerRenderer;
 pub use focus::FocusManager;
-pub use layout::{point_in_rect, HitTest};
+pub use layout::point_in_rect;
 #[cfg(feature = "runtime")]
 pub use menu::{context_keys, MenuContext, MenuHit, MenuLayout, MenuRenderer, MenuState};
 #[cfg(feature = "runtime")]

@@ -13,56 +13,6 @@ pub fn point_in_rect(rect: Rect, x: u16, y: u16) -> bool {
     x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
 }
 
-/// Trait for layout structs that support hit testing
-///
-/// Implement this trait for layout structs returned by render functions
-/// to provide uniform hit testing across different UI components.
-///
-/// # Example
-///
-/// ```ignore
-/// pub struct MyLayout {
-///     pub button_area: Rect,
-///     pub list_areas: Vec<Rect>,
-/// }
-///
-/// pub enum MyHit {
-///     Button,
-///     ListItem(usize),
-/// }
-///
-/// impl HitTest for MyLayout {
-///     type Hit = MyHit;
-///
-///     fn hit_test(&self, x: u16, y: u16) -> Option<MyHit> {
-///         if point_in_rect(self.button_area, x, y) {
-///             return Some(MyHit::Button);
-///         }
-///         for (i, area) in self.list_areas.iter().enumerate() {
-///             if point_in_rect(*area, x, y) {
-///                 return Some(MyHit::ListItem(i));
-///             }
-///         }
-///         None
-///     }
-///
-///     fn contains(&self, x: u16, y: u16) -> bool {
-///         // Check if point is in any tracked area
-///         self.hit_test(x, y).is_some()
-///     }
-/// }
-/// ```
-pub trait HitTest {
-    /// The hit result type (e.g., DropdownHit, MenuHit)
-    type Hit;
-
-    /// Test if point hits any element, returning hit info
-    fn hit_test(&self, x: u16, y: u16) -> Option<Self::Hit>;
-
-    /// Check if point is within component bounds
-    fn contains(&self, x: u16, y: u16) -> bool;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
