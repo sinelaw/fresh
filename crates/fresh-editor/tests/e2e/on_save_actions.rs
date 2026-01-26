@@ -633,7 +633,9 @@ fn test_whitespace_cleanup_no_change_needed() {
 
     // Modify buffer slightly to make it saveable
     harness.type_text("x").unwrap();
-    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Save the file

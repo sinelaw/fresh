@@ -734,6 +734,7 @@
   "lsp.cannot_rename_unsaved": "저장되지 않은 버퍼에서 이름 바꾸기 불가",
   "lsp.code_action_hint": "번호를 눌러 선택, Esc로 취소",
   "lsp.code_actions_not_implemented": "%{count}개 코드 작업 발견됨 - 선택 기능 미구현",
+  "lsp.disabled.library_file": "라이브러리 파일 (프로젝트 외부)",
   "lsp.disabled.unnamed": "이름 없는 버퍼",
   "lsp.disabled.virtual": "가상 버퍼",
   "lsp.disabled.virtual_macro": "가상 매크로 버퍼",

@@ -734,6 +734,7 @@
   "lsp.cannot_rename_unsaved": "Impossible de renommer dans un tampon non enregistré",
   "lsp.code_action_hint": "Appuyez sur un numéro pour sélectionner, Échap pour annuler",
   "lsp.code_actions_not_implemented": "%{count} action(s) de code trouvée(s) - sélection pas encore implémentée",
+  "lsp.disabled.library_file": "Fichier de bibliothèque (hors du projet)",
   "lsp.disabled.unnamed": "Tampon sans nom",
   "lsp.disabled.virtual": "Tampon virtuel",
   "lsp.disabled.virtual_macro": "Tampon de macro virtuel",

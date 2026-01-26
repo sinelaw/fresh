@@ -1564,11 +1564,15 @@ fn test_multicursor_cut() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Type content with repeated words
-    harness.type_text("hello world\nhello world\nhello world\n").unwrap();
+    harness
+        .type_text("hello world\nhello world\nhello world\n")
+        .unwrap();
     harness.render().unwrap();
 
     // Move to beginning
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Add cursors below (should have 3 cursors, one per line)
@@ -1586,7 +1590,9 @@ fn test_multicursor_cut() {
     // Select "hello" on each line with Shift+End (word at start of each line)
     // First, select the word "hello" by pressing Shift+Right 5 times
     for _ in 0..5 {
-        harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
     }
     harness.render().unwrap();
 
@@ -1599,14 +1605,17 @@ fn test_multicursor_cut() {
         );
         let range = cursor.selection_range().unwrap();
         assert_eq!(
-            range.end - range.start, 5,
+            range.end - range.start,
+            5,
             "Selection should be 5 characters (hello), got {}",
             range.end - range.start
         );
     }
 
     // Perform cut (Ctrl+X)
-    harness.send_key(KeyCode::Char('x'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Buffer should now have " world" on each line (hello removed)
@@ -1629,13 +1638,17 @@ fn test_multicursor_cut_same_line() {
     harness.render().unwrap();
 
     // Move cursor to start
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Select first "foo" using Ctrl+D (add cursor at next match)
     // First, select "foo" with Shift+Right 3 times
     for _ in 0..3 {
-        harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
     }
     harness.render().unwrap();
 
@@ -1651,7 +1664,9 @@ fn test_multicursor_cut_same_line() {
     );
 
     // Cut - should remove both "foo"s
-    harness.send_key(KeyCode::Char('x'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Buffer should now have " bar  baz" (both "foo"s removed)

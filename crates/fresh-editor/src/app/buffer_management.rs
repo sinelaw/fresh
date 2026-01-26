@@ -1031,36 +1031,36 @@ impl Editor {
         // Find a replacement buffer, preferring the most recently focused one
         // First try focus history, then fall back to any visible buffer
         let active_split = self.split_manager.active_split();
-        let replacement_from_history = self
-            .split_view_states
-            .get(&active_split)
-            .and_then(|vs| {
-                // Find the most recently focused buffer that's still open and visible
-                vs.focus_history
-                    .iter()
-                    .rev()
-                    .find(|&&bid| {
-                        bid != id
-                            && self.buffers.contains_key(&bid)
-                            && !self
-                                .buffer_metadata
-                                .get(&bid)
-                                .map(|m| m.hidden_from_tabs)
-                                .unwrap_or(false)
-                    })
-                    .copied()
-            });
+        let replacement_from_history = self.split_view_states.get(&active_split).and_then(|vs| {
+            // Find the most recently focused buffer that's still open and visible
+            vs.focus_history
+                .iter()
+                .rev()
+                .find(|&&bid| {
+                    bid != id
+                        && self.buffers.contains_key(&bid)
+                        && !self
+                            .buffer_metadata
+                            .get(&bid)
+                            .map(|m| m.hidden_from_tabs)
+                            .unwrap_or(false)
+                })
+                .copied()
+        });
 
         // Fall back to any visible buffer if no history match
         let visible_replacement = replacement_from_history.or_else(|| {
-            self.buffers.keys().find(|&&bid| {
-                bid != id
-                    && !self
-                        .buffer_metadata
-                        .get(&bid)
-                        .map(|m| m.hidden_from_tabs)
-                        .unwrap_or(false)
-            }).copied()
+            self.buffers
+                .keys()
+                .find(|&&bid| {
+                    bid != id
+                        && !self
+                            .buffer_metadata
+                            .get(&bid)
+                            .map(|m| m.hidden_from_tabs)
+                            .unwrap_or(false)
+                })
+                .copied()
         });
 
         let is_last_visible_buffer = visible_replacement.is_none();

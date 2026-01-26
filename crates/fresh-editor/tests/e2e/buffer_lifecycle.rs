@@ -631,7 +631,9 @@ fn test_close_returns_to_previous_focused() {
     // Now B is active
     // Close B - should return to A (the previously focused buffer), not C (adjacent)
     // Note: Default keybinding for close_tab is Alt+W
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::ALT).unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
     harness.render().unwrap();
 
     // Should now be on A
@@ -642,4 +644,3 @@ fn test_close_returns_to_previous_focused() {
         screen
     );
 }
-

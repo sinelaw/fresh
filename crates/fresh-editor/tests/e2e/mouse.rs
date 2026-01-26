@@ -1365,8 +1365,14 @@ fn test_shift_click_extends_selection() {
         "Selection range should be available"
     );
     let range = selection_range.unwrap();
-    assert_eq!(range.start, 0, "Selection should start at original click position");
-    assert!(range.end > range.start, "Selection should extend to shift+click position");
+    assert_eq!(
+        range.start, 0,
+        "Selection should start at original click position"
+    );
+    assert!(
+        range.end > range.start,
+        "Selection should extend to shift+click position"
+    );
 }
 
 /// Test that shift+click can shrink selection when clicking before anchor
@@ -1386,7 +1392,9 @@ fn test_shift_click_can_shrink_selection() {
     let gutter_width = 8;
 
     // Create initial selection via drag from position 5 to 15
-    harness.mouse_drag(gutter_width + 5, row, gutter_width + 15, row).unwrap();
+    harness
+        .mouse_drag(gutter_width + 5, row, gutter_width + 15, row)
+        .unwrap();
     harness.render().unwrap();
 
     assert!(harness.has_selection(), "Should have selection after drag");

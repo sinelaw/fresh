@@ -734,6 +734,7 @@
   "lsp.cannot_rename_unsaved": "Nelze přejmenovat v neuloženém bufferu",
   "lsp.code_action_hint": "Stiskněte číslo pro výběr, Esc pro zrušení",
   "lsp.code_actions_not_implemented": "Nalezeno %{count} akcí kódu - výběr zatím není implementován",
+  "lsp.disabled.library_file": "Knihovní soubor (mimo projekt)",
   "lsp.disabled.unnamed": "Nepojmenovaný buffer",
   "lsp.disabled.virtual": "Virtuální buffer",
   "lsp.disabled.virtual_macro": "Virtuální makro buffer",

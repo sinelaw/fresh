@@ -734,6 +734,7 @@
   "lsp.cannot_rename_unsaved": "Невозможно переименовать в несохранённом буфере",
   "lsp.code_action_hint": "Нажмите цифру для выбора, Esc для отмены",
   "lsp.code_actions_not_implemented": "Найдено %{count} действий с кодом - выбор ещё не реализован",
+  "lsp.disabled.library_file": "Файл библиотеки (вне проекта)",
   "lsp.disabled.unnamed": "Безымянный буфер",
   "lsp.disabled.virtual": "Виртуальный буфер",
   "lsp.disabled.virtual_macro": "Виртуальный буфер макроса",

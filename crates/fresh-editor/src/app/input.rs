@@ -330,44 +330,32 @@ impl Editor {
                     );
                 }
             }
-            Action::TrimTrailingWhitespace => {
-                match self.trim_trailing_whitespace() {
-                    Ok(true) => {
-                        self.set_status_message(
-                            t!("whitespace.trimmed").to_string(),
-                        );
-                    }
-                    Ok(false) => {
-                        self.set_status_message(
-                            t!("whitespace.no_trailing").to_string(),
-                        );
-                    }
-                    Err(e) => {
-                        self.set_status_message(
-                            t!("error.trim_whitespace_failed", error = e).to_string(),
-                        );
-                    }
+            Action::TrimTrailingWhitespace => match self.trim_trailing_whitespace() {
+                Ok(true) => {
+                    self.set_status_message(t!("whitespace.trimmed").to_string());
                 }
-            }
-            Action::EnsureFinalNewline => {
-                match self.ensure_final_newline() {
-                    Ok(true) => {
-                        self.set_status_message(
-                            t!("whitespace.newline_added").to_string(),
-                        );
-                    }
-                    Ok(false) => {
-                        self.set_status_message(
-                            t!("whitespace.already_has_newline").to_string(),
-                        );
-                    }
-                    Err(e) => {
-                        self.set_status_message(
-                            t!("error.ensure_newline_failed", error = e).to_string(),
-                        );
-                    }
+                Ok(false) => {
+                    self.set_status_message(t!("whitespace.no_trailing").to_string());
                 }
-            }
+                Err(e) => {
+                    self.set_status_message(
+                        t!("error.trim_whitespace_failed", error = e).to_string(),
+                    );
+                }
+            },
+            Action::EnsureFinalNewline => match self.ensure_final_newline() {
+                Ok(true) => {
+                    self.set_status_message(t!("whitespace.newline_added").to_string());
+                }
+                Ok(false) => {
+                    self.set_status_message(t!("whitespace.already_has_newline").to_string());
+                }
+                Err(e) => {
+                    self.set_status_message(
+                        t!("error.ensure_newline_failed", error = e).to_string(),
+                    );
+                }
+            },
             Action::Copy => {
                 // Check if there's an active popup with text selection
                 let state = self.active_state();
@@ -1923,8 +1911,7 @@ impl Editor {
             self.mouse_state.dragging_text_selection = true;
             self.mouse_state.drag_selection_split = Some(split_id);
             // For shift+click, anchor stays at selection start; otherwise anchor at click position
-            self.mouse_state.drag_selection_anchor =
-                Some(new_anchor.unwrap_or(target_position));
+            self.mouse_state.drag_selection_anchor = Some(new_anchor.unwrap_or(target_position));
         }
 
         Ok(())

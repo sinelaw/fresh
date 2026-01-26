@@ -762,7 +762,10 @@ impl Editor {
                 Some(TabHit::TabName(buffer_id)) => {
                     return Some(HoverTarget::TabName(buffer_id, *split_id));
                 }
-                Some(TabHit::ScrollLeft) | Some(TabHit::ScrollRight) | Some(TabHit::BarBackground) | None => {}
+                Some(TabHit::ScrollLeft)
+                | Some(TabHit::ScrollRight)
+                | Some(TabHit::BarBackground)
+                | None => {}
             }
         }
 
@@ -1433,14 +1436,16 @@ impl Editor {
                 TabHit::ScrollLeft => {
                     // Scroll tabs left by one tab width (use 5 chars as estimate)
                     if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
-                        view_state.tab_scroll_offset = view_state.tab_scroll_offset.saturating_sub(10);
+                        view_state.tab_scroll_offset =
+                            view_state.tab_scroll_offset.saturating_sub(10);
                     }
                     return Ok(());
                 }
                 TabHit::ScrollRight => {
                     // Scroll tabs right by one tab width (use 5 chars as estimate)
                     if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
-                        view_state.tab_scroll_offset = view_state.tab_scroll_offset.saturating_add(10);
+                        view_state.tab_scroll_offset =
+                            view_state.tab_scroll_offset.saturating_add(10);
                     }
                     return Ok(());
                 }
@@ -1473,7 +1478,14 @@ impl Editor {
             {
                 // Click in editor - focus split and position cursor
                 tracing::debug!("  -> HIT! calling handle_editor_click");
-                self.handle_editor_click(col, row, *split_id, *buffer_id, *content_rect, modifiers)?;
+                self.handle_editor_click(
+                    col,
+                    row,
+                    *split_id,
+                    *buffer_id,
+                    *content_rect,
+                    modifiers,
+                )?;
                 return Ok(());
             }
         }

@@ -734,6 +734,7 @@
   "lsp.cannot_rename_unsaved": "ไม่สามารถเปลี่ยนชื่อในบัฟเฟอร์ที่ไม่ได้บันทึก",
   "lsp.code_action_hint": "กดตัวเลขเพื่อเลือก หรือ Esc เพื่อยกเลิก",
   "lsp.code_actions_not_implemented": "พบการดำเนินการโค้ด %{count} รายการ - ยังไม่รองรับการเลือก",
+  "lsp.disabled.library_file": "ไฟล์ไลบรารี (นอกโปรเจกต์)",
   "lsp.disabled.unnamed": "บัฟเฟอร์ไม่มีชื่อ",
   "lsp.disabled.virtual": "บัฟเฟอร์เสมือน",
   "lsp.disabled.virtual_macro": "บัฟเฟอร์มาโครเสมือน",

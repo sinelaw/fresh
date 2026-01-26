@@ -734,6 +734,7 @@
   "lsp.cannot_rename_unsaved": "未保存のバッファでは名前を変更できません",
   "lsp.code_action_hint": "番号を押して選択、Escでキャンセル",
   "lsp.code_actions_not_implemented": "%{count}個のコードアクションが見つかりました - 選択機能は未実装",
+  "lsp.disabled.library_file": "ライブラリファイル（プロジェクト外）",
   "lsp.disabled.unnamed": "無題のバッファ",
   "lsp.disabled.virtual": "仮想バッファ",
   "lsp.disabled.virtual_macro": "仮想マクロバッファ",

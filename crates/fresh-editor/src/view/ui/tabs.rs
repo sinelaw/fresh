@@ -479,12 +479,14 @@ impl TabsRenderer {
 
         // Set scroll button areas if shown
         if show_left {
-            layout.left_scroll_area = Some(Rect::new(area.x, area.y, SCROLL_INDICATOR_WIDTH as u16, 1));
+            layout.left_scroll_area =
+                Some(Rect::new(area.x, area.y, SCROLL_INDICATOR_WIDTH as u16, 1));
         }
         if show_right {
             // Right scroll button is at the end of the rendered area
             let right_x = area.x + max_width as u16 - SCROLL_INDICATOR_WIDTH as u16;
-            layout.right_scroll_area = Some(Rect::new(right_x, area.y, SCROLL_INDICATOR_WIDTH as u16, 1));
+            layout.right_scroll_area =
+                Some(Rect::new(right_x, area.y, SCROLL_INDICATOR_WIDTH as u16, 1));
         }
 
         for (idx, buffer_id) in rendered_buffer_ids.iter().enumerate() {

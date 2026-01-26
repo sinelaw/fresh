@@ -734,6 +734,7 @@
   "lsp.cannot_rename_unsaved": "无法重命名未保存的缓冲区",
   "lsp.code_action_hint": "按数字选择，Esc 取消",
   "lsp.code_actions_not_implemented": "找到 %{count} 个代码操作 - 选择功能尚未实现",
+  "lsp.disabled.library_file": "库文件（项目外部）",
   "lsp.disabled.unnamed": "未命名缓冲区",
   "lsp.disabled.virtual": "虚拟缓冲区",
   "lsp.disabled.virtual_macro": "虚拟宏缓冲区",

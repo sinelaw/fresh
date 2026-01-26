@@ -258,54 +258,7 @@ impl Editor {
     /// Check if a file path is a library file (outside project root or in common library directories).
     /// Library files should be opened as read-only.
     fn is_library_file(&self, path: &std::path::Path) -> bool {
-        // Check if outside working directory
-        if !path.starts_with(&self.working_dir) {
-            return true;
-        }
-
-        // Check for common library paths within the project
-        let path_str = path.to_string_lossy();
-
-        // Rust: .cargo directory (can be within project for vendor'd crates)
-        if path_str.contains("/.cargo/") || path_str.contains("\\.cargo\\") {
-            return true;
-        }
-
-        // Node.js: node_modules
-        if path_str.contains("/node_modules/") || path_str.contains("\\node_modules\\") {
-            return true;
-        }
-
-        // Python: site-packages, dist-packages
-        if path_str.contains("/site-packages/")
-            || path_str.contains("\\site-packages\\")
-            || path_str.contains("/dist-packages/")
-            || path_str.contains("\\dist-packages\\")
-        {
-            return true;
-        }
-
-        // Go: pkg/mod
-        if path_str.contains("/pkg/mod/") || path_str.contains("\\pkg\\mod\\") {
-            return true;
-        }
-
-        // Ruby: gems
-        if path_str.contains("/gems/") || path_str.contains("\\gems\\") {
-            return true;
-        }
-
-        // Java/Gradle: .gradle
-        if path_str.contains("/.gradle/") || path_str.contains("\\.gradle\\") {
-            return true;
-        }
-
-        // Maven: .m2
-        if path_str.contains("/.m2/") || path_str.contains("\\.m2\\") {
-            return true;
-        }
-
-        false
+        super::types::BufferMetadata::is_library_path(path, &self.working_dir)
     }
 
     /// Check if there are any pending LSP requests

@@ -290,7 +290,9 @@ fn test_tab_indent_preserves_relative_cursor_position() {
 
     // Select to end of line 3 using Shift+End, then Shift+Down to select line 3
     harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
-    harness.send_key(KeyCode::Down, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
 
     // Get positions before indent

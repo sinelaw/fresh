@@ -734,6 +734,7 @@
   "lsp.cannot_rename_unsaved": "Impossibile rinominare in un buffer non salvato",
   "lsp.code_action_hint": "Premi un numero per selezionare, Esc per annullare",
   "lsp.code_actions_not_implemented": "Trovate %{count} azioni codice - selezione non ancora implementata",
+  "lsp.disabled.library_file": "File di libreria (fuori dal progetto)",
   "lsp.disabled.unnamed": "Buffer senza nome",
   "lsp.disabled.virtual": "Buffer virtuale",
   "lsp.disabled.virtual_macro": "Buffer macro virtuale",
