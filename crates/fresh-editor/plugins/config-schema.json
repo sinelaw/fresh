@@ -42,6 +42,10 @@
         "auto_indent": true,
         "scroll_offset": 3,
         "default_line_ending": "lf",
+        "trim_trailing_whitespace_on_save": false,
+        "ensure_final_newline_on_save": false,
+        "highlight_matching_brackets": true,
+        "rainbow_brackets": true,
         "quick_suggestions": true,
         "quick_suggestions_delay_ms": 10,
         "suggest_on_trigger_characters": true,
@@ -264,6 +268,30 @@
           "$ref": "#/$defs/LineEndingOption",
           "x-section": "Editing",
           "default": "lf"
+        },
+        "trim_trailing_whitespace_on_save": {
+          "description": "Remove trailing whitespace from lines when saving.\nDefault: false",
+          "type": "boolean",
+          "x-section": "Editing",
+          "default": false
+        },
+        "ensure_final_newline_on_save": {
+          "description": "Ensure files end with a newline when saving.\nDefault: false",
+          "type": "boolean",
+          "x-section": "Editing",
+          "default": false
+        },
+        "highlight_matching_brackets": {
+          "description": "Highlight matching bracket pairs when cursor is on a bracket.\nDefault: true",
+          "type": "boolean",
+          "x-section": "Bracket Matching",
+          "default": true
+        },
+        "rainbow_brackets": {
+          "description": "Use rainbow colors for nested brackets based on nesting depth.\nRequires highlight_matching_brackets to be enabled.\nDefault: true",
+          "type": "boolean",
+          "x-section": "Bracket Matching",
+          "default": true
         },
         "quick_suggestions": {
           "description": "Enable quick suggestions (VS Code-like behavior).\nWhen enabled, completion suggestions appear automatically while typing,\nnot just on trigger characters (like `.` or `::`).\nDefault: true",
