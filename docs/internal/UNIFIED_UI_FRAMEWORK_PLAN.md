@@ -1712,6 +1712,58 @@ impl Element for Column {
    filterBarParts.push({ text: `${leftBracket} ${f.label} ${rightBracket}`, ... });
    ```
 
+### Type-Safe Codegen Architecture
+
+The editor uses `ts-rs` to generate TypeScript types from Rust structs, ensuring type safety across the Rust/TypeScript boundary. The controls library should leverage this:
+
+**How it works:**
+1. Rust types defined with `#[derive(TS)]` + `#[ts(export)]` in `fresh-core/src/api.rs`
+2. `fresh-plugin-runtime/src/ts_export.rs` collects types and generates `fresh.d.ts`
+3. TypeScript imports types from `fresh.d.ts` - single source of truth
+
+**Existing types we can reuse:**
+- `TextPropertyEntry` - already generated, used for virtual buffer content
+- `OverlayColorSpec` - RGB or theme key color specification
+- `OverlayOptions` - fg, bg, bold, italic, underline
+
+**New types to add in Rust** (in `fresh-core/src/api.rs`):
+```rust
+/// Style for a control element
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct ControlStyle {
+    /// Foreground color - RGB or theme key
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fg: Option<OverlayColorSpec>,
+    /// Background color - RGB or theme key
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bg: Option<OverlayColorSpec>,
+    /// Bold text
+    #[serde(default)]
+    pub bold: bool,
+}
+
+/// A focusable element identifier
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct FocusTarget {
+    /// Element type (e.g., "button", "list", "search")
+    #[serde(rename = "type")]
+    pub target_type: String,
+    /// Optional index for indexed elements (e.g., filter button 0, 1, 2)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<usize>,
+}
+```
+
+**Benefits:**
+- Types defined once in Rust, auto-generated for TypeScript
+- Compile-time type checking on both sides
+- `#[serde(deny_unknown_fields)]` catches typos at runtime
+- Theme key validation can happen in Rust
+
 ### Proposed Library Structure
 
 ```
@@ -1719,8 +1771,10 @@ plugins/lib/
 ├── controls.ts      # Button, List, TextInput, Label controls
 ├── focus.ts         # FocusManager for Tab navigation
 ├── vbuffer.ts       # VirtualBufferBuilder (handles byte offsets)
-├── theme.ts         # Theme color helpers (future)
 └── index.ts         # Re-exports
+
+fresh-core/src/
+└── api.rs           # Add ControlStyle, FocusTarget types (generated to fresh.d.ts)
 ```
 
 ### API Design
@@ -1728,14 +1782,8 @@ plugins/lib/
 #### `plugins/lib/controls.ts`
 
 ```typescript
-import type { TextPropertyEntry } from "./fresh.d.ts";
-
-/** Style configuration for a control */
-export interface ControlStyle {
-  fg?: string | [number, number, number];  // theme key or RGB
-  bg?: string | [number, number, number];
-  bold?: boolean;
-}
+// Types imported from generated fresh.d.ts - NOT duplicated
+import type { TextPropertyEntry, ControlStyle, OverlayColorSpec } from "./fresh.d.ts";
 
 /** Styles for different button states */
 export interface ButtonStyles {
@@ -1869,11 +1917,11 @@ export function newline(): TextPropertyEntry {
 #### `plugins/lib/focus.ts`
 
 ```typescript
-/** A focusable element identifier */
-export interface FocusTarget {
-  type: string;
-  index?: number;
-}
+// FocusTarget imported from generated types - defined in Rust
+import type { FocusTarget } from "./fresh.d.ts";
+
+// Re-export for convenience
+export type { FocusTarget };
 
 /** Manages focus order and Tab/Shift-Tab navigation */
 export class FocusManager {
@@ -2040,9 +2088,14 @@ export class VirtualBufferBuilder {
 
 ### Migration Plan for pkg.ts
 
+**Phase 0: Add types to Rust** (ensures type safety)
+- Add `ControlStyle`, `FocusTarget` to `fresh-core/src/api.rs` with `#[derive(TS)]`
+- Register types in `fresh-plugin-runtime/src/ts_export.rs`
+- Regenerate `fresh.d.ts` (run test: `cargo test -p fresh-plugin-runtime write_fresh_dts_file -- --ignored`)
+
 **Phase 1: Add library files**
-- Create `plugins/lib/controls.ts`
-- Create `plugins/lib/focus.ts`
+- Create `plugins/lib/controls.ts` (imports types from `fresh.d.ts`)
+- Create `plugins/lib/focus.ts` (imports `FocusTarget` from `fresh.d.ts`)
 - Create `plugins/lib/vbuffer.ts`
 - Update `plugins/lib/index.ts` exports
 
