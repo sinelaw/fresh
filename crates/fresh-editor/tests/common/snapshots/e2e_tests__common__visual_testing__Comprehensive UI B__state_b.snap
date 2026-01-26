@@ -2,7 +2,7 @@
 source: crates/fresh-editor/tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
- File   Edit   View   Selection   Go   LSP   Explorer   Help                                                            
+ File   Edit   View   Selection   Go   LSP   Help                                                                       
  file1.rs ×                                                                                                         □ × 
     1 │ // File 1 - Contains a very long line that will require horizontal scrolling to see the end of it completely wh 
     2 │ fn main() {                                                                                                     

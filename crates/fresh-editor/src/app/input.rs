@@ -1877,8 +1877,11 @@ impl Editor {
             let old_position = primary_cursor.position;
             let old_anchor = primary_cursor.anchor;
 
-            // For shift+click: extend selection from current anchor (or position if no anchor) to click
-            let new_anchor = if modifiers.contains(KeyModifiers::SHIFT) {
+            // For shift+click or ctrl+click: extend selection from current anchor (or position if no anchor) to click
+            // Both modifiers supported since some terminals intercept shift+click
+            let extend_selection = modifiers.contains(KeyModifiers::SHIFT)
+                || modifiers.contains(KeyModifiers::CONTROL);
+            let new_anchor = if extend_selection {
                 // If already selecting, keep the existing anchor; otherwise anchor at current position
                 Some(old_anchor.unwrap_or(old_position))
             } else {
