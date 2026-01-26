@@ -1146,14 +1146,15 @@ export interface StyleRange {
 }
 ```
 
-## What This Plan Does NOT Include
+## What This Plan Does NOT Include (Current Phase)
 
-The goal is minimal changes that leverage existing code:
+The immediate goal is minimal changes that leverage existing code:
 
-1. **No new component trait** - The `render() → *Layout` pattern is sufficient
-2. **No virtual DOM** - Full rebuild on each render is fine for TUI
-3. **No flexbox/grid** - Manual Rect calculation works; `ratatui::Layout` handles splitting
-4. **No reactive state bindings** - Explicit state management (like existing `*State` structs) is clearer
+1. **No virtual DOM** - Full rebuild on each render is fine for TUI
+2. **No reactive state bindings** - Explicit state management (like existing `*State` structs) is clearer
+3. **No complex constraint solver** - Simple Fixed/Fill sizing is sufficient
+
+The **Layout DSL** (Part 5) is a future direction that adds compositional UI building, but it builds on the foundation established in the current phase rather than replacing it.
 
 ## Success Metrics
 
@@ -1508,6 +1509,156 @@ pub fn render_for_split(...) -> TabLayout
 
 ---
 
+## Part 5: Layout DSL (Future Direction)
+
+The current plan extracts utilities and improves hit-testing. The next evolution is a **typed DSL for composing UI hierarchies** that unifies Settings UI, Menu, Tabs, and plugin UIs.
+
+### 5.1 Core Primitives
+
+The DSL is intentionally minimal:
+
+```rust
+// Two containers
+Column  // Children stacked vertically
+Row     // Children laid out horizontally
+
+// Two sizing modes
+Fixed(n)  // Exact n cells
+Fill      // Take remaining space
+
+// Overlays
+Stack   // Children layered, last on top
+
+// Escape hatch
+Custom  // Manual rendering with full control
+```
+
+### 5.2 Basic Usage
+
+```rust
+// Settings-like layout
+Column::new()
+    .child(header.height(Fixed(1)))
+    .child(
+        Row::new()
+            .child(sidebar.width(Fixed(30)))
+            .child(content)  // Defaults to Fill
+    )
+    .child(footer.height(Fixed(1)))
+
+// Menu bar
+Row::new()
+    .child(menu_item("File"))
+    .child(menu_item("Edit"))
+    .child(menu_item("View"))
+    .child(spacer().width(Fill))  // Push help to right
+    .child(menu_item("Help"))
+```
+
+### 5.3 Overlays with Stack
+
+```rust
+Stack::new()
+    .child(editor_content)                    // Base layer
+    .child(popup.at(cursor_x, cursor_y + 1))  // Absolute position
+    .child(modal.centered())                  // Centered in parent
+```
+
+### 5.4 Escape Hatch for Complex Cases
+
+Buffer content, syntax highlighting, and other complex rendering stays manual:
+
+```rust
+Column::new()
+    .child(tabs.height(Fixed(1)))
+    .child(Custom::new(|frame, area, ctx| {
+        // Full manual control - receives computed Rect
+        render_buffer_content(frame, area, &ctx.buffer);
+        // Return layout for hit-testing
+        BufferLayout { line_rects: ... }
+    }))
+    .child(status.height(Fixed(1)))
+```
+
+### 5.5 How It Works
+
+1. **Build phase**: Construct tree of `Column`, `Row`, `Stack`, controls
+2. **Layout phase**: Traverse tree, solve constraints, assign `Rect` to each node
+3. **Render phase**: Call each node's render with its assigned `Rect`
+4. **Hit-test phase**: Query the tree with `(x, y)`, get hit result
+
+The tree structure IS the layout - no separate layout calculation that can drift.
+
+### 5.6 TypeScript Gets Same DSL
+
+```typescript
+// Same structure, same API
+Column()
+    .child(Label("Packages").height(Fixed(1)))
+    .child(
+        Row()
+            .child(PackageList(items).width(Fixed(40)))
+            .child(PackageDetails(selected))
+    )
+    .child(StatusBar().height(Fixed(1)))
+```
+
+TypeScript DSL either:
+- Renders to text locally (Phase 1 - current plan's approach)
+- Sends tree to Rust for rendering (Phase 2 - more advanced)
+
+### 5.7 Implementation Approach
+
+The DSL builds on top of existing controls, not replacing them:
+
+```rust
+// Button becomes an Element
+impl Element for Button {
+    fn render(&self, frame: &mut Frame, area: Rect) -> ButtonLayout {
+        render_button(frame, area, &self.state, &self.colors)  // Existing fn
+    }
+}
+
+// Column composes Elements
+impl Element for Column {
+    fn render(&self, frame: &mut Frame, area: Rect) -> ColumnLayout {
+        let mut y = area.y;
+        let mut layouts = vec![];
+
+        for child in &self.children {
+            let child_height = child.height.resolve(area.height, ...);
+            let child_area = Rect::new(area.x, y, area.width, child_height);
+            layouts.push(child.render(frame, child_area));
+            y += child_height;
+        }
+
+        ColumnLayout { children: layouts, area }
+    }
+}
+```
+
+### 5.8 What This Enables
+
+| Capability | Manual Rects | With DSL |
+|------------|--------------|----------|
+| Express hierarchy | Implicit in render order | Explicit tree structure |
+| Resize handling | Manual recalculation | Automatic constraint solving |
+| Hit testing | Separate code path | Derived from same tree |
+| Plugin UIs | Manual string building | Same DSL as Rust UI |
+| Composition | Copy-paste patterns | Reusable components |
+
+### 5.9 Phased Rollout
+
+| Phase | Scope | Validates |
+|-------|-------|-----------|
+| Current (1-8) | Extract utilities, improve hit-testing | Patterns work |
+| DSL Phase 1 | Add `Column`, `Row` to Rust | Basic composition |
+| DSL Phase 2 | Migrate Settings UI to DSL | Handles real complexity |
+| DSL Phase 3 | TypeScript DSL for plugins | Cross-language parity |
+| DSL Phase 4 | `Stack` for overlays, modals | Full UI capability |
+
+---
+
 ### Future Steps (After Core Migration)
 
 Once the Rust patterns are validated:
@@ -1516,6 +1667,7 @@ Once the Rust patterns are validated:
 2. **Create TypeScript controls library** for plugins
 3. **Migrate pkg.ts** to use the TypeScript controls
 4. **Consider `CompositeLayout<H>`** if Settings/Menu/Tabs want to share more structure
+5. **Implement Layout DSL** (`Column`, `Row`, `Stack`, `Custom`) as described in Part 5
 
 ---
 
