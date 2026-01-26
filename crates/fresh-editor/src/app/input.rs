@@ -626,17 +626,11 @@ impl Editor {
             Action::SwitchToPreviousTab => self.switch_to_previous_tab(),
             Action::SwitchToTabByName => self.start_switch_to_tab_prompt(),
 
-            // Tab scrolling
+            // Tab scrolling (manual scroll - don't auto-adjust)
             Action::ScrollTabsLeft => {
                 let active_split_id = self.split_manager.active_split();
                 if let Some(view_state) = self.split_view_states.get_mut(&active_split_id) {
                     view_state.tab_scroll_offset = view_state.tab_scroll_offset.saturating_sub(5);
-                    // After manual scroll, re-evaluate to clamp and show indicators
-                    self.ensure_active_tab_visible(
-                        active_split_id,
-                        self.active_buffer(),
-                        self.terminal_width,
-                    );
                     self.set_status_message(t!("status.scrolled_tabs_left").to_string());
                 }
             }
@@ -644,12 +638,6 @@ impl Editor {
                 let active_split_id = self.split_manager.active_split();
                 if let Some(view_state) = self.split_view_states.get_mut(&active_split_id) {
                     view_state.tab_scroll_offset = view_state.tab_scroll_offset.saturating_add(5);
-                    // After manual scroll, re-evaluate to clamp and show indicators
-                    self.ensure_active_tab_visible(
-                        active_split_id,
-                        self.active_buffer(),
-                        self.terminal_width,
-                    );
                     self.set_status_message(t!("status.scrolled_tabs_right").to_string());
                 }
             }

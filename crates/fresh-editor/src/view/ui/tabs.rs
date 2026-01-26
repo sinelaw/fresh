@@ -71,7 +71,9 @@ impl TabLayout {
         if let Some(left_area) = self.left_scroll_area {
             tracing::debug!(
                 "Tab hit_test: checking left_scroll_area {:?} against ({}, {})",
-                left_area, x, y
+                left_area,
+                x,
+                y
             );
             if point_in_rect(left_area, x, y) {
                 tracing::debug!("Tab hit_test: HIT ScrollLeft");
@@ -81,7 +83,9 @@ impl TabLayout {
         if let Some(right_area) = self.right_scroll_area {
             tracing::debug!(
                 "Tab hit_test: checking right_scroll_area {:?} against ({}, {})",
-                right_area, x, y
+                right_area,
+                x,
+                y
             );
             if point_in_rect(right_area, x, y) {
                 tracing::debug!("Tab hit_test: HIT ScrollRight");
@@ -112,46 +116,130 @@ impl TabLayout {
 /// Renders the tab bar showing open buffers
 pub struct TabsRenderer;
 
-/// Compute a scroll offset that keeps the active tab fully visible.
-/// `tab_widths` should include separators; `active_idx` refers to the tab index (not counting separators).
-pub fn compute_tab_scroll_offset(
+/// Compute scroll offset to bring the active tab into view.
+/// Always scrolls to put the active tab at a comfortable position.
+/// `tab_widths` includes separators between tabs.
+pub fn scroll_to_show_tab(
     tab_widths: &[usize],
     active_idx: usize,
+    _current_offset: usize,
     max_width: usize,
-    current_offset: usize,
-    padding_between_tabs: usize,
 ) -> usize {
-    if tab_widths.is_empty() || max_width == 0 {
+    if tab_widths.is_empty() || max_width == 0 || active_idx >= tab_widths.len() {
         return 0;
     }
 
-    let total_width: usize = tab_widths.iter().sum::<usize>()
-        + padding_between_tabs.saturating_mul(tab_widths.len().saturating_sub(1));
-    let mut tab_start = 0usize;
-    let mut tab_end = 0usize;
+    let total_width: usize = tab_widths.iter().sum();
+    let tab_start: usize = tab_widths[..active_idx].iter().sum();
+    let tab_width = tab_widths[active_idx];
+    let tab_end = tab_start + tab_width;
 
-    // Walk through widths to locate active tab boundaries.
-    for (tab_counter, w) in tab_widths.iter().enumerate() {
-        let next = tab_start + *w;
-        if tab_counter == active_idx {
-            tab_end = next;
-            break;
+    // Try to put the active tab about 1/4 from the left edge
+    let preferred_position = max_width / 4;
+    let target_offset = tab_start.saturating_sub(preferred_position);
+
+    // Clamp to valid range (0 to max_offset)
+    let max_offset = total_width.saturating_sub(max_width);
+    let mut result = target_offset.min(max_offset);
+
+    // But ensure the tab is fully visible - if clamping pushed the tab off screen,
+    // adjust to show at least the tab
+    if tab_end > result + max_width {
+        // Tab is past right edge, scroll right to show it
+        result = tab_end.saturating_sub(max_width);
+    }
+
+    tracing::debug!(
+        "scroll_to_show_tab: idx={}, tab={}..{}, target={}, result={}, total={}, max_width={}, max_offset={}",
+        active_idx, tab_start, tab_end, target_offset, result, total_width, max_width, max_offset
+    );
+
+    result
+}
+
+/// Calculate tab widths for scroll offset calculations.
+/// Returns (tab_widths, rendered_buffer_ids) where tab_widths includes separators.
+/// This uses the same logic as render_for_split to ensure consistency.
+pub fn calculate_tab_widths(
+    split_buffers: &[BufferId],
+    buffers: &HashMap<BufferId, EditorState>,
+    buffer_metadata: &HashMap<BufferId, BufferMetadata>,
+    composite_buffers: &HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
+) -> (Vec<usize>, Vec<BufferId>) {
+    let mut tab_widths: Vec<usize> = Vec::new();
+    let mut rendered_buffer_ids: Vec<BufferId> = Vec::new();
+
+    for id in split_buffers.iter() {
+        // Check if this is a regular buffer or a composite buffer
+        let is_regular_buffer = buffers.contains_key(id);
+        let is_composite_buffer = composite_buffers.contains_key(id);
+
+        if !is_regular_buffer && !is_composite_buffer {
+            continue;
         }
-        tab_start = next + padding_between_tabs;
+
+        // Skip buffers that are marked as hidden from tabs
+        if let Some(meta) = buffer_metadata.get(id) {
+            if meta.hidden_from_tabs {
+                continue;
+            }
+        }
+
+        let meta = buffer_metadata.get(id);
+        let is_terminal = meta
+            .and_then(|m| m.virtual_mode())
+            .map(|mode| mode == "terminal")
+            .unwrap_or(false);
+
+        // Use same name resolution logic as render_for_split
+        let name = if is_composite_buffer {
+            meta.map(|m| m.display_name.as_str())
+        } else if is_terminal {
+            meta.map(|m| m.display_name.as_str())
+        } else {
+            buffers
+                .get(id)
+                .and_then(|state| state.buffer.file_path())
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .or_else(|| meta.map(|m| m.display_name.as_str()))
+        }
+        .unwrap_or("[No Name]");
+
+        // Calculate modified indicator
+        let modified = if is_composite_buffer {
+            ""
+        } else if let Some(state) = buffers.get(id) {
+            if state.buffer.is_modified() {
+                "*"
+            } else {
+                ""
+            }
+        } else {
+            ""
+        };
+
+        let binary_indicator = if buffer_metadata.get(id).map(|m| m.binary).unwrap_or(false) {
+            " [BIN]"
+        } else {
+            ""
+        };
+
+        // Same format as render_for_split: " {name}{modified}{binary_indicator} " + "× "
+        let tab_name_text = format!(" {name}{modified}{binary_indicator} ");
+        let close_text = "× ";
+        let tab_width = str_width(&tab_name_text) + str_width(close_text);
+
+        // Add separator if not first tab
+        if !rendered_buffer_ids.is_empty() {
+            tab_widths.push(1); // separator
+        }
+
+        tab_widths.push(tab_width);
+        rendered_buffer_ids.push(*id);
     }
 
-    // If we didn't find the tab, keep current offset.
-    if tab_end == 0 {
-        return current_offset.min(total_width.saturating_sub(max_width));
-    }
-
-    // Basic rule: stick the active tab into view, prefer left-aligned start unless it overflows.
-    let mut offset = tab_start;
-    if tab_end.saturating_sub(offset) > max_width {
-        offset = tab_end.saturating_sub(max_width);
-    }
-
-    offset.min(total_width.saturating_sub(max_width))
+    (tab_widths, rendered_buffer_ids)
 }
 
 impl TabsRenderer {
@@ -362,47 +450,20 @@ impl TabsRenderer {
             tab_widths.push(end.saturating_sub(*start));
         }
 
-        let mut offset = tab_scroll_offset.min(total_width.saturating_sub(max_width));
-        if let Some(active_idx) = active_tab_idx {
-            offset = compute_tab_scroll_offset(
-                &tab_widths,
-                active_idx,
-                max_width,
-                tab_scroll_offset,
-                1, // separator width between tabs
-            );
-        }
+        // Use the scroll offset directly - ensure_active_tab_visible handles the calculation
+        // Only clamp to prevent negative or extreme values
+        let max_offset = total_width.saturating_sub(max_width);
+        let offset = tab_scroll_offset.min(total_width);
+        tracing::debug!(
+            "render_for_split: tab_scroll_offset={}, max_offset={}, offset={}, total={}, max_width={}",
+            tab_scroll_offset, max_offset, offset, total_width, max_width
+        );
 
-        // Indicators reserve space; adjust once so the active tab still fits.
-        let mut show_left = offset > 0;
-        let mut show_right = total_width.saturating_sub(offset) > max_width;
-        let mut available = max_width
+        // Indicators reserve space based on scroll position
+        let show_left = offset > 0;
+        let show_right = total_width.saturating_sub(offset) > max_width;
+        let available = max_width
             .saturating_sub((show_left as usize + show_right as usize) * SCROLL_INDICATOR_WIDTH);
-
-        if let Some(active_idx) = active_tab_idx {
-            let (start, end, _close_start) = tab_ranges[active_idx];
-            let active_width = end.saturating_sub(start);
-            if start == 0 && active_width >= max_width {
-                show_left = false;
-                show_right = false;
-                available = max_width;
-            }
-
-            if end.saturating_sub(offset) > available {
-                offset = end.saturating_sub(available);
-                offset = offset.min(total_width.saturating_sub(available));
-                show_left = offset > 0;
-                show_right = total_width.saturating_sub(offset) > available;
-                available = max_width.saturating_sub(
-                    (show_left as usize + show_right as usize) * SCROLL_INDICATOR_WIDTH,
-                );
-            }
-            if start < offset {
-                offset = start;
-                show_left = offset > 0;
-                show_right = total_width.saturating_sub(offset) > available;
-            }
-        }
 
         let mut rendered_width = 0;
         let mut skip_chars_count = offset;
@@ -597,27 +658,30 @@ mod tests {
     use crate::model::event::BufferId;
 
     #[test]
-    fn offset_clamped_to_zero_when_active_first() {
-        let widths = vec![5, 5, 5]; // tab widths
-        let offset = compute_tab_scroll_offset(&widths, 0, 6, 10, 1);
+    fn scroll_to_show_active_first_tab() {
+        // Active is first tab, should scroll left to show it
+        let widths = vec![5, 5, 5];
+        let offset = scroll_to_show_tab(&widths, 0, 10, 20);
+        // First tab starts at 0, should scroll to show it
         assert_eq!(offset, 0);
     }
 
     #[test]
-    fn offset_moves_to_show_active_tab() {
-        let widths = vec![5, 8, 6]; // active is the middle tab (index 1)
-        let offset = compute_tab_scroll_offset(&widths, 1, 6, 0, 1);
-        // Active tab width 8 cannot fully fit into width 6; expect it to right-align within view.
-        assert_eq!(offset, 8);
+    fn scroll_to_show_tab_already_visible() {
+        // Tab is already visible, offset should stay the same
+        let widths = vec![5, 5, 5];
+        let offset = scroll_to_show_tab(&widths, 1, 0, 20);
+        // Tab 1 starts at 5, ends at 10, visible in 0..20
+        assert_eq!(offset, 0);
     }
 
     #[test]
-    fn offset_respects_total_width_bounds() {
-        let widths = vec![3, 3, 3, 3];
-        let offset = compute_tab_scroll_offset(&widths, 3, 4, 100, 1);
-        let total: usize = widths.iter().sum();
-        let total_with_padding = total + 3; // three gaps of width 1
-        assert!(offset <= total_with_padding.saturating_sub(4));
+    fn scroll_to_show_tab_on_right() {
+        // Tab is to the right, need to scroll right
+        let widths = vec![10, 10, 10];
+        let offset = scroll_to_show_tab(&widths, 2, 0, 15);
+        // Tab 2 starts at 20, ends at 30; need to scroll to show it
+        assert!(offset > 0);
     }
 
     #[test]

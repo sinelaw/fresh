@@ -1408,12 +1408,31 @@ impl Editor {
         }
 
         // Check if click is on a tab using cached tab layouts (computed during rendering)
+        // Debug: show tab layout info
+        for (split_id, tab_layout) in &self.cached_layout.tab_layouts {
+            tracing::debug!(
+                "Tab layout for split {:?}: bar_area={:?}, left_scroll={:?}, right_scroll={:?}",
+                split_id,
+                tab_layout.bar_area,
+                tab_layout.left_scroll_area,
+                tab_layout.right_scroll_area
+            );
+        }
+
         let tab_hit = self
             .cached_layout
             .tab_layouts
             .iter()
             .find_map(|(split_id, tab_layout)| {
-                tab_layout.hit_test(col, row).map(|hit| (*split_id, hit))
+                let hit = tab_layout.hit_test(col, row);
+                tracing::debug!(
+                    "Tab hit_test at ({}, {}) for split {:?} returned {:?}",
+                    col,
+                    row,
+                    split_id,
+                    hit
+                );
+                hit.map(|h| (*split_id, h))
             });
 
         if let Some((split_id, hit)) = tab_hit {
@@ -1435,6 +1454,7 @@ impl Editor {
                 }
                 TabHit::ScrollLeft => {
                     // Scroll tabs left by one tab width (use 5 chars as estimate)
+                    self.set_status_message("ScrollLeft clicked!".to_string());
                     if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
                         view_state.tab_scroll_offset =
                             view_state.tab_scroll_offset.saturating_sub(10);
@@ -1443,6 +1463,7 @@ impl Editor {
                 }
                 TabHit::ScrollRight => {
                     // Scroll tabs right by one tab width (use 5 chars as estimate)
+                    self.set_status_message("ScrollRight clicked!".to_string());
                     if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
                         view_state.tab_scroll_offset =
                             view_state.tab_scroll_offset.saturating_add(10);

@@ -1795,7 +1795,6 @@ impl Editor {
         }
 
         // Ensure the newly active tab is visible
-        // Use effective_tabs_width() to account for file explorer taking 30% of width
         self.ensure_active_tab_visible(active_split, buffer_id, self.effective_tabs_width());
 
         // Note: We don't sync file explorer here to avoid flicker during tab switches.

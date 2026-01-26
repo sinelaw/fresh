@@ -3887,57 +3887,59 @@ impl Editor {
         active_buffer: BufferId,
         available_width: u16,
     ) {
+        tracing::debug!(
+            "ensure_active_tab_visible called: split={:?}, buffer={:?}, width={}",
+            split_id,
+            active_buffer,
+            available_width
+        );
         let Some(view_state) = self.split_view_states.get_mut(&split_id) else {
+            tracing::debug!("  -> no view_state for split");
             return;
         };
 
-        let split_buffers = &view_state.open_buffers;
-        let buffers = &self.buffers;
-        let buffer_metadata = &self.buffer_metadata;
-        // The theme is not strictly necessary here, but passed to TabsRenderer
-        // so we'll just use a dummy default style for width calculation
+        let split_buffers = view_state.open_buffers.clone();
 
-        // Calculate widths of tabs (and separators)
-        let mut tab_layout_info: Vec<(usize, bool)> = Vec::new();
-        for (idx, id) in split_buffers.iter().enumerate() {
-            let Some(state) = buffers.get(id) else {
-                continue;
-            };
+        // Use the shared function to calculate tab widths (same as render_for_split)
+        let (tab_widths, rendered_buffer_ids) = crate::view::ui::tabs::calculate_tab_widths(
+            &split_buffers,
+            &self.buffers,
+            &self.buffer_metadata,
+            &self.composite_buffers,
+        );
 
-            let name = if let Some(metadata) = buffer_metadata.get(id) {
-                metadata.display_name.as_str()
-            } else {
-                state
-                    .buffer
-                    .file_path()
-                    .and_then(|p| p.file_name())
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("[No Name]")
-            };
-
-            let modified_indicator_width = if state.buffer.is_modified() { 1 } else { 0 };
-            let tab_width = 2 + name.chars().count() + modified_indicator_width; // " {name}{modified} "
-            let is_active = *id == active_buffer;
-
-            tab_layout_info.push((tab_width, is_active));
-            if idx < split_buffers.len() - 1 {
-                tab_layout_info.push((1, false)); // separator
-            }
-        }
-
-        let total_tabs_width: usize = tab_layout_info.iter().map(|(w, _)| w).sum();
+        let total_tabs_width: usize = tab_widths.iter().sum();
         let max_visible_width = available_width as usize;
 
-        let tab_widths: Vec<usize> = tab_layout_info.iter().map(|(w, _)| *w).collect();
-        let active_tab_index = tab_layout_info.iter().position(|(_, is_active)| *is_active);
+        // Find the active tab index among rendered buffers
+        // Note: tab_widths includes separators, so we need to map buffer index to width index
+        let active_tab_index = rendered_buffer_ids
+            .iter()
+            .position(|id| *id == active_buffer);
 
-        let new_scroll_offset = if let Some(idx) = active_tab_index {
-            crate::view::ui::tabs::compute_tab_scroll_offset(
+        // Map buffer index to width index (accounting for separators)
+        // Widths are: [sep?, tab0, sep, tab1, sep, tab2, ...]
+        // First tab has no separator before it, subsequent tabs have separator before
+        let active_width_index = active_tab_index.map(|buf_idx| {
+            if buf_idx == 0 {
+                0
+            } else {
+                // Each tab after the first has a separator before it
+                // So tab N is at position 2*N (sep before tab1 is at 1, tab1 at 2, sep before tab2 at 3, tab2 at 4, etc.)
+                // Wait, the structure is: [tab0, sep, tab1, sep, tab2]
+                // So tab N (0-indexed) is at position 2*N
+                buf_idx * 2
+            }
+        });
+
+        // Calculate offset to bring active tab into view
+        let old_offset = view_state.tab_scroll_offset;
+        let new_scroll_offset = if let Some(idx) = active_width_index {
+            crate::view::ui::tabs::scroll_to_show_tab(
                 &tab_widths,
                 idx,
-                max_visible_width,
                 view_state.tab_scroll_offset,
-                1, // separator width
+                max_visible_width,
             )
         } else {
             view_state
@@ -3945,6 +3947,14 @@ impl Editor {
                 .min(total_tabs_width.saturating_sub(max_visible_width))
         };
 
+        tracing::debug!(
+            "  -> offset: {} -> {} (idx={:?}, max_width={}, total={})",
+            old_offset,
+            new_scroll_offset,
+            active_width_index,
+            max_visible_width,
+            total_tabs_width
+        );
         view_state.tab_scroll_offset = new_scroll_offset;
     }
 
