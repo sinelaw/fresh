@@ -9,6 +9,7 @@
 use super::types::TabDropZone;
 use super::Editor;
 use crate::model::event::{BufferId, SplitDirection, SplitId};
+use crate::view::ui::tabs::TabHit;
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
@@ -50,7 +51,10 @@ impl Editor {
     ) -> Option<TabDropZone> {
         // First check if we're over a tab bar (for reordering/moving to another split)
         for (split_id, tab_layout) in &self.cached_layout.tab_layouts {
-            if let Some((_buffer_id, _is_close)) = tab_layout.tab_at(col, row) {
+            if matches!(
+                tab_layout.hit_test(col, row),
+                Some(TabHit::TabName(_) | TabHit::CloseButton(_))
+            ) {
                 // Find the index where this tab would be inserted
                 let insert_idx = self.find_tab_insert_index(*split_id, col);
                 return Some(TabDropZone::TabBar(*split_id, insert_idx));

@@ -13,6 +13,7 @@ use crate::model::event::{SplitDirection, SplitId};
 use crate::services::plugins::hooks::HookArgs;
 use crate::view::popup_mouse::{popup_areas_to_layout_info, PopupHitTester};
 use crate::view::prompt::PromptType;
+use crate::view::ui::tabs::TabHit;
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
@@ -754,11 +755,14 @@ impl Editor {
         }
 
         for (split_id, tab_layout) in &self.cached_layout.tab_layouts {
-            if let Some((buffer_id, is_close)) = tab_layout.tab_at(col, row) {
-                if is_close {
+            match tab_layout.hit_test(col, row) {
+                Some(TabHit::CloseButton(buffer_id)) => {
                     return Some(HoverTarget::TabCloseButton(buffer_id, *split_id));
                 }
-                return Some(HoverTarget::TabName(buffer_id, *split_id));
+                Some(TabHit::TabName(buffer_id)) => {
+                    return Some(HoverTarget::TabName(buffer_id, *split_id));
+                }
+                Some(TabHit::BarBackground) | None => {}
             }
         }
 
@@ -1396,32 +1400,33 @@ impl Editor {
         }
 
         // Check if click is on a tab using cached tab layouts (computed during rendering)
-        let tab_click = self
+        let tab_hit = self
             .cached_layout
             .tab_layouts
             .iter()
             .find_map(|(split_id, tab_layout)| {
-                tab_layout
-                    .tab_at(col, row)
-                    .map(|(buffer_id, is_close)| (*split_id, buffer_id, is_close))
+                tab_layout.hit_test(col, row).map(|hit| (*split_id, hit))
             });
 
-        if let Some((split_id, clicked_buffer, clicked_close)) = tab_click {
-            self.focus_split(split_id, clicked_buffer);
-
-            // Handle close button click - use close_tab logic
-            if clicked_close {
-                self.close_tab_in_split(clicked_buffer, split_id);
-                return Ok(());
+        if let Some((split_id, hit)) = tab_hit {
+            match hit {
+                TabHit::CloseButton(buffer_id) => {
+                    self.focus_split(split_id, buffer_id);
+                    self.close_tab_in_split(buffer_id, split_id);
+                    return Ok(());
+                }
+                TabHit::TabName(buffer_id) => {
+                    self.focus_split(split_id, buffer_id);
+                    // Start potential tab drag (will only become active after moving threshold)
+                    self.mouse_state.dragging_tab = Some(super::types::TabDragState::new(
+                        buffer_id,
+                        split_id,
+                        (col, row),
+                    ));
+                    return Ok(());
+                }
+                TabHit::BarBackground => {}
             }
-
-            // Start potential tab drag (will only become active after moving threshold)
-            self.mouse_state.dragging_tab = Some(super::types::TabDragState::new(
-                clicked_buffer,
-                split_id,
-                (col, row),
-            ));
-            return Ok(());
         }
 
         // Check if click is in editor content area
@@ -1756,17 +1761,17 @@ impl Editor {
         }
 
         // Check if right-click is on a tab
-        let tab_click = self
-            .cached_layout
-            .tab_layouts
-            .iter()
-            .find_map(|(split_id, tab_layout)| {
-                tab_layout
-                    .tab_at(col, row)
-                    .map(|(buffer_id, _is_close)| (*split_id, buffer_id))
-            });
+        let tab_hit =
+            self.cached_layout.tab_layouts.iter().find_map(
+                |(split_id, tab_layout)| match tab_layout.hit_test(col, row) {
+                    Some(TabHit::TabName(buffer_id) | TabHit::CloseButton(buffer_id)) => {
+                        Some((*split_id, buffer_id))
+                    }
+                    _ => None,
+                },
+            );
 
-        if let Some((split_id, buffer_id)) = tab_click {
+        if let Some((split_id, buffer_id)) = tab_hit {
             // Open tab context menu
             self.tab_context_menu = Some(TabContextMenu::new(buffer_id, split_id, col, row + 1));
         } else {

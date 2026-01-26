@@ -55,22 +55,7 @@ impl TabLayout {
         }
     }
 
-    /// Find the tab at the given position
-    pub fn tab_at(&self, x: u16, y: u16) -> Option<(BufferId, bool)> {
-        for tab in &self.tabs {
-            // Check close button first (it's inside the tab area)
-            if point_in_rect(tab.close_area, x, y) {
-                return Some((tab.buffer_id, true));
-            }
-            // Check tab area
-            if point_in_rect(tab.tab_area, x, y) {
-                return Some((tab.buffer_id, false));
-            }
-        }
-        None
-    }
-
-    /// Perform a complete hit test
+    /// Perform a hit test to determine what element is at the given position
     pub fn hit_test(&self, x: u16, y: u16) -> Option<TabHit> {
         for tab in &self.tabs {
             // Check close button first (it's inside the tab area)
@@ -583,47 +568,6 @@ mod tests {
         let total: usize = widths.iter().sum();
         let total_with_padding = total + 3; // three gaps of width 1
         assert!(offset <= total_with_padding.saturating_sub(4));
-    }
-
-    #[test]
-    fn test_tab_layout_tab_at() {
-        let bar_area = Rect::new(0, 0, 80, 1);
-        let mut layout = TabLayout::new(bar_area);
-
-        let buf1 = BufferId(1);
-        let buf2 = BufferId(2);
-
-        // Tab 1: x=0-15, close button at x=12-15
-        layout.tabs.push(TabHitArea {
-            buffer_id: buf1,
-            tab_area: Rect::new(0, 0, 16, 1),
-            close_area: Rect::new(12, 0, 4, 1),
-        });
-
-        // Tab 2: x=17-32, close button at x=29-32
-        layout.tabs.push(TabHitArea {
-            buffer_id: buf2,
-            tab_area: Rect::new(17, 0, 16, 1),
-            close_area: Rect::new(29, 0, 4, 1),
-        });
-
-        // Click on tab 1 name area
-        assert_eq!(layout.tab_at(5, 0), Some((buf1, false)));
-
-        // Click on tab 1 close button
-        assert_eq!(layout.tab_at(13, 0), Some((buf1, true)));
-
-        // Click on tab 2 name area
-        assert_eq!(layout.tab_at(20, 0), Some((buf2, false)));
-
-        // Click on tab 2 close button
-        assert_eq!(layout.tab_at(30, 0), Some((buf2, true)));
-
-        // Click between tabs
-        assert_eq!(layout.tab_at(16, 0), None);
-
-        // Click outside tab bar row
-        assert_eq!(layout.tab_at(5, 1), None);
     }
 
     #[test]
