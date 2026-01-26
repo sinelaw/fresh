@@ -315,6 +315,73 @@ impl Editor {
         }
     }
 
+    /// Send a mouse event to the active terminal
+    pub fn send_terminal_mouse(
+        &mut self,
+        col: u16,
+        row: u16,
+        kind: crate::input::handler::TerminalMouseEventKind,
+        modifiers: crossterm::event::KeyModifiers,
+    ) {
+        use crate::input::handler::TerminalMouseEventKind;
+
+        // Check if terminal uses SGR mouse encoding
+        let use_sgr = self
+            .get_active_terminal_state()
+            .map(|s| s.uses_sgr_mouse())
+            .unwrap_or(true); // Default to SGR as it's the modern standard
+
+        // For alternate scroll mode, convert scroll to arrow keys
+        let uses_alt_scroll = self
+            .get_active_terminal_state()
+            .map(|s| s.uses_alternate_scroll())
+            .unwrap_or(false);
+
+        if uses_alt_scroll {
+            match kind {
+                TerminalMouseEventKind::ScrollUp => {
+                    // Send up arrow 3 times (typical scroll amount)
+                    for _ in 0..3 {
+                        self.send_terminal_input(b"\x1b[A");
+                    }
+                    return;
+                }
+                TerminalMouseEventKind::ScrollDown => {
+                    // Send down arrow 3 times
+                    for _ in 0..3 {
+                        self.send_terminal_input(b"\x1b[B");
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        // Encode mouse event for terminal
+        let bytes = if use_sgr {
+            encode_sgr_mouse(col, row, kind, modifiers)
+        } else {
+            encode_x10_mouse(col, row, kind, modifiers)
+        };
+
+        if let Some(bytes) = bytes {
+            self.send_terminal_input(&bytes);
+        }
+    }
+
+    /// Check if the active terminal buffer is in alternate screen mode.
+    /// Programs like vim, less, htop use alternate screen mode.
+    pub fn is_terminal_in_alternate_screen(&self, buffer_id: BufferId) -> bool {
+        if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
+            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                if let Ok(state) = handle.state.lock() {
+                    return state.is_alternate_screen();
+                }
+            }
+        }
+        false
+    }
+
     /// Get terminal dimensions based on split size
     fn get_terminal_dimensions(&self) -> (u16, u16) {
         // Use the visible area of the current split
@@ -751,4 +818,115 @@ pub mod render {
             }
         }
     }
+}
+
+/// Encode a mouse event in SGR format (modern protocol).
+/// Format: CSI < Cb ; Cx ; Cy M (press) or CSI < Cb ; Cx ; Cy m (release)
+fn encode_sgr_mouse(
+    col: u16,
+    row: u16,
+    kind: crate::input::handler::TerminalMouseEventKind,
+    modifiers: crossterm::event::KeyModifiers,
+) -> Option<Vec<u8>> {
+    use crate::input::handler::{TerminalMouseButton, TerminalMouseEventKind};
+
+    // SGR uses 1-based coordinates
+    let cx = col + 1;
+    let cy = row + 1;
+
+    // Build button code
+    let (button_code, is_release) = match kind {
+        TerminalMouseEventKind::Down(btn) => {
+            let code = match btn {
+                TerminalMouseButton::Left => 0,
+                TerminalMouseButton::Middle => 1,
+                TerminalMouseButton::Right => 2,
+            };
+            (code, false)
+        }
+        TerminalMouseEventKind::Up(btn) => {
+            let code = match btn {
+                TerminalMouseButton::Left => 0,
+                TerminalMouseButton::Middle => 1,
+                TerminalMouseButton::Right => 2,
+            };
+            (code, true)
+        }
+        TerminalMouseEventKind::Drag(btn) => {
+            let code = match btn {
+                TerminalMouseButton::Left => 32,   // 0 + 32 (motion flag)
+                TerminalMouseButton::Middle => 33, // 1 + 32
+                TerminalMouseButton::Right => 34,  // 2 + 32
+            };
+            (code, false)
+        }
+        TerminalMouseEventKind::Moved => (35, false), // 3 + 32 (no button + motion)
+        TerminalMouseEventKind::ScrollUp => (64, false),
+        TerminalMouseEventKind::ScrollDown => (65, false),
+    };
+
+    // Add modifier flags
+    let mut cb = button_code;
+    if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+        cb += 4;
+    }
+    if modifiers.contains(crossterm::event::KeyModifiers::ALT) {
+        cb += 8;
+    }
+    if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+        cb += 16;
+    }
+
+    // Build escape sequence
+    let terminator = if is_release { 'm' } else { 'M' };
+    Some(format!("\x1b[<{};{};{}{}", cb, cx, cy, terminator).into_bytes())
+}
+
+/// Encode a mouse event in X10/normal format (legacy protocol).
+/// Format: CSI M Cb Cx Cy (with 32 added to all values for ASCII safety)
+fn encode_x10_mouse(
+    col: u16,
+    row: u16,
+    kind: crate::input::handler::TerminalMouseEventKind,
+    modifiers: crossterm::event::KeyModifiers,
+) -> Option<Vec<u8>> {
+    use crate::input::handler::{TerminalMouseButton, TerminalMouseEventKind};
+
+    // X10 uses 1-based coordinates with 32 offset for ASCII safety
+    // Maximum coordinate is 223 (255 - 32)
+    let cx = (col.min(222) + 1 + 32) as u8;
+    let cy = (row.min(222) + 1 + 32) as u8;
+
+    // Build button code
+    let button_code: u8 = match kind {
+        TerminalMouseEventKind::Down(btn) | TerminalMouseEventKind::Drag(btn) => match btn {
+            TerminalMouseButton::Left => 0,
+            TerminalMouseButton::Middle => 1,
+            TerminalMouseButton::Right => 2,
+        },
+        TerminalMouseEventKind::Up(_) => 3, // Release is button 3 in X10
+        TerminalMouseEventKind::Moved => 3 + 32,
+        TerminalMouseEventKind::ScrollUp => 64,
+        TerminalMouseEventKind::ScrollDown => 65,
+    };
+
+    // Add modifier flags and motion flag for drag
+    let mut cb = button_code;
+    if matches!(kind, TerminalMouseEventKind::Drag(_)) {
+        cb += 32; // Motion flag
+    }
+    if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+        cb += 4;
+    }
+    if modifiers.contains(crossterm::event::KeyModifiers::ALT) {
+        cb += 8;
+    }
+    if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+        cb += 16;
+    }
+
+    // Add 32 offset for ASCII safety
+    let cb = cb + 32;
+
+    Some(vec![0x1b, b'[', b'M', cb, cx, cy])
 }

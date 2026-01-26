@@ -29,6 +29,7 @@ mod split_actions;
 mod tab_drag;
 mod terminal;
 mod terminal_input;
+mod terminal_mouse;
 mod toggle_actions;
 pub mod types;
 mod undo_actions;

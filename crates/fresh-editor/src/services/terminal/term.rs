@@ -31,7 +31,7 @@ use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::test::TermSize;
-use alacritty_terminal::term::{Config as TermConfig, Term};
+use alacritty_terminal::term::{Config as TermConfig, Term, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
 use std::io::{self, Write};
 
@@ -265,6 +265,36 @@ impl TerminalState {
     pub fn scroll_to_bottom(&mut self) {
         self.term.scroll_display(Scroll::Bottom);
         self.dirty = true;
+    }
+
+    // =========================================================================
+    // Terminal mode flags
+    // =========================================================================
+
+    /// Check if the terminal is in alternate screen mode.
+    /// Programs like vim, less, htop use alternate screen.
+    pub fn is_alternate_screen(&self) -> bool {
+        self.term.mode().contains(TermMode::ALT_SCREEN)
+    }
+
+    /// Check if the terminal wants mouse events reported.
+    /// Returns true if any mouse reporting mode is enabled.
+    pub fn wants_mouse_events(&self) -> bool {
+        let mode = self.term.mode();
+        mode.intersects(
+            TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG,
+        )
+    }
+
+    /// Check if SGR mouse encoding is enabled (modern mouse protocol).
+    pub fn uses_sgr_mouse(&self) -> bool {
+        self.term.mode().contains(TermMode::SGR_MOUSE)
+    }
+
+    /// Check if alternate scroll mode is enabled.
+    /// When enabled, scroll wheel should be sent as up/down arrow keys.
+    pub fn uses_alternate_scroll(&self) -> bool {
+        self.term.mode().contains(TermMode::ALTERNATE_SCROLL)
     }
 
     // =========================================================================

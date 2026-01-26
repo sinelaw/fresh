@@ -165,7 +165,9 @@ fn test_tab_scroll_button_click() {
     let temp_dir = TempDir::new().unwrap();
     let files = create_dummy_files(&temp_dir);
 
-    let mut harness = EditorTestHarness::new(NARROW_WIDTH, TEST_HEIGHT).unwrap();
+    // Use a wider terminal than the other test so filenames are fully visible
+    // This test focuses on scroll button functionality, not narrow terminal behavior
+    let mut harness = EditorTestHarness::new(80, TEST_HEIGHT).unwrap();
 
     // Open all dummy files to ensure tab overflow
     for file_path in &files {

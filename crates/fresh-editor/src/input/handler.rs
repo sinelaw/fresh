@@ -39,6 +39,32 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+/// Mouse event kinds for terminal forwarding.
+/// Simplified from crossterm's MouseEventKind to capture what we need.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalMouseEventKind {
+    /// Button press
+    Down(TerminalMouseButton),
+    /// Button release
+    Up(TerminalMouseButton),
+    /// Mouse drag with button held
+    Drag(TerminalMouseButton),
+    /// Mouse movement (no button)
+    Moved,
+    /// Scroll up
+    ScrollUp,
+    /// Scroll down
+    ScrollDown,
+}
+
+/// Mouse buttons for terminal forwarding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalMouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
 /// Result of handling an input event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputResult {
@@ -152,6 +178,15 @@ pub enum DeferredAction {
     // Terminal mode actions
     ToggleKeyboardCapture,
     SendTerminalKey(crossterm::event::KeyCode, crossterm::event::KeyModifiers),
+    /// Send a mouse event to the terminal PTY.
+    /// Fields: (col, row, event_kind, button, modifiers)
+    /// Coordinates are terminal-relative (0-based from terminal content area).
+    SendTerminalMouse {
+        col: u16,
+        row: u16,
+        kind: TerminalMouseEventKind,
+        modifiers: crossterm::event::KeyModifiers,
+    },
     ExitTerminalMode {
         explicit: bool,
     },

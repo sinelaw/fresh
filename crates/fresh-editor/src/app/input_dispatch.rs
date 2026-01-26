@@ -392,6 +392,14 @@ impl Editor {
             DeferredAction::SendTerminalKey(code, modifiers) => {
                 self.send_terminal_key(code, modifiers);
             }
+            DeferredAction::SendTerminalMouse {
+                col,
+                row,
+                kind,
+                modifiers,
+            } => {
+                self.send_terminal_mouse(col, row, kind, modifiers);
+            }
             DeferredAction::ExitTerminalMode { explicit } => {
                 self.terminal_mode = false;
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
