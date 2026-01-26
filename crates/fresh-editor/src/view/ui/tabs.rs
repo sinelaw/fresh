@@ -69,12 +69,22 @@ impl TabLayout {
     pub fn hit_test(&self, x: u16, y: u16) -> Option<TabHit> {
         // Check scroll buttons first (they're at the edges)
         if let Some(left_area) = self.left_scroll_area {
+            tracing::debug!(
+                "Tab hit_test: checking left_scroll_area {:?} against ({}, {})",
+                left_area, x, y
+            );
             if point_in_rect(left_area, x, y) {
+                tracing::debug!("Tab hit_test: HIT ScrollLeft");
                 return Some(TabHit::ScrollLeft);
             }
         }
         if let Some(right_area) = self.right_scroll_area {
+            tracing::debug!(
+                "Tab hit_test: checking right_scroll_area {:?} against ({}, {})",
+                right_area, x, y
+            );
             if point_in_rect(right_area, x, y) {
+                tracing::debug!("Tab hit_test: HIT ScrollRight");
                 return Some(TabHit::ScrollRight);
             }
         }
@@ -450,6 +460,13 @@ impl TabsRenderer {
             }
         }
 
+        // Track where the right indicator will be rendered (before adding it)
+        let right_indicator_x = if show_right && rendered_width < max_width {
+            Some(area.x + rendered_width as u16)
+        } else {
+            None
+        };
+
         if show_right && rendered_width < max_width {
             current_spans.push(Span::styled(
                 SCROLL_INDICATOR_RIGHT,
@@ -482,9 +499,8 @@ impl TabsRenderer {
             layout.left_scroll_area =
                 Some(Rect::new(area.x, area.y, SCROLL_INDICATOR_WIDTH as u16, 1));
         }
-        if show_right {
-            // Right scroll button is at the end of the rendered area
-            let right_x = area.x + max_width as u16 - SCROLL_INDICATOR_WIDTH as u16;
+        if let Some(right_x) = right_indicator_x {
+            // Right scroll button is at the position where it was actually rendered
             layout.right_scroll_area =
                 Some(Rect::new(right_x, area.y, SCROLL_INDICATOR_WIDTH as u16, 1));
         }
