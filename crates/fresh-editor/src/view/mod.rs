@@ -39,6 +39,8 @@ pub mod settings;
 
 // Runtime-only modules (depend on app, state, config_io, input, or tree-sitter)
 #[cfg(feature = "runtime")]
+pub mod bracket_highlight_overlay;
+#[cfg(feature = "runtime")]
 pub mod calibration_wizard;
 #[cfg(feature = "runtime")]
 pub mod file_browser_input;

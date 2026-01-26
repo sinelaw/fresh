@@ -2884,6 +2884,14 @@ impl SplitRenderer {
             theme.semantic_highlight_bg,
         );
 
+        // Update bracket highlight overlays
+        state.bracket_highlight_overlay.update(
+            &state.buffer,
+            &mut state.overlays,
+            &mut state.marker_list,
+            primary_cursor_position,
+        );
+
         // Semantic tokens are stored as overlays so their ranges track edits.
         // Convert them into highlight spans for the render pipeline.
         let mut semantic_token_spans = Vec::new();

@@ -157,6 +157,8 @@ pub struct PartialEditorConfig {
     pub default_line_ending: Option<LineEndingOption>,
     pub trim_trailing_whitespace_on_save: Option<bool>,
     pub ensure_final_newline_on_save: Option<bool>,
+    pub highlight_matching_brackets: Option<bool>,
+    pub rainbow_brackets: Option<bool>,
     pub cursor_style: Option<CursorStyle>,
     pub keyboard_disambiguate_escape_codes: Option<bool>,
     pub keyboard_report_event_types: Option<bool>,
@@ -214,6 +216,9 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.trim_trailing_whitespace_on_save);
         self.ensure_final_newline_on_save
             .merge_from(&other.ensure_final_newline_on_save);
+        self.highlight_matching_brackets
+            .merge_from(&other.highlight_matching_brackets);
+        self.rainbow_brackets.merge_from(&other.rainbow_brackets);
         self.cursor_style.merge_from(&other.cursor_style);
         self.keyboard_disambiguate_escape_codes
             .merge_from(&other.keyboard_disambiguate_escape_codes);
@@ -415,6 +420,8 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             default_line_ending: Some(cfg.default_line_ending.clone()),
             trim_trailing_whitespace_on_save: Some(cfg.trim_trailing_whitespace_on_save),
             ensure_final_newline_on_save: Some(cfg.ensure_final_newline_on_save),
+            highlight_matching_brackets: Some(cfg.highlight_matching_brackets),
+            rainbow_brackets: Some(cfg.rainbow_brackets),
             cursor_style: Some(cfg.cursor_style),
             keyboard_disambiguate_escape_codes: Some(cfg.keyboard_disambiguate_escape_codes),
             keyboard_report_event_types: Some(cfg.keyboard_report_event_types),
@@ -495,6 +502,10 @@ impl PartialEditorConfig {
             ensure_final_newline_on_save: self
                 .ensure_final_newline_on_save
                 .unwrap_or(defaults.ensure_final_newline_on_save),
+            highlight_matching_brackets: self
+                .highlight_matching_brackets
+                .unwrap_or(defaults.highlight_matching_brackets),
+            rainbow_brackets: self.rainbow_brackets.unwrap_or(defaults.rainbow_brackets),
             cursor_style: self.cursor_style.unwrap_or(defaults.cursor_style),
             keyboard_disambiguate_escape_codes: self
                 .keyboard_disambiguate_escape_codes

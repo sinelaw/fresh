@@ -15,6 +15,7 @@ use crate::primitives::highlighter::Language;
 use crate::primitives::indent::IndentCalculator;
 use crate::primitives::reference_highlighter::ReferenceHighlighter;
 use crate::primitives::text_property::TextPropertyManager;
+use crate::view::bracket_highlight_overlay::BracketHighlightOverlay;
 use crate::view::margin::{MarginAnnotation, MarginContent, MarginManager, MarginPosition};
 use crate::view::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
 use crate::view::popup::{
@@ -133,6 +134,9 @@ pub struct EditorState {
     /// Debounced semantic highlight cache
     pub reference_highlight_overlay: ReferenceHighlightOverlay,
 
+    /// Bracket matching highlight overlay
+    pub bracket_highlight_overlay: BracketHighlightOverlay,
+
     /// Cached LSP semantic tokens (converted to buffer byte ranges)
     pub semantic_tokens: Option<SemanticTokenStore>,
 
@@ -178,6 +182,7 @@ impl EditorState {
             compose_column_guides: None,
             view_transform: None,
             reference_highlight_overlay: ReferenceHighlightOverlay::new(),
+            bracket_highlight_overlay: BracketHighlightOverlay::new(),
             semantic_tokens: None,
             language: "text".to_string(), // Default to plain text
         }
@@ -270,6 +275,7 @@ impl EditorState {
             compose_column_guides: None,
             view_transform: None,
             reference_highlight_overlay: ReferenceHighlightOverlay::new(),
+            bracket_highlight_overlay: BracketHighlightOverlay::new(),
             semantic_tokens: None,
             language: language_name,
         })
@@ -337,6 +343,7 @@ impl EditorState {
             compose_column_guides: None,
             view_transform: None,
             reference_highlight_overlay: ReferenceHighlightOverlay::new(),
+            bracket_highlight_overlay: BracketHighlightOverlay::new(),
             semantic_tokens: None,
             language: language_name,
         })

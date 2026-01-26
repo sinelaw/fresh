@@ -513,6 +513,20 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Editing"))]
     pub ensure_final_newline_on_save: bool,
 
+    // ===== Bracket Matching =====
+    /// Highlight matching bracket pairs when cursor is on a bracket.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Bracket Matching"))]
+    pub highlight_matching_brackets: bool,
+
+    /// Use rainbow colors for nested brackets based on nesting depth.
+    /// Requires highlight_matching_brackets to be enabled.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Bracket Matching"))]
+    pub rainbow_brackets: bool,
+
     // ===== Completion =====
     /// Enable quick suggestions (VS Code-like behavior).
     /// When enabled, completion suggestions appear automatically while typing,
@@ -781,6 +795,8 @@ impl Default for EditorConfig {
             default_line_ending: LineEndingOption::default(),
             trim_trailing_whitespace_on_save: false,
             ensure_final_newline_on_save: false,
+            highlight_matching_brackets: true,
+            rainbow_brackets: true,
             cursor_style: CursorStyle::default(),
             keyboard_disambiguate_escape_codes: true,
             keyboard_report_event_types: false,
