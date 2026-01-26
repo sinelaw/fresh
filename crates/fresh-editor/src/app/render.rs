@@ -831,7 +831,7 @@ impl Editor {
         }
 
         if self.menu_bar_visible {
-            crate::view::ui::MenuRenderer::render(
+            self.cached_layout.menu_layout = Some(crate::view::ui::MenuRenderer::render(
                 frame,
                 menu_bar_area,
                 &self.menus,
@@ -839,7 +839,9 @@ impl Editor {
                 &self.keybindings,
                 &self.theme,
                 self.mouse_state.hover_target.as_ref(),
-            );
+            ));
+        } else {
+            self.cached_layout.menu_layout = None;
         }
 
         // Render tab context menu if open

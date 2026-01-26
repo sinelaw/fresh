@@ -663,4 +663,6 @@ pub(crate) struct CachedLayout {
     pub status_bar_message_area: Option<(u16, u16, u16)>,
     /// Search options layout for checkbox hit testing
     pub search_options_layout: Option<crate::view::ui::status_bar::SearchOptionsLayout>,
+    /// Menu bar layout for hit testing
+    pub menu_layout: Option<crate::view::ui::menu::MenuLayout>,
 }

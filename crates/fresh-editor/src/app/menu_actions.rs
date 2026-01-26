@@ -6,7 +6,6 @@ use super::Editor;
 use crate::app::types::HoverTarget;
 use crate::config::{generate_dynamic_items, Menu, MenuExt, MenuItem};
 use crate::input::keybindings::Action;
-use crate::primitives::display_width::str_width;
 use anyhow::Result as AnyhowResult;
 
 impl Editor {
@@ -148,82 +147,23 @@ impl Editor {
     }
 
     /// Compute hover target for menu dropdown chain (main dropdown and submenus).
+    /// Uses the cached menu layout from the previous render frame.
     pub(crate) fn compute_menu_dropdown_hover(
         &self,
         col: u16,
         row: u16,
-        menu: &Menu,
         menu_index: usize,
-        all_menus: &[Menu],
     ) -> Option<HoverTarget> {
-        // Calculate dropdown positions for the entire chain
-        let mut x_offset = 0usize;
-        for (idx, m) in all_menus.iter().enumerate() {
-            if idx == menu_index {
-                break;
-            }
-            x_offset += str_width(&m.label) + 3;
+        let menu_layout = self.cached_layout.menu_layout.as_ref()?;
+
+        // Check submenu items first (they're rendered on top)
+        if let Some((depth, item_idx)) = menu_layout.submenu_item_at(col, row) {
+            return Some(HoverTarget::SubmenuItem(depth, item_idx));
         }
 
-        let mut current_items: &[MenuItem] = &menu.items;
-        let mut current_x = x_offset as u16;
-        let mut current_y = 1u16;
-
-        let mut dropdown_rects = Vec::new();
-
-        for depth in 0..=self.menu_state.submenu_path.len() {
-            let max_width = current_items
-                .iter()
-                .map(|item| match item {
-                    MenuItem::Action { label, .. } => str_width(label) + 20,
-                    MenuItem::Submenu { label, .. } => str_width(label) + 20,
-                    MenuItem::DynamicSubmenu { label, .. } => str_width(label) + 20,
-                    MenuItem::Separator { .. } => 20,
-                    MenuItem::Label { info } => str_width(info) + 4,
-                })
-                .max()
-                .unwrap_or(20)
-                .min(40) as u16;
-
-            let dropdown_height = current_items.len() as u16 + 2;
-
-            dropdown_rects.push((
-                current_x,
-                current_y,
-                max_width,
-                dropdown_height,
-                depth,
-                current_items.len(),
-            ));
-
-            if depth < self.menu_state.submenu_path.len() {
-                let submenu_idx = self.menu_state.submenu_path[depth];
-                if let Some(MenuItem::Submenu { items, .. }) = current_items.get(submenu_idx) {
-                    let next_x = current_x + max_width - 1;
-                    let next_y = current_y + submenu_idx as u16 + 1;
-                    current_items = items;
-                    current_x = next_x;
-                    current_y = next_y;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        // Check from deepest submenu to main dropdown
-        for (dx, dy, width, height, depth, item_count) in dropdown_rects.iter().rev() {
-            if col >= *dx && col < dx + width && row >= *dy && row < dy + height {
-                let item_row = row.saturating_sub(*dy + 1);
-                let item_idx = item_row as usize;
-
-                if item_idx < *item_count {
-                    if *depth == 0 {
-                        return Some(HoverTarget::MenuDropdownItem(menu_index, item_idx));
-                    } else {
-                        return Some(HoverTarget::SubmenuItem(*depth, item_idx));
-                    }
-                }
-            }
+        // Check main dropdown items
+        if let Some(item_idx) = menu_layout.item_at(col, row) {
+            return Some(HoverTarget::MenuDropdownItem(menu_index, item_idx));
         }
 
         None
@@ -231,131 +171,99 @@ impl Editor {
 
     /// Handle click on menu dropdown chain (main dropdown and any open submenus).
     /// Returns Some(Ok(())) if click was handled, None if click was outside all dropdowns.
+    /// Uses the cached menu layout from the previous render frame for hit testing.
     pub(crate) fn handle_menu_dropdown_click(
         &mut self,
         col: u16,
         row: u16,
         menu: &Menu,
-        menu_index: usize,
-        all_menus: &[Menu],
     ) -> AnyhowResult<Option<AnyhowResult<()>>> {
-        // Calculate dropdown positions for the entire chain
-        // Similar to render_dropdown_chain but for hit testing
+        use crate::view::ui::menu::MenuHit;
 
-        // Calculate the x position of the top-level dropdown
-        let mut x_offset = 0usize;
-        for (idx, m) in all_menus.iter().enumerate() {
-            if idx == menu_index {
-                break;
-            }
-            x_offset += str_width(&m.label) + 3;
-        }
+        let menu_layout = match &self.cached_layout.menu_layout {
+            Some(layout) => layout.clone(),
+            None => return Ok(None),
+        };
 
-        let mut current_items: &[MenuItem] = &menu.items;
-        let mut current_x = x_offset as u16;
-        let mut current_y = 1u16; // Below menu bar
+        // Use the layout to determine what was clicked
+        let hit = match menu_layout.hit_test(col, row) {
+            Some(MenuHit::DropdownItem(item_idx)) => (0, item_idx),
+            Some(MenuHit::SubmenuItem { depth, index }) => (depth, index),
+            _ => return Ok(None), // Click outside dropdown areas
+        };
 
-        // Check each dropdown level from deepest to shallowest
-        // This ensures clicks on nested submenus take priority
-        let mut dropdown_rects = Vec::new();
+        let (depth, item_idx) = hit;
 
-        for depth in 0..=self.menu_state.submenu_path.len() {
-            let max_width = current_items
-                .iter()
-                .map(|item| match item {
-                    MenuItem::Action { label, .. } => str_width(label) + 20,
-                    MenuItem::Submenu { label, .. } => str_width(label) + 20,
-                    MenuItem::DynamicSubmenu { label, .. } => str_width(label) + 20,
-                    MenuItem::Separator { .. } => 20,
-                    MenuItem::Label { info } => str_width(info) + 4,
-                })
-                .max()
-                .unwrap_or(20)
-                .min(40) as u16;
-
-            let dropdown_height = current_items.len() as u16 + 2;
-
-            dropdown_rects.push((
-                current_x,
-                current_y,
-                max_width,
-                dropdown_height,
-                depth,
-                current_items.to_vec(),
-            ));
-
-            // Navigate to next level if there is one
-            if depth < self.menu_state.submenu_path.len() {
-                let submenu_idx = self.menu_state.submenu_path[depth];
-                if let Some(MenuItem::Submenu { items, .. }) = current_items.get(submenu_idx) {
-                    let next_x = current_x + max_width - 1;
-                    let next_y = current_y + submenu_idx as u16 + 1;
-                    current_items = items;
-                    current_x = next_x;
-                    current_y = next_y;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        // Check clicks from deepest submenu to main dropdown
-        for (dx, dy, width, height, depth, items) in dropdown_rects.iter().rev() {
-            if col >= *dx && col < dx + width && row >= *dy && row < dy + height {
-                // Click is inside this dropdown
-                let item_row = row.saturating_sub(*dy + 1); // -1 for border
-                let item_idx = item_row as usize;
-
-                if item_idx < items.len() {
-                    // Check what kind of item was clicked
-                    match &items[item_idx] {
-                        MenuItem::Separator { .. } | MenuItem::Label { .. } => {
-                            // Clicked on separator or label - do nothing but consume the click
-                            return Ok(Some(Ok(())));
+        // Navigate to the clicked item in the menu structure
+        let items = if depth == 0 {
+            // Main dropdown items
+            menu.items.clone()
+        } else {
+            // Navigate through submenu path to find items at this depth
+            let mut current_items = menu.items.clone();
+            for d in 0..depth {
+                if d < self.menu_state.submenu_path.len() {
+                    let submenu_idx = self.menu_state.submenu_path[d];
+                    match current_items.get(submenu_idx) {
+                        Some(MenuItem::Submenu { items, .. }) => {
+                            current_items = items.clone();
                         }
-                        MenuItem::Submenu {
-                            items: submenu_items,
-                            ..
-                        } => {
-                            // Clicked on submenu - open it
-                            // First, truncate submenu_path to this depth
-                            self.menu_state.submenu_path.truncate(*depth);
-                            // Then add this submenu
-                            if !submenu_items.is_empty() {
-                                self.menu_state.submenu_path.push(item_idx);
-                                self.menu_state.highlighted_item = Some(0);
-                            }
-                            return Ok(Some(Ok(())));
+                        Some(MenuItem::DynamicSubmenu { source, .. }) => {
+                            current_items = generate_dynamic_items(source);
                         }
-                        MenuItem::DynamicSubmenu { source, .. } => {
-                            // Clicked on dynamic submenu - open it
-                            self.menu_state.submenu_path.truncate(*depth);
-                            let generated = generate_dynamic_items(source);
-                            if !generated.is_empty() {
-                                self.menu_state.submenu_path.push(item_idx);
-                                self.menu_state.highlighted_item = Some(0);
-                            }
-                            return Ok(Some(Ok(())));
-                        }
-                        MenuItem::Action { action, args, .. } => {
-                            // Clicked on action - execute it
-                            let action_name = action.clone();
-                            let action_args = args.clone();
-
-                            self.close_menu_with_auto_hide();
-
-                            if let Some(action) = Action::from_str(&action_name, &action_args) {
-                                return Ok(Some(self.handle_action(action)));
-                            }
-                            return Ok(Some(Ok(())));
-                        }
+                        _ => return Ok(Some(Ok(()))),
                     }
+                } else {
+                    return Ok(Some(Ok(())));
                 }
-                return Ok(Some(Ok(())));
+            }
+            current_items
+        };
+
+        let Some(item) = items.get(item_idx) else {
+            return Ok(Some(Ok(())));
+        };
+
+        // Handle the clicked item
+        match item {
+            MenuItem::Separator { .. } | MenuItem::Label { .. } => {
+                // Clicked on separator or label - do nothing but consume the click
+                Ok(Some(Ok(())))
+            }
+            MenuItem::Submenu {
+                items: submenu_items,
+                ..
+            } => {
+                // Clicked on submenu - open it
+                self.menu_state.submenu_path.truncate(depth);
+                if !submenu_items.is_empty() {
+                    self.menu_state.submenu_path.push(item_idx);
+                    self.menu_state.highlighted_item = Some(0);
+                }
+                Ok(Some(Ok(())))
+            }
+            MenuItem::DynamicSubmenu { source, .. } => {
+                // Clicked on dynamic submenu - open it
+                self.menu_state.submenu_path.truncate(depth);
+                let generated = generate_dynamic_items(source);
+                if !generated.is_empty() {
+                    self.menu_state.submenu_path.push(item_idx);
+                    self.menu_state.highlighted_item = Some(0);
+                }
+                Ok(Some(Ok(())))
+            }
+            MenuItem::Action { action, args, .. } => {
+                // Clicked on action - execute it
+                let action_name = action.clone();
+                let action_args = args.clone();
+
+                self.close_menu_with_auto_hide();
+
+                if let Some(action) = Action::from_str(&action_name, &action_args) {
+                    return Ok(Some(self.handle_action(action)));
+                }
+                Ok(Some(Ok(())))
             }
         }
-
-        // Click was outside all dropdowns
-        Ok(None)
     }
 }

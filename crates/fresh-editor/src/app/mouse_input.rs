@@ -657,36 +657,19 @@ impl Editor {
         }
 
         // Check menu bar (row 0, only when visible)
-        if self.menu_bar_visible && row == 0 {
-            let all_menus: Vec<crate::config::Menu> = self
-                .menus
-                .menus
-                .iter()
-                .chain(self.menu_state.plugin_menus.iter())
-                .cloned()
-                .collect();
-
-            if let Some(menu_idx) = self.menu_state.get_menu_at_position(&all_menus, col) {
-                return Some(HoverTarget::MenuBarItem(menu_idx));
+        // Check menu bar using cached layout from previous render
+        if self.menu_bar_visible {
+            if let Some(ref menu_layout) = self.cached_layout.menu_layout {
+                if let Some(menu_idx) = menu_layout.menu_at(col, row) {
+                    return Some(HoverTarget::MenuBarItem(menu_idx));
+                }
             }
         }
 
         // Check menu dropdown items if a menu is open (including submenus)
         if let Some(active_idx) = self.menu_state.active_menu {
-            let all_menus: Vec<crate::config::Menu> = self
-                .menus
-                .menus
-                .iter()
-                .chain(self.menu_state.plugin_menus.iter())
-                .cloned()
-                .collect();
-
-            if let Some(menu) = all_menus.get(active_idx) {
-                if let Some(hover) =
-                    self.compute_menu_dropdown_hover(col, row, menu, active_idx, &all_menus)
-                {
-                    return Some(hover);
-                }
+            if let Some(hover) = self.compute_menu_dropdown_hover(col, row, active_idx) {
+                return Some(hover);
             }
         }
 
@@ -1163,30 +1146,25 @@ impl Editor {
             return Ok(());
         }
 
-        // Check if click is on menu bar (row 0, only when visible)
-        if self.menu_bar_visible && row == 0 {
-            let all_menus: Vec<crate::config::Menu> = self
-                .menus
-                .menus
-                .iter()
-                .chain(self.menu_state.plugin_menus.iter())
-                .cloned()
-                .collect();
-
-            if let Some(menu_idx) = self.menu_state.get_menu_at_position(&all_menus, col) {
-                // Toggle menu: if same menu is open, close it; otherwise open clicked menu
-                if self.menu_state.active_menu == Some(menu_idx) {
+        // Check if click is on menu bar using cached layout
+        if self.menu_bar_visible {
+            if let Some(ref menu_layout) = self.cached_layout.menu_layout {
+                if let Some(menu_idx) = menu_layout.menu_at(col, row) {
+                    // Toggle menu: if same menu is open, close it; otherwise open clicked menu
+                    if self.menu_state.active_menu == Some(menu_idx) {
+                        self.close_menu_with_auto_hide();
+                    } else {
+                        // Dismiss transient popups and clear hover state when opening menu
+                        self.on_editor_focus_lost();
+                        self.menu_state.open_menu(menu_idx);
+                    }
+                    return Ok(());
+                } else if row == 0 {
+                    // Clicked on menu bar background but not on a menu label - close any open menu
                     self.close_menu_with_auto_hide();
-                } else {
-                    // Dismiss transient popups and clear hover state when opening menu
-                    self.on_editor_focus_lost();
-                    self.menu_state.open_menu(menu_idx);
+                    return Ok(());
                 }
-            } else {
-                // Clicked on menu bar but not on a menu label - close any open menu
-                self.close_menu_with_auto_hide();
             }
-            return Ok(());
         }
 
         // Check if click is on an open menu dropdown
@@ -1201,9 +1179,7 @@ impl Editor {
 
             if let Some(menu) = all_menus.get(active_idx) {
                 // Handle click on menu dropdown chain (including submenus)
-                if let Some(click_result) =
-                    self.handle_menu_dropdown_click(col, row, menu, active_idx, &all_menus)?
-                {
+                if let Some(click_result) = self.handle_menu_dropdown_click(col, row, menu)? {
                     return click_result;
                 }
             }

@@ -1209,6 +1209,21 @@ The **Layout DSL** (Part 5) is a future direction that adds compositional UI bui
 
 The key principle: **extract existing code into shared modules first**, then have the original code use the extraction. This validates the extraction works before anyone else adopts it.
 
+### Implementation Status
+
+| Step | Description | Status |
+|------|-------------|--------|
+| 1 | Extract `point_in_rect()` to `ui/layout.rs` | ✅ Done |
+| 2 | Add `HitTest` trait to `ui/layout.rs` | ✅ Done |
+| 3 | Extract `FocusManager` to `ui/focus.rs` | ✅ Done |
+| 4 | Update `ui/mod.rs` exports | ✅ Done |
+| 5 | Migrate `settings/layout.rs` to use `point_in_rect` | ✅ Done |
+| 6 | Migrate `settings/state.rs` to use `FocusManager` | ✅ Done |
+| 7 | Add `MenuLayout` to `menu.rs` | ✅ Done |
+| 8 | Add `TabLayout` to `tabs.rs` | ✅ Done |
+
+---
+
 ### Step 1: Extract `point_in_rect()` to `ui/layout.rs`
 
 **What:** Move the `contains()` helper from `settings/layout.rs:257` to a new shared module.

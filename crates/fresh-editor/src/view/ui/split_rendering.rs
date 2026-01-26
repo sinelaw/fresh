@@ -788,7 +788,7 @@ impl SplitRenderer {
             // Only render tabs and split control buttons when tab bar is visible
             if tab_bar_visible {
                 // Render tabs for this split and collect hit areas
-                let tab_hit_areas = TabsRenderer::render_for_split(
+                let tab_layout = TabsRenderer::render_for_split(
                     frame,
                     layout.tabs_rect,
                     &split_buffers,
@@ -802,16 +802,16 @@ impl SplitRenderer {
                     tab_hover_for_split,
                 );
 
-                // Add tab row to hit areas (all tabs share the same row)
+                // Add tab areas from the layout
                 let tab_row = layout.tabs_rect.y;
-                for (buf_id, start_col, end_col, close_start) in tab_hit_areas {
+                for tab_hit in &tab_layout.tabs {
                     all_tab_areas.push((
                         split_id,
-                        buf_id,
+                        tab_hit.buffer_id,
                         tab_row,
-                        start_col,
-                        end_col,
-                        close_start,
+                        tab_hit.tab_area.x,
+                        tab_hit.tab_area.x + tab_hit.tab_area.width,
+                        tab_hit.close_area.x,
                     ));
                 }
 

@@ -4,12 +4,93 @@ use crate::app::BufferMetadata;
 use crate::model::event::BufferId;
 use crate::primitives::display_width::str_width;
 use crate::state::EditorState;
+use crate::view::ui::layout::point_in_rect;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
 use std::collections::HashMap;
+
+/// Hit area for a single tab
+#[derive(Debug, Clone)]
+pub struct TabHitArea {
+    /// The buffer ID this tab represents
+    pub buffer_id: BufferId,
+    /// The area covering the tab name (clickable to switch to buffer)
+    pub tab_area: Rect,
+    /// The area covering the close button
+    pub close_area: Rect,
+}
+
+/// Layout information for hit testing tab interactions
+///
+/// Returned by `TabsRenderer::render_for_split()` to enable mouse hit testing
+/// without duplicating position calculations.
+#[derive(Debug, Clone, Default)]
+pub struct TabLayout {
+    /// Hit areas for each visible tab
+    pub tabs: Vec<TabHitArea>,
+    /// The full tab bar area
+    pub bar_area: Rect,
+}
+
+/// Hit test result for tab interactions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabHit {
+    /// Hit the tab name area (click to switch buffer)
+    TabName(BufferId),
+    /// Hit the close button area
+    CloseButton(BufferId),
+    /// Hit the tab bar background
+    BarBackground,
+}
+
+impl TabLayout {
+    /// Create a new empty layout
+    pub fn new(bar_area: Rect) -> Self {
+        Self {
+            tabs: Vec::new(),
+            bar_area,
+        }
+    }
+
+    /// Find the tab at the given position
+    pub fn tab_at(&self, x: u16, y: u16) -> Option<(BufferId, bool)> {
+        for tab in &self.tabs {
+            // Check close button first (it's inside the tab area)
+            if point_in_rect(tab.close_area, x, y) {
+                return Some((tab.buffer_id, true));
+            }
+            // Check tab area
+            if point_in_rect(tab.tab_area, x, y) {
+                return Some((tab.buffer_id, false));
+            }
+        }
+        None
+    }
+
+    /// Perform a complete hit test
+    pub fn hit_test(&self, x: u16, y: u16) -> Option<TabHit> {
+        for tab in &self.tabs {
+            // Check close button first (it's inside the tab area)
+            if point_in_rect(tab.close_area, x, y) {
+                return Some(TabHit::CloseButton(tab.buffer_id));
+            }
+            // Check tab area
+            if point_in_rect(tab.tab_area, x, y) {
+                return Some(TabHit::TabName(tab.buffer_id));
+            }
+        }
+
+        // Check bar background
+        if point_in_rect(self.bar_area, x, y) {
+            return Some(TabHit::BarBackground);
+        }
+
+        None
+    }
+}
 
 /// Renders the tab bar showing open buffers
 pub struct TabsRenderer;
@@ -71,8 +152,7 @@ impl TabsRenderer {
     /// * `hovered_tab` - Optional (buffer_id, is_close_button) if a tab is being hovered
     ///
     /// # Returns
-    /// Vec of (buffer_id, tab_start_col, tab_end_col, close_start_col) for each visible tab.
-    /// These are absolute screen column positions for hit testing.
+    /// `TabLayout` containing hit areas for mouse interaction.
     #[allow(clippy::too_many_arguments)]
     pub fn render_for_split(
         frame: &mut Frame,
@@ -86,7 +166,8 @@ impl TabsRenderer {
         is_active_split: bool,
         tab_scroll_offset: usize,
         hovered_tab: Option<(BufferId, bool)>, // (buffer_id, is_close_button)
-    ) -> Vec<(BufferId, u16, u16, u16)> {
+    ) -> TabLayout {
+        let mut layout = TabLayout::new(area);
         const SCROLL_INDICATOR_LEFT: &str = "<";
         const SCROLL_INDICATOR_RIGHT: &str = ">";
         const SCROLL_INDICATOR_WIDTH: usize = 1; // Width of "<" or ">"
@@ -389,7 +470,6 @@ impl TabsRenderer {
         // 3. The base area.x position
         let left_indicator_offset = if show_left { SCROLL_INDICATOR_WIDTH } else { 0 };
 
-        let mut hit_areas = Vec::new();
         for (idx, buffer_id) in rendered_buffer_ids.iter().enumerate() {
             let (logical_start, logical_end, logical_close_start) = tab_ranges[idx];
 
@@ -430,10 +510,18 @@ impl TabsRenderer {
                 screen_end
             };
 
-            hit_areas.push((*buffer_id, screen_start, screen_end, screen_close_start));
+            // Build tab hit area using Rects
+            let tab_width = screen_end.saturating_sub(screen_start);
+            let close_width = screen_end.saturating_sub(screen_close_start);
+
+            layout.tabs.push(TabHitArea {
+                buffer_id: *buffer_id,
+                tab_area: Rect::new(screen_start, area.y, tab_width, 1),
+                close_area: Rect::new(screen_close_start, area.y, close_width, 1),
+            });
         }
 
-        hit_areas
+        layout
     }
 
     /// Legacy render function for backward compatibility
@@ -470,7 +558,8 @@ impl TabsRenderer {
 
 #[cfg(test)]
 mod tests {
-    use super::compute_tab_scroll_offset;
+    use super::*;
+    use crate::model::event::BufferId;
 
     #[test]
     fn offset_clamped_to_zero_when_active_first() {
@@ -494,5 +583,72 @@ mod tests {
         let total: usize = widths.iter().sum();
         let total_with_padding = total + 3; // three gaps of width 1
         assert!(offset <= total_with_padding.saturating_sub(4));
+    }
+
+    #[test]
+    fn test_tab_layout_tab_at() {
+        let bar_area = Rect::new(0, 0, 80, 1);
+        let mut layout = TabLayout::new(bar_area);
+
+        let buf1 = BufferId(1);
+        let buf2 = BufferId(2);
+
+        // Tab 1: x=0-15, close button at x=12-15
+        layout.tabs.push(TabHitArea {
+            buffer_id: buf1,
+            tab_area: Rect::new(0, 0, 16, 1),
+            close_area: Rect::new(12, 0, 4, 1),
+        });
+
+        // Tab 2: x=17-32, close button at x=29-32
+        layout.tabs.push(TabHitArea {
+            buffer_id: buf2,
+            tab_area: Rect::new(17, 0, 16, 1),
+            close_area: Rect::new(29, 0, 4, 1),
+        });
+
+        // Click on tab 1 name area
+        assert_eq!(layout.tab_at(5, 0), Some((buf1, false)));
+
+        // Click on tab 1 close button
+        assert_eq!(layout.tab_at(13, 0), Some((buf1, true)));
+
+        // Click on tab 2 name area
+        assert_eq!(layout.tab_at(20, 0), Some((buf2, false)));
+
+        // Click on tab 2 close button
+        assert_eq!(layout.tab_at(30, 0), Some((buf2, true)));
+
+        // Click between tabs
+        assert_eq!(layout.tab_at(16, 0), None);
+
+        // Click outside tab bar row
+        assert_eq!(layout.tab_at(5, 1), None);
+    }
+
+    #[test]
+    fn test_tab_layout_hit_test() {
+        let bar_area = Rect::new(0, 0, 80, 1);
+        let mut layout = TabLayout::new(bar_area);
+
+        let buf1 = BufferId(1);
+
+        layout.tabs.push(TabHitArea {
+            buffer_id: buf1,
+            tab_area: Rect::new(0, 0, 16, 1),
+            close_area: Rect::new(12, 0, 4, 1),
+        });
+
+        // Hit tab name
+        assert_eq!(layout.hit_test(5, 0), Some(TabHit::TabName(buf1)));
+
+        // Hit close button
+        assert_eq!(layout.hit_test(13, 0), Some(TabHit::CloseButton(buf1)));
+
+        // Hit bar background
+        assert_eq!(layout.hit_test(50, 0), Some(TabHit::BarBackground));
+
+        // Outside everything
+        assert_eq!(layout.hit_test(50, 5), None);
     }
 }
