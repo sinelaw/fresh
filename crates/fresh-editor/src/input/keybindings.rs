@@ -360,7 +360,7 @@ pub enum Action {
     ShowStatusLog,
     ShowLspStatus,
     ClearWarnings,
-    CommandPalette,
+    CommandPalette, // TODO: Consider dropping this now that we have QuickOpen
     /// Quick Open - unified prompt with prefix-based provider routing
     QuickOpen,
     ToggleLineWrap,

@@ -437,6 +437,7 @@ fn test_diagnostics_panel_plugin_loads() {
 ///
 /// This ensures no deadlocks occur in the message passing architecture.
 #[test]
+#[ignore = "need to revise TestFixture to put files under test-specific project root"]
 fn test_plugin_message_queue_architecture() {
     init_tracing_from_env();
 
@@ -487,11 +488,14 @@ editor.setStatus("Test plugin loaded");
     // Verify file content is visible
     harness.assert_screen_contains("Test file content");
 
+    println!("opening command palette");
     // Execute the command via Quick Open
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.type_text("Test: Create Virtual Buffer").unwrap();
+
+    println!("waiting for command palette");
     harness
         .wait_until(|h| h.screen_to_string().contains("Create Virtual Buffer"))
         .unwrap();
@@ -500,6 +504,8 @@ editor.setStatus("Test plugin loaded");
         .unwrap();
 
     // Wait for command execution status
+
+    println!("opening command execution");
     harness
         .wait_until(|h| {
             h.screen_to_string()

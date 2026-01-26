@@ -779,7 +779,7 @@ pub fn get_all_commands() -> Vec<Command> {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
         },
-        // Note: Command Palette is intentionally not in the command list
+        // Note: Quick open / Command Palette is intentionally not in the command list
         // to avoid confusion when it's already open (use Ctrl+P or Ctrl+/ to toggle)
         // Search and replace
         Command {
@@ -852,14 +852,6 @@ pub fn get_all_commands() -> Vec<Command> {
             description: t!("cmd.goto_line_desc").to_string(),
             action: Action::GotoLine,
             contexts: vec![KeyContext::Normal],
-            custom_contexts: vec![],
-            source: CommandSource::Builtin,
-        },
-        Command {
-            name: t!("cmd.quick_open").to_string(),
-            description: t!("cmd.quick_open_desc").to_string(),
-            action: Action::QuickOpen,
-            contexts: vec![KeyContext::Normal, KeyContext::Global],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
         },
