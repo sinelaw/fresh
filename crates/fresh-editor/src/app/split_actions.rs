@@ -317,10 +317,11 @@ impl Editor {
         &self.cached_layout.separator_areas
     }
 
-    /// Get cached tab areas for testing
-    /// Returns (split_id, buffer_id, tab_row, start_col, end_col, close_start) tuples
-    pub fn get_tab_areas(&self) -> &[(SplitId, BufferId, u16, u16, u16, u16)] {
-        &self.cached_layout.tab_areas
+    /// Get cached tab layouts for testing
+    pub fn get_tab_layouts(
+        &self,
+    ) -> &std::collections::HashMap<SplitId, crate::view::ui::tabs::TabLayout> {
+        &self.cached_layout.tab_layouts
     }
 
     /// Get cached split content areas for testing

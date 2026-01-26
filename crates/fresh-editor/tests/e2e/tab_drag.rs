@@ -6,7 +6,40 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::app::types::TabDropZone;
+use fresh::model::event::{BufferId, SplitId};
 use tempfile::TempDir;
+
+/// Tab info extracted from TabLayout for easier test assertions
+struct TabInfo {
+    split_id: SplitId,
+    buffer_id: BufferId,
+    tab_row: u16,
+    start_col: u16,
+    end_col: u16,
+}
+
+impl TabInfo {
+    fn center_col(&self) -> u16 {
+        (self.start_col + self.end_col) / 2
+    }
+}
+
+/// Get all tabs as a flat list from the editor's tab layouts
+fn get_all_tabs(harness: &EditorTestHarness) -> Vec<TabInfo> {
+    let mut tabs = Vec::new();
+    for (split_id, tab_layout) in harness.editor().get_tab_layouts() {
+        for tab in &tab_layout.tabs {
+            tabs.push(TabInfo {
+                split_id: *split_id,
+                buffer_id: tab.buffer_id,
+                tab_row: tab.tab_area.y,
+                start_col: tab.tab_area.x,
+                end_col: tab.tab_area.x + tab.tab_area.width,
+            });
+        }
+    }
+    tabs
+}
 
 /// Helper to create a test environment with multiple files
 fn setup_multi_file_harness() -> (EditorTestHarness, TempDir, Vec<std::path::PathBuf>) {
@@ -38,12 +71,13 @@ fn test_drag_tab_to_right_creates_vertical_split() {
     assert_eq!(initial_split_count, 1, "Should start with 1 split");
 
     // Get the tab areas to find where to start dragging
-    let tab_areas = harness.editor().get_tab_areas().to_vec();
-    assert!(!tab_areas.is_empty(), "Should have tabs");
+    let tabs = get_all_tabs(&harness);
+    assert!(!tabs.is_empty(), "Should have tabs");
 
-    // Get the first tab (file3.txt is active, so let's drag file1.txt)
-    let (source_split_id, buffer_id, tab_row, start_col, end_col, _close_start) = tab_areas[0];
-    let tab_center_col = (start_col + end_col) / 2;
+    // Get the first tab
+    let tab = &tabs[0];
+    let source_split_id = tab.split_id;
+    let buffer_id = tab.buffer_id;
 
     // Get split content area to find right edge
     let split_areas = harness.editor().get_split_areas().to_vec();
@@ -67,7 +101,12 @@ fn test_drag_tab_to_right_creates_vertical_split() {
 
     // Now actually drag the tab to the right edge
     harness
-        .mouse_drag(tab_center_col, tab_row, right_edge_col, content_center_row)
+        .mouse_drag(
+            tab.center_col(),
+            tab.tab_row,
+            right_edge_col,
+            content_center_row,
+        )
         .unwrap();
 
     // Verify a new split was created
@@ -95,9 +134,10 @@ fn test_drag_tab_to_left_creates_vertical_split() {
     let initial_split_count = harness.editor().get_split_count();
     assert_eq!(initial_split_count, 1);
 
-    let tab_areas = harness.editor().get_tab_areas().to_vec();
-    let (source_split_id, buffer_id, tab_row, start_col, end_col, _) = tab_areas[0];
-    let tab_center_col = (start_col + end_col) / 2;
+    let tabs = get_all_tabs(&harness);
+    let tab = &tabs[0];
+    let source_split_id = tab.split_id;
+    let buffer_id = tab.buffer_id;
 
     let split_areas = harness.editor().get_split_areas().to_vec();
     let (_, _, content_rect, _, _, _) = split_areas[0];
@@ -120,7 +160,12 @@ fn test_drag_tab_to_left_creates_vertical_split() {
 
     // Drag to left edge
     harness
-        .mouse_drag(tab_center_col, tab_row, left_edge_col, content_center_row)
+        .mouse_drag(
+            tab.center_col(),
+            tab.tab_row,
+            left_edge_col,
+            content_center_row,
+        )
         .unwrap();
 
     assert_eq!(harness.editor().get_split_count(), 2);
@@ -139,9 +184,10 @@ fn test_drag_tab_to_top_creates_horizontal_split() {
     let initial_split_count = harness.editor().get_split_count();
     assert_eq!(initial_split_count, 1);
 
-    let tab_areas = harness.editor().get_tab_areas().to_vec();
-    let (source_split_id, buffer_id, tab_row, start_col, end_col, _) = tab_areas[0];
-    let tab_center_col = (start_col + end_col) / 2;
+    let tabs = get_all_tabs(&harness);
+    let tab = &tabs[0];
+    let source_split_id = tab.split_id;
+    let buffer_id = tab.buffer_id;
 
     let split_areas = harness.editor().get_split_areas().to_vec();
     let (_, _, content_rect, _, _, _) = split_areas[0];
@@ -164,7 +210,12 @@ fn test_drag_tab_to_top_creates_horizontal_split() {
 
     // Drag to top edge
     harness
-        .mouse_drag(tab_center_col, tab_row, content_center_col, top_edge_row)
+        .mouse_drag(
+            tab.center_col(),
+            tab.tab_row,
+            content_center_col,
+            top_edge_row,
+        )
         .unwrap();
 
     assert_eq!(harness.editor().get_split_count(), 2);
@@ -183,9 +234,10 @@ fn test_drag_tab_to_bottom_creates_horizontal_split() {
     let initial_split_count = harness.editor().get_split_count();
     assert_eq!(initial_split_count, 1);
 
-    let tab_areas = harness.editor().get_tab_areas().to_vec();
-    let (source_split_id, buffer_id, tab_row, start_col, end_col, _) = tab_areas[0];
-    let tab_center_col = (start_col + end_col) / 2;
+    let tabs = get_all_tabs(&harness);
+    let tab = &tabs[0];
+    let source_split_id = tab.split_id;
+    let buffer_id = tab.buffer_id;
 
     let split_areas = harness.editor().get_split_areas().to_vec();
     let (_, _, content_rect, _, _, _) = split_areas[0];
@@ -208,7 +260,12 @@ fn test_drag_tab_to_bottom_creates_horizontal_split() {
 
     // Drag to bottom edge
     harness
-        .mouse_drag(tab_center_col, tab_row, content_center_col, bottom_edge_row)
+        .mouse_drag(
+            tab.center_col(),
+            tab.tab_row,
+            content_center_col,
+            bottom_edge_row,
+        )
         .unwrap();
 
     assert_eq!(harness.editor().get_split_count(), 2);
@@ -237,8 +294,8 @@ fn test_drag_tab_to_another_split_center() {
 
     assert_eq!(harness.editor().get_split_count(), 2);
 
-    // Get tab areas - need to find a tab in the first split
-    let tab_areas = harness.editor().get_tab_areas().to_vec();
+    // Get tab areas and split areas
+    let tabs = get_all_tabs(&harness);
     let split_areas = harness.editor().get_split_areas().to_vec();
 
     // Find tab in the first split (left side)
@@ -246,12 +303,11 @@ fn test_drag_tab_to_another_split_center() {
     let (first_split_id, _, _first_content_rect, _, _, _) = first_split_area;
 
     // Find a tab that belongs to the first split
-    let tab_in_first_split = tab_areas
-        .iter()
-        .find(|(sid, _, _, _, _, _)| sid == first_split_id);
+    let tab_in_first_split = tabs.iter().find(|t| t.split_id == *first_split_id);
 
-    if let Some((source_split_id, buffer_id, tab_row, start_col, end_col, _)) = tab_in_first_split {
-        let tab_center_col = (start_col + end_col) / 2;
+    if let Some(tab) = tab_in_first_split {
+        let source_split_id = tab.split_id;
+        let buffer_id = tab.buffer_id;
 
         // Find the second split (right side)
         let second_split_area = split_areas
@@ -268,7 +324,7 @@ fn test_drag_tab_to_another_split_center() {
             let drop_zone = harness.editor().compute_drop_zone(
                 target_center_col,
                 target_center_row,
-                *source_split_id,
+                source_split_id,
             );
             assert!(
                 matches!(drop_zone, Some(TabDropZone::SplitCenter(id)) if id == *target_split_id),
@@ -279,8 +335,8 @@ fn test_drag_tab_to_another_split_center() {
             // Drag tab to center of second split
             harness
                 .mouse_drag(
-                    tab_center_col,
-                    *tab_row,
+                    tab.center_col(),
+                    tab.tab_row,
                     target_center_col,
                     target_center_row,
                 )
@@ -289,7 +345,7 @@ fn test_drag_tab_to_another_split_center() {
             // Verify the buffer is now in the target split's tabs
             let target_tabs = harness.editor().get_split_tabs(*target_split_id);
             assert!(
-                target_tabs.contains(buffer_id),
+                target_tabs.contains(&buffer_id),
                 "Buffer should be in target split's tabs"
             );
 
@@ -313,27 +369,21 @@ fn test_drag_tab_reorder_within_split() {
     let second_buffer = initial_tabs[1];
 
     // Get tab areas to find positions
-    let tab_areas = harness.editor().get_tab_areas().to_vec();
+    let tabs = get_all_tabs(&harness);
 
     // Find first and second tab positions
-    let first_tab = tab_areas
-        .iter()
-        .find(|(_, bid, _, _, _, _)| *bid == first_buffer);
-    let second_tab = tab_areas
-        .iter()
-        .find(|(_, bid, _, _, _, _)| *bid == second_buffer);
+    let first_tab = tabs.iter().find(|t| t.buffer_id == first_buffer);
+    let second_tab = tabs.iter().find(|t| t.buffer_id == second_buffer);
 
-    if let (
-        Some((_, _, tab_row, first_start, first_end, _)),
-        Some((_, _, _, second_start, second_end, _)),
-    ) = (first_tab, second_tab)
-    {
-        let first_center = (first_start + first_end) / 2;
-        let second_center = (second_start + second_end) / 2;
-
+    if let (Some(first), Some(second)) = (first_tab, second_tab) {
         // Drag first tab to second tab position
         harness
-            .mouse_drag(first_center, *tab_row, second_center, *tab_row)
+            .mouse_drag(
+                first.center_col(),
+                first.tab_row,
+                second.center_col(),
+                second.tab_row,
+            )
             .unwrap();
 
         // Verify tab order changed
@@ -387,9 +437,6 @@ fn test_drag_last_tab_closes_split() {
     let active_split = harness.editor().get_active_split();
     let active_tabs = harness.editor().get_split_tabs(active_split);
 
-    // The active split should have file2 (and possibly file1 as it was the buffer when split was created)
-    // We need to ensure we're dragging the last tab
-
     // Get split areas
     let split_areas = harness.editor().get_split_areas().to_vec();
     let other_split = split_areas
@@ -398,16 +445,14 @@ fn test_drag_last_tab_closes_split() {
 
     if let Some((_target_split_id, _, target_content_rect, _, _, _)) = other_split {
         // Get the tab for the current buffer
-        let tab_areas = harness.editor().get_tab_areas().to_vec();
+        let tabs = get_all_tabs(&harness);
         let current_buffer = harness.editor().get_split_buffer(active_split).unwrap();
 
-        let current_tab = tab_areas
+        let current_tab = tabs
             .iter()
-            .find(|(sid, bid, _, _, _, _)| *sid == active_split && *bid == current_buffer);
+            .find(|t| t.split_id == active_split && t.buffer_id == current_buffer);
 
-        if let Some((_, _, tab_row, start_col, end_col, _)) = current_tab {
-            let tab_center = (start_col + end_col) / 2;
-
+        if let Some(tab) = current_tab {
             // If this split has only one tab, dragging it out should close the split
             if active_tabs.len() == 1 {
                 // Drag to other split's center
@@ -415,7 +460,12 @@ fn test_drag_last_tab_closes_split() {
                 let target_center_row = target_content_rect.y + target_content_rect.height / 2;
 
                 harness
-                    .mouse_drag(tab_center, *tab_row, target_center_col, target_center_row)
+                    .mouse_drag(
+                        tab.center_col(),
+                        tab.tab_row,
+                        target_center_col,
+                        target_center_row,
+                    )
                     .unwrap();
 
                 // The source split should be closed
@@ -434,11 +484,7 @@ fn test_drag_last_tab_closes_split() {
 fn test_drop_zone_matches_result_comprehensive() {
     let (harness, _temp_dir, _files) = setup_multi_file_harness();
 
-    let tab_areas = harness.editor().get_tab_areas().to_vec();
     let split_areas = harness.editor().get_split_areas().to_vec();
-
-    let (_source_split_id, _buffer_id, _tab_row, start_col, end_col, _) = tab_areas[0];
-    let _tab_center_col = (start_col + end_col) / 2;
     let (_, _, content_rect, _, _, _) = split_areas[0];
 
     // Test all edge positions
@@ -474,9 +520,10 @@ fn test_drop_zone_matches_result_comprehensive() {
         // Reset harness for each test
         let (mut harness, _temp_dir, _files) = setup_multi_file_harness();
 
-        let tab_areas = harness.editor().get_tab_areas().to_vec();
-        let (source_split_id, buffer_id, tab_row, start_col, end_col, _) = tab_areas[0];
-        let tab_center_col = (start_col + end_col) / 2;
+        let tabs = get_all_tabs(&harness);
+        let tab = &tabs[0];
+        let source_split_id = tab.split_id;
+        let buffer_id = tab.buffer_id;
 
         // Verify the expected drop zone
         harness.render().unwrap();
@@ -504,7 +551,7 @@ fn test_drop_zone_matches_result_comprehensive() {
 
         // Now actually drag
         harness
-            .mouse_drag(tab_center_col, tab_row, target_col, target_row)
+            .mouse_drag(tab.center_col(), tab.tab_row, target_col, target_row)
             .unwrap();
 
         // Verify split was created
@@ -546,40 +593,36 @@ fn test_drag_tab_to_tab_bar() {
 
     assert_eq!(harness.editor().get_split_count(), 2);
 
-    // Get tab in first split
-    let tab_areas = harness.editor().get_tab_areas().to_vec();
+    // Get tab and split info
+    let tabs = get_all_tabs(&harness);
     let split_areas = harness.editor().get_split_areas().to_vec();
 
     // Find tabs in first split
     let first_split_id = split_areas[0].0;
     let second_split_id = split_areas[1].0;
 
-    let tab_in_first = tab_areas
-        .iter()
-        .find(|(sid, _, _, _, _, _)| *sid == first_split_id);
+    let tab_in_first = tabs.iter().find(|t| t.split_id == first_split_id);
 
-    if let Some((source_split_id, buffer_id, tab_row, start_col, end_col, _)) = tab_in_first {
-        let tab_center = (start_col + end_col) / 2;
+    if let Some(tab) = tab_in_first {
+        let source_split_id = tab.split_id;
+        let buffer_id = tab.buffer_id;
 
         // Find tab row of second split
-        let second_split_tabs: Vec<_> = tab_areas
+        let second_split_tabs: Vec<_> = tabs
             .iter()
-            .filter(|(sid, _, _, _, _, _)| *sid == second_split_id)
+            .filter(|t| t.split_id == second_split_id)
             .collect();
 
-        if let Some((_, _, target_tab_row, target_start, target_end, _)) = second_split_tabs.first()
-        {
-            let target_center = (target_start + target_end) / 2;
-
+        if let Some(target_tab) = second_split_tabs.first() {
             // Get initial tabs in target split
             let initial_target_tabs = harness.editor().get_split_tabs(second_split_id);
 
             // Verify this would be a TabBar drop zone
             harness.render().unwrap();
             let drop_zone = harness.editor().compute_drop_zone(
-                target_center,
-                *target_tab_row,
-                *source_split_id,
+                target_tab.center_col(),
+                target_tab.tab_row,
+                source_split_id,
             );
             assert!(
                 matches!(drop_zone, Some(TabDropZone::TabBar(_, _))),
@@ -589,13 +632,18 @@ fn test_drag_tab_to_tab_bar() {
 
             // Drag to target tab bar
             harness
-                .mouse_drag(tab_center, *tab_row, target_center, *target_tab_row)
+                .mouse_drag(
+                    tab.center_col(),
+                    tab.tab_row,
+                    target_tab.center_col(),
+                    target_tab.tab_row,
+                )
                 .unwrap();
 
             // Buffer should now be in target split's tabs
             let final_target_tabs = harness.editor().get_split_tabs(second_split_id);
             assert!(
-                final_target_tabs.contains(buffer_id),
+                final_target_tabs.contains(&buffer_id),
                 "Buffer should be added to target split's tabs"
             );
             assert!(
@@ -614,13 +662,17 @@ fn test_small_drag_does_not_move_tab() {
     let initial_split = harness.editor().get_active_split();
     let initial_tabs = harness.editor().get_split_tabs(initial_split);
 
-    let tab_areas = harness.editor().get_tab_areas().to_vec();
-    let (_, _buffer_id, tab_row, start_col, end_col, _) = tab_areas[0];
-    let tab_center_col = (start_col + end_col) / 2;
+    let tabs = get_all_tabs(&harness);
+    let tab = &tabs[0];
 
     // Small drag (2 pixels - below 3 pixel threshold)
     harness
-        .mouse_drag(tab_center_col, tab_row, tab_center_col + 2, tab_row)
+        .mouse_drag(
+            tab.center_col(),
+            tab.tab_row,
+            tab.center_col() + 2,
+            tab.tab_row,
+        )
         .unwrap();
 
     // Tabs should be unchanged
@@ -669,13 +721,11 @@ fn test_drag_right_split_to_left_border_switches_order() {
     let (right_split_id, _right_buffer_id, _right_content_rect, _, _, _) = right_split;
 
     // Get the tab from the right split
-    let tab_areas = harness.editor().get_tab_areas().to_vec();
-    let right_tab = tab_areas
-        .iter()
-        .find(|(sid, _, _, _, _, _)| sid == right_split_id);
+    let tabs = get_all_tabs(&harness);
+    let right_tab = tabs.iter().find(|t| t.split_id == *right_split_id);
 
-    if let Some((_, buffer_id, tab_row, start_col, end_col, _)) = right_tab {
-        let tab_center_col = (start_col + end_col) / 2;
+    if let Some(tab) = right_tab {
+        let buffer_id = tab.buffer_id;
 
         // Calculate the left edge of the left split (this is where we drag to)
         let left_edge_col = left_content_rect.x + 2; // Near left edge
@@ -694,11 +744,16 @@ fn test_drag_right_split_to_left_border_switches_order() {
         );
 
         // Remember the buffer we're dragging
-        let dragged_buffer = *buffer_id;
+        let dragged_buffer = buffer_id;
 
         // Drag the right split's tab to the left edge of the left split
         harness
-            .mouse_drag(tab_center_col, *tab_row, left_edge_col, left_center_row)
+            .mouse_drag(
+                tab.center_col(),
+                tab.tab_row,
+                left_edge_col,
+                left_center_row,
+            )
             .unwrap();
 
         // Now we should have 2 splits (the right split may have closed if it was the last tab)

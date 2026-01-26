@@ -753,16 +753,12 @@ impl Editor {
             }
         }
 
-        for (split_id, buffer_id, tab_row, start_col, end_col, close_start) in
-            &self.cached_layout.tab_areas
-        {
-            if row == *tab_row && col >= *start_col && col < *end_col {
-                // Check if hovering over the close button
-                if col >= *close_start {
-                    return Some(HoverTarget::TabCloseButton(*buffer_id, *split_id));
+        for (split_id, tab_layout) in &self.cached_layout.tab_layouts {
+            if let Some((buffer_id, is_close)) = tab_layout.tab_at(col, row) {
+                if is_close {
+                    return Some(HoverTarget::TabCloseButton(buffer_id, *split_id));
                 }
-                // Otherwise, return TabName for hover effect on tab name
-                return Some(HoverTarget::TabName(*buffer_id, *split_id));
+                return Some(HoverTarget::TabName(buffer_id, *split_id));
             }
         }
 
@@ -1399,17 +1395,16 @@ impl Editor {
             return Ok(());
         }
 
-        // Check if click is on a tab using cached hit areas (computed during rendering)
-        let tab_click = self.cached_layout.tab_areas.iter().find_map(
-            |(split_id, buffer_id, tab_row, start_col, end_col, close_start)| {
-                if row == *tab_row && col >= *start_col && col < *end_col {
-                    let is_close_button = col >= *close_start;
-                    Some((*split_id, *buffer_id, is_close_button))
-                } else {
-                    None
-                }
-            },
-        );
+        // Check if click is on a tab using cached tab layouts (computed during rendering)
+        let tab_click = self
+            .cached_layout
+            .tab_layouts
+            .iter()
+            .find_map(|(split_id, tab_layout)| {
+                tab_layout
+                    .tab_at(col, row)
+                    .map(|(buffer_id, is_close)| (*split_id, buffer_id, is_close))
+            });
 
         if let Some((split_id, clicked_buffer, clicked_close)) = tab_click {
             self.focus_split(split_id, clicked_buffer);
@@ -1761,15 +1756,15 @@ impl Editor {
         }
 
         // Check if right-click is on a tab
-        let tab_click = self.cached_layout.tab_areas.iter().find_map(
-            |(split_id, buffer_id, tab_row, start_col, end_col, _close_start)| {
-                if row == *tab_row && col >= *start_col && col < *end_col {
-                    Some((*split_id, *buffer_id))
-                } else {
-                    None
-                }
-            },
-        );
+        let tab_click = self
+            .cached_layout
+            .tab_layouts
+            .iter()
+            .find_map(|(split_id, tab_layout)| {
+                tab_layout
+                    .tab_at(col, row)
+                    .map(|(buffer_id, _is_close)| (*split_id, buffer_id))
+            });
 
         if let Some((split_id, buffer_id)) = tab_click {
             // Open tab context menu

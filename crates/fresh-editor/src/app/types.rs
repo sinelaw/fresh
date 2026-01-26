@@ -633,10 +633,8 @@ pub(crate) struct CachedLayout {
     /// Suggestions area for mouse hit testing
     /// (inner_rect, scroll_start_idx, visible_count, total_count)
     pub suggestions_area: Option<(Rect, usize, usize, usize)>,
-    /// Tab hit areas for mouse interaction
-    /// (split_id, buffer_id, tab_row, tab_start_col, tab_end_col, close_button_start_col)
-    /// The close button spans from close_button_start_col to tab_end_col
-    pub tab_areas: Vec<(SplitId, BufferId, u16, u16, u16, u16)>,
+    /// Tab layouts per split for mouse interaction
+    pub tab_layouts: HashMap<SplitId, crate::view::ui::tabs::TabLayout>,
     /// Close split button hit areas
     /// (split_id, row, start_col, end_col)
     pub close_split_areas: Vec<(SplitId, u16, u16, u16)>,

@@ -748,7 +748,7 @@ impl SplitRenderer {
             usize,
             usize,
         )>,
-        Vec<(crate::model::event::SplitId, BufferId, u16, u16, u16, u16)>,
+        HashMap<crate::model::event::SplitId, crate::view::ui::tabs::TabLayout>, // tab layouts per split
         Vec<(crate::model::event::SplitId, u16, u16, u16)>, // close split button areas
         Vec<(crate::model::event::SplitId, u16, u16, u16)>, // maximize split button areas
         HashMap<crate::model::event::SplitId, Vec<ViewLineMapping>>, // view line mappings for mouse clicks
@@ -762,7 +762,10 @@ impl SplitRenderer {
 
         // Collect areas for mouse handling
         let mut split_areas = Vec::new();
-        let mut all_tab_areas = Vec::new();
+        let mut tab_layouts: HashMap<
+            crate::model::event::SplitId,
+            crate::view::ui::tabs::TabLayout,
+        > = HashMap::new();
         let mut close_split_areas = Vec::new();
         let mut maximize_split_areas = Vec::new();
         let mut view_line_mappings: HashMap<crate::model::event::SplitId, Vec<ViewLineMapping>> =
@@ -802,18 +805,9 @@ impl SplitRenderer {
                     tab_hover_for_split,
                 );
 
-                // Add tab areas from the layout
+                // Store the tab layout for this split
+                tab_layouts.insert(split_id, tab_layout);
                 let tab_row = layout.tabs_rect.y;
-                for tab_hit in &tab_layout.tabs {
-                    all_tab_areas.push((
-                        split_id,
-                        tab_hit.buffer_id,
-                        tab_row,
-                        tab_hit.tab_area.x,
-                        tab_hit.tab_area.x + tab_hit.tab_area.width,
-                        tab_hit.close_area.x,
-                    ));
-                }
 
                 // Render split control buttons at the right side of tabs row
                 // Show maximize/unmaximize button when: multiple splits exist OR we're currently maximized
@@ -1050,7 +1044,7 @@ impl SplitRenderer {
 
         (
             split_areas,
-            all_tab_areas,
+            tab_layouts,
             close_split_areas,
             maximize_split_areas,
             view_line_mappings,
