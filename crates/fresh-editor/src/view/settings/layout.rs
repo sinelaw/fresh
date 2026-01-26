@@ -3,6 +3,7 @@
 //! Tracks the layout of rendered settings UI elements for mouse interaction.
 
 use super::render::ControlLayoutInfo;
+use crate::view::ui::point_in_rect;
 use ratatui::layout::Rect;
 
 /// Layout information for the entire settings UI
@@ -101,58 +102,58 @@ impl SettingsLayout {
     /// Hit test a position and return what was clicked
     pub fn hit_test(&self, x: u16, y: u16) -> Option<SettingsHit> {
         // Check if outside modal
-        if !self.contains(self.modal_area, x, y) {
+        if !point_in_rect(self.modal_area, x, y) {
             return Some(SettingsHit::Outside);
         }
 
         // Check footer buttons
         if let Some(ref layer) = self.layer_button {
-            if self.contains(*layer, x, y) {
+            if point_in_rect(*layer, x, y) {
                 return Some(SettingsHit::LayerButton);
             }
         }
         if let Some(ref edit) = self.edit_button {
-            if self.contains(*edit, x, y) {
+            if point_in_rect(*edit, x, y) {
                 return Some(SettingsHit::EditButton);
             }
         }
         if let Some(ref save) = self.save_button {
-            if self.contains(*save, x, y) {
+            if point_in_rect(*save, x, y) {
                 return Some(SettingsHit::SaveButton);
             }
         }
         if let Some(ref cancel) = self.cancel_button {
-            if self.contains(*cancel, x, y) {
+            if point_in_rect(*cancel, x, y) {
                 return Some(SettingsHit::CancelButton);
             }
         }
         if let Some(ref reset) = self.reset_button {
-            if self.contains(*reset, x, y) {
+            if point_in_rect(*reset, x, y) {
                 return Some(SettingsHit::ResetButton);
             }
         }
 
         // Check categories
         for (index, area) in &self.categories {
-            if self.contains(*area, x, y) {
+            if point_in_rect(*area, x, y) {
                 return Some(SettingsHit::Category(*index));
             }
         }
 
         // Check search results (before regular items, since they replace the item list during search)
         for (idx, result) in self.search_results.iter().enumerate() {
-            if self.contains(result.area, x, y) {
+            if point_in_rect(result.area, x, y) {
                 return Some(SettingsHit::SearchResult(idx));
             }
         }
 
         // Check setting items
         for item in &self.items {
-            if self.contains(item.area, x, y) {
+            if point_in_rect(item.area, x, y) {
                 // Check specific control areas
                 match &item.control {
                     ControlLayoutInfo::Toggle(toggle_area) => {
-                        if self.contains(*toggle_area, x, y) {
+                        if point_in_rect(*toggle_area, x, y) {
                             return Some(SettingsHit::ControlToggle(item.index));
                         }
                     }
@@ -161,13 +162,13 @@ impl SettingsLayout {
                         increment,
                         value,
                     } => {
-                        if self.contains(*decrement, x, y) {
+                        if point_in_rect(*decrement, x, y) {
                             return Some(SettingsHit::ControlDecrement(item.index));
                         }
-                        if self.contains(*increment, x, y) {
+                        if point_in_rect(*increment, x, y) {
                             return Some(SettingsHit::ControlIncrement(item.index));
                         }
-                        if self.contains(*value, x, y) {
+                        if point_in_rect(*value, x, y) {
                             return Some(SettingsHit::Item(item.index));
                         }
                     }
@@ -178,25 +179,25 @@ impl SettingsLayout {
                     } => {
                         // Check option areas first (when dropdown is open)
                         for (i, area) in option_areas.iter().enumerate() {
-                            if self.contains(*area, x, y) {
+                            if point_in_rect(*area, x, y) {
                                 return Some(SettingsHit::ControlDropdownOption(
                                     item.index,
                                     scroll_offset + i,
                                 ));
                             }
                         }
-                        if self.contains(*button_area, x, y) {
+                        if point_in_rect(*button_area, x, y) {
                             return Some(SettingsHit::ControlDropdown(item.index));
                         }
                     }
                     ControlLayoutInfo::Text(area) => {
-                        if self.contains(*area, x, y) {
+                        if point_in_rect(*area, x, y) {
                             return Some(SettingsHit::ControlText(item.index));
                         }
                     }
                     ControlLayoutInfo::TextList { rows } => {
                         for (row_idx, row_area) in rows.iter().enumerate() {
-                            if self.contains(*row_area, x, y) {
+                            if point_in_rect(*row_area, x, y) {
                                 return Some(SettingsHit::ControlTextListRow(item.index, row_idx));
                             }
                         }
@@ -207,25 +208,25 @@ impl SettingsLayout {
                     } => {
                         // Check click on add-new row first (so it has priority)
                         if let Some(add_area) = add_row_area {
-                            if self.contains(*add_area, x, y) {
+                            if point_in_rect(*add_area, x, y) {
                                 return Some(SettingsHit::ControlMapAddNew(item.index));
                             }
                         }
                         for (row_idx, row_area) in entry_rows.iter().enumerate() {
-                            if self.contains(*row_area, x, y) {
+                            if point_in_rect(*row_area, x, y) {
                                 return Some(SettingsHit::ControlMapRow(item.index, row_idx));
                             }
                         }
                     }
                     ControlLayoutInfo::ObjectArray { entry_rows } => {
                         for (row_idx, row_area) in entry_rows.iter().enumerate() {
-                            if self.contains(*row_area, x, y) {
+                            if point_in_rect(*row_area, x, y) {
                                 return Some(SettingsHit::ControlMapRow(item.index, row_idx));
                             }
                         }
                     }
                     ControlLayoutInfo::Json { edit_area } => {
-                        if self.contains(*edit_area, x, y) {
+                        if point_in_rect(*edit_area, x, y) {
                             return Some(SettingsHit::ControlText(item.index));
                         }
                     }
@@ -238,24 +239,19 @@ impl SettingsLayout {
 
         // Check scrollbar area (for drag detection)
         if let Some(ref scrollbar) = self.scrollbar_area {
-            if self.contains(*scrollbar, x, y) {
+            if point_in_rect(*scrollbar, x, y) {
                 return Some(SettingsHit::Scrollbar);
             }
         }
 
         // Check settings panel area (for scroll wheel)
         if let Some(ref panel) = self.settings_panel_area {
-            if self.contains(*panel, x, y) {
+            if point_in_rect(*panel, x, y) {
                 return Some(SettingsHit::SettingsPanel);
             }
         }
 
         Some(SettingsHit::Background)
-    }
-
-    /// Check if a point is within a rectangle
-    fn contains(&self, rect: Rect, x: u16, y: u16) -> bool {
-        x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
     }
 }
 

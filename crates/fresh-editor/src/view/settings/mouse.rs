@@ -223,7 +223,7 @@ impl Editor {
             SettingsHit::Outside | SettingsHit::Background | SettingsHit::SettingsPanel => {}
             SettingsHit::Category(idx) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus_panel = FocusPanel::Categories;
+                    state.focus.set(FocusPanel::Categories);
                     state.selected_category = idx;
                     state.selected_item = 0;
                     state.scroll_panel = crate::view::ui::ScrollablePanel::new();
@@ -239,13 +239,13 @@ impl Editor {
             }
             SettingsHit::Item(idx) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus_panel = FocusPanel::Settings;
+                    state.focus.set(FocusPanel::Settings);
                     state.selected_item = idx;
                 }
             }
             SettingsHit::ControlToggle(idx) | SettingsHit::ControlDropdown(idx) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus_panel = FocusPanel::Settings;
+                    state.focus.set(FocusPanel::Settings);
                     state.selected_item = idx;
                 }
                 self.settings_activate_current();
@@ -253,35 +253,35 @@ impl Editor {
             SettingsHit::ControlDropdownOption(idx, option_idx) => {
                 // Click on a dropdown option - select it and close dropdown
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus_panel = FocusPanel::Settings;
+                    state.focus.set(FocusPanel::Settings);
                     state.selected_item = idx;
                     state.dropdown_select(option_idx);
                 }
             }
             SettingsHit::ControlDecrement(idx) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus_panel = FocusPanel::Settings;
+                    state.focus.set(FocusPanel::Settings);
                     state.selected_item = idx;
                 }
                 self.settings_decrement_current();
             }
             SettingsHit::ControlIncrement(idx) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus_panel = FocusPanel::Settings;
+                    state.focus.set(FocusPanel::Settings);
                     state.selected_item = idx;
                 }
                 self.settings_increment_current();
             }
             SettingsHit::ControlText(idx) | SettingsHit::ControlTextListRow(idx, _) => {
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus_panel = FocusPanel::Settings;
+                    state.focus.set(FocusPanel::Settings);
                     state.selected_item = idx;
                     state.start_editing();
                 }
             }
             SettingsHit::ControlMapRow(idx, row_idx) => {
                 let is_add_new_row = if let Some(ref mut state) = self.settings_state {
-                    state.focus_panel = FocusPanel::Settings;
+                    state.focus.set(FocusPanel::Settings);
                     state.selected_item = idx;
 
                     let mut is_add_new = false;
@@ -309,7 +309,7 @@ impl Editor {
             SettingsHit::ControlMapAddNew(idx) => {
                 // Click on map add-new row - focus it and activate immediately
                 if let Some(ref mut state) = self.settings_state {
-                    state.focus_panel = FocusPanel::Settings;
+                    state.focus.set(FocusPanel::Settings);
                     state.selected_item = idx;
 
                     if let Some(page) = state.pages.get_mut(state.selected_category) {

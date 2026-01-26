@@ -11,7 +11,7 @@ use super::search::{search_settings, SearchResult};
 use crate::config::Config;
 use crate::config_io::ConfigLayer;
 use crate::view::controls::FocusState;
-use crate::view::ui::ScrollablePanel;
+use crate::view::ui::{FocusManager, ScrollablePanel};
 use std::collections::HashMap;
 
 /// Info needed to open a nested dialog (extracted before mutable borrow)
@@ -57,7 +57,7 @@ pub struct SettingsState {
     /// Currently selected item index within the category
     pub selected_item: usize,
     /// Which panel currently has keyboard focus
-    pub focus_panel: FocusPanel,
+    pub focus: FocusManager<FocusPanel>,
     /// Selected footer button index (0=Reset, 1=Save, 2=Cancel)
     pub footer_button_index: usize,
     /// Pending changes (path -> new value)
@@ -124,7 +124,11 @@ impl SettingsState {
             pages,
             selected_category: 0,
             selected_item: 0,
-            focus_panel: FocusPanel::Categories,
+            focus: FocusManager::new(vec![
+                FocusPanel::Categories,
+                FocusPanel::Settings,
+                FocusPanel::Footer,
+            ]),
             footer_button_index: 2, // Default to Save button (0=Layer, 1=Reset, 2=Save, 3=Cancel)
             pending_changes: HashMap::new(),
             original_config: config_value,
@@ -149,10 +153,16 @@ impl SettingsState {
         })
     }
 
+    /// Get the currently focused panel
+    #[inline]
+    pub fn focus_panel(&self) -> FocusPanel {
+        self.focus.current().unwrap_or_default()
+    }
+
     /// Show the settings panel
     pub fn show(&mut self) {
         self.visible = true;
-        self.focus_panel = FocusPanel::Categories;
+        self.focus.set(FocusPanel::Categories);
         self.footer_button_index = 2; // Default to Save button (0=Layer, 1=Reset, 2=Save, 3=Cancel)
         self.selected_category = 0;
         self.selected_item = 0;
@@ -285,7 +295,7 @@ impl SettingsState {
 
     /// Move selection up
     pub fn select_prev(&mut self) {
-        match self.focus_panel {
+        match self.focus_panel() {
             FocusPanel::Categories => {
                 if self.selected_category > 0 {
                     self.update_control_focus(false); // Unfocus old item
@@ -329,7 +339,7 @@ impl SettingsState {
 
     /// Move selection down
     pub fn select_next(&mut self) {
-        match self.focus_panel {
+        match self.focus_panel() {
             FocusPanel::Categories => {
                 if self.selected_category + 1 < self.pages.len() {
                     self.update_control_focus(false); // Unfocus old item
@@ -378,12 +388,8 @@ impl SettingsState {
 
     /// Switch focus between panels: Categories -> Settings -> Footer -> Categories
     pub fn toggle_focus(&mut self) {
-        let old_panel = self.focus_panel;
-        self.focus_panel = match self.focus_panel {
-            FocusPanel::Categories => FocusPanel::Settings,
-            FocusPanel::Settings => FocusPanel::Footer,
-            FocusPanel::Footer => FocusPanel::Categories,
-        };
+        let old_panel = self.focus_panel();
+        self.focus.focus_next();
 
         // Unfocus control when leaving Settings panel
         if old_panel == FocusPanel::Settings {
@@ -391,20 +397,20 @@ impl SettingsState {
         }
 
         // Reset item selection when switching to settings
-        if self.focus_panel == FocusPanel::Settings
+        if self.focus_panel() == FocusPanel::Settings
             && self.selected_item >= self.current_page().map_or(0, |p| p.items.len())
         {
             self.selected_item = 0;
         }
         self.sub_focus = None;
 
-        if self.focus_panel == FocusPanel::Settings {
+        if self.focus_panel() == FocusPanel::Settings {
             self.init_map_focus(true); // entering from above
             self.update_control_focus(true); // Focus the control
         }
 
         // Reset footer button to Save when entering Footer panel
-        if self.focus_panel == FocusPanel::Footer {
+        if self.focus_panel() == FocusPanel::Footer {
             self.footer_button_index = 2; // Save button (0=Layer, 1=Reset, 2=Save, 3=Cancel)
         }
 
@@ -413,7 +419,7 @@ impl SettingsState {
 
     /// Ensure the selected item is visible in the viewport
     pub fn ensure_visible(&mut self) {
-        if self.focus_panel != FocusPanel::Settings {
+        if self.focus_panel() != FocusPanel::Settings {
             return;
         }
 
@@ -613,9 +619,10 @@ impl SettingsState {
 
     /// Update focus states for rendering
     pub fn update_focus_states(&mut self) {
+        let current_focus = self.focus_panel();
         for (page_idx, page) in self.pages.iter_mut().enumerate() {
             for (item_idx, item) in page.items.iter_mut().enumerate() {
-                let is_focused = self.focus_panel == FocusPanel::Settings
+                let is_focused = current_focus == FocusPanel::Settings
                     && page_idx == self.selected_category
                     && item_idx == self.selected_item;
 
@@ -709,7 +716,7 @@ impl SettingsState {
         self.update_control_focus(false);
         self.selected_category = page_index;
         self.selected_item = item_index;
-        self.focus_panel = FocusPanel::Settings;
+        self.focus.set(FocusPanel::Settings);
         // Reset scroll offset but preserve viewport for ensure_visible
         self.scroll_panel.scroll.offset = 0;
         // Update content height for the new category's items
@@ -1847,11 +1854,11 @@ mod tests {
         let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
 
         // Start in category focus
-        assert_eq!(state.focus_panel, FocusPanel::Categories);
+        assert_eq!(state.focus_panel(), FocusPanel::Categories);
 
         // Toggle to settings
         state.toggle_focus();
-        assert_eq!(state.focus_panel, FocusPanel::Settings);
+        assert_eq!(state.focus_panel(), FocusPanel::Settings);
 
         // Navigate items
         state.select_next();
@@ -1884,7 +1891,7 @@ mod tests {
 
         state.show();
         assert!(state.visible);
-        assert_eq!(state.focus_panel, FocusPanel::Categories);
+        assert_eq!(state.focus_panel(), FocusPanel::Categories);
 
         state.hide();
         assert!(!state.visible);

@@ -54,7 +54,7 @@ impl InputHandler for SettingsState {
         }
 
         // Route to focused panel
-        match self.focus_panel {
+        match self.focus_panel() {
             FocusPanel::Categories => self.handle_categories_input(event, ctx),
             FocusPanel::Settings => self.handle_settings_input(event, ctx),
             FocusPanel::Footer => self.handle_footer_input(event, ctx),
@@ -512,7 +512,7 @@ impl SettingsState {
             }
             KeyCode::Enter | KeyCode::Right => {
                 // Enter/Right on categories: move focus to settings panel
-                self.focus_panel = FocusPanel::Settings;
+                self.focus.set(FocusPanel::Settings);
                 InputResult::Consumed
             }
             _ => InputResult::Ignored, // Let modal catch it
@@ -589,7 +589,7 @@ impl SettingsState {
                 if self.footer_button_index > 0 {
                     self.footer_button_index -= 1;
                 } else {
-                    self.focus_panel = FocusPanel::Settings;
+                    self.focus.set(FocusPanel::Settings);
                 }
                 InputResult::Consumed
             }
@@ -605,7 +605,7 @@ impl SettingsState {
                 if self.footer_button_index < FOOTER_BUTTON_COUNT - 1 {
                     self.footer_button_index += 1;
                 } else {
-                    self.focus_panel = FocusPanel::Categories;
+                    self.focus.set(FocusPanel::Categories);
                 }
                 InputResult::Consumed
             }
@@ -956,7 +956,7 @@ mod tests {
         let config = crate::config::Config::default();
         let mut state = SettingsState::new(schema, &config).unwrap();
         state.visible = true;
-        state.focus_panel = FocusPanel::Categories;
+        state.focus.set(FocusPanel::Categories);
 
         let mut ctx = InputContext::new();
 
@@ -964,16 +964,16 @@ mod tests {
         // It should just move focus to settings panel
         let result = state.handle_key_event(&key(KeyCode::Enter), &mut ctx);
         assert_eq!(result, InputResult::Consumed);
-        assert_eq!(state.focus_panel, FocusPanel::Settings);
+        assert_eq!(state.focus_panel(), FocusPanel::Settings);
 
         // Go back to categories
-        state.focus_panel = FocusPanel::Categories;
+        state.focus.set(FocusPanel::Categories);
 
         // Left/Right on categories should be consumed but not affect settings
         let result = state.handle_key_event(&key(KeyCode::Right), &mut ctx);
         assert_eq!(result, InputResult::Consumed);
         // Should have moved to settings panel
-        assert_eq!(state.focus_panel, FocusPanel::Settings);
+        assert_eq!(state.focus_panel(), FocusPanel::Settings);
     }
 
     #[test]
@@ -986,15 +986,15 @@ mod tests {
         let mut ctx = InputContext::new();
 
         // Start at Categories
-        assert_eq!(state.focus_panel, FocusPanel::Categories);
+        assert_eq!(state.focus_panel(), FocusPanel::Categories);
 
         // Tab -> Settings
         state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(state.focus_panel, FocusPanel::Settings);
+        assert_eq!(state.focus_panel(), FocusPanel::Settings);
 
         // Tab -> Footer (defaults to Save button, index 2)
         state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(state.focus_panel, FocusPanel::Footer);
+        assert_eq!(state.focus_panel(), FocusPanel::Footer);
         assert_eq!(state.footer_button_index, 2);
 
         // Tab through footer buttons: 2 -> 3 -> 4 -> wrap to Categories
@@ -1003,16 +1003,16 @@ mod tests {
         state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
         assert_eq!(state.footer_button_index, 4); // Edit button
         state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(state.focus_panel, FocusPanel::Categories);
+        assert_eq!(state.focus_panel(), FocusPanel::Categories);
 
         // SECOND LOOP: Tab again should still land on Save button when entering Footer
         // Tab -> Settings
         state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(state.focus_panel, FocusPanel::Settings);
+        assert_eq!(state.focus_panel(), FocusPanel::Settings);
 
         // Tab -> Footer (should reset to Save button, not stay on Edit)
         state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
-        assert_eq!(state.focus_panel, FocusPanel::Footer);
+        assert_eq!(state.focus_panel(), FocusPanel::Footer);
         assert_eq!(
             state.footer_button_index, 2,
             "Footer should reset to Save button (index 2) on second loop"
@@ -1117,7 +1117,7 @@ mod tests {
         let config = crate::config::Config::default();
         let mut state = SettingsState::new(schema, &config).unwrap();
         state.visible = true;
-        state.focus_panel = FocusPanel::Footer;
+        state.focus.set(FocusPanel::Footer);
         state.footer_button_index = 2; // Save button (0=Layer, 1=Reset, 2=Save, 3=Cancel)
 
         let mut ctx = InputContext::new();

@@ -335,7 +335,7 @@ fn render_categories_horizontal(
         return;
     }
 
-    let is_focused = state.focus_panel == FocusPanel::Categories;
+    let is_focused = state.focus_panel() == FocusPanel::Categories;
 
     // Build category labels with indicators
     let mut spans = Vec::new();
@@ -426,7 +426,7 @@ fn render_categories(
         layout.add_category(idx, row_area);
 
         let style = if is_selected {
-            if state.focus_panel == FocusPanel::Categories {
+            if state.focus_panel() == FocusPanel::Categories {
                 Style::default()
                     .fg(theme.menu_highlight_fg)
                     .bg(theme.menu_highlight_bg)
@@ -447,7 +447,7 @@ fn render_categories(
         let modified_indicator = if has_changes { "●" } else { " " };
 
         // Show ">" when selected and focused for clearer selection indicator
-        let selection_indicator = if is_selected && state.focus_panel == FocusPanel::Categories {
+        let selection_indicator = if is_selected && state.focus_panel() == FocusPanel::Categories {
             ">"
         } else {
             " "
@@ -550,7 +550,7 @@ fn render_settings_panel(
     use super::state::FocusPanel;
     let render_ctx = RenderContext {
         selected_item: state.selected_item,
-        settings_focused: state.focus_panel == FocusPanel::Settings,
+        settings_focused: state.focus_panel() == FocusPanel::Settings,
         hover_hit: state.hover_hit,
     };
 
@@ -1838,7 +1838,7 @@ fn render_footer(
     }
 
     // Check if footer has keyboard focus
-    let footer_focused = state.focus_panel == FocusPanel::Footer;
+    let footer_focused = state.focus_panel() == FocusPanel::Footer;
 
     // Determine hover and keyboard focus states for buttons
     // Button indices: 0=Layer, 1=Reset, 2=Save, 3=Cancel, 4=Edit (on left, for advanced users)
@@ -2067,7 +2067,7 @@ fn render_footer_vertical(
     }
 
     // Check if footer has keyboard focus
-    let footer_focused = state.focus_panel == FocusPanel::Footer;
+    let footer_focused = state.focus_panel() == FocusPanel::Footer;
 
     // Determine hover and keyboard focus states for buttons
     let layer_hovered = matches!(state.hover_hit, Some(SettingsHit::LayerButton));

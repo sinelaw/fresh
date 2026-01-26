@@ -1201,7 +1201,7 @@ The goal is minimal changes that leverage existing code:
 ## Open Questions
 
 1. **Should controls implement `HitTest`?** Optional - the existing `*Layout::is_*()` methods work fine
-2. **Should `FocusManager` replace `FocusPanel`?** Could be a type alias: `type FocusPanelManager = FocusManager<FocusPanel>`
+2. ~~**Should `FocusManager` replace `FocusPanel`?**~~ ✅ Resolved: Settings now uses `FocusManager<FocusPanel>` with a `focus_panel()` helper method
 3. **Plugin mouse support?** Currently pkg.ts is keyboard-only; adding mouse would need more work
 
 ## Implementation Plan: Extract First, Then Adopt
@@ -1492,19 +1492,18 @@ pub fn render_for_split(...) -> TabLayout
 
 ### Sequence Summary
 
-| Step | Action | Type | Risk |
-|------|--------|------|------|
-| 1 | Create `ui/layout.rs` with `point_in_rect()` | Extract | None |
-| 2 | Add `HitTest` trait | New code | None |
-| 3 | Create `ui/focus.rs` with `FocusManager<T>` | Extract pattern | None |
-| 4 | Update `ui/mod.rs` exports | Wire up | None |
-| 5 | Migrate settings/layout.rs to use `point_in_rect` | Adopt | Low |
-| 6 | Migrate settings/state.rs to use `FocusManager` | Adopt | Medium |
-| 7 | Add `MenuLayout`, delete duplicate hit methods | Refactor | Medium |
-| 8 | Add `TabLayout`, replace tuple Vec | Refactor | Low |
+| Step | Action | Type | Status |
+|------|--------|------|--------|
+| 1 | Create `ui/layout.rs` with `point_in_rect()` | Extract | ✅ Done |
+| 2 | Add `HitTest` trait | New code | ✅ Done |
+| 3 | Create `ui/focus.rs` with `FocusManager<T>` | Extract pattern | ✅ Done |
+| 4 | Update `ui/mod.rs` exports | Wire up | ✅ Done |
+| 5 | Migrate settings/layout.rs to use `point_in_rect` | Adopt | ✅ Done |
+| 6 | Migrate settings/state.rs to use `FocusManager` | Adopt | ✅ Done |
+| 7 | Add `MenuLayout`, delete duplicate hit methods | Refactor | Pending |
+| 8 | Add `TabLayout`, replace tuple Vec | Refactor | Pending |
 
-**Steps 1-4** are pure additions with zero risk.
-**Steps 5-6** validate the extractions work by having Settings use them.
+**Steps 1-6 complete.** Settings now uses the shared `point_in_rect()` and `FocusManager<T>`.
 **Steps 7-8** are independent refactors that benefit from the shared utilities.
 
 ---

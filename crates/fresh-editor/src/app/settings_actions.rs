@@ -267,7 +267,7 @@ impl Editor {
         let focus_panel = self
             .settings_state
             .as_ref()
-            .map(|s| s.focus_panel)
+            .map(|s| s.focus_panel())
             .unwrap_or(FocusPanel::Categories);
 
         if focus_panel == FocusPanel::Footer {
@@ -408,7 +408,7 @@ impl Editor {
         let focus_panel = self
             .settings_state
             .as_ref()
-            .map(|s| s.focus_panel)
+            .map(|s| s.focus_panel())
             .unwrap_or(FocusPanel::Categories);
 
         if focus_panel == FocusPanel::Footer {
@@ -470,7 +470,7 @@ impl Editor {
         let focus_panel = self
             .settings_state
             .as_ref()
-            .map(|s| s.focus_panel)
+            .map(|s| s.focus_panel())
             .unwrap_or(FocusPanel::Categories);
 
         if focus_panel == FocusPanel::Footer {
