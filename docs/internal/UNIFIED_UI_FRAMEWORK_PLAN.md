@@ -1668,13 +1668,463 @@ impl Element for Column {
 
 ---
 
-### Future Steps (After Core Migration)
+## Part 6: TypeScript Controls Library
 
-Once the Rust patterns are validated:
+**Goal:** Enable plugin authors to build UIs easily without manually constructing text entries and tracking byte offsets.
 
-1. **Create TypeScript controls library** for plugins (`plugins/lib/controls.ts`)
-2. **Migrate pkg.ts** to use the TypeScript controls
-3. **Implement Layout DSL** (`Column`, `Row`, `Stack`, `Custom`) as described in Part 5
+**Approach:** Start with controls library, migrate pkg.ts, then evaluate if a DSL is needed based on real usage.
+
+### Current Pain Points in pkg.ts
+
+1. **Manual text construction** - Building `TextPropertyEntry[]` is verbose:
+   ```typescript
+   entries.push({ text: " Search: ", properties: { type: "search-label" } });
+   entries.push({ text: searchFocused ? `[${searchDisplay}]` : ` ${searchDisplay} `, properties: { type: "search-input", focused: searchFocused } });
+   entries.push({ text: "\n", properties: { type: "newline" } });
+   ```
+
+2. **Byte offset tracking** - `applyPkgManagerHighlighting()` manually tracks byte offsets for overlays:
+   ```typescript
+   let byteOffset = 0;
+   for (const entry of entries) {
+     const len = new TextEncoder().encode(entry.text).length;
+     editor.addOverlay(bufferId, "pkg", byteOffset, byteOffset + len, options);
+     byteOffset += len;
+   }
+   ```
+
+3. **Focus management** - Manual focus order and navigation:
+   ```typescript
+   function getFocusOrder(): FocusTarget[] {
+     const order: FocusTarget[] = [
+       { type: "search" },
+       { type: "filter", index: 0 },
+       { type: "filter", index: 1 },
+       // ...
+     ];
+   }
+   ```
+
+4. **Button rendering** - Repeated pattern for each button type:
+   ```typescript
+   const leftBracket = isFocused ? "[" : " ";
+   const rightBracket = isFocused ? "]" : " ";
+   filterBarParts.push({ text: `${leftBracket} ${f.label} ${rightBracket}`, ... });
+   ```
+
+### Proposed Library Structure
+
+```
+plugins/lib/
+├── controls.ts      # Button, List, TextInput, Label controls
+├── focus.ts         # FocusManager for Tab navigation
+├── vbuffer.ts       # VirtualBufferBuilder (handles byte offsets)
+├── theme.ts         # Theme color helpers (future)
+└── index.ts         # Re-exports
+```
+
+### API Design
+
+#### `plugins/lib/controls.ts`
+
+```typescript
+import type { TextPropertyEntry } from "./fresh.d.ts";
+
+/** Style configuration for a control */
+export interface ControlStyle {
+  fg?: string | [number, number, number];  // theme key or RGB
+  bg?: string | [number, number, number];
+  bold?: boolean;
+}
+
+/** Styles for different button states */
+export interface ButtonStyles {
+  normal: ControlStyle;
+  focused: ControlStyle;
+  active?: ControlStyle;        // for toggle-style buttons
+  activeFocused?: ControlStyle;
+}
+
+/** A button control */
+export class Button {
+  constructor(
+    public readonly id: string,
+    public readonly label: string,
+    public styles: ButtonStyles,
+  ) {}
+
+  /** Render the button, reserving space for focus brackets */
+  render(focused: boolean, active?: boolean): TextPropertyEntry {
+    const left = focused ? "[" : " ";
+    const right = focused ? "]" : " ";
+    return {
+      text: `${left} ${this.label} ${right}`,
+      properties: {
+        type: "button",
+        controlId: this.id,
+        focused,
+        active,
+      },
+    };
+  }
+}
+
+/** A text input control */
+export class TextInput {
+  constructor(
+    public readonly id: string,
+    public readonly width: number,
+    public styles: { normal: ControlStyle; focused: ControlStyle },
+  ) {}
+
+  render(value: string, focused: boolean): TextPropertyEntry {
+    const display = value.length > this.width - 1
+      ? value.slice(0, this.width - 2) + "…"
+      : value.padEnd(this.width);
+    const left = focused ? "[" : " ";
+    const right = focused ? "]" : " ";
+    return {
+      text: `${left}${display}${right}`,
+      properties: {
+        type: "text-input",
+        controlId: this.id,
+        focused,
+      },
+    };
+  }
+}
+
+/** A list item */
+export interface ListItem {
+  id: string;
+  text: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** A scrollable list control */
+export class List<T extends ListItem> {
+  constructor(
+    public readonly id: string,
+    public styles: {
+      normal: ControlStyle;
+      selected: ControlStyle;
+      sectionTitle?: ControlStyle;
+    },
+  ) {}
+
+  /** Render visible portion of list */
+  render(
+    items: T[],
+    selectedIndex: number,
+    viewportHeight: number,
+    scrollOffset: number,
+    formatItem: (item: T, selected: boolean) => string,
+  ): TextPropertyEntry[] {
+    const entries: TextPropertyEntry[] = [];
+    const visibleItems = items.slice(scrollOffset, scrollOffset + viewportHeight);
+
+    for (let i = 0; i < visibleItems.length; i++) {
+      const item = visibleItems[i];
+      const actualIndex = scrollOffset + i;
+      const isSelected = actualIndex === selectedIndex;
+      const prefix = isSelected ? "▸" : " ";
+
+      entries.push({
+        text: `${prefix} ${formatItem(item, isSelected)}\n`,
+        properties: {
+          type: "list-item",
+          controlId: this.id,
+          itemId: item.id,
+          selected: isSelected,
+        },
+      });
+    }
+    return entries;
+  }
+}
+
+/** A label (non-interactive text) */
+export class Label {
+  constructor(public styles: ControlStyle) {}
+
+  render(text: string, type: string = "label"): TextPropertyEntry {
+    return { text, properties: { type } };
+  }
+}
+
+/** A horizontal separator */
+export function separator(width: number, char: string = "─"): TextPropertyEntry {
+  return {
+    text: char.repeat(width) + "\n",
+    properties: { type: "separator" },
+  };
+}
+
+/** A newline */
+export function newline(): TextPropertyEntry {
+  return { text: "\n", properties: { type: "newline" } };
+}
+```
+
+#### `plugins/lib/focus.ts`
+
+```typescript
+/** A focusable element identifier */
+export interface FocusTarget {
+  type: string;
+  index?: number;
+}
+
+/** Manages focus order and Tab/Shift-Tab navigation */
+export class FocusManager {
+  private targets: FocusTarget[] = [];
+  private currentIndex: number = 0;
+
+  /** Set the focus order */
+  setOrder(targets: FocusTarget[]): void {
+    this.targets = targets;
+    this.currentIndex = Math.min(this.currentIndex, targets.length - 1);
+  }
+
+  /** Get current focused target */
+  current(): FocusTarget | null {
+    return this.targets[this.currentIndex] ?? null;
+  }
+
+  /** Move to next focusable element */
+  next(): FocusTarget | null {
+    if (this.targets.length === 0) return null;
+    this.currentIndex = (this.currentIndex + 1) % this.targets.length;
+    return this.current();
+  }
+
+  /** Move to previous focusable element */
+  prev(): FocusTarget | null {
+    if (this.targets.length === 0) return null;
+    this.currentIndex = (this.currentIndex - 1 + this.targets.length) % this.targets.length;
+    return this.current();
+  }
+
+  /** Focus a specific target */
+  focus(target: FocusTarget): boolean {
+    const idx = this.targets.findIndex(
+      t => t.type === target.type && t.index === target.index
+    );
+    if (idx >= 0) {
+      this.currentIndex = idx;
+      return true;
+    }
+    return false;
+  }
+
+  /** Check if a target is focused */
+  isFocused(type: string, index?: number): boolean {
+    const current = this.current();
+    return current?.type === type && current?.index === index;
+  }
+}
+```
+
+#### `plugins/lib/vbuffer.ts`
+
+```typescript
+import type { TextPropertyEntry } from "./fresh.d.ts";
+
+/**
+ * Builds virtual buffer content and automatically handles byte offset calculation.
+ *
+ * @example
+ * ```typescript
+ * const builder = new VirtualBufferBuilder(editor, bufferId, "my-plugin");
+ * builder
+ *   .entry(headerLabel.render("Packages"))
+ *   .newline()
+ *   .entry(searchInput.render(query, focused))
+ *   .entries(list.render(items, selectedIdx, height, offset, formatFn))
+ *   .apply();
+ * ```
+ */
+export class VirtualBufferBuilder {
+  private entries: TextPropertyEntry[] = [];
+  private styles: Map<string, (props: Record<string, unknown>) => Partial<{
+    fg: string | [number, number, number];
+    bg: string | [number, number, number];
+    bold: boolean;
+  }>> = new Map();
+
+  constructor(
+    private editor: EditorAPI,
+    private bufferId: number,
+    private overlayNamespace: string,
+  ) {}
+
+  /** Register a style resolver for a property type */
+  registerStyle(
+    type: string,
+    resolver: (props: Record<string, unknown>) => Partial<{
+      fg: string | [number, number, number];
+      bg: string | [number, number, number];
+      bold: boolean;
+    }>,
+  ): this {
+    this.styles.set(type, resolver);
+    return this;
+  }
+
+  /** Add a single entry */
+  entry(entry: TextPropertyEntry): this {
+    this.entries.push(entry);
+    return this;
+  }
+
+  /** Add multiple entries */
+  entries(entries: TextPropertyEntry[]): this {
+    this.entries.push(...entries);
+    return this;
+  }
+
+  /** Add a newline */
+  newline(): this {
+    this.entries.push({ text: "\n", properties: { type: "newline" } });
+    return this;
+  }
+
+  /** Add text with a type */
+  text(text: string, type: string, props?: Record<string, unknown>): this {
+    this.entries.push({ text, properties: { type, ...props } });
+    return this;
+  }
+
+  /** Clear all entries */
+  clear(): this {
+    this.entries = [];
+    return this;
+  }
+
+  /** Apply: set buffer content and overlays */
+  apply(): void {
+    // Set content
+    this.editor.setVirtualBufferContent(this.bufferId, this.entries);
+
+    // Clear existing overlays
+    this.editor.clearOverlays(this.bufferId, this.overlayNamespace);
+
+    // Apply overlays with automatic byte offset calculation
+    let byteOffset = 0;
+    const encoder = new TextEncoder();
+
+    for (const entry of this.entries) {
+      const bytes = encoder.encode(entry.text);
+      const len = bytes.length;
+      const props = entry.properties ?? {};
+      const type = props.type as string | undefined;
+
+      if (type && this.styles.has(type)) {
+        const style = this.styles.get(type)!(props);
+        if (style.fg || style.bg || style.bold) {
+          this.editor.addOverlay(
+            this.bufferId,
+            this.overlayNamespace,
+            byteOffset,
+            byteOffset + len,
+            style,
+          );
+        }
+      }
+
+      byteOffset += len;
+    }
+  }
+}
+```
+
+### Migration Plan for pkg.ts
+
+**Phase 1: Add library files**
+- Create `plugins/lib/controls.ts`
+- Create `plugins/lib/focus.ts`
+- Create `plugins/lib/vbuffer.ts`
+- Update `plugins/lib/index.ts` exports
+
+**Phase 2: Migrate pkg.ts incrementally**
+1. Replace `getFocusOrder()` and focus management with `FocusManager`
+2. Replace manual button rendering with `Button` class
+3. Replace search input rendering with `TextInput` class
+4. Replace `buildListViewEntries()` list portion with `List` class
+5. Replace `applyPkgManagerHighlighting()` with `VirtualBufferBuilder`
+
+**Phase 3: Evaluate**
+- Review resulting code - is composition still painful?
+- If yes, consider Layout DSL
+- If no, document patterns for other plugin authors
+
+### Expected Results
+
+**Before (pkg.ts ~400 lines of UI code):**
+```typescript
+// Manual entry building
+entries.push({ text: " Search: ", properties: { type: "search-label" } });
+entries.push({ text: searchFocused ? `[${searchDisplay}]` : ` ${searchDisplay} `, ... });
+entries.push({ text: "\n", properties: { type: "newline" } });
+
+// Manual focus management
+function getFocusOrder(): FocusTarget[] { ... }
+function isButtonFocused(type: string, index?: number): boolean { ... }
+
+// Manual byte offset tracking
+let byteOffset = 0;
+for (const entry of entries) { ... }
+```
+
+**After (~50-100 lines of UI code):**
+```typescript
+// Controls
+const searchInput = new TextInput("search", 30, searchStyles);
+const filterButtons = filters.map(f => new Button(`filter-${f.id}`, f.label, filterStyles));
+const packageList = new List<PackageItem>("packages", listStyles);
+
+// Focus
+const focus = new FocusManager();
+focus.setOrder([
+  { type: "search" },
+  ...filters.map((_, i) => ({ type: "filter", index: i })),
+  { type: "list" },
+]);
+
+// Render
+const builder = new VirtualBufferBuilder(editor, bufferId, "pkg");
+builder
+  .text(" Packages\n", "header")
+  .newline()
+  .text(" Search: ", "search-label")
+  .entry(searchInput.render(query, focus.isFocused("search")))
+  .newline()
+  .entries(filterButtons.map((btn, i) => btn.render(focus.isFocused("filter", i), filter === filters[i].id)))
+  .entry(separator(TOTAL_WIDTH - 2))
+  .entries(packageList.render(items, selectedIndex, height, scrollOffset, formatPackage))
+  .apply();
+```
+
+### Success Criteria
+
+1. **pkg.ts UI code reduced** from ~400 lines to ~50-100 lines
+2. **Patterns documented** for other plugin authors
+3. **No behavior changes** - pkg.ts works identically
+4. **Evaluate DSL need** - if composition is still painful after migration, consider DSL
+
+---
+
+### Future: Layout DSL (If Needed)
+
+After migrating pkg.ts with the controls library, evaluate whether a Layout DSL would further simplify plugin UIs. The DSL would add:
+
+- `Column()`, `Row()` for composition
+- Automatic sizing (`Fixed(n)`, `Fill`)
+- Declarative syntax
+
+Only pursue if the controls library proves insufficient for common plugin UI patterns.
+
+---
 
 ### Deferred Ideas
 
