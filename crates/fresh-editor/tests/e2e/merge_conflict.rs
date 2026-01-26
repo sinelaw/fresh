@@ -1027,11 +1027,81 @@ fn test_diff3_conflict_resolution() {
     // Note: The exact content depends on which resolution was chosen
 }
 
+/// Set up a real git merge conflict with CRLF line endings (Windows-style)
+/// Assumes git is already initialized in project_root
+fn setup_crlf_merge_conflict(project_root: &std::path::Path) -> std::path::PathBuf {
+    use std::process::Command;
+
+    let conflict_file = project_root.join("crlf_conflict.c");
+
+    // Configure diff3 merge conflict style
+    Command::new("git")
+        .args(["config", "merge.conflictstyle", "diff3"])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+
+    // Create base version with CRLF line endings
+    fs::write(&conflict_file, "static int showdf(const char *uuid)\r\n").unwrap();
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "base"])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+
+    // Create feature branch with one change (keep CRLF)
+    Command::new("git")
+        .args(["checkout", "-b", "feature"])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+    fs::write(&conflict_file, "static int showdf(char *uuid)\r\n").unwrap();
+    Command::new("git")
+        .args(["commit", "-am", "feature"])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+
+    // Go back to main and make different change (keep CRLF)
+    // Try both master and main since git version varies
+    let _ = Command::new("git")
+        .args(["checkout", "master"])
+        .current_dir(project_root)
+        .output();
+    let _ = Command::new("git")
+        .args(["checkout", "main"])
+        .current_dir(project_root)
+        .output();
+
+    fs::write(
+        &conflict_file,
+        "static int showdf(const char *uuid, int extra)\r\n",
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["commit", "-am", "main change"])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+
+    // Merge - this will fail and leave conflict markers
+    Command::new("git")
+        .args(["merge", "feature"])
+        .current_dir(project_root)
+        .output()
+        .unwrap();
+
+    conflict_file
+}
+
 /// Test that CRLF line endings are handled correctly (Windows-style files)
 #[test]
 fn test_merge_conflict_crlf_line_endings() {
-    use std::process::Command;
-
     // Create project directory and plugins BEFORE harness
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");
@@ -1039,18 +1109,8 @@ fn test_merge_conflict_crlf_line_endings() {
 
     setup_merge_conflict_test(&project_root);
 
-    // Create test file with CRLF line endings (Windows-style) in project dir
-    // This is the diff3 conflict but with \r\n instead of \n
-    let crlf_content = "}\r\n\r\nstatic int showdf(char *mntdir, struct obd_statfs *stat,\r\n<<<<<<< HEAD\r\n                  char *uuid, enum mntdf_flags flags,\r\n                  char *type, int index, int rc)\r\n||||||| parent of a3f05d81f6\r\n                  const char *uuid, enum mntdf_flags flags,\r\n                  char *type, int index, int rc)\r\n=======\r\n                  const char *uuid, enum mntdf_flags flags,\r\n                  char *type, int index, int rc, enum showdf_fields fields)\r\n>>>>>>> a3f05d81f6\r\n{\r\n";
-    let file_path = project_root.join("crlf_conflict.c");
-    fs::write(&file_path, crlf_content).unwrap();
-
-    // Stage the file so git knows about it (required for merge conflict detection)
-    Command::new("git")
-        .args(["add", "crlf_conflict.c"])
-        .current_dir(&project_root)
-        .output()
-        .unwrap();
+    // Set up a real git merge conflict with CRLF line endings
+    let file_path = setup_crlf_merge_conflict(&project_root);
 
     // Create harness with project directory (so plugins load)
     let mut harness =
@@ -1073,9 +1133,14 @@ fn test_merge_conflict_crlf_line_endings() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    harness.process_async_and_render().unwrap();
-    harness.process_async_and_render().unwrap();
-    harness.process_async_and_render().unwrap();
+    // Wait for merge UI to appear (semantic waiting)
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Merge UI shows OURS/THEIRS buttons or Conflict indicator
+            screen.contains("OURS") || screen.contains("Conflict 1")
+        })
+        .unwrap();
 
     let screen = harness.screen_to_string();
     println!("Screen with CRLF conflict:\n{}", screen);
@@ -1086,9 +1151,9 @@ fn test_merge_conflict_crlf_line_endings() {
         "Merge should detect conflicts in CRLF files - regex must handle \\r\\n"
     );
 
-    // Should see merge UI elements
+    // Should see merge UI elements (already verified by wait_until)
     assert!(
-        screen.contains("OURS") || screen.contains("Merge:") || screen.contains("Conflict"),
+        screen.contains("OURS") || screen.contains("Conflict"),
         "Merge UI should be visible for CRLF files"
     );
 
