@@ -171,6 +171,10 @@ fn test_explorer_menu_left_right_navigation() {
     let mut harness = EditorTestHarness::new(100, 30).unwrap();
     harness.render().unwrap();
 
+    // Focus file explorer so Explorer menu becomes visible
+    harness.editor_mut().focus_file_explorer();
+    harness.render().unwrap();
+
     // Open Explorer menu
     harness
         .send_key(KeyCode::Char('x'), KeyModifiers::ALT)

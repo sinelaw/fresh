@@ -859,3 +859,36 @@ fn test_tab_selection_click_works_with_menu_bar_hidden() {
          The click was intercepted by the menu bar handler instead of reaching the tab."
     );
 }
+
+/// Test that arrow key navigation skips hidden menus
+/// When file explorer is not focused, the Explorer menu is hidden.
+/// Pressing Left from Help menu should skip the hidden Explorer menu and go to LSP menu.
+#[test]
+fn test_menu_arrow_navigation_skips_hidden_menus() {
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+    harness.render().unwrap();
+
+    // Verify file explorer is not focused (Explorer menu should be hidden)
+    // By default, the editor focuses the text buffer, not the file explorer
+
+    // Open Help menu (the rightmost menu)
+    harness
+        .send_key(KeyCode::Char('h'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify Help menu is open
+    harness.assert_screen_contains("Show Fresh Manual");
+
+    // Press Left to navigate to previous menu
+    // Expected: Should go to LSP menu (skipping hidden Explorer menu)
+    // Bug: Goes to hidden Explorer menu instead
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should show LSP menu items, not Explorer menu items
+    // LSP menu has "Restart Server" and "Stop Server"
+    // Explorer menu has "New Folder" which should NOT be visible
+    harness.assert_screen_not_contains("New Folder");
+    harness.assert_screen_contains("Restart Server");
+}

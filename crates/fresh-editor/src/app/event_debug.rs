@@ -172,7 +172,6 @@ impl Default for EventDebug {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::KeyEventKind;
 
     #[test]
     fn test_event_debug_creation() {

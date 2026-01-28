@@ -71,7 +71,7 @@ impl InputHandler for MenuInputHandler<'_> {
                 // If in a submenu, close it and go back to parent
                 // Otherwise, go to the previous menu
                 if !self.state.close_submenu() {
-                    self.state.prev_menu(self.menus.len());
+                    self.state.prev_menu(self.menus);
                 }
                 InputResult::Consumed
             }
@@ -79,7 +79,7 @@ impl InputHandler for MenuInputHandler<'_> {
                 // If on a submenu item, open it
                 // Otherwise, go to the next menu
                 if !self.state.open_submenu(self.menus) {
-                    self.state.next_menu(self.menus.len());
+                    self.state.next_menu(self.menus);
                 }
                 InputResult::Consumed
             }

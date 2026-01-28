@@ -197,20 +197,58 @@ impl MenuState {
     }
 
     /// Navigate to the next menu (right) - only at top level
-    pub fn next_menu(&mut self, total_menus: usize) {
-        if let Some(active) = self.active_menu {
-            self.active_menu = Some((active + 1) % total_menus);
-            self.highlighted_item = Some(0);
-            self.submenu_path.clear();
+    /// Skips menus that are hidden (where `when` condition evaluates to false)
+    pub fn next_menu(&mut self, menus: &[Menu]) {
+        let Some(active) = self.active_menu else {
+            return;
+        };
+        let total = menus.len();
+        if total == 0 {
+            return;
         }
+
+        // Find the next visible menu, wrapping around
+        for i in 1..=total {
+            let next_idx = (active + i) % total;
+            if self.is_menu_visible(&menus[next_idx]) {
+                self.active_menu = Some(next_idx);
+                self.highlighted_item = Some(0);
+                self.submenu_path.clear();
+                return;
+            }
+        }
+        // No visible menu found, stay on current
     }
 
     /// Navigate to the previous menu (left) - only at top level
-    pub fn prev_menu(&mut self, total_menus: usize) {
-        if let Some(active) = self.active_menu {
-            self.active_menu = Some((active + total_menus - 1) % total_menus);
-            self.highlighted_item = Some(0);
-            self.submenu_path.clear();
+    /// Skips menus that are hidden (where `when` condition evaluates to false)
+    pub fn prev_menu(&mut self, menus: &[Menu]) {
+        let Some(active) = self.active_menu else {
+            return;
+        };
+        let total = menus.len();
+        if total == 0 {
+            return;
+        }
+
+        // Find the previous visible menu, wrapping around
+        for i in 1..=total {
+            let prev_idx = (active + total - i) % total;
+            if self.is_menu_visible(&menus[prev_idx]) {
+                self.active_menu = Some(prev_idx);
+                self.highlighted_item = Some(0);
+                self.submenu_path.clear();
+                return;
+            }
+        }
+        // No visible menu found, stay on current
+    }
+
+    /// Check if a menu is visible based on its `when` condition
+    fn is_menu_visible(&self, menu: &Menu) -> bool {
+        match &menu.when {
+            Some(condition) => self.context.get(condition),
+            None => true, // No condition = always visible
         }
     }
 
@@ -1014,32 +1052,34 @@ mod tests {
     #[test]
     fn test_menu_state_next_menu() {
         let mut state = MenuState::new();
+        let menus = create_test_menus();
         state.open_menu(0);
 
-        state.next_menu(3);
+        state.next_menu(&menus);
         assert_eq!(state.active_menu, Some(1));
 
-        state.next_menu(3);
+        state.next_menu(&menus);
         assert_eq!(state.active_menu, Some(2));
 
         // Wrap around
-        state.next_menu(3);
+        state.next_menu(&menus);
         assert_eq!(state.active_menu, Some(0));
     }
 
     #[test]
     fn test_menu_state_prev_menu() {
         let mut state = MenuState::new();
+        let menus = create_test_menus();
         state.open_menu(0);
 
         // Wrap around backwards
-        state.prev_menu(3);
+        state.prev_menu(&menus);
         assert_eq!(state.active_menu, Some(2));
 
-        state.prev_menu(3);
+        state.prev_menu(&menus);
         assert_eq!(state.active_menu, Some(1));
 
-        state.prev_menu(3);
+        state.prev_menu(&menus);
         assert_eq!(state.active_menu, Some(0));
     }
 
@@ -1565,7 +1605,7 @@ mod tests {
         assert!(!state.submenu_path.is_empty());
 
         // next_menu should clear submenu path
-        state.next_menu(1);
+        state.next_menu(&menus);
         assert!(state.submenu_path.is_empty());
 
         // Re-open submenu
@@ -1574,7 +1614,7 @@ mod tests {
         state.open_submenu(&menus);
 
         // prev_menu should clear submenu path
-        state.prev_menu(1);
+        state.prev_menu(&menus);
         assert!(state.submenu_path.is_empty());
     }
 

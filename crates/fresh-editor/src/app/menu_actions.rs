@@ -54,8 +54,8 @@ impl Editor {
     /// Handle MenuLeft action - close submenu or go to previous menu.
     pub fn handle_menu_left(&mut self) {
         if !self.menu_state.close_submenu() {
-            let total_menus = self.menus.menus.len() + self.menu_state.plugin_menus.len();
-            self.menu_state.prev_menu(total_menus);
+            let all_menus = self.all_menus();
+            self.menu_state.prev_menu(&all_menus);
         }
     }
 
@@ -63,8 +63,7 @@ impl Editor {
     pub fn handle_menu_right(&mut self) {
         let all_menus = self.all_menus();
         if !self.menu_state.open_submenu(&all_menus) {
-            let total_menus = self.menus.menus.len() + self.menu_state.plugin_menus.len();
-            self.menu_state.next_menu(total_menus);
+            self.menu_state.next_menu(&all_menus);
         }
     }
 
