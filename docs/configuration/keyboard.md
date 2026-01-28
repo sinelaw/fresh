@@ -219,3 +219,7 @@ The macOS keymap disables Alt+0-9 bindings because these key combinations are us
 - **Spanish**: Alt+2 = @, Alt+3 = #
 
 If you find that certain Alt combinations insert characters instead of triggering editor commands, ensure your terminal's Option key is configured as Meta (see above).
+
+## Debugging Keyboard Issues
+
+If keybindings aren't working as expected, use **Help → Debug Keyboard Events** to see exactly what your terminal sends. See [Troubleshooting: Debug Keyboard Events](/troubleshooting#debug-keyboard-events) for details.

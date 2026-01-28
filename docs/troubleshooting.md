@@ -61,3 +61,13 @@ Fresh uses a visual regression testing system to ensure that UI changes are inte
 Open command palette (Ctrl+P or ^P) and type the name of the command you want to run - if any keybinding is assigned, it will also be shown.
 
 Alternatively, use Help -> Keyboard Shortcuts to view the full list.
+
+### Debug Keyboard Events
+
+If a keybinding isn't working as expected, use **Help → Debug Keyboard Events** to see exactly what key codes your terminal sends to Fresh. This shows raw terminal events before any translation, helping diagnose issues like:
+
+- Missing modifier keys (e.g., Ctrl+Shift+Home arriving as just Ctrl+Home)
+- Terminal or OS intercepting keys before they reach Fresh
+- Incorrect escape sequences from your terminal
+
+Press any key to see its code, modifiers, and event type. Press `c` to clear history, `q` or `Esc` to close.
