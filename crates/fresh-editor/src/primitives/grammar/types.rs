@@ -45,6 +45,8 @@ pub struct GrammarRegistry {
     user_extensions: HashMap<String, String>,
     /// Filename -> scope name mapping for dotfiles and special files
     filename_scopes: HashMap<String, String>,
+    /// Paths to dynamically loaded grammar files (for reloading when adding more)
+    loaded_grammar_paths: Vec<(String, PathBuf, Vec<String>)>,
 }
 
 impl GrammarRegistry {
@@ -61,6 +63,7 @@ impl GrammarRegistry {
             syntax_set: Arc::new(syntax_set),
             user_extensions,
             filename_scopes,
+            loaded_grammar_paths: Vec::new(),
         }
     }
 
@@ -72,6 +75,7 @@ impl GrammarRegistry {
             syntax_set: Arc::new(builder.build()),
             user_extensions: HashMap::new(),
             filename_scopes: HashMap::new(),
+            loaded_grammar_paths: Vec::new(),
         })
     }
 
@@ -229,16 +233,35 @@ impl GrammarRegistry {
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             // Check user grammars first (higher priority)
             if let Some(scope) = self.user_extensions.get(ext) {
+                tracing::info!("[SYNTAX DEBUG] find_syntax_for_file: found ext '{}' in user_extensions -> scope '{}'", ext, scope);
                 if let Some(syntax) = syntect::parsing::Scope::new(scope)
                     .ok()
                     .and_then(|s| self.syntax_set.find_syntax_by_scope(s))
                 {
+                    tracing::info!(
+                        "[SYNTAX DEBUG] find_syntax_for_file: found syntax by scope: {}",
+                        syntax.name
+                    );
                     return Some(syntax);
+                } else {
+                    tracing::info!(
+                        "[SYNTAX DEBUG] find_syntax_for_file: scope '{}' not found in syntax_set",
+                        scope
+                    );
                 }
+            } else {
+                tracing::info!(
+                    "[SYNTAX DEBUG] find_syntax_for_file: ext '{}' NOT in user_extensions",
+                    ext
+                );
             }
 
             // Try extension lookup (includes embedded grammars like TOML)
             if let Some(syntax) = self.syntax_set.find_syntax_by_extension(ext) {
+                tracing::info!(
+                    "[SYNTAX DEBUG] find_syntax_for_file: found by syntect extension: {}",
+                    syntax.name
+                );
                 return Some(syntax);
             }
         }
@@ -261,6 +284,10 @@ impl GrammarRegistry {
             return Some(syntax);
         }
 
+        tracing::info!(
+            "[SYNTAX DEBUG] find_syntax_for_file: no syntax found for {:?}",
+            path
+        );
         None
     }
 
@@ -280,12 +307,29 @@ impl GrammarRegistry {
         path: &Path,
         languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
     ) -> Option<&SyntaxReference> {
+        let extension = path.extension().and_then(|e| e.to_str());
+        tracing::info!(
+            "[SYNTAX DEBUG] find_syntax_for_file_with_languages: path={:?}, ext={:?}, languages_config_keys={:?}",
+            path,
+            extension,
+            languages.keys().collect::<Vec<_>>()
+        );
+
         // Try filename match from languages config first
         if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-            for lang_config in languages.values() {
+            for (lang_name, lang_config) in languages.iter() {
                 if lang_config.filenames.iter().any(|f| f == filename) {
+                    tracing::info!(
+                        "[SYNTAX DEBUG] filename match: {} -> grammar '{}'",
+                        lang_name,
+                        lang_config.grammar
+                    );
                     // Found a match - try to find syntax by grammar name
                     if let Some(syntax) = self.find_syntax_by_name(&lang_config.grammar) {
+                        tracing::info!(
+                            "[SYNTAX DEBUG] found syntax by grammar name: {}",
+                            syntax.name
+                        );
                         return Some(syntax);
                     }
                     // Also try finding by extension if grammar name didn't work
@@ -293,6 +337,10 @@ impl GrammarRegistry {
                     if !lang_config.extensions.is_empty() {
                         if let Some(ext) = lang_config.extensions.first() {
                             if let Some(syntax) = self.syntax_set.find_syntax_by_extension(ext) {
+                                tracing::info!(
+                                    "[SYNTAX DEBUG] found syntax by extension fallback: {}",
+                                    syntax.name
+                                );
                                 return Some(syntax);
                             }
                         }
@@ -302,19 +350,40 @@ impl GrammarRegistry {
         }
 
         // Try extension match from languages config
-        if let Some(extension) = path.extension().and_then(|e| e.to_str()) {
-            for lang_config in languages.values() {
+        if let Some(extension) = extension {
+            for (lang_name, lang_config) in languages.iter() {
                 if lang_config.extensions.iter().any(|ext| ext == extension) {
+                    tracing::info!(
+                        "[SYNTAX DEBUG] extension match in config: ext={}, lang={}, grammar='{}'",
+                        extension,
+                        lang_name,
+                        lang_config.grammar
+                    );
                     // Found a match - try to find syntax by grammar name
                     if let Some(syntax) = self.find_syntax_by_name(&lang_config.grammar) {
+                        tracing::info!(
+                            "[SYNTAX DEBUG] found syntax by grammar name: {}",
+                            syntax.name
+                        );
                         return Some(syntax);
+                    } else {
+                        tracing::info!(
+                            "[SYNTAX DEBUG] grammar name '{}' not found in registry",
+                            lang_config.grammar
+                        );
                     }
                 }
             }
         }
 
         // Fall back to built-in detection
-        self.find_syntax_for_file(path)
+        tracing::info!("[SYNTAX DEBUG] falling back to find_syntax_for_file");
+        let result = self.find_syntax_for_file(path);
+        tracing::info!(
+            "[SYNTAX DEBUG] find_syntax_for_file result: {:?}",
+            result.map(|s| &s.name)
+        );
+        result
     }
 
     /// Find syntax by first line content (shebang, mode line, etc.)
@@ -366,6 +435,11 @@ impl GrammarRegistry {
             .collect()
     }
 
+    /// Debug helper: get user extensions as a string for logging
+    pub fn user_extensions_debug(&self) -> String {
+        format!("{:?}", self.user_extensions.keys().collect::<Vec<_>>())
+    }
+
     /// Check if a syntax is available for an extension
     pub fn has_syntax_for_extension(&self, ext: &str) -> bool {
         if self.user_extensions.contains_key(ext) {
@@ -406,19 +480,66 @@ impl GrammarRegistry {
         base: &GrammarRegistry,
         additional: &[(String, PathBuf, Vec<String>)],
     ) -> Option<Self> {
+        tracing::info!(
+            "[SYNTAX DEBUG] with_additional_grammars: adding {} grammars, base has {} user_extensions, {} previously loaded grammars",
+            additional.len(),
+            base.user_extensions.len(),
+            base.loaded_grammar_paths.len()
+        );
+
         // Start with defaults and embedded grammars (same as Default impl)
         let defaults = SyntaxSet::load_defaults_newlines();
         let mut builder = defaults.into_builder();
         Self::add_embedded_grammars(&mut builder);
 
-        // Clone the base user extensions
-        let mut user_extensions = base.user_extensions.clone();
+        // Start fresh with user extensions - we'll rebuild from loaded grammars
+        let mut user_extensions = HashMap::new();
 
-        // Add each new grammar
-        for (language, path, extensions) in additional {
+        // Track all loaded grammar paths (existing + new)
+        let mut loaded_grammar_paths = base.loaded_grammar_paths.clone();
+
+        // First, reload all previously loaded grammars from base
+        for (language, path, extensions) in &base.loaded_grammar_paths {
+            tracing::info!(
+                "[SYNTAX DEBUG] reloading existing grammar: lang='{}', path={:?}",
+                language,
+                path
+            );
             match Self::load_grammar_file(path) {
                 Ok(syntax) => {
                     let scope = syntax.scope.to_string();
+                    builder.add(syntax);
+                    for ext in extensions {
+                        user_extensions.insert(ext.clone(), scope.clone());
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to reload grammar for '{}' from {:?}: {}",
+                        language,
+                        path,
+                        e
+                    );
+                }
+            }
+        }
+
+        // Add each new grammar
+        for (language, path, extensions) in additional {
+            tracing::info!(
+                "[SYNTAX DEBUG] loading new grammar file: lang='{}', path={:?}, extensions={:?}",
+                language,
+                path,
+                extensions
+            );
+            match Self::load_grammar_file(path) {
+                Ok(syntax) => {
+                    let scope = syntax.scope.to_string();
+                    tracing::info!(
+                        "[SYNTAX DEBUG] grammar loaded successfully: name='{}', scope='{}'",
+                        syntax.name,
+                        scope
+                    );
                     builder.add(syntax);
                     tracing::info!(
                         "Loaded grammar for '{}' from {:?} with extensions {:?}",
@@ -430,6 +551,8 @@ impl GrammarRegistry {
                     for ext in extensions {
                         user_extensions.insert(ext.clone(), scope.clone());
                     }
+                    // Track this grammar path for future reloads
+                    loaded_grammar_paths.push((language.clone(), path.clone(), extensions.clone()));
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -442,11 +565,12 @@ impl GrammarRegistry {
             }
         }
 
-        Some(Self::new(
-            builder.build(),
+        Some(Self {
+            syntax_set: Arc::new(builder.build()),
             user_extensions,
-            base.filename_scopes.clone(),
-        ))
+            filename_scopes: base.filename_scopes.clone(),
+            loaded_grammar_paths,
+        })
     }
 
     /// Load a grammar file from disk

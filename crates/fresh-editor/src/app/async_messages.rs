@@ -978,9 +978,31 @@ impl Editor {
         }
 
         tracing::info!(
-            "process_plugin_commands: processing {} commands",
+            "[SYNTAX DEBUG] process_plugin_commands: processing {} commands",
             commands.len()
         );
+
+        for command in &commands {
+            // Log RegisterGrammar and ReloadGrammars commands specifically
+            match command {
+                fresh_core::api::PluginCommand::RegisterGrammar {
+                    language,
+                    grammar_path,
+                    extensions,
+                } => {
+                    tracing::info!(
+                        "[SYNTAX DEBUG] processing RegisterGrammar: lang='{}', path='{}', ext={:?}",
+                        language,
+                        grammar_path,
+                        extensions
+                    );
+                }
+                fresh_core::api::PluginCommand::ReloadGrammars => {
+                    tracing::info!("[SYNTAX DEBUG] processing ReloadGrammars command");
+                }
+                _ => {}
+            }
+        }
 
         for command in commands {
             tracing::trace!(

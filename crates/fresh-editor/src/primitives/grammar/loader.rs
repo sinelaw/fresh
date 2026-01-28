@@ -22,6 +22,9 @@ pub trait GrammarLoader: Send + Sync {
     /// Get the user grammars directory path.
     fn grammars_dir(&self) -> Option<PathBuf>;
 
+    /// Get the language packages directory path (installed via pkg manager).
+    fn languages_packages_dir(&self) -> Option<PathBuf>;
+
     /// Read file contents as string.
     fn read_file(&self, path: &Path) -> io::Result<String>;
 
@@ -65,6 +68,12 @@ impl GrammarLoader for LocalGrammarLoader {
         self.config_dir.as_ref().map(|p| p.join("fresh/grammars"))
     }
 
+    fn languages_packages_dir(&self) -> Option<PathBuf> {
+        self.config_dir
+            .as_ref()
+            .map(|p| p.join("fresh/languages/packages"))
+    }
+
     fn read_file(&self, path: &Path) -> io::Result<String> {
         std::fs::read_to_string(path)
     }
@@ -93,7 +102,8 @@ impl GrammarRegistry {
     /// This loads:
     /// 1. Built-in syntect grammars
     /// 2. Embedded grammars (TOML, Odin, etc.)
-    /// 3. User-installed grammars from the config directory
+    /// 3. User-installed grammars from ~/.config/fresh/grammars/
+    /// 4. Language pack grammars from ~/.config/fresh/languages/packages/
     pub fn load(loader: &dyn GrammarLoader) -> Self {
         let mut user_extensions = HashMap::new();
 
@@ -104,10 +114,22 @@ impl GrammarRegistry {
         // Add embedded grammars (TOML, etc.)
         Self::add_embedded_grammars(&mut builder);
 
-        // Add user grammars via loader
+        // Add user grammars from ~/.config/fresh/grammars/
         if let Some(grammars_dir) = loader.grammars_dir() {
             if loader.exists(&grammars_dir) {
                 load_user_grammars(loader, &grammars_dir, &mut builder, &mut user_extensions);
+            }
+        }
+
+        // Add language pack grammars from ~/.config/fresh/languages/packages/
+        if let Some(packages_dir) = loader.languages_packages_dir() {
+            if loader.exists(&packages_dir) {
+                load_language_pack_grammars(
+                    loader,
+                    &packages_dir,
+                    &mut builder,
+                    &mut user_extensions,
+                );
             }
         }
 
@@ -261,6 +283,145 @@ fn load_direct_grammar(
     }
 }
 
+/// Fresh-specific language pack manifest format
+#[derive(Debug, serde::Deserialize)]
+struct FreshPackageManifest {
+    name: String,
+    #[serde(default)]
+    fresh: Option<FreshConfig>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct FreshConfig {
+    #[serde(default)]
+    grammar: Option<FreshGrammarConfig>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct FreshGrammarConfig {
+    file: String,
+    #[serde(default)]
+    extensions: Vec<String>,
+}
+
+/// Load grammars from Fresh language packages (installed via pkg manager).
+///
+/// These packages use a Fresh-specific package.json format with:
+/// ```json
+/// {
+///   "name": "hare",
+///   "fresh": {
+///     "grammar": {
+///       "file": "grammars/Hare.sublime-syntax",
+///       "extensions": ["ha"]
+///     }
+///   }
+/// }
+/// ```
+fn load_language_pack_grammars(
+    loader: &dyn GrammarLoader,
+    packages_dir: &Path,
+    builder: &mut SyntaxSetBuilder,
+    user_extensions: &mut HashMap<String, String>,
+) {
+    let entries = match loader.read_dir(packages_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::debug!(
+                "Failed to read language packages directory {:?}: {}",
+                packages_dir,
+                e
+            );
+            return;
+        }
+    };
+
+    for package_path in entries {
+        if !loader.is_dir(&package_path) {
+            continue;
+        }
+
+        let manifest_path = package_path.join("package.json");
+        if !loader.exists(&manifest_path) {
+            continue;
+        }
+
+        // Try to parse as Fresh language pack format
+        let content = match loader.read_file(&manifest_path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::debug!("Failed to read {:?}: {}", manifest_path, e);
+                continue;
+            }
+        };
+
+        let manifest: FreshPackageManifest = match serde_json::from_str(&content) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::debug!("Failed to parse {:?}: {}", manifest_path, e);
+                continue;
+            }
+        };
+
+        // Check for Fresh grammar config
+        let grammar_config = match manifest.fresh.and_then(|f| f.grammar) {
+            Some(g) => g,
+            None => continue,
+        };
+
+        let grammar_path = package_path.join(&grammar_config.file);
+        if !loader.exists(&grammar_path) {
+            tracing::warn!(
+                "Grammar file not found for language pack '{}': {:?}",
+                manifest.name,
+                grammar_path
+            );
+            continue;
+        }
+
+        // Load the grammar file
+        let content = match loader.read_file(&grammar_path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("Failed to read grammar file {:?}: {}", grammar_path, e);
+                continue;
+            }
+        };
+
+        // Parse and add the syntax
+        match syntect::parsing::SyntaxDefinition::load_from_str(
+            &content,
+            true,
+            grammar_path.file_stem().and_then(|s| s.to_str()),
+        ) {
+            Ok(syntax) => {
+                let scope = syntax.scope.to_string();
+                tracing::info!(
+                    "Loaded language pack grammar '{}' from {:?} (scope: {}, extensions: {:?})",
+                    manifest.name,
+                    grammar_path,
+                    scope,
+                    grammar_config.extensions
+                );
+                builder.add(syntax);
+
+                // Map extensions to scope
+                for ext in &grammar_config.extensions {
+                    let ext_clean = ext.trim_start_matches('.');
+                    user_extensions.insert(ext_clean.to_string(), scope.clone());
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to parse grammar for language pack '{}': {}",
+                    manifest.name,
+                    e
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +452,10 @@ mod tests {
     impl GrammarLoader for MockGrammarLoader {
         fn grammars_dir(&self) -> Option<PathBuf> {
             self.grammars_dir.clone()
+        }
+
+        fn languages_packages_dir(&self) -> Option<PathBuf> {
+            None // Not used in current tests
         }
 
         fn read_file(&self, path: &Path) -> io::Result<String> {

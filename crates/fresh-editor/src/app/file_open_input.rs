@@ -294,6 +294,7 @@ impl Editor {
         self.key_context = crate::input::keybindings::KeyContext::Normal;
 
         // Open the file
+        tracing::info!("[SYNTAX DEBUG] file_open_dialog opening file: {:?}", path);
         if let Err(e) = self.open_file(&path) {
             self.set_status_message(t!("file.error_opening", error = e.to_string()).to_string());
         } else {

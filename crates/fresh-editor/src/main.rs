@@ -318,6 +318,7 @@ fn handle_first_run_setup(
         if loc.path.is_dir() {
             continue;
         }
+        tracing::info!("[SYNTAX DEBUG] CLI opening file: {:?}", loc.path);
         editor.open_file(&loc.path)?;
 
         if let Some(line) = loc.line {

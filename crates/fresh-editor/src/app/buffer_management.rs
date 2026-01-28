@@ -170,6 +170,13 @@ impl Editor {
         };
 
         // Create the editor state - either load from file or create empty buffer
+        tracing::info!(
+            "[SYNTAX DEBUG] open_file_no_focus: path={:?}, extension={:?}, registry_syntaxes={}, user_extensions={:?}",
+            path,
+            path.extension(),
+            self.grammar_registry.available_syntaxes().len(),
+            self.grammar_registry.user_extensions_debug()
+        );
         let mut state = if file_exists {
             EditorState::from_file_with_languages(
                 path,

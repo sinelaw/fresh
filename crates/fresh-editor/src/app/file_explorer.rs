@@ -328,6 +328,7 @@ impl Editor {
             if is_dir {
                 self.file_explorer_toggle_expand();
             } else {
+                tracing::info!("[SYNTAX DEBUG] file_explorer opening file: {:?}", path);
                 self.open_file(&path)?;
                 self.set_status_message(t!("explorer.opened_file", name = &name).to_string());
                 self.focus_editor();

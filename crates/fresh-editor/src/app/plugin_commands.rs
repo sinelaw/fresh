@@ -1289,6 +1289,11 @@ impl Editor {
         use crate::primitives::grammar::GrammarRegistry;
         use std::path::PathBuf;
 
+        tracing::info!(
+            "[SYNTAX DEBUG] handle_reload_grammars called, pending_grammars count: {}",
+            self.pending_grammars.len()
+        );
+
         if self.pending_grammars.is_empty() {
             tracing::debug!("ReloadGrammars called but no pending grammars");
             return;
@@ -1299,6 +1304,12 @@ impl Editor {
             .pending_grammars
             .drain(..)
             .map(|g| {
+                tracing::info!(
+                    "[SYNTAX DEBUG] pending grammar: lang='{}', path='{}', extensions={:?}",
+                    g.language,
+                    g.grammar_path,
+                    g.extensions
+                );
                 (
                     g.language.clone(),
                     PathBuf::from(g.grammar_path),
@@ -1322,11 +1333,28 @@ impl Editor {
                     lang_config.extensions.push(ext.clone());
                 }
             }
+            tracing::info!(
+                "[SYNTAX DEBUG] updated config.languages['{}']: extensions={:?}, grammar='{}'",
+                language,
+                lang_config.extensions,
+                lang_config.grammar
+            );
         }
+
+        tracing::info!(
+            "[SYNTAX DEBUG] before rebuild: registry has {} syntaxes, user_extensions: {}",
+            self.grammar_registry.available_syntaxes().len(),
+            self.grammar_registry.user_extensions_debug()
+        );
 
         // Rebuild registry with pending grammars
         match GrammarRegistry::with_additional_grammars(&self.grammar_registry, &additional) {
             Some(new_registry) => {
+                tracing::info!(
+                    "[SYNTAX DEBUG] after rebuild: new registry has {} syntaxes, user_extensions: {}",
+                    new_registry.available_syntaxes().len(),
+                    new_registry.user_extensions_debug()
+                );
                 self.grammar_registry = std::sync::Arc::new(new_registry);
 
                 // Re-detect syntax for all buffers that might now have highlighting
