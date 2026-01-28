@@ -2799,7 +2799,15 @@ impl SplitRenderer {
         let ranges: Vec<Range<usize>> = state
             .cursors
             .iter()
-            .filter_map(|(_, cursor)| cursor.selection_range())
+            .filter_map(|(_, cursor)| {
+                // Don't include normal selection for cursors in block selection mode
+                // Block selections are rendered separately via block_rects
+                if cursor.selection_mode == SelectionMode::Block {
+                    None
+                } else {
+                    cursor.selection_range()
+                }
+            })
             .collect();
 
         let block_rects: Vec<(usize, usize, usize, usize)> = state
