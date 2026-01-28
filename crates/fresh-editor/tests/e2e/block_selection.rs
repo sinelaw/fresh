@@ -455,3 +455,90 @@ fn test_block_selection_renders_rectangular() {
         "Block selection: line 1 column 0 should NOT have selection background (this fails if block renders as normal selection)"
     );
 }
+
+/// Test that copying a block selection copies only the rectangular region
+/// Bug: Block selection visually looks correct but Ctrl+C copies entire lines
+/// instead of just the rectangular block
+#[test]
+fn test_block_selection_copy_copies_rectangular_region() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Use test clipboard to avoid system clipboard issues
+    harness.editor_mut().set_clipboard_for_test("".to_string());
+
+    // Create lines with distinct content per column to verify exact copy
+    // Each line: "AAAA BBBB CCCC"
+    // If we block-select columns 5-8 on lines 0-1, we should get:
+    // "BBBB\nBBBB" (just the B's), NOT "AAAA BBBB CCCC\nAAAA BBBB CCCC"
+    harness
+        .type_text("AAAA BBBB CCCC\nAAAA BBBB CCCC\nAAAA BBBB CCCC")
+        .unwrap();
+
+    // Move to start of buffer
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Move to column 5 (start of "BBBB")
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    // Create block selection: down one line, right 4 characters
+    // This should select a 2x4 rectangle: "BBBB" on lines 0 and 1
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
+    for _ in 0..4 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::ALT | KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Verify we have a selection
+    assert!(
+        harness.has_selection(),
+        "Should have block selection before copy"
+    );
+
+    // Copy the block selection
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Get clipboard content
+    let clipboard_content = harness.editor_mut().clipboard_content_for_test();
+    println!("Clipboard content: {:?}", clipboard_content);
+
+    // The clipboard should contain only the rectangular block:
+    // "BBBB\nBBBB" (the 4 B's from each of the 2 lines)
+    // It should NOT contain "AAAA" or "CCCC" or entire lines
+    assert!(
+        !clipboard_content.contains("AAAA"),
+        "Block selection copy should NOT include content outside the rectangle (found AAAA). Got: {:?}",
+        clipboard_content
+    );
+    assert!(
+        !clipboard_content.contains("CCCC"),
+        "Block selection copy should NOT include content outside the rectangle (found CCCC). Got: {:?}",
+        clipboard_content
+    );
+
+    // Should contain the block content (BBBB from each line)
+    assert!(
+        clipboard_content.contains("BBBB"),
+        "Block selection copy should include the selected block content. Got: {:?}",
+        clipboard_content
+    );
+
+    // Verify the exact expected content: two lines of "BBBB"
+    let expected = "BBBB\nBBBB";
+    assert_eq!(
+        clipboard_content, expected,
+        "Block selection copy should produce exactly the rectangular region"
+    );
+}

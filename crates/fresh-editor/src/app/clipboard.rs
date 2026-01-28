@@ -10,10 +10,20 @@ use rust_i18n::t;
 use crate::input::multi_cursor::{
     add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult,
 };
+use crate::model::buffer::Buffer;
+use crate::model::cursor::Position2D;
 use crate::model::event::{CursorId, Event};
 use crate::primitives::word_navigation::{find_word_start_left, find_word_start_right};
 
 use super::Editor;
+
+/// Convert byte offset to 2D position (line, column)
+fn byte_to_2d(buffer: &Buffer, byte_pos: usize) -> Position2D {
+    let line = buffer.get_line_number(byte_pos);
+    let line_start = buffer.line_start_offset(line).unwrap_or(0);
+    let column = byte_pos.saturating_sub(line_start);
+    Position2D { line, column }
+}
 
 // These are the clipboard and multi-cursor operations on Editor.
 //
@@ -30,8 +40,28 @@ impl Editor {
     /// Copy the current selection to clipboard
     ///
     /// If no selection exists, copies the entire current line (like VSCode/Rider/Zed).
+    /// For block selections, copies only the rectangular region.
     pub fn copy_selection(&mut self) {
-        // Check if any cursor has a selection
+        // Check if any cursor has a block selection (takes priority)
+        let has_block_selection = {
+            let state = self.active_state();
+            state
+                .cursors
+                .iter()
+                .any(|(_, cursor)| cursor.has_block_selection())
+        };
+
+        if has_block_selection {
+            // Block selection: copy rectangular region
+            let text = self.copy_block_selection_text();
+            if !text.is_empty() {
+                self.clipboard.copy(text);
+                self.status_message = Some(t!("clipboard.copied").to_string());
+            }
+            return;
+        }
+
+        // Check if any cursor has a normal selection
         let has_selection = {
             let state = self.active_state();
             state
@@ -89,6 +119,102 @@ impl Editor {
                 self.status_message = Some(t!("clipboard.copied_line").to_string());
             }
         }
+    }
+
+    /// Extract text from block (rectangular) selection
+    ///
+    /// For block selection, we need to extract a rectangular region defined by:
+    /// - The block anchor (stored as Position2D with line and column)
+    /// - The current cursor position (byte offset, converted to 2D)
+    ///
+    /// This works for both small and large files by using line_iterator
+    /// for iteration and only using 2D positions for column extraction.
+    fn copy_block_selection_text(&mut self) -> String {
+        let estimated_line_length = 120;
+
+        // Collect block selection info from all cursors
+        let block_infos: Vec<_> = {
+            let state = self.active_state();
+            state
+                .cursors
+                .iter()
+                .filter_map(|(_, cursor)| {
+                    if !cursor.has_block_selection() {
+                        return None;
+                    }
+                    let block_anchor = cursor.block_anchor?;
+                    let anchor_byte = cursor.anchor?; // byte offset of anchor
+                    let cursor_byte = cursor.position;
+                    Some((block_anchor, anchor_byte, cursor_byte))
+                })
+                .collect()
+        };
+
+        let mut result = String::new();
+
+        for (block_anchor, anchor_byte, cursor_byte) in block_infos {
+            // Get current cursor position as 2D
+            let cursor_2d = {
+                let state = self.active_state();
+                byte_to_2d(&state.buffer, cursor_byte)
+            };
+
+            // Calculate column bounds (min and max columns for the rectangle)
+            let min_col = block_anchor.column.min(cursor_2d.column);
+            let max_col = block_anchor.column.max(cursor_2d.column);
+
+            // Calculate line bounds using byte positions
+            let start_byte = anchor_byte.min(cursor_byte);
+            let end_byte = anchor_byte.max(cursor_byte);
+
+            // Use line_iterator to iterate through lines
+            let state = self.active_state_mut();
+            let mut iter = state
+                .buffer
+                .line_iterator(start_byte, estimated_line_length);
+
+            // Collect lines within the block selection range
+            let mut lines_text = Vec::new();
+            loop {
+                let line_start = iter.current_position();
+
+                // Stop if we've passed the end of the selection
+                if line_start > end_byte {
+                    break;
+                }
+
+                if let Some((_offset, line_content)) = iter.next_line() {
+                    // Extract the column range from this line
+                    // Remove trailing newline for column calculation
+                    let content_without_newline = line_content.trim_end_matches(&['\n', '\r'][..]);
+                    let chars: Vec<char> = content_without_newline.chars().collect();
+
+                    // Extract characters from min_col to max_col (exclusive)
+                    let extracted: String = chars
+                        .iter()
+                        .skip(min_col)
+                        .take(max_col.saturating_sub(min_col))
+                        .collect();
+
+                    lines_text.push(extracted);
+
+                    // If this line extends past end_byte, we're done
+                    if line_start + line_content.len() > end_byte {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            // Join the extracted text from each line
+            if !result.is_empty() && !lines_text.is_empty() {
+                result.push('\n');
+            }
+            result.push_str(&lines_text.join("\n"));
+        }
+
+        result
     }
 
     /// Copy selection with a specific theme's formatting
