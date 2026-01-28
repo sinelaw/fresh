@@ -66,13 +66,6 @@
       "when": "global"
     },
     {
-      "key": ",",
-      "modifiers": ["ctrl"],
-      "action": "open_settings",
-      "args": {},
-      "when": "global"
-    },
-    {
       "comment": "Normal context - Close tab",
       "key": "w",
       "modifiers": ["alt"],

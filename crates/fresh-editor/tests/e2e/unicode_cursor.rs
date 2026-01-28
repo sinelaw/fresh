@@ -897,10 +897,7 @@ fn test_settings_search_grapheme_movement() {
     harness.render().unwrap();
 
     // Open settings with Ctrl+,
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Verify settings is open
     harness.assert_screen_contains("Settings");

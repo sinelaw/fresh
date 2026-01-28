@@ -23,10 +23,7 @@ fn test_settings_paste() {
         .unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for "languages"
     harness

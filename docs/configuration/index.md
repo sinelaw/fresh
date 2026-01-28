@@ -115,7 +115,7 @@ There is currently no explicit mechanism to "remove" or "unset" a value defined 
 
 The easiest way to configure Fresh is through the Settings UI:
 
-1. **Open Settings**: Press `Ctrl+,` or use Command Palette → "Open Settings"
+1. **Open Settings**: Use **Edit → Settings...** or Command Palette (`Ctrl+P`) → "Open Settings"
 2. **Browse Categories**: Use arrow keys or click to navigate
 3. **Change Values**: Toggle booleans, adjust numbers, select from dropdowns
 4. **Choose Target Layer**: Click the layer button (e.g., `[ User ]`) to switch between User/Project/Session

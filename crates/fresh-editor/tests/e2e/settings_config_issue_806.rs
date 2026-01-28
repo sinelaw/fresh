@@ -68,10 +68,7 @@ fn test_issue_806_external_config_edits_lost_on_settings_save() {
     .unwrap();
 
     // Step 3: User opens Settings UI
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Verify settings is open
     assert!(
@@ -188,10 +185,7 @@ fn test_issue_806_custom_language_config_lost_on_settings_save() {
     .unwrap();
 
     // Open Settings UI
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     assert!(
         harness.editor().is_settings_open(),
@@ -318,10 +312,7 @@ fn test_issue_806_external_edit_then_settings_change_and_save() {
     );
 
     // Step 4: Open Settings UI (Ctrl+,)
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Step 5: Change a DIFFERENT setting (search for auto_indent and toggle it)
     // Press / to open search in settings
@@ -405,10 +396,7 @@ fn test_settings_should_reflect_external_config_changes() {
     fs::write(&user_config_path, r#"{"theme": "dracula"}"#).unwrap();
 
     // Open Settings UI
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     assert!(
         harness.editor().is_settings_open(),

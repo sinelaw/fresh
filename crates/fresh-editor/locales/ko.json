@@ -823,6 +823,7 @@
   "menu.edit.redo": "다시 실행",
   "menu.edit.replace": "바꾸기...",
   "menu.edit.select_all": "모두 선택",
+  "menu.edit.settings": "설정...",
   "menu.edit.undo": "실행 취소",
   "menu.explorer": "탐색기",
   "menu.explorer.delete": "삭제",

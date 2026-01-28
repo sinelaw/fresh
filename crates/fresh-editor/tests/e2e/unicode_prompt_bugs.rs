@@ -375,10 +375,7 @@ fn test_multibyte_in_settings_number_input() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for "hover delay" which is a number input
     harness

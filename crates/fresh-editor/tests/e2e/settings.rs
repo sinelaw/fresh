@@ -15,10 +15,7 @@ fn test_open_settings_modal() {
     harness.assert_screen_not_contains("Settings");
 
     // Open settings with Ctrl+,
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Settings modal should now be visible
     harness.assert_screen_contains("Settings");
@@ -30,10 +27,7 @@ fn test_close_settings_with_escape() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
     harness.assert_screen_contains("Settings");
 
     // Close with Escape
@@ -50,10 +44,7 @@ fn test_settings_navigation() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Navigate down in categories
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -77,10 +68,7 @@ fn test_settings_search() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Start search with /
     harness
@@ -123,10 +111,7 @@ fn test_settings_help_overlay() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Open help with ?
     harness
@@ -154,10 +139,7 @@ fn test_settings_search_text_displays() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Start search with /
     harness
@@ -197,10 +179,7 @@ fn test_settings_toggle_shows_modified() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Use search to find "Check For Updates" (a toggle setting)
     harness
@@ -246,10 +225,7 @@ fn test_confirmation_dialog_shows_changes() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Use search to find "Check For Updates"
     harness
@@ -293,10 +269,7 @@ fn test_confirmation_dialog_button_navigation() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Use search to find and toggle a setting
     harness
@@ -367,10 +340,7 @@ fn test_settings_selection_indicator() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Switch to settings panel with Tab
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
@@ -409,10 +379,7 @@ fn test_settings_number_increment() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for a number setting (mouse hover delay)
     harness
@@ -463,10 +430,7 @@ fn test_settings_number_decrement() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for hover delay (number setting) - same as increment test but decrement
     harness
@@ -515,10 +479,7 @@ fn test_settings_dropdown_cycle() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for "theme" (a dropdown setting)
     harness
@@ -571,10 +532,7 @@ fn test_settings_dropdown_increment() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for "theme" (a dropdown setting)
     harness
@@ -629,10 +587,7 @@ fn test_settings_scrolling() {
     let mut harness = EditorTestHarness::new(100, 25).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Navigate to Editor category which has many settings
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -674,10 +629,7 @@ fn test_settings_scrollbar_visible() {
     let mut harness = EditorTestHarness::new(100, 25).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Navigate to Editor category which has many settings
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -708,10 +660,7 @@ fn test_settings_search_jump_scrolls() {
     let mut harness = EditorTestHarness::new(100, 25).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for a setting that's likely at the bottom of a category
     harness
@@ -749,10 +698,7 @@ fn test_settings_search_result_click_navigates() {
     let mut harness = EditorTestHarness::new(100, 30).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for "tab" which should match "Tab Size" in Editor category
     harness
@@ -806,10 +752,7 @@ fn test_settings_theme_dropdown_cycle() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for theme setting
     harness
@@ -924,10 +867,7 @@ fn test_settings_from_terminal_mode_captures_input() {
     );
 
     // Open settings with Ctrl+, (this should work even in terminal mode)
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Settings should be visible
     harness.assert_screen_contains("Settings");
@@ -977,10 +917,7 @@ fn test_settings_footer_buttons_keyboard_accessible() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
     harness.assert_screen_contains("Settings");
 
     // Make a change so footer buttons become relevant
@@ -1055,10 +992,7 @@ fn test_settings_change_theme_and_save() {
     let initial_theme = harness.editor().theme().name.clone();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Verify settings is open via state check
     assert!(
@@ -1135,10 +1069,7 @@ fn test_settings_descriptions_render_properly() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Navigate to Editor category which has settings with descriptions
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -1196,10 +1127,7 @@ fn test_settings_consumes_global_shortcuts() {
     harness.render().unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Verify settings is open
     assert!(
@@ -1245,10 +1173,7 @@ fn test_map_control_add_new_shows_text_input() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for "Keybinding Maps" which is a Map control
     harness
@@ -1347,10 +1272,7 @@ fn test_settings_percentage_value_saves_correctly() {
     );
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Navigate to File Explorer category (down three times from General)
     // Categories: General, Editor, File Browser, File Explorer, Menu, Terminal, Warnings
@@ -1419,10 +1341,7 @@ fn test_number_input_enter_editing_mode() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for hover delay (a number setting)
     harness
@@ -1490,10 +1409,7 @@ fn test_number_input_escape_cancels_editing() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for hover delay
     harness
@@ -1545,10 +1461,7 @@ fn test_number_input_cursor_navigation() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for hover delay
     harness
@@ -1608,10 +1521,7 @@ fn test_number_input_backspace() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for hover delay
     harness
@@ -1685,10 +1595,7 @@ fn test_settings_loads_saved_values_on_reopen() {
     );
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for "auto save" to find the setting
     harness
@@ -1745,10 +1652,7 @@ fn test_settings_loads_saved_values_on_reopen() {
     );
 
     // CRITICAL TEST: Reopen settings and verify the saved value is displayed
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for the same setting again
     harness
@@ -1787,10 +1691,7 @@ fn test_number_input_enter_selects_all_text() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for hover delay (a number setting with value 500)
     harness
@@ -1862,10 +1763,7 @@ fn test_category_selection_indicator_visible() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Categories panel is focused by default, should show ">" before General
     // General may have "●" modified indicator due to test defaults
@@ -1916,10 +1814,7 @@ fn test_ctrl_s_saves_settings() {
     assert!(!harness.config().check_for_updates);
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for "check for updates" and toggle it
     harness
@@ -1969,10 +1864,7 @@ fn test_entry_dialog_focus_indicator() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // We're in General category. Tab to content panel
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
@@ -2044,10 +1936,7 @@ fn test_entry_dialog_add_new_textlist_item() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Navigate to Languages section - Tab to content, then down to a language
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
@@ -2121,10 +2010,7 @@ fn test_entry_dialog_delete_textlist_item() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Navigate to Languages section - Tab to content, then down to a language
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
@@ -2222,10 +2108,7 @@ fn test_settings_toggle_persists_after_save_and_reopen() {
     );
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Switch to settings panel
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
@@ -2278,10 +2161,7 @@ fn test_settings_toggle_persists_after_save_and_reopen() {
     );
 
     // CRITICAL: Reopen settings and verify the saved value is displayed
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Switch to settings panel
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
@@ -2324,10 +2204,7 @@ fn test_line_numbers_config_applied_to_new_buffers() {
     );
 
     // Open settings and disable line numbers
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for line numbers setting
     harness
@@ -2389,10 +2266,7 @@ fn test_line_wrap_config_applied_to_new_buffers() {
     harness.render().unwrap();
 
     // Open settings and disable line wrap
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for line wrap setting
     harness
@@ -2469,10 +2343,7 @@ fn test_line_wrap_config_applied_to_new_buffers() {
 /// Opens settings, searches for "lsp", opens the first LSP entry, and navigates to Initialization Options
 fn navigate_to_lsp_json_editor(harness: &mut EditorTestHarness) {
     // Open settings via Ctrl+,
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Use search to find "lsp" section
     harness
@@ -2690,10 +2561,7 @@ fn test_settings_edit_button_visible() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Edit button should be visible in footer (on the left, dimmed style)
     harness.assert_screen_contains("[ Edit ]");
@@ -2711,10 +2579,7 @@ fn test_settings_edit_button_keyboard_navigation() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Tab to settings panel
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
@@ -2758,10 +2623,7 @@ fn test_settings_edit_button_opens_config_file() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Verify settings is open
     assert!(
@@ -2812,10 +2674,7 @@ fn test_settings_edit_button_blocked_with_pending_changes() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Make a change: toggle "Check For Updates"
     harness
@@ -2880,10 +2739,7 @@ fn test_map_add_new_button_clickable_with_mouse() {
     let mut harness = EditorTestHarness::new(120, 45).unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for "Keybinding Maps" which is a Map control
     harness
@@ -2942,10 +2798,7 @@ fn test_lsp_map_has_add_new_button() {
     harness.render().unwrap();
 
     // Open settings via Ctrl+,
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for "lsp" to navigate to the LSP section
     harness
@@ -2988,10 +2841,7 @@ fn test_languages_map_has_add_new_button() {
     harness.render().unwrap();
 
     // Open settings via Ctrl+,
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for "languages" to navigate to the Languages section
     harness
@@ -3055,10 +2905,7 @@ fn test_lsp_map_add_new_button_click_opens_dialog() {
     harness.render().unwrap();
 
     // Open settings via Ctrl+,
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for "lsp" to navigate to the LSP section
     harness
@@ -3144,10 +2991,7 @@ fn test_map_entry_navigation_scrolls_to_focused_entry() {
     harness.render().unwrap();
 
     // Open settings
-    harness
-        .send_key(KeyCode::Char(','), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    harness.open_settings().unwrap();
 
     // Search for "languages" to navigate to the Languages section
     harness

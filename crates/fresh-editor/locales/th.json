@@ -823,6 +823,7 @@
   "menu.edit.redo": "ทำซ้ำ",
   "menu.edit.replace": "แทนที่...",
   "menu.edit.select_all": "เลือกทั้งหมด",
+  "menu.edit.settings": "การตั้งค่า...",
   "menu.edit.undo": "เลิกทำ",
   "menu.explorer": "โปรแกรมสำรวจ",
   "menu.explorer.delete": "ลบ",

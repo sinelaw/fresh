@@ -823,6 +823,7 @@
   "menu.edit.redo": "やり直し",
   "menu.edit.replace": "置換...",
   "menu.edit.select_all": "すべて選択",
+  "menu.edit.settings": "設定...",
   "menu.edit.undo": "元に戻す",
   "menu.explorer": "エクスプローラー",
   "menu.explorer.delete": "削除",

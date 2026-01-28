@@ -823,6 +823,7 @@
   "menu.edit.redo": "重做",
   "menu.edit.replace": "替换...",
   "menu.edit.select_all": "全选",
+  "menu.edit.settings": "设置...",
   "menu.edit.undo": "撤销",
   "menu.explorer": "资源管理器",
   "menu.explorer.delete": "删除",

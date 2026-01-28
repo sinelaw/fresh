@@ -117,7 +117,7 @@ The language name (e.g., `"csharp"`) must match in both sections. Fresh includes
 
 You can also configure language detection using the Settings UI instead of editing `config.json` directly:
 
-1. **Open Settings**: Press `Ctrl+,` or use the command palette (`Ctrl+P`) and search for "Settings"
+1. **Open Settings**: Use **Edit → Settings...** or the command palette (`Ctrl+P`) and search for "Settings"
 2. **Navigate to Languages**: Go to the **Languages** section
 3. **Add or Edit a Language**: Click on an existing language to edit it, or add a new one
 4. **Configure Detection**: Set the following fields:
@@ -129,7 +129,7 @@ You can also configure language detection using the Settings UI instead of editi
 
 To make Fresh recognize `.bashrc`, `.zshrc`, and similar files as shell scripts:
 
-1. Open Settings (`Ctrl+,`)
+1. Open Settings (**Edit → Settings...**)
 2. Go to **Languages** → **bash** (or create a new `bash` entry)
 3. Add filenames: `.bashrc`, `.zshrc`, `.bash_profile`, `.profile`
 4. The grammar should be set to `Bourne Again Shell (bash)` or similar

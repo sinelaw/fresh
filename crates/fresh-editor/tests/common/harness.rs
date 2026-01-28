@@ -1627,6 +1627,24 @@ impl EditorTestHarness {
         self.wait_until(|h| !h.editor().is_prompting())
     }
 
+    /// Open the settings dialog via command palette
+    /// This is the preferred way to open settings since Ctrl+, doesn't work reliably in terminals
+    pub fn open_settings(&mut self) -> anyhow::Result<()> {
+        // Open command palette
+        self.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+        self.wait_for_prompt()?;
+
+        // Type "Settings" and press Enter
+        self.type_text("Settings")?;
+        self.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+
+        // Wait for settings to appear
+        self.wait_for_screen_contains("Settings")?;
+        self.render()?;
+
+        Ok(())
+    }
+
     /// Wait for screen to contain specific text
     pub fn wait_for_screen_contains(&mut self, text: &str) -> anyhow::Result<()> {
         let text = text.to_string();

@@ -1519,6 +1519,14 @@ impl MenuConfig {
                         when: Some(context_keys::FORMATTER_AVAILABLE.to_string()),
                         checkbox: None,
                     },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.edit.settings").to_string(),
+                        action: "open_settings".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
                 ],
             },
             // View menu

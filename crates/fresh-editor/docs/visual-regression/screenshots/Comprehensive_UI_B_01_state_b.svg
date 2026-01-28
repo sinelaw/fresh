@@ -76,32 +76,24 @@
   <rect x="387" y="0" width="9" height="18" fill="#323237"/>
   <rect x="396" y="0" width="9" height="18" fill="#323237"/>
   <rect x="405" y="0" width="9" height="18" fill="#323237"/>
-  <text x="406" y="14" fill="#ffffff" class="terminal" style="">E</text>
+  <text x="406" y="14" fill="#ffffff" class="terminal" style="text-decoration:underline;">H</text>
   <rect x="414" y="0" width="9" height="18" fill="#323237"/>
-  <text x="415" y="14" fill="#ffffff" class="terminal" style="text-decoration:underline;">x</text>
+  <text x="415" y="14" fill="#ffffff" class="terminal" style="">e</text>
   <rect x="423" y="0" width="9" height="18" fill="#323237"/>
-  <text x="424" y="14" fill="#ffffff" class="terminal" style="">p</text>
+  <text x="424" y="14" fill="#ffffff" class="terminal" style="">l</text>
   <rect x="432" y="0" width="9" height="18" fill="#323237"/>
-  <text x="433" y="14" fill="#ffffff" class="terminal" style="">l</text>
+  <text x="433" y="14" fill="#ffffff" class="terminal" style="">p</text>
   <rect x="441" y="0" width="9" height="18" fill="#323237"/>
-  <text x="442" y="14" fill="#ffffff" class="terminal" style="">o</text>
   <rect x="450" y="0" width="9" height="18" fill="#323237"/>
-  <text x="451" y="14" fill="#ffffff" class="terminal" style="">r</text>
   <rect x="459" y="0" width="9" height="18" fill="#323237"/>
-  <text x="460" y="14" fill="#ffffff" class="terminal" style="">e</text>
   <rect x="468" y="0" width="9" height="18" fill="#323237"/>
-  <text x="469" y="14" fill="#ffffff" class="terminal" style="">r</text>
   <rect x="477" y="0" width="9" height="18" fill="#323237"/>
   <rect x="486" y="0" width="9" height="18" fill="#323237"/>
   <rect x="495" y="0" width="9" height="18" fill="#323237"/>
   <rect x="504" y="0" width="9" height="18" fill="#323237"/>
-  <text x="505" y="14" fill="#ffffff" class="terminal" style="text-decoration:underline;">H</text>
   <rect x="513" y="0" width="9" height="18" fill="#323237"/>
-  <text x="514" y="14" fill="#ffffff" class="terminal" style="">e</text>
   <rect x="522" y="0" width="9" height="18" fill="#323237"/>
-  <text x="523" y="14" fill="#ffffff" class="terminal" style="">l</text>
   <rect x="531" y="0" width="9" height="18" fill="#323237"/>
-  <text x="532" y="14" fill="#ffffff" class="terminal" style="">p</text>
   <rect x="540" y="0" width="9" height="18" fill="#323237"/>
   <rect x="549" y="0" width="9" height="18" fill="#323237"/>
   <rect x="558" y="0" width="9" height="18" fill="#323237"/>

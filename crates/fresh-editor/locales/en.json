@@ -823,6 +823,7 @@
   "menu.edit.redo": "Redo",
   "menu.edit.replace": "Replace...",
   "menu.edit.select_all": "Select All",
+  "menu.edit.settings": "Settings...",
   "menu.edit.undo": "Undo",
   "menu.explorer": "Explorer",
   "menu.explorer.delete": "Delete",
