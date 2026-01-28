@@ -592,12 +592,20 @@ impl MenuRenderer {
         layout: &mut MenuLayout,
     ) {
         // Calculate the x position of the top-level dropdown based on menu index
+        // Skip hidden menus (those with `when` conditions that evaluate to false)
         let mut x_offset = 0usize;
         for (idx, m) in all_menus.iter().enumerate() {
             if idx == menu_index {
                 break;
             }
-            x_offset += str_width(&m.label) + 3; // label + spaces
+            // Only count visible menus
+            let is_visible = match &m.when {
+                Some(condition) => menu_state.context.get(condition),
+                None => true,
+            };
+            if is_visible {
+                x_offset += str_width(&m.label) + 3; // label + spaces
+            }
         }
 
         let terminal_width = frame.area().width;
@@ -1597,5 +1605,113 @@ mod tests {
         // Navigate up wraps to end
         state.prev_item(&menus[0]);
         assert_eq!(state.highlighted_item, Some(2));
+    }
+
+    /// Helper function to calculate dropdown x offset (mirrors the logic in render_dropdown_chain)
+    fn calculate_dropdown_x_offset(
+        all_menus: &[Menu],
+        menu_index: usize,
+        context: &MenuContext,
+    ) -> usize {
+        let mut x_offset = 0usize;
+        for (idx, m) in all_menus.iter().enumerate() {
+            if idx == menu_index {
+                break;
+            }
+            // Only count visible menus
+            let is_visible = match &m.when {
+                Some(condition) => context.get(condition),
+                None => true,
+            };
+            if is_visible {
+                x_offset += str_width(&m.label) + 3; // label + spaces
+            }
+        }
+        x_offset
+    }
+
+    #[test]
+    fn test_dropdown_position_skips_hidden_menus() {
+        // Create menus: File (always visible), Explorer (conditional), Help (always visible)
+        let menus = vec![
+            Menu {
+                id: None,
+                label: "File".to_string(), // width 4, total 7 with padding
+                items: vec![],
+                when: None,
+            },
+            Menu {
+                id: None,
+                label: "Explorer".to_string(), // width 8, total 11 with padding
+                items: vec![],
+                when: Some("file_explorer_focused".to_string()),
+            },
+            Menu {
+                id: None,
+                label: "Help".to_string(), // width 4, total 7 with padding
+                items: vec![],
+                when: None,
+            },
+        ];
+
+        // When Explorer is hidden, Help dropdown should be at File's width only
+        let context_hidden = MenuContext::new().with("file_explorer_focused", false);
+        let x_help_hidden = calculate_dropdown_x_offset(&menus, 2, &context_hidden);
+        // "File" = 4 chars + 3 spaces = 7
+        assert_eq!(
+            x_help_hidden, 7,
+            "Help dropdown should be at x=7 when Explorer is hidden"
+        );
+
+        // When Explorer is visible, Help dropdown should be at File + Explorer width
+        let context_visible = MenuContext::new().with("file_explorer_focused", true);
+        let x_help_visible = calculate_dropdown_x_offset(&menus, 2, &context_visible);
+        // "File" = 4 chars + 3 spaces = 7, "Explorer" = 8 chars + 3 spaces = 11, total = 18
+        assert_eq!(
+            x_help_visible, 18,
+            "Help dropdown should be at x=18 when Explorer is visible"
+        );
+    }
+
+    #[test]
+    fn test_dropdown_position_with_multiple_hidden_menus() {
+        let menus = vec![
+            Menu {
+                id: None,
+                label: "A".to_string(), // width 1, total 4
+                items: vec![],
+                when: None,
+            },
+            Menu {
+                id: None,
+                label: "B".to_string(), // width 1, total 4
+                items: vec![],
+                when: Some("show_b".to_string()),
+            },
+            Menu {
+                id: None,
+                label: "C".to_string(), // width 1, total 4
+                items: vec![],
+                when: Some("show_c".to_string()),
+            },
+            Menu {
+                id: None,
+                label: "D".to_string(),
+                items: vec![],
+                when: None,
+            },
+        ];
+
+        // No conditional menus visible: D should be right after A
+        let context_none = MenuContext::new();
+        assert_eq!(calculate_dropdown_x_offset(&menus, 3, &context_none), 4);
+
+        // Only B visible: D should be after A + B
+        let context_b = MenuContext::new().with("show_b", true);
+        assert_eq!(calculate_dropdown_x_offset(&menus, 3, &context_b), 8);
+
+        // Both B and C visible: D should be after A + B + C
+        let context_both = MenuContext::new().with("show_b", true).with("show_c", true);
+        assert_eq!(calculate_dropdown_x_offset(&menus, 3, &context_both), 12);
     }
 }
