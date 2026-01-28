@@ -308,6 +308,92 @@ pub fn clear_block_selection_if_active(state: &mut EditorState) {
     });
 }
 
+/// Convert block selection to multiple cursors with normal selections.
+/// Each cursor will have a selection covering that line's portion of the block.
+/// This should be called before action processing so normal multi-cursor logic applies.
+/// Returns events to add the new cursors (if any).
+fn convert_block_selection_to_cursors(state: &mut EditorState) -> Vec<Event> {
+    let mut events = Vec::new();
+
+    // Check if any cursor has a block selection
+    let block_info: Option<(CursorId, Position2D, Position2D)> =
+        state.cursors.iter().find_map(|(cursor_id, cursor)| {
+            if cursor.has_block_selection() {
+                let block_anchor = cursor.block_anchor?;
+                let cursor_2d = byte_to_2d(&state.buffer, cursor.position);
+                Some((cursor_id, block_anchor, cursor_2d))
+            } else {
+                None
+            }
+        });
+
+    let Some((primary_cursor_id, block_anchor, cursor_2d)) = block_info else {
+        return events;
+    };
+
+    // Calculate block rectangle bounds
+    let min_line = block_anchor.line.min(cursor_2d.line);
+    let max_line = block_anchor.line.max(cursor_2d.line);
+    let min_col = block_anchor.column.min(cursor_2d.column);
+    let max_col = block_anchor.column.max(cursor_2d.column);
+
+    // Calculate cursor positions for each line
+    let mut cursor_positions: Vec<(usize, usize)> = Vec::new(); // (position, anchor)
+
+    for line in min_line..=max_line {
+        let line_start = state.buffer.line_start_offset(line).unwrap_or(0);
+        let line_content = state.buffer.get_line(line).unwrap_or_default();
+
+        // Calculate line length excluding newline
+        let line_len = if line_content.last() == Some(&b'\n') {
+            line_content.len().saturating_sub(1)
+        } else {
+            line_content.len()
+        };
+
+        // Clamp columns to actual line length
+        let actual_min_col = min_col.min(line_len);
+        let actual_max_col = max_col.min(line_len);
+
+        let anchor = line_start + actual_min_col;
+        let position = line_start + actual_max_col;
+
+        cursor_positions.push((position, anchor));
+    }
+
+    // Update the primary cursor to have a normal selection on the first line
+    if let Some((position, anchor)) = cursor_positions.first().copied() {
+        if let Some(cursor) = state.cursors.get_mut(primary_cursor_id) {
+            cursor.position = position;
+            cursor.anchor = if position != anchor {
+                Some(anchor)
+            } else {
+                None
+            };
+            cursor.clear_block_selection();
+        }
+    }
+
+    // Add new cursors for remaining lines
+    let mut next_cursor_id = state.cursors.count();
+    for (position, anchor) in cursor_positions.into_iter().skip(1) {
+        let cursor_id = CursorId(next_cursor_id);
+        next_cursor_id += 1;
+
+        events.push(Event::AddCursor {
+            cursor_id,
+            position,
+            anchor: if position != anchor {
+                Some(anchor)
+            } else {
+                None
+            },
+        });
+    }
+
+    events
+}
+
 /// Get the matching close character for auto-pairing.
 pub fn get_auto_close_char(ch: char, auto_indent: bool, language: &str) -> Option<char> {
     if !auto_indent {
@@ -694,6 +780,16 @@ pub fn action_to_events(
     }
 
     let mut events = Vec::new();
+
+    // Convert block selection to multi-cursor before processing editing actions
+    // This allows normal multi-cursor logic to handle typing, deletion, etc.
+    if action.is_editing() {
+        let cursor_events = convert_block_selection_to_cursors(state);
+        for event in &cursor_events {
+            state.apply(event);
+        }
+        events.extend(cursor_events);
+    }
 
     match action {
         // Character input - insert at each cursor

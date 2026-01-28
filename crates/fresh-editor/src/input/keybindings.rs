@@ -941,6 +941,28 @@ impl Action {
                 | Action::Redo
         )
     }
+
+    /// Check if this action modifies buffer content (for block selection conversion).
+    /// Block selections should be converted to multi-cursor before these actions.
+    pub fn is_editing(&self) -> bool {
+        matches!(
+            self,
+            Action::InsertChar(_)
+                | Action::InsertNewline
+                | Action::InsertTab
+                | Action::DeleteBackward
+                | Action::DeleteForward
+                | Action::DeleteWordBackward
+                | Action::DeleteWordForward
+                | Action::DeleteLine
+                | Action::DeleteToLineEnd
+                | Action::DeleteToLineStart
+                | Action::TransposeChars
+                | Action::OpenLine
+                | Action::Cut
+                | Action::Paste
+        )
+    }
 }
 
 /// Result of chord resolution
