@@ -4,6 +4,8 @@ mod calibration_actions;
 pub mod calibration_wizard;
 mod clipboard;
 mod composite_buffer_actions;
+pub mod event_debug;
+mod event_debug_actions;
 mod file_explorer;
 pub mod file_open;
 mod file_open_input;
@@ -651,6 +653,9 @@ pub struct Editor {
     /// Calibration wizard state (when calibration modal is open)
     pub(crate) calibration_wizard: Option<calibration_wizard::CalibrationWizard>,
 
+    /// Event debug dialog state (when event debug modal is open)
+    pub(crate) event_debug: Option<event_debug::EventDebug>,
+
     /// Key translator for input calibration (loaded from config)
     pub(crate) key_translator: crate::input::key_translator::KeyTranslator,
 
@@ -1209,6 +1214,7 @@ impl Editor {
             previous_click_position: None,
             settings_state: None,
             calibration_wizard: None,
+            event_debug: None,
             key_translator: crate::input::key_translator::KeyTranslator::load_default()
                 .unwrap_or_default(),
             color_capability,

@@ -553,6 +553,9 @@ pub enum Action {
     // Input calibration
     CalibrateInput, // Open the input calibration wizard
 
+    // Event debug
+    EventDebug, // Open the event debug dialog
+
     // No-op
     None,
 }
@@ -855,6 +858,9 @@ impl Action {
 
             // Input calibration
             "calibrate_input" => Self::CalibrateInput,
+
+            // Event debug
+            "event_debug" => Self::EventDebug,
 
             // Settings actions
             "open_settings" => Self::OpenSettings,
@@ -1846,6 +1852,7 @@ impl KeybindingResolver {
             Action::ToUpperCase => t!("action.to_uppercase"),
             Action::ToLowerCase => t!("action.to_lowercase"),
             Action::CalibrateInput => t!("action.calibrate_input"),
+            Action::EventDebug => t!("action.event_debug"),
             Action::None => t!("action.none"),
         }
         .to_string()

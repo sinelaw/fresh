@@ -838,6 +838,13 @@ impl Editor {
             );
         }
 
+        // Render event debug dialog if active
+        if let Some(ref debug) = self.event_debug {
+            // Dim the editor content behind the dialog modal
+            crate::view::dimming::apply_dimming(frame, size);
+            crate::view::event_debug::render_event_debug(frame, size, debug, &self.theme);
+        }
+
         if self.menu_bar_visible {
             self.cached_layout.menu_layout = Some(crate::view::ui::MenuRenderer::render(
                 frame,

@@ -1112,6 +1112,9 @@ impl Editor {
             Action::CalibrateInput => {
                 self.open_calibration_wizard();
             }
+            Action::EventDebug => {
+                self.open_event_debug();
+            }
             Action::PromptConfirm => {
                 if let Some((input, prompt_type, selected_index)) = self.confirm_prompt() {
                     use super::prompt_actions::PromptResult;

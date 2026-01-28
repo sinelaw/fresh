@@ -1820,6 +1820,19 @@ where
         let (event, next) = coalesce_mouse_moves(event)?;
         pending_event = next;
 
+        // Event debug dialog receives ALL RAW events (before any translation or processing)
+        // This is essential for diagnosing terminal keybinding issues
+        if editor.is_event_debug_active() {
+            if let CrosstermEvent::Key(key_event) = event {
+                if key_event.kind == KeyEventKind::Press {
+                    editor.handle_event_debug_input(&key_event);
+                    needs_render = true;
+                }
+            }
+            // Consume all events while event debug is active
+            continue;
+        }
+
         match event {
             CrosstermEvent::Key(key_event) => {
                 if key_event.kind == KeyEventKind::Press {
