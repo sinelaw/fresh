@@ -155,12 +155,14 @@ interface Lockfile {
 // =============================================================================
 
 interface ParsedPackageUrl {
-  /** The base git repository URL (without fragment) */
+  /** The base git repository URL or local path (without fragment) */
   repoUrl: string;
-  /** Optional path within the repository (from fragment) */
+  /** Optional path within the repository/directory (from fragment) */
   subpath: string | null;
   /** Extracted package name */
   name: string;
+  /** Whether this is a local file path (not a remote URL) */
+  isLocal: boolean;
 }
 
 // =============================================================================
@@ -207,12 +209,37 @@ async function gitCommand(args: string[]): Promise<{ exit_code: number; stdout: 
 }
 
 /**
+ * Check if a string is a local file path (not a URL).
+ */
+function isLocalPath(str: string): boolean {
+  // Absolute paths start with /
+  if (str.startsWith("/")) return true;
+  // Windows absolute paths (C:\, D:\, etc.)
+  if (/^[A-Za-z]:[\\\/]/.test(str)) return true;
+  // Relative paths starting with . or ..
+  if (str.startsWith("./") || str.startsWith("../")) return true;
+  // Home directory expansion
+  if (str.startsWith("~/")) return true;
+  // Not a URL scheme (http://, https://, git://, ssh://, file://)
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(str)) {
+    // If it doesn't look like a URL and doesn't contain @, it's probably a path
+    // (git@github.com:user/repo is a git URL)
+    if (!str.includes("@") || str.startsWith("/")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Parse a package URL that may contain a subpath fragment.
  *
  * Supported formats:
  * - `https://github.com/user/repo` - standard repo
  * - `https://github.com/user/repo#path/to/plugin` - monorepo with subpath
  * - `https://github.com/user/repo.git#packages/my-plugin` - with .git suffix
+ * - `/path/to/local/repo#subdir` - local path with subpath
+ * - `/path/to/local/package` - direct local package path
  *
  * The fragment (after #) specifies a subdirectory within the repo.
  */
@@ -234,19 +261,22 @@ function parsePackageUrl(url: string): ParsedPackageUrl {
     repoUrl = url;
   }
 
+  // Determine if this is a local path
+  const isLocal = isLocalPath(repoUrl);
+
   // Extract package name
   let name: string;
   if (subpath) {
-    // For monorepo, use the last component of the subpath
+    // For monorepo/directory, use the last component of the subpath
     const parts = subpath.split("/");
     name = parts[parts.length - 1].replace(/^fresh-/, "");
   } else {
-    // For regular repo, use repo name
+    // For regular repo/path, use the last component
     const match = repoUrl.match(/\/([^\/]+?)(\.git)?$/);
     name = match ? match[1].replace(/^fresh-/, "") : "unknown";
   }
 
-  return { repoUrl, subpath, name };
+  return { repoUrl, subpath, name, isLocal };
 }
 
 /**
@@ -603,12 +633,15 @@ function validatePackage(packageDir: string, packageName: string): ValidationRes
 }
 
 /**
- * Install a package from git URL.
+ * Install a package from git URL or local path.
  *
- * Supports monorepo URLs with subpath fragments:
- * - `https://github.com/user/repo#packages/my-plugin`
+ * Supports:
+ * - `https://github.com/user/repo` - standard git repo
+ * - `https://github.com/user/repo#packages/my-plugin` - monorepo with subpath
+ * - `/path/to/local/repo#subdir` - local path with subpath
+ * - `/path/to/local/package` - direct local package path
  *
- * For subpath packages, clones to temp directory and copies the subdirectory.
+ * For subpath packages, clones/copies to temp directory and copies the subdirectory.
  */
 async function installPackage(
   url: string,
@@ -632,11 +665,14 @@ async function installPackage(
 
   editor.setStatus(`Installing ${packageName}...`);
 
-  if (parsed.subpath) {
-    // Monorepo installation: clone to temp, copy subdirectory
+  if (parsed.isLocal) {
+    // Local path installation: copy directly
+    return await installFromLocalPath(parsed, packageName, targetDir);
+  } else if (parsed.subpath) {
+    // Remote monorepo installation: clone to temp, copy subdirectory
     return await installFromMonorepo(parsed, packageName, targetDir, version);
   } else {
-    // Standard installation: clone directly
+    // Standard git installation: clone directly
     return await installFromRepo(parsed.repoUrl, packageName, targetDir, version);
   }
 }
@@ -686,6 +722,90 @@ async function installFromRepo(
     await editor.spawnProcess("rm", ["-rf", targetDir]);
     return false;
   }
+
+  const manifest = validation.manifest;
+
+  // Dynamically load plugins, reload themes, or load language packs
+  if (manifest?.type === "plugin" && validation.entryPath) {
+    await editor.loadPlugin(validation.entryPath);
+    editor.setStatus(`Installed and activated ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+  } else if (manifest?.type === "theme") {
+    editor.reloadThemes();
+    editor.setStatus(`Installed theme ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+  } else if (manifest?.type === "language") {
+    await loadLanguagePack(targetDir, manifest);
+    editor.setStatus(`Installed language pack ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+  } else {
+    editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+  }
+  return true;
+}
+
+/**
+ * Install from a local file path.
+ *
+ * Strategy:
+ * - If subpath is specified: copy that subdirectory
+ * - Otherwise: copy the entire directory
+ * - Store the source path for reference
+ */
+async function installFromLocalPath(
+  parsed: ParsedPackageUrl,
+  packageName: string,
+  targetDir: string
+): Promise<boolean> {
+  // Resolve the full source path
+  let sourcePath = parsed.repoUrl;
+
+  // Handle home directory expansion
+  if (sourcePath.startsWith("~/")) {
+    const home = editor.getEnv("HOME") || editor.getEnv("USERPROFILE") || "";
+    sourcePath = editor.pathJoin(home, sourcePath.slice(2));
+  }
+
+  // If there's a subpath, append it
+  if (parsed.subpath) {
+    sourcePath = editor.pathJoin(sourcePath, parsed.subpath);
+  }
+
+  // Check if source exists
+  if (!editor.fileExists(sourcePath)) {
+    editor.setStatus(`Local path not found: ${sourcePath}`);
+    return false;
+  }
+
+  // Check if it's a directory (by checking for package.json)
+  const manifestPath = editor.pathJoin(sourcePath, "package.json");
+  if (!editor.fileExists(manifestPath)) {
+    editor.setStatus(`Not a valid package (no package.json): ${sourcePath}`);
+    return false;
+  }
+
+  // Copy the directory to target
+  editor.setStatus(`Copying from ${sourcePath}...`);
+  const copyResult = await editor.spawnProcess("cp", ["-r", sourcePath, targetDir]);
+  if (copyResult.exit_code !== 0) {
+    editor.setStatus(`Failed to copy package: ${copyResult.stderr}`);
+    return false;
+  }
+
+  // Validate package structure
+  const validation = validatePackage(targetDir, packageName);
+  if (!validation.valid) {
+    editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
+    editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
+    // Clean up the invalid package
+    await editor.spawnProcess("rm", ["-rf", targetDir]);
+    return false;
+  }
+
+  // Store the source path for reference
+  const sourceInfo = {
+    local_path: sourcePath,
+    original_url: parsed.subpath ? `${parsed.repoUrl}#${parsed.subpath}` : parsed.repoUrl,
+    installed_at: new Date().toISOString()
+  };
+  await writeJsonFile(editor.pathJoin(targetDir, ".fresh-source.json"), sourceInfo);
 
   const manifest = validation.manifest;
 
