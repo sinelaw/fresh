@@ -1500,8 +1500,11 @@ impl JsEditorApi {
 
     /// Submit a view transform for a buffer/split
     ///
-    /// Note: tokens should be ViewTokenWire[], layoutHints should be LayoutHints
-    /// These use manual parsing due to complex enum handling
+    /// Accepts tokens in the simple format:
+    ///   {kind: "text"|"newline"|"space"|"break", text: "...", sourceOffset: N, style?: {...}}
+    ///
+    /// Also accepts the TypeScript-defined format for backwards compatibility:
+    ///   {kind: {Text: "..."} | "Newline" | "Space" | "Break", source_offset: N, style?: {...}}
     #[allow(clippy::too_many_arguments)]
     pub fn submit_view_transform<'js>(
         &self,
@@ -1511,62 +1514,35 @@ impl JsEditorApi {
         start: u32,
         end: u32,
         tokens: Vec<rquickjs::Object<'js>>,
-        _layout_hints: rquickjs::function::Opt<rquickjs::Object<'js>>,
+        layout_hints: rquickjs::function::Opt<rquickjs::Object<'js>>,
     ) -> rquickjs::Result<bool> {
-        use fresh_core::api::{
-            ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewTransformPayload,
-        };
+        use fresh_core::api::{LayoutHints, ViewTokenWire, ViewTransformPayload};
 
         let tokens: Vec<ViewTokenWire> = tokens
             .into_iter()
-            .map(|obj| {
-                let kind_str: String = obj.get("kind").unwrap_or_default();
-                let text: String = obj.get("text").unwrap_or_default();
-                let source_offset: Option<usize> = obj.get("sourceOffset").ok();
-
-                let kind = match kind_str.as_str() {
-                    "text" => ViewTokenWireKind::Text(text),
-                    "newline" => ViewTokenWireKind::Newline,
-                    "space" => ViewTokenWireKind::Space,
-                    "break" => ViewTokenWireKind::Break,
-                    _ => ViewTokenWireKind::Text(text),
-                };
-
-                let style = obj.get::<_, rquickjs::Object>("style").ok().map(|s| {
-                    let fg: Option<Vec<u8>> = s.get("fg").ok();
-                    let bg: Option<Vec<u8>> = s.get("bg").ok();
-                    ViewTokenStyle {
-                        fg: fg.and_then(|c| {
-                            if c.len() >= 3 {
-                                Some((c[0], c[1], c[2]))
-                            } else {
-                                None
-                            }
-                        }),
-                        bg: bg.and_then(|c| {
-                            if c.len() >= 3 {
-                                Some((c[0], c[1], c[2]))
-                            } else {
-                                None
-                            }
-                        }),
-                        bold: s.get("bold").unwrap_or(false),
-                        italic: s.get("italic").unwrap_or(false),
-                    }
-                });
-
-                ViewTokenWire {
-                    source_offset,
-                    kind,
-                    style,
-                }
+            .enumerate()
+            .map(|(idx, obj)| {
+                // Try to parse the token, with detailed error messages
+                parse_view_token(&obj, idx)
             })
-            .collect();
+            .collect::<rquickjs::Result<Vec<_>>>()?;
+
+        // Parse layout hints if provided
+        let parsed_layout_hints = if let Some(hints_obj) = layout_hints.into_inner() {
+            let compose_width: Option<u16> = hints_obj.get("composeWidth").ok();
+            let column_guides: Option<Vec<u16>> = hints_obj.get("columnGuides").ok();
+            Some(LayoutHints {
+                compose_width,
+                column_guides,
+            })
+        } else {
+            None
+        };
 
         let payload = ViewTransformPayload {
             range: (start as usize)..(end as usize),
             tokens,
-            layout_hints: None,
+            layout_hints: parsed_layout_hints,
         };
 
         Ok(self
@@ -2616,6 +2592,174 @@ impl JsEditorApi {
         });
         id
     }
+}
+
+// =============================================================================
+// View Token Parsing Helpers
+// =============================================================================
+
+/// Parse a single view token from JS object
+/// Supports both simple format and TypeScript format
+fn parse_view_token(
+    obj: &rquickjs::Object<'_>,
+    idx: usize,
+) -> rquickjs::Result<fresh_core::api::ViewTokenWire> {
+    use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
+
+    // Try to get the 'kind' field - could be string or object
+    let kind_value: rquickjs::Value = obj.get("kind").map_err(|_| rquickjs::Error::FromJs {
+        from: "object",
+        to: "ViewTokenWire",
+        message: Some(format!("token[{}]: missing required field 'kind'", idx)),
+    })?;
+
+    // Parse source_offset - try both camelCase and snake_case
+    let source_offset: Option<usize> = obj
+        .get("sourceOffset")
+        .ok()
+        .or_else(|| obj.get("source_offset").ok());
+
+    // Parse the kind field - support both formats
+    let kind = if kind_value.is_string() {
+        // Simple format: kind is a string like "text", "newline", etc.
+        // OR TypeScript format for non-text: "Newline", "Space", "Break"
+        let kind_str: String = kind_value.get().map_err(|_| rquickjs::Error::FromJs {
+            from: "value",
+            to: "string",
+            message: Some(format!("token[{}]: 'kind' is not a valid string", idx)),
+        })?;
+
+        match kind_str.to_lowercase().as_str() {
+            "text" => {
+                let text: String = obj.get("text").unwrap_or_default();
+                ViewTokenWireKind::Text(text)
+            }
+            "newline" => ViewTokenWireKind::Newline,
+            "space" => ViewTokenWireKind::Space,
+            "break" => ViewTokenWireKind::Break,
+            _ => {
+                // Unknown kind string - log warning and return error
+                tracing::warn!(
+                    "token[{}]: unknown kind string '{}', expected one of: text, newline, space, break",
+                    idx, kind_str
+                );
+                return Err(rquickjs::Error::FromJs {
+                    from: "string",
+                    to: "ViewTokenWireKind",
+                    message: Some(format!(
+                        "token[{}]: unknown kind '{}', expected: text, newline, space, break, or {{Text: \"...\"}}",
+                        idx, kind_str
+                    )),
+                });
+            }
+        }
+    } else if kind_value.is_object() {
+        // TypeScript format: kind is an object like {Text: "..."} or {BinaryByte: N}
+        let kind_obj: rquickjs::Object = kind_value.get().map_err(|_| rquickjs::Error::FromJs {
+            from: "value",
+            to: "object",
+            message: Some(format!("token[{}]: 'kind' is not an object", idx)),
+        })?;
+
+        if let Ok(text) = kind_obj.get::<_, String>("Text") {
+            ViewTokenWireKind::Text(text)
+        } else if let Ok(byte) = kind_obj.get::<_, u8>("BinaryByte") {
+            ViewTokenWireKind::BinaryByte(byte)
+        } else {
+            // Check what keys are present for a helpful error
+            let keys: Vec<String> = kind_obj.keys::<String>().filter_map(|k| k.ok()).collect();
+            tracing::warn!(
+                "token[{}]: kind object has unknown keys: {:?}, expected 'Text' or 'BinaryByte'",
+                idx,
+                keys
+            );
+            return Err(rquickjs::Error::FromJs {
+                from: "object",
+                to: "ViewTokenWireKind",
+                message: Some(format!(
+                    "token[{}]: kind object must have 'Text' or 'BinaryByte' key, found: {:?}",
+                    idx, keys
+                )),
+            });
+        }
+    } else {
+        tracing::warn!(
+            "token[{}]: 'kind' field must be a string or object, got: {:?}",
+            idx,
+            kind_value.type_of()
+        );
+        return Err(rquickjs::Error::FromJs {
+            from: "value",
+            to: "ViewTokenWireKind",
+            message: Some(format!(
+                "token[{}]: 'kind' must be a string (e.g., \"text\") or object (e.g., {{Text: \"...\"}})",
+                idx
+            )),
+        });
+    };
+
+    // Parse style if present
+    let style = parse_view_token_style(obj, idx)?;
+
+    Ok(ViewTokenWire {
+        source_offset,
+        kind,
+        style,
+    })
+}
+
+/// Parse optional style from a token object
+fn parse_view_token_style(
+    obj: &rquickjs::Object<'_>,
+    idx: usize,
+) -> rquickjs::Result<Option<fresh_core::api::ViewTokenStyle>> {
+    use fresh_core::api::ViewTokenStyle;
+
+    let style_obj: Option<rquickjs::Object> = obj.get("style").ok();
+    let Some(s) = style_obj else {
+        return Ok(None);
+    };
+
+    let fg: Option<Vec<u8>> = s.get("fg").ok();
+    let bg: Option<Vec<u8>> = s.get("bg").ok();
+
+    // Validate color arrays
+    let fg_color = if let Some(ref c) = fg {
+        if c.len() < 3 {
+            tracing::warn!(
+                "token[{}]: style.fg has {} elements, expected 3 (RGB)",
+                idx,
+                c.len()
+            );
+            None
+        } else {
+            Some((c[0], c[1], c[2]))
+        }
+    } else {
+        None
+    };
+
+    let bg_color = if let Some(ref c) = bg {
+        if c.len() < 3 {
+            tracing::warn!(
+                "token[{}]: style.bg has {} elements, expected 3 (RGB)",
+                idx,
+                c.len()
+            );
+            None
+        } else {
+            Some((c[0], c[1], c[2]))
+        }
+    } else {
+        None
+    };
+
+    Ok(Some(ViewTokenStyle {
+        fg: fg_color,
+        bg: bg_color,
+        bold: s.get("bold").unwrap_or(false),
+        italic: s.get("italic").unwrap_or(false),
+    }))
 }
 
 /// QuickJS-based JavaScript runtime for plugins
