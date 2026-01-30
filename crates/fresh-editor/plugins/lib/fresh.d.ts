@@ -1069,6 +1069,10 @@ interface EditorAPI {
 	*/
 	setLineNumbers(bufferId: number, enabled: boolean): boolean;
 	/**
+	* Enable or disable line wrapping for a buffer/split
+	*/
+	setLineWrap(bufferId: number, splitId: number | null, enabled: boolean): boolean;
+	/**
 	* Create a scroll sync group for anchor-based synchronized scrolling
 	*/
 	createScrollSyncGroup(groupId: number, leftSplit: number, rightSplit: number): boolean;

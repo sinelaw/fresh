@@ -1962,6 +1962,17 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Enable or disable line wrapping for a buffer/split
+    pub fn set_line_wrap(&self, buffer_id: u32, split_id: Option<u32>, enabled: bool) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetLineWrap {
+                buffer_id: BufferId(buffer_id as usize),
+                split_id: split_id.map(|s| SplitId(s as usize)),
+                enabled,
+            })
+            .is_ok()
+    }
+
     // === Scroll Sync ===
 
     /// Create a scroll sync group for anchor-based synchronized scrolling

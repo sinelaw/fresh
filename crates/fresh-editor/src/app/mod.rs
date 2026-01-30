@@ -4405,6 +4405,13 @@ impl Editor {
             PluginCommand::SetLineNumbers { buffer_id, enabled } => {
                 self.handle_set_line_numbers(buffer_id, enabled);
             }
+            PluginCommand::SetLineWrap {
+                buffer_id,
+                split_id,
+                enabled,
+            } => {
+                self.handle_set_line_wrap(buffer_id, split_id, enabled);
+            }
             PluginCommand::SubmitViewTransform {
                 buffer_id,
                 split_id,

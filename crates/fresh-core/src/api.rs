@@ -839,6 +839,13 @@ pub enum PluginCommand {
     /// Enable/disable line numbers for a buffer
     SetLineNumbers { buffer_id: BufferId, enabled: bool },
 
+    /// Enable/disable line wrapping for a buffer
+    SetLineWrap {
+        buffer_id: BufferId,
+        split_id: Option<SplitId>,
+        enabled: bool,
+    },
+
     /// Submit a transformed view stream for a viewport
     SubmitViewTransform {
         buffer_id: BufferId,

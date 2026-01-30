@@ -857,6 +857,19 @@ impl Editor {
         }
     }
 
+    /// Handle SetLineWrap command
+    pub(super) fn handle_set_line_wrap(
+        &mut self,
+        _buffer_id: BufferId,
+        split_id: Option<SplitId>,
+        enabled: bool,
+    ) {
+        let target_split = split_id.unwrap_or(self.split_manager.active_split());
+        if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
+            view_state.viewport.line_wrap_enabled = enabled;
+        }
+    }
+
     /// Handle SubmitViewTransform command
     pub(super) fn handle_submit_view_transform(
         &mut self,
