@@ -24,10 +24,8 @@ pub trait TimeSource: Send + Sync + std::fmt::Debug {
     /// In tests, this may be a no-op or advance logical time.
     fn sleep(&self, duration: Duration);
 
-    /// Get today's date as YYYY-MM-DD string.
-    ///
-    /// Used for daily debouncing of telemetry/update checks.
-    fn today_date_string(&self) -> String;
+    /// Get today's date.
+    fn today_date(&self) -> NaiveDate;
 
     /// Calculate elapsed time since an earlier instant.
     fn elapsed_since(&self, earlier: Instant) -> Duration {
@@ -63,8 +61,8 @@ impl TimeSource for RealTimeSource {
         std::thread::sleep(duration);
     }
 
-    fn today_date_string(&self) -> String {
-        Utc::now().format("%Y-%m-%d").to_string()
+    fn today_date(&self) -> NaiveDate {
+        Utc::now().date_naive()
     }
 }
 
@@ -73,7 +71,7 @@ impl TimeSource for RealTimeSource {
 /// - `now()` returns a logical instant based on internal counter
 /// - `sleep()` advances logical time (no actual sleeping)
 /// - Time can be advanced manually via `advance()`
-/// - `today_date_string()` returns a date based on base_date + elapsed days
+/// - `today_date()` returns a date based on base_date + elapsed days
 ///
 /// # Example
 ///
@@ -157,14 +155,12 @@ impl TimeSource for TestTimeSource {
         self.advance(duration);
     }
 
-    fn today_date_string(&self) -> String {
+    fn today_date(&self) -> NaiveDate {
         // Calculate days elapsed from logical time
         let elapsed_days = (self.elapsed().as_secs() / 86400) as i64;
-        let current_date = self
-            .base_date
+        self.base_date
             .checked_add_signed(chrono::Duration::days(elapsed_days))
-            .unwrap_or(self.base_date);
-        current_date.format("%Y-%m-%d").to_string()
+            .unwrap_or(self.base_date)
     }
 }
 
