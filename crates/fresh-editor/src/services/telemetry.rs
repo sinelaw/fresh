@@ -162,6 +162,8 @@ fn send(event: Event) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::time_source::TestTimeSource;
+    use std::time::Duration;
 
     #[test]
     fn parse_stamp_content_valid() {
@@ -192,6 +194,28 @@ mod tests {
                 content
             );
         }
+    }
+
+    #[test]
+    fn should_run_daily_check_debounces_by_day() {
+        let time_source = TestTimeSource::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // First call: creates stamp file, returns unique_id
+        let id1 = should_run_daily_check(&time_source, temp_dir.path());
+        assert!(id1.is_some(), "first call should return Some");
+
+        // Same-day call: returns None (already checked today)
+        let id2 = should_run_daily_check(&time_source, temp_dir.path());
+        assert!(id2.is_none(), "same-day call should return None");
+
+        // Advance time by 1 day
+        time_source.advance(Duration::from_secs(86400));
+
+        // Next-day call: returns same unique_id
+        let id3 = should_run_daily_check(&time_source, temp_dir.path());
+        assert!(id3.is_some(), "next-day call should return Some");
+        assert_eq!(id1, id3, "unique_id should persist across days");
     }
 }
 
