@@ -2369,3 +2369,321 @@ fn test_file_explorer_directory_status_indicator_hover_tooltip() {
 
     println!("Screen after hover:\n{}", harness.screen_to_string());
 }
+
+/// Test file explorer search functionality - typing characters to filter files
+#[test]
+fn test_file_explorer_search_basic() {
+    // Create harness with isolated temp project
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create files with different names for searching
+    // Note: files are sorted alphabetically, so order is: README.md, config.toml, main.rs, src/, test_helper.rs
+    fs::write(project_root.join("main.rs"), "fn main() {}").unwrap();
+    fs::write(project_root.join("config.toml"), "[settings]").unwrap();
+    fs::write(project_root.join("README.md"), "# Project").unwrap();
+    fs::write(project_root.join("test_helper.rs"), "// test helper").unwrap();
+    fs::create_dir(project_root.join("src")).unwrap();
+    fs::write(project_root.join("src/lib.rs"), "// lib").unwrap();
+
+    // Toggle file explorer on
+    harness.editor_mut().toggle_file_explorer();
+    harness.wait_for_screen_contains("File Explorer").unwrap();
+
+    // Wait for file explorer to be fully initialized
+    harness.sleep(std::time::Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen_before = harness.screen_to_string();
+    println!("Screen before search:\n{screen_before}");
+
+    // Get the initially selected entry (should be the root or first item)
+    let initial_selection = harness
+        .editor()
+        .file_explorer()
+        .and_then(|e| e.get_selected_entry())
+        .map(|e| e.name.clone());
+    println!("Initial selection: {:?}", initial_selection);
+
+    // Type a search query - "main" to find main.rs
+    harness
+        .send_key(KeyCode::Char('m'), KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('i'), KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search bar should be visible with the query
+    let screen_with_search = harness.screen_to_string();
+    println!("Screen with search:\n{screen_with_search}");
+
+    // Should show the search indicator "/" with query
+    assert!(
+        screen_with_search.contains("/main"),
+        "Should show search bar with query. Screen:\n{screen_with_search}"
+    );
+
+    // CRITICAL: Selection should have jumped to main.rs (the matching file)
+    let selection_after_search = harness
+        .editor()
+        .file_explorer()
+        .and_then(|e| e.get_selected_entry())
+        .map(|e| e.name.clone());
+    println!("Selection after search: {:?}", selection_after_search);
+
+    assert_eq!(
+        selection_after_search,
+        Some("main.rs".to_string()),
+        "Selection should jump to matching file 'main.rs'. Got: {:?}",
+        selection_after_search
+    );
+
+    // Test backspace removes characters from search
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_after_backspace = harness.screen_to_string();
+    assert!(
+        screen_after_backspace.contains("/mai"),
+        "Should show search with one character removed. Screen:\n{screen_after_backspace}"
+    );
+
+    // Test Escape clears the search
+    harness
+        .send_key(KeyCode::Esc, KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_after_escape = harness.screen_to_string();
+    // After clearing search, the search bar should not show a query
+    assert!(
+        !screen_after_escape.contains("/mai"),
+        "Search should be cleared after Escape. Screen:\n{screen_after_escape}"
+    );
+}
+
+/// Test that file explorer search generates match positions for highlighting
+#[test]
+fn test_file_explorer_search_highlight_positions() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join("main.rs"), "fn main() {}").unwrap();
+
+    harness.editor_mut().toggle_file_explorer();
+    harness.wait_for_screen_contains("File Explorer").unwrap();
+
+    harness.sleep(std::time::Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Type "main" to search
+    for c in "main".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::empty())
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    // Get the file explorer and check if we can get match positions for the selected node
+    let explorer = harness
+        .editor()
+        .file_explorer()
+        .expect("File explorer should exist");
+    assert!(explorer.is_search_active(), "Search should be active");
+
+    // Get the selected node and check for match positions
+    if let Some(selected_entry) = explorer.get_selected_entry() {
+        println!("Selected entry: {}", selected_entry.name);
+
+        // The get_match_for_node requires a node_id, so let's check via the view
+        // We can verify that the fuzzy match logic works by checking the search module directly
+        let query = explorer.search_query();
+        println!("Search query: {}", query);
+
+        // Use the fuzzy match directly to verify match positions
+        let fuzzy_result = fresh::input::fuzzy::fuzzy_match(query, &selected_entry.name);
+        println!(
+            "Fuzzy match result: matched={}, positions={:?}",
+            fuzzy_result.matched, fuzzy_result.match_positions
+        );
+
+        assert!(fuzzy_result.matched, "Should match");
+        assert!(
+            !fuzzy_result.match_positions.is_empty(),
+            "Match positions should not be empty for highlighting. Got: {:?}",
+            fuzzy_result.match_positions
+        );
+
+        // For "main" matching "main.rs", positions should be [0, 1, 2, 3]
+        assert_eq!(
+            fuzzy_result.match_positions,
+            vec![0, 1, 2, 3],
+            "Match positions should be [0,1,2,3] for 'main' in 'main.rs'"
+        );
+
+        // Verify that get_match_for_node also returns positions
+        // We need to get the selected node ID to verify
+        let selected_index = explorer.get_selected_index();
+        println!("Selected index: {:?}", selected_index);
+
+        if let Some(idx) = selected_index {
+            if let Some(node_id) = explorer.get_node_at_index(idx) {
+                let match_result = explorer.get_match_for_node(node_id);
+                println!("get_match_for_node result: {:?}", match_result);
+                assert!(
+                    match_result.is_some(),
+                    "get_match_for_node should return Some for matching node"
+                );
+                let m = match_result.unwrap();
+                assert_eq!(
+                    m.match_positions,
+                    vec![0, 1, 2, 3],
+                    "get_match_for_node should return correct positions"
+                );
+            }
+        }
+    } else {
+        panic!("Should have a selected entry");
+    }
+}
+
+/// Test file explorer search navigation with up/down keys
+#[test]
+fn test_file_explorer_search_navigation() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create multiple files with similar names
+    fs::write(project_root.join("test1.rs"), "// test 1").unwrap();
+    fs::write(project_root.join("test2.rs"), "// test 2").unwrap();
+    fs::write(project_root.join("other.rs"), "// other").unwrap();
+    fs::write(project_root.join("test3.rs"), "// test 3").unwrap();
+
+    harness.editor_mut().toggle_file_explorer();
+    harness.wait_for_screen_contains("File Explorer").unwrap();
+
+    harness.sleep(std::time::Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Type "test" to filter to only test files
+    for c in "test".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::empty())
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    let screen = harness.screen_to_string();
+    println!("Screen with 'test' filter:\n{screen}");
+
+    // Verify search bar shows
+    assert!(screen.contains("/test"), "Should show search query");
+
+    // Navigate down through matches
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+
+    // Navigate up
+    harness
+        .send_key(KeyCode::Up, KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+
+    // Selection should change (we're cycling through matches)
+    let screen_after_nav = harness.screen_to_string();
+    println!("Screen after navigation:\n{screen_after_nav}");
+}
+
+/// Test that Escape in file explorer clears search but stays in file explorer
+#[test]
+fn test_file_explorer_escape_clears_search() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join("file.txt"), "content").unwrap();
+
+    harness.editor_mut().toggle_file_explorer();
+    harness.wait_for_screen_contains("File Explorer").unwrap();
+
+    harness.sleep(std::time::Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Verify we're in file explorer context
+    assert!(
+        matches!(
+            harness.editor().get_key_context(),
+            fresh::input::keybindings::KeyContext::FileExplorer
+        ),
+        "Should be in FileExplorer context"
+    );
+
+    // Type a search query
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify search is active
+    assert!(
+        harness.editor().file_explorer().unwrap().is_search_active(),
+        "Search should be active after typing"
+    );
+
+    // Press Escape to clear search
+    harness
+        .send_key(KeyCode::Esc, KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search should be cleared
+    assert!(
+        !harness.editor().file_explorer().unwrap().is_search_active(),
+        "Search should be cleared after Escape"
+    );
+
+    // Should still be in file explorer context
+    assert!(
+        matches!(
+            harness.editor().get_key_context(),
+            fresh::input::keybindings::KeyContext::FileExplorer
+        ),
+        "Should still be in FileExplorer context after Escape"
+    );
+
+    // Press Escape again - should still stay in file explorer (no focus change)
+    harness
+        .send_key(KeyCode::Esc, KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        matches!(
+            harness.editor().get_key_context(),
+            fresh::input::keybindings::KeyContext::FileExplorer
+        ),
+        "Should remain in FileExplorer context after second Escape"
+    );
+}

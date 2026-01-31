@@ -45,6 +45,8 @@
   "action.file_explorer_page_up": "Explorador: página arriba",
   "action.file_explorer_refresh": "Explorador: actualizar",
   "action.file_explorer_rename": "Explorador: renombrar",
+  "action.file_explorer_search_backspace": "Explorador: eliminar carácter de búsqueda",
+  "action.file_explorer_search_clear": "Explorador: limpiar búsqueda",
   "action.file_explorer_toggle_gitignored": "Explorador: alternar archivos gitignored",
   "action.file_explorer_toggle_hidden": "Explorador: alternar archivos ocultos",
   "action.file_explorer_up": "Explorador: navegar arriba",

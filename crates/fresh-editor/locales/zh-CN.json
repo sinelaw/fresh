@@ -45,6 +45,8 @@
   "action.file_explorer_page_up": "文件资源管理器：向上翻页",
   "action.file_explorer_refresh": "文件资源管理器：刷新",
   "action.file_explorer_rename": "文件资源管理器：重命名",
+  "action.file_explorer_search_backspace": "文件资源管理器：删除搜索字符",
+  "action.file_explorer_search_clear": "文件资源管理器：清除搜索",
   "action.file_explorer_toggle_gitignored": "文件资源管理器：切换 gitignore 文件",
   "action.file_explorer_toggle_hidden": "文件资源管理器：切换隐藏文件",
   "action.file_explorer_up": "文件资源管理器：向上导航",

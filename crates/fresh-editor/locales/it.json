@@ -45,6 +45,8 @@
   "action.file_explorer_page_up": "Esplora file: pagina su",
   "action.file_explorer_refresh": "Esplora file: aggiorna",
   "action.file_explorer_rename": "Esplora file: rinomina",
+  "action.file_explorer_search_backspace": "Esplora file: elimina carattere di ricerca",
+  "action.file_explorer_search_clear": "Esplora file: cancella ricerca",
   "action.file_explorer_toggle_gitignored": "Esplora file: alterna file gitignored",
   "action.file_explorer_toggle_hidden": "Esplora file: alterna file nascosti",
   "action.file_explorer_up": "Esplora file: naviga su",

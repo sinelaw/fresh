@@ -716,6 +716,8 @@ impl Editor {
             Action::FileExplorerRename => self.file_explorer_rename(),
             Action::FileExplorerToggleHidden => self.file_explorer_toggle_hidden(),
             Action::FileExplorerToggleGitignored => self.file_explorer_toggle_gitignored(),
+            Action::FileExplorerSearchClear => self.file_explorer_search_clear(),
+            Action::FileExplorerSearchBackspace => self.file_explorer_search_pop_char(),
             Action::RemoveSecondaryCursors => {
                 // Convert action to events and apply them
                 if let Some(events) = self.action_to_events(Action::RemoveSecondaryCursors) {
@@ -1160,6 +1162,8 @@ impl Editor {
             Action::InsertChar(c) => {
                 if self.is_prompting() {
                     return self.handle_insert_char_prompt(c);
+                } else if self.key_context == KeyContext::FileExplorer {
+                    self.file_explorer_search_push_char(c);
                 } else {
                     self.handle_insert_char_editor(c)?;
                 }

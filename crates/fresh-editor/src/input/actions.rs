@@ -2548,6 +2548,8 @@ pub fn action_to_events(
         | Action::FileExplorerRename
         | Action::FileExplorerToggleHidden
         | Action::FileExplorerToggleGitignored
+        | Action::FileExplorerSearchClear
+        | Action::FileExplorerSearchBackspace
         | Action::LspCompletion
         | Action::LspGotoDefinition
         | Action::LspReferences

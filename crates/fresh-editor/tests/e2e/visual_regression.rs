@@ -94,8 +94,10 @@ fn long_function() {
         .unwrap();
     harness.render().unwrap();
 
-    // Focus back on the editor pane
-    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    // Focus back on the editor pane (Ctrl+E when in file explorer focuses editor)
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Add LSP diagnostic markers (simulated)

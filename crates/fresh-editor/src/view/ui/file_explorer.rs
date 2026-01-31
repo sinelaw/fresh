@@ -1,3 +1,4 @@
+use crate::input::fuzzy::FuzzyMatch;
 use crate::primitives::display_width::str_width;
 use crate::view::file_tree::{FileExplorerDecorationCache, FileTreeView, NodeId};
 use crate::view::theme::Theme;
@@ -43,6 +44,8 @@ impl FileExplorerRenderer {
         close_button_hovered: bool,
         remote_connection: Option<&str>,
     ) {
+        let search_active = view.is_search_active();
+
         // Update viewport height for scrolling calculations
         // Account for borders (top + bottom = 2)
         let viewport_height = area.height.saturating_sub(2) as usize;
@@ -73,6 +76,12 @@ impl FileExplorerRenderer {
                 // The actual index in the full list
                 let actual_idx = scroll_offset + viewport_idx;
                 let is_selected = selected_index == Some(actual_idx);
+                // Get match positions for highlighting
+                let fuzzy_match = if search_active {
+                    view.get_match_for_node(node_id)
+                } else {
+                    None
+                };
                 Self::render_node(
                     view,
                     node_id,
@@ -83,6 +92,7 @@ impl FileExplorerRenderer {
                     decorations,
                     theme,
                     content_width,
+                    fuzzy_match.as_ref(),
                 )
             })
             .collect();
@@ -95,7 +105,11 @@ impl FileExplorerRenderer {
             )
             .map(|kb| format!(" ({})", kb))
             .unwrap_or_default();
-        let title = if let Some(host) = remote_connection {
+
+        // Show search query in title when search is active
+        let title = if search_active {
+            format!(" /{} ", view.search_query())
+        } else if let Some(host) = remote_connection {
             // Extract just the hostname from "user@host" or "user@host:port"
             let hostname = host
                 .split('@')
@@ -200,6 +214,7 @@ impl FileExplorerRenderer {
         decorations: &FileExplorerDecorationCache,
         theme: &Theme,
         content_width: usize,
+        fuzzy_match: Option<&FuzzyMatch>,
     ) -> ListItem<'static> {
         let node = view.tree().get_node(node_id).expect("Node should exist");
 
@@ -238,8 +253,8 @@ impl FileExplorerRenderer {
         }
 
         // Name styling using theme colors
-        let name_style = if is_selected && is_focused {
-            Style::default().fg(theme.editor_fg)
+        let base_fg = if is_selected && is_focused {
+            theme.editor_fg
         } else if node
             .entry
             .metadata
@@ -247,17 +262,31 @@ impl FileExplorerRenderer {
             .map(|m| m.is_hidden)
             .unwrap_or(false)
         {
-            Style::default().fg(theme.line_number_fg)
+            theme.line_number_fg
         } else if node.entry.is_symlink() {
             // Symlinks use a distinct color (type color, typically cyan)
-            Style::default().fg(theme.syntax_type)
+            theme.syntax_type
         } else if node.is_dir() {
-            Style::default().fg(theme.syntax_keyword)
+            theme.syntax_keyword
         } else {
-            Style::default().fg(theme.editor_fg)
+            theme.editor_fg
         };
 
-        spans.push(Span::styled(node.entry.name.clone(), name_style));
+        // Render name with match highlighting
+        if let Some(fm) = fuzzy_match {
+            Self::render_name_with_highlights(
+                &node.entry.name,
+                &fm.match_positions,
+                base_fg,
+                theme,
+                &mut spans,
+            );
+        } else {
+            spans.push(Span::styled(
+                node.entry.name.clone(),
+                Style::default().fg(base_fg),
+            ));
+        }
 
         // Determine the right-side indicator (status symbol)
         // Priority: unsaved changes > direct decoration > bubbled decoration (for dirs)
@@ -335,5 +364,62 @@ impl FileExplorerRenderer {
     fn decoration_color(decoration: &crate::view::file_tree::FileExplorerDecoration) -> Color {
         let [r, g, b] = decoration.color;
         Color::Rgb(r, g, b)
+    }
+
+    /// Render a file/directory name with matched characters highlighted
+    fn render_name_with_highlights(
+        name: &str,
+        match_positions: &[usize],
+        base_fg: Color,
+        theme: &Theme,
+        spans: &mut Vec<Span<'static>>,
+    ) {
+        if match_positions.is_empty() {
+            spans.push(Span::styled(name.to_string(), Style::default().fg(base_fg)));
+            return;
+        }
+
+        let chars: Vec<char> = name.chars().collect();
+        let match_set: std::collections::HashSet<usize> = match_positions.iter().copied().collect();
+
+        let base_style = Style::default().fg(base_fg);
+        let highlight_style = Style::default()
+            .fg(theme.search_match_fg)
+            .bg(theme.search_match_bg);
+
+        let mut current_span = String::new();
+        let mut current_is_match = false;
+
+        for (i, &c) in chars.iter().enumerate() {
+            let is_match = match_set.contains(&i);
+
+            if i == 0 {
+                current_is_match = is_match;
+                current_span.push(c);
+            } else if is_match == current_is_match {
+                current_span.push(c);
+            } else {
+                // Style changed, push current span and start new one
+                let style = if current_is_match {
+                    highlight_style
+                } else {
+                    base_style
+                };
+                spans.push(Span::styled(current_span.clone(), style));
+                current_span.clear();
+                current_span.push(c);
+                current_is_match = is_match;
+            }
+        }
+
+        // Push final span
+        if !current_span.is_empty() {
+            let style = if current_is_match {
+                highlight_style
+            } else {
+                base_style
+            };
+            spans.push(Span::styled(current_span, style));
+        }
     }
 }

@@ -45,6 +45,8 @@
   "action.file_explorer_page_up": "ファイルエクスプローラ: ページアップ",
   "action.file_explorer_refresh": "ファイルエクスプローラ: 更新",
   "action.file_explorer_rename": "ファイルエクスプローラ: 名前の変更",
+  "action.file_explorer_search_backspace": "ファイルエクスプローラ: 検索文字を削除",
+  "action.file_explorer_search_clear": "ファイルエクスプローラ: 検索をクリア",
   "action.file_explorer_toggle_gitignored": "ファイルエクスプローラ: gitignoreファイルの表示を切り替え",
   "action.file_explorer_toggle_hidden": "ファイルエクスプローラ: 隠しファイルの表示を切り替え",
   "action.file_explorer_up": "ファイルエクスプローラ: 上へ移動",

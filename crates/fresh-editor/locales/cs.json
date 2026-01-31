@@ -45,6 +45,8 @@
   "action.file_explorer_page_up": "Průzkumník: stránka nahoru",
   "action.file_explorer_refresh": "Průzkumník: obnovit",
   "action.file_explorer_rename": "Průzkumník: přejmenovat",
+  "action.file_explorer_search_backspace": "Průzkumník: smazat znak hledání",
+  "action.file_explorer_search_clear": "Průzkumník: vymazat hledání",
   "action.file_explorer_toggle_gitignored": "Průzkumník: přepnout gitignored soubory",
   "action.file_explorer_toggle_hidden": "Průzkumník: přepnout skryté soubory",
   "action.file_explorer_up": "Průzkumník: navigovat nahoru",

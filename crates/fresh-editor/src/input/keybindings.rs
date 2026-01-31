@@ -179,7 +179,7 @@ pub enum KeyContext {
 impl KeyContext {
     /// Check if a context should allow input
     pub fn allows_text_input(&self) -> bool {
-        matches!(self, Self::Normal | Self::Prompt)
+        matches!(self, Self::Normal | Self::Prompt | Self::FileExplorer)
     }
 
     /// Parse context from a "when" string
@@ -466,6 +466,8 @@ pub enum Action {
     FileExplorerRename,
     FileExplorerToggleHidden,
     FileExplorerToggleGitignored,
+    FileExplorerSearchClear,
+    FileExplorerSearchBackspace,
 
     // LSP operations
     LspCompletion,
@@ -788,6 +790,8 @@ impl Action {
             "file_explorer_rename" => Self::FileExplorerRename,
             "file_explorer_toggle_hidden" => Self::FileExplorerToggleHidden,
             "file_explorer_toggle_gitignored" => Self::FileExplorerToggleGitignored,
+            "file_explorer_search_clear" => Self::FileExplorerSearchClear,
+            "file_explorer_search_backspace" => Self::FileExplorerSearchBackspace,
 
             "lsp_completion" => Self::LspCompletion,
             "lsp_goto_definition" => Self::LspGotoDefinition,
@@ -1814,6 +1818,8 @@ impl KeybindingResolver {
             Action::FileExplorerRename => t!("action.file_explorer_rename"),
             Action::FileExplorerToggleHidden => t!("action.file_explorer_toggle_hidden"),
             Action::FileExplorerToggleGitignored => t!("action.file_explorer_toggle_gitignored"),
+            Action::FileExplorerSearchClear => t!("action.file_explorer_search_clear"),
+            Action::FileExplorerSearchBackspace => t!("action.file_explorer_search_backspace"),
             Action::LspCompletion => t!("action.lsp_completion"),
             Action::LspGotoDefinition => t!("action.lsp_goto_definition"),
             Action::LspReferences => t!("action.lsp_references"),

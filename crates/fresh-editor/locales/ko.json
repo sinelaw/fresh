@@ -45,6 +45,8 @@
   "action.file_explorer_page_up": "파일 탐색기: 페이지 위로",
   "action.file_explorer_refresh": "파일 탐색기: 새로 고침",
   "action.file_explorer_rename": "파일 탐색기: 이름 바꾸기",
+  "action.file_explorer_search_backspace": "파일 탐색기: 검색 문자 삭제",
+  "action.file_explorer_search_clear": "파일 탐색기: 검색 지우기",
   "action.file_explorer_toggle_gitignored": "파일 탐색기: gitignore 파일 전환",
   "action.file_explorer_toggle_hidden": "파일 탐색기: 숨김 파일 전환",
   "action.file_explorer_up": "파일 탐색기: 위로 이동",

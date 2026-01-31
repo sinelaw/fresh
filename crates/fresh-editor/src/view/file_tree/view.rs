@@ -1,6 +1,8 @@
 use super::ignore::IgnorePatterns;
 use super::node::NodeId;
+use super::search::FileExplorerSearch;
 use super::tree::FileTree;
+use crate::input::fuzzy::FuzzyMatch;
 use crate::model::filesystem::DirEntry;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -20,6 +22,8 @@ pub struct FileTreeView {
     ignore_patterns: IgnorePatterns,
     /// Last known viewport height (for scrolling calculations)
     pub(crate) viewport_height: usize,
+    /// Search state for quick navigation
+    search: FileExplorerSearch,
 }
 
 /// Sort mode for file tree entries
@@ -44,6 +48,7 @@ impl FileTreeView {
             sort_mode: SortMode::Type,
             ignore_patterns: IgnorePatterns::new(),
             viewport_height: 10, // Default, will be updated during rendering
+            search: FileExplorerSearch::new(),
         }
     }
 
@@ -392,6 +397,144 @@ impl FileTreeView {
         }
 
         mappings
+    }
+
+    // ==================== Search Methods ====================
+
+    /// Get the current search query
+    pub fn search_query(&self) -> &str {
+        self.search.query()
+    }
+
+    /// Check if search is active
+    pub fn is_search_active(&self) -> bool {
+        self.search.is_active()
+    }
+
+    /// Add a character to the search query and jump to first match
+    pub fn search_push_char(&mut self, c: char) {
+        self.search.push_char(c);
+        self.jump_to_first_match();
+    }
+
+    /// Remove the last character from the search query
+    pub fn search_pop_char(&mut self) {
+        self.search.pop_char();
+        if self.search.is_active() {
+            self.jump_to_first_match();
+        }
+    }
+
+    /// Clear the search query
+    pub fn search_clear(&mut self) {
+        self.search.clear();
+    }
+
+    /// Get nodes that match the current search query
+    fn get_matching_nodes(&self) -> Vec<NodeId> {
+        if !self.search.is_active() {
+            return self.tree.get_visible_nodes();
+        }
+
+        self.tree
+            .get_visible_nodes()
+            .into_iter()
+            .filter(|&id| {
+                if let Some(node) = self.tree.get_node(id) {
+                    self.search.matches(&node.entry.name)
+                } else {
+                    false
+                }
+            })
+            .collect()
+    }
+
+    /// Jump to the first matching node
+    fn jump_to_first_match(&mut self) {
+        let matching = self.get_matching_nodes();
+        if let Some(&first) = matching.first() {
+            self.selected_node = Some(first);
+            self.update_scroll_for_selection();
+        }
+    }
+
+    /// Select the next matching node (when search is active)
+    pub fn select_next_match(&mut self) {
+        if !self.search.is_active() {
+            self.select_next();
+            return;
+        }
+
+        let matching = self.get_matching_nodes();
+        if matching.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.selected_node {
+            if let Some(pos) = matching.iter().position(|&id| id == current) {
+                // Move to next match (wrap around)
+                let next_pos = (pos + 1) % matching.len();
+                self.selected_node = Some(matching[next_pos]);
+            } else {
+                // Current not in matches, select first match
+                self.selected_node = Some(matching[0]);
+            }
+        } else {
+            self.selected_node = Some(matching[0]);
+        }
+    }
+
+    /// Select the previous matching node (when search is active)
+    pub fn select_prev_match(&mut self) {
+        if !self.search.is_active() {
+            self.select_prev();
+            return;
+        }
+
+        let matching = self.get_matching_nodes();
+        if matching.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.selected_node {
+            if let Some(pos) = matching.iter().position(|&id| id == current) {
+                // Move to previous match (wrap around)
+                let prev_pos = if pos == 0 {
+                    matching.len() - 1
+                } else {
+                    pos - 1
+                };
+                self.selected_node = Some(matching[prev_pos]);
+            } else {
+                // Current not in matches, select last match
+                self.selected_node = Some(*matching.last().unwrap());
+            }
+        } else {
+            self.selected_node = Some(*matching.last().unwrap());
+        }
+    }
+
+    /// Get match result for a node's name (for highlighting)
+    pub fn get_match_for_node(&self, node_id: NodeId) -> Option<FuzzyMatch> {
+        if !self.search.is_active() {
+            return None;
+        }
+
+        self.tree
+            .get_node(node_id)
+            .and_then(|node| self.search.match_name(&node.entry.name))
+    }
+
+    /// Check if a node matches the current search
+    pub fn node_matches_search(&self, node_id: NodeId) -> bool {
+        if !self.search.is_active() {
+            return true;
+        }
+
+        self.tree
+            .get_node(node_id)
+            .map(|node| self.search.matches(&node.entry.name))
+            .unwrap_or(false)
     }
 }
 

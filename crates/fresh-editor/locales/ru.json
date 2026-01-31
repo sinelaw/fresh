@@ -45,6 +45,8 @@
   "action.file_explorer_page_up": "Проводник: страница вверх",
   "action.file_explorer_refresh": "Проводник: обновить",
   "action.file_explorer_rename": "Проводник: переименовать",
+  "action.file_explorer_search_backspace": "Проводник: удалить символ поиска",
+  "action.file_explorer_search_clear": "Проводник: очистить поиск",
   "action.file_explorer_toggle_gitignored": "Проводник: переключить файлы gitignore",
   "action.file_explorer_toggle_hidden": "Проводник: переключить скрытые файлы",
   "action.file_explorer_up": "Проводник: переместиться вверх",

@@ -45,6 +45,8 @@
   "action.file_explorer_page_up": "Explorateur de fichiers : page précédente",
   "action.file_explorer_refresh": "Explorateur de fichiers : actualiser",
   "action.file_explorer_rename": "Explorateur de fichiers : renommer",
+  "action.file_explorer_search_backspace": "Explorateur de fichiers : supprimer le caractère de recherche",
+  "action.file_explorer_search_clear": "Explorateur de fichiers : effacer la recherche",
   "action.file_explorer_toggle_gitignored": "Explorateur de fichiers : basculer les fichiers gitignored",
   "action.file_explorer_toggle_hidden": "Explorateur de fichiers : basculer les fichiers cachés",
   "action.file_explorer_up": "Explorateur de fichiers : naviguer vers le haut",

@@ -178,14 +178,14 @@ impl Editor {
 
     pub fn file_explorer_navigate_up(&mut self) {
         if let Some(explorer) = &mut self.file_explorer {
-            explorer.select_prev();
+            explorer.select_prev_match();
             explorer.update_scroll_for_selection();
         }
     }
 
     pub fn file_explorer_navigate_down(&mut self) {
         if let Some(explorer) = &mut self.file_explorer {
-            explorer.select_next();
+            explorer.select_next_match();
             explorer.update_scroll_for_selection();
         }
     }
@@ -751,6 +751,29 @@ impl Editor {
                 t!("explorer.hiding_gitignored")
             };
             self.set_status_message(msg.to_string());
+        }
+    }
+
+    /// Clear the file explorer search
+    pub fn file_explorer_search_clear(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.search_clear();
+        }
+    }
+
+    /// Add a character to the file explorer search
+    pub fn file_explorer_search_push_char(&mut self, c: char) {
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.search_push_char(c);
+            explorer.update_scroll_for_selection();
+        }
+    }
+
+    /// Remove a character from the file explorer search (backspace)
+    pub fn file_explorer_search_pop_char(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.search_pop_char();
+            explorer.update_scroll_for_selection();
         }
     }
 

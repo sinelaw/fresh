@@ -45,6 +45,8 @@
   "action.file_explorer_page_up": "โปรแกรมสำรวจไฟล์: ขึ้นหนึ่งหน้า",
   "action.file_explorer_refresh": "โปรแกรมสำรวจไฟล์: รีเฟรช",
   "action.file_explorer_rename": "โปรแกรมสำรวจไฟล์: เปลี่ยนชื่อ",
+  "action.file_explorer_search_backspace": "โปรแกรมสำรวจไฟล์: ลบอักขระค้นหา",
+  "action.file_explorer_search_clear": "โปรแกรมสำรวจไฟล์: ล้างการค้นหา",
   "action.file_explorer_toggle_gitignored": "โปรแกรมสำรวจไฟล์: สลับไฟล์ที่ถูก Git ละเว้น",
   "action.file_explorer_toggle_hidden": "โปรแกรมสำรวจไฟล์: สลับไฟล์ที่ซ่อน",
   "action.file_explorer_up": "โปรแกรมสำรวจไฟล์: เลื่อนขึ้น",

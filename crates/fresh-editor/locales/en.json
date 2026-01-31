@@ -42,6 +42,8 @@
   "action.file_explorer_page_up": "File explorer: page up",
   "action.file_explorer_refresh": "File explorer: refresh",
   "action.file_explorer_rename": "File explorer: rename",
+  "action.file_explorer_search_backspace": "File explorer: delete search character",
+  "action.file_explorer_search_clear": "File explorer: clear search",
   "action.file_explorer_toggle_gitignored": "File explorer: toggle gitignored files",
   "action.file_explorer_toggle_hidden": "File explorer: toggle hidden files",
   "action.file_explorer_up": "File explorer: navigate up",
