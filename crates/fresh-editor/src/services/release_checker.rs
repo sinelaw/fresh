@@ -4,16 +4,14 @@
 //! - Check for new releases by fetching a GitHub releases API endpoint
 //! - Detect the installation method (Homebrew, npm, cargo, etc.) based on executable path
 //! - Provide appropriate update commands based on installation method
-//! - Periodic update checking with automatic re-spawn daily
+//! - Daily update checking (debounced via stamp file)
 
 use super::time_source::SharedTimeSource;
 use std::env;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// The current version of the editor
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -97,28 +95,24 @@ impl UpdateCheckHandle {
     }
 }
 
-/// Default check interval for periodic update checking (24 hours)
-pub const DEFAULT_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
-
-/// Handle to a periodic update checker that runs in the background.
+/// Handle to an update checker running in the background.
 ///
-/// The checker runs daily and provides results via `poll_result()`.
-/// When a check finds an update, the result is stored until retrieved.
-pub struct PeriodicUpdateChecker {
+/// Runs a single check at startup (if not already done today).
+/// Results are available via `poll_result()`.
+pub struct UpdateChecker {
     /// Receiver for update check results
     receiver: Receiver<Result<ReleaseCheckResult, String>>,
-    /// Signal to stop the background thread
-    stop_signal: Arc<AtomicBool>,
     /// Background thread handle
     #[allow(dead_code)]
     thread: JoinHandle<()>,
     /// Last successful result (cached)
     last_result: Option<ReleaseCheckResult>,
-    /// Time of last check (for tracking)
-    last_check_time: Option<Instant>,
 }
 
-impl PeriodicUpdateChecker {
+/// Backwards compatibility alias
+pub type PeriodicUpdateChecker = UpdateChecker;
+
+impl UpdateChecker {
     /// Poll for a new update check result without blocking.
     ///
     /// Returns `Some(result)` if a new check completed, `None` if no new result.
@@ -126,10 +120,9 @@ impl PeriodicUpdateChecker {
     pub fn poll_result(&mut self) -> Option<Result<ReleaseCheckResult, String>> {
         match self.receiver.try_recv() {
             Ok(result) => {
-                self.last_check_time = Some(Instant::now());
                 if let Ok(ref release_result) = result {
                     tracing::debug!(
-                        "Periodic update check completed: update_available={}",
+                        "Update check completed: update_available={}",
                         release_result.update_available
                     );
                     self.last_result = Some(release_result.clone());
@@ -137,10 +130,7 @@ impl PeriodicUpdateChecker {
                 Some(result)
             }
             Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => {
-                tracing::debug!("Periodic update checker thread disconnected");
-                None
-            }
+            Err(TryRecvError::Disconnected) => None,
         }
     }
 
@@ -169,113 +159,47 @@ impl PeriodicUpdateChecker {
     }
 }
 
-impl Drop for PeriodicUpdateChecker {
-    fn drop(&mut self) {
-        // Signal the background thread to stop
-        self.stop_signal.store(true, Ordering::SeqCst);
-    }
-}
-
-/// Start a periodic update checker that runs daily.
+/// Start an update checker that runs once at startup.
 ///
-/// The checker immediately runs the first check, then repeats daily.
+/// The check respects daily debouncing via the stamp file - if already
+/// checked today, no network request is made.
 /// Results are available via `poll_result()` on the returned handle.
 pub fn start_periodic_update_check(
     releases_url: &str,
     time_source: SharedTimeSource,
     data_dir: PathBuf,
-) -> PeriodicUpdateChecker {
-    start_periodic_update_check_with_interval(
-        releases_url,
-        DEFAULT_UPDATE_CHECK_INTERVAL,
-        time_source,
-        data_dir,
-    )
-}
-
-/// Start a periodic update checker with a custom check interval.
-///
-/// This is primarily for testing - allows specifying a short interval to verify
-/// the periodic behavior without waiting for a day.
-///
-/// # Arguments
-/// * `releases_url` - The GitHub releases API URL to check
-/// * `check_interval` - Duration between checks
-/// * `time_source` - Time source for debouncing and sleep
-/// * `data_dir` - Data directory for storing the telemetry stamp file
-pub fn start_periodic_update_check_with_interval(
-    releases_url: &str,
-    check_interval: Duration,
-    time_source: SharedTimeSource,
-    data_dir: PathBuf,
-) -> PeriodicUpdateChecker {
-    tracing::debug!(
-        "Starting periodic update checker with interval {:?}",
-        check_interval
-    );
+) -> UpdateChecker {
+    tracing::debug!("Starting update checker");
     let url = releases_url.to_string();
     let (tx, rx) = mpsc::channel();
-    let stop_signal = Arc::new(AtomicBool::new(false));
-    let stop_signal_clone = stop_signal.clone();
-
-    // Use a smaller sleep increment for shorter intervals
-    let sleep_increment = if check_interval < Duration::from_secs(10) {
-        Duration::from_millis(10)
-    } else {
-        Duration::from_secs(1)
-    };
 
     let handle = thread::spawn(move || {
-        // Run initial check immediately, but only if not already done today (debounce)
         if let Some(unique_id) =
             super::telemetry::should_run_daily_check(time_source.as_ref(), &data_dir)
         {
             super::telemetry::track_open(&unique_id);
             let result = check_for_update(&url);
-            if tx.send(result).is_err() {
-                return; // Receiver dropped, exit
-            }
-        }
-
-        // Then check periodically (debouncing will naturally pass after 24 hours)
-        loop {
-            // Sleep in small increments to allow quick shutdown
-            let sleep_end = time_source.now() + check_interval;
-            while time_source.now() < sleep_end {
-                if stop_signal_clone.load(Ordering::SeqCst) {
-                    tracing::debug!("Periodic update checker stopping");
-                    return;
-                }
-                time_source.sleep(sleep_increment);
-            }
-
-            // Check if we should stop before making a new request
-            if stop_signal_clone.load(Ordering::SeqCst) {
-                tracing::debug!("Periodic update checker stopping");
-                return;
-            }
-
-            tracing::debug!("Periodic update check starting");
-            // Debounce check - only proceed if a new day
-            if let Some(unique_id) =
-                super::telemetry::should_run_daily_check(time_source.as_ref(), &data_dir)
-            {
-                super::telemetry::track_open(&unique_id);
-                let result = check_for_update(&url);
-                if tx.send(result).is_err() {
-                    return; // Receiver dropped, exit
-                }
-            }
+            let _ = tx.send(result);
         }
     });
 
-    PeriodicUpdateChecker {
+    UpdateChecker {
         receiver: rx,
-        stop_signal,
         thread: handle,
         last_result: None,
-        last_check_time: None,
     }
+}
+
+/// Start an update checker (for testing with custom parameters).
+#[doc(hidden)]
+pub fn start_periodic_update_check_with_interval(
+    releases_url: &str,
+    _check_interval: Duration,
+    time_source: SharedTimeSource,
+    data_dir: PathBuf,
+) -> UpdateChecker {
+    // check_interval is ignored - debouncing is handled by stamp file
+    start_periodic_update_check(releases_url, time_source, data_dir)
 }
 
 /// Start a background update check
@@ -607,21 +531,16 @@ mod tests {
     }
 
     #[test]
-    fn test_periodic_update_checker_with_local_server() {
-        // Test that the periodic checker works with a real HTTP server
+    fn test_update_checker_detects_new_version() {
         let (stop_tx, url) = start_mock_release_server("99.0.0");
         let time_source = super::super::time_source::TestTimeSource::shared();
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let mut checker = start_periodic_update_check_with_interval(
-            &url,
-            Duration::from_millis(50),
-            time_source,
-            temp_dir.path().to_path_buf(),
-        );
+        let mut checker =
+            start_periodic_update_check(&url, time_source, temp_dir.path().to_path_buf());
 
-        // Wait for initial result
-        let start = Instant::now();
+        // Wait for result
+        let start = std::time::Instant::now();
         while start.elapsed() < Duration::from_secs(2) {
             if checker.poll_result().is_some() {
                 break;
@@ -629,114 +548,23 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
 
-        // Verify cached result
-        assert!(
-            checker.is_update_available(),
-            "Should detect update available"
-        );
+        assert!(checker.is_update_available());
         assert_eq!(checker.latest_version(), Some("99.0.0"));
-        assert!(checker.get_cached_result().is_some());
-
-        drop(checker);
-        let _ = stop_tx.send(());
-    }
-
-    #[test]
-    fn test_periodic_update_checker_shutdown_clean() {
-        // Test that the checker shuts down cleanly without hanging
-        let (stop_tx, url) = start_mock_release_server("99.0.0");
-        let time_source = super::super::time_source::TestTimeSource::shared();
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let checker = start_periodic_update_check_with_interval(
-            &url,
-            Duration::from_millis(50),
-            time_source,
-            temp_dir.path().to_path_buf(),
-        );
-
-        // Let it run briefly
-        thread::sleep(Duration::from_millis(100));
-
-        // Drop should signal stop and not hang
-        let start = Instant::now();
-        drop(checker);
-        let elapsed = start.elapsed();
-
-        // Shutdown should be quick (within a second)
-        assert!(
-            elapsed < Duration::from_secs(2),
-            "Shutdown took too long: {:?}",
-            elapsed
-        );
 
         let _ = stop_tx.send(());
     }
 
     #[test]
-    fn test_periodic_update_checker_multiple_cycles() {
-        // Test that the checker produces multiple results when time advances by days
-        let (stop_tx, url) = start_mock_release_server("99.0.0");
-        let time_source = super::super::time_source::TestTimeSource::shared();
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let mut checker = start_periodic_update_check_with_interval(
-            &url,
-            Duration::from_secs(86400),
-            time_source.clone(),
-            temp_dir.path().to_path_buf(),
-        );
-
-        let mut result_count = 0;
-        let start = Instant::now();
-        let timeout = Duration::from_secs(2);
-
-        // Get initial result
-        while start.elapsed() < timeout && result_count < 1 {
-            if checker.poll_result().is_some() {
-                result_count += 1;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-
-        // Advance time by 1 day to trigger next check
-        time_source.advance(Duration::from_secs(86400));
-
-        // Wait for second result
-        let start2 = Instant::now();
-        while start2.elapsed() < timeout && result_count < 2 {
-            if checker.poll_result().is_some() {
-                result_count += 1;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-
-        assert!(
-            result_count >= 2,
-            "Expected at least 2 results, got {}",
-            result_count
-        );
-
-        drop(checker);
-        let _ = stop_tx.send(());
-    }
-
-    #[test]
-    fn test_periodic_update_checker_no_update_when_current() {
-        // Test behavior when server returns current version (no update)
+    fn test_update_checker_no_update_when_current() {
         let (stop_tx, url) = start_mock_release_server(CURRENT_VERSION);
         let time_source = super::super::time_source::TestTimeSource::shared();
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let mut checker = start_periodic_update_check_with_interval(
-            &url,
-            Duration::from_secs(3600),
-            time_source,
-            temp_dir.path().to_path_buf(),
-        );
+        let mut checker =
+            start_periodic_update_check(&url, time_source, temp_dir.path().to_path_buf());
 
-        // Wait for initial result
-        let start = Instant::now();
+        // Wait for result
+        let start = std::time::Instant::now();
         while start.elapsed() < Duration::from_secs(2) {
             if checker.poll_result().is_some() {
                 break;
@@ -744,36 +572,26 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
 
-        // Verify no update available
         assert!(!checker.is_update_available());
-        assert!(checker.latest_version().is_none()); // Returns None when no update
-        assert!(checker.get_cached_result().is_some()); // But result is still cached
+        assert!(checker.latest_version().is_none());
+        assert!(checker.get_cached_result().is_some());
 
-        drop(checker);
         let _ = stop_tx.send(());
     }
 
     #[test]
-    fn test_periodic_update_checker_api_before_result() {
-        // Test that API methods work correctly before any result is received
+    fn test_update_checker_api_before_result() {
         let (stop_tx, url) = start_mock_release_server("99.0.0");
         let time_source = super::super::time_source::TestTimeSource::shared();
         let temp_dir = tempfile::tempdir().unwrap();
 
-        // Use a very long interval so we only test the initial state
-        let checker = start_periodic_update_check_with_interval(
-            &url,
-            Duration::from_secs(3600),
-            time_source,
-            temp_dir.path().to_path_buf(),
-        );
+        let checker = start_periodic_update_check(&url, time_source, temp_dir.path().to_path_buf());
 
         // Immediately check (before result arrives)
         assert!(!checker.is_update_available());
         assert!(checker.latest_version().is_none());
         assert!(checker.get_cached_result().is_none());
 
-        drop(checker);
         let _ = stop_tx.send(());
     }
 }
