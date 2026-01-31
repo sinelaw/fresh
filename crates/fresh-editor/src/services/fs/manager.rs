@@ -157,11 +157,11 @@ impl FsManager {
         let fs = Arc::clone(&self.fs);
         let path_buf = path.to_path_buf();
         tokio::task::spawn_blocking(move || {
+            // Handle root paths (e.g., "/" on Unix) which have no file_name component
             let name = path_buf
                 .file_name()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid path"))?
-                .to_string_lossy()
-                .into_owned();
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path_buf.to_string_lossy().into_owned());
 
             // Get symlink metadata first to check if it's a symlink
             let symlink_meta = fs.symlink_metadata(&path_buf)?;
@@ -406,6 +406,20 @@ mod tests {
         assert_eq!(entry.entry_type, EntryType::File);
         assert!(entry.metadata.is_some());
         assert_eq!(entry.metadata.unwrap().size, 12);
+    }
+
+    /// Test that get_entry works for root path "/" (issue #902)
+    #[tokio::test]
+    async fn test_get_entry_root_path() {
+        let fs = Arc::new(StdFileSystem);
+        let manager = FsManager::new(fs);
+
+        // Root path "/" has no file_name() component, but should still work
+        let root = PathBuf::from("/");
+        let entry = manager.get_entry(&root).await.unwrap();
+
+        assert_eq!(entry.name, "/");
+        assert_eq!(entry.entry_type, EntryType::Directory);
     }
 
     #[tokio::test]
