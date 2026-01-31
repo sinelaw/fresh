@@ -101,13 +101,16 @@ pub struct FileOpenState {
 }
 
 impl FileOpenState {
-    /// Create a new file open state for the given directory
+    /// Create a new file open state for the given directory.
+    /// Only builds basic shortcuts synchronously; async shortcuts (documents, downloads,
+    /// Windows drives) should be loaded separately via the async bridge.
     pub fn new(
         dir: PathBuf,
         show_hidden: bool,
         filesystem: Arc<dyn FileSystem + Send + Sync>,
     ) -> Self {
-        let shortcuts = Self::build_shortcuts(&dir, &*filesystem);
+        // Only build sync shortcuts immediately - async shortcuts are loaded in background
+        let shortcuts = Self::build_shortcuts_sync(&dir, &*filesystem);
         Self {
             current_dir: dir,
             entries: Vec::new(),
@@ -126,8 +129,12 @@ impl FileOpenState {
         }
     }
 
-    /// Build navigation shortcuts for the given directory
-    fn build_shortcuts(current_dir: &Path, filesystem: &dyn FileSystem) -> Vec<NavigationShortcut> {
+    /// Build basic navigation shortcuts synchronously (no slow filesystem checks).
+    /// These shortcuts are available immediately when the dialog opens.
+    fn build_shortcuts_sync(
+        current_dir: &Path,
+        filesystem: &dyn FileSystem,
+    ) -> Vec<NavigationShortcut> {
         let mut shortcuts = Vec::new();
 
         // Parent directory
@@ -150,6 +157,7 @@ impl FileOpenState {
         }
 
         // Home directory - use filesystem trait for remote filesystem support
+        // home_dir() is typically fast (reads env vars or registry)
         if let Ok(home) = filesystem.home_dir() {
             shortcuts.push(NavigationShortcut {
                 label: "~".to_string(),
@@ -157,6 +165,16 @@ impl FileOpenState {
                 description: t!("file_browser.home_dir").to_string(),
             });
         }
+
+        shortcuts
+    }
+
+    /// Build additional shortcuts that require filesystem existence checks.
+    /// This is called asynchronously to avoid blocking the UI.
+    /// On Windows, this includes drive letter detection which can hang on unreachable network drives.
+    /// See issue #903.
+    pub fn build_shortcuts_async(filesystem: &dyn FileSystem) -> Vec<NavigationShortcut> {
+        let mut shortcuts = Vec::new();
 
         // Documents directory - check existence via filesystem trait
         if let Some(docs) = dirs::document_dir() {
@@ -183,7 +201,7 @@ impl FileOpenState {
         // Windows: Add drive letters
         // Note: This uses the FileSystem trait's exists() method to allow mocking in tests.
         // On Windows with unreachable network drives, exists() can block for network timeout.
-        // See issue #903.
+        // This is now called asynchronously to prevent UI freezing (issue #903).
         #[cfg(windows)]
         {
             for letter in b'A'..=b'Z' {
@@ -201,9 +219,17 @@ impl FileOpenState {
         shortcuts
     }
 
-    /// Update shortcuts when directory changes
+    /// Merge asynchronously-loaded shortcuts into the shortcuts list.
+    /// Called when async shortcut loading completes.
+    pub fn merge_async_shortcuts(&mut self, async_shortcuts: Vec<NavigationShortcut>) {
+        // Append async shortcuts to the existing list
+        self.shortcuts.extend(async_shortcuts);
+    }
+
+    /// Update shortcuts when directory changes (sync part only).
+    /// Async shortcuts should be loaded separately via load_file_open_shortcuts_async.
     pub fn update_shortcuts(&mut self) {
-        self.shortcuts = Self::build_shortcuts(&self.current_dir, &*self.filesystem);
+        self.shortcuts = Self::build_shortcuts_sync(&self.current_dir, &*self.filesystem);
         self.selected_shortcut = 0;
     }
 

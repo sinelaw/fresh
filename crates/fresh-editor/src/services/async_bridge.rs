@@ -164,6 +164,9 @@ pub enum AsyncMessage {
     /// File open dialog: directory listing completed
     FileOpenDirectoryLoaded(std::io::Result<Vec<crate::services::fs::DirEntry>>),
 
+    /// File open dialog: async shortcuts (Windows drive letters) loaded
+    FileOpenShortcutsLoaded(Vec<crate::app::file_open::NavigationShortcut>),
+
     /// Terminal output received (triggers redraw)
     TerminalOutput { terminal_id: TerminalId },
 

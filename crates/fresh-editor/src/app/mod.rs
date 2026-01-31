@@ -3092,8 +3092,9 @@ impl Editor {
             self.filesystem.clone(),
         ));
 
-        // Start async directory loading
+        // Start async directory loading and async shortcuts loading in parallel
         self.load_file_open_directory(initial_dir);
+        self.load_file_open_shortcuts_async();
     }
 
     /// Initialize the folder open dialog state
@@ -3112,8 +3113,9 @@ impl Editor {
             self.filesystem.clone(),
         ));
 
-        // Start async directory loading
+        // Start async directory loading and async shortcuts loading in parallel
         self.load_file_open_directory(initial_dir);
+        self.load_file_open_shortcuts_async();
     }
 
     /// Change the working directory to a new path
@@ -3190,6 +3192,39 @@ impl Editor {
                     state.set_error(e.to_string());
                 }
             }
+        }
+    }
+
+    /// Load async shortcuts (documents, downloads, Windows drive letters) in the background.
+    /// This prevents the UI from hanging when checking paths that may be slow or unreachable.
+    /// See issue #903.
+    fn load_file_open_shortcuts_async(&mut self) {
+        if let Some(ref runtime) = self.tokio_runtime {
+            let filesystem = self.filesystem.clone();
+            let sender = self.async_bridge.as_ref().map(|b| b.sender());
+
+            runtime.spawn(async move {
+                // Run the blocking filesystem checks in a separate thread
+                let shortcuts = tokio::task::spawn_blocking(move || {
+                    file_open::FileOpenState::build_shortcuts_async(&*filesystem)
+                })
+                .await
+                .unwrap_or_default();
+
+                if let Some(sender) = sender {
+                    let _ = sender.send(AsyncMessage::FileOpenShortcutsLoaded(shortcuts));
+                }
+            });
+        }
+    }
+
+    /// Handle async shortcuts load result
+    pub(super) fn handle_file_open_shortcuts_loaded(
+        &mut self,
+        shortcuts: Vec<file_open::NavigationShortcut>,
+    ) {
+        if let Some(state) = &mut self.file_open_state {
+            state.merge_async_shortcuts(shortcuts);
         }
     }
 
@@ -3901,6 +3936,9 @@ impl Editor {
                 }
                 AsyncMessage::FileOpenDirectoryLoaded(result) => {
                     self.handle_file_open_directory_loaded(result);
+                }
+                AsyncMessage::FileOpenShortcutsLoaded(shortcuts) => {
+                    self.handle_file_open_shortcuts_loaded(shortcuts);
                 }
                 AsyncMessage::TerminalOutput { terminal_id } => {
                     // Terminal output received - check if we should auto-jump back to terminal mode
