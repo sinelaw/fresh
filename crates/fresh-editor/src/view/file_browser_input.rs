@@ -206,11 +206,13 @@ impl<'a> InputHandler for FileBrowserInputHandler<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::filesystem::StdFileSystem;
     use crate::view::prompt::PromptType;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     fn create_test_file_state() -> FileOpenState {
-        FileOpenState::new(PathBuf::from("/tmp"), false)
+        FileOpenState::new(PathBuf::from("/tmp"), false, Arc::new(StdFileSystem))
     }
 
     fn create_test_prompt() -> Prompt {

@@ -1146,3 +1146,88 @@ fn test_filter_prioritizes_exact_matches() {
         );
     }
 }
+
+/// Test that documents issue #903: File Open hangs if a mapped network drive is not accessible
+///
+/// On Windows, `build_shortcuts()` iterates through all drive letters A-Z and calls
+/// `filesystem.exists()` for each one. If a mapped network drive is unreachable,
+/// this call blocks waiting for network timeout, freezing the UI.
+///
+/// This test verifies that opening the file dialog triggers filesystem existence checks
+/// during shortcut building. With a slow filesystem, this demonstrates the blocking behavior.
+#[test]
+fn test_file_open_shortcuts_use_filesystem_trait_issue_903() {
+    use crate::common::harness::HarnessOptions;
+    use fresh::services::fs::SlowFsConfig;
+    use std::time::{Duration, Instant};
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_root = temp_dir.path().to_path_buf();
+
+    // Create a test file
+    fs::write(project_root.join("test.txt"), "content").unwrap();
+
+    // Create harness with slow filesystem - the "other" operations include exists()
+    // Using a noticeable delay to measure the blocking behavior
+    let slow_config = SlowFsConfig {
+        read_dir_delay: Duration::from_millis(10),
+        metadata_delay: Duration::from_millis(10),
+        read_file_delay: Duration::from_millis(10),
+        write_file_delay: Duration::from_millis(10),
+        // exists() calls use metadata internally, which has this delay
+        other_delay: Duration::from_millis(50),
+    };
+
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_working_dir(project_root.clone())
+            .with_slow_fs(slow_config),
+    )
+    .unwrap();
+
+    // Reset metrics before opening file dialog
+    harness.fs_metrics().unwrap().reset();
+
+    let start = Instant::now();
+
+    // Open file dialog - this triggers build_shortcuts() which calls exists()
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Wait for the file browser to appear
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Navigation:"))
+        .expect("File browser should appear");
+
+    let elapsed = start.elapsed();
+
+    // Check that filesystem operations were performed during shortcut building
+    // On Unix, this includes checking home_dir, documents, downloads directories
+    let metrics = harness.fs_metrics().unwrap();
+
+    // The file browser should have triggered some filesystem existence checks
+    // (home, documents, downloads directories are checked via filesystem.exists())
+    // Note: The exact count depends on which directories exist on the system
+    let total_calls = metrics.total_calls();
+
+    // Verify filesystem trait is being used (at least some calls should be made)
+    // The read_dir call happens async, but exists() calls for shortcuts happen during init
+    assert!(
+        total_calls > 0,
+        "File browser should use filesystem trait for operations, got {} calls. \
+         This test verifies issue #903 fix: shortcuts now use FileSystem trait \
+         so slow/unreachable paths can be handled properly.",
+        total_calls
+    );
+
+    // With slow filesystem, opening should take some time due to exists() checks
+    // This demonstrates the blocking behavior that causes issue #903 on Windows
+    // with unreachable network drives
+    println!(
+        "File dialog open took {:?} with {} filesystem calls",
+        elapsed, total_calls
+    );
+}

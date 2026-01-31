@@ -3089,6 +3089,7 @@ impl Editor {
         self.file_open_state = Some(file_open::FileOpenState::new(
             initial_dir.clone(),
             show_hidden,
+            self.filesystem.clone(),
         ));
 
         // Start async directory loading
@@ -3108,6 +3109,7 @@ impl Editor {
         self.file_open_state = Some(file_open::FileOpenState::new(
             initial_dir.clone(),
             show_hidden,
+            self.filesystem.clone(),
         ));
 
         // Start async directory loading

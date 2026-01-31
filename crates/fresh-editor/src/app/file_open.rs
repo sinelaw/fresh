@@ -5,10 +5,11 @@
 //! navigation shortcuts, and filtering.
 
 use crate::input::fuzzy::fuzzy_match;
-use crate::model::filesystem::{DirEntry, EntryType};
+use crate::model::filesystem::{DirEntry, EntryType, FileSystem};
 use rust_i18n::t;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 /// A file entry in the browser with filter match state
@@ -54,7 +55,7 @@ pub struct NavigationShortcut {
 }
 
 /// State for the file open dialog
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FileOpenState {
     /// Current directory being browsed
     pub current_dir: PathBuf,
@@ -94,12 +95,19 @@ pub struct FileOpenState {
 
     /// Whether to show hidden files
     pub show_hidden: bool,
+
+    /// Filesystem for checking path existence (used for drive letter detection on Windows)
+    filesystem: Arc<dyn FileSystem + Send + Sync>,
 }
 
 impl FileOpenState {
     /// Create a new file open state for the given directory
-    pub fn new(dir: PathBuf, show_hidden: bool) -> Self {
-        let shortcuts = Self::build_shortcuts(&dir);
+    pub fn new(
+        dir: PathBuf,
+        show_hidden: bool,
+        filesystem: Arc<dyn FileSystem + Send + Sync>,
+    ) -> Self {
+        let shortcuts = Self::build_shortcuts(&dir, &*filesystem);
         Self {
             current_dir: dir,
             entries: Vec::new(),
@@ -114,11 +122,12 @@ impl FileOpenState {
             shortcuts,
             selected_shortcut: 0,
             show_hidden,
+            filesystem,
         }
     }
 
     /// Build navigation shortcuts for the given directory
-    fn build_shortcuts(current_dir: &Path) -> Vec<NavigationShortcut> {
+    fn build_shortcuts(current_dir: &Path, filesystem: &dyn FileSystem) -> Vec<NavigationShortcut> {
         let mut shortcuts = Vec::new();
 
         // Parent directory
@@ -140,8 +149,8 @@ impl FileOpenState {
             });
         }
 
-        // Home directory
-        if let Some(home) = dirs::home_dir() {
+        // Home directory - use filesystem trait for remote filesystem support
+        if let Ok(home) = filesystem.home_dir() {
             shortcuts.push(NavigationShortcut {
                 label: "~".to_string(),
                 path: home,
@@ -149,30 +158,37 @@ impl FileOpenState {
             });
         }
 
-        // Documents directory
+        // Documents directory - check existence via filesystem trait
         if let Some(docs) = dirs::document_dir() {
-            shortcuts.push(NavigationShortcut {
-                label: t!("file_browser.documents").to_string(),
-                path: docs,
-                description: t!("file_browser.documents_folder").to_string(),
-            });
+            if filesystem.exists(&docs) {
+                shortcuts.push(NavigationShortcut {
+                    label: t!("file_browser.documents").to_string(),
+                    path: docs,
+                    description: t!("file_browser.documents_folder").to_string(),
+                });
+            }
         }
 
-        // Downloads directory
+        // Downloads directory - check existence via filesystem trait
         if let Some(downloads) = dirs::download_dir() {
-            shortcuts.push(NavigationShortcut {
-                label: t!("file_browser.downloads").to_string(),
-                path: downloads,
-                description: t!("file_browser.downloads_folder").to_string(),
-            });
+            if filesystem.exists(&downloads) {
+                shortcuts.push(NavigationShortcut {
+                    label: t!("file_browser.downloads").to_string(),
+                    path: downloads,
+                    description: t!("file_browser.downloads_folder").to_string(),
+                });
+            }
         }
 
         // Windows: Add drive letters
+        // Note: This uses the FileSystem trait's exists() method to allow mocking in tests.
+        // On Windows with unreachable network drives, exists() can block for network timeout.
+        // See issue #903.
         #[cfg(windows)]
         {
             for letter in b'A'..=b'Z' {
                 let path = PathBuf::from(format!("{}:\\", letter as char));
-                if path.exists() {
+                if filesystem.exists(&path) {
                     shortcuts.push(NavigationShortcut {
                         label: format!("{}:", letter as char),
                         path,
@@ -187,7 +203,7 @@ impl FileOpenState {
 
     /// Update shortcuts when directory changes
     pub fn update_shortcuts(&mut self) {
-        self.shortcuts = Self::build_shortcuts(&self.current_dir);
+        self.shortcuts = Self::build_shortcuts(&self.current_dir, &*self.filesystem);
         self.selected_shortcut = 0;
     }
 
@@ -636,6 +652,12 @@ pub fn format_modified(time: SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::filesystem::StdFileSystem;
+
+    fn test_filesystem() -> Arc<dyn FileSystem + Send + Sync> {
+        Arc::new(StdFileSystem)
+    }
+
     fn make_entry(name: &str, is_dir: bool) -> DirEntry {
         DirEntry::new(
             PathBuf::from(format!("/test/{}", name)),
@@ -655,7 +677,7 @@ mod tests {
     #[test]
     fn test_sort_by_name() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"), false);
+        let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
         state.set_entries(vec![
             make_entry("zebra.txt", false),
             make_entry("alpha.txt", false),
@@ -670,7 +692,7 @@ mod tests {
     #[test]
     fn test_sort_by_size() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"), false);
+        let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
         state.sort_mode = SortMode::Size;
         state.set_entries(vec![
             make_entry_with_size("big.txt", 1000),
@@ -686,7 +708,7 @@ mod tests {
     #[test]
     fn test_filter() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"), false);
+        let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
         state.set_entries(vec![
             make_entry("foo.txt", false),
             make_entry("bar.txt", false),
@@ -713,7 +735,7 @@ mod tests {
     #[test]
     fn test_filter_case_insensitive() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"), false);
+        let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
         state.set_entries(vec![
             make_entry("README.md", false),
             make_entry("readme.txt", false),
@@ -734,7 +756,7 @@ mod tests {
     #[test]
     fn test_hidden_files() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"), false);
+        let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
         state.show_hidden = false;
         state.set_entries(vec![
             make_entry(".hidden", false),
@@ -758,7 +780,7 @@ mod tests {
     #[test]
     fn test_navigation() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"), false);
+        let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
         state.set_entries(vec![
             make_entry("a.txt", false),
             make_entry("b.txt", false),
@@ -794,7 +816,7 @@ mod tests {
     #[test]
     fn test_fuzzy_filter() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"), false);
+        let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
         state.set_entries(vec![
             make_entry("command_registry.rs", false),
             make_entry("commands.rs", false),
@@ -817,7 +839,7 @@ mod tests {
     #[test]
     fn test_fuzzy_filter_sparse_match() {
         // Use root path so no ".." entry is added
-        let mut state = FileOpenState::new(PathBuf::from("/"), false);
+        let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
         state.set_entries(vec![
             make_entry("Save File", false),
             make_entry("Select All", false),
