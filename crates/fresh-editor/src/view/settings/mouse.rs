@@ -174,6 +174,10 @@ impl Editor {
                         state.dropdown_scroll(-3);
                         return Ok(true);
                     }
+                    // If search is active and we have results, scroll search results
+                    if state.search_active && !state.search_results.is_empty() {
+                        return Ok(state.search_scroll_up(3));
+                    }
                 }
                 return Ok(self.settings_scroll_up(3));
             }
@@ -184,11 +188,23 @@ impl Editor {
                         state.dropdown_scroll(3);
                         return Ok(true);
                     }
+                    // If search is active and we have results, scroll search results
+                    if state.search_active && !state.search_results.is_empty() {
+                        return Ok(state.search_scroll_down(3));
+                    }
                 }
                 return Ok(self.settings_scroll_down(3));
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                return Ok(self.settings_scrollbar_drag(col, row))
+                // Check if dragging on search scrollbar
+                if let Some(ref mut state) = self.settings_state {
+                    if state.search_active && !state.search_results.is_empty() {
+                        if let Some(scrolled) = self.search_scrollbar_drag(col, row) {
+                            return Ok(scrolled);
+                        }
+                    }
+                }
+                return Ok(self.settings_scrollbar_drag(col, row));
             }
             MouseEventKind::Down(MouseButton::Left) => {}
             _ => return Ok(false),
@@ -352,6 +368,10 @@ impl Editor {
                 }
             }
             SettingsHit::Scrollbar => self.settings_scrollbar_click(row),
+            SettingsHit::SearchScrollbar => self.search_scrollbar_click(row),
+            SettingsHit::SearchResultsPanel => {
+                // Clicking on search results panel background - no action needed
+            }
         }
 
         Ok(true)
@@ -406,6 +426,43 @@ impl Editor {
             }
         }
         false
+    }
+
+    fn search_scrollbar_click(&mut self, row: u16) {
+        if let Some(ref scrollbar_area) = self
+            .cached_layout
+            .settings_layout
+            .as_ref()
+            .and_then(|l| l.search_scrollbar_area)
+        {
+            if scrollbar_area.height > 0 {
+                let relative_y = row.saturating_sub(scrollbar_area.y);
+                let ratio = relative_y as f32 / scrollbar_area.height as f32;
+                if let Some(ref mut state) = self.settings_state {
+                    state.search_scroll_to_ratio(ratio);
+                }
+            }
+        }
+    }
+
+    fn search_scrollbar_drag(&mut self, col: u16, row: u16) -> Option<bool> {
+        if let Some(ref scrollbar_area) = self
+            .cached_layout
+            .settings_layout
+            .as_ref()
+            .and_then(|l| l.search_scrollbar_area)
+        {
+            let in_scrollbar_x = col >= scrollbar_area.x.saturating_sub(1)
+                && col <= scrollbar_area.x + scrollbar_area.width;
+            if in_scrollbar_x && scrollbar_area.height > 0 {
+                let relative_y = row.saturating_sub(scrollbar_area.y);
+                let ratio = relative_y as f32 / scrollbar_area.height as f32;
+                if let Some(ref mut state) = self.settings_state {
+                    return Some(state.search_scroll_to_ratio(ratio));
+                }
+            }
+        }
+        None // Not on search scrollbar
     }
 
     fn entry_dialog_layout(&self) -> Option<EntryDialogLayout> {

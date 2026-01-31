@@ -165,8 +165,12 @@ fn test_settings_search_text_displays() {
     // Search text should be visible in the search box
     harness.assert_screen_contains("tab");
 
-    // Should show results count
-    harness.assert_screen_contains("results");
+    // Should show results count (format: "X-Y of Z" when scrollable, or "N results" when all visible)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(" of ") || screen.contains("results"),
+        "Should show result count indicator"
+    );
 
     // Close with Escape
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -3055,5 +3059,67 @@ fn test_map_entry_navigation_scrolls_to_focused_entry() {
     // Close settings
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test that search results can be scrolled when there are many results
+/// This tests issue #905: Settings UI doesn't scroll down in filter search results
+#[test]
+fn test_settings_search_results_scroll() {
+    // Use a small terminal to ensure we need to scroll
+    let mut harness = EditorTestHarness::new(80, 20).unwrap();
+
+    // Open settings
+    harness.open_settings().unwrap();
+
+    // Start search with /
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+
+    // Search for "e" which should match many settings
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Get the first visible result
+    let screen_before = harness.screen_to_string();
+
+    // Press Down many times to scroll through results
+    for _ in 0..15 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // The screen should have changed - different results should be visible
+    let screen_after = harness.screen_to_string();
+
+    // The screens should be different because we scrolled
+    // (the first result should no longer be the top one)
+    assert_ne!(
+        screen_before, screen_after,
+        "Screen should change after scrolling through search results"
+    );
+
+    // The selected result should still be visible (highlighted)
+    // Check that there's a selection highlight in the results area
+    // We should see at least one result with the selection indicator
+
+    // Press Up to scroll back
+    for _ in 0..15 {
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // Should be back at the top
+    let screen_back = harness.screen_to_string();
+    assert_eq!(
+        screen_before, screen_back,
+        "Screen should return to original state after scrolling back up"
+    );
+
+    // Close settings
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }

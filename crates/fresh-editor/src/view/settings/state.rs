@@ -74,6 +74,10 @@ pub struct SettingsState {
     pub search_results: Vec<SearchResult>,
     /// Selected search result index
     pub selected_search_result: usize,
+    /// Scroll offset for search results (first visible result index)
+    pub search_scroll_offset: usize,
+    /// Maximum number of visible search results (set during render)
+    pub search_max_visible: usize,
     /// Whether the unsaved changes confirmation dialog is showing
     pub showing_confirm_dialog: bool,
     /// Selected option in confirmation dialog (0=Save, 1=Discard, 2=Cancel)
@@ -137,6 +141,8 @@ impl SettingsState {
             search_active: false,
             search_results: Vec::new(),
             selected_search_result: 0,
+            search_scroll_offset: 0,
+            search_max_visible: 5, // Default, updated during render
             showing_confirm_dialog: false,
             confirm_dialog_selection: 0,
             confirm_dialog_hover: None,
@@ -653,6 +659,7 @@ impl SettingsState {
         self.search_query.clear();
         self.search_results.clear();
         self.selected_search_result = 0;
+        self.search_scroll_offset = 0;
     }
 
     /// Cancel search mode
@@ -661,6 +668,7 @@ impl SettingsState {
         self.search_query.clear();
         self.search_results.clear();
         self.selected_search_result = 0;
+        self.search_scroll_offset = 0;
     }
 
     /// Update search query and refresh results
@@ -668,6 +676,7 @@ impl SettingsState {
         self.search_query = query;
         self.search_results = search_settings(&self.pages, &self.search_query);
         self.selected_search_result = 0;
+        self.search_scroll_offset = 0;
     }
 
     /// Add a character to the search query
@@ -675,6 +684,7 @@ impl SettingsState {
         self.search_query.push(c);
         self.search_results = search_settings(&self.pages, &self.search_query);
         self.selected_search_result = 0;
+        self.search_scroll_offset = 0;
     }
 
     /// Remove the last character from the search query
@@ -682,12 +692,17 @@ impl SettingsState {
         self.search_query.pop();
         self.search_results = search_settings(&self.pages, &self.search_query);
         self.selected_search_result = 0;
+        self.search_scroll_offset = 0;
     }
 
     /// Navigate to previous search result
     pub fn search_prev(&mut self) {
         if !self.search_results.is_empty() && self.selected_search_result > 0 {
             self.selected_search_result -= 1;
+            // Scroll up if selection moved above visible area
+            if self.selected_search_result < self.search_scroll_offset {
+                self.search_scroll_offset = self.selected_search_result;
+            }
         }
     }
 
@@ -697,7 +712,71 @@ impl SettingsState {
             && self.selected_search_result + 1 < self.search_results.len()
         {
             self.selected_search_result += 1;
+            // Scroll down if selection moved below visible area
+            if self.selected_search_result >= self.search_scroll_offset + self.search_max_visible {
+                self.search_scroll_offset =
+                    self.selected_search_result - self.search_max_visible + 1;
+            }
         }
+    }
+
+    /// Scroll search results up by delta items
+    pub fn search_scroll_up(&mut self, delta: usize) -> bool {
+        if self.search_results.is_empty() || self.search_scroll_offset == 0 {
+            return false;
+        }
+        self.search_scroll_offset = self.search_scroll_offset.saturating_sub(delta);
+        // Keep selection visible
+        if self.selected_search_result >= self.search_scroll_offset + self.search_max_visible {
+            self.selected_search_result = self.search_scroll_offset + self.search_max_visible - 1;
+        }
+        true
+    }
+
+    /// Scroll search results down by delta items
+    pub fn search_scroll_down(&mut self, delta: usize) -> bool {
+        if self.search_results.is_empty() {
+            return false;
+        }
+        let max_offset = self
+            .search_results
+            .len()
+            .saturating_sub(self.search_max_visible);
+        if self.search_scroll_offset >= max_offset {
+            return false;
+        }
+        self.search_scroll_offset = (self.search_scroll_offset + delta).min(max_offset);
+        // Keep selection visible
+        if self.selected_search_result < self.search_scroll_offset {
+            self.selected_search_result = self.search_scroll_offset;
+        }
+        true
+    }
+
+    /// Scroll search results to a ratio (0.0 = top, 1.0 = bottom)
+    pub fn search_scroll_to_ratio(&mut self, ratio: f32) -> bool {
+        if self.search_results.is_empty() {
+            return false;
+        }
+        let max_offset = self
+            .search_results
+            .len()
+            .saturating_sub(self.search_max_visible);
+        let new_offset = (ratio * max_offset as f32) as usize;
+        if new_offset != self.search_scroll_offset {
+            self.search_scroll_offset = new_offset.min(max_offset);
+            // Keep selection visible
+            if self.selected_search_result < self.search_scroll_offset {
+                self.selected_search_result = self.search_scroll_offset;
+            } else if self.selected_search_result
+                >= self.search_scroll_offset + self.search_max_visible
+            {
+                self.selected_search_result =
+                    self.search_scroll_offset + self.search_max_visible - 1;
+            }
+            return true;
+        }
+        false
     }
 
     /// Jump to the currently selected search result

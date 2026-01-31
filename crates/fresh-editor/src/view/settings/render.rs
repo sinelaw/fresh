@@ -16,6 +16,7 @@ use crate::view::controls::{
     TextListColors, ToggleColors,
 };
 use crate::view::theme::Theme;
+use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -2211,7 +2212,7 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
         .fg(theme.settings_selected_fg)
         .add_modifier(Modifier::REVERSED);
 
-    // Show result count inline after cursor
+    // Show result count and scroll position inline after cursor
     let result_count = state.search_results.len();
     let count_text = if state.search_query.is_empty() {
         String::new()
@@ -2219,16 +2220,37 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
         " (no results)".to_string()
     } else if result_count == 1 {
         " (1 result)".to_string()
-    } else {
+    } else if state.search_max_visible >= result_count {
+        // All results visible, no need to show range
         format!(" ({} results)", result_count)
+    } else {
+        // Show current position in results
+        let first = state.search_scroll_offset + 1;
+        let last = (state.search_scroll_offset + state.search_max_visible).min(result_count);
+        format!(" ({}-{} of {})", first, last, result_count)
     };
+
+    // Add scroll indicators
+    let has_more_above = state.search_scroll_offset > 0;
+    let has_more_below = state.search_scroll_offset + state.search_max_visible < result_count;
+    let scroll_indicator = match (has_more_above, has_more_below) {
+        (true, true) => " ↑↓",
+        (true, false) => " ↑",
+        (false, true) => " ↓",
+        (false, false) => "",
+    };
+
     let count_style = Style::default().fg(theme.line_number_fg);
+    let indicator_style = Style::default()
+        .fg(theme.menu_active_fg)
+        .add_modifier(Modifier::BOLD);
 
     let spans = vec![
         Span::styled("> ", search_style),
         Span::styled(&state.search_query, search_style),
         Span::styled(" ", cursor_style), // Cursor
         Span::styled(count_text, count_style),
+        Span::styled(scroll_indicator, indicator_style),
     ];
     let line = Line::from(spans);
     frame.render_widget(Paragraph::new(line), area);
@@ -2254,22 +2276,84 @@ fn render_search_hint(frame: &mut Frame, area: Rect, theme: &Theme) {
 fn render_search_results(
     frame: &mut Frame,
     area: Rect,
-    state: &SettingsState,
+    state: &mut SettingsState,
     theme: &Theme,
     layout: &mut SettingsLayout,
 ) {
-    let mut y = area.y;
+    // Calculate max visible results (each result is 3 rows tall)
+    let max_visible = (area.height.saturating_sub(3) / 3) as usize;
+    state.search_max_visible = max_visible.max(1);
 
-    for (idx, result) in state.search_results.iter().enumerate() {
-        if y >= area.y + area.height.saturating_sub(3) {
+    // Ensure scroll offset is valid
+    if state.search_scroll_offset >= state.search_results.len() {
+        state.search_scroll_offset = state.search_results.len().saturating_sub(1);
+    }
+
+    // Determine if we need a scrollbar
+    let needs_scrollbar = state.search_results.len() > state.search_max_visible;
+    let scrollbar_width = if needs_scrollbar { 1 } else { 0 };
+
+    // Reserve space for scrollbar on the right
+    let content_area = Rect::new(
+        area.x,
+        area.y,
+        area.width.saturating_sub(scrollbar_width),
+        area.height,
+    );
+
+    let mut y = content_area.y;
+
+    for (idx, result) in state
+        .search_results
+        .iter()
+        .enumerate()
+        .skip(state.search_scroll_offset)
+    {
+        if y >= content_area.y + content_area.height.saturating_sub(3) {
             break;
         }
 
         let is_selected = idx == state.selected_search_result;
-        let item_area = Rect::new(area.x, y, area.width, 3);
+        let is_hovered = matches!(state.hover_hit, Some(SettingsHit::SearchResult(i)) if i == idx);
+        let item_area = Rect::new(content_area.x, y, content_area.width, 3);
 
-        render_search_result_item(frame, item_area, result, is_selected, theme, layout);
+        render_search_result_item(
+            frame,
+            item_area,
+            result,
+            is_selected,
+            is_hovered,
+            theme,
+            layout,
+        );
         y += 3;
+    }
+
+    // Track search results area in layout for mouse wheel support
+    layout.search_results_area = Some(content_area);
+
+    // Render scrollbar if needed
+    if needs_scrollbar {
+        let scrollbar_area = Rect::new(
+            area.x + area.width - 1,
+            area.y,
+            1,
+            area.height.saturating_sub(3), // Leave space at bottom
+        );
+
+        let scrollbar_state = ScrollbarState::new(
+            state.search_results.len(),
+            state.search_max_visible,
+            state.search_scroll_offset,
+        );
+
+        let colors = ScrollbarColors::from_theme(theme);
+        render_scrollbar(frame, scrollbar_area, &scrollbar_state, &colors);
+
+        // Track scrollbar area in layout for click/drag support
+        layout.search_scrollbar_area = Some(scrollbar_area);
+    } else {
+        layout.search_scrollbar_area = None;
     }
 }
 
@@ -2279,13 +2363,21 @@ fn render_search_result_item(
     area: Rect,
     result: &SearchResult,
     is_selected: bool,
+    is_hovered: bool,
     theme: &Theme,
     layout: &mut SettingsLayout,
 ) {
-    // Draw selection highlight background
+    // Draw selection or hover highlight background
     if is_selected {
         // Use dedicated settings colors for selected items
         let bg_style = Style::default().bg(theme.settings_selected_bg);
+        for row in 0..area.height.min(3) {
+            let row_area = Rect::new(area.x, area.y + row, area.width, 1);
+            frame.render_widget(Paragraph::new("").style(bg_style), row_area);
+        }
+    } else if is_hovered {
+        // Subtle hover highlight using menu hover colors
+        let bg_style = Style::default().bg(theme.menu_hover_bg);
         for row in 0..area.height.min(3) {
             let row_area = Rect::new(area.x, area.y + row, area.width, 1);
             frame.render_widget(Paragraph::new("").style(bg_style), row_area);
@@ -2295,6 +2387,8 @@ fn render_search_result_item(
     // First line: Setting name with highlighting
     let name_style = if is_selected {
         Style::default().fg(theme.settings_selected_fg)
+    } else if is_hovered {
+        Style::default().fg(theme.menu_hover_fg)
     } else {
         Style::default().fg(theme.popup_text_fg)
     };

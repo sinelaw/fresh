@@ -31,6 +31,10 @@ pub struct SettingsLayout {
     pub settings_panel_area: Option<Rect>,
     /// Scrollbar area (for drag detection)
     pub scrollbar_area: Option<Rect>,
+    /// Search results scrollbar area (for search results scrolling)
+    pub search_scrollbar_area: Option<Rect>,
+    /// Search results content area (for scroll wheel detection)
+    pub search_results_area: Option<Rect>,
 }
 
 /// Layout info for a search result
@@ -72,6 +76,8 @@ impl SettingsLayout {
             reset_button: None,
             settings_panel_area: None,
             scrollbar_area: None,
+            search_scrollbar_area: None,
+            search_results_area: None,
         }
     }
 
@@ -140,10 +146,24 @@ impl SettingsLayout {
             }
         }
 
+        // Check search scrollbar (before search results, for click/drag priority)
+        if let Some(ref scrollbar) = self.search_scrollbar_area {
+            if point_in_rect(*scrollbar, x, y) {
+                return Some(SettingsHit::SearchScrollbar);
+            }
+        }
+
         // Check search results (before regular items, since they replace the item list during search)
         for (idx, result) in self.search_results.iter().enumerate() {
             if point_in_rect(result.area, x, y) {
                 return Some(SettingsHit::SearchResult(idx));
+            }
+        }
+
+        // Check search results area (for scroll wheel when over the results area but not on a result)
+        if let Some(ref area) = self.search_results_area {
+            if point_in_rect(*area, x, y) {
+                return Some(SettingsHit::SearchResultsPanel);
             }
         }
 
@@ -300,6 +320,10 @@ pub enum SettingsHit {
     Scrollbar,
     /// Click on settings panel (scrollable area)
     SettingsPanel,
+    /// Click on search results scrollbar
+    SearchScrollbar,
+    /// Click on search results area (for scroll wheel)
+    SearchResultsPanel,
 }
 
 #[cfg(test)]
