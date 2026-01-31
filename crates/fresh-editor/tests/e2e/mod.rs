@@ -18,6 +18,7 @@ pub mod file_explorer;
 pub mod file_permissions;
 pub mod indent_dedent;
 pub mod language_features_e2e;
+pub mod large_file_inplace_write_bug;
 pub mod large_file_mode;
 pub mod lifecycle;
 pub mod line_wrapping;
