@@ -105,7 +105,7 @@ jobs:
           commit_username: ${{ secrets.AUR_USERNAME }}
           commit_email: ${{ secrets.AUR_EMAIL }}
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update to ${VERSION}"
+          commit_message: "Update to ${{ inputs.version }}"
           ssh_keyscan_types: ed25519
 
   publish-aur-source:
@@ -157,5 +157,5 @@ jobs:
           commit_username: ${{ secrets.AUR_USERNAME }}
           commit_email: ${{ secrets.AUR_EMAIL }}
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update to ${VERSION}"
+          commit_message: "Update to ${{ inputs.version }}"
           ssh_keyscan_types: ed25519

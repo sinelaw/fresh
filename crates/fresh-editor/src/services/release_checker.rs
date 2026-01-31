@@ -312,7 +312,7 @@ pub fn start_update_check(
 pub fn fetch_latest_version(url: &str) -> Result<String, String> {
     tracing::debug!("Fetching latest version from {}", url);
     let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(5)))
+        .timeout_global(Some(Duration::from_secs(15)))
         .build()
         .new_agent();
     let response = agent
