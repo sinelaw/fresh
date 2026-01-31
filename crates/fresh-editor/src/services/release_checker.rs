@@ -470,153 +470,93 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn test_is_newer_version_major() {
-        assert!(is_newer_version("0.1.26", "1.0.0"));
-        assert!(is_newer_version("1.0.0", "2.0.0"));
+    fn test_is_newer_version() {
+        // (current, latest, expected_newer)
+        let cases = [
+            ("0.1.26", "1.0.0", true),        // major bump
+            ("0.1.26", "0.2.0", true),        // minor bump
+            ("0.1.26", "0.1.27", true),       // patch bump
+            ("0.1.26", "0.1.26", false),      // same
+            ("0.1.26", "0.1.25", false),      // older patch
+            ("0.2.0", "0.1.26", false),       // older minor
+            ("1.0.0", "0.1.26", false),       // older major
+            ("0.1.26-alpha", "0.1.27", true), // prerelease current
+            ("0.1.26", "0.1.27-beta", true),  // prerelease latest
+        ];
+        for (current, latest, expected) in cases {
+            assert_eq!(
+                is_newer_version(current, latest),
+                expected,
+                "is_newer_version({:?}, {:?})",
+                current,
+                latest
+            );
+        }
     }
 
     #[test]
-    fn test_is_newer_version_minor() {
-        assert!(is_newer_version("0.1.26", "0.2.0"));
-        assert!(is_newer_version("0.1.26", "0.2.26"));
-    }
-
-    #[test]
-    fn test_is_newer_version_patch() {
-        assert!(is_newer_version("0.1.26", "0.1.27"));
-        assert!(is_newer_version("0.1.26", "0.1.100"));
-    }
-
-    #[test]
-    fn test_is_newer_version_same() {
-        assert!(!is_newer_version("0.1.26", "0.1.26"));
-    }
-
-    #[test]
-    fn test_is_newer_version_older() {
-        assert!(!is_newer_version("0.1.26", "0.1.25"));
-        assert!(!is_newer_version("0.2.0", "0.1.26"));
-        assert!(!is_newer_version("1.0.0", "0.1.26"));
-    }
-
-    #[test]
-    fn test_is_newer_version_with_v_prefix() {
-        assert!(is_newer_version("0.1.26", "0.1.27"));
-    }
-
-    #[test]
-    fn test_is_newer_version_with_prerelease() {
-        assert!(is_newer_version("0.1.26-alpha", "0.1.27"));
-        assert!(is_newer_version("0.1.26", "0.1.27-beta"));
-    }
-
-    #[test]
-    fn test_detect_install_method_homebrew_macos() {
-        let path = PathBuf::from("/opt/homebrew/Cellar/fresh/0.1.26/bin/fresh");
-        assert_eq!(
-            detect_install_method_from_path(&path),
-            InstallMethod::Homebrew
-        );
-    }
-
-    #[test]
-    fn test_detect_install_method_homebrew_intel_mac() {
-        let path = PathBuf::from("/usr/local/Cellar/fresh/0.1.26/bin/fresh");
-        assert_eq!(
-            detect_install_method_from_path(&path),
-            InstallMethod::Homebrew
-        );
-    }
-
-    #[test]
-    fn test_detect_install_method_homebrew_linux() {
-        let path = PathBuf::from("/home/linuxbrew/.linuxbrew/bin/fresh");
-        assert_eq!(
-            detect_install_method_from_path(&path),
-            InstallMethod::Homebrew
-        );
-    }
-
-    #[test]
-    fn test_detect_install_method_cargo() {
-        let path = PathBuf::from("/home/user/.cargo/bin/fresh");
-        assert_eq!(detect_install_method_from_path(&path), InstallMethod::Cargo);
-    }
-
-    #[test]
-    fn test_detect_install_method_cargo_windows() {
-        let path = PathBuf::from("C:\\Users\\user\\.cargo\\bin\\fresh.exe");
-        assert_eq!(detect_install_method_from_path(&path), InstallMethod::Cargo);
-    }
-
-    #[test]
-    fn test_detect_install_method_npm() {
-        let path = PathBuf::from("/usr/local/lib/node_modules/fresh-editor/bin/fresh");
-        assert_eq!(detect_install_method_from_path(&path), InstallMethod::Npm);
-    }
-
-    #[test]
-    fn test_detect_install_method_package_manager() {
-        let path = PathBuf::from("/usr/local/bin/fresh");
-        assert_eq!(
-            detect_install_method_from_path(&path),
-            InstallMethod::PackageManager
-        );
-    }
-
-    #[test]
-    fn test_detect_install_method_unknown() {
-        let path = PathBuf::from("/home/user/downloads/fresh");
-        assert_eq!(
-            detect_install_method_from_path(&path),
-            InstallMethod::Unknown
-        );
+    fn test_detect_install_method() {
+        let cases = [
+            (
+                "/opt/homebrew/Cellar/fresh/0.1.26/bin/fresh",
+                InstallMethod::Homebrew,
+            ),
+            (
+                "/usr/local/Cellar/fresh/0.1.26/bin/fresh",
+                InstallMethod::Homebrew,
+            ),
+            (
+                "/home/linuxbrew/.linuxbrew/bin/fresh",
+                InstallMethod::Homebrew,
+            ),
+            ("/home/user/.cargo/bin/fresh", InstallMethod::Cargo),
+            (
+                "C:\\Users\\user\\.cargo\\bin\\fresh.exe",
+                InstallMethod::Cargo,
+            ),
+            (
+                "/usr/local/lib/node_modules/fresh-editor/bin/fresh",
+                InstallMethod::Npm,
+            ),
+            ("/usr/local/bin/fresh", InstallMethod::PackageManager),
+            ("/home/user/downloads/fresh", InstallMethod::Unknown),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(
+                detect_install_method_from_path(&PathBuf::from(path)),
+                expected,
+                "detect_install_method({:?})",
+                path
+            );
+        }
     }
 
     #[test]
     fn test_parse_version_from_json() {
-        let json = r#"{"tag_name": "v0.1.27", "name": "Release 0.1.27"}"#;
-        assert_eq!(parse_version_from_json(json).unwrap(), "0.1.27");
-    }
+        // Various JSON formats should all parse correctly
+        let cases = [
+            (r#"{"tag_name": "v0.1.27"}"#, "0.1.27"),
+            (r#"{"tag_name": "0.1.27"}"#, "0.1.27"),
+            (
+                r#"{"tag_name": "v0.2.0", "name": "v0.2.0", "draft": false}"#,
+                "0.2.0",
+            ),
+        ];
+        for (json, expected) in cases {
+            assert_eq!(parse_version_from_json(json).unwrap(), expected);
+        }
 
-    #[test]
-    fn test_parse_version_from_json_no_v_prefix() {
-        let json = r#"{"tag_name": "0.1.27", "name": "Release 0.1.27"}"#;
-        assert_eq!(parse_version_from_json(json).unwrap(), "0.1.27");
-    }
-
-    #[test]
-    fn test_parse_version_from_json_full_response() {
-        let json = r#"{
-            "url": "https://api.github.com/repos/sinelaw/fresh/releases/12345",
-            "tag_name": "v0.2.0",
-            "target_commitish": "main",
-            "name": "v0.2.0",
-            "draft": false,
-            "prerelease": false
-        }"#;
-        assert_eq!(parse_version_from_json(json).unwrap(), "0.2.0");
+        // Verify mock version is detected as newer than current
+        let version = parse_version_from_json(r#"{"tag_name": "v99.0.0"}"#).unwrap();
+        assert!(is_newer_version(CURRENT_VERSION, &version));
     }
 
     #[test]
     fn test_current_version_is_valid() {
         let parts: Vec<&str> = CURRENT_VERSION.split('.').collect();
         assert!(parts.len() >= 2, "Version should have at least major.minor");
-        assert!(
-            parts[0].parse::<u32>().is_ok(),
-            "Major version should be a number"
-        );
-        assert!(
-            parts[1].parse::<u32>().is_ok(),
-            "Minor version should be a number"
-        );
-    }
-
-    #[test]
-    fn test_version_parsing_with_mock_data() {
-        let json = r#"{"tag_name": "v99.0.0"}"#;
-        let version = parse_version_from_json(json).unwrap();
-        assert!(is_newer_version(CURRENT_VERSION, &version));
+        assert!(parts[0].parse::<u32>().is_ok());
+        assert!(parts[1].parse::<u32>().is_ok());
     }
 
     use std::sync::mpsc as std_mpsc;
