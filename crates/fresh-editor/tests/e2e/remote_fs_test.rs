@@ -137,7 +137,7 @@ fn test_remote_huge_file_mid_and_start_insert() {
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
-    let iterations = 3;
+    let _iterations = 3;
     for target_line in vec![5000, 3] {
         // 1. Edit Middle (Line 5000)
         // Reset to start
@@ -187,21 +187,21 @@ fn test_remote_large_file_edits_beginning_middle_end() {
     use std::fs;
     use tempfile::TempDir;
 
-    let Some((fs, temp_dir, _rt)) = create_test_filesystem() else {
+    let Some((fs, _remote_temp_dir, _rt)) = create_test_filesystem() else {
         eprintln!("Skipping test: could not create test filesystem");
         return;
     };
     let fs_arc = Arc::new(fs);
 
-    let temp_dir = TempDir::new().unwrap();
-    let file_path = temp_dir.path().join("large_edit_test.txt");
+    let local_temp_dir = TempDir::new().unwrap();
+    let file_path = local_temp_dir.path().join("large_edit_test.txt");
 
     // Create 100 lines, ~10KB (enough for 500 byte threshold)
     let mut content = String::new();
     let mut expected_lines = Vec::new();
-    let LINES = 1_000_000;
-    let LINE_LEN = format!("Line {:04}  original content\n", 1).len();
-    for i in 0..LINES {
+    let lines = 1_000_000;
+    let line_len = format!("Line {:04}  original content\n", 1).len();
+    for i in 0..lines {
         let line = format!("Line {:04}  original content\n", i);
         content.push_str(&line);
         expected_lines.push(line);
@@ -214,7 +214,7 @@ fn test_remote_large_file_edits_beginning_middle_end() {
         HarnessOptions::new()
             .with_config(fresh::config::Config {
                 editor: fresh::config::EditorConfig {
-                    estimated_line_length: LINE_LEN,
+                    estimated_line_length: line_len,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -227,15 +227,15 @@ fn test_remote_large_file_edits_beginning_middle_end() {
     harness.render().unwrap();
 
     // Edit lines
-    let STEPS = 7;
-    for i in 0..STEPS {
-        let target = (STEPS - 1 - i) * (LINES / STEPS);
+    let steps = 7;
+    for i in 0..steps {
+        let target = (steps - 1 - i) * (lines / steps);
         println!("{}", harness.screen_to_string());
         harness
             .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
             .unwrap();
         println!("target line: {}", target);
-        harness.type_text(&format!("{}", target).to_string());
+        let _ = harness.type_text(&format!("{}", target).to_string());
         println!("{}", harness.screen_to_string());
         harness
             .send_key(KeyCode::Enter, KeyModifiers::NONE)

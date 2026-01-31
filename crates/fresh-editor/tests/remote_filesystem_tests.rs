@@ -796,7 +796,7 @@ fn test_buffer_large_file_edits_at_beginning_middle_and_end_through_remote() {
     for i in 0..NUM_LINES {
         let line = format!("Line {:08} content\n", i);
         assert_eq!(line.len(), LINE_LEN);
-        original.extend_from_slice(line.as_bytes().clone());
+        original.extend_from_slice(line.as_bytes());
         original_lines.push(line.into_bytes());
     }
     let size = original.len();

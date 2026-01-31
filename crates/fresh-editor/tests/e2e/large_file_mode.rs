@@ -581,9 +581,9 @@ fn test_large_file_edits_beginning_middle_end() {
     // Create 100 lines, ~10KB (enough for 500 byte threshold)
     let mut content = String::new();
     let mut expected_lines = Vec::new();
-    let LINES = 1_000_000;
-    let LINE_LEN = format!("Line {:04}  original content\n", 1).len();
-    for i in 0..LINES {
+    let lines = 1_000_000;
+    let line_len = format!("Line {:04}  original content\n", 1).len();
+    for i in 0..lines {
         let line = format!("Line {:04}  original content\n", i);
         content.push_str(&line);
         expected_lines.push(line);
@@ -595,7 +595,7 @@ fn test_large_file_edits_beginning_middle_end() {
         24,
         fresh::config::Config {
             editor: fresh::config::EditorConfig {
-                estimated_line_length: LINE_LEN,
+                estimated_line_length: line_len,
                 ..Default::default()
             },
             ..Default::default()
@@ -607,15 +607,15 @@ fn test_large_file_edits_beginning_middle_end() {
     harness.render().unwrap();
 
     // Edit lines
-    let STEPS = 17;
-    for i in 0..STEPS {
-        let target = i * (LINES / STEPS);
+    let steps = 17;
+    for i in 0..steps {
+        let target = i * (lines / steps);
         println!("{}", harness.screen_to_string());
         harness
             .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
             .unwrap();
         println!("target line: {}", target);
-        harness.type_text(&format!("{}", target).to_string());
+        let _ = harness.type_text(&format!("{}", target).to_string());
         println!("{}", harness.screen_to_string());
         harness
             .send_key(KeyCode::Enter, KeyModifiers::NONE)
