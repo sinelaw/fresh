@@ -96,6 +96,8 @@
   "action.move_down": "光标向下移动",
   "action.move_left": "光标向左移动",
   "action.move_line_end": "移动到行尾",
+  "action.move_line_up": "上移行",
+  "action.move_line_down": "下移行",
   "action.move_line_start": "移动到行首",
   "action.move_page_down": "向下翻页",
   "action.move_page_up": "向上翻页",

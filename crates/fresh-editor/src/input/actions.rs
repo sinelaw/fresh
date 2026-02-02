@@ -2,7 +2,7 @@
 
 use crate::input::keybindings::Action;
 use crate::model::buffer::{Buffer, LineEnding};
-use crate::model::cursor::{Position2D, SelectionMode};
+use crate::model::cursor::{Cursor, Position2D, SelectionMode};
 use crate::model::event::{CursorId, Event};
 use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
 use crate::primitives::word_navigation::{
@@ -10,6 +10,7 @@ use crate::primitives::word_navigation::{
     find_word_start_right,
 };
 use crate::state::EditorState;
+use std::collections::HashMap;
 use std::ops::Range;
 
 /// Direction for block selection movement
@@ -19,6 +20,18 @@ enum BlockDirection {
     Right,
     Up,
     Down,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum LineMoveDirection {
+    Up,
+    Down,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LineRange {
+    start: usize,
+    end: usize,
 }
 
 /// Convert byte offset to 2D position (line, column)
@@ -42,6 +55,224 @@ fn pos_2d_to_byte(buffer: &Buffer, pos: Position2D) -> usize {
     };
     let clamped_col = pos.column.min(line_len);
     line_start + clamped_col
+}
+
+/// Return the byte offset for the end of a line (start of next line or EOF).
+fn line_end_offset(buffer: &Buffer, line: usize) -> usize {
+    buffer
+        .line_start_offset(line + 1)
+        .unwrap_or_else(|| buffer.len())
+}
+
+fn split_line_content(line_bytes: &[u8]) -> (String, usize) {
+    let mut len = line_bytes.len();
+    if len >= 2 && line_bytes[len - 2] == b'\r' && line_bytes[len - 1] == b'\n' {
+        len -= 2;
+    } else if len >= 1 && (line_bytes[len - 1] == b'\n' || line_bytes[len - 1] == b'\r') {
+        len -= 1;
+    }
+
+    let content = String::from_utf8_lossy(&line_bytes[..len]).to_string();
+    (content, len)
+}
+
+/// Determine the line range affected by a cursor selection or position.
+fn selection_line_range(buffer: &Buffer, cursor: &Cursor) -> LineRange {
+    if let Some(range) = cursor.selection_range() {
+        if range.start == range.end {
+            let line = buffer.get_line_number(range.start);
+            LineRange {
+                start: line,
+                end: line,
+            }
+        } else {
+            let start_line = buffer.get_line_number(range.start);
+            let end_pos = range.end.saturating_sub(1);
+            let end_line = buffer.get_line_number(end_pos);
+            LineRange {
+                start: start_line,
+                end: end_line,
+            }
+        }
+    } else {
+        let line = buffer.get_line_number(cursor.position);
+        LineRange {
+            start: line,
+            end: line,
+        }
+    }
+}
+
+fn merge_line_ranges(mut ranges: Vec<LineRange>) -> Vec<LineRange> {
+    if ranges.is_empty() {
+        return ranges;
+    }
+
+    ranges.sort_by_key(|range| range.start);
+    let mut merged = Vec::with_capacity(ranges.len());
+    let mut current = ranges[0];
+
+    for range in ranges.into_iter().skip(1) {
+        if range.start <= current.end.saturating_add(1) {
+            current.end = current.end.max(range.end);
+        } else {
+            merged.push(current);
+            current = range;
+        }
+    }
+
+    merged.push(current);
+    merged
+}
+
+fn map_position(buffer: &Buffer, new_line_starts: &HashMap<usize, usize>, pos: usize) -> usize {
+    let line = buffer.get_line_number(pos);
+    if let Some(&new_start) = new_line_starts.get(&line) {
+        let old_start = buffer.line_start_offset(line).unwrap_or(0);
+        let column = pos.saturating_sub(old_start);
+        new_start + column
+    } else {
+        pos
+    }
+}
+
+fn move_lines(state: &mut EditorState, events: &mut Vec<Event>, direction: LineMoveDirection) {
+    let buffer_len = state.buffer.len();
+    if buffer_len == 0 {
+        return;
+    }
+
+    let total_lines = state
+        .buffer
+        .get_line_number(buffer_len.saturating_sub(1))
+        .saturating_add(1);
+
+    let ranges: Vec<LineRange> = state
+        .cursors
+        .iter()
+        .map(|(_, cursor)| selection_line_range(&state.buffer, cursor))
+        .collect();
+    let merged_ranges = merge_line_ranges(ranges);
+    if merged_ranges.is_empty() {
+        return;
+    }
+
+    let movable_ranges: Vec<LineRange> = merged_ranges
+        .into_iter()
+        .filter(|range| match direction {
+            LineMoveDirection::Up => range.start > 0,
+            LineMoveDirection::Down => range.end.saturating_add(1) < total_lines,
+        })
+        .collect();
+
+    if movable_ranges.is_empty() {
+        return;
+    }
+
+    let primary_cursor_id = state.cursors.primary_id();
+    let mut new_line_starts: HashMap<usize, usize> = HashMap::new();
+
+    for range in movable_ranges {
+        let (region_start_line, region_end_line, swap_line) = match direction {
+            LineMoveDirection::Up => (range.start - 1, range.end, range.start - 1),
+            LineMoveDirection::Down => (range.start, range.end + 1, range.end + 1),
+        };
+
+        let region_start_offset = match state.buffer.line_start_offset(region_start_line) {
+            Some(offset) => offset,
+            None => continue,
+        };
+        let region_end_offset = line_end_offset(&state.buffer, region_end_line);
+
+        let old_text = state.get_text_range(region_start_offset, region_end_offset);
+        let new_order: Vec<usize> = match direction {
+            LineMoveDirection::Up => (range.start..=range.end)
+                .chain(std::iter::once(swap_line))
+                .collect(),
+            LineMoveDirection::Down => std::iter::once(swap_line)
+                .chain(range.start..=range.end)
+                .collect(),
+        };
+        let region_includes_last = region_end_line + 1 == total_lines;
+        let line_ending = state.buffer.line_ending().as_str();
+        let line_ending_len = line_ending.len();
+
+        let mut line_contents: HashMap<usize, (String, usize)> = HashMap::new();
+        for line in region_start_line..=region_end_line {
+            let bytes = state.buffer.get_line(line).unwrap_or_default();
+            let (content, content_len) = split_line_content(&bytes);
+            line_contents.insert(line, (content, content_len));
+        }
+
+        let mut new_text = String::new();
+        let mut offset = region_start_offset;
+
+        for (idx, line) in new_order.iter().enumerate() {
+            let (content, content_len) = line_contents
+                .get(line)
+                .map(|(text, len)| (text.as_str(), *len))
+                .unwrap_or(("", 0));
+
+            new_line_starts.insert(*line, offset);
+            new_text.push_str(content);
+
+            let append_line_ending = if region_includes_last {
+                idx + 1 < new_order.len()
+            } else {
+                true
+            };
+
+            if append_line_ending {
+                new_text.push_str(line_ending);
+            }
+
+            let line_len = content_len
+                + if append_line_ending {
+                    line_ending_len
+                } else {
+                    0
+                };
+            offset = offset.saturating_add(line_len);
+        }
+
+        if new_text == old_text {
+            continue;
+        }
+
+        events.push(Event::Delete {
+            range: region_start_offset..region_end_offset,
+            deleted_text: old_text,
+            cursor_id: primary_cursor_id,
+        });
+        events.push(Event::Insert {
+            position: region_start_offset,
+            text: new_text,
+            cursor_id: primary_cursor_id,
+        });
+    }
+
+    if new_line_starts.is_empty() {
+        return;
+    }
+
+    for (cursor_id, cursor) in state.cursors.iter() {
+        let new_position = map_position(&state.buffer, &new_line_starts, cursor.position);
+        let new_anchor = cursor
+            .anchor
+            .map(|anchor| map_position(&state.buffer, &new_line_starts, anchor));
+
+        if new_position != cursor.position || new_anchor != cursor.anchor {
+            events.push(Event::MoveCursor {
+                cursor_id,
+                old_position: cursor.position,
+                new_position,
+                old_anchor: cursor.anchor,
+                new_anchor,
+                old_sticky_column: cursor.sticky_column,
+                new_sticky_column: cursor.sticky_column,
+            });
+        }
+    }
 }
 
 /// Calculate the visual column (display width) at the cursor position.
@@ -2272,6 +2503,14 @@ pub fn action_to_events(
             apply_deletions(state, deletions, &mut events);
         }
 
+        Action::MoveLineUp => {
+            move_lines(state, &mut events, LineMoveDirection::Up);
+        }
+
+        Action::MoveLineDown => {
+            move_lines(state, &mut events, LineMoveDirection::Down);
+        }
+
         Action::TransposeChars => {
             // Transpose the character before the cursor with the one at the cursor
             // Collect cursor positions first to avoid borrow issues
@@ -2907,6 +3146,40 @@ mod tests {
         } else {
             panic!("Expected MoveCursor event");
         }
+    }
+
+    #[test]
+    fn test_move_line_up_without_trailing_newline() {
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "A\nB".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: state.cursors.primary().position,
+            new_position: 2, // "B"
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        let events = action_to_events(&mut state, Action::MoveLineUp, 4, false, 80, 24).unwrap();
+        for event in events {
+            state.apply(&event);
+        }
+
+        assert_eq!(state.buffer.to_string().unwrap(), "B\nA");
+        assert_eq!(state.cursors.primary().position, 0);
     }
 
     #[test]

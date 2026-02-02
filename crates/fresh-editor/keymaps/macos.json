@@ -123,6 +123,21 @@
       "when": "normal"
     },
     {
+      "comment": "Alt+Up/Down -> Move line/selection (Mac: Option+Up/Down)",
+      "key": "Up",
+      "modifiers": ["alt"],
+      "action": "move_line_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["alt"],
+      "action": "move_line_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Ctrl+A -> Line start (Mac terminals send this for Home)",
       "key": "a",
       "modifiers": ["ctrl"],

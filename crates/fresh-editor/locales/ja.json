@@ -96,6 +96,8 @@
   "action.move_down": "カーソルを下へ移動",
   "action.move_left": "カーソルを左へ移動",
   "action.move_line_end": "行末へ移動",
+  "action.move_line_up": "行を上へ移動",
+  "action.move_line_down": "行を下へ移動",
   "action.move_line_start": "行頭へ移動",
   "action.move_page_down": "ページダウン",
   "action.move_page_up": "ページアップ",

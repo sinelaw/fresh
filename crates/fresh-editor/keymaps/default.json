@@ -111,6 +111,21 @@
       "when": "normal"
     },
     {
+      "comment": "Normal context - Move line/selection up/down",
+      "key": "Up",
+      "modifiers": ["alt"],
+      "action": "move_line_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["alt"],
+      "action": "move_line_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "key": "Home",
       "modifiers": [],
       "action": "move_line_start",

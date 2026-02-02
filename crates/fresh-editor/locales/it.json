@@ -96,6 +96,8 @@
   "action.move_down": "Sposta cursore giù",
   "action.move_left": "Sposta cursore a sinistra",
   "action.move_line_end": "Vai a fine riga",
+  "action.move_line_up": "Sposta riga su",
+  "action.move_line_down": "Sposta riga giù",
   "action.move_line_start": "Vai a inizio riga",
   "action.move_page_down": "Vai alla pagina successiva",
   "action.move_page_up": "Vai alla pagina precedente",

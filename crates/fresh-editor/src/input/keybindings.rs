@@ -254,6 +254,8 @@ pub enum Action {
     MoveWordEnd, // Move to end of current word
     MoveLineStart,
     MoveLineEnd,
+    MoveLineUp,
+    MoveLineDown,
     MovePageUp,
     MovePageDown,
     MoveDocumentStart,
@@ -622,6 +624,8 @@ impl Action {
             "move_word_end" => Self::MoveWordEnd,
             "move_line_start" => Self::MoveLineStart,
             "move_line_end" => Self::MoveLineEnd,
+            "move_line_up" => Self::MoveLineUp,
+            "move_line_down" => Self::MoveLineDown,
             "move_page_up" => Self::MovePageUp,
             "move_page_down" => Self::MovePageDown,
             "move_document_start" => Self::MoveDocumentStart,
@@ -980,6 +984,8 @@ impl Action {
                 | Action::TransposeChars
                 | Action::OpenLine
                 | Action::DuplicateLine
+                | Action::MoveLineUp
+                | Action::MoveLineDown
                 // Clipboard editing (but not Copy)
                 | Action::Cut
                 | Action::Paste
@@ -1007,6 +1013,8 @@ impl Action {
                 | Action::TransposeChars
                 | Action::OpenLine
                 | Action::DuplicateLine
+                | Action::MoveLineUp
+                | Action::MoveLineDown
                 | Action::Cut
                 | Action::Paste
         )
@@ -1699,6 +1707,8 @@ impl KeybindingResolver {
             Action::MoveWordEnd => t!("action.move_word_end"),
             Action::MoveLineStart => t!("action.move_line_start"),
             Action::MoveLineEnd => t!("action.move_line_end"),
+            Action::MoveLineUp => t!("action.move_line_up"),
+            Action::MoveLineDown => t!("action.move_line_down"),
             Action::MovePageUp => t!("action.move_page_up"),
             Action::MovePageDown => t!("action.move_page_down"),
             Action::MoveDocumentStart => t!("action.move_document_start"),

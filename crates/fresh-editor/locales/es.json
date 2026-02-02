@@ -96,6 +96,8 @@
   "action.move_down": "Mover cursor abajo",
   "action.move_left": "Mover cursor a la izquierda",
   "action.move_line_end": "Mover al final de línea",
+  "action.move_line_up": "Mover línea arriba",
+  "action.move_line_down": "Mover línea abajo",
   "action.move_line_start": "Mover al inicio de línea",
   "action.move_page_down": "Mover página abajo",
   "action.move_page_up": "Mover página arriba",

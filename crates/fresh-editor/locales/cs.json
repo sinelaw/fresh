@@ -96,6 +96,8 @@
   "action.move_down": "Přesunout kurzor dolů",
   "action.move_left": "Přesunout kurzor vlevo",
   "action.move_line_end": "Přesunout na konec řádku",
+  "action.move_line_up": "Přesunout řádek nahoru",
+  "action.move_line_down": "Přesunout řádek dolů",
   "action.move_line_start": "Přesunout na začátek řádku",
   "action.move_page_down": "Přesunout o stránku dolů",
   "action.move_page_up": "Přesunout o stránku nahoru",

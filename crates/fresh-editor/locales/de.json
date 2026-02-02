@@ -96,6 +96,8 @@
   "action.move_down": "Cursor nach unten bewegen",
   "action.move_left": "Cursor nach links bewegen",
   "action.move_line_end": "Zum Zeilenende bewegen",
+  "action.move_line_up": "Zeile nach oben verschieben",
+  "action.move_line_down": "Zeile nach unten verschieben",
   "action.move_line_start": "Zum Zeilenanfang bewegen",
   "action.move_page_down": "Seite nach unten bewegen",
   "action.move_page_up": "Seite nach oben bewegen",

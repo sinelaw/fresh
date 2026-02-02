@@ -96,6 +96,8 @@
   "action.move_down": "커서 아래로 이동",
   "action.move_left": "커서 왼쪽으로 이동",
   "action.move_line_end": "줄 끝으로 이동",
+  "action.move_line_up": "줄을 위로 이동",
+  "action.move_line_down": "줄을 아래로 이동",
   "action.move_line_start": "줄 시작으로 이동",
   "action.move_page_down": "페이지 아래로 이동",
   "action.move_page_up": "페이지 위로 이동",

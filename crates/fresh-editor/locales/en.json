@@ -94,6 +94,8 @@
   "action.move_down": "Move cursor down",
   "action.move_left": "Move cursor left",
   "action.move_line_end": "Move to line end",
+  "action.move_line_up": "Move line up",
+  "action.move_line_down": "Move line down",
   "action.move_line_start": "Move to line start",
   "action.move_page_down": "Move page down",
   "action.move_page_up": "Move page up",

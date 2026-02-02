@@ -96,6 +96,8 @@
   "action.move_down": "Перемістити курсор вниз",
   "action.move_left": "Перемістити курсор вліво",
   "action.move_line_end": "Перейти до кінця рядка",
+  "action.move_line_up": "Перемістити рядок вгору",
+  "action.move_line_down": "Перемістити рядок вниз",
   "action.move_line_start": "Перейти до початку рядка",
   "action.move_page_down": "Перейти на сторінку вниз",
   "action.move_page_up": "Перейти на сторінку вгору",

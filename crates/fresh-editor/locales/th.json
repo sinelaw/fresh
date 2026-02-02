@@ -96,6 +96,8 @@
   "action.move_down": "เลื่อนเคอร์เซอร์ลง",
   "action.move_left": "เลื่อนเคอร์เซอร์ไปทางซ้าย",
   "action.move_line_end": "เลื่อนไปท้ายบรรทัด",
+  "action.move_line_up": "ย้ายบรรทัดขึ้น",
+  "action.move_line_down": "ย้ายบรรทัดลง",
   "action.move_line_start": "เลื่อนไปต้นบรรทัด",
   "action.move_page_down": "เลื่อนลงหนึ่งหน้า",
   "action.move_page_up": "เลื่อนขึ้นหนึ่งหน้า",
