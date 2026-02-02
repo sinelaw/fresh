@@ -219,8 +219,15 @@ impl ThemeLoader {
             let path = entry.path();
 
             if path.is_dir() {
-                // Recurse into subdirectory with updated pack name
                 let subdir_name = path.file_name().unwrap().to_string_lossy();
+
+                // Skip "packages" subdirectory at top level - it's handled separately
+                // by load_package_themes for proper package metadata
+                if pack == "user" && subdir_name == "packages" {
+                    continue;
+                }
+
+                // Recurse into subdirectory with updated pack name
                 let new_pack = if pack == "user" {
                     format!("user/{}", subdir_name)
                 } else {
@@ -334,5 +341,182 @@ mod tests {
         // Verify theme content is correct
         let dark = registry.get("dark").unwrap();
         assert_eq!(dark.name, "dark");
+    }
+
+    /// Test that custom themes in user themes directory are loaded and available.
+    /// This is a regression test for the macOS bug where themes in ~/.config/fresh/themes/
+    /// were not appearing in the "Select Theme" command because ThemeLoader was using
+    /// the wrong directory path on macOS.
+    #[test]
+    fn test_custom_theme_loading_from_user_dir() {
+        // Create isolated temp directory for this test
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let themes_dir = temp_dir.path().to_path_buf();
+
+        // Create a custom theme file directly in the themes directory
+        let theme_json = r#"{
+            "name": "my-custom-theme",
+            "editor": {},
+            "ui": {},
+            "search": {},
+            "diagnostic": {},
+            "syntax": {}
+        }"#;
+        std::fs::write(themes_dir.join("my-custom-theme.json"), theme_json)
+            .expect("Failed to write theme file");
+
+        // Load themes with the custom themes directory
+        let loader = ThemeLoader::new(themes_dir.clone());
+        let registry = loader.load_all();
+
+        // Verify the custom theme is loaded
+        assert!(
+            registry.contains("my-custom-theme"),
+            "Custom theme should be loaded from user themes directory"
+        );
+        assert!(
+            registry.get("my-custom-theme").is_some(),
+            "Custom theme should be retrievable"
+        );
+
+        // Verify it appears in the theme list (used for "Select Theme" menu)
+        let theme_list = registry.list();
+        assert!(
+            theme_list.iter().any(|t| t.name == "my-custom-theme"),
+            "Custom theme should appear in theme list for Select Theme menu"
+        );
+
+        // Verify the theme has the correct pack metadata
+        let theme_info = theme_list
+            .iter()
+            .find(|t| t.name == "my-custom-theme")
+            .unwrap();
+        assert_eq!(
+            theme_info.pack, "user",
+            "Custom theme should have 'user' pack"
+        );
+
+        // Verify the theme is also available via generate_dynamic_items
+        // (the function used for Select Theme menu items)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let menu_items = crate::config::generate_dynamic_items("copy_with_theme", &themes_dir);
+            let theme_names: Vec<_> = menu_items
+                .iter()
+                .filter_map(|item| match item {
+                    crate::config::MenuItem::Action { args, .. } => {
+                        args.get("theme").map(|v| v.as_str().unwrap_or_default())
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                theme_names.contains(&"my-custom-theme"),
+                "Custom theme should appear in dynamic menu items"
+            );
+        }
+    }
+
+    /// Test that custom themes in a package directory (with package.json) are loaded.
+    #[test]
+    fn test_custom_theme_package_loading() {
+        // Create isolated temp directory for this test
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let themes_dir = temp_dir.path().to_path_buf();
+
+        // Create packages subdirectory
+        let packages_dir = themes_dir.join("packages");
+        let pkg_dir = packages_dir.join("my-theme-pack");
+        std::fs::create_dir_all(&pkg_dir).expect("Failed to create package dir");
+
+        // Create package.json manifest
+        let manifest = r#"{
+            "name": "my-theme-pack",
+            "fresh": {
+                "themes": [
+                    { "name": "Packaged Theme", "file": "packaged-theme.json" }
+                ]
+            }
+        }"#;
+        std::fs::write(pkg_dir.join("package.json"), manifest)
+            .expect("Failed to write package.json");
+
+        // Create the theme file referenced in package.json
+        let theme_json = r#"{
+            "name": "packaged-theme",
+            "editor": {},
+            "ui": {},
+            "search": {},
+            "diagnostic": {},
+            "syntax": {}
+        }"#;
+        std::fs::write(pkg_dir.join("packaged-theme.json"), theme_json)
+            .expect("Failed to write theme file");
+
+        // Load themes
+        let loader = ThemeLoader::new(themes_dir);
+        let registry = loader.load_all();
+
+        // Verify the packaged theme is loaded (name is normalized from "Packaged Theme")
+        assert!(
+            registry.contains("packaged-theme"),
+            "Packaged theme should be loaded"
+        );
+
+        // Verify it appears in the theme list with correct pack name
+        let theme_list = registry.list();
+        let theme_info = theme_list
+            .iter()
+            .find(|t| t.name == "packaged-theme")
+            .expect("Packaged theme should be in theme list");
+        assert_eq!(
+            theme_info.pack, "pkg/my-theme-pack",
+            "Packaged theme should have correct pack name"
+        );
+    }
+
+    /// Test that themes in subdirectories of the user themes directory are loaded.
+    #[test]
+    fn test_custom_theme_in_subdirectory() {
+        // Create isolated temp directory for this test
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let themes_dir = temp_dir.path().to_path_buf();
+
+        // Create a subdirectory
+        let subdir = themes_dir.join("my-collection");
+        std::fs::create_dir_all(&subdir).expect("Failed to create subdir");
+
+        // Create a theme in the subdirectory
+        let theme_json = r#"{
+            "name": "nested-theme",
+            "editor": {},
+            "ui": {},
+            "search": {},
+            "diagnostic": {},
+            "syntax": {}
+        }"#;
+        std::fs::write(subdir.join("nested-theme.json"), theme_json)
+            .expect("Failed to write theme file");
+
+        // Load themes
+        let loader = ThemeLoader::new(themes_dir);
+        let registry = loader.load_all();
+
+        // Verify the nested theme is loaded
+        assert!(
+            registry.contains("nested-theme"),
+            "Theme in subdirectory should be loaded"
+        );
+
+        // Verify pack name includes the subdirectory
+        let theme_list = registry.list();
+        let theme_info = theme_list
+            .iter()
+            .find(|t| t.name == "nested-theme")
+            .expect("Nested theme should be in theme list");
+        assert_eq!(
+            theme_info.pack, "user/my-collection",
+            "Nested theme should have subdirectory in pack name"
+        );
     }
 }
