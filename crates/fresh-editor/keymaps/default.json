@@ -1363,7 +1363,8 @@
       "when": "prompt"
     },
     {
-      "key": "e",
+      "comment": "Toggle confirm each in search/replace (mnemonic: I for Interactive)",
+      "key": "i",
       "modifiers": ["alt"],
       "action": "toggle_search_confirm_each",
       "args": {},

@@ -1379,6 +1379,28 @@ impl KeybindingResolver {
         Action::None
     }
 
+    /// Resolve a key event looking only in the specified context (no Global fallback).
+    /// This is used when a modal context (like Prompt) needs to check if it has
+    /// a specific binding without being overridden by Global bindings.
+    /// Returns None if no binding found in the specified context.
+    pub fn resolve_in_context_only(&self, event: &KeyEvent, context: KeyContext) -> Option<Action> {
+        // Try custom bindings for this context
+        if let Some(context_bindings) = self.bindings.get(&context) {
+            if let Some(action) = context_bindings.get(&(event.code, event.modifiers)) {
+                return Some(action.clone());
+            }
+        }
+
+        // Try default bindings for this context
+        if let Some(context_bindings) = self.default_bindings.get(&context) {
+            if let Some(action) = context_bindings.get(&(event.code, event.modifiers)) {
+                return Some(action.clone());
+            }
+        }
+
+        None
+    }
+
     /// Resolve a key event to a UI action for terminal mode.
     /// Only returns actions that are classified as UI actions (is_terminal_ui_action).
     /// Returns Action::None if the key doesn't map to a UI action.
