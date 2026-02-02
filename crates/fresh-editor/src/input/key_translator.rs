@@ -320,7 +320,8 @@ impl KeyTranslator {
 
     /// Get the default calibration file path
     pub fn default_path() -> Option<std::path::PathBuf> {
-        dirs::config_dir().map(|p| p.join("fresh").join("key_calibration.json"))
+        crate::config_io::DirectoryContext::default_config_dir()
+            .map(|p| p.join("key_calibration.json"))
     }
 
     /// Load from the default config location

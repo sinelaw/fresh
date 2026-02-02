@@ -805,7 +805,8 @@ impl Editor {
         let working_dir = working_dir.canonicalize().unwrap_or(working_dir);
 
         // Load all themes into registry
-        let theme_loader = crate::view::theme::ThemeLoader::new();
+        let theme_loader =
+            crate::view::theme::ThemeLoader::with_user_dir(Some(dir_context.themes_dir()));
         let theme_registry = theme_loader.load_all();
 
         // Get active theme from registry, falling back to default if not found

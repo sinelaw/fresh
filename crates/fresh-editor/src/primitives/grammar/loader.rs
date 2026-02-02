@@ -45,9 +45,12 @@ pub struct LocalGrammarLoader {
 
 impl LocalGrammarLoader {
     /// Create a new LocalGrammarLoader with default config directory.
+    ///
+    /// Uses [`DirectoryContext::default_config_dir()`] to determine the config directory,
+    /// ensuring consistent path handling across all platforms.
     pub fn new() -> Self {
         Self {
-            config_dir: dirs::config_dir(),
+            config_dir: crate::config_io::DirectoryContext::default_config_dir(),
         }
     }
 
@@ -65,13 +68,13 @@ impl Default for LocalGrammarLoader {
 
 impl GrammarLoader for LocalGrammarLoader {
     fn grammars_dir(&self) -> Option<PathBuf> {
-        self.config_dir.as_ref().map(|p| p.join("fresh/grammars"))
+        self.config_dir.as_ref().map(|p| p.join("grammars"))
     }
 
     fn languages_packages_dir(&self) -> Option<PathBuf> {
         self.config_dir
             .as_ref()
-            .map(|p| p.join("fresh/languages/packages"))
+            .map(|p| p.join("languages/packages"))
     }
 
     fn read_file(&self, path: &Path) -> io::Result<String> {

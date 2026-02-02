@@ -67,9 +67,12 @@ pub struct ThemeLoader {
 
 impl ThemeLoader {
     /// Create a new ThemeLoader with default user themes directory.
+    ///
+    /// Uses [`DirectoryContext::default_themes_dir()`] to determine the themes directory,
+    /// ensuring consistent path handling across all platforms.
     pub fn new() -> Self {
         Self {
-            user_themes_dir: dirs::config_dir().map(|p| p.join("fresh").join("themes")),
+            user_themes_dir: crate::config_io::DirectoryContext::default_themes_dir(),
         }
     }
 

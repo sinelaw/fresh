@@ -285,8 +285,7 @@ pub fn print_all_paths() {
     let mut handle = stdout.lock();
 
     // Config directory (~/.config/fresh)
-    let config_dir = dirs::config_dir()
-        .map(|d| d.join("fresh"))
+    let config_dir = crate::config_io::DirectoryContext::default_config_dir()
         .unwrap_or_else(|| PathBuf::from("<unavailable>"));
 
     // Data directory (~/.local/share/fresh)
