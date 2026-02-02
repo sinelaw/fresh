@@ -102,7 +102,11 @@ impl Editor {
                         event,
                         crate::input::keybindings::KeyContext::Prompt,
                     ) {
-                        // Handle the action (ignore errors for modal context)
+                        // For file browser actions, route to handle_file_open_action
+                        if self.is_file_open_active() && self.handle_file_open_action(&action) {
+                            return Some(InputResult::Consumed);
+                        }
+                        // For other prompt actions, use handle_action
                         let _ = self.handle_action(action);
                         return Some(InputResult::Consumed);
                     }
