@@ -1237,7 +1237,7 @@ pub trait MenuExt {
 
     /// Expand all DynamicSubmenu items in this menu to regular Submenu items
     /// This should be called before the menu is used for rendering/navigation
-    fn expand_dynamic_items(&mut self);
+    fn expand_dynamic_items(&mut self, themes_dir: &std::path::Path);
 }
 
 impl MenuExt for Menu {
@@ -1245,11 +1245,11 @@ impl MenuExt for Menu {
         self.id.as_deref().unwrap_or(&self.label)
     }
 
-    fn expand_dynamic_items(&mut self) {
+    fn expand_dynamic_items(&mut self, themes_dir: &std::path::Path) {
         self.items = self
             .items
             .iter()
-            .map(|item| item.expand_dynamic())
+            .map(|item| item.expand_dynamic(themes_dir))
             .collect();
     }
 }
@@ -1258,14 +1258,14 @@ impl MenuExt for Menu {
 pub trait MenuItemExt {
     /// Expand a DynamicSubmenu into a regular Submenu with generated items.
     /// Returns the original item if not a DynamicSubmenu.
-    fn expand_dynamic(&self) -> MenuItem;
+    fn expand_dynamic(&self, themes_dir: &std::path::Path) -> MenuItem;
 }
 
 impl MenuItemExt for MenuItem {
-    fn expand_dynamic(&self) -> MenuItem {
+    fn expand_dynamic(&self, themes_dir: &std::path::Path) -> MenuItem {
         match self {
             MenuItem::DynamicSubmenu { label, source } => {
-                let items = generate_dynamic_items(source);
+                let items = generate_dynamic_items(source, themes_dir);
                 MenuItem::Submenu {
                     label: label.clone(),
                     items,
@@ -1278,11 +1278,11 @@ impl MenuItemExt for MenuItem {
 
 /// Generate menu items for a dynamic source (runtime only - requires view::theme)
 #[cfg(feature = "runtime")]
-pub fn generate_dynamic_items(source: &str) -> Vec<MenuItem> {
+pub fn generate_dynamic_items(source: &str, themes_dir: &std::path::Path) -> Vec<MenuItem> {
     match source {
         "copy_with_theme" => {
             // Generate theme options from available themes
-            let loader = crate::view::theme::ThemeLoader::new();
+            let loader = crate::view::theme::ThemeLoader::new(themes_dir.to_path_buf());
             let registry = loader.load_all();
             registry
                 .list()
@@ -1308,7 +1308,7 @@ pub fn generate_dynamic_items(source: &str) -> Vec<MenuItem> {
 
 /// Generate menu items for a dynamic source (WASM stub - returns empty)
 #[cfg(not(feature = "runtime"))]
-pub fn generate_dynamic_items(_source: &str) -> Vec<MenuItem> {
+pub fn generate_dynamic_items(_source: &str, _themes_dir: &std::path::Path) -> Vec<MenuItem> {
     // Theme loading not available in WASM builds
     vec![]
 }
@@ -3176,19 +3176,22 @@ mod tests {
     #[test]
     fn test_dynamic_submenu_expansion() {
         // Test that DynamicSubmenu expands to Submenu with generated items
+        let temp_dir = tempfile::tempdir().unwrap();
+        let themes_dir = temp_dir.path().to_path_buf();
+
         let dynamic = MenuItem::DynamicSubmenu {
             label: "Test".to_string(),
             source: "copy_with_theme".to_string(),
         };
 
-        let expanded = dynamic.expand_dynamic();
+        let expanded = dynamic.expand_dynamic(&themes_dir);
 
         // Should expand to a Submenu
         match expanded {
             MenuItem::Submenu { label, items } => {
                 assert_eq!(label, "Test");
-                // Should have items for each available theme
-                let loader = crate::view::theme::ThemeLoader::new();
+                // Should have items for each available theme (embedded themes only, no user themes in temp dir)
+                let loader = crate::view::theme::ThemeLoader::embedded_only();
                 let registry = loader.load_all();
                 assert_eq!(items.len(), registry.len());
 
@@ -3219,6 +3222,9 @@ mod tests {
     #[test]
     fn test_non_dynamic_item_unchanged() {
         // Non-DynamicSubmenu items should be unchanged by expand_dynamic
+        let temp_dir = tempfile::tempdir().unwrap();
+        let themes_dir = temp_dir.path();
+
         let action = MenuItem::Action {
             label: "Test".to_string(),
             action: "test".to_string(),
@@ -3227,7 +3233,7 @@ mod tests {
             checkbox: None,
         };
 
-        let expanded = action.expand_dynamic();
+        let expanded = action.expand_dynamic(themes_dir);
         match expanded {
             MenuItem::Action { label, action, .. } => {
                 assert_eq!(label, "Test");

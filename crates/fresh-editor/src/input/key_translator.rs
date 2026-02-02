@@ -318,31 +318,21 @@ impl KeyTranslator {
         Ok(())
     }
 
-    /// Get the default calibration file path
-    pub fn default_path() -> Option<std::path::PathBuf> {
-        crate::config_io::DirectoryContext::default_config_dir()
-            .map(|p| p.join("key_calibration.json"))
+    /// Get the calibration file path for a given config directory.
+    pub fn calibration_path(config_dir: &std::path::Path) -> std::path::PathBuf {
+        config_dir.join("key_calibration.json")
     }
 
-    /// Load from the default config location
-    pub fn load_default() -> Result<Self, std::io::Error> {
-        if let Some(path) = Self::default_path() {
-            Self::load_from_file(&path)
-        } else {
-            Ok(Self::new())
-        }
+    /// Load from the config directory.
+    pub fn load_from_config_dir(config_dir: &std::path::Path) -> Result<Self, std::io::Error> {
+        let path = Self::calibration_path(config_dir);
+        Self::load_from_file(&path)
     }
 
-    /// Save to the default config location
-    pub fn save_default(&self) -> Result<(), std::io::Error> {
-        if let Some(path) = Self::default_path() {
-            self.save_to_file(&path)
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "Could not determine config directory",
-            ))
-        }
+    /// Save to the config directory.
+    pub fn save_to_config_dir(&self, config_dir: &std::path::Path) -> Result<(), std::io::Error> {
+        let path = Self::calibration_path(config_dir);
+        self.save_to_file(&path)
     }
 }
 

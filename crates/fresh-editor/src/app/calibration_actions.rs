@@ -21,7 +21,7 @@ impl Editor {
         let count = translator.len();
 
         // Save to config file
-        if let Err(e) = translator.save_default() {
+        if let Err(e) = translator.save_to_config_dir(&self.dir_context.config_dir) {
             tracing::error!("Failed to save key calibration: {}", e);
             self.set_status_message(
                 t!("calibration.save_error", error = e.to_string()).to_string(),

@@ -285,7 +285,7 @@ impl Editor {
     pub fn reload_themes(&mut self) {
         use crate::view::theme::ThemeLoader;
 
-        let theme_loader = ThemeLoader::with_user_dir(Some(self.dir_context.themes_dir()));
+        let theme_loader = ThemeLoader::new(self.dir_context.themes_dir());
         self.theme_registry = theme_loader.load_all();
 
         // Re-apply current theme if it still exists, otherwise it might have been updated

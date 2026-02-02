@@ -17,7 +17,7 @@ impl Editor {
             .chain(self.menu_state.plugin_menus.iter())
             .cloned()
             .map(|mut menu| {
-                menu.expand_dynamic_items();
+                menu.expand_dynamic_items(&self.menu_state.themes_dir);
                 menu
             })
             .collect()
@@ -208,7 +208,8 @@ impl Editor {
                             current_items = items.clone();
                         }
                         Some(MenuItem::DynamicSubmenu { source, .. }) => {
-                            current_items = generate_dynamic_items(source);
+                            current_items =
+                                generate_dynamic_items(source, &self.menu_state.themes_dir);
                         }
                         _ => return Ok(Some(Ok(()))),
                     }
@@ -244,7 +245,7 @@ impl Editor {
             MenuItem::DynamicSubmenu { source, .. } => {
                 // Clicked on dynamic submenu - open it
                 self.menu_state.submenu_path.truncate(depth);
-                let generated = generate_dynamic_items(source);
+                let generated = generate_dynamic_items(source, &self.menu_state.themes_dir);
                 if !generated.is_empty() {
                     self.menu_state.submenu_path.push(item_idx);
                     self.menu_state.highlighted_item = Some(0);

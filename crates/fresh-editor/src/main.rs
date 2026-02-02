@@ -804,7 +804,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     let current_working_dir = working_dir;
 
     // Load key translator for input calibration
-    let key_translator = match KeyTranslator::load_default() {
+    let key_translator = match KeyTranslator::load_from_config_dir(&dir_context.config_dir) {
         Ok(translator) => translator,
         Err(e) => {
             tracing::warn!("Failed to load key calibration: {}", e);
@@ -1495,7 +1495,8 @@ fn main() -> AnyhowResult<()> {
 
     // Handle --show-paths early (no terminal setup needed)
     if args.show_paths {
-        fresh::services::log_dirs::print_all_paths();
+        let dir_context = fresh::config_io::DirectoryContext::from_system()?;
+        fresh::services::log_dirs::print_all_paths(&dir_context);
         return Ok(());
     }
 

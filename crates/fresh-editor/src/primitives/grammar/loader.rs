@@ -44,25 +44,16 @@ pub struct LocalGrammarLoader {
 }
 
 impl LocalGrammarLoader {
-    /// Create a new LocalGrammarLoader with default config directory.
-    ///
-    /// Uses [`DirectoryContext::default_config_dir()`] to determine the config directory,
-    /// ensuring consistent path handling across all platforms.
-    pub fn new() -> Self {
+    /// Create a LocalGrammarLoader with the given config directory.
+    pub fn new(config_dir: PathBuf) -> Self {
         Self {
-            config_dir: crate::config_io::DirectoryContext::default_config_dir(),
+            config_dir: Some(config_dir),
         }
     }
 
-    /// Create a LocalGrammarLoader with a custom config directory.
-    pub fn with_config_dir(config_dir: Option<PathBuf>) -> Self {
-        Self { config_dir }
-    }
-}
-
-impl Default for LocalGrammarLoader {
-    fn default() -> Self {
-        Self::new()
+    /// Create a LocalGrammarLoader with no config directory (embedded grammars only).
+    pub fn embedded_only() -> Self {
+        Self { config_dir: None }
     }
 }
 
@@ -151,13 +142,13 @@ impl GrammarRegistry {
 
     /// Create a fully-loaded grammar registry for the editor.
     /// Uses LocalGrammarLoader to load grammars from the filesystem.
-    pub fn for_editor() -> Arc<Self> {
-        Arc::new(Self::load(&LocalGrammarLoader::new()))
+    pub fn for_editor(config_dir: std::path::PathBuf) -> Arc<Self> {
+        Arc::new(Self::load(&LocalGrammarLoader::new(config_dir)))
     }
 
-    /// Get the grammars directory path (convenience method using default loader).
-    pub fn grammars_directory() -> Option<PathBuf> {
-        LocalGrammarLoader::default().grammars_dir()
+    /// Get the grammars directory path for the given config directory.
+    pub fn grammars_directory(config_dir: &std::path::Path) -> PathBuf {
+        config_dir.join("grammars")
     }
 }
 
@@ -495,27 +486,30 @@ mod tests {
 
     #[test]
     fn test_local_loader_grammars_dir() {
-        let loader = LocalGrammarLoader::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_dir = temp_dir.path().to_path_buf();
+        let loader = LocalGrammarLoader::new(config_dir.clone());
         let grammars_dir = loader.grammars_dir();
 
-        // Should return a path if config_dir is available
-        // (might be None in some test environments)
-        if let Some(dir) = grammars_dir {
-            assert!(dir.to_string_lossy().contains("fresh"));
-            assert!(dir.to_string_lossy().contains("grammars"));
-        }
+        // Should return the grammars subdirectory
+        assert!(grammars_dir.is_some());
+        let dir = grammars_dir.unwrap();
+        assert_eq!(dir, config_dir.join("grammars"));
     }
 
     #[test]
     fn test_for_editor() {
-        let registry = GrammarRegistry::for_editor();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_dir = temp_dir.path().to_path_buf();
+        let registry = GrammarRegistry::for_editor(config_dir);
         // Should have built-in syntaxes
         assert!(!registry.available_syntaxes().is_empty());
     }
 
     #[test]
     fn test_find_syntax_with_custom_languages_config() {
-        let registry = GrammarRegistry::for_editor();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let registry = GrammarRegistry::for_editor(temp_dir.path().to_path_buf());
 
         // Create a custom languages config that maps "custom.myext" files to bash
         let mut languages = std::collections::HashMap::new();
@@ -571,7 +565,8 @@ mod tests {
 
     #[test]
     fn test_list_all_syntaxes() {
-        let registry = GrammarRegistry::for_editor();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let registry = GrammarRegistry::for_editor(temp_dir.path().to_path_buf());
         let syntax_set = registry.syntax_set();
 
         let mut syntaxes: Vec<_> = syntax_set

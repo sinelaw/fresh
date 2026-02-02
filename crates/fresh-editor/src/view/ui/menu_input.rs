@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn test_menu_navigation_down() {
         let menus = create_test_menus();
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         state.open_menu(0);
 
         let mut handler = MenuInputHandler::new(&mut state, &menus);
@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn test_menu_navigation_between_menus() {
         let menus = create_test_menus();
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         state.open_menu(0);
 
         let mut handler = MenuInputHandler::new(&mut state, &menus);
@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn test_menu_escape_closes() {
         let menus = create_test_menus();
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         state.open_menu(0);
 
         let mut handler = MenuInputHandler::new(&mut state, &menus);
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn test_menu_enter_executes() {
         let menus = create_test_menus();
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         state.open_menu(0);
         state.highlighted_item = Some(0); // "New" action
 
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn test_menu_is_modal_when_active() {
         let menus = create_test_menus();
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
 
         let handler = MenuInputHandler::new(&mut state, &menus);
         assert!(!handler.is_modal());
@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn test_menu_ignored_when_inactive() {
         let menus = create_test_menus();
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
 
         let mut handler = MenuInputHandler::new(&mut state, &menus);
         let mut ctx = InputContext::new();

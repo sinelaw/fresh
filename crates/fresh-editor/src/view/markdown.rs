@@ -700,7 +700,7 @@ mod tests {
     fn test_code_block_syntax_highlighting() {
         let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
         let registry =
-            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
         // Rust code with keywords and strings that should get different colors
         let markdown = "```rust\nfn main() {\n    println!(\"Hello\");\n}\n```";
         let lines = parse_markdown(markdown, &theme, Some(&registry));

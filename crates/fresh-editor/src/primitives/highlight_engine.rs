@@ -910,7 +910,7 @@ mod tests {
     #[test]
     fn test_textmate_backend_selection() {
         let registry =
-            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // Languages with TextMate grammars use TextMate for highlighting
         let engine = HighlightEngine::for_file(Path::new("test.rs"), &registry);
@@ -939,7 +939,7 @@ mod tests {
     #[test]
     fn test_tree_sitter_explicit_preference() {
         let registry =
-            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // Force tree-sitter for highlighting
         let engine = HighlightEngine::for_file_with_preference(
@@ -953,7 +953,7 @@ mod tests {
     #[test]
     fn test_unknown_extension() {
         let registry =
-            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // Unknown extension
         let engine = HighlightEngine::for_file(Path::new("test.unknown_xyz_123"), &registry);
@@ -973,7 +973,7 @@ mod tests {
         // - parse_end = min(viewport_end + context_bytes, buffer.len()) = 0
         // - parse_end - parse_start would underflow (0 - positive = overflow)
         let registry =
-            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         let mut engine = HighlightEngine::for_file(Path::new("test.rs"), &registry);
 
@@ -997,7 +997,7 @@ mod tests {
     #[test]
     fn test_textmate_engine_crlf_byte_offsets() {
         let registry =
-            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         let mut engine = HighlightEngine::for_file(Path::new("test.java"), &registry);
 
@@ -1064,7 +1064,7 @@ mod tests {
     #[test]
     fn test_git_rebase_todo_highlighting() {
         let registry =
-            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // git-rebase-todo files should use the Git Rebase Todo grammar
         let engine = HighlightEngine::for_file(Path::new("git-rebase-todo"), &registry);
@@ -1075,7 +1075,7 @@ mod tests {
     #[test]
     fn test_git_commit_message_highlighting() {
         let registry =
-            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // COMMIT_EDITMSG should use the Git Commit Message grammar
         let engine = HighlightEngine::for_file(Path::new("COMMIT_EDITMSG"), &registry);
@@ -1091,7 +1091,7 @@ mod tests {
     #[test]
     fn test_gitignore_highlighting() {
         let registry =
-            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // .gitignore should use the Gitignore grammar
         let engine = HighlightEngine::for_file(Path::new(".gitignore"), &registry);
@@ -1107,7 +1107,7 @@ mod tests {
     #[test]
     fn test_gitconfig_highlighting() {
         let registry =
-            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // .gitconfig should use the Git Config grammar
         let engine = HighlightEngine::for_file(Path::new(".gitconfig"), &registry);
@@ -1123,7 +1123,7 @@ mod tests {
     #[test]
     fn test_gitattributes_highlighting() {
         let registry =
-            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::new());
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
 
         // .gitattributes should use the Git Attributes grammar
         let engine = HighlightEngine::for_file(Path::new(".gitattributes"), &registry);

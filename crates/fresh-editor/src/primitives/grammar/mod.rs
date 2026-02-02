@@ -15,11 +15,13 @@
 //! // Create default registry with embedded grammars only
 //! let registry = GrammarRegistry::default();
 //!
-//! // Load registry with user grammars using default loader (runtime only)
+//! // Load registry with user grammars (runtime only)
 //! #[cfg(feature = "runtime")]
 //! {
-//!     let registry = GrammarRegistry::for_editor();
-//!     let loader = LocalGrammarLoader::new();
+//!     let config_dir = std::path::PathBuf::from("/home/user/.config/fresh");
+//!     let registry = GrammarRegistry::for_editor(config_dir.clone());
+//!     // Or manually:
+//!     let loader = LocalGrammarLoader::new(config_dir);
 //!     let registry = GrammarRegistry::load(&loader);
 //! }
 //! ```

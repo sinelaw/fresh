@@ -162,7 +162,15 @@ fn is_checkbox_checked(checkbox: &Option<String>, context: &MenuContext) -> bool
 }
 
 /// Menu bar state (tracks which menu is open and which item is highlighted)
-#[derive(Debug, Clone, Default)]
+///
+/// TODO: The menu system design could be improved to handle dynamic items better.
+/// Currently, `themes_dir` is stored here to support `DynamicSubmenu` expansion.
+/// A cleaner approach might be:
+/// 1. Accept a pure data value representing the entire expanded menu system
+/// 2. Have the "dynamic" item expansion done externally by the caller
+/// 3. Allow updating the menu data by re-setting with a new expanded value
+/// This would decouple menu rendering/navigation from theme loading concerns.
+#[derive(Debug, Clone)]
 pub struct MenuState {
     /// Index of the currently open menu (None if menu bar is closed)
     pub active_menu: Option<usize>,
@@ -175,11 +183,27 @@ pub struct MenuState {
     pub plugin_menus: Vec<Menu>,
     /// Context containing named boolean states for conditions and checkboxes
     pub context: MenuContext,
+    /// Path to the themes directory for expanding DynamicSubmenu items.
+    /// See TODO above for potential design improvement.
+    pub themes_dir: std::path::PathBuf,
 }
 
 impl MenuState {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(themes_dir: std::path::PathBuf) -> Self {
+        Self {
+            active_menu: None,
+            highlighted_item: None,
+            submenu_path: Vec::new(),
+            plugin_menus: Vec::new(),
+            context: MenuContext::default(),
+            themes_dir,
+        }
+    }
+
+    /// Create a MenuState for testing with an empty themes directory.
+    #[cfg(test)]
+    pub fn for_testing() -> Self {
+        Self::new(std::path::PathBuf::new())
     }
 
     /// Open a menu by index
@@ -293,7 +317,7 @@ impl MenuState {
                 }
                 MenuItem::DynamicSubmenu { source, .. } => {
                     // Generate items to check if non-empty
-                    let generated = generate_dynamic_items(source);
+                    let generated = generate_dynamic_items(source, &self.themes_dir);
                     if !generated.is_empty() {
                         self.submenu_path.push(highlighted);
                         self.highlighted_item = Some(0);
@@ -345,10 +369,14 @@ impl MenuState {
     /// DynamicSubmenus are expanded to regular Submenus
     pub fn get_current_items_cloned(&self, menu: &Menu) -> Option<Vec<MenuItem>> {
         // Expand all items (handles DynamicSubmenu -> Submenu)
-        let mut items: Vec<MenuItem> = menu.items.iter().map(|i| i.expand_dynamic()).collect();
+        let mut items: Vec<MenuItem> = menu
+            .items
+            .iter()
+            .map(|i| i.expand_dynamic(&self.themes_dir))
+            .collect();
 
         for &idx in &self.submenu_path {
-            match items.get(idx)?.expand_dynamic() {
+            match items.get(idx)?.expand_dynamic(&self.themes_dir) {
                 MenuItem::Submenu {
                     items: submenu_items,
                     ..
@@ -508,7 +536,7 @@ impl MenuRenderer {
             .chain(menu_state.plugin_menus.iter())
             .cloned()
             .map(|mut menu| {
-                menu.expand_dynamic_items();
+                menu.expand_dynamic_items(&menu_state.themes_dir);
                 menu
             })
             .collect();
@@ -1026,7 +1054,7 @@ mod tests {
 
     #[test]
     fn test_menu_state_default() {
-        let state = MenuState::new();
+        let state = MenuState::for_testing();
         assert_eq!(state.active_menu, None);
         assert_eq!(state.highlighted_item, None);
         assert!(state.plugin_menus.is_empty());
@@ -1034,7 +1062,7 @@ mod tests {
 
     #[test]
     fn test_menu_state_open_menu() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         state.open_menu(2);
         assert_eq!(state.active_menu, Some(2));
         assert_eq!(state.highlighted_item, Some(0));
@@ -1042,7 +1070,7 @@ mod tests {
 
     #[test]
     fn test_menu_state_close_menu() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         state.open_menu(1);
         state.close_menu();
         assert_eq!(state.active_menu, None);
@@ -1051,7 +1079,7 @@ mod tests {
 
     #[test]
     fn test_menu_state_next_menu() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let menus = create_test_menus();
         state.open_menu(0);
 
@@ -1068,7 +1096,7 @@ mod tests {
 
     #[test]
     fn test_menu_state_prev_menu() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let menus = create_test_menus();
         state.open_menu(0);
 
@@ -1085,7 +1113,7 @@ mod tests {
 
     #[test]
     fn test_menu_state_next_item_skips_separator() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let menus = create_test_menus();
         state.open_menu(0);
 
@@ -1107,7 +1135,7 @@ mod tests {
 
     #[test]
     fn test_menu_state_prev_item_skips_separator() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let menus = create_test_menus();
         state.open_menu(0);
         state.highlighted_item = Some(2); // Start at Save
@@ -1123,7 +1151,7 @@ mod tests {
 
     #[test]
     fn test_get_highlighted_action() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let menus = create_test_menus();
         state.open_menu(0);
         state.highlighted_item = Some(2); // Save action
@@ -1136,7 +1164,7 @@ mod tests {
 
     #[test]
     fn test_menu_item_when_requires_selection() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let select_menu = Menu {
             id: None,
             label: "Edit".to_string(),
@@ -1164,14 +1192,14 @@ mod tests {
 
     #[test]
     fn test_get_highlighted_action_none_when_closed() {
-        let state = MenuState::new();
+        let state = MenuState::for_testing();
         let menus = create_test_menus();
         assert!(state.get_highlighted_action(&menus).is_none());
     }
 
     #[test]
     fn test_get_highlighted_action_none_for_separator() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let menus = create_test_menus();
         state.open_menu(0);
         state.highlighted_item = Some(1); // Separator
@@ -1446,7 +1474,7 @@ mod tests {
 
     #[test]
     fn test_submenu_open_and_close() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let menus = create_menu_with_submenus();
 
         state.open_menu(0);
@@ -1472,7 +1500,7 @@ mod tests {
 
     #[test]
     fn test_nested_submenu() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let menus = create_menu_with_submenus();
 
         state.open_menu(0);
@@ -1507,7 +1535,7 @@ mod tests {
 
     #[test]
     fn test_get_highlighted_action_in_submenu() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let menus = create_menu_with_submenus();
 
         state.open_menu(0);
@@ -1534,7 +1562,7 @@ mod tests {
 
     #[test]
     fn test_get_current_items_at_different_depths() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let menus = create_menu_with_submenus();
 
         state.open_menu(0);
@@ -1562,7 +1590,7 @@ mod tests {
 
     #[test]
     fn test_is_highlighted_submenu() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let menus = create_menu_with_submenus();
 
         state.open_menu(0);
@@ -1581,7 +1609,7 @@ mod tests {
 
     #[test]
     fn test_open_menu_clears_submenu_path() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let menus = create_menu_with_submenus();
 
         state.open_menu(0);
@@ -1596,7 +1624,7 @@ mod tests {
 
     #[test]
     fn test_next_prev_menu_clears_submenu_path() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let menus = create_menu_with_submenus();
 
         state.open_menu(0);
@@ -1620,7 +1648,7 @@ mod tests {
 
     #[test]
     fn test_navigation_in_submenu() {
-        let mut state = MenuState::new();
+        let mut state = MenuState::for_testing();
         let menus = create_menu_with_submenus();
 
         state.open_menu(0);

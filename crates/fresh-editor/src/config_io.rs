@@ -910,17 +910,13 @@ impl DirectoryContext {
         self.config_dir.join("plugins")
     }
 
-    /// Get the default config directory path (static version).
+    /// Get the default config directory path (static/internal version).
     ///
-    /// This returns the default config directory without requiring a DirectoryContext instance.
-    ///
-    /// **Prefer passing `DirectoryContext` down from `main()` instead of using this method.**
-    /// This method should only be used in rare cases where refactoring to pass DirectoryContext
-    /// would be prohibitively complex (e.g., deeply nested standalone functions).
+    /// This is used internally by `from_system()` to determine the config directory.
     ///
     /// On macOS, this prioritizes `~/.config/fresh` over `~/Library/Application Support/fresh`
     /// to match the documented configuration location.
-    pub(crate) fn default_config_dir() -> Option<std::path::PathBuf> {
+    fn default_config_dir() -> Option<std::path::PathBuf> {
         #[cfg(target_os = "macos")]
         {
             dirs::home_dir().map(|p| p.join(".config").join("fresh"))
@@ -930,16 +926,6 @@ impl DirectoryContext {
         {
             dirs::config_dir().map(|p| p.join("fresh"))
         }
-    }
-
-    /// Get the default themes directory path (static version).
-    ///
-    /// This is a convenience method that returns `default_config_dir()/themes`.
-    ///
-    /// **Prefer using `DirectoryContext::themes_dir()` instead.**
-    /// See `default_config_dir()` for when this static method is appropriate.
-    pub(crate) fn default_themes_dir() -> Option<std::path::PathBuf> {
-        Self::default_config_dir().map(|p| p.join("themes"))
     }
 }
 

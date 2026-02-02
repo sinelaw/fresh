@@ -735,6 +735,8 @@ impl Editor {
         color_capability: crate::view::color_support::ColorCapability,
         filesystem: Arc<dyn FileSystem + Send + Sync>,
     ) -> AnyhowResult<Self> {
+        let grammar_registry =
+            crate::primitives::grammar::GrammarRegistry::for_editor(dir_context.config_dir.clone());
         Self::with_options(
             config,
             width,
@@ -745,7 +747,7 @@ impl Editor {
             dir_context,
             None,
             color_capability,
-            crate::primitives::grammar::GrammarRegistry::for_editor(),
+            grammar_registry,
         )
     }
 
@@ -805,8 +807,7 @@ impl Editor {
         let working_dir = working_dir.canonicalize().unwrap_or(working_dir);
 
         // Load all themes into registry
-        let theme_loader =
-            crate::view::theme::ThemeLoader::with_user_dir(Some(dir_context.themes_dir()));
+        let theme_loader = crate::view::theme::ThemeLoader::new(dir_context.themes_dir());
         let theme_registry = theme_loader.load_all();
 
         // Get active theme from registry, falling back to default if not found
@@ -1102,7 +1103,7 @@ impl Editor {
             mouse_cursor_position: None,
             gpm_active: false,
             key_context: KeyContext::Normal,
-            menu_state: crate::view::ui::MenuState::new(),
+            menu_state: crate::view::ui::MenuState::new(dir_context.themes_dir()),
             menus: crate::config::MenuConfig::translated(),
             working_dir,
             position_history: PositionHistory::new(),
@@ -1223,8 +1224,10 @@ impl Editor {
             settings_state: None,
             calibration_wizard: None,
             event_debug: None,
-            key_translator: crate::input::key_translator::KeyTranslator::load_default()
-                .unwrap_or_default(),
+            key_translator: crate::input::key_translator::KeyTranslator::load_from_config_dir(
+                &dir_context.config_dir,
+            )
+            .unwrap_or_default(),
             color_capability,
             stdin_streaming: None,
             review_hunks: Vec::new(),

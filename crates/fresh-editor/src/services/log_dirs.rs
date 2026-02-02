@@ -278,20 +278,17 @@ fn is_process_running(pid: u32) -> bool {
 }
 
 /// Print all directories used by Fresh to stdout
-pub fn print_all_paths() {
+pub fn print_all_paths(dir_context: &crate::config_io::DirectoryContext) {
     use std::io::Write;
 
     let stdout = std::io::stdout();
     let mut handle = stdout.lock();
 
     // Config directory (~/.config/fresh)
-    let config_dir = crate::config_io::DirectoryContext::default_config_dir()
-        .unwrap_or_else(|| PathBuf::from("<unavailable>"));
+    let config_dir = &dir_context.config_dir;
 
     // Data directory (~/.local/share/fresh)
-    let data_dir = dirs::data_dir()
-        .map(|d| d.join("fresh"))
-        .unwrap_or_else(|| PathBuf::from("<unavailable>"));
+    let data_dir = &dir_context.data_dir;
 
     // State/logs directory
     let logs_dir = log_dir().clone();

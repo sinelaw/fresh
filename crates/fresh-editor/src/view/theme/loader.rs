@@ -66,19 +66,18 @@ pub struct ThemeLoader {
 }
 
 impl ThemeLoader {
-    /// Create a new ThemeLoader with default user themes directory.
-    ///
-    /// Uses [`DirectoryContext::default_themes_dir()`] to determine the themes directory,
-    /// ensuring consistent path handling across all platforms.
-    pub fn new() -> Self {
+    /// Create a ThemeLoader with the given user themes directory.
+    pub fn new(user_themes_dir: PathBuf) -> Self {
         Self {
-            user_themes_dir: crate::config_io::DirectoryContext::default_themes_dir(),
+            user_themes_dir: Some(user_themes_dir),
         }
     }
 
-    /// Create a ThemeLoader with a custom user themes directory.
-    pub fn with_user_dir(user_themes_dir: Option<PathBuf>) -> Self {
-        Self { user_themes_dir }
+    /// Create a ThemeLoader for embedded themes only (no user themes).
+    pub fn embedded_only() -> Self {
+        Self {
+            user_themes_dir: None,
+        }
     }
 
     /// Get the user themes directory path.
@@ -284,7 +283,7 @@ mod tests {
 
     #[test]
     fn test_theme_registry_get() {
-        let loader = ThemeLoader::new();
+        let loader = ThemeLoader::embedded_only();
         let registry = loader.load_all();
 
         // Should find builtin themes
@@ -303,7 +302,7 @@ mod tests {
 
     #[test]
     fn test_theme_registry_list() {
-        let loader = ThemeLoader::new();
+        let loader = ThemeLoader::embedded_only();
         let registry = loader.load_all();
 
         let list = registry.list();
@@ -316,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_theme_registry_contains() {
-        let loader = ThemeLoader::new();
+        let loader = ThemeLoader::embedded_only();
         let registry = loader.load_all();
 
         assert!(registry.contains("dark"));
@@ -326,7 +325,7 @@ mod tests {
 
     #[test]
     fn test_theme_loader_load_all() {
-        let loader = ThemeLoader::new();
+        let loader = ThemeLoader::embedded_only();
         let registry = loader.load_all();
 
         // Should have loaded all embedded themes
