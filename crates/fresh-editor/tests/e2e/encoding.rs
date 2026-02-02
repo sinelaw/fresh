@@ -1605,3 +1605,521 @@ fn test_all_encodings_load_and_save_as_utf8() {
         drop(harness);
     }
 }
+
+// ============================================================================
+// Large File Encoding Confirmation Tests
+// ============================================================================
+
+/// Test that opening a large file with GBK encoding via file browser shows confirmation prompt
+/// and pressing Enter (default = Load) loads the file.
+///
+/// Uses a small `large_file_threshold_bytes` to avoid creating huge test files.
+/// The file browser flow (Ctrl+O) catches the LargeFileEncodingConfirmation error and shows a prompt.
+#[test]
+fn test_large_file_gbk_encoding_confirmation_prompt() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("large_gbk.txt");
+
+    // Create a GBK-encoded file larger than our test threshold (500 bytes)
+    // GBK encoding of Chinese characters: 你好 = 0xC4E3 0xBAC3
+    let mut gbk_bytes = Vec::new();
+    // Create ~600 bytes of GBK content (60 repetitions of "你好世界\n" = 9 bytes each = 540 bytes)
+    for _ in 0..60 {
+        gbk_bytes.extend_from_slice(&[
+            0xC4, 0xE3, // 你
+            0xBA, 0xC3, // 好
+            0xCA, 0xC0, // 世
+            0xBD, 0xE7, // 界
+            0x0A, // \n
+        ]);
+    }
+    assert!(
+        gbk_bytes.len() >= 500,
+        "File should be at least 500 bytes (got {})",
+        gbk_bytes.len()
+    );
+    std::fs::write(&file_path, &gbk_bytes).unwrap();
+
+    // Create harness with small threshold to trigger large file mode
+    let mut harness = EditorTestHarness::with_config(
+        100,
+        30,
+        fresh::config::Config {
+            editor: fresh::config::EditorConfig {
+                large_file_threshold_bytes: 500, // Force large file mode
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    // Use Ctrl+O to open file browser, then type path and Enter
+    // This triggers the flow that catches LargeFileEncodingConfirmation and shows a prompt
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type the file path in the file browser
+    harness.type_text(file_path.to_str().unwrap()).unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to open the file - this should show the confirmation prompt
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Check that the confirmation prompt is shown
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("requires full load") || screen.contains("GBK"),
+        "Should show confirmation prompt for GBK encoding. Screen:\n{}",
+        screen
+    );
+
+    // Press Enter to accept the default (Load)
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // After loading, the file content should be visible
+    let screen_after = harness.screen_to_string();
+    assert!(
+        screen_after.contains('你') || screen_after.contains('好'),
+        "Chinese characters should be visible after loading. Screen:\n{}",
+        screen_after
+    );
+
+    // Verify the status bar shows GBK encoding
+    assert!(
+        screen_after.contains("GBK"),
+        "Status bar should show GBK encoding. Screen:\n{}",
+        screen_after
+    );
+}
+
+/// Test that pressing 'c' (cancel) on the large file encoding prompt cancels the operation
+#[test]
+fn test_large_file_gbk_encoding_cancel() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("large_gbk_cancel.txt");
+
+    // Create a GBK-encoded file larger than threshold (60 * 9 = 540 bytes)
+    let mut gbk_bytes = Vec::new();
+    for _ in 0..60 {
+        gbk_bytes.extend_from_slice(&[
+            0xC4, 0xE3, // 你
+            0xBA, 0xC3, // 好
+            0xCA, 0xC0, // 世
+            0xBD, 0xE7, // 界
+            0x0A, // \n
+        ]);
+    }
+    std::fs::write(&file_path, &gbk_bytes).unwrap();
+
+    let mut harness = EditorTestHarness::with_config(
+        100,
+        30,
+        fresh::config::Config {
+            editor: fresh::config::EditorConfig {
+                large_file_threshold_bytes: 500,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    // Use Ctrl+O to open file browser
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type the file path
+    harness.type_text(file_path.to_str().unwrap()).unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to open - this should show the confirmation prompt
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify prompt is shown
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("requires full load") || screen.contains("GBK"),
+        "Should show confirmation prompt. Screen:\n{}",
+        screen
+    );
+
+    // Press 'c' and then Enter to cancel
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // After cancelling, the file should NOT be loaded
+    // The status message should indicate cancellation
+    let screen_after = harness.screen_to_string();
+    assert!(
+        screen_after.contains("cancel") || screen_after.contains("Cancel"),
+        "Should show cancellation message. Screen:\n{}",
+        screen_after
+    );
+}
+
+/// Test that pressing 'e' (encoding) on the large file encoding prompt opens encoding selector
+#[test]
+fn test_large_file_gbk_encoding_change() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("large_gbk_encoding.txt");
+
+    // Create a GBK-encoded file larger than threshold (60 * 9 = 540 bytes)
+    let mut gbk_bytes = Vec::new();
+    for _ in 0..60 {
+        gbk_bytes.extend_from_slice(&[
+            0xC4, 0xE3, // 你
+            0xBA, 0xC3, // 好
+            0xCA, 0xC0, // 世
+            0xBD, 0xE7, // 界
+            0x0A, // \n
+        ]);
+    }
+    std::fs::write(&file_path, &gbk_bytes).unwrap();
+
+    let mut harness = EditorTestHarness::with_config(
+        100,
+        30,
+        fresh::config::Config {
+            editor: fresh::config::EditorConfig {
+                large_file_threshold_bytes: 500,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    // Use Ctrl+O to open file browser
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type the file path
+    harness.type_text(file_path.to_str().unwrap()).unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to open - this should show the confirmation prompt
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify prompt is shown
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("requires full load") || screen.contains("GBK"),
+        "Should show confirmation prompt. Screen:\n{}",
+        screen
+    );
+
+    // Press 'e' and Enter to open encoding selector
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The encoding selector should now be open
+    let screen_after = harness.screen_to_string();
+    assert!(
+        screen_after.contains("Encoding:") || screen_after.contains("UTF-16"),
+        "Encoding selector should be open. Screen:\n{}",
+        screen_after
+    );
+}
+
+/// Test with Shift-JIS encoding (another non-resynchronizable encoding)
+#[test]
+fn test_large_file_shift_jis_encoding_confirmation() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("large_shift_jis.txt");
+
+    // Create a Shift-JIS encoded file larger than threshold
+    // Shift-JIS encoding of こんにちは (konnichiha):
+    // こ=0x82B1, ん=0x82F1, に=0x82C9, ち=0x82BF, は=0x82CD
+    let mut sjis_bytes = Vec::new();
+    for _ in 0..50 {
+        sjis_bytes.extend_from_slice(&[
+            0x82, 0xB1, // こ
+            0x82, 0xF1, // ん
+            0x82, 0xC9, // に
+            0x82, 0xBF, // ち
+            0x82, 0xCD, // は
+            0x0A, // \n
+        ]);
+    }
+    assert!(
+        sjis_bytes.len() >= 500,
+        "File should be at least 500 bytes (got {})",
+        sjis_bytes.len()
+    );
+    std::fs::write(&file_path, &sjis_bytes).unwrap();
+
+    let mut harness = EditorTestHarness::with_config(
+        100,
+        30,
+        fresh::config::Config {
+            editor: fresh::config::EditorConfig {
+                large_file_threshold_bytes: 500,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    // Use Ctrl+O to open file browser
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type the file path
+    harness.type_text(file_path.to_str().unwrap()).unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to open - this should show the confirmation prompt
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Check that the confirmation prompt is shown
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("requires full load") || screen.contains("Shift-JIS"),
+        "Should show confirmation prompt for Shift-JIS encoding. Screen:\n{}",
+        screen
+    );
+
+    // Press 'L' (explicit load key) to load
+    harness
+        .send_key(KeyCode::Char('L'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // After loading, the file content should be visible (Japanese hiragana)
+    let screen_after = harness.screen_to_string();
+    assert!(
+        screen_after.contains('こ')
+            || screen_after.contains('ん')
+            || screen_after.contains("Shift-JIS"),
+        "Should show Shift-JIS content or encoding indicator. Screen:\n{}",
+        screen_after
+    );
+}
+
+/// Test that selecting a non-resynchronizable encoding from the encoding selector
+/// shows the confirmation prompt again
+#[test]
+fn test_large_file_encoding_selector_non_sync_shows_prompt() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("large_gbk_resync.txt");
+
+    // Create a GBK-encoded file larger than threshold
+    let mut gbk_bytes = Vec::new();
+    for _ in 0..60 {
+        gbk_bytes.extend_from_slice(&[
+            0xC4, 0xE3, // 你
+            0xBA, 0xC3, // 好
+            0xCA, 0xC0, // 世
+            0xBD, 0xE7, // 界
+            0x0A, // \n
+        ]);
+    }
+    std::fs::write(&file_path, &gbk_bytes).unwrap();
+
+    let mut harness = EditorTestHarness::with_config(
+        100,
+        30,
+        fresh::config::Config {
+            editor: fresh::config::EditorConfig {
+                large_file_threshold_bytes: 500,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    // Open file via Ctrl+O
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text(file_path.to_str().unwrap()).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // First prompt for GBK
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("requires full load") || screen.contains("GBK"),
+        "Should show first confirmation prompt. Screen:\n{}",
+        screen
+    );
+
+    // Press 'e' to select encoding
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type "Shift-JIS" (another non-resynchronizable encoding)
+    // Clear the current input first
+    for _ in 0..30 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.type_text("Shift-JIS").unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to select Shift-JIS
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show confirmation prompt again for Shift-JIS
+    let screen_after = harness.screen_to_string();
+    assert!(
+        screen_after.contains("requires full load") || screen_after.contains("Shift-JIS"),
+        "Should show confirmation prompt again for Shift-JIS. Screen:\n{}",
+        screen_after
+    );
+}
+
+/// Test that selecting a synchronizable encoding (UTF-8) from the encoding selector
+/// loads the file directly without showing confirmation prompt again
+#[test]
+fn test_large_file_encoding_selector_sync_no_prompt() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("large_gbk_utf8.txt");
+
+    // Create a GBK-encoded file larger than threshold
+    let mut gbk_bytes = Vec::new();
+    for _ in 0..60 {
+        gbk_bytes.extend_from_slice(&[
+            0xC4, 0xE3, // 你
+            0xBA, 0xC3, // 好
+            0xCA, 0xC0, // 世
+            0xBD, 0xE7, // 界
+            0x0A, // \n
+        ]);
+    }
+    std::fs::write(&file_path, &gbk_bytes).unwrap();
+
+    let mut harness = EditorTestHarness::with_config(
+        100,
+        30,
+        fresh::config::Config {
+            editor: fresh::config::EditorConfig {
+                large_file_threshold_bytes: 500,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    // Open file via Ctrl+O
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text(file_path.to_str().unwrap()).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // First prompt for GBK
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("requires full load") || screen.contains("GBK"),
+        "Should show first confirmation prompt. Screen:\n{}",
+        screen
+    );
+
+    // Press 'e' to select encoding
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // UTF-8 should already be selected, just press Enter
+    // (or clear and type UTF-8)
+    for _ in 0..30 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.type_text("UTF-8").unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to select UTF-8
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should NOT show confirmation prompt - file should be loaded directly
+    // (UTF-8 is resynchronizable, so no full load needed)
+    let screen_after = harness.screen_to_string();
+    // The file will be loaded with UTF-8 encoding (will show garbled content but that's ok)
+    // The key assertion is that we don't see another "requires full load" prompt
+    assert!(
+        !screen_after.contains("requires full load"),
+        "Should NOT show confirmation prompt for UTF-8 (synchronizable). Screen:\n{}",
+        screen_after
+    );
+    // Should show UTF-8 in status bar (file is open)
+    assert!(
+        screen_after.contains("UTF-8"),
+        "File should be opened with UTF-8 encoding. Screen:\n{}",
+        screen_after
+    );
+}

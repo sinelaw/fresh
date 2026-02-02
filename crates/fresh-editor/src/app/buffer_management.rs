@@ -495,6 +495,101 @@ impl Editor {
         Ok(())
     }
 
+    /// Open a large file with confirmed full loading for non-resynchronizable encoding.
+    ///
+    /// Called after user confirms they want to load a large file with an encoding like
+    /// GB18030, GBK, Shift-JIS, or EUC-KR that requires loading the entire file into memory.
+    pub fn open_file_large_encoding_confirmed(&mut self, path: &Path) -> anyhow::Result<BufferId> {
+        // Use the same base directory logic as open_file
+        let base_dir = self.working_dir.clone();
+
+        let resolved_path = if path.is_relative() {
+            base_dir.join(path)
+        } else {
+            path.to_path_buf()
+        };
+
+        // Canonicalize the path
+        let canonical_path = self
+            .filesystem
+            .canonicalize(&resolved_path)
+            .unwrap_or_else(|_| resolved_path.clone());
+        let path = canonical_path.as_path();
+
+        // Check if already open
+        let already_open = self
+            .buffers
+            .iter()
+            .find(|(_, state)| state.buffer.file_path() == Some(path))
+            .map(|(id, _)| *id);
+
+        if let Some(id) = already_open {
+            self.set_active_buffer(id);
+            return Ok(id);
+        }
+
+        // Create new buffer with forced full loading
+        let buffer_id = BufferId(self.next_buffer_id);
+        self.next_buffer_id += 1;
+
+        // Load buffer with forced full loading (bypasses the large file encoding check)
+        let buffer = crate::model::buffer::Buffer::load_large_file_confirmed(
+            path,
+            Arc::clone(&self.filesystem),
+        )?;
+
+        // Create editor state with the buffer
+        let highlighter =
+            crate::primitives::highlight_engine::HighlightEngine::for_file_with_languages(
+                path,
+                &self.grammar_registry,
+                &self.config.languages,
+            );
+
+        let language = crate::primitives::highlighter::Language::from_path(path);
+        let language_name = if let Some(lang) = &language {
+            lang.to_string()
+        } else {
+            crate::services::lsp::manager::detect_language(path, &self.config.languages)
+                .unwrap_or_else(|| "text".to_string())
+        };
+
+        let mut state =
+            EditorState::from_buffer_with_highlighter(buffer, highlighter, language_name, language);
+
+        state
+            .margins
+            .set_line_numbers(self.config.editor.line_numbers);
+
+        self.buffers.insert(buffer_id, state);
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
+
+        let metadata =
+            super::types::BufferMetadata::with_file(path.to_path_buf(), &self.working_dir);
+        self.buffer_metadata.insert(buffer_id, metadata);
+
+        // Add to active split's tabs
+        let active_split = self.split_manager.active_split();
+        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.add_buffer(buffer_id);
+            view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+        }
+
+        self.set_active_buffer(buffer_id);
+
+        // Use display_name from metadata for relative path display
+        let display_name = self
+            .buffer_metadata
+            .get(&buffer_id)
+            .map(|m| m.display_name.clone())
+            .unwrap_or_else(|| path.display().to_string());
+
+        self.status_message = Some(t!("buffer.opened", name = display_name).to_string());
+
+        Ok(buffer_id)
+    }
+
     /// Restore global file state (cursor and scroll position) for a newly opened file
     ///
     /// This looks up the file's saved state from the global file states store

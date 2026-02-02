@@ -340,6 +340,38 @@ impl Editor {
                     self.set_status_message(t!("explorer.delete_cancelled").to_string());
                 }
             }
+            PromptType::ConfirmLargeFileEncoding { path } => {
+                let input_lower = input.trim().to_lowercase();
+                let load_key = t!("file.large_encoding.key.load")
+                    .to_string()
+                    .to_lowercase();
+                let encoding_key = t!("file.large_encoding.key.encoding")
+                    .to_string()
+                    .to_lowercase();
+                let cancel_key = t!("file.large_encoding.key.cancel")
+                    .to_string()
+                    .to_lowercase();
+                // Default (empty input or load key) loads the file
+                if input_lower.is_empty() || input_lower == load_key {
+                    if let Err(e) = self.open_file_large_encoding_confirmed(&path) {
+                        self.set_status_message(
+                            t!("file.error_opening", error = e.to_string()).to_string(),
+                        );
+                    }
+                } else if input_lower == encoding_key {
+                    // Let user pick a different encoding
+                    self.start_open_file_with_encoding_prompt(path);
+                } else if input_lower == cancel_key {
+                    self.set_status_message(t!("file.open_cancelled").to_string());
+                } else {
+                    // Unknown input - default to load
+                    if let Err(e) = self.open_file_large_encoding_confirmed(&path) {
+                        self.set_status_message(
+                            t!("file.error_opening", error = e.to_string()).to_string(),
+                        );
+                    }
+                }
+            }
             PromptType::StopLspServer => {
                 self.handle_stop_lsp_server(&input);
             }
@@ -633,8 +665,12 @@ impl Editor {
 
     /// Handle OpenFileWithEncoding prompt confirmation.
     /// Opens a file with a specific encoding (no auto-detection).
+    ///
+    /// For large files with non-resynchronizable encodings, shows a confirmation prompt
+    /// before loading the entire file into memory.
     fn handle_open_file_with_encoding(&mut self, path: &std::path::Path, input: &str) {
         use crate::model::buffer::Encoding;
+        use crate::view::prompt::PromptType;
 
         let trimmed = input.trim();
 
@@ -653,6 +689,39 @@ impl Editor {
 
         match encoding {
             Some(enc) => {
+                // Check if this is a large file with non-resynchronizable encoding
+                // If so, show confirmation prompt before loading
+                let threshold = self.config.editor.large_file_threshold_bytes as usize;
+                let file_size = self
+                    .filesystem
+                    .metadata(path)
+                    .map(|m| m.size as usize)
+                    .unwrap_or(0);
+
+                if file_size >= threshold && enc.requires_full_file_load() {
+                    // Show confirmation prompt for large file with non-resynchronizable encoding
+                    let size_mb = file_size as f64 / (1024.0 * 1024.0);
+                    let load_key = t!("file.large_encoding.key.load").to_string();
+                    let encoding_key = t!("file.large_encoding.key.encoding").to_string();
+                    let cancel_key = t!("file.large_encoding.key.cancel").to_string();
+                    let prompt_msg = t!(
+                        "file.large_encoding_prompt",
+                        encoding = enc.display_name(),
+                        size = format!("{:.0}", size_mb),
+                        load_key = load_key,
+                        encoding_key = encoding_key,
+                        cancel_key = cancel_key
+                    )
+                    .to_string();
+                    self.start_prompt(
+                        prompt_msg,
+                        PromptType::ConfirmLargeFileEncoding {
+                            path: path.to_path_buf(),
+                        },
+                    );
+                    return;
+                }
+
                 // Reset key context to Normal so editor gets focus
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
 

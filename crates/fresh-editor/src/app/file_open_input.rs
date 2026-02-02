@@ -315,7 +315,35 @@ impl Editor {
         // Open the file with auto-detected encoding
         tracing::info!("[SYNTAX DEBUG] file_open_dialog opening file: {:?}", path);
         if let Err(e) = self.open_file(&path) {
-            self.set_status_message(t!("file.error_opening", error = e.to_string()).to_string());
+            // Check if this is a large file encoding confirmation error
+            if let Some(confirmation) =
+                e.downcast_ref::<crate::model::buffer::LargeFileEncodingConfirmation>()
+            {
+                // Show confirmation prompt for large file with non-resynchronizable encoding
+                let size_mb = confirmation.file_size as f64 / (1024.0 * 1024.0);
+                let load_key = t!("file.large_encoding.key.load").to_string();
+                let encoding_key = t!("file.large_encoding.key.encoding").to_string();
+                let cancel_key = t!("file.large_encoding.key.cancel").to_string();
+                let prompt_msg = t!(
+                    "file.large_encoding_prompt",
+                    encoding = confirmation.encoding.display_name(),
+                    size = format!("{:.0}", size_mb),
+                    load_key = load_key,
+                    encoding_key = encoding_key,
+                    cancel_key = cancel_key
+                )
+                .to_string();
+                self.start_prompt(
+                    prompt_msg,
+                    PromptType::ConfirmLargeFileEncoding {
+                        path: confirmation.path.clone(),
+                    },
+                );
+            } else {
+                self.set_status_message(
+                    t!("file.error_opening", error = e.to_string()).to_string(),
+                );
+            }
         } else {
             self.set_status_message(
                 t!("file.opened", path = path.display().to_string()).to_string(),
@@ -324,7 +352,7 @@ impl Editor {
     }
 
     /// Start the encoding selection prompt for opening a file
-    fn start_open_file_with_encoding_prompt(&mut self, path: std::path::PathBuf) {
+    pub fn start_open_file_with_encoding_prompt(&mut self, path: std::path::PathBuf) {
         use crate::model::buffer::Encoding;
         use crate::view::prompt::PromptType;
 

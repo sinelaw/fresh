@@ -117,6 +117,9 @@ pub enum PromptType {
         path: std::path::PathBuf,
         is_dir: bool,
     },
+    /// Confirm loading a large file with non-resynchronizable encoding
+    /// (like GB18030, GBK, Shift-JIS, EUC-KR) that requires full file loading
+    ConfirmLargeFileEncoding { path: std::path::PathBuf },
     /// Switch to a tab by name (from the current split's open buffers)
     SwitchToTab,
     /// Run shell command on buffer/selection

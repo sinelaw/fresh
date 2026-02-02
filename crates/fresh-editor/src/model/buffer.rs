@@ -69,11 +69,9 @@ impl std::fmt::Display for LargeFileEncodingConfirmation {
         let size_mb = self.file_size as f64 / (1024.0 * 1024.0);
         write!(
             f,
-            "Large file ({:.1} MB) uses {} encoding which requires loading the entire file into memory. \
-             This encoding cannot be streamed because character boundaries cannot be determined \
-             from the middle of the file. Continue?",
-            size_mb,
-            self.encoding.display_name()
+            "{} ({:.0} MB) requires full load. (l)oad, (e)ncoding, (C)ancel? ",
+            self.encoding.display_name(),
+            size_mb
         )
     }
 }
@@ -4910,9 +4908,13 @@ mod tests {
             };
 
             let display = format!("{}", confirmation);
-            assert!(display.contains("150.0 MB"));
-            assert!(display.contains("Shift-JIS"));
-            assert!(display.contains("entire file into memory"));
+            assert!(display.contains("150 MB"), "Display: {}", display);
+            assert!(display.contains("Shift-JIS"), "Display: {}", display);
+            assert!(
+                display.contains("requires full load"),
+                "Display: {}",
+                display
+            );
         }
 
         #[test]
