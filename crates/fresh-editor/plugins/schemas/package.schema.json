@@ -22,7 +22,7 @@
     },
     "type": {
       "type": "string",
-      "enum": ["plugin", "theme", "theme-pack", "language"],
+      "enum": ["plugin", "theme", "theme-pack", "language", "bundle"],
       "description": "Package type"
     },
     "author": {
@@ -182,6 +182,151 @@
             "initializationOptions": {
               "type": "object",
               "description": "LSP initialization options"
+            }
+          }
+        },
+        "languages": {
+          "type": "array",
+          "description": "Language definitions (for bundles)",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Language identifier (e.g., 'elixir', 'heex')"
+              },
+              "grammar": {
+                "type": "object",
+                "description": "Grammar configuration",
+                "required": ["file"],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "description": "Path to grammar file relative to package"
+                  },
+                  "extensions": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "File extensions this grammar handles"
+                  },
+                  "firstLine": {
+                    "type": "string",
+                    "description": "Regex pattern for shebang detection"
+                  }
+                }
+              },
+              "language": {
+                "type": "object",
+                "description": "Language configuration",
+                "properties": {
+                  "commentPrefix": {
+                    "type": "string",
+                    "description": "Line comment prefix"
+                  },
+                  "blockCommentStart": {
+                    "type": "string",
+                    "description": "Block comment start marker"
+                  },
+                  "blockCommentEnd": {
+                    "type": "string",
+                    "description": "Block comment end marker"
+                  },
+                  "tabSize": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Default tab size for this language"
+                  },
+                  "useTabs": {
+                    "type": "boolean",
+                    "description": "Use tabs instead of spaces"
+                  },
+                  "autoIndent": {
+                    "type": "boolean",
+                    "description": "Enable automatic indentation"
+                  },
+                  "showWhitespaceTabs": {
+                    "type": "boolean",
+                    "description": "Whether to show whitespace tab indicators"
+                  },
+                  "formatter": {
+                    "type": "object",
+                    "required": ["command"],
+                    "properties": {
+                      "command": {
+                        "type": "string",
+                        "description": "Formatter command"
+                      },
+                      "args": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Arguments to pass to the formatter"
+                      }
+                    }
+                  }
+                }
+              },
+              "lsp": {
+                "type": "object",
+                "description": "LSP server configuration",
+                "required": ["command"],
+                "properties": {
+                  "command": {
+                    "type": "string",
+                    "description": "LSP server command"
+                  },
+                  "args": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Arguments to pass to the server"
+                  },
+                  "autoStart": {
+                    "type": "boolean",
+                    "description": "Auto-start the server when a matching file is opened"
+                  },
+                  "initializationOptions": {
+                    "type": "object",
+                    "description": "LSP initialization options"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "plugins": {
+          "type": "array",
+          "description": "Plugin definitions (for bundles)",
+          "items": {
+            "type": "object",
+            "required": ["entry"],
+            "properties": {
+              "entry": {
+                "type": "string",
+                "description": "Plugin entry point file relative to package"
+              }
+            }
+          }
+        },
+        "themes": {
+          "type": "array",
+          "description": "Theme definitions (for bundles)",
+          "items": {
+            "type": "object",
+            "required": ["file", "name"],
+            "properties": {
+              "file": {
+                "type": "string",
+                "description": "Theme JSON file path relative to package"
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name for the theme"
+              },
+              "variant": {
+                "type": "string",
+                "enum": ["dark", "light"],
+                "description": "Theme variant (dark or light)"
+              }
             }
           }
         }

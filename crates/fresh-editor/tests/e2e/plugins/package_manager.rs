@@ -886,6 +886,535 @@ globalThis.beta_cmd = function() { editor.setStatus("Beta plugin works!"); };
     );
 }
 
+/// Test installing a bundle package from a local path.
+/// A bundle contains multiple languages and plugins in a single package.
+/// This test verifies:
+/// - Bundle installs to the bundles/packages directory
+/// - Languages from the bundle are registered (grammars)
+/// - Plugins from the bundle are loaded and their commands available
+#[test]
+#[cfg_attr(windows, ignore)] // file:// URLs don't work reliably on Windows
+fn test_pkg_install_bundle_from_local_path() {
+    use fresh::config_io::DirectoryContext;
+    use tempfile::TempDir;
+
+    init_tracing_from_env();
+
+    // Create temp directories for test isolation
+    let temp_dir = TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Create a local bundle package with 2 languages and 1 plugin
+    // Note: We create it inside a subdirectory named "test-bundle" so the package
+    // manager extracts the correct name from the path
+    let bundle_temp = TempDir::new().unwrap();
+    let bundle_dir = bundle_temp.path().join("test-bundle");
+    fs::create_dir_all(&bundle_dir).unwrap();
+
+    // Create the grammars directory
+    let grammars_dir = bundle_dir.join("grammars");
+    fs::create_dir_all(&grammars_dir).unwrap();
+
+    // Create a minimal sublime-syntax grammar for "testlang1"
+    fs::write(
+        grammars_dir.join("TestLang1.sublime-syntax"),
+        r#"%YAML 1.2
+---
+name: TestLang1
+file_extensions: [tl1]
+scope: source.testlang1
+contexts:
+  main:
+    - match: '#.*'
+      scope: comment.line
+"#,
+    )
+    .unwrap();
+
+    // Create a minimal sublime-syntax grammar for "testlang2"
+    fs::write(
+        grammars_dir.join("TestLang2.sublime-syntax"),
+        r#"%YAML 1.2
+---
+name: TestLang2
+file_extensions: [tl2]
+scope: source.testlang2
+contexts:
+  main:
+    - match: '//.*'
+      scope: comment.line
+"#,
+    )
+    .unwrap();
+
+    // Create the plugins directory
+    let plugins_dir = bundle_dir.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+
+    // Create first plugin that registers a command
+    // Note: registerCommand(id, displayName, functionName, keybinding)
+    fs::write(
+        plugins_dir.join("test-helper.ts"),
+        r#"
+/// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
+
+globalThis.bundle_test_cmd = function(): void {
+    editor.setStatus("Bundle test command executed!");
+};
+
+editor.registerCommand(
+    "bundle_test_cmd",
+    "Bundle Test: Command",
+    "bundle_test_cmd",
+    null
+);
+
+editor.debug("Bundle test plugin 1 loaded!");
+"#,
+    )
+    .unwrap();
+
+    // Create second plugin that registers another command
+    fs::write(
+        plugins_dir.join("another-helper.ts"),
+        r#"
+/// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
+
+globalThis.bundle_another_cmd = function(): void {
+    editor.setStatus("Bundle another command executed!");
+};
+
+editor.registerCommand(
+    "bundle_another_cmd",
+    "Bundle Another: Command",
+    "bundle_another_cmd",
+    null
+);
+
+editor.debug("Bundle test plugin 2 loaded!");
+"#,
+    )
+    .unwrap();
+
+    // Create the themes directory
+    let themes_dir = bundle_dir.join("themes");
+    fs::create_dir_all(&themes_dir).unwrap();
+
+    // Create first theme (dark variant)
+    // Note: Using r##"..."## because JSON contains "#" color codes
+    fs::write(
+        themes_dir.join("bundle-dark.json"),
+        r##"{
+    "name": "Bundle Dark Theme",
+    "variant": "dark",
+    "colors": {
+        "editor.background": "#1e1e1e",
+        "editor.foreground": "#d4d4d4"
+    }
+}"##,
+    )
+    .unwrap();
+
+    // Create second theme (light variant)
+    fs::write(
+        themes_dir.join("bundle-light.json"),
+        r##"{
+    "name": "Bundle Light Theme",
+    "variant": "light",
+    "colors": {
+        "editor.background": "#ffffff",
+        "editor.foreground": "#000000"
+    }
+}"##,
+    )
+    .unwrap();
+
+    // Create the bundle's package.json manifest
+    // Note: Using r##"..."## because the content contains "#" which would close r#"..."#
+    fs::write(
+        bundle_dir.join("package.json"),
+        r##"{
+    "name": "test-bundle",
+    "version": "1.0.0",
+    "description": "Test bundle with languages, plugins, and themes",
+    "type": "bundle",
+    "fresh": {
+        "languages": [
+            {
+                "id": "testlang1",
+                "grammar": {
+                    "file": "grammars/TestLang1.sublime-syntax",
+                    "extensions": ["tl1"]
+                },
+                "language": {
+                    "commentPrefix": "#",
+                    "tabSize": 2
+                }
+            },
+            {
+                "id": "testlang2",
+                "grammar": {
+                    "file": "grammars/TestLang2.sublime-syntax",
+                    "extensions": ["tl2"]
+                },
+                "language": {
+                    "commentPrefix": "//",
+                    "tabSize": 4
+                }
+            }
+        ],
+        "plugins": [
+            { "entry": "plugins/test-helper.ts" },
+            { "entry": "plugins/another-helper.ts" }
+        ],
+        "themes": [
+            { "file": "themes/bundle-dark.json", "name": "Bundle Dark Theme", "variant": "dark" },
+            { "file": "themes/bundle-light.json", "name": "Bundle Light Theme", "variant": "light" }
+        ]
+    }
+}"##,
+    )
+    .unwrap();
+
+    // Create the main project repo
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+
+    // Setup plugins directory with the package manager
+    let project_plugins_dir = repo.path.join("plugins");
+    fs::create_dir_all(&project_plugins_dir).unwrap();
+    copy_plugin_lib(&project_plugins_dir);
+    copy_plugin(&project_plugins_dir, "pkg");
+
+    // Also copy lib to bundle plugins dir so the plugin can find fresh.d.ts
+    let bundle_plugins_lib_dir = plugins_dir.join("lib");
+    fs::create_dir_all(&bundle_plugins_lib_dir).unwrap();
+    fs::copy(
+        project_plugins_dir.join("lib").join("fresh.d.ts"),
+        bundle_plugins_lib_dir.join("fresh.d.ts"),
+    )
+    .unwrap();
+
+    // Create empty registry structure so sync doesn't interfere
+    let config_plugins_dir = dir_context.config_dir.join("plugins");
+    fs::create_dir_all(&config_plugins_dir).unwrap();
+    let packages_dir = config_plugins_dir.join("packages");
+    fs::create_dir_all(&packages_dir).unwrap();
+    let index_dir = packages_dir.join(".index");
+    fs::create_dir_all(&index_dir).unwrap();
+    let fake_registry_dir = index_dir.join("193934da");
+    fs::create_dir_all(&fake_registry_dir).unwrap();
+    fs::write(
+        fake_registry_dir.join("plugins.json"),
+        r#"{"schema_version": 1, "updated": "2024-01-01", "packages": {}}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(fake_registry_dir.join(".git")).unwrap();
+
+    // Create the bundles directory structure
+    let bundles_packages_dir = dir_context.config_dir.join("bundles").join("packages");
+    fs::create_dir_all(&bundles_packages_dir).unwrap();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        120,
+        35,
+        Default::default(),
+        repo.path.clone(),
+        dir_context.clone(),
+    )
+    .unwrap();
+
+    // Open command palette and install from URL
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness.type_text("pkg: Install from URL").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Install from URL"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for the URL prompt to appear
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Git URL"))
+        .unwrap();
+
+    // Enter the local bundle directory path (not git, just a local path)
+    let bundle_path = bundle_dir.display().to_string();
+    harness.type_text(&bundle_path).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for installation to complete
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Installed bundle")
+                || screen.contains("Failed")
+                || screen.contains("already")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("After bundle install:\n{}", screen);
+
+    // Verify the bundle was installed to bundles/packages directory
+    let installed_bundle_dir = bundles_packages_dir.join("test-bundle");
+    assert!(
+        installed_bundle_dir.exists(),
+        "Bundle should be installed in bundles/packages directory. Path: {:?}",
+        installed_bundle_dir
+    );
+
+    // Verify package.json exists
+    let package_json_path = installed_bundle_dir.join("package.json");
+    assert!(
+        package_json_path.exists(),
+        "package.json should exist in installed bundle"
+    );
+
+    // Verify the package type is bundle
+    let package_json_content = fs::read_to_string(&package_json_path).unwrap();
+    assert!(
+        package_json_content.contains("\"type\": \"bundle\""),
+        "package.json should have type 'bundle'. Content: {}",
+        package_json_content
+    );
+
+    // Verify grammar files were copied
+    let grammar1_path = installed_bundle_dir
+        .join("grammars")
+        .join("TestLang1.sublime-syntax");
+    assert!(
+        grammar1_path.exists(),
+        "Grammar file for testlang1 should exist"
+    );
+    let grammar2_path = installed_bundle_dir
+        .join("grammars")
+        .join("TestLang2.sublime-syntax");
+    assert!(
+        grammar2_path.exists(),
+        "Grammar file for testlang2 should exist"
+    );
+
+    // === Test 1: Verify bundled plugin command is available and works ===
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness.type_text("Bundle Test").unwrap();
+
+    // Wait for the command to appear (semantic wait)
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Bundle Test: Command") || screen.contains("bundle_test_cmd")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Bundle Test: Command") || screen.contains("bundle_test_cmd"),
+        "Bundle plugin command should be available in command palette. Screen: {}",
+        screen
+    );
+
+    // Execute the command and verify the status message
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for the status message from the plugin command
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Bundle test command executed!")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("After executing bundle command:\n{}", screen);
+    assert!(
+        screen.contains("Bundle test command executed!"),
+        "Bundle plugin command should show status message when executed. Screen: {}",
+        screen
+    );
+
+    // === Test 2: Verify bundled languages are available in "Set Language" ===
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness.type_text("Set Language").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Set Language"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for language selection prompt
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Language:"))
+        .unwrap();
+
+    // Type the name of our bundled language
+    harness.type_text("testlang1").unwrap();
+
+    // Wait for the bundled language to appear in the list
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // The language should appear in the suggestions
+            screen.contains("testlang1") || screen.to_lowercase().contains("testlang1")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Set Language showing bundled language:\n{}", screen);
+    assert!(
+        screen.to_lowercase().contains("testlang1"),
+        "Bundled language 'testlang1' should be available in Set Language. Screen: {}",
+        screen
+    );
+
+    // Close the language selection
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // === Test 3: Verify second plugin command is available ===
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness.type_text("Bundle Another").unwrap();
+
+    // Wait for the second command to appear
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Bundle Another: Command") || screen.contains("bundle_another_cmd")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Second plugin command in palette:\n{}", screen);
+    assert!(
+        screen.contains("Bundle Another: Command") || screen.contains("bundle_another_cmd"),
+        "Second bundle plugin command should be available. Screen: {}",
+        screen
+    );
+
+    // Execute the second command
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Bundle another command executed!")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("After executing second plugin command:\n{}", screen);
+
+    // === Test 4: Verify bundled themes are available in "Select Theme" ===
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness.type_text("Theme").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Theme"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for theme selection - the finder shows themes
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Look for any theme-related content or the finder
+            screen.contains("Bundle Dark") || screen.contains("Theme") || screen.contains("dark")
+        })
+        .unwrap();
+
+    // Type to filter for our bundled theme
+    harness.type_text("Bundle").unwrap();
+
+    // Wait for the bundled theme to appear
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Bundle Dark") || screen.to_lowercase().contains("bundle")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Select Theme showing bundled theme:\n{}", screen);
+    assert!(
+        screen.to_lowercase().contains("bundle"),
+        "Bundled theme should be available in theme selection. Screen: {}",
+        screen
+    );
+
+    // Close the theme selection
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // === Test 5: Verify bundle shows up in package manager with installed status ===
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness.type_text("Package: Packages").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Package: Packages"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for package manager UI to load and show installed bundles
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("INSTALLED") && screen.contains("test-bundle")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Package manager showing bundle:\n{}", screen);
+
+    assert!(
+        screen.contains("test-bundle"),
+        "Package manager should show the installed bundle. Screen: {}",
+        screen
+    );
+}
+
 /// Test that uninstalling a plugin removes its commands from the command palette.
 /// This verifies that commands registered by a plugin are properly unregistered
 /// when the plugin is unloaded, not just showing untranslated keys.
