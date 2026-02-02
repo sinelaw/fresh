@@ -1,8 +1,9 @@
 # Code Tour Feature Design
 
-**Status**: Design Phase
+**Status**: Implementation Phase
 **Author**: Claude
 **Date**: 2026-02-02
+**Branch**: `claude/implement-code-tour-zIYjM`
 
 ## 1. Executive Summary
 
@@ -21,12 +22,14 @@ Code Tour is a JSON-driven walkthrough system that guides users through a codeba
 
 ## 3. Data Structure: Tour Manifest Schema
 
+### 3.1 TypeScript Interface
+
 ```typescript
 interface TourStep {
   step_id: number;
   title: string;
   file_path: string;         // Relative to project root
-  lines: [number, number];   // Start and End line (1-indexed)
+  lines: [number, number];   // Start and End line (1-indexed, inclusive)
   explanation: string;       // Markdown supported text
   overlay_config?: {
     type: 'block' | 'line';
@@ -35,6 +38,7 @@ interface TourStep {
 }
 
 interface TourManifest {
+  $schema?: string;          // Optional: reference to JSON schema
   title: string;
   description: string;
   schema_version: "1.0";
@@ -43,11 +47,123 @@ interface TourManifest {
 }
 ```
 
-**Example `.fresh-tour.json`**:
+### 3.2 JSON Schema (Draft-07)
+
+The schema file should be placed at `plugins/code-tour/tour-schema.json`:
+
 ```json
 {
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fresh-editor.dev/schemas/tour-manifest-v1.json",
+  "title": "Fresh Code Tour Manifest",
+  "description": "Schema for .fresh-tour.json files that define guided code walkthroughs",
+  "type": "object",
+  "required": ["title", "description", "schema_version", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Reference to this JSON schema for editor validation"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "Display title for the tour"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "Brief description of what this tour covers"
+    },
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"],
+      "description": "Schema version for forward compatibility"
+    },
+    "commit_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{7,40}$",
+      "description": "Git commit hash (short or full) this tour was created for"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Ordered list of tour steps",
+      "items": {
+        "$ref": "#/definitions/TourStep"
+      }
+    }
+  },
+  "definitions": {
+    "TourStep": {
+      "type": "object",
+      "required": ["step_id", "title", "file_path", "lines", "explanation"],
+      "additionalProperties": false,
+      "properties": {
+        "step_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Unique identifier for this step (1-indexed)"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Short title displayed in the tour dock"
+        },
+        "file_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to the file, relative to project root"
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Line range [start, end] (1-indexed, inclusive)"
+        },
+        "explanation": {
+          "type": "string",
+          "description": "Markdown-formatted explanation shown in the tour dock"
+        },
+        "overlay_config": {
+          "$ref": "#/definitions/OverlayConfig"
+        }
+      }
+    },
+    "OverlayConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["block", "line"],
+          "default": "block",
+          "description": "block = highlight entire range, line = highlight each line separately"
+        },
+        "focus_mode": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, dims lines outside the active range"
+        }
+      }
+    }
+  }
+}
+```
+
+### 3.3 Example `.fresh-tour.json`
+
+```json
+{
+  "$schema": "./tour-schema.json",
   "title": "Fresh Plugin System Tour",
-  "description": "Learn how plugins work in Fresh",
+  "description": "Learn how plugins work in Fresh - from loading to execution",
   "schema_version": "1.0",
   "commit_hash": "ee3bda2",
   "steps": [
@@ -56,11 +172,18 @@ interface TourManifest {
       "title": "Plugin Entry Point",
       "file_path": "crates/fresh-plugin-runtime/src/backend/quickjs_backend.rs",
       "lines": [1, 50],
-      "explanation": "This is where plugins are loaded and executed...",
+      "explanation": "## QuickJS Backend\n\nThis module provides the JavaScript runtime for executing TypeScript plugins.\n\n**Key concepts:**\n- Plugins run in a sandboxed QuickJS environment\n- TypeScript is transpiled to JavaScript using oxc\n- The `JsEditorApi` struct exposes editor functionality to plugins",
       "overlay_config": {
         "type": "block",
         "focus_mode": true
       }
+    },
+    {
+      "step_id": 2,
+      "title": "Plugin Command System",
+      "file_path": "crates/fresh-core/src/api.rs",
+      "lines": [735, 800],
+      "explanation": "## PluginCommand Enum\n\nPlugins communicate with the editor through commands.\n\nEach variant represents an action the plugin can request:\n- `InsertText` - Insert text at a position\n- `AddOverlay` - Add visual decorations\n- `OpenFile` - Navigate to a file\n\nCommands are sent through a channel and processed by the editor's main loop."
     }
   ]
 }
@@ -599,31 +722,67 @@ Add theme keys for Code Tour in theme schema:
 
 ## 10. Implementation Phases
 
-### Phase 1: API Additions (This PR)
-- [ ] Add `scrollToLineCenter` command
-- [ ] Add `getLineEndPosition` async API
-- [ ] Add `getBufferLineCount` async API
-- [ ] Expose `extendToLineEnd` in overlay options
-- [ ] Add theme keys for tour colors
-- [ ] Regenerate TypeScript definitions
+### Phase 1: API Additions
 
-### Phase 2: Core Plugin
-- [ ] Create `plugins/code-tour/` directory
-- [ ] Implement TourManager state machine
-- [ ] Implement tour loading and validation
-- [ ] Implement step navigation
-- [ ] Implement Tour Dock virtual buffer
+**Files to modify:**
 
-### Phase 3: Visual Polish
-- [ ] Implement focus mode dimming
-- [ ] Implement detour detection
+1. `crates/fresh-core/src/api.rs`
+   - [ ] Add `ScrollToLineCenter` variant to `PluginCommand`
+   - [ ] Add `GetLineEndPosition` variant to `PluginCommand`
+   - [ ] Add `GetBufferLineCount` variant to `PluginCommand`
+   - [ ] Add `LineEndPosition` variant to `PluginResponse`
+   - [ ] Add `BufferLineCount` variant to `PluginResponse`
+   - [ ] Add `extend_to_line_end: bool` field to `OverlayOptions`
+
+2. `crates/fresh-plugin-runtime/src/backend/quickjs_backend.rs`
+   - [ ] Add `scroll_to_line_center()` method
+   - [ ] Add `get_line_end_position_start()` async method
+   - [ ] Add `get_buffer_line_count_start()` async method
+
+3. `crates/fresh-editor/src/app/plugin_commands.rs`
+   - [ ] Add `handle_scroll_to_line_center()` handler
+   - [ ] Add `handle_get_line_end_position()` handler
+   - [ ] Add `handle_get_buffer_line_count()` handler
+
+4. `crates/fresh-editor/src/app/mod.rs`
+   - [ ] Dispatch new `PluginCommand` variants to handlers
+
+5. Regenerate TypeScript definitions
+   - [ ] Run `cargo test -p fresh-plugin-runtime write_fresh_dts_file -- --ignored`
+
+### Phase 2: Core Plugin Implementation
+
+**Files to create:**
+
+1. `plugins/code-tour/tour-schema.json` - JSON Schema for validation
+2. `plugins/code-tour/index.ts` - Plugin entry point
+3. `plugins/code-tour/types.ts` - TypeScript types
+
+**Plugin implementation:**
+
+- [ ] Create plugin directory structure
+- [ ] Implement JSON schema file
+- [ ] Implement tour manifest loading and validation
+- [ ] Register commands: `tour:load`, `tour:next`, `tour:prev`, `tour:exit`, `tour:resume`
+- [ ] Define `tour-mode` keybindings
+- [ ] Implement step navigation (open file, scroll to line, highlight)
+- [ ] Implement Tour Dock (virtual buffer with step info)
+- [ ] Implement overlay rendering for active lines
+
+### Phase 3: Visual Polish & Edge Cases
+
+- [ ] Implement focus mode (dim non-active lines)
+- [ ] Implement detour detection via `viewport_changed` hook
 - [ ] Implement resume functionality
-- [ ] Add keyboard hints overlay
+- [ ] Handle missing files gracefully
+- [ ] Handle line count mismatch (clamp highlights)
+- [ ] Implement commit hash verification (optional)
 
 ### Phase 4: Testing & Documentation
-- [ ] Create sample `.fresh-tour.json` for Fresh codebase
-- [ ] Write user documentation
-- [ ] Add to plugin marketplace
+
+- [ ] Create sample `.fresh-tour.json` for Fresh plugin system
+- [ ] Add user documentation to `docs/plugins/code-tour.md`
+- [ ] Test on various codebases
 
 ## 11. Summary
 
