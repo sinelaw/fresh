@@ -358,6 +358,143 @@ impl Editor {
         Ok(buffer_id)
     }
 
+    /// Open a file with a specific encoding (no auto-detection).
+    ///
+    /// Used when the user disables auto-detection in the file browser
+    /// and selects a specific encoding to use.
+    pub fn open_file_with_encoding(
+        &mut self,
+        path: &Path,
+        encoding: crate::model::buffer::Encoding,
+    ) -> anyhow::Result<BufferId> {
+        // Use the same base directory logic as open_file
+        let base_dir = self.working_dir.clone();
+
+        let resolved_path = if path.is_relative() {
+            base_dir.join(path)
+        } else {
+            path.to_path_buf()
+        };
+
+        // Canonicalize the path
+        let canonical_path = self
+            .filesystem
+            .canonicalize(&resolved_path)
+            .unwrap_or_else(|_| resolved_path.clone());
+        let path = canonical_path.as_path();
+
+        // Check if already open
+        let already_open = self
+            .buffers
+            .iter()
+            .find(|(_, state)| state.buffer.file_path() == Some(path))
+            .map(|(id, _)| *id);
+
+        if let Some(id) = already_open {
+            // File is already open - update its encoding and reload
+            if let Some(state) = self.buffers.get_mut(&id) {
+                state.buffer.set_encoding(encoding);
+            }
+            self.set_active_buffer(id);
+            return Ok(id);
+        }
+
+        // Create new buffer with specified encoding
+        let buffer_id = BufferId(self.next_buffer_id);
+        self.next_buffer_id += 1;
+
+        // Load buffer with the specified encoding
+        let buffer = crate::model::buffer::Buffer::load_from_file_with_encoding(
+            path,
+            encoding,
+            Arc::clone(&self.filesystem),
+        )?;
+
+        // Create editor state with the buffer
+        let highlighter =
+            crate::primitives::highlight_engine::HighlightEngine::for_file_with_languages(
+                path,
+                &self.grammar_registry,
+                &self.config.languages,
+            );
+
+        let language = crate::primitives::highlighter::Language::from_path(path);
+        let language_name = if let Some(lang) = &language {
+            lang.to_string()
+        } else {
+            crate::services::lsp::manager::detect_language(path, &self.config.languages)
+                .unwrap_or_else(|| "text".to_string())
+        };
+
+        let mut state =
+            EditorState::from_buffer_with_highlighter(buffer, highlighter, language_name, language);
+
+        state
+            .margins
+            .set_line_numbers(self.config.editor.line_numbers);
+
+        self.buffers.insert(buffer_id, state);
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
+
+        let metadata =
+            super::types::BufferMetadata::with_file(path.to_path_buf(), &self.working_dir);
+        self.buffer_metadata.insert(buffer_id, metadata);
+
+        // Add to active split's tabs
+        let active_split = self.split_manager.active_split();
+        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.add_buffer(buffer_id);
+            view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+        }
+
+        self.set_active_buffer(buffer_id);
+
+        Ok(buffer_id)
+    }
+
+    /// Reload the current file with a specific encoding.
+    ///
+    /// Requires the buffer to have no unsaved modifications.
+    pub fn reload_with_encoding(
+        &mut self,
+        encoding: crate::model::buffer::Encoding,
+    ) -> anyhow::Result<()> {
+        let buffer_id = self.active_buffer();
+
+        // Get the file path
+        let path = self
+            .buffers
+            .get(&buffer_id)
+            .and_then(|s| s.buffer.file_path().map(|p| p.to_path_buf()))
+            .ok_or_else(|| anyhow::anyhow!("Buffer has no file path"))?;
+
+        // Check for unsaved modifications
+        if let Some(state) = self.buffers.get(&buffer_id) {
+            if state.buffer.is_modified() {
+                anyhow::bail!("Cannot reload: buffer has unsaved modifications");
+            }
+        }
+
+        // Reload the buffer with the new encoding
+        let new_buffer = crate::model::buffer::Buffer::load_from_file_with_encoding(
+            &path,
+            encoding,
+            Arc::clone(&self.filesystem),
+        )?;
+
+        // Update the buffer in the editor state
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.buffer = new_buffer;
+            // Reset cursor to start
+            state.cursors = crate::model::cursor::Cursors::new();
+            // Invalidate highlighting
+            state.highlighter.invalidate_all();
+        }
+
+        Ok(())
+    }
+
     /// Restore global file state (cursor and scroll position) for a newly opened file
     ///
     /// This looks up the file's saved state from the global file states store

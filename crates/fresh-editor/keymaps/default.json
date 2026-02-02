@@ -1378,6 +1378,14 @@
       "when": "prompt"
     },
     {
+      "comment": "File browser - toggle encoding detection (mnemonic: E for Encoding)",
+      "key": "e",
+      "modifiers": ["alt"],
+      "action": "file_browser_toggle_detect_encoding",
+      "args": {},
+      "when": "prompt"
+    },
+    {
       "comment": "Popup context - Navigation",
       "key": "Up",
       "modifiers": [],

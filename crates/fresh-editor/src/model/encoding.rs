@@ -480,6 +480,51 @@ pub fn detect_and_convert(bytes: &[u8]) -> (Encoding, Vec<u8>) {
     }
 }
 
+/// Convert bytes from a specific encoding to UTF-8
+///
+/// Used when opening a file with a user-specified encoding instead of auto-detection.
+/// Returns the UTF-8 converted content.
+pub fn convert_to_utf8(bytes: &[u8], encoding: Encoding) -> Vec<u8> {
+    if bytes.is_empty() {
+        return Vec::new();
+    }
+
+    match encoding {
+        Encoding::Utf8 | Encoding::Ascii => {
+            // Already UTF-8, just clone
+            bytes.to_vec()
+        }
+        Encoding::Utf8Bom => {
+            // Skip the BOM (3 bytes) if present and use the rest
+            if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) && bytes.len() > 3 {
+                bytes[3..].to_vec()
+            } else {
+                bytes.to_vec()
+            }
+        }
+        Encoding::Utf16Le | Encoding::Utf16Be => {
+            // Decode UTF-16 to UTF-8
+            let enc_rs = encoding.to_encoding_rs();
+            let start_offset =
+                if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
+                    2 // Skip BOM
+                } else {
+                    0
+                };
+            let data = &bytes[start_offset..];
+
+            let (cow, _had_errors) = enc_rs.decode_without_bom_handling(data);
+            cow.into_owned().into_bytes()
+        }
+        _ => {
+            // Use encoding_rs to convert to UTF-8
+            let enc_rs = encoding.to_encoding_rs();
+            let (cow, _had_errors) = enc_rs.decode_without_bom_handling(bytes);
+            cow.into_owned().into_bytes()
+        }
+    }
+}
+
 /// Convert UTF-8 content to the specified encoding for saving
 ///
 /// Used when saving files to convert internal UTF-8 representation

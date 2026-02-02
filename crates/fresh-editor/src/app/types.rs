@@ -420,6 +420,8 @@ pub enum HoverTarget {
     FileBrowserScrollbar,
     /// Hovering over the file browser "Show Hidden" checkbox
     FileBrowserShowHiddenCheckbox,
+    /// Hovering over the file browser "Detect Encoding" checkbox
+    FileBrowserDetectEncodingCheckbox,
     /// Hovering over a tab name (buffer_id, split_id) - for non-active tabs
     TabName(BufferId, SplitId),
     /// Hovering over a tab close button (buffer_id, split_id)

@@ -53,6 +53,12 @@ impl Editor {
                     );
                 }
             }
+            PromptType::OpenFileWithEncoding { path } => {
+                self.handle_open_file_with_encoding(&path, &input);
+            }
+            PromptType::ReloadWithEncoding => {
+                self.handle_reload_with_encoding(&input);
+            }
             PromptType::SwitchProject => {
                 // Expand tilde to home directory first
                 let expanded_path = expand_tilde(&input);
@@ -618,6 +624,88 @@ impl Editor {
             Some(enc) => {
                 self.active_state_mut().buffer.set_encoding(enc);
                 self.set_status_message(format!("Encoding set to {}", enc.display_name()));
+            }
+            None => {
+                self.set_status_message(format!("Unknown encoding: {}", input));
+            }
+        }
+    }
+
+    /// Handle OpenFileWithEncoding prompt confirmation.
+    /// Opens a file with a specific encoding (no auto-detection).
+    fn handle_open_file_with_encoding(&mut self, path: &std::path::Path, input: &str) {
+        use crate::model::buffer::Encoding;
+
+        let trimmed = input.trim();
+
+        // Parse the encoding from input
+        let encoding = Encoding::all()
+            .iter()
+            .find(|enc| enc.display_name().eq_ignore_ascii_case(trimmed))
+            .copied()
+            .or_else(|| {
+                let before_paren = trimmed.split('(').next().unwrap_or(trimmed).trim();
+                Encoding::all()
+                    .iter()
+                    .find(|enc| enc.display_name().eq_ignore_ascii_case(before_paren))
+                    .copied()
+            });
+
+        match encoding {
+            Some(enc) => {
+                // Reset key context to Normal so editor gets focus
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
+
+                // Open the file with the specified encoding
+                if let Err(e) = self.open_file_with_encoding(path, enc) {
+                    self.set_status_message(
+                        t!("file.error_opening", error = e.to_string()).to_string(),
+                    );
+                } else {
+                    self.set_status_message(format!(
+                        "Opened {} with {} encoding",
+                        path.display(),
+                        enc.display_name()
+                    ));
+                }
+            }
+            None => {
+                self.set_status_message(format!("Unknown encoding: {}", input));
+            }
+        }
+    }
+
+    /// Handle ReloadWithEncoding prompt confirmation.
+    /// Reloads the current file with a specific encoding.
+    fn handle_reload_with_encoding(&mut self, input: &str) {
+        use crate::model::buffer::Encoding;
+
+        let trimmed = input.trim();
+
+        // Parse the encoding from input
+        let encoding = Encoding::all()
+            .iter()
+            .find(|enc| enc.display_name().eq_ignore_ascii_case(trimmed))
+            .copied()
+            .or_else(|| {
+                let before_paren = trimmed.split('(').next().unwrap_or(trimmed).trim();
+                Encoding::all()
+                    .iter()
+                    .find(|enc| enc.display_name().eq_ignore_ascii_case(before_paren))
+                    .copied()
+            });
+
+        match encoding {
+            Some(enc) => {
+                // Reload the file with the specified encoding
+                if let Err(e) = self.reload_with_encoding(enc) {
+                    self.set_status_message(format!("Failed to reload: {}", e));
+                } else {
+                    self.set_status_message(format!(
+                        "Reloaded with {} encoding",
+                        enc.display_name()
+                    ));
+                }
             }
             None => {
                 self.set_status_message(format!("Unknown encoding: {}", input));

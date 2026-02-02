@@ -677,6 +677,9 @@ impl Editor {
             Action::SetEncoding => {
                 self.start_set_encoding_prompt();
             }
+            Action::ReloadWithEncoding => {
+                self.start_reload_with_encoding_prompt();
+            }
             Action::SetLanguage => {
                 self.start_set_language_prompt();
             }
@@ -2062,6 +2065,81 @@ impl Editor {
         self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Encoding: ".to_string(),
             PromptType::SetEncoding,
+            suggestions,
+        ));
+
+        if let Some(prompt) = self.prompt.as_mut() {
+            if !prompt.suggestions.is_empty() {
+                prompt.selected_suggestion = Some(current_index);
+                let enc = Encoding::all()[current_index];
+                prompt.input = format!("{} ({})", enc.display_name(), enc.description());
+                prompt.cursor_pos = prompt.input.len();
+            }
+        }
+    }
+
+    /// Start the reload with encoding prompt
+    ///
+    /// Prompts user to select an encoding, then reloads the current file with that encoding.
+    /// Requires the buffer to have no unsaved modifications.
+    fn start_reload_with_encoding_prompt(&mut self) {
+        use crate::model::buffer::Encoding;
+
+        // Check if buffer has a file path
+        let has_file = self
+            .buffers
+            .get(&self.active_buffer())
+            .and_then(|s| s.buffer.file_path())
+            .is_some();
+
+        if !has_file {
+            self.set_status_message("Cannot reload: buffer has no file".to_string());
+            return;
+        }
+
+        // Check for unsaved modifications
+        let is_modified = self
+            .buffers
+            .get(&self.active_buffer())
+            .map(|s| s.buffer.is_modified())
+            .unwrap_or(false);
+
+        if is_modified {
+            self.set_status_message(
+                "Cannot reload: buffer has unsaved modifications (save first)".to_string(),
+            );
+            return;
+        }
+
+        let current_encoding = self.active_state().buffer.encoding();
+
+        let suggestions: Vec<crate::input::commands::Suggestion> = Encoding::all()
+            .iter()
+            .map(|enc| {
+                let is_current = *enc == current_encoding;
+                crate::input::commands::Suggestion {
+                    text: format!("{} ({})", enc.display_name(), enc.description()),
+                    description: if is_current {
+                        Some("current".to_string())
+                    } else {
+                        None
+                    },
+                    value: Some(enc.display_name().to_string()),
+                    disabled: false,
+                    keybinding: None,
+                    source: None,
+                }
+            })
+            .collect();
+
+        let current_index = Encoding::all()
+            .iter()
+            .position(|enc| *enc == current_encoding)
+            .unwrap_or(0);
+
+        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+            "Reload with encoding: ".to_string(),
+            PromptType::ReloadWithEncoding,
             suggestions,
         ));
 

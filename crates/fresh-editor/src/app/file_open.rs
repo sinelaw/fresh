@@ -96,6 +96,10 @@ pub struct FileOpenState {
     /// Whether to show hidden files
     pub show_hidden: bool,
 
+    /// Whether to auto-detect encoding when opening files (true by default)
+    /// When false, user will be prompted to select encoding after file selection
+    pub detect_encoding: bool,
+
     /// Filesystem for checking path existence (used for drive letter detection on Windows)
     filesystem: Arc<dyn FileSystem + Send + Sync>,
 }
@@ -125,6 +129,7 @@ impl FileOpenState {
             shortcuts,
             selected_shortcut: 0,
             show_hidden,
+            detect_encoding: true,
             filesystem,
         }
     }
@@ -437,6 +442,11 @@ impl FileOpenState {
     pub fn toggle_hidden(&mut self) {
         self.show_hidden = !self.show_hidden;
         // Need to reload directory to apply this change
+    }
+
+    /// Toggle encoding detection mode
+    pub fn toggle_detect_encoding(&mut self) {
+        self.detect_encoding = !self.detect_encoding;
     }
 
     /// Move selection up

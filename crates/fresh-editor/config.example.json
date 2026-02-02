@@ -599,6 +599,13 @@
             "checkbox": null
           },
           {
+            "label": "Reload with Encoding...",
+            "action": "reload_with_encoding",
+            "args": {},
+            "when": null,
+            "checkbox": null
+          },
+          {
             "separator": true
           },
           {

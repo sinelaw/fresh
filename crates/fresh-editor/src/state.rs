@@ -349,6 +349,59 @@ impl EditorState {
         })
     }
 
+    /// Create an editor state from a buffer and highlighter
+    ///
+    /// This is useful when you have already loaded a buffer with a specific encoding
+    /// and want to create an EditorState from it.
+    pub fn from_buffer_with_highlighter(
+        buffer: Buffer,
+        highlighter: HighlightEngine,
+        language_name: String,
+        language: Option<Language>,
+    ) -> Self {
+        let mut reference_highlighter = ReferenceHighlighter::new();
+        if let Some(lang) = &language {
+            reference_highlighter.set_language(lang);
+        }
+
+        let mut marker_list = MarkerList::new();
+        if !buffer.is_empty() {
+            marker_list.adjust_for_insert(0, buffer.len());
+        }
+
+        Self {
+            buffer,
+            cursors: Cursors::new(),
+            highlighter,
+            indent_calculator: RefCell::new(IndentCalculator::new()),
+            overlays: OverlayManager::new(),
+            marker_list,
+            virtual_texts: VirtualTextManager::new(),
+            popups: PopupManager::new(),
+            margins: MarginManager::new(),
+            primary_cursor_line_number: LineNumber::Absolute(0),
+            mode: "insert".to_string(),
+            text_properties: TextPropertyManager::new(),
+            show_cursors: true,
+            editing_disabled: false,
+            is_composite_buffer: false,
+            show_whitespace_tabs: true,
+            use_tabs: false,
+            tab_size: 4,
+            reference_highlighter,
+            view_mode: ViewMode::Source,
+            debug_highlight_mode: false,
+            compose_width: None,
+            compose_prev_line_numbers: None,
+            compose_column_guides: None,
+            view_transform: None,
+            reference_highlight_overlay: ReferenceHighlightOverlay::new(),
+            bracket_highlight_overlay: BracketHighlightOverlay::new(),
+            semantic_tokens: None,
+            language: language_name,
+        }
+    }
+
     /// Handle an Insert event - adjusts markers, buffer, highlighter, cursors, and line numbers
     fn apply_insert(
         &mut self,

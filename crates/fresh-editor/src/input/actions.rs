@@ -2521,6 +2521,7 @@ pub fn action_to_events(
         | Action::PromptSelectWordRight
         | Action::PromptSelectAll
         | Action::FileBrowserToggleHidden
+        | Action::FileBrowserToggleDetectEncoding
         | Action::PopupSelectNext
         | Action::PopupSelectPrev
         | Action::PopupPageUp
@@ -2613,6 +2614,7 @@ pub fn action_to_events(
         | Action::SetTabSize
         | Action::SetLineEnding
         | Action::SetEncoding
+        | Action::ReloadWithEncoding
         | Action::SetLanguage
         | Action::ToggleIndentationStyle
         | Action::ToggleTabIndicators

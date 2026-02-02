@@ -150,6 +150,12 @@ impl Editor {
                 true
             }
 
+            // Toggle encoding detection
+            Action::FileBrowserToggleDetectEncoding => {
+                self.file_open_toggle_detect_encoding();
+                true
+            }
+
             // Text input is handled by normal prompt, but we need to update filter
             _ => false,
         }
@@ -285,15 +291,28 @@ impl Editor {
 
     /// Open a file from the file browser
     fn file_open_open_file(&mut self, path: std::path::PathBuf) {
+        // Check if encoding detection is disabled - if so, prompt for encoding first
+        let detect_encoding = self
+            .file_open_state
+            .as_ref()
+            .map(|s| s.detect_encoding)
+            .unwrap_or(true);
+
         // Close the file browser
         self.file_open_state = None;
         self.prompt = None;
+
+        if !detect_encoding {
+            // Start encoding selection prompt, then open with selected encoding
+            self.start_open_file_with_encoding_prompt(path);
+            return;
+        }
 
         // Reset key context to Normal so editor gets focus
         // This is important when the file explorer was focused before opening the file browser
         self.key_context = crate::input::keybindings::KeyContext::Normal;
 
-        // Open the file
+        // Open the file with auto-detected encoding
         tracing::info!("[SYNTAX DEBUG] file_open_dialog opening file: {:?}", path);
         if let Err(e) = self.open_file(&path) {
             self.set_status_message(t!("file.error_opening", error = e.to_string()).to_string());
@@ -301,6 +320,48 @@ impl Editor {
             self.set_status_message(
                 t!("file.opened", path = path.display().to_string()).to_string(),
             );
+        }
+    }
+
+    /// Start the encoding selection prompt for opening a file
+    fn start_open_file_with_encoding_prompt(&mut self, path: std::path::PathBuf) {
+        use crate::model::buffer::Encoding;
+        use crate::view::prompt::PromptType;
+
+        // Default to UTF-8 as the suggested encoding
+        let suggestions: Vec<crate::input::commands::Suggestion> = Encoding::all()
+            .iter()
+            .map(|enc| {
+                let is_default = *enc == Encoding::Utf8;
+                crate::input::commands::Suggestion {
+                    text: format!("{} ({})", enc.display_name(), enc.description()),
+                    description: if is_default {
+                        Some("default".to_string())
+                    } else {
+                        None
+                    },
+                    value: Some(enc.display_name().to_string()),
+                    disabled: false,
+                    keybinding: None,
+                    source: None,
+                }
+            })
+            .collect();
+
+        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+            "Select encoding: ".to_string(),
+            PromptType::OpenFileWithEncoding { path },
+            suggestions,
+        ));
+
+        // Pre-select UTF-8
+        if let Some(prompt) = self.prompt.as_mut() {
+            if !prompt.suggestions.is_empty() {
+                prompt.selected_suggestion = Some(0); // UTF-8 is first
+                let enc = Encoding::Utf8;
+                prompt.input = format!("{} ({})", enc.display_name(), enc.description());
+                prompt.cursor_pos = prompt.input.len();
+            }
         }
     }
 
@@ -483,6 +544,22 @@ impl Editor {
         }
     }
 
+    /// Handle encoding detection toggle
+    pub fn file_open_toggle_detect_encoding(&mut self) {
+        if let Some(state) = &mut self.file_open_state {
+            state.toggle_detect_encoding();
+            let new_state = state.detect_encoding;
+
+            // Show status message
+            let msg = if new_state {
+                "Encoding auto-detection enabled"
+            } else {
+                "Encoding auto-detection disabled - will prompt for encoding"
+            };
+            self.set_status_message(msg.to_string());
+        }
+    }
+
     /// Handle mouse wheel scroll in file browser
     /// Returns true if the scroll was handled
     pub fn handle_file_open_scroll(&mut self, delta: i32) -> bool {
@@ -565,9 +642,15 @@ impl Editor {
             return true;
         }
 
-        // Check if click is on "Show Hidden" checkbox (in navigation area, right side)
+        // Check if click is on "Show Hidden" checkbox
         if layout.is_on_show_hidden_checkbox(x, y) {
             self.file_open_toggle_hidden();
+            return true;
+        }
+
+        // Check if click is on "Detect Encoding" checkbox
+        if layout.is_on_detect_encoding_checkbox(x, y) {
+            self.file_open_toggle_detect_encoding();
             return true;
         }
 
@@ -664,6 +747,11 @@ impl Editor {
         // Check "Show Hidden" checkbox first (priority over navigation shortcuts)
         if layout.is_on_show_hidden_checkbox(x, y) {
             return Some(HoverTarget::FileBrowserShowHiddenCheckbox);
+        }
+
+        // Check "Detect Encoding" checkbox
+        if layout.is_on_detect_encoding_checkbox(x, y) {
+            return Some(HoverTarget::FileBrowserDetectEncodingCheckbox);
         }
 
         // Check navigation shortcuts

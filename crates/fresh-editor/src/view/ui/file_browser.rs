@@ -155,7 +155,7 @@ impl FileBrowserRenderer {
         })
     }
 
-    /// Render navigation shortcuts section with "Show Hidden" checkbox on separate row
+    /// Render navigation shortcuts section with checkboxes on first row
     fn render_navigation(
         frame: &mut Frame,
         area: Rect,
@@ -166,8 +166,8 @@ impl FileBrowserRenderer {
     ) {
         use crate::app::HoverTarget;
 
-        // Look up the keybinding for toggle hidden action
-        let shortcut_hint = keybindings
+        // Look up keybindings for toggle actions
+        let hidden_shortcut = keybindings
             .and_then(|kb| {
                 kb.get_keybinding_for_action(
                     &crate::input::keybindings::Action::FileBrowserToggleHidden,
@@ -176,20 +176,32 @@ impl FileBrowserRenderer {
             })
             .unwrap_or_default();
 
-        // First line: "Show Hidden" checkbox (on its own row to avoid truncation on Windows)
-        let checkbox_icon = if state.show_hidden { "☑" } else { "☐" };
-        let checkbox_label = format!("{} {}", checkbox_icon, t!("file_browser.show_hidden"));
-        let shortcut_text = if shortcut_hint.is_empty() {
+        let encoding_shortcut = keybindings
+            .and_then(|kb| {
+                kb.get_keybinding_for_action(
+                    &crate::input::keybindings::Action::FileBrowserToggleDetectEncoding,
+                    crate::input::keybindings::KeyContext::Prompt,
+                )
+            })
+            .unwrap_or_default();
+
+        // First line: "Show Hidden" and "Detect Encoding" checkboxes
+        let mut checkbox_spans = Vec::new();
+
+        // Show Hidden checkbox
+        let hidden_icon = if state.show_hidden { "☑" } else { "☐" };
+        let hidden_label = format!("{} {}", hidden_icon, t!("file_browser.show_hidden"));
+        let hidden_shortcut_text = if hidden_shortcut.is_empty() {
             String::new()
         } else {
-            format!(" ({})", shortcut_hint)
+            format!(" ({})", hidden_shortcut)
         };
 
-        let is_checkbox_hovered = matches!(
+        let is_hidden_hovered = matches!(
             hover_target,
             Some(HoverTarget::FileBrowserShowHiddenCheckbox)
         );
-        let checkbox_style = if is_checkbox_hovered {
+        let hidden_style = if is_hidden_hovered {
             Style::default()
                 .fg(theme.menu_hover_fg)
                 .bg(theme.menu_hover_bg)
@@ -200,7 +212,7 @@ impl FileBrowserRenderer {
         } else {
             Style::default().fg(theme.help_key_fg).bg(theme.popup_bg)
         };
-        let shortcut_style = if is_checkbox_hovered {
+        let hidden_shortcut_style = if is_hidden_hovered {
             Style::default()
                 .fg(theme.menu_hover_fg)
                 .bg(theme.menu_hover_bg)
@@ -210,11 +222,77 @@ impl FileBrowserRenderer {
                 .bg(theme.popup_bg)
         };
 
-        let mut checkbox_spans = Vec::new();
-        checkbox_spans.push(Span::styled(format!(" {}", checkbox_label), checkbox_style));
-        if !shortcut_text.is_empty() {
-            checkbox_spans.push(Span::styled(shortcut_text, shortcut_style));
+        checkbox_spans.push(Span::styled(format!(" {}", hidden_label), hidden_style));
+        if !hidden_shortcut_text.is_empty() {
+            checkbox_spans.push(Span::styled(hidden_shortcut_text, hidden_shortcut_style));
         }
+
+        // Separator between checkboxes
+        checkbox_spans.push(Span::styled(
+            " │ ",
+            Style::default()
+                .fg(theme.help_separator_fg)
+                .bg(theme.popup_bg),
+        ));
+
+        // Detect Encoding checkbox with underlined E
+        let encoding_icon = if state.detect_encoding { "☑" } else { "☐" };
+        let is_encoding_hovered = matches!(
+            hover_target,
+            Some(HoverTarget::FileBrowserDetectEncodingCheckbox)
+        );
+        let encoding_style = if is_encoding_hovered {
+            Style::default()
+                .fg(theme.menu_hover_fg)
+                .bg(theme.menu_hover_bg)
+        } else if state.detect_encoding {
+            Style::default()
+                .fg(theme.menu_highlight_fg)
+                .bg(theme.popup_bg)
+        } else {
+            Style::default().fg(theme.help_key_fg).bg(theme.popup_bg)
+        };
+        let encoding_underline_style = if is_encoding_hovered {
+            Style::default()
+                .fg(theme.menu_hover_fg)
+                .bg(theme.menu_hover_bg)
+                .add_modifier(Modifier::UNDERLINED)
+        } else if state.detect_encoding {
+            Style::default()
+                .fg(theme.menu_highlight_fg)
+                .bg(theme.popup_bg)
+                .add_modifier(Modifier::UNDERLINED)
+        } else {
+            Style::default()
+                .fg(theme.help_key_fg)
+                .bg(theme.popup_bg)
+                .add_modifier(Modifier::UNDERLINED)
+        };
+        let encoding_shortcut_style = if is_encoding_hovered {
+            Style::default()
+                .fg(theme.menu_hover_fg)
+                .bg(theme.menu_hover_bg)
+        } else {
+            Style::default()
+                .fg(theme.help_separator_fg)
+                .bg(theme.popup_bg)
+        };
+
+        // "☐ Detect " + "E" (underlined) + "ncoding"
+        checkbox_spans.push(Span::styled(
+            format!("{} Detect ", encoding_icon),
+            encoding_style,
+        ));
+        checkbox_spans.push(Span::styled("E", encoding_underline_style));
+        checkbox_spans.push(Span::styled("ncoding", encoding_style));
+
+        if !encoding_shortcut.is_empty() {
+            checkbox_spans.push(Span::styled(
+                format!(" ({})", encoding_shortcut),
+                encoding_shortcut_style,
+            ));
+        }
+
         // Fill rest of row with background
         let checkbox_line_width: usize = checkbox_spans.iter().map(|s| str_width(&s.content)).sum();
         let remaining = (area.width as usize).saturating_sub(checkbox_line_width);
@@ -698,8 +776,8 @@ impl FileBrowserLayout {
     }
 
     /// Check if a position is on the "Show Hidden" checkbox
-    /// The checkbox is on its own row (first row of navigation area)
-    /// Format: " ☐ Show Hidden (Alt+.)" (includes keyboard shortcut hint)
+    /// The checkbox is on the first row of navigation area
+    /// Format: " ☐ Show Hidden (Alt+.) │ ☐ Detect Encoding (Alt+E)"
     pub fn is_on_show_hidden_checkbox(&self, x: u16, y: u16) -> bool {
         // Must be on the first row of navigation area (checkbox row)
         if y != self.nav_area.y {
@@ -711,9 +789,33 @@ impl FileBrowserLayout {
             return false;
         }
 
-        // Checkbox spans the left portion of the row
+        // Show Hidden checkbox spans the left portion of the row
         // " ☐ Show Hidden (Alt+.)" is approximately 24 characters
-        let checkbox_width = 24u16;
-        x < self.nav_area.x + checkbox_width
+        let show_hidden_width = 24u16;
+        x < self.nav_area.x + show_hidden_width
+    }
+
+    /// Check if a position is on the "Detect Encoding" checkbox
+    /// The checkbox is on the first row of navigation area, after Show Hidden
+    /// Format: " ☐ Show Hidden (Alt+.) │ ☐ Detect Encoding (Alt+E)"
+    pub fn is_on_detect_encoding_checkbox(&self, x: u16, y: u16) -> bool {
+        // Must be on the first row of navigation area (checkbox row)
+        if y != self.nav_area.y {
+            return false;
+        }
+
+        // Must be within the x bounds of the navigation area
+        if x < self.nav_area.x || x >= self.nav_area.x + self.nav_area.width {
+            return false;
+        }
+
+        // Show Hidden + separator takes about 27 characters
+        // " ☐ Show Hidden (Alt+.)" (24) + " │ " (3) = 27
+        let detect_encoding_start = self.nav_area.x + 27;
+        // Detect Encoding checkbox is about 28 characters
+        // "☐ Detect Encoding (Alt+E)" (25+)
+        let detect_encoding_end = detect_encoding_start + 28;
+
+        x >= detect_encoding_start && x < detect_encoding_end
     }
 }
