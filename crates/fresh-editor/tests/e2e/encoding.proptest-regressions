@@ -7,3 +7,4 @@
 #
 # Note: Old regression cases removed after updating latin1_text_strategy
 # to require ASCII prefix, making previously ambiguous cases now distinguishable.
+cc fa2d0956f8dd1fb001f366b690db7f8c55dd70bd34b80eac1148764cc69cfc2c # shrinks to text = "Hello ££ù end"

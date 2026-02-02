@@ -9,6 +9,7 @@ pub mod cursor;
 pub mod document_model;
 pub mod edit;
 pub mod encoding;
+pub mod encoding_heuristics;
 pub mod event;
 pub mod filesystem;
 pub mod line_diff;

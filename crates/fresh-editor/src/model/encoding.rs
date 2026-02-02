@@ -14,6 +14,7 @@
 //! 5. **Statistical Detection**: Use chardetng for legacy encoding detection
 //! 6. **Fallback**: Default to Windows-1252 for ambiguous cases
 
+use super::encoding_heuristics::has_windows1250_pattern;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -336,20 +337,42 @@ pub fn detect_encoding_or_binary(bytes: &[u8]) -> (Encoding, bool) {
             Encoding::ShiftJis
         } else if detected_encoding == encoding_rs::EUC_KR {
             Encoding::EucKr
-        } else if detected_encoding == encoding_rs::WINDOWS_1252 {
-            Encoding::Windows1252
+        } else if detected_encoding == encoding_rs::WINDOWS_1252
+            || detected_encoding == encoding_rs::WINDOWS_1250
+        {
+            // chardetng often returns Windows-1252 for Central European text
+            // Check for Windows-1250 specific patterns
+            if has_windows1250_pattern(sample) {
+                Encoding::Windows1250
+            } else {
+                Encoding::Windows1252
+            }
         } else if detected_encoding == encoding_rs::UTF_8 {
             // chardetng thinks it's UTF-8, but validation failed above
-            Encoding::Windows1252
+            // Could still be Windows-1250 if it has Central European patterns
+            if has_windows1250_pattern(sample) {
+                Encoding::Windows1250
+            } else {
+                Encoding::Windows1252
+            }
         } else {
-            Encoding::Windows1252
+            // Unknown encoding - check for Windows-1250 patterns
+            if has_windows1250_pattern(sample) {
+                Encoding::Windows1250
+            } else {
+                Encoding::Windows1252
+            }
         };
         return (encoding, false);
     }
 
-    // 7. chardetng not confident, but no binary indicators - default to Windows-1252
+    // 7. chardetng not confident, but no binary indicators - check for Windows-1250 patterns
     // We already checked for binary control chars earlier, so this is valid text
-    (Encoding::Windows1252, false)
+    if has_windows1250_pattern(sample) {
+        (Encoding::Windows1250, false)
+    } else {
+        (Encoding::Windows1252, false)
+    }
 }
 
 // ============================================================================
@@ -710,6 +733,99 @@ mod tests {
         assert_eq!(
             Encoding::Windows1250.description(),
             "Windows-1250 (Central European)"
+        );
+    }
+
+    #[test]
+    fn test_detect_windows1250_definitive_bytes() {
+        // Bytes 0x8D (Ť), 0x8F (Ź), 0x9D (ť) are undefined in Windows-1252
+        // but valid in Windows-1250, so they definitively indicate Windows-1250
+
+        // Czech text with ť (0x9D): "měsťo" (city, archaic)
+        let with_t_caron = [0x6D, 0x9D, 0x73, 0x74, 0x6F]; // mťsto
+        assert_eq!(
+            detect_encoding(&with_t_caron),
+            Encoding::Windows1250,
+            "Byte 0x9D (ť) should trigger Windows-1250 detection"
+        );
+
+        // Polish text with Ź (0x8F): "Źródło" (source)
+        let with_z_acute_upper = [0x8F, 0x72, 0xF3, 0x64, 0xB3, 0x6F]; // Źródło
+        assert_eq!(
+            detect_encoding(&with_z_acute_upper),
+            Encoding::Windows1250,
+            "Byte 0x8F (Ź) should trigger Windows-1250 detection"
+        );
+    }
+
+    #[test]
+    fn test_detect_windows1250_strong_indicators() {
+        // Polish text with ś (0x9C) and Ś (0x8C) - strong indicators from 0x80-0x9F range
+        let polish_text = [
+            0x9C, 0x77, 0x69, 0x65, 0x74, 0x79, 0x20, // "świety "
+            0x8C, 0x77, 0x69, 0x61, 0x74, // "Świat"
+        ];
+        assert_eq!(
+            detect_encoding(&polish_text),
+            Encoding::Windows1250,
+            "Multiple Polish characters (ś, Ś) should trigger Windows-1250"
+        );
+    }
+
+    #[test]
+    fn test_detect_ambiguous_bytes_as_windows1252() {
+        // Bytes in 0xA0-0xFF range are ambiguous and should default to Windows-1252
+        // Polish "żółć" - ż(0xBF) ó(0xF3) ł(0xB3) ć(0xE6) - all ambiguous
+        let zolc = [0xBF, 0xF3, 0xB3, 0xE6];
+        assert_eq!(
+            detect_encoding(&zolc),
+            Encoding::Windows1252,
+            "Ambiguous bytes should default to Windows-1252"
+        );
+
+        // ą (0xB9) and ł (0xB3) could be ¹ and ³ in Windows-1252
+        let ambiguous = [
+            0x6D, 0xB9, 0x6B, 0x61, 0x20, // "mąka " or "m¹ka "
+            0x6D, 0xB3, 0x6F, 0x64, 0x79, // "młody" or "m³ody"
+        ];
+        assert_eq!(
+            detect_encoding(&ambiguous),
+            Encoding::Windows1252,
+            "Ambiguous Polish bytes should default to Windows-1252"
+        );
+    }
+
+    #[test]
+    fn test_detect_windows1250_czech_pangram() {
+        // "Příliš žluťoučký kůň úpěl ďábelské ódy" - Czech pangram in Windows-1250
+        // Contains ť (0x9D) which is a definitive Windows-1250 indicator
+        let czech_pangram: &[u8] = &[
+            0x50, 0xF8, 0xED, 0x6C, 0x69, 0x9A, 0x20, // "Příliš "
+            0x9E, 0x6C, 0x75, 0x9D, 0x6F, 0x75, 0xE8, 0x6B, 0xFD, 0x20, // "žluťoučký "
+            0x6B, 0xF9, 0xF2, 0x20, // "kůň "
+            0xFA, 0x70, 0xEC, 0x6C, 0x20, // "úpěl "
+            0xEF, 0xE1, 0x62, 0x65, 0x6C, 0x73, 0x6B, 0xE9, 0x20, // "ďábelské "
+            0xF3, 0x64, 0x79, // "ódy"
+        ];
+        assert_eq!(
+            detect_encoding(czech_pangram),
+            Encoding::Windows1250,
+            "Czech pangram should be detected as Windows-1250 (contains ť = 0x9D)"
+        );
+    }
+
+    #[test]
+    fn test_detect_windows1252_not_1250() {
+        // Pure Windows-1252 text without Central European indicators
+        // "Café résumé" in Windows-1252
+        let windows1252_text = [
+            0x43, 0x61, 0x66, 0xE9, 0x20, // "Café "
+            0x72, 0xE9, 0x73, 0x75, 0x6D, 0xE9, // "résumé"
+        ];
+        assert_eq!(
+            detect_encoding(&windows1252_text),
+            Encoding::Windows1252,
+            "French text should remain Windows-1252"
         );
     }
 }
