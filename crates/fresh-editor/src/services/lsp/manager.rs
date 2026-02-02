@@ -342,8 +342,11 @@ impl LspManager {
     ///
     /// For normal operations, use `try_spawn()` + `get_handle_mut()` instead.
     pub fn force_spawn(&mut self, language: &str) -> Option<&mut LspHandle> {
+        tracing::debug!("force_spawn called for language: {}", language);
+
         // Return existing handle if available
         if self.handles.contains_key(language) {
+            tracing::debug!("force_spawn: returning existing handle for {}", language);
             return self.handles.get_mut(language);
         }
 
@@ -358,21 +361,45 @@ impl LspManager {
         }
 
         // Get config for this language
-        let config = self.config.get(language)?;
+        let config = match self.config.get(language) {
+            Some(c) => c,
+            None => {
+                tracing::warn!(
+                    "force_spawn: no config found for language '{}', available configs: {:?}",
+                    language,
+                    self.config.keys().collect::<Vec<_>>()
+                );
+                return None;
+            }
+        };
 
         if !config.enabled {
+            tracing::debug!("force_spawn: LSP for {} is not enabled in config", language);
             return None;
         }
 
         // Check command is specified (required when enabled)
         if config.command.is_empty() {
+            tracing::warn!("force_spawn: LSP command is empty for {}", language);
             return None;
         }
         let command = &config.command;
 
         // Check we have runtime and bridge
-        let runtime = self.runtime.as_ref()?;
-        let async_bridge = self.async_bridge.as_ref()?;
+        let runtime = match self.runtime.as_ref() {
+            Some(r) => r,
+            None => {
+                tracing::error!("force_spawn: no tokio runtime available for {}", language);
+                return None;
+            }
+        };
+        let async_bridge = match self.async_bridge.as_ref() {
+            Some(b) => b,
+            None => {
+                tracing::error!("force_spawn: no async bridge available for {}", language);
+                return None;
+            }
+        };
 
         // Spawn new handle
         tracing::info!("Spawning async LSP server for language: {}", language);

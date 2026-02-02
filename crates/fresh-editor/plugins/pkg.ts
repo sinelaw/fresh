@@ -646,52 +646,43 @@ function validatePackage(packageDir: string, packageName: string): ValidationRes
 async function installPackage(
   url: string,
   name?: string,
-  type: "plugin" | "theme" | "language" = "plugin",
+  _type?: "plugin" | "theme" | "language",  // Ignored - type is auto-detected from manifest
   version?: string
 ): Promise<boolean> {
   const parsed = parsePackageUrl(url);
   const packageName = name || parsed.name;
-  const packagesDir = type === "plugin" ? PACKAGES_DIR
-                    : type === "theme" ? THEMES_PACKAGES_DIR
-                    : LANGUAGES_PACKAGES_DIR;
-  const targetDir = editor.pathJoin(packagesDir, packageName);
-
-  if (editor.fileExists(targetDir)) {
-    editor.setStatus(`Package '${packageName}' is already installed`);
-    return false;
-  }
-
-  await ensureDir(packagesDir);
 
   editor.setStatus(`Installing ${packageName}...`);
 
   if (parsed.isLocal) {
     // Local path installation: copy directly
-    return await installFromLocalPath(parsed, packageName, targetDir);
+    return await installFromLocalPath(parsed, packageName);
   } else if (parsed.subpath) {
     // Remote monorepo installation: clone to temp, copy subdirectory
-    return await installFromMonorepo(parsed, packageName, targetDir, version);
+    return await installFromMonorepo(parsed, packageName, version);
   } else {
     // Standard git installation: clone directly
-    return await installFromRepo(parsed.repoUrl, packageName, targetDir, version);
+    return await installFromRepo(parsed.repoUrl, packageName, version);
   }
 }
 
 /**
  * Install from a standard git repository (no subpath)
+ * Clones to temp first to detect type, then moves to correct location.
  */
 async function installFromRepo(
   repoUrl: string,
   packageName: string,
-  targetDir: string,
   version?: string
 ): Promise<boolean> {
-  // Clone the repository
+  // Clone to temp directory first to detect package type
+  const tempDir = `/tmp/fresh-pkg-clone-${hashString(repoUrl)}-${Date.now()}`;
+
   const cloneArgs = ["clone"];
   if (!version || version === "latest") {
     cloneArgs.push("--depth", "1");
   }
-  cloneArgs.push(`${repoUrl}`, `${targetDir}`);
+  cloneArgs.push(`${repoUrl}`, `${tempDir}`);
 
   const result = await gitCommand(cloneArgs);
 
@@ -707,33 +698,58 @@ async function installFromRepo(
 
   // Checkout specific version if requested
   if (version && version !== "latest") {
-    const checkoutResult = await checkoutVersion(targetDir, version);
+    const checkoutResult = await checkoutVersion(tempDir, version);
     if (!checkoutResult) {
       editor.setStatus(`Installed ${packageName} but failed to checkout version ${version}`);
     }
   }
 
   // Validate package structure
-  const validation = validatePackage(targetDir, packageName);
+  const validation = validatePackage(tempDir, packageName);
   if (!validation.valid) {
     editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
     editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
-    // Clean up the invalid package
-    await editor.spawnProcess("rm", ["-rf", targetDir]);
+    // Clean up
+    await editor.spawnProcess("rm", ["-rf", tempDir]);
     return false;
   }
 
   const manifest = validation.manifest;
 
+  // Determine correct target directory based on actual package type
+  const actualType = manifest?.type || "plugin";
+  const correctPackagesDir = actualType === "plugin" ? PACKAGES_DIR
+                           : actualType === "theme" ? THEMES_PACKAGES_DIR
+                           : LANGUAGES_PACKAGES_DIR;
+  const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
+
+  // Check if already installed in correct location
+  if (editor.fileExists(correctTargetDir)) {
+    editor.setStatus(`Package '${packageName}' is already installed`);
+    await editor.spawnProcess("rm", ["-rf", tempDir]);
+    return false;
+  }
+
+  // Ensure correct directory exists and move from temp
+  await ensureDir(correctPackagesDir);
+  const moveResult = await editor.spawnProcess("mv", [tempDir, correctTargetDir]);
+  if (moveResult.exit_code !== 0) {
+    editor.setStatus(`Failed to install ${packageName}: ${moveResult.stderr}`);
+    await editor.spawnProcess("rm", ["-rf", tempDir]);
+    return false;
+  }
+
   // Dynamically load plugins, reload themes, or load language packs
   if (manifest?.type === "plugin" && validation.entryPath) {
-    await editor.loadPlugin(validation.entryPath);
+    // Update entry path to new location
+    const newEntryPath = validation.entryPath.replace(tempDir, correctTargetDir);
+    await editor.loadPlugin(newEntryPath);
     editor.setStatus(`Installed and activated ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
   } else if (manifest?.type === "theme") {
     editor.reloadThemes();
     editor.setStatus(`Installed theme ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
   } else if (manifest?.type === "language") {
-    await loadLanguagePack(targetDir, manifest);
+    await loadLanguagePack(correctTargetDir, manifest);
     editor.setStatus(`Installed language pack ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
   } else {
     editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
@@ -748,11 +764,11 @@ async function installFromRepo(
  * - If subpath is specified: copy that subdirectory
  * - Otherwise: copy the entire directory
  * - Store the source path for reference
+ * - Auto-detect package type from manifest and install to correct directory
  */
 async function installFromLocalPath(
   parsed: ParsedPackageUrl,
-  packageName: string,
-  targetDir: string
+  packageName: string
 ): Promise<boolean> {
   // Resolve the full source path
   let sourcePath = parsed.repoUrl;
@@ -781,21 +797,44 @@ async function installFromLocalPath(
     return false;
   }
 
-  // Copy the directory to target
+  // Read manifest FIRST to determine actual package type
+  const manifest = readJsonFile<PackageManifest>(manifestPath);
+  if (!manifest) {
+    editor.setStatus(`Invalid package.json in ${sourcePath}`);
+    return false;
+  }
+
+  // Determine correct target directory based on actual package type
+  const actualType = manifest.type || "plugin";
+  const correctPackagesDir = actualType === "plugin" ? PACKAGES_DIR
+                           : actualType === "theme" ? THEMES_PACKAGES_DIR
+                           : LANGUAGES_PACKAGES_DIR;
+  const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
+
+  // Check if already installed in correct location
+  if (editor.fileExists(correctTargetDir)) {
+    editor.setStatus(`Package '${packageName}' is already installed`);
+    return false;
+  }
+
+  // Ensure correct directory exists
+  await ensureDir(correctPackagesDir);
+
+  // Copy the directory to correct target
   editor.setStatus(`Copying from ${sourcePath}...`);
-  const copyResult = await editor.spawnProcess("cp", ["-r", sourcePath, targetDir]);
+  const copyResult = await editor.spawnProcess("cp", ["-r", sourcePath, correctTargetDir]);
   if (copyResult.exit_code !== 0) {
     editor.setStatus(`Failed to copy package: ${copyResult.stderr}`);
     return false;
   }
 
   // Validate package structure
-  const validation = validatePackage(targetDir, packageName);
+  const validation = validatePackage(correctTargetDir, packageName);
   if (!validation.valid) {
     editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
     editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
     // Clean up the invalid package
-    await editor.spawnProcess("rm", ["-rf", targetDir]);
+    await editor.spawnProcess("rm", ["-rf", correctTargetDir]);
     return false;
   }
 
@@ -805,22 +844,20 @@ async function installFromLocalPath(
     original_url: parsed.subpath ? `${parsed.repoUrl}#${parsed.subpath}` : parsed.repoUrl,
     installed_at: new Date().toISOString()
   };
-  await writeJsonFile(editor.pathJoin(targetDir, ".fresh-source.json"), sourceInfo);
-
-  const manifest = validation.manifest;
+  await writeJsonFile(editor.pathJoin(correctTargetDir, ".fresh-source.json"), sourceInfo);
 
   // Dynamically load plugins, reload themes, or load language packs
-  if (manifest?.type === "plugin" && validation.entryPath) {
+  if (manifest.type === "plugin" && validation.entryPath) {
     await editor.loadPlugin(validation.entryPath);
-    editor.setStatus(`Installed and activated ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
-  } else if (manifest?.type === "theme") {
+    editor.setStatus(`Installed and activated ${packageName} v${manifest.version || "unknown"}`);
+  } else if (manifest.type === "theme") {
     editor.reloadThemes();
-    editor.setStatus(`Installed theme ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
-  } else if (manifest?.type === "language") {
-    await loadLanguagePack(targetDir, manifest);
-    editor.setStatus(`Installed language pack ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    editor.setStatus(`Installed theme ${packageName} v${manifest.version || "unknown"}`);
+  } else if (manifest.type === "language") {
+    await loadLanguagePack(correctTargetDir, manifest);
+    editor.setStatus(`Installed language pack ${packageName} v${manifest.version || "unknown"}`);
   } else {
-    editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    editor.setStatus(`Installed ${packageName} v${manifest.version || "unknown"}`);
   }
   return true;
 }
@@ -830,14 +867,13 @@ async function installFromLocalPath(
  *
  * Strategy:
  * 1. Clone the repo to a temp directory
- * 2. Copy the subdirectory to the target location
- * 3. Initialize a new git repo in the target (for updates)
+ * 2. Detect package type from manifest
+ * 3. Copy the subdirectory to the correct target location
  * 4. Store the original URL for reference
  */
 async function installFromMonorepo(
   parsed: ParsedPackageUrl,
   packageName: string,
-  targetDir: string,
   version?: string
 ): Promise<boolean> {
   const tempDir = `/tmp/fresh-pkg-${hashString(parsed.repoUrl)}-${Date.now()}`;
@@ -875,26 +911,43 @@ async function installFromMonorepo(
       return false;
     }
 
-    // Copy subdirectory to target
+    // Validate package structure (validates against subpath dir)
+    const validation = validatePackage(subpathDir, packageName);
+    if (!validation.valid) {
+      editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
+      editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
+      await editor.spawnProcess("rm", ["-rf", tempDir]);
+      return false;
+    }
+
+    const manifest = validation.manifest;
+
+    // Determine correct target directory based on actual package type
+    const actualType = manifest?.type || "plugin";
+    const correctPackagesDir = actualType === "plugin" ? PACKAGES_DIR
+                             : actualType === "theme" ? THEMES_PACKAGES_DIR
+                             : LANGUAGES_PACKAGES_DIR;
+    const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
+
+    // Check if already installed
+    if (editor.fileExists(correctTargetDir)) {
+      editor.setStatus(`Package '${packageName}' is already installed`);
+      await editor.spawnProcess("rm", ["-rf", tempDir]);
+      return false;
+    }
+
+    // Ensure correct directory exists
+    await ensureDir(correctPackagesDir);
+
+    // Copy subdirectory to correct target
     editor.setStatus(`Installing ${packageName} from ${parsed.subpath}...`);
-    const copyResult = await editor.spawnProcess("cp", ["-r", subpathDir, targetDir]);
+    const copyResult = await editor.spawnProcess("cp", ["-r", subpathDir, correctTargetDir]);
     if (copyResult.exit_code !== 0) {
       editor.setStatus(`Failed to copy package: ${copyResult.stderr}`);
       await editor.spawnProcess("rm", ["-rf", tempDir]);
       return false;
     }
 
-    // Validate package structure
-    const validation = validatePackage(targetDir, packageName);
-    if (!validation.valid) {
-      editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
-      editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
-      // Clean up the invalid package
-      await editor.spawnProcess("rm", ["-rf", targetDir]);
-      return false;
-    }
-
-    // Initialize git in target for future updates
     // Store the original monorepo URL in a .fresh-source file
     const sourceInfo = {
       repository: parsed.repoUrl,
@@ -902,19 +955,19 @@ async function installFromMonorepo(
       installed_from: `${parsed.repoUrl}#${parsed.subpath}`,
       installed_at: new Date().toISOString()
     };
-    await writeJsonFile(editor.pathJoin(targetDir, ".fresh-source.json"), sourceInfo);
-
-    const manifest = validation.manifest;
+    await writeJsonFile(editor.pathJoin(correctTargetDir, ".fresh-source.json"), sourceInfo);
 
     // Dynamically load plugins, reload themes, or load language packs
     if (manifest?.type === "plugin" && validation.entryPath) {
-      await editor.loadPlugin(validation.entryPath);
+      // Update entry path to new location
+      const newEntryPath = validation.entryPath.replace(subpathDir, correctTargetDir);
+      await editor.loadPlugin(newEntryPath);
       editor.setStatus(`Installed and activated ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
     } else if (manifest?.type === "theme") {
       editor.reloadThemes();
       editor.setStatus(`Installed theme ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
     } else if (manifest?.type === "language") {
-      await loadLanguagePack(targetDir, manifest);
+      await loadLanguagePack(correctTargetDir, manifest);
       editor.setStatus(`Installed language pack ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
     } else {
       editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
