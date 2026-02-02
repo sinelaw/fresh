@@ -1283,6 +1283,7 @@ impl Editor {
         let lsp_config = crate::types::LspServerConfig {
             command: config.command,
             args: config.args,
+            enabled: true, // Explicitly enable - Default::default() gives false
             auto_start: config.auto_start.unwrap_or(true),
             initialization_options: config.initialization_options,
             ..Default::default()
