@@ -78,18 +78,18 @@ impl Encoding {
     /// Get a longer description for UI (e.g., command palette)
     pub fn description(&self) -> &'static str {
         match self {
-            Self::Utf8 => "UTF-8 (Unicode)",
+            Self::Utf8 => "UTF-8",
             Self::Utf8Bom => "UTF-8 with BOM",
-            Self::Utf16Le => "UTF-16 LE (Windows Unicode)",
-            Self::Utf16Be => "UTF-16 BE",
-            Self::Ascii => "ASCII (7-bit)",
-            Self::Latin1 => "Latin-1 / ISO-8859-1 (Western European)",
-            Self::Windows1252 => "Windows-1252 / ANSI (Western European)",
-            Self::Windows1250 => "Windows-1250 (Central European)",
-            Self::Gb18030 => "GB18030 (Chinese)",
-            Self::Gbk => "GBK (Chinese Simplified)",
-            Self::ShiftJis => "Shift-JIS (Japanese)",
-            Self::EucKr => "EUC-KR (Korean)",
+            Self::Utf16Le => "UTF-16 Little Endian",
+            Self::Utf16Be => "UTF-16 Big Endian",
+            Self::Ascii => "US-ASCII",
+            Self::Latin1 => "ISO-8859-1 / Latin-1 – Western European",
+            Self::Windows1252 => "Windows-1252 / CP1252 – Western European",
+            Self::Windows1250 => "Windows-1250 / CP1250 – Central European",
+            Self::Gb18030 => "GB18030 – Chinese",
+            Self::Gbk => "GBK / CP936 – Simplified Chinese",
+            Self::ShiftJis => "Shift_JIS – Japanese",
+            Self::EucKr => "EUC-KR – Korean",
         }
     }
 
@@ -732,7 +732,7 @@ mod tests {
     fn test_windows1250_description() {
         assert_eq!(
             Encoding::Windows1250.description(),
-            "Windows-1250 (Central European)"
+            "Windows-1250 / CP1250 – Central European"
         );
     }
 

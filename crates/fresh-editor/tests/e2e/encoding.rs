@@ -1299,7 +1299,7 @@ fn test_windows1250_display_and_selector() {
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("Windows-1250") && screen.contains("Central European"),
-        "Selector should show Windows-1250 (Central European)"
+        "Selector should show Windows-1250 / CP1250 – Central European"
     );
 
     // Select and verify encoding changed
