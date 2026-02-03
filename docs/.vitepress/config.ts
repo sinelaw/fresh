@@ -39,6 +39,7 @@ export default defineConfig({
           { text: "Integrated Terminal", link: "/features/terminal" },
           { text: "LSP Integration", link: "/features/lsp" },
           { text: "Themes", link: "/features/themes" },
+          { text: "Encoding", link: "/features/encoding" },
           { text: "Remote Editing (SSH)", link: "/features/ssh" },
         ],
       },
@@ -66,6 +67,7 @@ export default defineConfig({
             collapsed: true,
             items: [
               { text: "Introduction", link: "/plugins/development/" },
+              { text: "Language Packs", link: "/plugins/development/language-packs" },
               { text: "Common Patterns", link: "/plugins/development/patterns" },
               { text: "Utilities Library", link: "/plugins/development/utilities" },
               { text: "Internationalization", link: "/plugins/development/i18n" },
@@ -173,6 +175,7 @@ export default defineConfig({
                 text: "Core/System",
                 collapsed: true,
                 items: [
+                  { text: "Testing Guide", link: "/internal/testing" },
                   { text: "Bulk Edit Optimization", link: "/internal/bulk-edit-optimization" },
                   { text: "Code Review", link: "/internal/code-review" },
                   { text: "TimeSource Design", link: "/internal/timesource-design" },

@@ -5,6 +5,7 @@ Fresh's functionality can be extended with packages:
 *   **Plugins:** TypeScript code that extends editor functionality
 *   **Themes:** Color schemes for syntax highlighting and UI
 *   **Language Packs:** Syntax highlighting, language configuration, and LSP support for new languages
+*   **Bundles:** Combine multiple languages and plugins into a single package
 
 Fresh comes with a few useful plugins out of the box:
 
@@ -88,6 +89,36 @@ fresh --init language  # Create a language pack
 For detailed guides, see:
 - [Plugin Development](./development/)
 - [Language Packs](./development/language-packs.md)
+
+## Bundles
+
+Bundles combine multiple languages and plugins into a single installable package. Useful for language ecosystems with multiple file types (e.g., Elixir + HEEx templates).
+
+```json
+{
+  "name": "elixir-bundle",
+  "type": "bundle",
+  "fresh": {
+    "languages": [
+      {
+        "id": "elixir",
+        "grammar": { "file": "grammars/elixir.sublime-syntax", "extensions": ["ex", "exs"] },
+        "language": { "commentPrefix": "#" },
+        "lsp": { "command": "elixir-ls" }
+      },
+      {
+        "id": "heex",
+        "grammar": { "file": "grammars/heex.sublime-syntax", "extensions": ["heex"] }
+      }
+    ],
+    "plugins": [
+      { "id": "elixir-tools", "entry": "plugins/tools.ts" }
+    ]
+  }
+}
+```
+
+Bundles are shown with a "B" tag in the package manager. Create one with `fresh --init bundle`.
 
 ## Clangd helper plugin
 

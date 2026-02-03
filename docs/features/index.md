@@ -10,3 +10,4 @@ Fresh provides a comprehensive set of features to help you be productive.
 - [LSP Integration](./lsp.md) - Language server support for diagnostics and completion
 - [Integrated Terminal](./terminal.md) - Run shell commands without leaving the editor
 - [Themes](./themes.md) - Customizable color themes
+- [Encoding](./encoding.md) - Text encoding detection and conversion
