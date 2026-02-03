@@ -855,6 +855,9 @@ impl Editor {
             }
             Action::LspCompletion => {
                 self.request_completion();
+                if let Err(err) = self.request_inline_completion_invoked() {
+                    tracing::debug!("Failed to request inline completion: {err}");
+                }
             }
             Action::DabbrevExpand => {
                 if self.refuse_if_editing_disabled() {

@@ -418,6 +418,9 @@ pub struct Window {
     /// candidates it carries are only resolvable against that server.
     pub pending_completion_requests: std::collections::HashMap<u64, u64>,
 
+    /// Pending LSP inline-completion request id.
+    pub pending_inline_completion_request: Option<u64>,
+
     /// Original LSP completion candidates (for type-to-filter), merged
     /// from every server that answered.
     pub completion_items: Option<Vec<LspCompletionCandidate>>,
@@ -440,6 +443,9 @@ pub struct Window {
     /// resolve the user has already moved past would apply an import for a
     /// candidate that is no longer the accepted one.
     pub pending_completion_resolve_request: Option<u64>,
+
+    /// Buffer currently showing inline ghost text for completion.
+    pub ghost_text_buffer_id: Option<BufferId>,
 
     /// Scheduled completion-trigger time (debounced quick-suggestions).
     pub scheduled_completion_trigger: Option<std::time::Instant>,
@@ -1449,6 +1455,7 @@ impl Window {
     /// goto-definition request whose response would still be relevant.
     pub fn has_pending_lsp_requests(&self) -> bool {
         !self.pending_completion_requests.is_empty()
+            || self.pending_inline_completion_request.is_some()
             || self.pending_goto_definition_request.is_some()
     }
 
@@ -1469,6 +1476,13 @@ impl Window {
                 tracing::debug!("Canceling pending LSP completion request {}", request_id);
                 self.send_lsp_cancel_request(request_id);
             }
+        }
+        if let Some(request_id) = self.pending_inline_completion_request.take() {
+            tracing::debug!(
+                "Canceling pending LSP inline completion request {}",
+                request_id
+            );
+            self.send_lsp_cancel_request(request_id);
         }
         if let Some(request_id) = self.pending_goto_definition_request.take() {
             tracing::debug!(
@@ -2324,9 +2338,11 @@ impl Window {
             bridge,
             next_lsp_request_id: 0,
             pending_completion_requests: std::collections::HashMap::new(),
+            pending_inline_completion_request: None,
             completion_items: None,
             completion_popup_lsp_items: Vec::new(),
             pending_completion_resolve_request: None,
+            ghost_text_buffer_id: None,
             scheduled_completion_trigger: None,
             dabbrev_state: None,
             pending_goto_definition_request: None,

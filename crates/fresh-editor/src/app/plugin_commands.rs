@@ -401,6 +401,7 @@ impl Editor {
                 vtext_position,
                 0, // priority
                 virtual_text_id,
+                crate::view::virtual_text::MarkerGravity::Right,
             );
         }
     }

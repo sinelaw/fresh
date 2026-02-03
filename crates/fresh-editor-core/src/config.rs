@@ -1618,6 +1618,14 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Completion"))]
     pub quick_suggestions_delay_ms: u64,
 
+    /// Show inline ghost text for the currently selected completion item.
+    /// This renders a dimmed suggestion directly in the buffer while the
+    /// completion popup is open.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Completion"))]
+    pub enable_ghost_text: bool,
+
     /// Whether trigger characters (like `.`, `::`, `->`) immediately show completions.
     /// When true, typing a trigger character bypasses quick_suggestions_delay_ms.
     /// Default: true
@@ -2065,6 +2073,7 @@ impl Default for EditorConfig {
             completion_popup_auto_show: false,
             quick_suggestions: true,
             quick_suggestions_delay_ms: default_quick_suggestions_delay(),
+            enable_ghost_text: true,
             suggest_on_trigger_characters: true,
             show_menu_bar: true,
             screensaver_enabled: false,

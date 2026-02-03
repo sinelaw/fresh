@@ -834,14 +834,18 @@ impl Editor {
             self.request_inlay_hints_for_active_buffer();
             self.set_status_message(t!("toggle.inlay_hints_enabled").to_string());
         } else {
-            // Clear inlay hints from all buffers
-            for (_, state) in self
+            // Clear inlay hints from all buffers while preserving other virtual text.
+            for state in self
                 .windows
                 .get_mut(&self.active_window)
                 .map(|w| &mut w.buffers)
                 .expect("active window present")
+                .as_map_mut()
+                .values_mut()
             {
-                state.virtual_texts.clear(&mut state.marker_list);
+                state
+                    .virtual_texts
+                    .remove_by_prefix(&mut state.marker_list, "lsp-inlay:");
             }
             self.set_status_message(t!("toggle.inlay_hints_disabled").to_string());
         }
