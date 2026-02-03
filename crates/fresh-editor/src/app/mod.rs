@@ -5188,6 +5188,26 @@ impl Editor {
             } => {
                 self.handle_get_line_start_position(buffer_id, line, request_id);
             }
+            PluginCommand::GetLineEndPosition {
+                buffer_id,
+                line,
+                request_id,
+            } => {
+                self.handle_get_line_end_position(buffer_id, line, request_id);
+            }
+            PluginCommand::GetBufferLineCount {
+                buffer_id,
+                request_id,
+            } => {
+                self.handle_get_buffer_line_count(buffer_id, request_id);
+            }
+            PluginCommand::ScrollToLineCenter {
+                split_id,
+                buffer_id,
+                line,
+            } => {
+                self.handle_scroll_to_line_center(split_id, buffer_id, line);
+            }
             PluginCommand::SetEditorMode { mode } => {
                 self.handle_set_editor_mode(mode);
             }
@@ -5627,6 +5647,130 @@ impl Editor {
         // Serialize as JSON (null for None, number for Some)
         let json = serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string());
         self.plugin_manager.resolve_callback(callback_id, json);
+    }
+
+    /// Get the byte offset of the end of a line in the active buffer
+    /// Returns the position after the last character of the line (before newline)
+    fn handle_get_line_end_position(&mut self, buffer_id: BufferId, line: u32, request_id: u64) {
+        // Use active buffer if buffer_id is 0
+        let actual_buffer_id = if buffer_id.0 == 0 {
+            self.active_buffer_id()
+        } else {
+            buffer_id
+        };
+
+        let result = if let Some(state) = self.buffers.get_mut(&actual_buffer_id) {
+            let line_number = line as usize;
+            let buffer_len = state.buffer.len();
+
+            // Read buffer content to find line boundaries
+            let content = state.get_text_range(0, buffer_len);
+            let mut current_line = 0;
+            let mut line_end = None;
+
+            for (byte_idx, c) in content.char_indices() {
+                if c == '\n' {
+                    if current_line == line_number {
+                        // Found the end of the requested line (position of newline)
+                        line_end = Some(byte_idx);
+                        break;
+                    }
+                    current_line += 1;
+                }
+            }
+
+            // Handle last line (no trailing newline)
+            if line_end.is_none() && current_line == line_number {
+                line_end = Some(buffer_len);
+            }
+
+            line_end
+        } else {
+            None
+        };
+
+        let callback_id = fresh_core::api::JsCallbackId::from(request_id);
+        let json = serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string());
+        self.plugin_manager.resolve_callback(callback_id, json);
+    }
+
+    /// Get the total number of lines in a buffer
+    fn handle_get_buffer_line_count(&mut self, buffer_id: BufferId, request_id: u64) {
+        // Use active buffer if buffer_id is 0
+        let actual_buffer_id = if buffer_id.0 == 0 {
+            self.active_buffer_id()
+        } else {
+            buffer_id
+        };
+
+        let result = if let Some(state) = self.buffers.get_mut(&actual_buffer_id) {
+            let buffer_len = state.buffer.len();
+            let content = state.get_text_range(0, buffer_len);
+
+            // Count lines (number of newlines + 1, unless empty)
+            if content.is_empty() {
+                Some(1) // Empty buffer has 1 line
+            } else {
+                let newline_count = content.chars().filter(|&c| c == '\n').count();
+                // If file ends with newline, don't count extra line
+                let ends_with_newline = content.ends_with('\n');
+                if ends_with_newline {
+                    Some(newline_count)
+                } else {
+                    Some(newline_count + 1)
+                }
+            }
+        } else {
+            None
+        };
+
+        let callback_id = fresh_core::api::JsCallbackId::from(request_id);
+        let json = serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string());
+        self.plugin_manager.resolve_callback(callback_id, json);
+    }
+
+    /// Scroll a split to center a specific line in the viewport
+    fn handle_scroll_to_line_center(
+        &mut self,
+        split_id: SplitId,
+        buffer_id: BufferId,
+        line: usize,
+    ) {
+        // Use active split if split_id is 0
+        let actual_split_id = if split_id.0 == 0 {
+            self.split_manager.active_split()
+        } else {
+            split_id
+        };
+
+        // Use active buffer if buffer_id is 0
+        let actual_buffer_id = if buffer_id.0 == 0 {
+            self.active_buffer()
+        } else {
+            buffer_id
+        };
+
+        // Get viewport height
+        let viewport_height = if let Some(view_state) = self.split_view_states.get(&actual_split_id)
+        {
+            view_state.viewport.height as usize
+        } else {
+            return;
+        };
+
+        // Calculate the target line to scroll to (center the requested line)
+        let lines_above = viewport_height / 2;
+        let target_line = line.saturating_sub(lines_above);
+
+        // Get the buffer and scroll
+        if let Some(state) = self.buffers.get_mut(&actual_buffer_id) {
+            let buffer = &mut state.buffer;
+            if let Some(view_state) = self.split_view_states.get_mut(&actual_split_id) {
+                view_state.viewport.scroll_to(buffer, target_line);
+                // Mark to skip ensure_visible on next render so the scroll isn't undone
+                view_state.viewport.set_skip_ensure_visible();
+            }
+        }
     }
 }
 

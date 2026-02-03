@@ -830,6 +830,72 @@ impl JsEditorApi {
         id
     }
 
+    /// Get the byte offset of the end of a line (0-indexed line number)
+    /// Returns the position after the last character of the line (before newline)
+    /// Returns null if the line number is out of range
+    #[plugin_api(
+        async_promise,
+        js_name = "getLineEndPosition",
+        ts_return = "number | null"
+    )]
+    #[qjs(rename = "_getLineEndPositionStart")]
+    pub fn get_line_end_position_start(&self, _ctx: rquickjs::Ctx<'_>, line: u32) -> u64 {
+        let id = {
+            let mut id_ref = self.next_request_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            self.callback_contexts
+                .borrow_mut()
+                .insert(id, self.plugin_name.clone());
+            id
+        };
+        // Use buffer_id 0 for active buffer
+        let _ = self.command_sender.send(PluginCommand::GetLineEndPosition {
+            buffer_id: BufferId(0),
+            line,
+            request_id: id,
+        });
+        id
+    }
+
+    /// Get the total number of lines in the active buffer
+    /// Returns null if buffer not found
+    #[plugin_api(
+        async_promise,
+        js_name = "getBufferLineCount",
+        ts_return = "number | null"
+    )]
+    #[qjs(rename = "_getBufferLineCountStart")]
+    pub fn get_buffer_line_count_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+        let id = {
+            let mut id_ref = self.next_request_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            self.callback_contexts
+                .borrow_mut()
+                .insert(id, self.plugin_name.clone());
+            id
+        };
+        // Use buffer_id 0 for active buffer
+        let _ = self.command_sender.send(PluginCommand::GetBufferLineCount {
+            buffer_id: BufferId(0),
+            request_id: id,
+        });
+        id
+    }
+
+    /// Scroll a split to center a specific line in the viewport
+    /// Line is 0-indexed (0 = first line)
+    pub fn scroll_to_line_center(&self, split_id: u32, buffer_id: u32, line: u32) -> bool {
+        self.command_sender
+            .send(PluginCommand::ScrollToLineCenter {
+                split_id: SplitId(split_id as usize),
+                buffer_id: BufferId(buffer_id as usize),
+                line: line as usize,
+            })
+            .is_ok()
+    }
+
     /// Find buffer by file path, returns buffer ID or 0 if not found
     pub fn find_buffer_by_path(&self, path: String) -> u32 {
         let path_buf = std::path::PathBuf::from(&path);
@@ -3039,6 +3105,9 @@ impl QuickJsBackend {
                 editor.unloadPlugin = _wrapAsync("_unloadPluginStart", "unloadPlugin");
                 editor.reloadPlugin = _wrapAsync("_reloadPluginStart", "reloadPlugin");
                 editor.listPlugins = _wrapAsync("_listPluginsStart", "listPlugins");
+                editor.prompt = _wrapAsync("_promptStart", "prompt");
+                editor.getLineStartPosition = _wrapAsync("_getLineStartPositionStart", "getLineStartPosition");
+                editor.getLineEndPosition = _wrapAsync("_getLineEndPositionStart", "getLineEndPosition");
 
                 // Wrapper for deleteTheme - wraps sync function in Promise
                 editor.deleteTheme = function(name) {

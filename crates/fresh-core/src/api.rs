@@ -179,6 +179,18 @@ pub enum PluginResponse {
         /// None if line is out of range, Some(offset) for valid line
         position: Option<usize>,
     },
+    /// Response to GetLineEndPosition with the byte offset
+    LineEndPosition {
+        request_id: u64,
+        /// None if line is out of range, Some(offset) for valid line
+        position: Option<usize>,
+    },
+    /// Response to GetBufferLineCount with the total number of lines
+    BufferLineCount {
+        request_id: u64,
+        /// None if buffer not found, Some(count) for valid buffer
+        count: Option<usize>,
+    },
     /// Response to CreateCompositeBuffer with the created buffer ID
     CompositeBufferCreated {
         request_id: u64,
@@ -1275,6 +1287,37 @@ pub enum PluginCommand {
         line: u32,
         /// Request ID for async response
         request_id: u64,
+    },
+
+    /// Get byte offset of the end of a line (async)
+    /// Line is 0-indexed (0 = first line)
+    /// Returns the byte offset after the last character of the line (before newline)
+    GetLineEndPosition {
+        /// Buffer ID (0 for active buffer)
+        buffer_id: BufferId,
+        /// Line number (0-indexed)
+        line: u32,
+        /// Request ID for async response
+        request_id: u64,
+    },
+
+    /// Get the total number of lines in a buffer (async)
+    GetBufferLineCount {
+        /// Buffer ID (0 for active buffer)
+        buffer_id: BufferId,
+        /// Request ID for async response
+        request_id: u64,
+    },
+
+    /// Scroll a split to center a specific line in the viewport
+    /// Line is 0-indexed (0 = first line)
+    ScrollToLineCenter {
+        /// Split ID to scroll
+        split_id: SplitId,
+        /// Buffer ID containing the line
+        buffer_id: BufferId,
+        /// Line number to center (0-indexed)
+        line: usize,
     },
 
     /// Set the global editor mode (for modal editing like vi mode)
@@ -2719,5 +2762,72 @@ mod tests {
             "Error should mention unknown field: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_plugin_response_line_end_position() {
+        let response = PluginResponse::LineEndPosition {
+            request_id: 42,
+            position: Some(100),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("LineEndPosition"));
+        assert!(json.contains("42"));
+        assert!(json.contains("100"));
+
+        // Test None case
+        let response_none = PluginResponse::LineEndPosition {
+            request_id: 1,
+            position: None,
+        };
+        let json_none = serde_json::to_string(&response_none).unwrap();
+        assert!(json_none.contains("null"));
+    }
+
+    #[test]
+    fn test_plugin_response_buffer_line_count() {
+        let response = PluginResponse::BufferLineCount {
+            request_id: 99,
+            count: Some(500),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("BufferLineCount"));
+        assert!(json.contains("99"));
+        assert!(json.contains("500"));
+    }
+
+    #[test]
+    fn test_plugin_command_get_line_end_position() {
+        let command = PluginCommand::GetLineEndPosition {
+            buffer_id: BufferId(1),
+            line: 10,
+            request_id: 123,
+        };
+        let json = serde_json::to_string(&command).unwrap();
+        assert!(json.contains("GetLineEndPosition"));
+        assert!(json.contains("10"));
+    }
+
+    #[test]
+    fn test_plugin_command_get_buffer_line_count() {
+        let command = PluginCommand::GetBufferLineCount {
+            buffer_id: BufferId(0),
+            request_id: 456,
+        };
+        let json = serde_json::to_string(&command).unwrap();
+        assert!(json.contains("GetBufferLineCount"));
+        assert!(json.contains("456"));
+    }
+
+    #[test]
+    fn test_plugin_command_scroll_to_line_center() {
+        let command = PluginCommand::ScrollToLineCenter {
+            split_id: SplitId(1),
+            buffer_id: BufferId(2),
+            line: 50,
+        };
+        let json = serde_json::to_string(&command).unwrap();
+        assert!(json.contains("ScrollToLineCenter"));
+        assert!(json.contains("50"));
     }
 }
