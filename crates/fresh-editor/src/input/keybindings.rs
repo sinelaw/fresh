@@ -22,6 +22,30 @@ fn use_macos_symbols() -> bool {
     cfg!(target_os = "macos")
 }
 
+/// Check if the given modifiers allow text input (character insertion).
+///
+/// Returns true for:
+/// - No modifiers
+/// - Shift only (for uppercase letters, symbols)
+/// - Ctrl+Alt on Windows (AltGr key, used for special characters on international keyboards)
+///
+/// On Windows, the AltGr key is reported as Ctrl+Alt by crossterm, which is needed for
+/// typing characters like @, [, ], {, }, etc. on German, French, and other keyboard layouts.
+/// See: https://github.com/crossterm-rs/crossterm/issues/820
+fn is_text_input_modifier(modifiers: KeyModifiers) -> bool {
+    if modifiers.is_empty() || modifiers == KeyModifiers::SHIFT {
+        return true;
+    }
+
+    // Windows: AltGr is reported as Ctrl+Alt by crossterm
+    #[cfg(windows)]
+    if modifiers == (KeyModifiers::CONTROL | KeyModifiers::ALT) {
+        return true;
+    }
+
+    false
+}
+
 /// Format a keybinding as a user-friendly string
 /// On macOS, uses native symbols: ⌃ (Control), ⌥ (Option), ⇧ (Shift) without separators
 /// On other platforms, uses "Ctrl+Alt+Shift+" format
@@ -1366,9 +1390,7 @@ impl KeybindingResolver {
         }
 
         // Handle regular character input in text input contexts
-        if context.allows_text_input()
-            && (event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT)
-        {
+        if context.allows_text_input() && is_text_input_modifier(event.modifiers) {
             if let KeyCode::Char(c) = event.code {
                 tracing::trace!("  -> Character input: '{}'", c);
                 return Action::InsertChar(c);
