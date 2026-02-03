@@ -138,29 +138,276 @@ impl Viewport {
     }
 
     /// Scroll up by N lines (byte-based)
-    /// LineCache automatically tracks line numbers
+    /// When line_wrap_enabled is true, scrolls by visual rows instead of logical lines
     pub fn scroll_up(&mut self, buffer: &mut Buffer, lines: usize) {
-        let mut iter = buffer.line_iterator(self.top_byte, 80);
-        for _ in 0..lines {
-            if iter.prev().is_none() {
-                break;
+        if self.line_wrap_enabled {
+            self.scroll_up_visual(buffer, lines);
+        } else {
+            let mut iter = buffer.line_iterator(self.top_byte, 80);
+            for _ in 0..lines {
+                if iter.prev().is_none() {
+                    break;
+                }
             }
+            let new_position = iter.current_position();
+            self.set_top_byte_with_limit(buffer, new_position);
         }
-        let new_position = iter.current_position();
-        self.set_top_byte_with_limit(buffer, new_position);
     }
 
     /// Scroll down by N lines (byte-based)
-    /// LineCache automatically tracks line numbers
+    /// When line_wrap_enabled is true, scrolls by visual rows instead of logical lines
     pub fn scroll_down(&mut self, buffer: &mut Buffer, lines: usize) {
-        let mut iter = buffer.line_iterator(self.top_byte, 80);
-        for _ in 0..lines {
-            if iter.next_line().is_none() {
-                break;
+        if self.line_wrap_enabled {
+            self.scroll_down_visual(buffer, lines);
+        } else {
+            let mut iter = buffer.line_iterator(self.top_byte, 80);
+            for _ in 0..lines {
+                if iter.next_line().is_none() {
+                    break;
+                }
+            }
+            let new_position = iter.current_position();
+            self.set_top_byte_with_limit(buffer, new_position);
+        }
+    }
+
+    /// Scroll up by N visual rows (for line-wrapped content)
+    /// This counts wrapped segments, not logical lines
+    fn scroll_up_visual(&mut self, buffer: &mut Buffer, visual_rows: usize) {
+        if visual_rows == 0 {
+            return;
+        }
+
+        let gutter_width = self.gutter_width(buffer);
+        let wrap_config = WrapConfig::new(self.width as usize, gutter_width, true);
+
+        // We need to move backwards through visual rows
+        // Start from current top_byte and count backwards
+        let mut rows_remaining = visual_rows;
+        let mut current_byte = self.top_byte;
+
+        // First, check if we have a top_view_line_offset (mid-line position)
+        // If so, we can scroll up within the current line first
+        if self.top_view_line_offset > 0 {
+            let rows_in_offset = self.top_view_line_offset.min(rows_remaining);
+            self.top_view_line_offset -= rows_in_offset;
+            rows_remaining -= rows_in_offset;
+            if rows_remaining == 0 {
+                return;
             }
         }
-        let new_position = iter.current_position();
-        self.set_top_byte_with_limit(buffer, new_position);
+
+        // Now scroll backwards through logical lines, counting visual rows
+        let mut iter = buffer.line_iterator(current_byte, 80);
+
+        while rows_remaining > 0 {
+            // Move to previous line
+            if iter.prev().is_none() {
+                // Hit beginning of buffer
+                self.top_byte = 0;
+                self.top_view_line_offset = 0;
+                return;
+            }
+
+            // Get the line content to calculate how many visual rows it has
+            let line_start = iter.current_position();
+            let line_content = if let Some((_, content)) = iter.next_line() {
+                content.trim_end_matches(['\n', '\r']).to_string()
+            } else {
+                String::new()
+            };
+            // Move back to the line start position
+            iter = buffer.line_iterator(line_start, 80);
+
+            let segments = wrap_line(&line_content, &wrap_config);
+            let visual_rows_in_line = segments.len().max(1);
+
+            if visual_rows_in_line >= rows_remaining {
+                // This line has enough visual rows to satisfy the remaining scroll
+                // Position at the appropriate segment within this line
+                self.top_byte = line_start;
+                self.top_view_line_offset = visual_rows_in_line - rows_remaining;
+                return;
+            }
+
+            // This line doesn't have enough rows, continue to previous line
+            rows_remaining -= visual_rows_in_line;
+            current_byte = line_start;
+        }
+
+        self.top_byte = current_byte;
+        self.top_view_line_offset = 0;
+    }
+
+    /// Scroll down by N visual rows (for line-wrapped content)
+    /// This counts wrapped segments, not logical lines
+    fn scroll_down_visual(&mut self, buffer: &mut Buffer, visual_rows: usize) {
+        if visual_rows == 0 {
+            return;
+        }
+
+        let gutter_width = self.gutter_width(buffer);
+        let wrap_config = WrapConfig::new(self.width as usize, gutter_width, true);
+        let buffer_len = buffer.len();
+
+        let mut rows_remaining = visual_rows;
+        let mut iter = buffer.line_iterator(self.top_byte, 80);
+
+        // First, handle any existing top_view_line_offset
+        // Get current line's visual row count to see how many rows are left in it
+        let current_line_content = if let Some((_, content)) = iter.next_line() {
+            let c = content.trim_end_matches(['\n', '\r']).to_string();
+            // Reset iterator to start of this line for later use
+            iter = buffer.line_iterator(self.top_byte, 80);
+            c
+        } else {
+            String::new()
+        };
+
+        let current_segments = wrap_line(&current_line_content, &wrap_config);
+        let current_visual_rows = current_segments.len().max(1);
+        let rows_left_in_current = current_visual_rows.saturating_sub(self.top_view_line_offset);
+
+        if rows_remaining < rows_left_in_current {
+            // Can satisfy scroll within current line
+            self.top_view_line_offset += rows_remaining;
+            return;
+        }
+
+        // Move past the current line
+        rows_remaining -= rows_left_in_current;
+        self.top_view_line_offset = 0;
+
+        // Move to next line
+        if iter.next_line().is_none() {
+            // Already at end of buffer
+            return;
+        }
+
+        // Continue scrolling through subsequent lines
+        loop {
+            let line_start = iter.current_position();
+
+            // Check for end of buffer
+            if line_start >= buffer_len {
+                self.set_top_byte_with_limit(buffer, line_start);
+                return;
+            }
+
+            let line_content = if let Some((_, content)) = iter.next_line() {
+                content.trim_end_matches(['\n', '\r']).to_string()
+            } else {
+                // End of buffer
+                self.set_top_byte_with_limit(buffer, line_start);
+                return;
+            };
+
+            let segments = wrap_line(&line_content, &wrap_config);
+            let visual_rows_in_line = segments.len().max(1);
+
+            if rows_remaining < visual_rows_in_line {
+                // This line has enough visual rows to satisfy the scroll
+                self.top_byte = line_start;
+                self.top_view_line_offset = rows_remaining;
+                // Apply visual-row-aware scroll limit
+                self.apply_visual_scroll_limit(buffer, &wrap_config);
+                return;
+            }
+
+            // Not enough rows in this line, continue to next
+            rows_remaining -= visual_rows_in_line;
+
+            if rows_remaining == 0 {
+                // Exactly consumed this line, position at start of next
+                let next_pos = iter.current_position();
+                self.top_byte = next_pos;
+                self.top_view_line_offset = 0;
+                // Apply visual-row-aware scroll limit
+                self.apply_visual_scroll_limit(buffer, &wrap_config);
+                return;
+            }
+        }
+    }
+
+    /// Apply visual-row-aware scroll limit to prevent over-scrolling.
+    /// This ensures the viewport is always filled with content when possible.
+    /// Returns true if position was adjusted, false if no adjustment needed.
+    fn apply_visual_scroll_limit(&mut self, buffer: &mut Buffer, wrap_config: &WrapConfig) {
+        let viewport_height = self.visible_line_count();
+        if viewport_height == 0 {
+            return;
+        }
+
+        // Count visual rows from current position to end of buffer
+        let mut visual_rows_remaining = 0;
+        let mut iter = buffer.line_iterator(self.top_byte, 80);
+
+        // First, count rows in current line (from top_view_line_offset to end)
+        if let Some((_, content)) = iter.next_line() {
+            let line_content = content.trim_end_matches(['\n', '\r']).to_string();
+            let segments = wrap_line(&line_content, wrap_config);
+            let line_visual_rows = segments.len().max(1);
+            visual_rows_remaining += line_visual_rows.saturating_sub(self.top_view_line_offset);
+        }
+
+        // Count rows in subsequent lines
+        while let Some((_, content)) = iter.next_line() {
+            let line_content = content.trim_end_matches(['\n', '\r']).to_string();
+            let segments = wrap_line(&line_content, wrap_config);
+            visual_rows_remaining += segments.len().max(1);
+
+            // Early exit if we have enough rows
+            if visual_rows_remaining >= viewport_height {
+                return; // No need to adjust
+            }
+        }
+
+        // If we don't have enough rows to fill viewport, find the max scroll position
+        // and set it directly (instead of calling scroll_up_visual which can be jumpy)
+        if visual_rows_remaining < viewport_height {
+            // Find the max scroll position by scanning from the beginning
+            let (max_byte, max_offset) =
+                self.find_max_visual_scroll_position(buffer, wrap_config, viewport_height);
+            self.top_byte = max_byte;
+            self.top_view_line_offset = max_offset;
+        }
+    }
+
+    /// Find the maximum scroll position that still shows viewport_height visual rows.
+    /// Returns (top_byte, top_view_line_offset) for the max scroll position.
+    fn find_max_visual_scroll_position(
+        &self,
+        buffer: &mut Buffer,
+        wrap_config: &WrapConfig,
+        viewport_height: usize,
+    ) -> (usize, usize) {
+        // Build a list of all visual row positions
+        let mut positions: Vec<(usize, usize)> = Vec::new(); // (line_start_byte, offset_in_line)
+
+        let mut iter = buffer.line_iterator(0, 80);
+        while let Some((line_start, content)) = iter.next_line() {
+            let line_content = content.trim_end_matches(['\n', '\r']).to_string();
+            let segments = wrap_line(&line_content, wrap_config);
+            let visual_rows_in_line = segments.len().max(1);
+
+            for offset in 0..visual_rows_in_line {
+                positions.push((line_start, offset));
+            }
+        }
+
+        let total_rows = positions.len();
+        if total_rows <= viewport_height {
+            // Everything fits, max scroll is at the beginning
+            return (0, 0);
+        }
+
+        // Max scroll is total_rows - viewport_height visual rows from the start
+        let max_scroll_row = total_rows - viewport_height;
+        if max_scroll_row < positions.len() {
+            positions[max_scroll_row]
+        } else {
+            (0, 0)
+        }
     }
 
     /// Scroll through ViewLines (view-transform aware)
@@ -686,7 +933,7 @@ impl Viewport {
                         // We need to check if the cursor's SPECIFIC POSITION within the wrapped line is visible
                         // Get the line content
                         let line_content = if let Some((_, content)) = iter.next_line() {
-                            content.trim_end_matches('\n').to_string()
+                            content.trim_end_matches(['\n', '\r']).to_string()
                         } else {
                             // At EOF after trailing newline - empty line
                             String::new()
@@ -1061,7 +1308,7 @@ impl Viewport {
             let mut line_iter = buffer.line_iterator(line_start, 80);
             let line_text = if let Some((_start, content)) = line_iter.next_line() {
                 // Remove trailing newline if present
-                content.trim_end_matches('\n').to_string()
+                content.trim_end_matches(['\n', '\r']).to_string()
             } else {
                 String::new()
             };

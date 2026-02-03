@@ -1855,6 +1855,11 @@ impl SplitRenderer {
             return (0, 0);
         }
 
+        // When line wrapping is enabled, count visual rows instead of logical lines
+        if viewport.line_wrap_enabled {
+            return Self::scrollbar_visual_row_counts(state, viewport, buffer_len);
+        }
+
         let total_lines = if buffer_len > 0 {
             state.buffer.get_line_number(buffer_len.saturating_sub(1)) + 1
         } else {
@@ -1868,6 +1873,73 @@ impl SplitRenderer {
         };
 
         (total_lines, top_line)
+    }
+
+    /// Calculate scrollbar position based on visual rows (for line-wrapped content)
+    /// Returns (total_visual_rows, top_visual_row)
+    fn scrollbar_visual_row_counts(
+        state: &EditorState,
+        viewport: &crate::view::viewport::Viewport,
+        buffer_len: usize,
+    ) -> (usize, usize) {
+        use crate::primitives::line_wrapping::{wrap_line, WrapConfig};
+
+        if buffer_len == 0 {
+            return (1, 0);
+        }
+
+        let gutter_width = viewport.gutter_width(&state.buffer);
+        let wrap_config = WrapConfig::new(viewport.width as usize, gutter_width, true);
+
+        // Count total visual rows and find top visual row
+        // Use get_line which doesn't require mutable buffer access
+        let mut total_visual_rows = 0;
+        let mut top_visual_row = 0;
+        let mut found_top = false;
+
+        // Get total line count (if available) or estimate
+        let line_count = state.buffer.line_count().unwrap_or_else(|| {
+            // Estimate based on buffer size
+            (buffer_len / 80).max(1)
+        });
+
+        for line_idx in 0..line_count {
+            // Get the line start offset to check if we've reached top_byte
+            let line_start = state
+                .buffer
+                .line_start_offset(line_idx)
+                .unwrap_or(buffer_len);
+
+            // Check if this is the top line
+            if !found_top && line_start >= viewport.top_byte {
+                top_visual_row = total_visual_rows + viewport.top_view_line_offset;
+                found_top = true;
+            }
+
+            // Get line content
+            let line_content = if let Some(bytes) = state.buffer.get_line(line_idx) {
+                String::from_utf8_lossy(&bytes)
+                    .trim_end_matches('\n')
+                    .trim_end_matches('\r')
+                    .to_string()
+            } else {
+                break;
+            };
+
+            let segments = wrap_line(&line_content, &wrap_config);
+            let visual_rows_in_line = segments.len().max(1);
+            total_visual_rows += visual_rows_in_line;
+        }
+
+        // Handle case where top_byte is at/past end of buffer
+        if !found_top {
+            top_visual_row = total_visual_rows.saturating_sub(1);
+        }
+
+        // Ensure at least 1 total row
+        total_visual_rows = total_visual_rows.max(1);
+
+        (total_visual_rows, top_visual_row)
     }
 
     /// Render a scrollbar for a split
@@ -1891,10 +1963,12 @@ impl SplitRenderer {
 
         let buffer_len = state.buffer.len();
         let viewport_top = viewport.top_byte;
-        // Use the constant viewport height (allocated terminal rows), not visible_line_count()
-        // which varies based on content. The scrollbar should represent the ratio of the
-        // viewport AREA to total document size, remaining constant throughout scrolling.
-        let viewport_height_lines = viewport.height as usize;
+        // Use the scrollbar height as the viewport height for line count calculations.
+        // This represents the actual number of visible content rows, which matches
+        // what the user sees. When line wrapping is enabled, total_lines represents
+        // visual rows, so we need to compare against actual visible rows (height),
+        // not the full terminal height (viewport.height includes menu, status bar, etc.)
+        let viewport_height_lines = height;
 
         // Calculate scrollbar thumb position and size
         let (thumb_start, thumb_size) = if buffer_len > large_file_threshold_bytes as usize {

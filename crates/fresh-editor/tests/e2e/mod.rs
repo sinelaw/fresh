@@ -22,6 +22,7 @@ pub mod language_features_e2e;
 pub mod large_file_inplace_write_bug;
 pub mod large_file_mode;
 pub mod lifecycle;
+pub mod line_wrap_scroll_bugs;
 pub mod line_wrapping;
 pub mod live_grep;
 pub mod locale;
