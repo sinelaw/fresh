@@ -351,6 +351,36 @@ impl Editor {
         }
     }
 
+    /// Start the large file encoding confirmation prompt.
+    ///
+    /// This is called when opening a file that has a non-resynchronizable encoding
+    /// (like GBK, GB18030, Shift-JIS) and the file is large enough to require
+    /// user confirmation before loading the entire file into memory.
+    pub fn start_large_file_encoding_confirmation(
+        &mut self,
+        confirmation: &crate::model::buffer::LargeFileEncodingConfirmation,
+    ) {
+        let size_mb = confirmation.file_size as f64 / (1024.0 * 1024.0);
+        let load_key = t!("file.large_encoding.key.load").to_string();
+        let encoding_key = t!("file.large_encoding.key.encoding").to_string();
+        let cancel_key = t!("file.large_encoding.key.cancel").to_string();
+        let prompt_msg = t!(
+            "file.large_encoding_prompt",
+            encoding = confirmation.encoding.display_name(),
+            size = format!("{:.0}", size_mb),
+            load_key = load_key,
+            encoding_key = encoding_key,
+            cancel_key = cancel_key
+        )
+        .to_string();
+        self.start_prompt(
+            prompt_msg,
+            PromptType::ConfirmLargeFileEncoding {
+                path: confirmation.path.clone(),
+            },
+        );
+    }
+
     /// Start the encoding selection prompt for opening a file
     pub fn start_open_file_with_encoding_prompt(&mut self, path: std::path::PathBuf) {
         use crate::model::buffer::Encoding;

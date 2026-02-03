@@ -228,22 +228,36 @@ impl Editor {
 
         // Close settings and open the config file
         self.settings_state = None;
-        self.open_file(&path)?;
-
-        let layer_name = match layer {
-            ConfigLayer::User => "User",
-            ConfigLayer::Project => "Project",
-            ConfigLayer::Session => "Session",
-            ConfigLayer::System => "System",
-        };
-        self.set_status_message(
-            t!(
-                "settings.editing_config",
-                layer = layer_name,
-                path = path.display().to_string()
-            )
-            .to_string(),
-        );
+        match self.open_file(&path) {
+            Ok(_) => {
+                let layer_name = match layer {
+                    ConfigLayer::User => "User",
+                    ConfigLayer::Project => "Project",
+                    ConfigLayer::Session => "Session",
+                    ConfigLayer::System => "System",
+                };
+                self.set_status_message(
+                    t!(
+                        "settings.editing_config",
+                        layer = layer_name,
+                        path = path.display().to_string()
+                    )
+                    .to_string(),
+                );
+            }
+            Err(e) => {
+                // Check if this is a large file encoding confirmation error
+                if let Some(confirmation) =
+                    e.downcast_ref::<crate::model::buffer::LargeFileEncodingConfirmation>()
+                {
+                    self.start_large_file_encoding_confirmation(confirmation);
+                } else {
+                    self.set_status_message(
+                        t!("file.error_opening", error = e.to_string()).to_string(),
+                    );
+                }
+            }
+        }
 
         Ok(())
     }

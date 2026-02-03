@@ -314,16 +314,15 @@ fn handle_first_run_setup(
         editor.open_stdin_buffer(&stream_state.temp_path, stream_state.thread_handle.take())?;
     }
 
+    // Queue CLI files to be opened after the TUI starts
+    // This ensures they go through the same code path as interactive file opens,
+    // with consistent error handling (e.g., encoding confirmation prompts in the UI)
     for loc in file_locations {
         if loc.path.is_dir() {
             continue;
         }
-        tracing::info!("[SYNTAX DEBUG] CLI opening file: {:?}", loc.path);
-        editor.open_file(&loc.path)?;
-
-        if let Some(line) = loc.line {
-            editor.goto_line_col(line, loc.column);
-        }
+        tracing::info!("[SYNTAX DEBUG] Queueing CLI file for open: {:?}", loc.path);
+        editor.queue_file_open(loc.path.clone(), loc.line, loc.column);
     }
 
     if show_file_explorer {
@@ -1769,6 +1768,13 @@ where
     loop {
         // Process async messages and poll for file changes (auto-revert, file tree)
         if editor.process_async_messages() {
+            needs_render = true;
+        }
+
+        // Process pending file opens from CLI arguments
+        // This runs after the first render, ensuring files go through the same
+        // code path as interactive file opens (with proper UI prompts for errors)
+        if editor.process_pending_file_opens() {
             needs_render = true;
         }
 

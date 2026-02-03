@@ -348,9 +348,27 @@ impl Editor {
                 self.file_explorer_toggle_expand();
             } else {
                 tracing::info!("[SYNTAX DEBUG] file_explorer opening file: {:?}", path);
-                self.open_file(&path)?;
-                self.set_status_message(t!("explorer.opened_file", name = &name).to_string());
-                self.focus_editor();
+                match self.open_file(&path) {
+                    Ok(_) => {
+                        self.set_status_message(
+                            t!("explorer.opened_file", name = &name).to_string(),
+                        );
+                        self.focus_editor();
+                    }
+                    Err(e) => {
+                        // Check if this is a large file encoding confirmation error
+                        // These should be shown as prompts in the UI, not as fatal errors
+                        if let Some(confirmation) =
+                            e.downcast_ref::<crate::model::buffer::LargeFileEncodingConfirmation>()
+                        {
+                            self.start_large_file_encoding_confirmation(confirmation);
+                        } else {
+                            self.set_status_message(
+                                t!("file.error_opening", error = e.to_string()).to_string(),
+                            );
+                        }
+                    }
+                }
             }
         }
         Ok(())

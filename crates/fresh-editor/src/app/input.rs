@@ -1968,10 +1968,26 @@ impl Editor {
                         // Double-click or Enter will focus the editor
                         let path = node.entry.path.clone();
                         let name = node.entry.name.clone();
-                        self.open_file(&path)?;
-                        self.set_status_message(
-                            rust_i18n::t!("explorer.opened_file", name = &name).to_string(),
-                        );
+                        match self.open_file(&path) {
+                            Ok(_) => {
+                                self.set_status_message(
+                                    rust_i18n::t!("explorer.opened_file", name = &name).to_string(),
+                                );
+                            }
+                            Err(e) => {
+                                // Check if this is a large file encoding confirmation error
+                                if let Some(confirmation) = e.downcast_ref::<
+                                    crate::model::buffer::LargeFileEncodingConfirmation,
+                                >() {
+                                    self.start_large_file_encoding_confirmation(confirmation);
+                                } else {
+                                    self.set_status_message(
+                                        rust_i18n::t!("file.error_opening", error = e.to_string())
+                                            .to_string(),
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             }

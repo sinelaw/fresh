@@ -198,7 +198,22 @@ impl Editor {
         // Convert URI to file path
         if let Ok(path) = uri_to_path(&location.uri) {
             // Open the file
-            let buffer_id = self.open_file(&path)?;
+            let buffer_id = match self.open_file(&path) {
+                Ok(id) => id,
+                Err(e) => {
+                    // Check if this is a large file encoding confirmation error
+                    if let Some(confirmation) =
+                        e.downcast_ref::<crate::model::buffer::LargeFileEncodingConfirmation>()
+                    {
+                        self.start_large_file_encoding_confirmation(confirmation);
+                    } else {
+                        self.set_status_message(
+                            t!("file.error_opening", error = e.to_string()).to_string(),
+                        );
+                    }
+                    return Ok(());
+                }
+            };
 
             // Check if file is outside project root (library file)
             let is_library_file = self.is_library_file(&path);
@@ -1394,7 +1409,23 @@ impl Editor {
                 if let Some(changes) = workspace_edit.changes {
                     for (uri, edits) in changes {
                         if let Ok(path) = uri_to_path(&uri) {
-                            let buffer_id = self.open_file(&path)?;
+                            let buffer_id = match self.open_file(&path) {
+                                Ok(id) => id,
+                                Err(e) => {
+                                    // Check if this is a large file encoding confirmation error
+                                    if let Some(confirmation) = e.downcast_ref::<
+                                        crate::model::buffer::LargeFileEncodingConfirmation,
+                                    >() {
+                                        self.start_large_file_encoding_confirmation(confirmation);
+                                    } else {
+                                        self.set_status_message(
+                                            t!("file.error_opening", error = e.to_string())
+                                                .to_string(),
+                                        );
+                                    }
+                                    return Ok(());
+                                }
+                            };
                             total_changes += self.apply_lsp_text_edits(buffer_id, edits)?;
                         }
                     }
@@ -1425,7 +1456,23 @@ impl Editor {
                         let uri = text_doc_edit.text_document.uri;
 
                         if let Ok(path) = uri_to_path(&uri) {
-                            let buffer_id = self.open_file(&path)?;
+                            let buffer_id = match self.open_file(&path) {
+                                Ok(id) => id,
+                                Err(e) => {
+                                    // Check if this is a large file encoding confirmation error
+                                    if let Some(confirmation) = e.downcast_ref::<
+                                        crate::model::buffer::LargeFileEncodingConfirmation,
+                                    >() {
+                                        self.start_large_file_encoding_confirmation(confirmation);
+                                    } else {
+                                        self.set_status_message(
+                                            t!("file.error_opening", error = e.to_string())
+                                                .to_string(),
+                                        );
+                                    }
+                                    return Ok(());
+                                }
+                            };
 
                             // Extract TextEdit from OneOf<TextEdit, AnnotatedTextEdit>
                             let edits: Vec<lsp_types::TextEdit> = text_doc_edit

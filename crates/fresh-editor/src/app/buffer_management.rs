@@ -10,7 +10,7 @@
 
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::app::warning_domains::WarningDomain;
@@ -2069,5 +2069,63 @@ impl Editor {
             }
         }
         false
+    }
+
+    /// Queue a file to be opened after the TUI starts.
+    ///
+    /// This is used for CLI file arguments to ensure they go through the same
+    /// code path as interactive file opens, providing consistent error handling
+    /// (e.g., encoding confirmation prompts are shown in the UI instead of crashing).
+    pub fn queue_file_open(&mut self, path: PathBuf, line: Option<usize>, column: Option<usize>) {
+        self.pending_file_opens
+            .push(super::PendingFileOpen { path, line, column });
+    }
+
+    /// Process pending file opens (called from the event loop).
+    ///
+    /// Opens files that were queued during startup, using the same error handling
+    /// as interactive file opens. Returns true if any files were processed.
+    pub fn process_pending_file_opens(&mut self) -> bool {
+        if self.pending_file_opens.is_empty() {
+            return false;
+        }
+
+        // Take all pending files to process
+        let pending = std::mem::take(&mut self.pending_file_opens);
+        let mut processed_any = false;
+
+        for pending_file in pending {
+            tracing::info!(
+                "[SYNTAX DEBUG] Processing pending file open: {:?}",
+                pending_file.path
+            );
+
+            match self.open_file(&pending_file.path) {
+                Ok(_) => {
+                    // Navigate to line/column if specified
+                    if let Some(line) = pending_file.line {
+                        self.goto_line_col(line, pending_file.column);
+                    }
+                    processed_any = true;
+                }
+                Err(e) => {
+                    // Check if this is a large file encoding confirmation error
+                    // Show prompt instead of crashing
+                    if let Some(confirmation) =
+                        e.downcast_ref::<crate::model::buffer::LargeFileEncodingConfirmation>()
+                    {
+                        self.start_large_file_encoding_confirmation(confirmation);
+                    } else {
+                        // For other errors, show status message (consistent with file browser)
+                        self.set_status_message(
+                            t!("file.error_opening", error = e.to_string()).to_string(),
+                        );
+                    }
+                    processed_any = true;
+                }
+            }
+        }
+
+        processed_any
     }
 }

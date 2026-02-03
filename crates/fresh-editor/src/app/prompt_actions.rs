@@ -1080,14 +1080,25 @@ impl Editor {
                     // Record file access for frecency
                     self.file_provider.record_access(path_str);
 
-                    if let Err(e) = self.open_file(&full_path) {
-                        self.set_status_message(
-                            t!("file.error_opening", error = e.to_string()).to_string(),
-                        );
-                    } else {
-                        self.set_status_message(
-                            t!("buffer.opened", name = full_path.display().to_string()).to_string(),
-                        );
+                    match self.open_file(&full_path) {
+                        Ok(_) => {
+                            self.set_status_message(
+                                t!("buffer.opened", name = full_path.display().to_string())
+                                    .to_string(),
+                            );
+                        }
+                        Err(e) => {
+                            // Check if this is a large file encoding confirmation error
+                            if let Some(confirmation) = e.downcast_ref::<
+                                crate::model::buffer::LargeFileEncodingConfirmation,
+                            >() {
+                                self.start_large_file_encoding_confirmation(confirmation);
+                            } else {
+                                self.set_status_message(
+                                    t!("file.error_opening", error = e.to_string()).to_string(),
+                                );
+                            }
+                        }
                     }
                     return PromptResult::Done;
                 }

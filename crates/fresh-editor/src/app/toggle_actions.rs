@@ -207,9 +207,16 @@ impl Editor {
                         );
                     }
                     Err(e) => {
-                        self.set_status_message(
-                            t!("config.saved_failed_open", error = e.to_string()).to_string(),
-                        );
+                        // Check if this is a large file encoding confirmation error
+                        if let Some(confirmation) =
+                            e.downcast_ref::<crate::model::buffer::LargeFileEncodingConfirmation>()
+                        {
+                            self.start_large_file_encoding_confirmation(confirmation);
+                        } else {
+                            self.set_status_message(
+                                t!("config.saved_failed_open", error = e.to_string()).to_string(),
+                            );
+                        }
                     }
                 }
             }

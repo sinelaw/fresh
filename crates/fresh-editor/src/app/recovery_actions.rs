@@ -55,16 +55,28 @@ impl Editor {
 
                     if let Some(path) = original_path {
                         // Open the file path (this creates the buffer)
-                        if self.open_file(&path).is_ok() {
-                            // Replace buffer content with recovered content
-                            let state = self.active_state_mut();
-                            let total = state.buffer.total_bytes();
-                            state.buffer.delete(0..total);
-                            state.buffer.insert(0, &text);
-                            // Mark as modified since it differs from disk
-                            state.buffer.set_modified(true);
-                            recovered_count += 1;
-                            tracing::info!("Recovered buffer: {}", path.display());
+                        match self.open_file(&path) {
+                            Ok(_) => {
+                                // Replace buffer content with recovered content
+                                let state = self.active_state_mut();
+                                let total = state.buffer.total_bytes();
+                                state.buffer.delete(0..total);
+                                state.buffer.insert(0, &text);
+                                // Mark as modified since it differs from disk
+                                state.buffer.set_modified(true);
+                                recovered_count += 1;
+                                tracing::info!("Recovered buffer: {}", path.display());
+                            }
+                            Err(e) => {
+                                // Check if this is a large file encoding confirmation error
+                                if let Some(confirmation) = e.downcast_ref::<
+                                    crate::model::buffer::LargeFileEncodingConfirmation,
+                                >() {
+                                    self.start_large_file_encoding_confirmation(confirmation);
+                                } else {
+                                    tracing::warn!("Failed to recover buffer {}: {}", path.display(), e);
+                                }
+                            }
                         }
                     } else {
                         // Unsaved buffer - create new buffer with recovered content

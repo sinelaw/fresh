@@ -681,8 +681,24 @@ pub struct Editor {
     composite_view_states:
         HashMap<(SplitId, BufferId), crate::view::composite_view::CompositeViewState>,
 
+    /// Pending file opens from CLI arguments (processed after TUI starts)
+    /// This allows CLI files to go through the same code path as interactive file opens,
+    /// ensuring consistent error handling (e.g., encoding confirmation prompts).
+    pending_file_opens: Vec<PendingFileOpen>,
+
     /// Stdin streaming state (if reading from stdin)
     stdin_streaming: Option<StdinStreamingState>,
+}
+
+/// A file that should be opened after the TUI starts
+#[derive(Debug, Clone)]
+pub struct PendingFileOpen {
+    /// Path to the file
+    pub path: PathBuf,
+    /// Line number to navigate to (1-indexed, optional)
+    pub line: Option<usize>,
+    /// Column number to navigate to (1-indexed, optional)
+    pub column: Option<usize>,
 }
 
 /// State for tracking stdin streaming in background
@@ -1229,6 +1245,7 @@ impl Editor {
             )
             .unwrap_or_default(),
             color_capability,
+            pending_file_opens: Vec::new(),
             stdin_streaming: None,
             review_hunks: Vec::new(),
             active_action_popup: None,
