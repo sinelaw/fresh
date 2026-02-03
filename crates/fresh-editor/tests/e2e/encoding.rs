@@ -2123,3 +2123,96 @@ fn test_large_file_encoding_selector_sync_no_prompt() {
         screen_after
     );
 }
+
+// ============================================================================
+// Reload with Encoding Command Tests
+// ============================================================================
+
+/// Test that "Reload with Encoding..." command is available in the command palette
+/// and can reload a file with a different encoding.
+#[test]
+fn test_reload_with_encoding_command() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 24).unwrap();
+    let file_path = harness.project_dir().unwrap().join("test_reload.txt");
+
+    // Create a file with Latin-1 content (bytes 0xE0-0xFF are valid Latin-1)
+    // "café" in Latin-1: c=0x63, a=0x61, f=0x66, é=0xE9
+    let latin1_content: Vec<u8> = vec![0x63, 0x61, 0x66, 0xE9, 0x0A]; // "café\n"
+    std::fs::write(&file_path, &latin1_content).unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // File is detected as Latin-1 or Windows-1252 (both decode 0xE9 as é)
+    // Status bar shows the detected encoding
+    let initial_screen = harness.screen_to_string();
+    assert!(
+        initial_screen.contains("Latin-1") || initial_screen.contains("Windows-1252"),
+        "File should be detected as Latin-1 or Windows-1252. Screen:\n{}",
+        initial_screen
+    );
+
+    // Open command palette with Ctrl+P
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type "Reload with" to find the command
+    harness.type_text("Reload with").unwrap();
+    harness.render().unwrap();
+
+    // Verify the command appears in the palette
+    harness.assert_screen_contains("Reload with Encoding");
+
+    // Press Enter to execute the command
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The encoding selector prompt should open
+    harness.assert_screen_contains("Reload with encoding:");
+
+    // Select UTF-8 (will misinterpret the Latin-1 bytes, but tests the command works)
+    // Use arrow keys to navigate since the prompt already has suggestions
+    // First, clear existing text and type UTF-8
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("UTF-8").unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // After reload, encoding should show UTF-8 in status bar
+    harness.assert_screen_contains("UTF-8");
+
+    // Status message should confirm the reload (may be truncated, so just check prefix)
+    harness.assert_screen_contains("Reloaded with");
+}
+
+/// Test "Reload with Encoding..." from the File menu
+#[test]
+fn test_reload_with_encoding_menu_item() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 24).unwrap();
+    let file_path = harness.project_dir().unwrap().join("test_menu.txt");
+
+    // Create a simple UTF-8 file
+    std::fs::write(&file_path, "Hello World\n").unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Open File menu with Alt+F
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify the menu item is present
+    harness.assert_screen_contains("Reload with Encoding...");
+}

@@ -1389,6 +1389,13 @@ impl MenuConfig {
                         when: None,
                         checkbox: None,
                     },
+                    MenuItem::Action {
+                        label: t!("menu.file.reload_with_encoding").to_string(),
+                        action: "reload_with_encoding".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
                         label: t!("menu.file.close_buffer").to_string(),
