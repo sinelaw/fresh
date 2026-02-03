@@ -616,3 +616,124 @@ fn test_scrollbar_drag_with_multiline_file_one_long_line() {
         drag_start_row, drag_end_row, screen_before, screen_after
     );
 }
+
+/// Test that dragging the scrollbar thumb doesn't cause a jump on drag start.
+/// The thumb should move relative to where it was clicked, not center around the mouse.
+/// Reproduction: click on thumb, drag horizontally (same row), release - should not scroll.
+#[test]
+fn test_scrollbar_thumb_drag_no_jump_on_start() {
+    const TERMINAL_WIDTH: u16 = 80;
+    const TERMINAL_HEIGHT: u16 = 24;
+
+    let mut harness =
+        EditorTestHarness::with_config(TERMINAL_WIDTH, TERMINAL_HEIGHT, config_with_line_wrap())
+            .unwrap();
+
+    // Create a file with 100 lines so we have a scrollable document
+    let content: String = (1..=100)
+        .map(|i| format!("Line {} content here\n", i))
+        .collect();
+
+    harness.load_buffer_from_text(&content).unwrap();
+    harness.render().unwrap();
+
+    // Scroll to line 30 (roughly 30% down) using keyboard
+    for _ in 0..30 {
+        harness
+            .send_key(
+                crossterm::event::KeyCode::Down,
+                crossterm::event::KeyModifiers::NONE,
+            )
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    let top_line_before = harness.top_line_number();
+    eprintln!("Top line before drag: {}", top_line_before);
+
+    // Get the scrollbar area info
+    let scrollbar_col = TERMINAL_WIDTH - 1;
+    let (content_first_row, _content_last_row) = harness.content_area_rows();
+
+    // Find where the thumb currently is by getting scroll state
+    // The thumb should be roughly 30% down since we're at line 30 of 100
+    // For a 20-row scrollbar, that's roughly row 6 from the top
+    let thumb_row = content_first_row as u16 + 6;
+
+    eprintln!(
+        "Starting drag at thumb position: col={}, row={}",
+        scrollbar_col, thumb_row
+    );
+
+    // Simulate mouse down on the thumb (start drag)
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let down_event = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: scrollbar_col,
+        row: thumb_row,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    };
+    harness.send_mouse(down_event).unwrap();
+    harness.render().unwrap();
+
+    let top_line_after_click = harness.top_line_number();
+    eprintln!(
+        "Top line after mouse down on thumb: {}",
+        top_line_after_click
+    );
+
+    // Just clicking on the thumb should NOT change scroll position
+    assert_eq!(
+        top_line_before, top_line_after_click,
+        "Clicking on scrollbar thumb should not change scroll position.\n\
+         Before click: line {}, After click: line {}",
+        top_line_before, top_line_after_click
+    );
+
+    // Drag horizontally only (move left, same row) - should NOT change scroll
+    let drag_event = MouseEvent {
+        kind: MouseEventKind::Drag(MouseButton::Left),
+        column: scrollbar_col - 5, // Move horizontally, NOT vertically
+        row: thumb_row,            // Same row!
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    };
+    harness.send_mouse(drag_event).unwrap();
+    harness.render().unwrap();
+
+    let top_line_after_horizontal_drag = harness.top_line_number();
+    eprintln!(
+        "Top line after horizontal drag: {}",
+        top_line_after_horizontal_drag
+    );
+
+    // Horizontal drag should NOT change scroll position at all
+    assert_eq!(
+        top_line_before, top_line_after_horizontal_drag,
+        "Dragging scrollbar thumb horizontally (same row) should not change scroll position.\n\
+         Before: line {}, After horizontal drag: line {}\n\
+         This indicates the thumb is jumping to center around mouse position instead of using relative movement.",
+        top_line_before,
+        top_line_after_horizontal_drag
+    );
+
+    // Release mouse
+    let up_event = MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        column: scrollbar_col - 5,
+        row: thumb_row,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    };
+    harness.send_mouse(up_event).unwrap();
+    harness.render().unwrap();
+
+    let top_line_after_release = harness.top_line_number();
+    eprintln!("Top line after mouse release: {}", top_line_after_release);
+
+    // After release, position should still be unchanged
+    assert_eq!(
+        top_line_before, top_line_after_release,
+        "After horizontal drag and release, scroll position should be unchanged.\n\
+         Before: line {}, After release: line {}",
+        top_line_before, top_line_after_release
+    );
+}

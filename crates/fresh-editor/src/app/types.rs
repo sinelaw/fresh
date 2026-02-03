@@ -626,6 +626,9 @@ pub(super) struct MouseState {
     pub drag_start_row: Option<u16>,
     /// Initial viewport top_byte when starting to drag the scrollbar thumb
     pub drag_start_top_byte: Option<usize>,
+    /// Initial viewport top_view_line_offset when starting to drag the scrollbar thumb
+    /// This is needed for proper visual row calculation when scrolled into a wrapped line
+    pub drag_start_view_line_offset: Option<usize>,
     /// Whether we're currently dragging a split separator
     /// Stores (split_id, direction) for the separator being dragged
     pub dragging_separator: Option<(SplitId, SplitDirection)>,

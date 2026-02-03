@@ -1264,6 +1264,8 @@ impl Editor {
                 // Record the current viewport position from SplitViewState
                 if let Some(view_state) = self.split_view_states.get(&split_id) {
                     self.mouse_state.drag_start_top_byte = Some(view_state.viewport.top_byte);
+                    self.mouse_state.drag_start_view_line_offset =
+                        Some(view_state.viewport.top_view_line_offset);
                 }
             } else {
                 // Click on track - jump to position
