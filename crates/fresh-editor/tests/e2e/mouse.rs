@@ -748,8 +748,10 @@ fn test_scrollbar_drag_to_absolute_bottom() {
     println!("  Top line number: {top_line_after_drag}");
     println!("  Total lines in file: 100");
     println!("  Viewport height: {viewport_height} rows");
-    let expected_max_top_line = 100 - viewport_height;
-    println!("  Expected max top line: {expected_max_top_line} (100 - {viewport_height})");
+    // Max top line = total_lines - viewport_height + 1
+    // With 100 lines and viewport 20: top_line 81 shows lines 81-100 (the last 20 lines)
+    let expected_max_top_line = 100 - viewport_height + 1;
+    println!("  Expected max top line: {expected_max_top_line} (100 - {viewport_height} + 1)");
 
     // INVARIANT: When scrolled to EOF, thumb bottom should be at scrollbar bottom
     println!("\nChecking invariant: thumb_end ({thumb_end}) should equal scrollbar_bottom_row ({scrollbar_bottom_row})");

@@ -425,3 +425,194 @@ fn test_mouse_wheel_with_multiline_file_one_long_line() {
         screen_before, screen_after
     );
 }
+
+/// Test scrollbar click with a multi-line file where one line is very long (like zz.txt).
+/// This specifically tests the case where:
+/// - Few logical lines (e.g., 6)
+/// - One line wraps to many visual rows
+/// - Total visual rows exceed viewport height
+/// - But logical line count < viewport height
+///
+/// Bug: Scrollbar click doesn't work because the scrollbar handler calculates
+/// max_scroll_line using logical lines, which results in 0 (no scrolling allowed).
+#[test]
+fn test_scrollbar_click_with_multiline_file_one_long_line() {
+    const TERMINAL_WIDTH: u16 = 80;
+    const TERMINAL_HEIGHT: u16 = 24;
+
+    let mut harness =
+        EditorTestHarness::with_config(TERMINAL_WIDTH, TERMINAL_HEIGHT, config_with_line_wrap())
+            .unwrap();
+
+    // Create a file structure similar to zz.txt:
+    // - Line 1: short
+    // - Line 2: short
+    // - Line 3: short
+    // - Line 4: VERY long (wraps to 30+ visual rows)
+    // - Line 5: short
+    // - Line 6: short
+    let short_line1 = "<p>Short line 1</p>";
+    let short_line2 = "</p>";
+    let short_line3 = "</div>";
+    // Long line similar to zz.txt - about 2000 chars that will wrap
+    let long_line = format!(
+        "<div class=\"content\">{}</div>",
+        "CONTENT_".repeat(250) // ~2000 chars
+    );
+    let short_line5 = "";
+    let short_line6 = "";
+
+    let content = format!(
+        "{}\n{}\n{}\n{}\n{}\n{}",
+        short_line1, short_line2, short_line3, long_line, short_line5, short_line6
+    );
+
+    // Type the content
+    for ch in content.chars() {
+        if ch == '\n' {
+            harness
+                .send_key(
+                    crossterm::event::KeyCode::Enter,
+                    crossterm::event::KeyModifiers::NONE,
+                )
+                .unwrap();
+        } else {
+            harness.type_text(&ch.to_string()).unwrap();
+        }
+    }
+
+    // Move cursor to the beginning
+    harness
+        .send_key(
+            crossterm::event::KeyCode::Home,
+            crossterm::event::KeyModifiers::CONTROL,
+        )
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_before = harness.screen_to_string();
+    eprintln!("Screen before scrollbar click:\n{}", screen_before);
+
+    // Verify we're at the top
+    assert!(
+        screen_before.contains("Short line 1"),
+        "Should see Short line 1 at top"
+    );
+
+    // Get scrollbar position
+    let scrollbar_col = TERMINAL_WIDTH - 1;
+    let (content_first_row, content_last_row) = harness.content_area_rows();
+
+    // Click in the lower half of the scrollbar to scroll down
+    let click_row = content_last_row as u16 - 3;
+    eprintln!(
+        "Clicking scrollbar at col={}, row={} (content area: {}-{})",
+        scrollbar_col, click_row, content_first_row, content_last_row
+    );
+
+    // Simulate clicking on the scrollbar track
+    harness.mouse_click(scrollbar_col, click_row).unwrap();
+    harness.render().unwrap();
+
+    let screen_after = harness.screen_to_string();
+    eprintln!("Screen after scrollbar click:\n{}", screen_after);
+
+    // The content should have changed - we should see content from later in the file
+    let content_changed = screen_before != screen_after;
+
+    // Should see the long line content (CONTENT_) somewhere, possibly scrolled
+    let sees_content_line = screen_after.contains("CONTENT_");
+
+    assert!(
+        content_changed,
+        "Scrollbar click should change viewport in multi-line file with wrapped content.\n\
+         Clicking at row {} should scroll down, but viewport didn't change.\n\
+         This indicates scrollbar click is broken for files with few logical lines but many visual rows.\n\
+         Before:\n{}\n\nAfter:\n{}",
+        click_row, screen_before, screen_after
+    );
+}
+
+/// Test scrollbar drag with a multi-line file where one line is very long.
+#[test]
+fn test_scrollbar_drag_with_multiline_file_one_long_line() {
+    const TERMINAL_WIDTH: u16 = 80;
+    const TERMINAL_HEIGHT: u16 = 24;
+
+    let mut harness =
+        EditorTestHarness::with_config(TERMINAL_WIDTH, TERMINAL_HEIGHT, config_with_line_wrap())
+            .unwrap();
+
+    // Same file structure as above
+    let short_line1 = "<p>Short line 1</p>";
+    let short_line2 = "</p>";
+    let short_line3 = "</div>";
+    let long_line = format!("<div class=\"content\">{}</div>", "CONTENT_".repeat(250));
+    let short_line5 = "";
+    let short_line6 = "";
+
+    let content = format!(
+        "{}\n{}\n{}\n{}\n{}\n{}",
+        short_line1, short_line2, short_line3, long_line, short_line5, short_line6
+    );
+
+    for ch in content.chars() {
+        if ch == '\n' {
+            harness
+                .send_key(
+                    crossterm::event::KeyCode::Enter,
+                    crossterm::event::KeyModifiers::NONE,
+                )
+                .unwrap();
+        } else {
+            harness.type_text(&ch.to_string()).unwrap();
+        }
+    }
+
+    harness
+        .send_key(
+            crossterm::event::KeyCode::Home,
+            crossterm::event::KeyModifiers::CONTROL,
+        )
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_before = harness.screen_to_string();
+    eprintln!("Screen before scrollbar drag:\n{}", screen_before);
+
+    assert!(
+        screen_before.contains("Short line 1"),
+        "Should see Short line 1 at top"
+    );
+
+    // Get scrollbar position
+    let scrollbar_col = TERMINAL_WIDTH - 1;
+    let (content_first_row, content_last_row) = harness.content_area_rows();
+
+    // Drag scrollbar from top to bottom
+    let drag_start_row = content_first_row as u16 + 2;
+    let drag_end_row = content_last_row as u16 - 2;
+
+    eprintln!(
+        "Dragging scrollbar from row {} to row {}",
+        drag_start_row, drag_end_row
+    );
+
+    harness
+        .mouse_drag(scrollbar_col, drag_start_row, scrollbar_col, drag_end_row)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_after = harness.screen_to_string();
+    eprintln!("Screen after scrollbar drag:\n{}", screen_after);
+
+    let content_changed = screen_before != screen_after;
+
+    assert!(
+        content_changed,
+        "Scrollbar drag should change viewport in multi-line file with wrapped content.\n\
+         Dragging from row {} to {} should scroll, but viewport didn't change.\n\
+         Before:\n{}\n\nAfter:\n{}",
+        drag_start_row, drag_end_row, screen_before, screen_after
+    );
+}
