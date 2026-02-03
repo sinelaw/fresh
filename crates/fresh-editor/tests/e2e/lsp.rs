@@ -253,6 +253,64 @@ fn test_lsp_completion_popup() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Test LSP inline completion renders ghost text
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_lsp_inline_completion_ghost_text() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "")?;
+
+    let mut config = fresh::config::Config::default();
+    config.editor.enable_ghost_text = true;
+    config.editor.completion_popup_auto_show = true;
+    config.editor.quick_suggestions = true;
+    config.editor.quick_suggestions_delay_ms = 0;
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            ..Default::default()
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    harness.type_text("hel")?;
+    harness.wait_until(|h| {
+        let screen = h.screen_to_string();
+        screen.contains("hel") && screen.contains("lo_world")
+    })?;
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+    harness.wait_until(|h| {
+        let screen = h.screen_to_string();
+        screen.contains("hel") && !screen.contains("lo_world")
+    })?;
+
+    Ok(())
+}
+
 /// Test LSP diagnostics summary in status bar
 #[test]
 fn test_lsp_diagnostics_status_bar() -> anyhow::Result<()> {

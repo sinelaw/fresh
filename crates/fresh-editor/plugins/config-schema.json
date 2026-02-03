@@ -116,6 +116,7 @@
         "completion_popup_auto_show": false,
         "quick_suggestions": true,
         "quick_suggestions_delay_ms": 150,
+        "enable_ghost_text": true,
         "suggest_on_trigger_characters": true,
         "enable_inlay_hints": true,
         "enable_semantic_tokens_full": false,
@@ -794,6 +795,12 @@
           "minimum": 0,
           "default": 150,
           "x-section": "Completion"
+        },
+        "enable_ghost_text": {
+          "description": "Show inline ghost text for the currently selected completion item.\nThis renders a dimmed suggestion directly in the buffer while the\ncompletion popup is open.\nDefault: true",
+          "type": "boolean",
+          "x-section": "Completion",
+          "default": true
         },
         "suggest_on_trigger_characters": {
           "description": "Whether trigger characters (like `.`, `::`, `->`) immediately show completions.\nWhen true, typing a trigger character bypasses quick_suggestions_delay_ms.\nDefault: true",
