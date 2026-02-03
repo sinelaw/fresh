@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fresh-editor.dev/schemas/tour-manifest-v1.json",
+  "title": "Fresh Code Tour Manifest",
+  "description": "Schema for .fresh-tour.json files that define guided code walkthroughs",
+  "type": "object",
+  "required": ["title", "description", "schema_version", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Reference to this JSON schema for editor validation"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "Display title for the tour"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "Brief description of what this tour covers"
+    },
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"],
+      "description": "Schema version for forward compatibility"
+    },
+    "commit_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{7,40}$",
+      "description": "Git commit hash (short or full) this tour was created for"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Ordered list of tour steps",
+      "items": {
+        "$ref": "#/definitions/TourStep"
+      }
+    }
+  },
+  "definitions": {
+    "TourStep": {
+      "type": "object",
+      "required": ["step_id", "title", "file_path", "lines", "explanation"],
+      "additionalProperties": false,
+      "properties": {
+        "step_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Unique identifier for this step (1-indexed)"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Short title displayed in the tour dock"
+        },
+        "file_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to the file, relative to project root"
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Line range [start, end] (1-indexed, inclusive)"
+        },
+        "explanation": {
+          "type": "string",
+          "description": "Markdown-formatted explanation shown in the tour dock"
+        },
+        "overlay_config": {
+          "$ref": "#/definitions/OverlayConfig"
+        }
+      }
+    },
+    "OverlayConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["block", "line"],
+          "default": "block",
+          "description": "block = highlight entire range, line = highlight each line separately"
+        },
+        "focus_mode": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, dims lines outside the active range"
+        }
+      }
+    }
+  }
+}

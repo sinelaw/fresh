@@ -1,0 +1,36 @@
+{
+  "$schema": "./crates/fresh-editor/plugins/schemas/tour.schema.json",
+  "title": "Fresh Plugin System Tour",
+  "description": "Learn how the Fresh plugin system works - from API definition to JavaScript execution",
+  "schema_version": "1.0",
+  "steps": [
+    {
+      "step_id": 1,
+      "title": "Plugin API Overview",
+      "file_path": "crates/fresh-plugin-runtime/src/backend/quickjs_backend.rs",
+      "lines": [1, 88],
+      "explanation": "## QuickJS Backend Overview\n\nThis is the main entry point for the Fresh plugin system. It uses QuickJS, a lightweight JavaScript engine, to execute TypeScript plugins.\n\n**Key points:**\n- Plugins are written in TypeScript and transpiled to JavaScript\n- The `JsEditorApi` struct exposes editor functionality to plugins\n- All plugin methods are defined here with the `#[plugin_api]` attribute"
+    },
+    {
+      "step_id": 2,
+      "title": "Plugin Command Types",
+      "file_path": "crates/fresh-core/src/api.rs",
+      "lines": [732, 780],
+      "explanation": "## PluginCommand Enum\n\nPlugins communicate with the editor through typed commands. Each variant of this enum represents an action a plugin can request.\n\n**Common commands:**\n- `InsertText` - Insert text at a position\n- `AddOverlay` - Add visual decorations\n- `SetStatus` - Update the status bar\n- `RegisterCommand` - Add to command palette"
+    },
+    {
+      "step_id": 3,
+      "title": "TypeScript API Definition",
+      "file_path": "crates/fresh-editor/plugins/lib/fresh.d.ts",
+      "lines": [646, 700],
+      "explanation": "## EditorAPI Interface\n\nThis TypeScript interface defines all methods available to plugins. It is auto-generated from the Rust implementation.\n\n**Regenerate after changes:**\n```bash\ncargo test -p fresh-plugin-runtime write_fresh_dts_file -- --ignored\n```"
+    },
+    {
+      "step_id": 4,
+      "title": "Example Plugin: Git Find File",
+      "file_path": "crates/fresh-editor/plugins/git_find_file.ts",
+      "lines": [1, 76],
+      "explanation": "## Simple Plugin Example\n\nThis plugin demonstrates the core patterns:\n\n1. Get editor API with `getEditor()`\n2. Define handler functions on `globalThis`\n3. Register commands with `editor.registerCommand()`\n4. Use async operations like `spawnProcess()`\n\nPlugins can interact with git, the filesystem, and all editor features."
+    }
+  ]
+}

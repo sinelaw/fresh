@@ -736,6 +736,22 @@ interface EditorAPI {
 	*/
 	getLineStartPosition(line: number): Promise<number | null>;
 	/**
+	* Get the byte offset of the end of a line (0-indexed line number)
+	* Returns the position after the last character of the line (before newline)
+	* Returns null if the line number is out of range
+	*/
+	getLineEndPosition(line: number): Promise<number | null>;
+	/**
+	* Get the total number of lines in the active buffer
+	* Returns null if buffer not found
+	*/
+	getBufferLineCount(): Promise<number | null>;
+	/**
+	* Scroll a split to center a specific line in the viewport
+	* Line is 0-indexed (0 = first line)
+	*/
+	scrollToLineCenter(splitId: number, bufferId: number, line: number): boolean;
+	/**
 	* Find buffer by file path, returns buffer ID or 0 if not found
 	*/
 	findBufferByPath(path: string): number;
@@ -957,10 +973,13 @@ interface EditorAPI {
 	/**
 	* Submit a view transform for a buffer/split
 	* 
-	* Note: tokens should be ViewTokenWire[], layoutHints should be LayoutHints
-	* These use manual parsing due to complex enum handling
+	* Accepts tokens in the simple format:
+	* {kind: "text"|"newline"|"space"|"break", text: "...", sourceOffset: N, style?: {...}}
+	* 
+	* Also accepts the TypeScript-defined format for backwards compatibility:
+	* {kind: {Text: "..."} | "Newline" | "Space" | "Break", source_offset: N, style?: {...}}
 	*/
-	submitViewTransform(bufferId: number, splitId: number | null, start: number, end: number, tokens: Record<string, unknown>[], LayoutHints?: Record<string, unknown>): boolean;
+	submitViewTransform(bufferId: number, splitId: number | null, start: number, end: number, tokens: Record<string, unknown>[], layoutHints?: Record<string, unknown>): boolean;
 	/**
 	* Clear view transform for a buffer/split
 	*/
