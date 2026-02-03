@@ -33,7 +33,7 @@ anyhow = { version = "1.0.100", default-features = false }
 tokio = { version = "1.49", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"] }
 once_cell = "1.20"
 tracing = "0.1"
-rust-i18n = "3"
+rust-i18n = "3.1.5"
 schemars = { version = "1.2", features = ["preserve_order"] }
 rquickjs = { version = "0.11", features = ["bindgen", "futures", "macro"] }
 rquickjs-serde = "0.4"

@@ -1489,7 +1489,24 @@ MIT
 }
 
 fn main() -> AnyhowResult<()> {
-    // Parse command-line arguments
+    // On Windows, run on a thread with larger stack size to handle rust-i18n's generated code
+    // (1100+ translation keys cause stack overflow with default 1-2 MB stack on Windows)
+    #[cfg(target_os = "windows")]
+    {
+        const STACK_SIZE: usize = 8 * 1024 * 1024; // 8 MB
+        std::thread::Builder::new()
+            .stack_size(STACK_SIZE)
+            .spawn(real_main)
+            .expect("Failed to spawn main thread")
+            .join()
+            .expect("Main thread panicked")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    real_main()
+}
+
+fn real_main() -> AnyhowResult<()> {
     let args = Args::parse();
 
     // Handle --show-paths early (no terminal setup needed)

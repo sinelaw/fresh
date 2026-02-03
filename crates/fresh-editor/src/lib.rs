@@ -1,7 +1,7 @@
 // Editor library - exposes all core modules for testing
 
 // Initialize i18n with translations from locales/ directory
-rust_i18n::i18n!("locales", fallback = "en");
+rust_i18n::i18n!("locales", fallback = "en", minify_key = true);
 
 pub mod i18n;
 
