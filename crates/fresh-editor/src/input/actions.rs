@@ -193,7 +193,7 @@ fn move_lines(state: &mut EditorState, events: &mut Vec<Event>, direction: LineM
                 .chain(range.start..=range.end)
                 .collect(),
         };
-        let region_includes_last = region_end_line + 1 == total_lines;
+        let region_includes_last = region_end_line == total_lines.saturating_sub(1);
         let line_ending = state.buffer.line_ending().as_str();
         let line_ending_len = line_ending.len();
 
