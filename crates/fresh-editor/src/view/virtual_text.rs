@@ -133,6 +133,9 @@ pub struct VirtualText {
     pub pad_to_column: Option<u32>,
     /// Where to render relative to the marker position
     pub position: VirtualTextPosition,
+    /// Whether to pad with spaces when rendering inline text
+    /// (default: true for inlay hints and other annotations)
+    pub pad_with_space: bool,
     /// Priority for ordering multiple items at same position (higher = later)
     pub priority: i32,
     /// Optional string identifier for this virtual text (for plugin use)
@@ -268,6 +271,7 @@ impl VirtualTextManager {
                 bg_theme_key: None,
                 pad_to_column: None,
                 position: vtext_position,
+                pad_with_space: true,
                 priority,
                 string_id: None,
                 namespace: None,
@@ -330,6 +334,7 @@ impl VirtualTextManager {
                 bg_theme_key,
                 pad_to_column: None,
                 position: vtext_position,
+                pad_with_space: true,
                 priority,
                 string_id: None,
                 namespace: None,
@@ -373,6 +378,7 @@ impl VirtualTextManager {
                 bg_theme_key: None,
                 pad_to_column: None,
                 position: vtext_position,
+                pad_with_space: true,
                 priority,
                 string_id: Some(string_id),
                 namespace: None,
@@ -401,13 +407,14 @@ impl VirtualTextManager {
         priority: i32,
         string_id: String,
         pad_to_column: Option<u32>,
+        gravity: MarkerGravity,
     ) -> VirtualTextId {
         debug_assert!(
             vtext_position.is_inline(),
             "add_with_id_and_theme_keys requires BeforeChar or AfterChar"
         );
 
-        let marker_id = marker_list.create(position);
+        let marker_id = gravity.create(marker_list, position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -416,13 +423,14 @@ impl VirtualTextManager {
             id,
             VirtualText {
                 marker_id,
-                gravity: MarkerGravity::Right,
+                gravity,
                 text,
                 style,
                 fg_theme_key,
                 bg_theme_key,
                 pad_to_column,
                 position: vtext_position,
+                pad_with_space: true,
                 priority,
                 string_id: Some(string_id),
                 namespace: None,
@@ -431,6 +439,7 @@ impl VirtualTextManager {
                 text_overlays: Vec::new(),
             },
         );
+        self.bump_version();
 
         id
     }
@@ -518,12 +527,59 @@ impl VirtualTextManager {
                 bg_theme_key,
                 pad_to_column: None,
                 position: placement,
+                pad_with_space: true,
                 priority,
                 string_id: None,
                 namespace: Some(namespace),
                 gutter_glyph,
                 gutter_color,
                 text_overlays,
+            },
+        );
+        self.bump_version();
+
+        id
+    }
+
+    /// Add a virtual text entry with a string identifier and custom padding behavior
+    ///
+    /// This is useful for inline features like ghost text that should not add
+    /// extra spacing around the inserted text.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_with_id_and_padding(
+        &mut self,
+        marker_list: &mut MarkerList,
+        position: usize,
+        text: String,
+        style: Style,
+        vtext_position: VirtualTextPosition,
+        priority: i32,
+        string_id: String,
+        pad_with_space: bool,
+    ) -> VirtualTextId {
+        let marker_id = marker_list.create(position);
+
+        let id = VirtualTextId(self.next_id);
+        self.next_id += 1;
+
+        self.texts.insert(
+            id,
+            VirtualText {
+                marker_id,
+                gravity: MarkerGravity::Right,
+                text,
+                style,
+                fg_theme_key: None,
+                bg_theme_key: None,
+                position: vtext_position,
+                pad_with_space,
+                pad_to_column: None,
+                priority,
+                string_id: Some(string_id),
+                namespace: None,
+                gutter_glyph: None,
+                gutter_color: None,
+                text_overlays: Vec::new(),
             },
         );
         self.bump_version();
