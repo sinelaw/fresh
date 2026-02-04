@@ -39,7 +39,7 @@ rquickjs = { version = "0.11", features = ["bindgen", "futures", "macro"] }
 rquickjs-serde = "0.4"
 oxc_allocator = "0.111.0"
 oxc_ast = "0.111.0"
-oxc_parser = "0.111.0"
+oxc_parser = "0.112.0"
 oxc_transformer = "0.111.0"
 oxc_codegen = "0.111.0"
 oxc_span = "0.111.0"
