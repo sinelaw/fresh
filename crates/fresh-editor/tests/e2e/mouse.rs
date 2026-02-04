@@ -1971,3 +1971,92 @@ fn test_blinking_bar_selection_first_char_color() {
         second_char_cell.bg
     );
 }
+
+/// Test that hover popup position accounts for file explorer width.
+///
+/// Bug #898: When the file explorer is open and a hover popup is shown,
+/// the popup appears on the file explorer area instead of being positioned
+/// under the cursor where the user is hovering.
+///
+/// This test verifies by examining the rendered output that the popup
+/// appears at the correct screen position (in the editor area, not the
+/// file explorer area).
+#[test]
+fn test_hover_popup_position_with_file_explorer() {
+    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+    use std::time::Duration;
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Load some content
+    let content = "fn main() {\n    let x = 42;\n}\n";
+    let _fixture = harness.load_buffer_from_text(content).unwrap();
+    harness.render().unwrap();
+
+    // Toggle file explorer ON and wait for it to load
+    harness.editor_mut().toggle_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+
+    assert!(
+        harness.editor().file_explorer_visible(),
+        "File explorer should be visible"
+    );
+
+    // Verify file explorer is actually visible in the rendered output
+    harness.render().unwrap();
+    let screen_before_popup = harness.screen_to_string();
+    println!("Screen before popup:\n{}", screen_before_popup);
+
+    // File explorer takes 30% of 80 columns = 24 columns (0-23)
+    // Editor content starts at column 24
+    let explorer_width = (80.0 * 0.3) as u16; // 24
+
+    // Show a popup positioned BelowCursor - this simulates a hover popup
+    // The popup content has a unique marker we can find in the rendered output
+    let popup_marker = "HOVER_POPUP_MARKER_898";
+    harness.apply_event(Event::ShowPopup {
+        popup: PopupData {
+            title: None,
+            description: None,
+            transient: false,
+            content: PopupContentData::Text(vec![popup_marker.to_string()]),
+            position: PopupPositionData::BelowCursor,
+            width: 30,
+            max_height: 5,
+            bordered: true,
+        },
+    });
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Screen with hover popup:\n{}", screen);
+
+    // Find where the popup appears on screen by looking for our marker
+    let mut popup_start_col: Option<usize> = None;
+
+    for (row_idx, line) in screen.lines().enumerate() {
+        if let Some(col) = line.find(popup_marker) {
+            println!(
+                "Found popup marker at row {}, col {} (explorer ends at col {})",
+                row_idx, col, explorer_width
+            );
+            popup_start_col = Some(col);
+            break;
+        }
+    }
+
+    let popup_col = popup_start_col.expect("Popup marker should be visible on screen");
+
+    // The popup should appear in the editor area (col >= explorer_width),
+    // not in the file explorer area (col < explorer_width)
+    assert!(
+        popup_col >= explorer_width as usize,
+        "BUG #898: Hover popup appears at column {} which is in the file explorer area (cols 0-{}). \
+         The popup should be positioned under the cursor in the editor area (cols {}+). \
+         Screen:\n{}",
+        popup_col,
+        explorer_width - 1,
+        explorer_width,
+        screen
+    );
+}

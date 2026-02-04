@@ -706,6 +706,13 @@ impl Editor {
                 .get(&active_split)
                 .map(|vs| vs.viewport.clone());
 
+            // Get file explorer width offset for popup positioning (Bug #898)
+            let file_explorer_offset = self
+                .cached_layout
+                .file_explorer_area
+                .map(|area| area.width)
+                .unwrap_or(0);
+
             let state = self.active_state_mut();
             if state.popups.is_visible() {
                 // Get the primary cursor position for popup positioning
@@ -716,7 +723,11 @@ impl Editor {
                     .unwrap_or((0, 0));
 
                 // Adjust cursor position to account for tab bar (1 line offset)
-                let cursor_screen_pos = (cursor_screen_pos.0, cursor_screen_pos.1 + 1);
+                // and file explorer width (Bug #898)
+                let cursor_screen_pos = (
+                    cursor_screen_pos.0 + file_explorer_offset,
+                    cursor_screen_pos.1 + 1,
+                );
 
                 // Collect popup data
                 state
