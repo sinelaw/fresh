@@ -16,7 +16,7 @@ use lsp_types::TextDocumentContentChangeEvent;
 use rust_i18n::t;
 
 use crate::model::event::{BufferId, EventLog};
-use crate::services::lsp::manager::{detect_language, LspSpawnResult};
+use crate::services::lsp::manager::LspSpawnResult;
 use crate::state::EditorState;
 
 use super::{BufferMetadata, Editor};
@@ -362,9 +362,9 @@ impl Editor {
         buffer_id: BufferId,
         metadata: &mut BufferMetadata,
     ) {
-        // Early return checks that don't need mutable lsp borrow
-        let Some(language) = detect_language(path, &self.config.languages) else {
-            tracing::debug!("No language detected for file: {}", path.display());
+        // Get language from buffer state
+        let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
+            tracing::debug!("No buffer state for file: {}", path.display());
             return;
         };
 
@@ -524,16 +524,18 @@ impl Editor {
         let Ok(lsp_uri) = uri.as_str().parse::<lsp_types::Uri>() else {
             return;
         };
-        let Some(language) = detect_language(path, &self.config.languages) else {
-            return;
-        };
 
-        // Find the buffer ID for this path
-        let Some((buffer_id, content)) = self
+        // Find the buffer ID, content, and language for this path
+        let Some((buffer_id, content, language)) = self
             .buffers
             .iter()
             .find(|(_, s)| s.buffer.file_path() == Some(path))
-            .and_then(|(id, state)| state.buffer.to_string().map(|t| (*id, t)))
+            .and_then(|(id, state)| {
+                state
+                    .buffer
+                    .to_string()
+                    .map(|t| (*id, t, state.language.clone()))
+            })
         else {
             return;
         };

@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 use crate::app::warning_domains::WarningDomain;
 use crate::model::event::{BufferId, Event, SplitId};
-use crate::services::lsp::manager::detect_language;
 use crate::state::EditorState;
 use crate::view::prompt::PromptType;
 use crate::view::split::SplitViewState;
@@ -211,15 +210,12 @@ impl Editor {
 
         // Set show_whitespace_tabs, use_tabs, and tab_size based on language config
         // with fallback to global editor config for tab_size
-        if let Some(language) = detect_language(path, &self.config.languages) {
-            if let Some(lang_config) = self.config.languages.get(&language) {
-                state.show_whitespace_tabs = lang_config.show_whitespace_tabs;
-                state.use_tabs = lang_config.use_tabs;
-                // Use language-specific tab_size if set, otherwise fall back to global
-                state.tab_size = lang_config.tab_size.unwrap_or(self.config.editor.tab_size);
-            } else {
-                state.tab_size = self.config.editor.tab_size;
-            }
+        // Use the buffer's stored language (already set by from_file_with_languages)
+        if let Some(lang_config) = self.config.languages.get(&state.language) {
+            state.show_whitespace_tabs = lang_config.show_whitespace_tabs;
+            state.use_tabs = lang_config.use_tabs;
+            // Use language-specific tab_size if set, otherwise fall back to global
+            state.tab_size = lang_config.tab_size.unwrap_or(self.config.editor.tab_size);
         } else {
             state.tab_size = self.config.editor.tab_size;
         }
@@ -1243,10 +1239,10 @@ impl Editor {
             .language
             .clone()
             .unwrap_or_else(|| {
-                self.buffer_metadata
+                // Use buffer's stored language
+                self.buffers
                     .get(&self.active_buffer())
-                    .and_then(|m| m.file_path())
-                    .and_then(|path| detect_language(path, &self.config.languages))
+                    .map(|s| s.language.clone())
                     .unwrap_or_else(|| "unknown".to_string())
             });
 

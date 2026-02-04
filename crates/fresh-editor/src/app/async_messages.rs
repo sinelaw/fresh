@@ -12,7 +12,6 @@ use crate::model::event::BufferId;
 use crate::services::async_bridge::{
     LspMessageType, LspProgressValue, LspSemanticTokensResponse, LspServerStatus,
 };
-use crate::services::lsp::manager::detect_language;
 use crate::state::{SemanticTokenSpan, SemanticTokenStore};
 use crate::view::file_tree::{FileTreeView, NodeId};
 use lsp_types::{
@@ -224,13 +223,8 @@ impl Editor {
             return;
         };
 
-        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
-            return;
-        };
-        let Some(path) = metadata.file_path() else {
-            return;
-        };
-        let Some(language) = detect_language(path, &self.config.languages) else {
+        // Get language from buffer's stored state
+        let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
             return;
         };
 
@@ -1070,20 +1064,18 @@ impl Editor {
 
     /// Re-send didOpen notifications for all buffers of a given language
     pub(super) fn resend_did_open_for_language(&mut self, language: &str) {
-        // Find all open buffers for this language
+        // Find all open buffers for this language using stored buffer language
         let buffers_for_language: Vec<_> = self
-            .buffer_metadata
+            .buffers
             .iter()
-            .filter_map(|(buf_id, meta)| {
-                meta.file_path().and_then(|path| {
-                    if crate::services::lsp::manager::detect_language(path, &self.config.languages)
-                        == Some(language.to_string())
-                    {
-                        Some((*buf_id, path.clone()))
-                    } else {
-                        None
-                    }
-                })
+            .filter_map(|(buf_id, state)| {
+                if state.language == language {
+                    self.buffer_metadata
+                        .get(buf_id)
+                        .and_then(|meta| meta.file_path().map(|p| (*buf_id, p.clone())))
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -1099,15 +1091,11 @@ impl Editor {
                     .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok());
 
                 if let Some(uri) = uri {
-                    if let Some(lang_id) = crate::services::lsp::manager::detect_language(
-                        &path,
-                        &self.config.languages,
-                    ) {
-                        if let Some(lsp) = self.lsp.as_mut() {
-                            // LSP should already be running since we just restarted it
-                            if let Some(handle) = lsp.get_handle_mut(&lang_id) {
-                                let _ = handle.did_open(uri, content, lang_id);
-                            }
+                    let lang_id = state.language.clone();
+                    if let Some(lsp) = self.lsp.as_mut() {
+                        // LSP should already be running since we just restarted it
+                        if let Some(handle) = lsp.get_handle_mut(&lang_id) {
+                            let _ = handle.did_open(uri, content, lang_id);
                         }
                     }
                 }
@@ -1117,17 +1105,16 @@ impl Editor {
 
     /// Request semantic tokens for all open buffers matching a language.
     pub(super) fn request_semantic_tokens_for_language(&mut self, language: &str) {
+        // Use stored buffer language instead of detecting from path
         let buffer_ids: Vec<_> = self
-            .buffer_metadata
+            .buffers
             .iter()
-            .filter_map(|(buffer_id, meta)| {
-                meta.file_path().and_then(|path| {
-                    if detect_language(path, &self.config.languages).as_deref() == Some(language) {
-                        Some(*buffer_id)
-                    } else {
-                        None
-                    }
-                })
+            .filter_map(|(buffer_id, state)| {
+                if state.language == language {
+                    Some(*buffer_id)
+                } else {
+                    None
+                }
             })
             .collect();
 

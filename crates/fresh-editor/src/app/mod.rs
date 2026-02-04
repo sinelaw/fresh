@@ -94,7 +94,7 @@ use crate::model::event::{Event, EventLog, SplitDirection, SplitId};
 use crate::model::filesystem::FileSystem;
 use crate::services::async_bridge::{AsyncBridge, AsyncMessage};
 use crate::services::fs::FsManager;
-use crate::services::lsp::manager::{detect_language, LspManager};
+use crate::services::lsp::manager::LspManager;
 use crate::services::plugins::PluginManager;
 use crate::services::recovery::{RecoveryConfig, RecoveryService};
 use crate::services::time_source::{RealTimeSource, SharedTimeSource};

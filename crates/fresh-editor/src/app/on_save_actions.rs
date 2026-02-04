@@ -11,7 +11,6 @@ use std::time::Duration;
 use super::Editor;
 use crate::config::{FormatterConfig, OnSaveAction};
 use crate::model::event::Event;
-use crate::services::lsp::manager::detect_language;
 use rust_i18n::t;
 
 /// Result of running a formatter or on-save action
@@ -58,11 +57,8 @@ impl Editor {
             self.active_event_log_mut().mark_saved();
         }
 
-        // Detect language for this file
-        let language = match detect_language(&path, &self.config.languages) {
-            Some(lang) => lang,
-            None => return Ok(ran_any_action),
-        };
+        // Get language from buffer's stored state
+        let language = self.active_state().language.clone();
 
         let lang_config = match self.config.languages.get(&language) {
             Some(lc) => lc.clone(),
@@ -132,11 +128,8 @@ impl Editor {
             }
         };
 
-        // Detect language for this file
-        let language = match detect_language(&path, &self.config.languages) {
-            Some(lang) => lang,
-            None => return Err("No language detected for this file".to_string()),
-        };
+        // Get language from buffer's stored state
+        let language = self.active_state().language.clone();
 
         // Get formatter for this language
         let formatter = self

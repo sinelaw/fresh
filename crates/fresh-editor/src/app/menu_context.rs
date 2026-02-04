@@ -6,7 +6,6 @@
 //! whether that feature is available.
 
 use super::Editor;
-use crate::services::lsp::manager::detect_language;
 use crate::view::ui::context_keys;
 
 impl Editor {
@@ -100,35 +99,41 @@ impl Editor {
 
     /// Check if an LSP server is available and ready for the current buffer's language.
     fn is_lsp_available(&self) -> bool {
-        self.buffer_metadata
-            .get(&self.active_buffer())
-            .and_then(|metadata| {
-                if !metadata.lsp_enabled {
-                    return None;
-                }
-                metadata.file_path().and_then(|path| {
-                    detect_language(path, &self.config.languages).and_then(|language| {
-                        self.lsp.as_ref().map(|lsp| lsp.is_server_ready(&language))
-                    })
-                })
+        let buffer_id = self.active_buffer();
+
+        // Check if LSP is enabled for this buffer
+        if let Some(metadata) = self.buffer_metadata.get(&buffer_id) {
+            if !metadata.lsp_enabled {
+                return false;
+            }
+        } else {
+            return false;
+        }
+
+        // Use buffer's stored language
+        self.buffers
+            .get(&buffer_id)
+            .and_then(|state| {
+                self.lsp
+                    .as_ref()
+                    .map(|lsp| lsp.is_server_ready(&state.language))
             })
             .unwrap_or(false)
     }
 
     /// Check if a formatter is configured for the current buffer's language.
     fn is_formatter_available(&self) -> bool {
-        self.buffer_metadata
-            .get(&self.active_buffer())
-            .and_then(|metadata| {
-                metadata.file_path().and_then(|path| {
-                    detect_language(path, &self.config.languages).and_then(|language| {
-                        self.config
-                            .languages
-                            .get(&language)
-                            .and_then(|lc| lc.formatter.as_ref())
-                            .map(|_| true)
-                    })
-                })
+        let buffer_id = self.active_buffer();
+
+        // Use buffer's stored language
+        self.buffers
+            .get(&buffer_id)
+            .and_then(|state| {
+                self.config
+                    .languages
+                    .get(&state.language)
+                    .and_then(|lc| lc.formatter.as_ref())
+                    .map(|_| true)
             })
             .unwrap_or(false)
     }

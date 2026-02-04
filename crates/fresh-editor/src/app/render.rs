@@ -1565,22 +1565,14 @@ impl Editor {
             }
         };
 
-        // Get the file path and verify language matches
-        let path = match metadata.file_path() {
-            Some(p) => p,
-            None => {
-                tracing::debug!("notify_lsp_current_file_opened: no file path for buffer");
-                return;
-            }
-        };
+        // Get the buffer text and line count before borrowing lsp
+        let active_buffer = self.active_buffer();
 
-        let file_language = match detect_language(path, &self.config.languages) {
+        // Use buffer's stored language to verify it matches the LSP server
+        let file_language = match self.buffers.get(&active_buffer).map(|s| s.language.clone()) {
             Some(l) => l,
             None => {
-                tracing::debug!(
-                    "notify_lsp_current_file_opened: no language detected for {:?}",
-                    path
-                );
+                tracing::debug!("notify_lsp_current_file_opened: no buffer state");
                 return;
             }
         };
@@ -1594,9 +1586,6 @@ impl Editor {
             );
             return;
         }
-
-        // Get the buffer text and line count before borrowing lsp
-        let active_buffer = self.active_buffer();
         let (text, line_count) = if let Some(state) = self.buffers.get(&active_buffer) {
             let text = match state.buffer.to_string() {
                 Some(t) => t,
@@ -1867,18 +1856,15 @@ impl Editor {
         };
 
         // Get the file path for language detection
-        let path = match metadata.file_path() {
-            Some(p) => p,
-            None => {
-                tracing::debug!("notify_lsp_save: no file path for buffer");
-                return;
-            }
-        };
-
-        let language = match detect_language(path, &self.config.languages) {
+        // Use buffer's stored language
+        let language = match self
+            .buffers
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone())
+        {
             Some(l) => l,
             None => {
-                tracing::debug!("notify_lsp_save: no language detected for {:?}", path);
+                tracing::debug!("notify_lsp_save: no buffer state");
                 return;
             }
         };

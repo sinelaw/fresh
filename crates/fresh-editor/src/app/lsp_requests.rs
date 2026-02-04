@@ -19,7 +19,6 @@ use lsp_types::TextDocumentContentChangeEvent;
 
 use crate::model::event::{BufferId, Event};
 use crate::primitives::word_navigation::{find_word_end, find_word_start};
-use crate::services::lsp::manager::detect_language;
 use crate::view::prompt::{Prompt, PromptType};
 
 use super::{uri_to_path, Editor, SemanticTokenRangeRequest};
@@ -304,21 +303,19 @@ impl Editor {
 
     /// Send a cancel request to the LSP server for a specific request ID
     fn send_lsp_cancel_request(&mut self, request_id: u64) {
-        // Get the current file path to determine language
-        let metadata = self.buffer_metadata.get(&self.active_buffer());
-        let file_path = metadata.and_then(|meta| meta.file_path());
+        // Get language from buffer state
+        let buffer_id = self.active_buffer();
+        let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
+            return;
+        };
 
-        if let Some(path) = file_path {
-            if let Some(language) = detect_language(path, &self.config.languages) {
-                if let Some(lsp) = self.lsp.as_mut() {
-                    // Only send cancel if LSP is already running (no need to spawn just to cancel)
-                    if let Some(handle) = lsp.get_handle_mut(&language) {
-                        if let Err(e) = handle.cancel_request(request_id) {
-                            tracing::warn!("Failed to send LSP cancel request: {}", e);
-                        } else {
-                            tracing::debug!("Sent $/cancelRequest for request_id={}", request_id);
-                        }
-                    }
+        if let Some(lsp) = self.lsp.as_mut() {
+            // Only send cancel if LSP is already running (no need to spawn just to cancel)
+            if let Some(handle) = lsp.get_handle_mut(&language) {
+                if let Err(e) = handle.cancel_request(request_id) {
+                    tracing::warn!("Failed to send LSP cancel request: {}", e);
+                } else {
+                    tracing::debug!("Sent $/cancelRequest for request_id={}", request_id);
                 }
             }
         }
@@ -341,16 +338,15 @@ impl Editor {
     {
         use crate::services::lsp::manager::LspSpawnResult;
 
-        // Get metadata (immutable borrow first to extract what we need)
-        let (uri, _path, language) = {
+        // Get metadata and language from buffer state
+        let (uri, language) = {
             let metadata = self.buffer_metadata.get(&buffer_id)?;
             if !metadata.lsp_enabled {
                 return None;
             }
             let uri = metadata.file_uri()?.clone();
-            let path = metadata.file_path()?.to_path_buf();
-            let language = detect_language(&path, &self.config.languages)?;
-            (uri, path, language)
+            let language = self.buffers.get(&buffer_id)?.language.clone();
+            (uri, language)
         };
 
         // Try to spawn LSP (respects auto_start setting)
@@ -446,16 +442,8 @@ impl Editor {
     /// This provides VS Code-like behavior where suggestions appear while typing,
     /// with debouncing to avoid spamming the LSP server.
     pub(crate) fn maybe_trigger_completion(&mut self, c: char) {
-        // Get the active buffer's file path and detect its language
-        let path = match self.active_state().buffer.file_path() {
-            Some(p) => p,
-            None => return, // No path, no language detection
-        };
-
-        let language = match detect_language(path, &self.config.languages) {
-            Some(lang) => lang,
-            None => return, // Unknown language
-        };
+        // Get the active buffer's language
+        let language = self.active_state().language.clone();
 
         // Check if this character is a trigger character for this language
         let is_lsp_trigger = self
@@ -1704,21 +1692,13 @@ impl Editor {
             }
         };
 
-        // Get the file path for language detection
-        let path = match metadata.file_path() {
-            Some(p) => p,
-            None => {
-                tracing::debug!("send_lsp_changes_for_buffer: no file path for buffer");
-                return;
-            }
-        };
-
-        let language = match detect_language(path, &self.config.languages) {
+        // Get language from buffer state
+        let language = match self.buffers.get(&buffer_id).map(|s| s.language.clone()) {
             Some(l) => l,
             None => {
                 tracing::debug!(
-                    "send_lsp_changes_for_buffer: no language detected for {:?}",
-                    path
+                    "send_lsp_changes_for_buffer: no buffer state for {:?}",
+                    buffer_id
                 );
                 return;
             }
@@ -1991,10 +1971,8 @@ impl Editor {
         let Some(uri) = metadata.file_uri().cloned() else {
             return;
         };
-        let Some(path) = metadata.file_path() else {
-            return;
-        };
-        let Some(language) = detect_language(path, &self.config.languages) else {
+        // Get language from buffer state
+        let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
             return;
         };
 
@@ -2115,10 +2093,8 @@ impl Editor {
         let Some(uri) = metadata.file_uri().cloned() else {
             return;
         };
-        let Some(path) = metadata.file_path() else {
-            return;
-        };
-        let Some(language) = detect_language(path, &self.config.languages) else {
+        // Get language from buffer state
+        let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
             return;
         };
 

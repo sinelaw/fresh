@@ -14,22 +14,12 @@ impl Editor {
     /// Restarts the LSP server for the current buffer's language and re-sends
     /// didOpen notifications for all buffers of that language.
     pub fn handle_lsp_restart(&mut self) {
-        // Get the language for the current buffer
-        let Some(metadata) = self.buffer_metadata.get(&self.active_buffer()) else {
+        // Get the language from the buffer's stored state
+        let buffer_id = self.active_buffer();
+        let Some(state) = self.buffers.get(&buffer_id) else {
             return;
         };
-
-        let Some(path) = metadata.file_path() else {
-            self.set_status_message(t!("lsp.buffer_has_no_file").to_string());
-            return;
-        };
-
-        let Some(language) =
-            crate::services::lsp::manager::detect_language(path, &self.config.languages)
-        else {
-            self.set_status_message(t!("lsp.no_server_configured").to_string());
-            return;
-        };
+        let language = state.language.clone();
 
         // Attempt restart
         let Some(lsp) = self.lsp.as_mut() else {
@@ -53,15 +43,15 @@ impl Editor {
     /// Called after LSP server restart to re-register open files.
     fn reopen_buffers_for_language(&mut self, language: &str) {
         // Collect buffer info first to avoid borrow conflicts
+        // Use buffer's stored language rather than detecting from path
         let buffers_for_language: Vec<_> = self
-            .buffer_metadata
+            .buffers
             .iter()
-            .filter_map(|(buf_id, meta)| {
-                let path = meta.file_path()?;
-                let detected =
-                    crate::services::lsp::manager::detect_language(path, &self.config.languages)?;
-                if detected == language {
-                    Some((*buf_id, path.clone()))
+            .filter_map(|(buf_id, state)| {
+                if state.language == language {
+                    self.buffer_metadata
+                        .get(buf_id)
+                        .and_then(|meta| meta.file_path().map(|p| (*buf_id, p.clone())))
                 } else {
                     None
                 }
@@ -84,11 +74,7 @@ impl Editor {
                 continue;
             };
 
-            let Some(lang_id) =
-                crate::services::lsp::manager::detect_language(&buf_path, &self.config.languages)
-            else {
-                continue;
-            };
+            let lang_id = state.language.clone();
 
             if let Some(lsp) = self.lsp.as_mut() {
                 // Respect auto_start setting for this user action

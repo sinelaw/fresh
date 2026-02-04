@@ -11,7 +11,6 @@ use rust_i18n::t;
 use crate::config::Config;
 use crate::config_io::{ConfigLayer, ConfigResolver};
 use crate::input::keybindings::KeybindingResolver;
-use crate::services::lsp::manager::detect_language;
 
 use super::Editor;
 
@@ -82,16 +81,11 @@ impl Editor {
     pub fn reset_buffer_settings(&mut self) {
         let buffer_id = self.active_buffer();
 
-        // Get the file path to determine language-specific settings
-        let file_path = self
-            .buffer_metadata
-            .get(&buffer_id)
-            .and_then(|m| m.file_path().cloned());
-
-        // Determine settings from config (with language fallback)
-        let (tab_size, use_tabs, show_whitespace_tabs) = if let Some(path) = &file_path {
-            if let Some(language) = detect_language(path, &self.config.languages) {
-                if let Some(lang_config) = self.config.languages.get(&language) {
+        // Determine settings from config using buffer's stored language
+        let (tab_size, use_tabs, show_whitespace_tabs) =
+            if let Some(state) = self.buffers.get(&buffer_id) {
+                let language = &state.language;
+                if let Some(lang_config) = self.config.languages.get(language) {
                     (
                         lang_config.tab_size.unwrap_or(self.config.editor.tab_size),
                         lang_config.use_tabs,
@@ -102,10 +96,7 @@ impl Editor {
                 }
             } else {
                 (self.config.editor.tab_size, false, true)
-            }
-        } else {
-            (self.config.editor.tab_size, false, true)
-        };
+            };
 
         // Apply settings to buffer
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
