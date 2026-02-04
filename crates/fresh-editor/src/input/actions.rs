@@ -293,8 +293,7 @@ fn move_lines(
                     }
                 }
                 LineMoveDirection::Down => {
-                    if let Some(next) = next_line_bounds(buffer, range.end, estimated_line_length)
-                    {
+                    if let Some(next) = next_line_bounds(buffer, range.end, estimated_line_length) {
                         let adjacent_len = next.end.saturating_sub(next.start);
                         if adjacent_len == 0 && next.start == buffer_len {
                             continue;
@@ -320,7 +319,9 @@ fn move_lines(
 
     let primary_cursor_id = state.cursors.primary_id();
     let has_trailing_newline = {
-        let mut iter = state.buffer.line_iterator(buffer_len, estimated_line_length);
+        let mut iter = state
+            .buffer
+            .line_iterator(buffer_len, estimated_line_length);
         matches!(
             iter.next_line(),
             Some((start, content)) if start == buffer_len && content.is_empty()
