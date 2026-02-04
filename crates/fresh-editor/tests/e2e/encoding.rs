@@ -1682,7 +1682,7 @@ fn test_large_file_gbk_encoding_confirmation_prompt() {
     // Check that the confirmation prompt is shown
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("requires full load") || screen.contains("GBK"),
+        screen.contains("requires full load") || screen.contains("GB18030"),
         "Should show confirmation prompt for GBK encoding. Screen:\n{}",
         screen
     );
@@ -1701,10 +1701,11 @@ fn test_large_file_gbk_encoding_confirmation_prompt() {
         screen_after
     );
 
-    // Verify the status bar shows GBK encoding
+    // Verify the status bar shows GB18030 encoding (GBK is detected as GB18030 since
+    // it's a subset and the 8KB sample may not contain GB18030-only code points)
     assert!(
-        screen_after.contains("GBK"),
-        "Status bar should show GBK encoding. Screen:\n{}",
+        screen_after.contains("GB18030"),
+        "Status bar should show GB18030 encoding. Screen:\n{}",
         screen_after
     );
 }
@@ -1761,7 +1762,7 @@ fn test_large_file_gbk_encoding_cancel() {
     // Verify prompt is shown
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("requires full load") || screen.contains("GBK"),
+        screen.contains("requires full load") || screen.contains("GB18030"),
         "Should show confirmation prompt. Screen:\n{}",
         screen
     );
@@ -1838,7 +1839,7 @@ fn test_large_file_gbk_encoding_change() {
     // Verify prompt is shown
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("requires full load") || screen.contains("GBK"),
+        screen.contains("requires full load") || screen.contains("GB18030"),
         "Should show confirmation prompt. Screen:\n{}",
         screen
     );
@@ -1993,7 +1994,7 @@ fn test_large_file_encoding_selector_non_sync_shows_prompt() {
     // First prompt for GBK
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("requires full load") || screen.contains("GBK"),
+        screen.contains("requires full load") || screen.contains("GB18030"),
         "Should show first confirmation prompt. Screen:\n{}",
         screen
     );
@@ -2082,7 +2083,7 @@ fn test_large_file_encoding_selector_sync_no_prompt() {
     // First prompt for GBK
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("requires full load") || screen.contains("GBK"),
+        screen.contains("requires full load") || screen.contains("GB18030"),
         "Should show first confirmation prompt. Screen:\n{}",
         screen
     );

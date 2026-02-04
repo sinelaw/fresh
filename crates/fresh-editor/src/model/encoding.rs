@@ -360,40 +360,43 @@ pub fn detect_encoding_or_binary(bytes: &[u8]) -> (Encoding, bool) {
             return (Encoding::Windows1252, false);
         }
 
-        let encoding = if detected_encoding == encoding_rs::GB18030 {
-            Encoding::Gb18030
-        } else if detected_encoding == encoding_rs::GBK {
-            Encoding::Gbk
-        } else if detected_encoding == encoding_rs::SHIFT_JIS {
-            Encoding::ShiftJis
-        } else if detected_encoding == encoding_rs::EUC_KR {
-            Encoding::EucKr
-        } else if detected_encoding == encoding_rs::WINDOWS_1252
-            || detected_encoding == encoding_rs::WINDOWS_1250
-        {
-            // chardetng often returns Windows-1252 for Central European text
-            // Check for Windows-1250 specific patterns
-            if has_windows1250_pattern(sample) {
-                Encoding::Windows1250
+        // GBK is a subset of GB18030. Since we only inspect the first 8KB for
+        // detection, the sample may not contain GB18030-only code points (uncommon
+        // Chinese characters, emoji, etc.). Treating GBK as GB18030 is safer and
+        // ensures proper display of all characters including French, Spanish, and emoji.
+        let encoding =
+            if detected_encoding == encoding_rs::GB18030 || detected_encoding == encoding_rs::GBK {
+                Encoding::Gb18030
+            } else if detected_encoding == encoding_rs::SHIFT_JIS {
+                Encoding::ShiftJis
+            } else if detected_encoding == encoding_rs::EUC_KR {
+                Encoding::EucKr
+            } else if detected_encoding == encoding_rs::WINDOWS_1252
+                || detected_encoding == encoding_rs::WINDOWS_1250
+            {
+                // chardetng often returns Windows-1252 for Central European text
+                // Check for Windows-1250 specific patterns
+                if has_windows1250_pattern(sample) {
+                    Encoding::Windows1250
+                } else {
+                    Encoding::Windows1252
+                }
+            } else if detected_encoding == encoding_rs::UTF_8 {
+                // chardetng thinks it's UTF-8, but validation failed above
+                // Could still be Windows-1250 if it has Central European patterns
+                if has_windows1250_pattern(sample) {
+                    Encoding::Windows1250
+                } else {
+                    Encoding::Windows1252
+                }
             } else {
-                Encoding::Windows1252
-            }
-        } else if detected_encoding == encoding_rs::UTF_8 {
-            // chardetng thinks it's UTF-8, but validation failed above
-            // Could still be Windows-1250 if it has Central European patterns
-            if has_windows1250_pattern(sample) {
-                Encoding::Windows1250
-            } else {
-                Encoding::Windows1252
-            }
-        } else {
-            // Unknown encoding - check for Windows-1250 patterns
-            if has_windows1250_pattern(sample) {
-                Encoding::Windows1250
-            } else {
-                Encoding::Windows1252
-            }
-        };
+                // Unknown encoding - check for Windows-1250 patterns
+                if has_windows1250_pattern(sample) {
+                    Encoding::Windows1250
+                } else {
+                    Encoding::Windows1252
+                }
+            };
         return (encoding, false);
     }
 
