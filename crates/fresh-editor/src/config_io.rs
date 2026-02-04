@@ -131,6 +131,46 @@ fn remove_json_pointer(root: &mut Value, pointer: &str) {
     }
 }
 
+/// Find all JSON pointer paths where two values differ.
+/// Returns leaf paths that have different values between old and new.
+fn find_changed_paths(old: &Value, new: &Value) -> std::collections::HashSet<String> {
+    let mut changed = std::collections::HashSet::new();
+    find_changed_paths_recursive(old, new, String::new(), &mut changed);
+    changed
+}
+
+fn find_changed_paths_recursive(
+    old: &Value,
+    new: &Value,
+    prefix: String,
+    changed: &mut std::collections::HashSet<String>,
+) {
+    match (old, new) {
+        (Value::Object(old_map), Value::Object(new_map)) => {
+            // Check all keys in both objects
+            let all_keys: std::collections::HashSet<_> =
+                old_map.keys().chain(new_map.keys()).collect();
+            for key in all_keys {
+                let path = if prefix.is_empty() {
+                    format!("/{}", key)
+                } else {
+                    format!("{}/{}", prefix, key)
+                };
+                let old_val = old_map.get(key).unwrap_or(&Value::Null);
+                let new_val = new_map.get(key).unwrap_or(&Value::Null);
+                find_changed_paths_recursive(old_val, new_val, path, changed);
+            }
+        }
+        (old_val, new_val) if old_val != new_val => {
+            // Leaf values differ - mark as changed
+            if !prefix.is_empty() {
+                changed.insert(prefix);
+            }
+        }
+        _ => {} // Values are equal, no change
+    }
+}
+
 // ============================================================================
 // Configuration Migration System
 // ============================================================================
@@ -404,6 +444,93 @@ impl ConfigResolver {
             strip_empty_defaults(stripped_nulls).unwrap_or(Value::Object(Default::default()));
 
         let json = serde_json::to_string_pretty(&clean_merged)
+            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+        std::fs::write(&path, json)
+            .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
+
+        Ok(())
+    }
+
+    /// Save a config to a specific layer, using a baseline to track changes.
+    ///
+    /// This solves the problem where `save_to_layer` can't distinguish between:
+    /// - "User didn't change this field" (should preserve external edits)
+    /// - "User changed this field to the default" (should update the file)
+    ///
+    /// By comparing `current` against `baseline` (what was loaded), we know exactly
+    /// which fields the user modified. Those fields are updated even if they match
+    /// defaults; untouched fields preserve any external edits to the file.
+    pub fn save_to_layer_with_baseline(
+        &self,
+        current: &Config,
+        baseline: &Config,
+        layer: ConfigLayer,
+    ) -> Result<(), ConfigError> {
+        if layer == ConfigLayer::System {
+            return Err(ConfigError::ValidationError(
+                "Cannot write to System layer".to_string(),
+            ));
+        }
+
+        // Calculate parent config (defaults from layers below)
+        let parent_partial = self.resolve_up_to_layer(layer)?;
+        let parent = PartialConfig::from(&parent_partial.resolve());
+
+        // Convert configs to JSON for comparison
+        let current_json = serde_json::to_value(current)
+            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+        let baseline_json = serde_json::to_value(baseline)
+            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+        let parent_json = serde_json::to_value(&parent)
+            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+
+        // Find which paths changed between baseline and current
+        let changed_paths = find_changed_paths(&baseline_json, &current_json);
+
+        // Get path for target layer
+        let path = match layer {
+            ConfigLayer::User => self.user_config_path(),
+            ConfigLayer::Project => self.project_config_write_path(),
+            ConfigLayer::Session => self.session_config_path(),
+            ConfigLayer::System => unreachable!(),
+        };
+
+        // Ensure parent directory exists
+        if let Some(parent_dir) = path.parent() {
+            std::fs::create_dir_all(parent_dir)
+                .map_err(|e| ConfigError::IoError(format!("{}: {}", parent_dir.display(), e)))?;
+        }
+
+        // Read existing file content as JSON
+        let mut result: Value = if path.exists() {
+            let content = std::fs::read_to_string(&path)
+                .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
+            serde_json::from_str(&content).unwrap_or(Value::Object(Default::default()))
+        } else {
+            Value::Object(Default::default())
+        };
+
+        // For each changed path, update the file:
+        // - If current matches parent (default), remove from file
+        // - If current differs from parent, set in file
+        for pointer in &changed_paths {
+            let current_val = current_json.pointer(pointer);
+            let parent_val = parent_json.pointer(pointer);
+
+            if current_val == parent_val {
+                // User changed to default - remove from file so default propagates
+                remove_json_pointer(&mut result, pointer);
+            } else if let Some(val) = current_val {
+                // User changed to non-default - set in file
+                set_json_pointer(&mut result, pointer, val.clone());
+            }
+        }
+
+        // Strip nulls and empty defaults to keep config minimal
+        let stripped = strip_nulls(result).unwrap_or(Value::Object(Default::default()));
+        let clean = strip_empty_defaults(stripped).unwrap_or(Value::Object(Default::default()));
+
+        let json = serde_json::to_string_pretty(&clean)
             .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
         std::fs::write(&path, json)
             .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
@@ -2027,5 +2154,59 @@ mod tests {
                  This is expected behavior but could be improved with read-modify-write pattern."
             );
         }
+    }
+
+    /// Bug reproduction: changing a config value to match the default should persist.
+    ///
+    /// When a user changes a setting FROM a non-default value TO the default value,
+    /// the change should be saved (either by writing the default value explicitly,
+    /// or by removing the field so the default propagates).
+    ///
+    /// The bug: save_to_layer computes delta vs defaults, so changing TO default
+    /// results in no delta for that field. The merge with existing file then
+    /// preserves the OLD value from the file instead of the new default.
+    #[test]
+    fn save_to_layer_changing_to_default_value_should_persist() {
+        let (_temp, resolver) = create_test_resolver();
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+
+        // Step 1: Create user config with non-default theme
+        std::fs::write(&user_config_path, r#"{"theme": "dracula"}"#).unwrap();
+
+        // Step 2: Load config - theme should be "dracula" from file
+        let baseline = resolver.resolve().unwrap();
+        assert_eq!(
+            baseline.theme.0, "dracula",
+            "Theme should be 'dracula' from file"
+        );
+
+        // Step 3: User changes theme to the DEFAULT value ("high-contrast")
+        let mut config = baseline.clone();
+        config.theme = crate::config::ThemeName::from("high-contrast");
+
+        // Step 4: Save the change using baseline tracking
+        resolver
+            .save_to_layer_with_baseline(&config, &baseline, ConfigLayer::User)
+            .unwrap();
+
+        // Step 5: Check what was saved to file
+        let saved_content = std::fs::read_to_string(&user_config_path).unwrap();
+        eprintln!(
+            "Saved config after changing to default theme:\n{}",
+            saved_content
+        );
+
+        // Step 6: Reload config
+        let reloaded = resolver.resolve().unwrap();
+
+        // The theme should be "high-contrast" (either explicitly in file, or absent so default applies)
+        assert_eq!(
+            reloaded.theme.0, "high-contrast",
+            "Theme should be 'high-contrast' after changing to default and saving. \
+             With save_to_layer_with_baseline, the theme field should be removed from file \
+             so the default applies. File content: {}",
+            saved_content
+        );
     }
 }

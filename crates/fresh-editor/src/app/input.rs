@@ -2575,10 +2575,34 @@ impl Editor {
             return;
         }
 
-        // Save the config using the resolver
+        // Save the theme using explicit changes to avoid the issue where
+        // changing to the default theme doesn't persist (because save_to_layer
+        // computes delta vs defaults and sees no difference).
         let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
-        if let Err(e) = resolver.save_to_layer(&self.config, ConfigLayer::User) {
-            tracing::warn!("Failed to save theme to config: {}", e);
+        let config_path = resolver.user_config_path();
+        tracing::info!(
+            "Saving theme '{}' to user config at {}",
+            self.config.theme.0,
+            config_path.display()
+        );
+
+        let mut changes = std::collections::HashMap::new();
+        changes.insert(
+            "/theme".to_string(),
+            serde_json::Value::String(self.config.theme.0.clone()),
+        );
+
+        match resolver.save_changes_to_layer(
+            &changes,
+            &std::collections::HashSet::new(),
+            ConfigLayer::User,
+        ) {
+            Ok(()) => {
+                tracing::info!("Theme saved successfully to {}", config_path.display());
+            }
+            Err(e) => {
+                tracing::warn!("Failed to save theme to config: {}", e);
+            }
         }
     }
 
