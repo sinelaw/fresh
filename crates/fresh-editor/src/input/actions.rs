@@ -10,7 +10,6 @@ use crate::primitives::word_navigation::{
     find_word_start_right,
 };
 use crate::state::EditorState;
-use std::collections::HashMap;
 use std::ops::Range;
 
 /// Direction for block selection movement
@@ -29,7 +28,7 @@ enum LineMoveDirection {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct LineRange {
+struct LineByteRange {
     start: usize,
     end: usize,
 }
@@ -57,53 +56,80 @@ fn pos_2d_to_byte(buffer: &Buffer, pos: Position2D) -> usize {
     line_start + clamped_col
 }
 
-/// Return the byte offset for the end of a line (start of next line or EOF).
-fn line_end_offset(buffer: &Buffer, line: usize) -> usize {
-    buffer
-        .line_start_offset(line + 1)
-        .unwrap_or_else(|| buffer.len())
+fn line_bounds_at(
+    buffer: &mut Buffer,
+    pos: usize,
+    estimated_line_length: usize,
+) -> Option<LineByteRange> {
+    let mut iter = buffer.line_iterator(pos, estimated_line_length);
+    let line_start = iter.current_position();
+    iter.next_line().map(|(_start, content)| LineByteRange {
+        start: line_start,
+        end: line_start + content.len(),
+    })
 }
 
-fn split_line_content(line_bytes: &[u8]) -> (String, usize) {
-    let mut len = line_bytes.len();
-    if len >= 2 && line_bytes[len - 2] == b'\r' && line_bytes[len - 1] == b'\n' {
-        len -= 2;
-    } else if len >= 1 && (line_bytes[len - 1] == b'\n' || line_bytes[len - 1] == b'\r') {
-        len -= 1;
+fn prev_line_bounds(
+    buffer: &mut Buffer,
+    pos: usize,
+    estimated_line_length: usize,
+) -> Option<LineByteRange> {
+    let mut iter = buffer.line_iterator(pos, estimated_line_length);
+    iter.prev().map(|(start, content)| LineByteRange {
+        start,
+        end: start + content.len(),
+    })
+}
+
+fn next_line_bounds(
+    buffer: &mut Buffer,
+    pos: usize,
+    estimated_line_length: usize,
+) -> Option<LineByteRange> {
+    let mut iter = buffer.line_iterator(pos, estimated_line_length);
+    if iter.current_position() < pos {
+        let _ = iter.next_line();
     }
-
-    let content = String::from_utf8_lossy(&line_bytes[..len]).to_string();
-    (content, len)
+    iter.next_line().map(|(start, content)| LineByteRange {
+        start,
+        end: start + content.len(),
+    })
 }
 
-/// Determine the line range affected by a cursor selection or position.
-fn selection_line_range(buffer: &Buffer, cursor: &Cursor) -> LineRange {
-    if let Some(range) = cursor.selection_range() {
+/// Determine the byte range covering full lines for a cursor selection or position.
+fn selection_line_range(
+    buffer: &mut Buffer,
+    cursor: &Cursor,
+    estimated_line_length: usize,
+) -> Option<LineByteRange> {
+    let buffer_len = buffer.len();
+    let (start_pos, end_pos) = if let Some(range) = cursor.selection_range() {
         if range.start == range.end {
-            let line = buffer.get_line_number(range.start);
-            LineRange {
-                start: line,
-                end: line,
-            }
+            (range.start.min(buffer_len), range.start.min(buffer_len))
         } else {
-            let start_line = buffer.get_line_number(range.start);
-            let end_pos = range.end.saturating_sub(1);
-            let end_line = buffer.get_line_number(end_pos);
-            LineRange {
-                start: start_line,
-                end: end_line,
-            }
+            let start = range.start.min(buffer_len);
+            let end = range.end.min(buffer_len);
+            let end_for_line = if start < end {
+                end.saturating_sub(1)
+            } else {
+                start
+            };
+            (start, end_for_line)
         }
     } else {
-        let line = buffer.get_line_number(cursor.position);
-        LineRange {
-            start: line,
-            end: line,
-        }
-    }
+        let pos = cursor.position.min(buffer_len);
+        (pos, pos)
+    };
+
+    let start_line = line_bounds_at(buffer, start_pos, estimated_line_length)?;
+    let end_line = line_bounds_at(buffer, end_pos, estimated_line_length)?;
+    Some(LineByteRange {
+        start: start_line.start,
+        end: end_line.end,
+    })
 }
 
-fn merge_line_ranges(mut ranges: Vec<LineRange>) -> Vec<LineRange> {
+fn merge_line_ranges(mut ranges: Vec<LineByteRange>) -> Vec<LineByteRange> {
     if ranges.is_empty() {
         return ranges;
     }
@@ -113,7 +139,7 @@ fn merge_line_ranges(mut ranges: Vec<LineRange>) -> Vec<LineRange> {
     let mut current = ranges[0];
 
     for range in ranges.into_iter().skip(1) {
-        if range.start <= current.end.saturating_add(1) {
+        if range.start <= current.end {
             current.end = current.end.max(range.end);
         } else {
             merged.push(current);
@@ -125,114 +151,292 @@ fn merge_line_ranges(mut ranges: Vec<LineRange>) -> Vec<LineRange> {
     merged
 }
 
-fn map_position(buffer: &Buffer, new_line_starts: &HashMap<usize, usize>, pos: usize) -> usize {
-    let line = buffer.get_line_number(pos);
-    if let Some(&new_start) = new_line_starts.get(&line) {
-        let old_start = buffer.line_start_offset(line).unwrap_or(0);
-        let column = pos.saturating_sub(old_start);
-        new_start + column
+#[derive(Debug, Clone, Copy)]
+struct MoveRegion {
+    start: usize,
+    end: usize,
+    block_len: usize,
+    adjacent_len: usize,
+    direction: LineMoveDirection,
+}
+
+#[derive(Debug, Clone)]
+struct LinePiece {
+    start: usize,
+    end: usize,
+    content: String,
+}
+
+fn strip_line_ending(line: &str) -> &str {
+    if line.ends_with("\r\n") {
+        &line[..line.len().saturating_sub(2)]
+    } else if line.ends_with('\n') || line.ends_with('\r') {
+        &line[..line.len().saturating_sub(1)]
     } else {
-        pos
+        line
     }
 }
 
-fn move_lines(state: &mut EditorState, events: &mut Vec<Event>, direction: LineMoveDirection) {
+fn map_position_in_region(
+    pos: usize,
+    selection_range: Option<&Range<usize>>,
+    region: &MoveRegion,
+) -> Option<usize> {
+    if pos < region.start || pos > region.end {
+        return None;
+    }
+
+    let (block_start, block_end) = match region.direction {
+        LineMoveDirection::Up => (region.start + region.adjacent_len, region.end),
+        LineMoveDirection::Down => (region.start, region.start + region.block_len),
+    };
+
+    let treat_block_end_as_block = selection_range
+        .filter(|range| range.start < range.end)
+        .map(|range| range.end == block_end)
+        .unwrap_or(false);
+
+    match region.direction {
+        LineMoveDirection::Up => {
+            if pos < block_start {
+                return Some(pos + region.block_len);
+            }
+            if pos < block_end {
+                return Some(pos - region.adjacent_len);
+            }
+            if pos == block_end && treat_block_end_as_block {
+                return Some(pos - region.adjacent_len);
+            }
+        }
+        LineMoveDirection::Down => {
+            if pos < block_end || (pos == block_end && treat_block_end_as_block) {
+                return Some(pos + region.adjacent_len);
+            }
+            if pos < region.end {
+                return Some(pos - region.block_len);
+            }
+        }
+    }
+
+    None
+}
+
+fn move_lines(
+    state: &mut EditorState,
+    events: &mut Vec<Event>,
+    direction: LineMoveDirection,
+    estimated_line_length: usize,
+) {
     let buffer_len = state.buffer.len();
     if buffer_len == 0 {
         return;
     }
 
-    let total_lines = state
-        .buffer
-        .get_line_number(buffer_len.saturating_sub(1))
-        .saturating_add(1);
+    let cursor_snapshots: Vec<(CursorId, Option<Range<usize>>, usize, Option<usize>, usize)> =
+        state
+            .cursors
+            .iter()
+            .map(|(cursor_id, cursor)| {
+                (
+                    cursor_id,
+                    cursor.selection_range().map(|range| range.clone()),
+                    cursor.position,
+                    cursor.anchor,
+                    cursor.sticky_column,
+                )
+            })
+            .collect();
 
-    let ranges: Vec<LineRange> = state
-        .cursors
-        .iter()
-        .map(|(_, cursor)| selection_line_range(&state.buffer, cursor))
-        .collect();
+    let ranges: Vec<LineByteRange> = {
+        let buffer = &mut state.buffer;
+        cursor_snapshots
+            .iter()
+            .filter_map(|(_, selection, position, _, _)| {
+                let cursor = if let Some(range) = selection {
+                    Cursor::with_selection(range.start, range.end)
+                } else {
+                    Cursor::new(*position)
+                };
+                selection_line_range(buffer, &cursor, estimated_line_length)
+            })
+            .collect()
+    };
     let merged_ranges = merge_line_ranges(ranges);
     if merged_ranges.is_empty() {
         return;
     }
 
-    let movable_ranges: Vec<LineRange> = merged_ranges
-        .into_iter()
-        .filter(|range| match direction {
-            LineMoveDirection::Up => range.start > 0,
-            LineMoveDirection::Down => range.end.saturating_add(1) < total_lines,
-        })
-        .collect();
+    let mut regions = Vec::new();
+    {
+        let buffer = &mut state.buffer;
+        for range in merged_ranges {
+            let block_len = range.end.saturating_sub(range.start);
+            if block_len == 0 {
+                continue;
+            }
 
-    if movable_ranges.is_empty() {
+            match direction {
+                LineMoveDirection::Up => {
+                    if let Some(prev) = prev_line_bounds(buffer, range.start, estimated_line_length)
+                    {
+                        let adjacent_len = prev.end.saturating_sub(prev.start);
+                        if adjacent_len == 0 && prev.start == buffer_len {
+                            continue;
+                        }
+                        regions.push(MoveRegion {
+                            start: prev.start,
+                            end: range.end,
+                            block_len,
+                            adjacent_len,
+                            direction,
+                        });
+                    }
+                }
+                LineMoveDirection::Down => {
+                    if let Some(next) = next_line_bounds(buffer, range.end, estimated_line_length)
+                    {
+                        let adjacent_len = next.end.saturating_sub(next.start);
+                        if adjacent_len == 0 && next.start == buffer_len {
+                            continue;
+                        }
+                        regions.push(MoveRegion {
+                            start: range.start,
+                            end: next.end,
+                            block_len,
+                            adjacent_len,
+                            direction,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    if regions.is_empty() {
         return;
     }
 
+    regions.sort_by_key(|region| region.start);
+
     let primary_cursor_id = state.cursors.primary_id();
-    let mut new_line_starts: HashMap<usize, usize> = HashMap::new();
+    let has_trailing_newline = {
+        let mut iter = state.buffer.line_iterator(buffer_len, estimated_line_length);
+        matches!(
+            iter.next_line(),
+            Some((start, content)) if start == buffer_len && content.is_empty()
+        )
+    };
 
-    for range in movable_ranges {
-        let (region_start_line, region_end_line, swap_line) = match direction {
-            LineMoveDirection::Up => (range.start - 1, range.end, range.start - 1),
-            LineMoveDirection::Down => (range.start, range.end + 1, range.end + 1),
+    for region in &regions {
+        let block_start = match region.direction {
+            LineMoveDirection::Up => region.start + region.adjacent_len,
+            LineMoveDirection::Down => region.start,
         };
+        let block_end = block_start.saturating_add(region.block_len);
+        let region_includes_last = region.end == buffer_len;
 
-        let region_start_offset = match state.buffer.line_start_offset(region_start_line) {
-            Some(offset) => offset,
-            None => continue,
-        };
-        let region_end_offset = line_end_offset(&state.buffer, region_end_line);
-
-        let old_text = state.get_text_range(region_start_offset, region_end_offset);
-        let new_order: Vec<usize> = match direction {
-            LineMoveDirection::Up => (range.start..=range.end)
-                .chain(std::iter::once(swap_line))
-                .collect(),
-            LineMoveDirection::Down => std::iter::once(swap_line)
-                .chain(range.start..=range.end)
-                .collect(),
-        };
-        let region_includes_last = region_end_line == total_lines.saturating_sub(1);
-        let line_ending = state.buffer.line_ending().as_str();
-        let line_ending_len = line_ending.len();
-
-        let mut line_contents: HashMap<usize, (String, usize)> = HashMap::new();
-        for line in region_start_line..=region_end_line {
-            let bytes = state.buffer.get_line(line).unwrap_or_default();
-            let (content, content_len) = split_line_content(&bytes);
-            line_contents.insert(line, (content, content_len));
+        let old_text = state.get_text_range(region.start, region.end);
+        if old_text.is_empty() && region.start != region.end {
+            continue;
         }
 
+        let mut iter = state
+            .buffer
+            .line_iterator(region.start, estimated_line_length);
+        let mut lines = Vec::new();
+        while let Some((line_start, line)) = iter.next_line() {
+            let line_end = line_start.saturating_add(line.len());
+            lines.push(LinePiece {
+                start: line_start,
+                end: line_end,
+                content: strip_line_ending(&line).to_string(),
+            });
+            if line_end >= region.end {
+                break;
+            }
+        }
+
+        if lines.is_empty() {
+            continue;
+        }
+
+        let mut adjacent = None;
+        let mut block_lines = Vec::new();
+        for line in lines {
+            match region.direction {
+                LineMoveDirection::Up => {
+                    if line.end == block_start {
+                        adjacent = Some(line);
+                    } else {
+                        block_lines.push(line);
+                    }
+                }
+                LineMoveDirection::Down => {
+                    if line.start == block_end {
+                        adjacent = Some(line);
+                    } else {
+                        block_lines.push(line);
+                    }
+                }
+            }
+        }
+
+        let adjacent = if let Some(line) = adjacent {
+            line
+        } else {
+            match region.direction {
+                LineMoveDirection::Up => {
+                    if block_lines.is_empty() {
+                        continue;
+                    }
+                    block_lines.remove(0)
+                }
+                LineMoveDirection::Down => {
+                    if block_lines.is_empty() {
+                        continue;
+                    }
+                    block_lines.pop().unwrap()
+                }
+            }
+        };
+
         let mut new_text = String::new();
-        let mut offset = region_start_offset;
+        let line_ending = state.buffer.line_ending().as_str();
+        let mut ordered = Vec::new();
+        match region.direction {
+            LineMoveDirection::Up => {
+                ordered.extend(block_lines.iter());
+                ordered.push(&adjacent);
+            }
+            LineMoveDirection::Down => {
+                ordered.push(&adjacent);
+                ordered.extend(block_lines.iter());
+            }
+        }
 
-        for (idx, line) in new_order.iter().enumerate() {
-            let (content, content_len) = line_contents
-                .get(line)
-                .map(|(text, len)| (text.as_str(), *len))
-                .unwrap_or(("", 0));
-
-            new_line_starts.insert(*line, offset);
-            new_text.push_str(content);
-
-            let append_line_ending = if region_includes_last {
-                idx + 1 < new_order.len()
+        for (idx, line) in ordered.iter().enumerate() {
+            new_text.push_str(&line.content);
+            let mut append_line_ending = if region_includes_last {
+                if has_trailing_newline {
+                    true
+                } else {
+                    idx + 1 < ordered.len()
+                }
             } else {
                 true
             };
 
+            if idx + 1 == ordered.len()
+                && has_trailing_newline
+                && line.start == buffer_len
+                && line.content.is_empty()
+            {
+                append_line_ending = false;
+            }
+
             if append_line_ending {
                 new_text.push_str(line_ending);
             }
-
-            let line_len = content_len
-                + if append_line_ending {
-                    line_ending_len
-                } else {
-                    0
-                };
-            offset = offset.saturating_add(line_len);
         }
 
         if new_text == old_text {
@@ -240,36 +444,38 @@ fn move_lines(state: &mut EditorState, events: &mut Vec<Event>, direction: LineM
         }
 
         events.push(Event::Delete {
-            range: region_start_offset..region_end_offset,
+            range: region.start..region.end,
             deleted_text: old_text,
             cursor_id: primary_cursor_id,
         });
         events.push(Event::Insert {
-            position: region_start_offset,
+            position: region.start,
             text: new_text,
             cursor_id: primary_cursor_id,
         });
     }
 
-    if new_line_starts.is_empty() {
-        return;
-    }
+    for (cursor_id, selection, position, anchor, sticky_column) in cursor_snapshots {
+        let new_position = regions
+            .iter()
+            .find_map(|region| map_position_in_region(position, selection.as_ref(), region))
+            .unwrap_or(position);
+        let new_anchor = anchor.map(|anchor_pos| {
+            regions
+                .iter()
+                .find_map(|region| map_position_in_region(anchor_pos, selection.as_ref(), region))
+                .unwrap_or(anchor_pos)
+        });
 
-    for (cursor_id, cursor) in state.cursors.iter() {
-        let new_position = map_position(&state.buffer, &new_line_starts, cursor.position);
-        let new_anchor = cursor
-            .anchor
-            .map(|anchor| map_position(&state.buffer, &new_line_starts, anchor));
-
-        if new_position != cursor.position || new_anchor != cursor.anchor {
+        if new_position != position || new_anchor != anchor {
             events.push(Event::MoveCursor {
                 cursor_id,
-                old_position: cursor.position,
+                old_position: position,
                 new_position,
-                old_anchor: cursor.anchor,
+                old_anchor: anchor,
                 new_anchor,
-                old_sticky_column: cursor.sticky_column,
-                new_sticky_column: cursor.sticky_column,
+                old_sticky_column: sticky_column,
+                new_sticky_column: sticky_column,
             });
         }
     }
@@ -2504,11 +2710,21 @@ pub fn action_to_events(
         }
 
         Action::MoveLineUp => {
-            move_lines(state, &mut events, LineMoveDirection::Up);
+            move_lines(
+                state,
+                &mut events,
+                LineMoveDirection::Up,
+                estimated_line_length,
+            );
         }
 
         Action::MoveLineDown => {
-            move_lines(state, &mut events, LineMoveDirection::Down);
+            move_lines(
+                state,
+                &mut events,
+                LineMoveDirection::Down,
+                estimated_line_length,
+            );
         }
 
         Action::TransposeChars => {
