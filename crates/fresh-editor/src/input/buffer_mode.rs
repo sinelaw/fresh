@@ -102,7 +102,7 @@ impl ModeRegistry {
         let special_mode = BufferMode::new("special")
             .with_read_only(true)
             .with_binding(KeyCode::Char('q'), KeyModifiers::NONE, "close")
-            .with_binding(KeyCode::Char('g'), KeyModifiers::NONE, "revert");
+            .with_binding(KeyCode::Esc, KeyModifiers::NONE, "close");
 
         registry.register(special_mode);
 
@@ -345,9 +345,8 @@ mod tests {
             Some(&"close".to_string())
         );
         assert_eq!(
-            mode.keybindings
-                .get(&(KeyCode::Char('g'), KeyModifiers::NONE)),
-            Some(&"revert".to_string())
+            mode.keybindings.get(&(KeyCode::Esc, KeyModifiers::NONE)),
+            Some(&"close".to_string())
         );
     }
 
@@ -420,10 +419,10 @@ mod tests {
             Some(&"child:quit".to_string())
         );
 
-        // Should have inherited 'g'
+        // Should have inherited Esc
         assert_eq!(
-            all_bindings.get(&(KeyCode::Char('g'), KeyModifiers::NONE)),
-            Some(&"revert".to_string())
+            all_bindings.get(&(KeyCode::Esc, KeyModifiers::NONE)),
+            Some(&"close".to_string())
         );
 
         // Should have child-specific binding
