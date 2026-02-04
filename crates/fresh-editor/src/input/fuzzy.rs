@@ -76,6 +76,9 @@ impl PartialOrd for FuzzyMatch {
 /// - Matches at word boundaries (after space, underscore, hyphen, or camelCase transitions)
 /// - Matches at the start of the string
 ///
+/// Queries containing spaces are split into separate terms. Each term is matched
+/// independently and all terms must match for the overall match to succeed.
+///
 /// # Examples
 /// ```
 /// use fresh::input::fuzzy::fuzzy_match;
@@ -91,6 +94,10 @@ impl PartialOrd for FuzzyMatch {
 /// // Non-matching
 /// let result = fuzzy_match("xyz", "Save File");
 /// assert!(!result.matched);
+///
+/// // Multi-term match (space-separated)
+/// let result = fuzzy_match("features groups-view", "/features/groups/groups-view.tsx");
+/// assert!(result.matched);
 /// ```
 pub fn fuzzy_match(query: &str, target: &str) -> FuzzyMatch {
     if query.is_empty() {
@@ -101,6 +108,79 @@ pub fn fuzzy_match(query: &str, target: &str) -> FuzzyMatch {
         };
     }
 
+    // Split query into terms by whitespace
+    let terms: Vec<&str> = query.split_whitespace().collect();
+
+    // If query is only whitespace, treat as empty query
+    if terms.is_empty() {
+        return FuzzyMatch {
+            matched: true,
+            score: 0,
+            match_positions: Vec::new(),
+        };
+    }
+
+    // If there are multiple terms, match each independently
+    if terms.len() > 1 {
+        return fuzzy_match_multi_term(query, &terms, target);
+    }
+
+    // Single term - use the trimmed version
+    fuzzy_match_single_term(terms[0], target)
+}
+
+/// Match multiple space-separated terms against a target.
+/// All terms must match for the overall match to succeed.
+fn fuzzy_match_multi_term(original_query: &str, terms: &[&str], target: &str) -> FuzzyMatch {
+    let mut total_score = 0;
+    let mut all_positions = Vec::new();
+
+    for term in terms {
+        let result = fuzzy_match_single_term(term, target);
+        if !result.matched {
+            return FuzzyMatch::no_match();
+        }
+        total_score += result.score;
+        all_positions.extend(result.match_positions);
+    }
+
+    // Sort and deduplicate positions (terms may have overlapping matches)
+    all_positions.sort_unstable();
+    all_positions.dedup();
+
+    // Bonus: if the original query (with spaces) appears as a contiguous substring
+    // in the target, give a significant bonus to prefer exact/substring matches
+    // over scattered multi-term matches.
+    let query_lower = original_query.to_lowercase();
+    let target_lower = target.to_lowercase();
+    if let Some(start_pos) = target_lower.find(&query_lower) {
+        // The original query appears verbatim in the target - give exact match bonus
+        total_score += score::EXACT_MATCH;
+
+        // Rebuild positions to show the contiguous match instead of scattered matches
+        let query_chars: Vec<char> = original_query.chars().collect();
+        let target_chars: Vec<char> = target.chars().collect();
+
+        // Find the byte offset -> char index mapping for the start position
+        let char_start = target
+            .char_indices()
+            .position(|(byte_idx, _)| byte_idx == start_pos)
+            .unwrap_or(0);
+
+        all_positions = (char_start..char_start + query_chars.len())
+            .filter(|&i| i < target_chars.len())
+            .collect();
+    }
+
+    FuzzyMatch {
+        matched: true,
+        score: total_score,
+        match_positions: all_positions,
+    }
+}
+
+/// Match a single term (no spaces) against a target string.
+fn fuzzy_match_single_term(query: &str, target: &str) -> FuzzyMatch {
     let query_lower: Vec<char> = query.to_lowercase().chars().collect();
     let target_chars: Vec<char> = target.chars().collect();
     let target_lower: Vec<char> = target.to_lowercase().chars().collect();
@@ -448,6 +528,52 @@ mod tests {
     }
 
     #[test]
+    fn test_multi_term_query_with_spaces() {
+        // Each term should be matched independently
+        let result = fuzzy_match("features groups-view", "/features/groups/groups-view.tsx");
+        assert!(result.matched);
+    }
+
+    #[test]
+    fn test_multi_term_query_partial_match_fails() {
+        // If any term doesn't match, the whole query fails
+        let result = fuzzy_match("features nonexistent", "/features/groups/groups-view.tsx");
+        assert!(!result.matched);
+    }
+
+    #[test]
+    fn test_multi_term_query_all_must_match() {
+        // All terms must match
+        let result = fuzzy_match("src main rs", "src/main.rs");
+        assert!(result.matched);
+
+        let result = fuzzy_match("src xyz", "src/main.rs");
+        assert!(!result.matched);
+    }
+
+    #[test]
+    fn test_multi_term_combines_scores() {
+        // Multi-term match should combine scores from each term
+        let result = fuzzy_match("save file", "Save File");
+        assert!(result.matched);
+        assert!(result.score > 0);
+    }
+
+    #[test]
+    fn test_leading_trailing_spaces_ignored() {
+        // Leading/trailing whitespace should be ignored
+        let result = fuzzy_match("  save  ", "Save File");
+        assert!(result.matched);
+    }
+
+    #[test]
+    fn test_multiple_spaces_between_terms() {
+        // Multiple spaces between terms should be treated as single separator
+        let result = fuzzy_match("save   file", "Save File");
+        assert!(result.matched);
+    }
+
+    #[test]
     fn test_real_world_command_names() {
         // Test with real command palette patterns
         assert!(fuzzy_match("gtd", "Go to Definition").matched);
@@ -509,6 +635,23 @@ mod tests {
             "exact_base: {}, longer: {}",
             exact_base.score,
             longer_name.score
+        );
+    }
+
+    #[test]
+    fn test_multi_term_exact_target_scores_higher() {
+        // "Package: Packages" should score higher against "Package: Packages"
+        // than against "Package: Install from URL"
+        let exact = fuzzy_match("Package: Packages", "Package: Packages");
+        let partial = fuzzy_match("Package: Packages", "Package: Install from URL");
+
+        assert!(exact.matched, "exact should match");
+        assert!(partial.matched, "partial should match");
+        assert!(
+            exact.score > partial.score,
+            "exact target should score higher: exact={}, partial={}",
+            exact.score,
+            partial.score
         );
     }
 }
