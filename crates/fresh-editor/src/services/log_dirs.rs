@@ -326,8 +326,8 @@ pub fn print_all_paths(dir_context: &crate::config_io::DirectoryContext) {
     writeln!(handle, "Data:       {}", data_dir.display()).ok();
     writeln!(
         handle,
-        "  sessions/:    {}",
-        data_dir.join("sessions").display()
+        "  workspaces/:  {}",
+        data_dir.join("workspaces").display()
     )
     .ok();
     writeln!(

@@ -992,10 +992,10 @@ fn test_session_restore_terminal_active_buffer() {
         );
 
         // Save session
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
 
         // Verify the session was captured with terminal as active
-        let session = harness.editor().capture_session();
+        let session = harness.editor().capture_workspace();
         let split_state = session.split_states.values().next().unwrap();
         eprintln!("Session open_tabs: {:?}", split_state.open_tabs);
         eprintln!(
@@ -1027,7 +1027,7 @@ fn test_session_restore_terminal_active_buffer() {
         .unwrap();
 
         // Restore session
-        let restored = harness.editor_mut().try_restore_session().unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "Session should have been restored");
         harness.render().unwrap();
 
@@ -2130,7 +2130,7 @@ fn test_session_restore_terminal_scrollback() {
         );
 
         // Save session
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
 
         // Get the backing file path for later verification
         let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
@@ -2168,7 +2168,7 @@ fn test_session_restore_terminal_scrollback() {
         .unwrap();
 
         // Restore session
-        let restored = harness.editor_mut().try_restore_session().unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "Session should have been restored");
 
         // Verify backing file was NOT overwritten during restore
@@ -2289,7 +2289,7 @@ fn test_scrollback_captured_after_session_restore() {
         assert!(!harness.editor().is_terminal_mode());
 
         // Save session
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
 
         // Get the backing file path for later verification
         let buffer_id = harness.editor().active_buffer_id();
@@ -2321,7 +2321,7 @@ fn test_scrollback_captured_after_session_restore() {
         .unwrap();
 
         // Restore session
-        let restored = harness.editor_mut().try_restore_session().unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "Session should have been restored");
         harness.render().unwrap();
 

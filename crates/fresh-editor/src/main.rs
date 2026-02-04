@@ -11,13 +11,15 @@ use fresh::services::terminal_modes::{self, KeyboardConfig, TerminalModes};
 use fresh::services::tracing_setup;
 use fresh::{
     app::Editor,
-    config,
+    client, config,
     config_io::DirectoryContext,
     model::filesystem::{FileSystem, StdFileSystem},
+    server::SocketPaths,
     services::release_checker,
     services::remote,
     services::signal_handler,
     services::tracing_setup::TracingHandles,
+    workspace,
 };
 use ratatui::Terminal;
 use std::{
@@ -26,16 +28,38 @@ use std::{
     time::Duration,
 };
 
-/// A high-performance terminal text editor
+/// A terminal text editor with multi-cursor support
 #[derive(Parser, Debug)]
 #[command(name = "fresh")]
-#[command(about = "A terminal text editor with multi-cursor support", long_about = None)]
-#[command(version)]
-struct Args {
-    /// Files to open. Supports line:col syntax (e.g., file.txt:10:5), remote paths
-    /// (user@host:path), and "-" for stdin.
+#[command(version, propagate_version = true)]
+#[command(after_help = concat!(
+    "Commands (use --cmd):\n",
+    "  session list       List active sessions\n",
+    "  session attach     Attach to a session\n",
+    "  session new        Start a new named session\n",
+    "  session kill       Terminate a session\n",
+    "  config show        Print effective configuration\n",
+    "  config paths       Show directories used by Fresh\n",
+    "  init               Initialize a new plugin/theme/language\n",
+    "\n",
+    "Examples:\n",
+    "  fresh file.txt              Open a file\n",
+    "  fresh --cmd session list    List sessions\n",
+    "  fresh -a                    Attach to session for current directory"
+))]
+struct Cli {
+    /// Run a command instead of opening files
+    /// Commands: session (list|attach|new|kill), config (show|paths), init
+    #[arg(long, num_args = 1.., value_name = "COMMAND")]
+    cmd: Vec<String>,
+
+    /// Files to open (supports line:col syntax, e.g., file.txt:10:5)
     #[arg(value_name = "FILES")]
     files: Vec<String>,
+
+    /// Attach to session (shortcut for `fresh --cmd session attach`)
+    #[arg(short = 'a', long, value_name = "NAME", num_args = 0..=1, default_missing_value = "")]
+    attach: Option<String>,
 
     /// Read content from stdin (alternative to using "-" as filename)
     #[arg(long)]
@@ -49,7 +73,7 @@ struct Args {
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
 
-    /// Path to log file for editor diagnostics (default: system temp dir)
+    /// Path to log file for editor diagnostics
     #[arg(long, value_name = "PATH")]
     log_file: Option<PathBuf>,
 
@@ -57,33 +81,240 @@ struct Args {
     #[arg(long, value_name = "LOG_FILE")]
     event_log: Option<PathBuf>,
 
-    /// Don't restore previous session (start fresh)
-    #[arg(long)]
-    no_session: bool,
+    /// Don't restore previous workspace
+    #[arg(long, alias = "no-session")]
+    no_restore: bool,
 
     /// Disable upgrade checking and anonymous telemetry
     #[arg(long)]
     no_upgrade_check: bool,
 
-    /// Print the effective configuration as JSON and exit
-    #[arg(long)]
-    dump_config: bool,
-
-    /// Print the directories used by Fresh and exit
-    #[arg(long)]
-    show_paths: bool,
-
     /// Override the locale (e.g., 'en', 'ja', 'zh-CN')
     #[arg(long, value_name = "LOCALE")]
     locale: Option<String>,
 
-    /// Check a plugin by bundling it and printing the output (for debugging)
-    #[arg(long, value_name = "PLUGIN_PATH")]
+    // === Hidden internal flags ===
+    /// Start as a daemon server (internal)
+    #[arg(long, hide = true)]
+    server: bool,
+
+    /// Session name for server mode (internal, used by spawn_server_detached)
+    #[arg(long, hide = true, value_name = "NAME")]
+    session_name: Option<String>,
+
+    // === Deprecated flags from pre-subcommand CLI (hidden, with warnings) ===
+    /// [deprecated: use `fresh config show`]
+    #[arg(long, hide = true)]
+    dump_config: bool,
+
+    /// [deprecated: use `fresh config paths`]
+    #[arg(long, hide = true)]
+    show_paths: bool,
+
+    /// Check a plugin (for debugging)
+    #[arg(long, hide = true, value_name = "PLUGIN_PATH")]
     check_plugin: Option<PathBuf>,
 
-    /// Initialize a new package (plugin, theme, or language pack)
-    #[arg(long, value_name = "TYPE")]
+    /// [deprecated: use `fresh init`]
+    #[arg(long, hide = true, value_name = "TYPE")]
     init: Option<Option<String>>,
+}
+
+// Internal Args struct - maps from new Cli to format used by rest of codebase
+#[derive(Debug)]
+#[allow(dead_code)]
+struct Args {
+    files: Vec<String>,
+    stdin: bool,
+    no_plugins: bool,
+    config: Option<PathBuf>,
+    log_file: Option<PathBuf>,
+    event_log: Option<PathBuf>,
+    no_session: bool,
+    no_upgrade_check: bool,
+    dump_config: bool,
+    show_paths: bool,
+    locale: Option<String>,
+    check_plugin: Option<PathBuf>,
+    init: Option<Option<String>>,
+    server: bool,
+    // Session-related fields (set via subcommands or -a shortcut)
+    attach: bool,
+    list_sessions: bool,
+    session_name: Option<String>,
+    kill: Option<Option<String>>,
+}
+
+impl From<Cli> for Args {
+    fn from(cli: Cli) -> Self {
+        // Parse --cmd arguments to determine command
+        let (list_sessions, kill, attach, session_name, dump_config, show_paths, init, files) =
+            if !cli.cmd.is_empty() {
+                // Parse command from --cmd arguments
+                let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
+                match cmd_args.as_slice() {
+                    // Session commands
+                    ["session", "list", ..]
+                    | ["s", "list", ..]
+                    | ["session", "ls", ..]
+                    | ["s", "ls", ..] => (true, None, false, None, false, false, None, cli.files),
+                    ["session", "attach", name, ..]
+                    | ["s", "attach", name, ..]
+                    | ["session", "a", name, ..]
+                    | ["s", "a", name, ..] => (
+                        false,
+                        None,
+                        true,
+                        Some((*name).to_string()),
+                        false,
+                        false,
+                        None,
+                        cli.files,
+                    ),
+                    ["session", "attach"] | ["s", "attach"] | ["session", "a"] | ["s", "a"] => {
+                        (false, None, true, None, false, false, None, cli.files)
+                    }
+                    ["session", "new", name, rest @ ..]
+                    | ["s", "new", name, rest @ ..]
+                    | ["session", "n", name, rest @ ..]
+                    | ["s", "n", name, rest @ ..] => {
+                        let files: Vec<String> = rest.iter().map(|s| (*s).to_string()).collect();
+                        (
+                            false,
+                            None,
+                            true,
+                            Some((*name).to_string()),
+                            false,
+                            false,
+                            None,
+                            files,
+                        )
+                    }
+                    ["session", "kill", "--all"]
+                    | ["s", "kill", "--all"]
+                    | ["session", "k", "--all"]
+                    | ["s", "k", "--all"] => (
+                        false,
+                        Some(Some("--all".to_string())),
+                        false,
+                        None,
+                        false,
+                        false,
+                        None,
+                        cli.files,
+                    ),
+                    ["session", "kill", name, ..]
+                    | ["s", "kill", name, ..]
+                    | ["session", "k", name, ..]
+                    | ["s", "k", name, ..] => (
+                        false,
+                        Some(Some((*name).to_string())),
+                        false,
+                        None,
+                        false,
+                        false,
+                        None,
+                        cli.files,
+                    ),
+                    ["session", "kill"] | ["s", "kill"] | ["session", "k"] | ["s", "k"] => (
+                        false,
+                        Some(None),
+                        false,
+                        None,
+                        false,
+                        false,
+                        None,
+                        cli.files,
+                    ),
+                    ["session", "info", name, ..] | ["s", "info", name, ..] => {
+                        // Info not fully implemented, treat as list for now
+                        let _ = name;
+                        (true, None, false, None, false, false, None, cli.files)
+                    }
+                    ["session", "info"] | ["s", "info"] => {
+                        (true, None, false, None, false, false, None, cli.files)
+                    }
+                    // Config commands
+                    ["config", "show"] | ["config", "dump"] => {
+                        (false, None, false, None, true, false, None, cli.files)
+                    }
+                    ["config", "paths"] => (false, None, false, None, false, true, None, cli.files),
+                    // Init command
+                    ["init", pkg_type, ..] => (
+                        false,
+                        None,
+                        false,
+                        None,
+                        false,
+                        false,
+                        Some(Some((*pkg_type).to_string())),
+                        cli.files,
+                    ),
+                    ["init"] => (
+                        false,
+                        None,
+                        false,
+                        None,
+                        false,
+                        false,
+                        Some(None),
+                        cli.files,
+                    ),
+                    // Unknown command
+                    _ => {
+                        eprintln!("Unknown command: {}", cli.cmd.join(" "));
+                        eprintln!("Available commands: session (list|attach|new|kill|info), config (show|paths), init");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                // No --cmd - check for -a shortcut and internal flags
+                let attach = cli.attach.is_some();
+                let session_name = if attach {
+                    let name = cli.attach.unwrap();
+                    if name.is_empty() {
+                        cli.session_name
+                    } else {
+                        Some(name)
+                    }
+                } else {
+                    // Use --session-name if provided (for internal --server use)
+                    cli.session_name
+                };
+
+                (
+                    false,
+                    None,
+                    attach,
+                    session_name,
+                    cli.dump_config,
+                    cli.show_paths,
+                    cli.init,
+                    cli.files,
+                )
+            };
+
+        Args {
+            files,
+            stdin: cli.stdin,
+            no_plugins: cli.no_plugins,
+            config: cli.config,
+            log_file: cli.log_file,
+            event_log: cli.event_log,
+            no_session: cli.no_restore,
+            no_upgrade_check: cli.no_upgrade_check,
+            dump_config,
+            show_paths,
+            locale: cli.locale,
+            check_plugin: cli.check_plugin,
+            init,
+            server: cli.server,
+            attach,
+            list_sessions,
+            session_name,
+            kill,
+        }
+    }
 }
 
 /// Parsed file location from CLI argument in file:line:col format
@@ -387,7 +618,7 @@ fn handle_first_run_setup(
     show_file_explorer: bool,
     stdin_stream: &mut Option<StdinStreamState>,
     tracing_handles: &mut Option<TracingHandles>,
-    session_enabled: bool,
+    workspace_enabled: bool,
 ) -> AnyhowResult<()> {
     if let Some(log_path) = &args.event_log {
         tracing::trace!("Event logging enabled: {}", log_path.display());
@@ -399,16 +630,16 @@ fn handle_first_run_setup(
         editor.set_status_log_path(handles.status.path);
     }
 
-    if session_enabled {
-        match editor.try_restore_session() {
+    if workspace_enabled {
+        match editor.try_restore_workspace() {
             Ok(true) => {
-                tracing::info!("Session restored successfully");
+                tracing::info!("Workspace restored successfully");
             }
             Ok(false) => {
-                tracing::debug!("No previous session found");
+                tracing::debug!("No previous workspace found");
             }
             Err(e) => {
-                tracing::warn!("Failed to restore session: {}", e);
+                tracing::warn!("Failed to restore workspace: {}", e);
             }
         }
     }
@@ -939,7 +1170,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
 fn run_editor_iteration(
     editor: &mut Editor,
-    session_enabled: bool,
+    workspace_enabled: bool,
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     key_translator: &KeyTranslator,
     #[cfg(target_os = "linux")] gpm_client: &Option<GpmClient>,
@@ -948,12 +1179,12 @@ fn run_editor_iteration(
     let loop_result = run_event_loop(
         editor,
         terminal,
-        session_enabled,
+        workspace_enabled,
         key_translator,
         gpm_client,
     );
     #[cfg(not(target_os = "linux"))]
-    let loop_result = run_event_loop(editor, terminal, session_enabled, key_translator);
+    let loop_result = run_event_loop(editor, terminal, workspace_enabled, key_translator);
 
     if let Err(e) = editor.end_recovery_session() {
         tracing::warn!("Failed to end recovery session: {}", e);
@@ -1594,6 +1825,346 @@ MIT
     Ok(())
 }
 
+// === Session persistence commands ===
+
+/// List active sessions
+fn list_sessions_command() -> AnyhowResult<()> {
+    let socket_dir = SocketPaths::socket_directory()?;
+
+    if !socket_dir.exists() {
+        println!("No active sessions.");
+        return Ok(());
+    }
+
+    let mut sessions = Vec::new();
+    let mut stale_cleaned = 0;
+
+    for entry in std::fs::read_dir(&socket_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+
+        // Look for control sockets (*.ctrl.sock)
+        if filename.ends_with(".ctrl.sock") {
+            // Extract session name by removing ".ctrl.sock" suffix
+            let name = &filename[..filename.len() - ".ctrl.sock".len()];
+
+            // Get socket paths for this session to check if server is alive
+            let socket_paths = SocketPaths::for_session_name(name)?;
+
+            // Check if server is actually running, clean up if stale
+            if socket_paths.cleanup_if_stale() {
+                stale_cleaned += 1;
+                continue;
+            }
+
+            // Only show sessions with running servers
+            if !socket_paths.is_server_alive() {
+                continue;
+            }
+
+            // Try to decode the session name (for working-dir based sessions)
+            // Only show the decoded path if it looks like a real absolute path
+            let display_name = if let Some(decoded_path) = workspace::decode_filename_to_path(name)
+            {
+                // Only use decoded path if it has more than one component
+                // (i.e., not just "/<name>" which happens with simple session names)
+                if decoded_path.components().count() > 2 {
+                    decoded_path.display().to_string()
+                } else {
+                    name.to_string()
+                }
+            } else {
+                name.to_string()
+            };
+
+            sessions.push((name.to_string(), display_name));
+        }
+    }
+
+    if stale_cleaned > 0 {
+        eprintln!("Cleaned up {} stale session(s).", stale_cleaned);
+    }
+
+    if sessions.is_empty() {
+        println!("No active sessions.");
+    } else {
+        println!("Active sessions:");
+        for (id, display) in sessions {
+            println!("  {} ({})", display, id);
+        }
+        println!();
+        println!("Attach with: fresh session attach [NAME]  or  fresh -a [NAME]");
+    }
+
+    Ok(())
+}
+
+/// Kill a session (terminate the server)
+fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> {
+    use fresh::server::ipc::ClientConnection;
+    use fresh::server::protocol::ClientControl;
+
+    let working_dir = std::env::current_dir()?;
+
+    // Determine session name: explicit arg > --session-name flag > working dir
+    let socket_paths = match session.or(args.session_name.as_deref()) {
+        Some(name) => SocketPaths::for_session_name(name)?,
+        None => SocketPaths::for_working_dir(&working_dir)?,
+    };
+
+    if !socket_paths.data.exists() || !socket_paths.control.exists() {
+        eprintln!("No session found to kill.");
+        return Ok(());
+    }
+
+    // Connect and send quit command
+    let mut conn = ClientConnection::connect(&socket_paths)?;
+
+    // We need to do a minimal handshake first
+    use fresh::server::protocol::{ClientHello, TermSize};
+    let hello = ClientHello::new(TermSize::new(80, 24));
+    let hello_json = serde_json::to_string(&ClientControl::Hello(hello))?;
+    conn.write_control(&hello_json)?;
+
+    // Read server response (we don't care about version mismatch here)
+    let _ = conn.read_control()?;
+
+    // Send quit command
+    let quit_msg = serde_json::to_string(&ClientControl::Quit)?;
+    conn.write_control(&quit_msg)?;
+
+    // Wait for server to close the connection (indicates shutdown)
+    conn.set_data_nonblocking(false)?;
+    let mut buf = [0u8; 1024];
+    let timeout = std::time::Duration::from_secs(5);
+    let start = std::time::Instant::now();
+
+    // Read until EOF or timeout
+    while start.elapsed() < timeout {
+        match conn.read_data(&mut buf) {
+            Ok(0) => break,    // EOF - server closed connection
+            Ok(_) => continue, // Keep draining
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(_) => break, // Error - connection closed
+        }
+    }
+
+    // Clean up stale socket files if they still exist
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    if socket_paths.data.exists() {
+        let _ = std::fs::remove_file(&socket_paths.data);
+    }
+    if socket_paths.control.exists() {
+        let _ = std::fs::remove_file(&socket_paths.control);
+    }
+
+    println!("Session terminated.");
+    Ok(())
+}
+
+/// Run as a daemon server
+fn run_server_command(args: &Args) -> AnyhowResult<()> {
+    use fresh::server::{EditorServer, EditorServerConfig};
+
+    // Initialize tracing to stderr (will go to log file when spawned detached)
+    use tracing_subscriber::{fmt, EnvFilter};
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
+    fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .init();
+
+    eprintln!(
+        "[server] Starting server process for session {:?}",
+        args.session_name
+    );
+
+    let working_dir = std::env::current_dir()?;
+    eprintln!("[server] Working directory: {:?}", working_dir);
+
+    let dir_context = fresh::config_io::DirectoryContext::from_system()?;
+
+    // Load editor config
+    eprintln!("[server] Loading editor config...");
+    let editor_config = if let Some(config_path) = &args.config {
+        config::Config::load_from_file(config_path)?
+    } else {
+        config::Config::load_with_layers(&dir_context, &working_dir)
+    };
+    eprintln!("[server] Editor config loaded");
+
+    let config = EditorServerConfig {
+        working_dir: working_dir.clone(),
+        session_name: args.session_name.clone(),
+        idle_timeout: Some(std::time::Duration::from_secs(3600)), // 1 hour default
+        editor_config,
+        dir_context,
+        plugins_enabled: !args.no_plugins,
+    };
+
+    eprintln!("[server] Creating EditorServer...");
+    let mut server = match EditorServer::new(config) {
+        Ok(s) => {
+            eprintln!("[server] EditorServer created successfully");
+            s
+        }
+        Err(e) => {
+            eprintln!("[server] EditorServer::new failed: {:?}", e);
+            return Err(e.into());
+        }
+    };
+
+    eprintln!("[server] Server ready at {:?}", server.socket_paths());
+    tracing::info!("Editor server started at {:?}", server.socket_paths());
+
+    // Run the server (blocking)
+    eprintln!("[server] Entering main loop...");
+    server.run()?;
+
+    eprintln!("[server] Server shutting down");
+    Ok(())
+}
+
+/// Attach to an existing session, starting a server if needed
+fn run_attach_command(args: &Args) -> AnyhowResult<()> {
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+    use fresh::client::ClientConfig;
+    use fresh::server::protocol::TermSize;
+    use fresh::server::spawn_server_detached;
+
+    // Initialize tracing to a file for debugging
+    use tracing_subscriber::{fmt, EnvFilter};
+    let log_file = std::fs::File::create("fresh-client.log").ok();
+    if let Some(file) = log_file {
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
+        let _ = fmt()
+            .with_env_filter(filter)
+            .with_writer(std::sync::Mutex::new(file))
+            .with_ansi(false)
+            .try_init();
+    }
+
+    let working_dir = std::env::current_dir()?;
+
+    // Determine socket paths based on session name or working directory
+    let socket_paths = if let Some(ref name) = args.session_name {
+        SocketPaths::for_session_name(name)?
+    } else {
+        SocketPaths::for_working_dir(&working_dir)?
+    };
+
+    // Clean up stale sockets if server is dead
+    if socket_paths.cleanup_if_stale() {
+        eprintln!("Cleaned up stale session.");
+    }
+
+    // Check if a server is running, if not start one
+    let server_was_started = if !socket_paths.is_server_alive() {
+        eprintln!("Starting server...");
+
+        // Spawn server in background
+        let _pid = spawn_server_detached(args.session_name.as_deref())?;
+        true
+    } else {
+        false
+    };
+
+    // Get terminal size
+    let (cols, rows) = crossterm::terminal::size()?;
+
+    // Wait for server to be ready - the PID file is the semantic signal
+    // that the server has successfully bound and is ready to accept connections.
+    if server_was_started {
+        use fresh::server::daemon::is_process_running;
+
+        // Wait for PID file to appear with a valid running PID
+        // This is the semantic condition: server writes PID after bind() succeeds
+        loop {
+            if let Ok(Some(pid)) = socket_paths.read_pid() {
+                if is_process_running(pid) {
+                    break; // Server is ready
+                }
+            }
+            // Yield to scheduler - we're waiting for an event (PID file creation),
+            // not delaying for time. The yield is just to avoid busy-spinning.
+            std::thread::yield_now();
+        }
+    }
+
+    // Now connect - server is ready
+    let conn = fresh::server::ipc::ClientConnection::connect(&socket_paths)?;
+
+    if server_was_started {
+        eprintln!("Server started.");
+    }
+
+    let config = ClientConfig {
+        socket_paths,
+        term_size: TermSize::new(cols, rows),
+    };
+
+    // Enable raw mode - the server sends terminal setup sequences (alternate screen, etc.)
+    // but we need raw mode so key presses are forwarded immediately
+    enable_raw_mode()?;
+
+    // Run the client with the established connection
+    let result = client::run_client_with_connection(config, conn);
+
+    // Disable raw mode before printing any messages
+    let _ = disable_raw_mode();
+
+    // Handle result
+    match result {
+        Ok(client::ClientExitReason::ServerQuit) => {
+            tracing::debug!("Client exit: ServerQuit");
+        }
+        Err(e) => {
+            tracing::debug!("Client error: {}", e);
+            return Err(e.into());
+        }
+        Ok(client::ClientExitReason::Detached) => {
+            tracing::debug!("Client exit: Detached");
+            eprintln!("Detached from session. Server continues running.");
+            eprintln!("Reattach with: fresh -a  or  fresh session attach");
+        }
+        Ok(client::ClientExitReason::VersionMismatch { server_version }) => {
+            tracing::debug!("Client exit: VersionMismatch");
+            eprintln!("Version mismatch: server is v{}", server_version);
+            eprintln!("Please restart the server with the same version as the client.");
+        }
+        Ok(client::ClientExitReason::Error(e)) => {
+            tracing::debug!("Client exit: Error({})", e);
+            eprintln!("Connection error: {}", e);
+            return Err(e.into());
+        }
+    }
+
+    Ok(())
+}
+
+/// Print deprecation warnings for old CLI flags
+fn print_deprecation_warnings(cli: &Cli) {
+    // Only print warnings if no --cmd is used (i.e., using deprecated flags directly)
+    if !cli.cmd.is_empty() {
+        return;
+    }
+
+    // These flags existed in master and are now reorganized into --cmd commands
+    if cli.dump_config {
+        eprintln!("warning: --dump-config is deprecated, use `fresh --cmd config show` instead");
+    }
+    if cli.show_paths {
+        eprintln!("warning: --show-paths is deprecated, use `fresh --cmd config paths` instead");
+    }
+    if cli.init.is_some() {
+        eprintln!("warning: --init is deprecated, use `fresh --cmd init` instead");
+    }
+}
+
 fn main() -> AnyhowResult<()> {
     // On Windows, run on a thread with larger stack size to handle rust-i18n's generated code
     // (1100+ translation keys cause stack overflow with default 1-2 MB stack on Windows)
@@ -1613,7 +2184,13 @@ fn main() -> AnyhowResult<()> {
 }
 
 fn real_main() -> AnyhowResult<()> {
-    let args = Args::parse();
+    let cli = Cli::parse();
+
+    // Print deprecation warnings for old flags
+    print_deprecation_warnings(&cli);
+
+    // Convert to legacy Args format for compatibility
+    let args: Args = cli.into();
 
     // Handle --show-paths early (no terminal setup needed)
     if args.show_paths {
@@ -1670,6 +2247,26 @@ fn real_main() -> AnyhowResult<()> {
         return init_package_command(pkg_type.clone());
     }
 
+    // Handle --list-sessions early (no terminal setup needed)
+    if args.list_sessions {
+        return list_sessions_command();
+    }
+
+    // Handle --kill: terminate a session
+    if let Some(ref session) = args.kill {
+        return kill_session_command(session.as_deref(), &args);
+    }
+
+    // Handle --server: run as daemon server
+    if args.server {
+        return run_server_command(&args);
+    }
+
+    // Handle --attach: connect to existing session
+    if args.attach {
+        return run_attach_command(&args);
+    }
+
     let SetupState {
         config,
         mut tracing_handles,
@@ -1697,14 +2294,14 @@ fn real_main() -> AnyhowResult<()> {
     // Track whether this is the first run (for session restore, file open, etc.)
     let mut is_first_run = true;
 
-    // Track whether we should restore session on restart (for project switching)
-    let mut restore_session_on_restart = false;
+    // Track whether we should restore workspace on restart (for project switching)
+    let mut restore_workspace_on_restart = false;
 
     // Main editor loop - supports restarting with a new working directory
     // Returns (loop_result, last_update_result) tuple
     let (result, last_update_result) = loop {
         let first_run = is_first_run;
-        let session_enabled = !args.no_session && file_locations.is_empty();
+        let workspace_enabled = !args.no_session && file_locations.is_empty();
 
         // Detect terminal color capability
         let color_capability = fresh::view::color_support::ColorCapability::detect();
@@ -1740,20 +2337,20 @@ fn real_main() -> AnyhowResult<()> {
                 show_file_explorer,
                 &mut stdin_stream,
                 &mut tracing_handles,
-                session_enabled,
+                workspace_enabled,
             )
             .context("Failed first run setup")?;
         } else {
-            if restore_session_on_restart {
-                match editor.try_restore_session() {
+            if restore_workspace_on_restart {
+                match editor.try_restore_workspace() {
                     Ok(true) => {
-                        tracing::info!("Session restored successfully");
+                        tracing::info!("Workspace restored successfully");
                     }
                     Ok(false) => {
-                        tracing::debug!("No previous session found");
+                        tracing::debug!("No previous workspace found");
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to restore session: {}", e);
+                        tracing::warn!("Failed to restore workspace: {}", e);
                     }
                 }
             }
@@ -1772,7 +2369,7 @@ fn real_main() -> AnyhowResult<()> {
 
         let iteration = run_editor_iteration(
             &mut editor,
-            session_enabled,
+            workspace_enabled,
             &mut terminal,
             &key_translator,
             #[cfg(target_os = "linux")]
@@ -1793,7 +2390,7 @@ fn real_main() -> AnyhowResult<()> {
             );
             current_working_dir = Some(new_dir);
             is_first_run = false;
-            restore_session_on_restart = true; // Restore session for the new project
+            restore_workspace_on_restart = true; // Restore workspace for the new project
             terminal
                 .clear()
                 .context("Failed to clear terminal for restart")?;
@@ -1835,14 +2432,14 @@ fn real_main() -> AnyhowResult<()> {
 fn run_event_loop(
     editor: &mut Editor,
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-    session_enabled: bool,
+    workspace_enabled: bool,
     key_translator: &KeyTranslator,
     gpm_client: &Option<GpmClient>,
 ) -> AnyhowResult<()> {
     run_event_loop_common(
         editor,
         terminal,
-        session_enabled,
+        workspace_enabled,
         key_translator,
         |timeout| poll_with_gpm(gpm_client.as_ref(), timeout),
     )
@@ -1853,13 +2450,13 @@ fn run_event_loop(
 fn run_event_loop(
     editor: &mut Editor,
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-    session_enabled: bool,
+    workspace_enabled: bool,
     key_translator: &KeyTranslator,
 ) -> AnyhowResult<()> {
     run_event_loop_common(
         editor,
         terminal,
-        session_enabled,
+        workspace_enabled,
         key_translator,
         |timeout| {
             if event_poll(timeout)? {
@@ -1874,7 +2471,7 @@ fn run_event_loop(
 fn run_event_loop_common<F>(
     editor: &mut Editor,
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-    session_enabled: bool,
+    workspace_enabled: bool,
     _key_translator: &KeyTranslator,
     mut poll_event: F,
 ) -> AnyhowResult<()>
@@ -1937,11 +2534,11 @@ where
         }
 
         if editor.should_quit() {
-            if session_enabled {
-                if let Err(e) = editor.save_session() {
-                    tracing::warn!("Failed to save session: {}", e);
+            if workspace_enabled {
+                if let Err(e) = editor.save_workspace() {
+                    tracing::warn!("Failed to save workspace: {}", e);
                 } else {
-                    tracing::debug!("Session saved successfully");
+                    tracing::debug!("Workspace saved successfully");
                 }
             }
             break;

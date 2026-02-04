@@ -6,7 +6,7 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
-use fresh::session::get_session_path;
+use fresh::workspace::get_workspace_path;
 use tempfile::TempDir;
 
 /// Test that session saves and restores open files
@@ -37,7 +37,7 @@ fn test_session_saves_and_restores_open_files() {
         // Verify both tabs exist - the second file should be active
         harness.assert_buffer_content("Content of file B");
 
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Second session: restore and verify
@@ -54,7 +54,7 @@ fn test_session_saves_and_restores_open_files() {
         harness.assert_buffer_content("");
 
         // Restore session
-        let restored = harness.editor_mut().try_restore_session().unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "Session should have been restored");
 
         // After restore, b.txt should be active (it was the last opened)
@@ -102,7 +102,7 @@ fn test_session_restores_cursor_line() {
         cursor_pos_before = harness.cursor_position();
         assert!(cursor_pos_before > 0, "Cursor should have moved");
 
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Second session: restore and verify cursor position is restored
@@ -115,7 +115,7 @@ fn test_session_restores_cursor_line() {
         )
         .unwrap();
 
-        harness.editor_mut().try_restore_session().unwrap();
+        harness.editor_mut().try_restore_workspace().unwrap();
         harness.render().unwrap();
 
         // Cursor should be restored - check it's not at the beginning
@@ -157,7 +157,7 @@ fn test_session_handles_missing_files() {
         harness.open_file(&file1).unwrap();
         harness.assert_buffer_content("Content that survives");
 
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Delete one file between sessions
@@ -174,7 +174,7 @@ fn test_session_handles_missing_files() {
         .unwrap();
 
         // Should not panic/error
-        let result = harness.editor_mut().try_restore_session();
+        let result = harness.editor_mut().try_restore_workspace();
         assert!(
             result.is_ok(),
             "Session restore should handle missing files"
@@ -210,7 +210,7 @@ fn test_no_session_flag_behavior() {
         harness.render().unwrap();
         harness.assert_screen_contains("important.txt");
 
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Second: create new editor WITHOUT restoring
@@ -224,7 +224,7 @@ fn test_no_session_flag_behavior() {
         )
         .unwrap();
 
-        // Explicitly NOT calling try_restore_session()
+        // Explicitly NOT calling try_restore_workspace()
         harness.render().unwrap();
 
         // Should see default empty buffer, not the saved file
@@ -266,7 +266,7 @@ fn test_session_restores_multiple_files() {
         // Last opened file should be active
         harness.assert_buffer_content("Unique content for file number 4");
 
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Second session: verify all restored
@@ -279,7 +279,7 @@ fn test_session_restores_multiple_files() {
         )
         .unwrap();
 
-        harness.editor_mut().try_restore_session().unwrap();
+        harness.editor_mut().try_restore_workspace().unwrap();
 
         // Verify we can access all files by opening them
         for (i, file) in files.iter().enumerate() {
@@ -297,7 +297,7 @@ fn test_session_file_location() {
     std::fs::create_dir(&project_dir).unwrap();
 
     // Get expected session path
-    let session_path = get_session_path(&project_dir).unwrap();
+    let session_path = get_workspace_path(&project_dir).unwrap();
 
     // Verify XDG location
     let data_dir = dirs::data_dir().unwrap();
@@ -312,8 +312,8 @@ fn test_session_file_location() {
         session_path
     );
     assert!(
-        session_path.to_string_lossy().contains("sessions"),
-        "Session should be in 'sessions' subdirectory: {:?}",
+        session_path.to_string_lossy().contains("workspaces"),
+        "Session should be in 'workspaces' subdirectory: {:?}",
         session_path
     );
     assert!(
@@ -356,7 +356,7 @@ fn test_session_data_integrity() {
     harness.open_file(&file).unwrap();
 
     // Capture session
-    let session = harness.editor().capture_session();
+    let session = harness.editor().capture_workspace();
 
     // Verify session has expected data
     assert!(!session.split_states.is_empty(), "Should have split states");
@@ -372,7 +372,7 @@ fn test_session_data_integrity() {
     assert!(json.contains("version"), "JSON should have version field");
 
     // Verify deserialization works
-    let restored: fresh::session::Session = serde_json::from_str(&json).unwrap();
+    let restored: fresh::workspace::Workspace = serde_json::from_str(&json).unwrap();
     assert_eq!(session.version, restored.version);
     assert_eq!(
         std::fs::canonicalize(&session.working_dir).unwrap(),
@@ -418,7 +418,7 @@ fn test_session_restores_scroll_position() {
         // Line 001 should be scrolled off screen
         // (Note: First few lines might still be visible due to viewport)
 
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Second session: verify scroll position restored
@@ -431,7 +431,7 @@ fn test_session_restores_scroll_position() {
         )
         .unwrap();
 
-        harness.editor_mut().try_restore_session().unwrap();
+        harness.editor_mut().try_restore_workspace().unwrap();
         harness.render().unwrap();
 
         // Should still show line 50 content on screen
@@ -472,7 +472,7 @@ fn test_session_preserves_active_tab() {
         harness.open_file(&file1).unwrap();
         harness.assert_buffer_content("First file content");
 
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Second session: should restore with first file active
@@ -485,7 +485,7 @@ fn test_session_preserves_active_tab() {
         )
         .unwrap();
 
-        harness.editor_mut().try_restore_session().unwrap();
+        harness.editor_mut().try_restore_workspace().unwrap();
 
         // First file should be active (its content should be displayed)
         harness.assert_buffer_content("First file content");
@@ -567,7 +567,7 @@ fn test_session_restores_cursor_in_splits() {
         right_cursor_before = harness.cursor_position();
         eprintln!("[TEST] Right cursor before: {}", right_cursor_before);
 
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Second session: restore and verify cursor positions
@@ -580,7 +580,7 @@ fn test_session_restores_cursor_in_splits() {
         )
         .unwrap();
 
-        harness.editor_mut().try_restore_session().unwrap();
+        harness.editor_mut().try_restore_workspace().unwrap();
         harness.render().unwrap();
 
         // Right split should be active with restored cursor
@@ -649,7 +649,7 @@ fn test_session_restores_scroll_in_splits() {
         harness.render().unwrap();
         harness.assert_screen_contains("Right Line 030");
 
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Second session: restore and verify scroll positions
@@ -662,7 +662,7 @@ fn test_session_restores_scroll_in_splits() {
         )
         .unwrap();
 
-        harness.editor_mut().try_restore_session().unwrap();
+        harness.editor_mut().try_restore_workspace().unwrap();
         harness.render().unwrap();
 
         // Right split should show line 30
@@ -726,7 +726,7 @@ fn test_session_cursor_visible_after_restore() {
             );
         }
 
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Second session: restore and verify cursor is STILL visible
@@ -739,7 +739,7 @@ fn test_session_cursor_visible_after_restore() {
         )
         .unwrap();
 
-        harness.editor_mut().try_restore_session().unwrap();
+        harness.editor_mut().try_restore_workspace().unwrap();
         harness.render().unwrap();
 
         // Line 50 should still be visible (cursor was there)
@@ -830,7 +830,7 @@ fn test_session_cursor_visible_in_splits_after_restore() {
             );
         }
 
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Second session: restore and verify cursor is visible in active split
@@ -843,7 +843,7 @@ fn test_session_cursor_visible_in_splits_after_restore() {
         )
         .unwrap();
 
-        harness.editor_mut().try_restore_session().unwrap();
+        harness.editor_mut().try_restore_workspace().unwrap();
 
         // Get cursor and scroll BEFORE first render from EditorState
         let cursor_before_render = harness.cursor_position();
@@ -985,10 +985,10 @@ fn test_session_restores_files_when_plugin_buffer_was_active() {
         harness.assert_buffer_content("");
 
         // Save session - active buffer is scratch (no file path)
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
 
         // Verify session was saved with the real file in open_files
-        let session = harness.editor().capture_session();
+        let session = harness.editor().capture_workspace();
         let split_state = session.split_states.values().next().unwrap();
         assert!(
             !split_state.open_files.is_empty(),
@@ -1018,7 +1018,7 @@ fn test_session_restores_files_when_plugin_buffer_was_active() {
         harness.assert_buffer_content("");
 
         // Restore session
-        let restored = harness.editor_mut().try_restore_session().unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "Session should have been restored");
 
         // The real file should be restorable - open it to verify it's in the buffer list
@@ -1070,7 +1070,7 @@ fn test_session_restores_splits() {
             screen
         );
 
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Second session: restore and verify splits are recreated
@@ -1083,7 +1083,7 @@ fn test_session_restores_splits() {
         )
         .unwrap();
 
-        harness.editor_mut().try_restore_session().unwrap();
+        harness.editor_mut().try_restore_workspace().unwrap();
         harness.render().unwrap();
 
         // After restore, BOTH file contents should be visible at the same time
@@ -1138,7 +1138,7 @@ fn test_session_restores_external_files() {
         harness.assert_buffer_content("Content outside project");
 
         // Verify session captures external files
-        let session = harness.editor().capture_session();
+        let session = harness.editor().capture_workspace();
         assert!(
             !session.external_files.is_empty(),
             "external_files should contain the external file"
@@ -1152,7 +1152,7 @@ fn test_session_restores_external_files() {
             session.external_files
         );
 
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Second session: restore and verify both files are available
@@ -1169,7 +1169,7 @@ fn test_session_restores_external_files() {
         harness.assert_buffer_content("");
 
         // Restore session
-        let restored = harness.editor_mut().try_restore_session().unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "Session should have been restored");
 
         // External file should be restorable
@@ -1248,7 +1248,7 @@ fn test_session_restores_file_explorer_hidden_and_gitignored_settings() {
         }
 
         // Save session
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Second session: restore and verify show_hidden and show_gitignored are still true
@@ -1265,7 +1265,7 @@ fn test_session_restores_file_explorer_hidden_and_gitignored_settings() {
         .unwrap();
 
         // Restore session
-        let restored = harness.editor_mut().try_restore_session().unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "Session should have been restored");
 
         // Wait for file explorer to be initialized (it's async)

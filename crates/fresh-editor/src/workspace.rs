@@ -1,4 +1,4 @@
-//! Session persistence for per-project editor state
+//! Workspace persistence for per-project editor state
 //!
 //! Saves and restores:
 //! - Split layout and open files
@@ -9,7 +9,7 @@
 //!
 //! ## Storage
 //!
-//! Sessions are stored in `$XDG_DATA_HOME/fresh/sessions/{encoded_path}.json`
+//! Workspaces are stored in `$XDG_DATA_HOME/fresh/workspaces/{encoded_path}.json`
 //! where `{encoded_path}` is the working directory path with:
 //! - Path separators (`/`) replaced with underscores (`_`)
 //! - Special characters percent-encoded as `%XX`
@@ -21,7 +21,7 @@
 //! ## Crash Resistance
 //!
 //! Uses atomic writes: write to temp file, then rename.
-//! This ensures the session file is never left in a corrupted state.
+//! This ensures the workspace file is never left in a corrupted state.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -31,19 +31,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::input::input_history::get_data_dir;
 
-/// Current session file format version
-pub const SESSION_VERSION: u32 = 1;
+/// Current workspace file format version
+pub const WORKSPACE_VERSION: u32 = 1;
 
-/// Current per-file session version
-pub const FILE_SESSION_VERSION: u32 = 1;
+/// Current per-file workspace version
+pub const FILE_WORKSPACE_VERSION: u32 = 1;
 
-/// Persisted session state for a working directory
+/// Persisted workspace state for a working directory
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Session {
+pub struct Workspace {
     /// Schema version for future migrations
     pub version: u32,
 
-    /// Working directory this session belongs to (for validation)
+    /// Working directory this workspace belongs to (for validation)
     pub working_dir: PathBuf,
 
     /// Split layout tree
@@ -57,16 +57,16 @@ pub struct Session {
 
     /// Editor config overrides (toggles that differ from defaults)
     #[serde(default)]
-    pub config_overrides: SessionConfigOverrides,
+    pub config_overrides: WorkspaceConfigOverrides,
 
     /// File explorer state
     pub file_explorer: FileExplorerState,
 
     /// Input histories (search, replace, command palette, etc.)
     #[serde(default)]
-    pub histories: SessionHistories,
+    pub histories: WorkspaceHistories,
 
-    /// Search options (persist across searches within session)
+    /// Search options (persist across searches within workspace)
     #[serde(default)]
     pub search_options: SearchOptions,
 
@@ -74,16 +74,16 @@ pub struct Session {
     #[serde(default)]
     pub bookmarks: HashMap<char, SerializedBookmark>,
 
-    /// Open terminal sessions (for restoration)
+    /// Open terminal workspaces (for restoration)
     #[serde(default)]
-    pub terminals: Vec<SerializedTerminalSession>,
+    pub terminals: Vec<SerializedTerminalWorkspace>,
 
-    /// External files open in the session (files outside working_dir)
+    /// External files open in the workspace (files outside working_dir)
     /// These are stored as absolute paths since they can't be made relative
     #[serde(default)]
     pub external_files: Vec<PathBuf>,
 
-    /// Timestamp when session was saved (Unix epoch seconds)
+    /// Timestamp when workspace was saved (Unix epoch seconds)
     pub saved_at: u64,
 }
 
@@ -198,7 +198,7 @@ pub enum SerializedViewMode {
 
 /// Config overrides that differ from base config
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SessionConfigOverrides {
+pub struct WorkspaceConfigOverrides {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_numbers: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -247,9 +247,9 @@ impl Default for FileExplorerState {
     }
 }
 
-/// Per-session input histories
+/// Per-workspace input histories
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SessionHistories {
+pub struct WorkspaceHistories {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub search: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -262,7 +262,7 @@ pub struct SessionHistories {
     pub open_file: Vec<String>,
 }
 
-/// Search options that persist across searches within a session
+/// Search options that persist across searches within a workspace
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchOptions {
     #[serde(default)]
@@ -291,9 +291,9 @@ pub enum SerializedTabRef {
     Terminal(usize),
 }
 
-/// Persisted metadata for a terminal session
+/// Persisted metadata for a terminal workspace
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedTerminalSession {
+pub struct SerializedTerminalWorkspace {
     pub terminal_index: usize,
     pub cwd: Option<PathBuf>,
     pub shell: String,
@@ -328,7 +328,7 @@ pub struct PersistedFileState {
 impl PersistedFileState {
     fn new(state: SerializedFileState) -> Self {
         Self {
-            version: FILE_SESSION_VERSION,
+            version: FILE_WORKSPACE_VERSION,
             state,
             saved_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -338,9 +338,9 @@ impl PersistedFileState {
     }
 }
 
-/// Per-file session storage for scroll/cursor positions
+/// Per-file workspace storage for scroll/cursor positions
 ///
-/// Unlike project sessions which store file states relative to a working directory,
+/// Unlike project workspaces which store file states relative to a working directory,
 /// this stores file states by absolute path so they persist across projects.
 /// This means opening the same file from different projects (or without a project)
 /// will restore the same scroll/cursor position.
@@ -348,10 +348,10 @@ impl PersistedFileState {
 /// Each file's state is stored in a separate JSON file at
 /// `$XDG_DATA_HOME/fresh/file_states/{encoded_path}.json` to avoid conflicts
 /// between concurrent editors. States are loaded lazily when opening files
-/// and saved immediately when closing files or saving the session.
-pub struct PersistedFileSession;
+/// and saved immediately when closing files or saving the workspace.
+pub struct PersistedFileWorkspace;
 
-impl PersistedFileSession {
+impl PersistedFileWorkspace {
     /// Get the directory for file state files
     fn states_dir() -> io::Result<PathBuf> {
         Ok(get_data_dir()?.join("file_states"))
@@ -388,7 +388,7 @@ impl PersistedFileSession {
         };
 
         // Check version compatibility
-        if persisted.version > FILE_SESSION_VERSION {
+        if persisted.version > FILE_WORKSPACE_VERSION {
             return None;
         }
 
@@ -442,12 +442,12 @@ impl PersistedFileSession {
 }
 
 // ============================================================================
-// Session file management
+// Workspace file management
 // ============================================================================
 
-/// Get the sessions directory
-pub fn get_sessions_dir() -> io::Result<PathBuf> {
-    Ok(get_data_dir()?.join("sessions"))
+/// Get the workspaces directory
+pub fn get_workspaces_dir() -> io::Result<PathBuf> {
+    Ok(get_data_dir()?.join("workspaces"))
 }
 
 /// Encode a path into a filesystem-safe filename using percent encoding
@@ -536,28 +536,28 @@ pub fn decode_filename_to_path(encoded: &str) -> Option<PathBuf> {
     Some(PathBuf::from(result))
 }
 
-/// Get the session file path for a working directory
-pub fn get_session_path(working_dir: &Path) -> io::Result<PathBuf> {
+/// Get the workspace file path for a working directory
+pub fn get_workspace_path(working_dir: &Path) -> io::Result<PathBuf> {
     let canonical = working_dir
         .canonicalize()
         .unwrap_or_else(|_| working_dir.to_path_buf());
     let filename = format!("{}.json", encode_path_for_filename(&canonical));
-    Ok(get_sessions_dir()?.join(filename))
+    Ok(get_workspaces_dir()?.join(filename))
 }
 
-/// Session error types
+/// Workspace error types
 #[derive(Debug)]
-pub enum SessionError {
+pub enum WorkspaceError {
     Io(anyhow::Error),
     Json(serde_json::Error),
     WorkdirMismatch { expected: PathBuf, found: PathBuf },
     VersionTooNew { version: u32, max_supported: u32 },
 }
 
-impl std::fmt::Display for SessionError {
+impl std::fmt::Display for WorkspaceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io(e) => write!(f, "Session error: {}", e),
+            Self::Io(e) => write!(f, "Workspace error: {}", e),
             Self::Json(e) => write!(f, "JSON error: {}", e),
             Self::WorkdirMismatch { expected, found } => {
                 write!(
@@ -566,13 +566,13 @@ impl std::fmt::Display for SessionError {
                     expected, found
                 )
             }
-            SessionError::VersionTooNew {
+            WorkspaceError::VersionTooNew {
                 version,
                 max_supported,
             } => {
                 write!(
                     f,
-                    "Session version {} is newer than supported (max: {})",
+                    "Workspace version {} is newer than supported (max: {})",
                     version, max_supported
                 )
             }
@@ -580,7 +580,7 @@ impl std::fmt::Display for SessionError {
     }
 }
 
-impl std::error::Error for SessionError {
+impl std::error::Error for WorkspaceError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => e.source(),
@@ -590,89 +590,89 @@ impl std::error::Error for SessionError {
     }
 }
 
-impl From<io::Error> for SessionError {
+impl From<io::Error> for WorkspaceError {
     fn from(e: io::Error) -> Self {
-        SessionError::Io(e.into())
+        WorkspaceError::Io(e.into())
     }
 }
 
-impl From<anyhow::Error> for SessionError {
+impl From<anyhow::Error> for WorkspaceError {
     fn from(e: anyhow::Error) -> Self {
-        SessionError::Io(e)
+        WorkspaceError::Io(e)
     }
 }
 
-impl From<serde_json::Error> for SessionError {
+impl From<serde_json::Error> for WorkspaceError {
     fn from(e: serde_json::Error) -> Self {
-        SessionError::Json(e)
+        WorkspaceError::Json(e)
     }
 }
 
-impl Session {
-    /// Load session for a working directory (if exists)
-    pub fn load(working_dir: &Path) -> Result<Option<Session>, SessionError> {
-        let path = get_session_path(working_dir)?;
-        tracing::debug!("Looking for session at {:?}", path);
+impl Workspace {
+    /// Load workspace for a working directory (if exists)
+    pub fn load(working_dir: &Path) -> Result<Option<Workspace>, WorkspaceError> {
+        let path = get_workspace_path(working_dir)?;
+        tracing::debug!("Looking for workspace at {:?}", path);
 
         if !path.exists() {
-            tracing::debug!("Session file does not exist");
+            tracing::debug!("Workspace file does not exist");
             return Ok(None);
         }
 
-        tracing::debug!("Loading session from {:?}", path);
+        tracing::debug!("Loading workspace from {:?}", path);
         let content = std::fs::read_to_string(&path)?;
-        let session: Session = serde_json::from_str(&content)?;
+        let workspace: Workspace = serde_json::from_str(&content)?;
 
         tracing::debug!(
-            "Loaded session: version={}, split_states={}, active_split={}",
-            session.version,
-            session.split_states.len(),
-            session.active_split_id
+            "Loaded workspace: version={}, split_states={}, active_split={}",
+            workspace.version,
+            workspace.split_states.len(),
+            workspace.active_split_id
         );
 
         // Validate working_dir matches (canonicalize both for comparison)
         let expected = working_dir
             .canonicalize()
             .unwrap_or_else(|_| working_dir.to_path_buf());
-        let found = session
+        let found = workspace
             .working_dir
             .canonicalize()
-            .unwrap_or_else(|_| session.working_dir.clone());
+            .unwrap_or_else(|_| workspace.working_dir.clone());
 
         if expected != found {
             tracing::warn!(
-                "Session working_dir mismatch: expected {:?}, found {:?}",
+                "Workspace working_dir mismatch: expected {:?}, found {:?}",
                 expected,
                 found
             );
-            return Err(SessionError::WorkdirMismatch { expected, found });
+            return Err(WorkspaceError::WorkdirMismatch { expected, found });
         }
 
         // Check version compatibility
-        if session.version > SESSION_VERSION {
+        if workspace.version > WORKSPACE_VERSION {
             tracing::warn!(
-                "Session version {} is newer than supported {}",
-                session.version,
-                SESSION_VERSION
+                "Workspace version {} is newer than supported {}",
+                workspace.version,
+                WORKSPACE_VERSION
             );
-            return Err(SessionError::VersionTooNew {
-                version: session.version,
-                max_supported: SESSION_VERSION,
+            return Err(WorkspaceError::VersionTooNew {
+                version: workspace.version,
+                max_supported: WORKSPACE_VERSION,
             });
         }
 
-        Ok(Some(session))
+        Ok(Some(workspace))
     }
 
-    /// Save session to file using atomic write (temp file + rename)
+    /// Save workspace to file using atomic write (temp file + rename)
     ///
-    /// This ensures the session file is never left in a corrupted state:
+    /// This ensures the workspace file is never left in a corrupted state:
     /// 1. Write to a temporary file in the same directory
     /// 2. Sync to disk (fsync)
     /// 3. Atomically rename to the final path
-    pub fn save(&self) -> Result<(), SessionError> {
-        let path = get_session_path(&self.working_dir)?;
-        tracing::debug!("Saving session to {:?}", path);
+    pub fn save(&self) -> Result<(), WorkspaceError> {
+        let path = get_workspace_path(&self.working_dir)?;
+        tracing::debug!("Saving workspace to {:?}", path);
 
         // Ensure directory exists
         if let Some(parent) = path.parent() {
@@ -681,7 +681,7 @@ impl Session {
 
         // Serialize to JSON
         let content = serde_json::to_string_pretty(self)?;
-        tracing::trace!("Session JSON size: {} bytes", content.len());
+        tracing::trace!("Workspace JSON size: {} bytes", content.len());
 
         // Write atomically: temp file + rename
         let temp_path = path.with_extension("json.tmp");
@@ -695,24 +695,24 @@ impl Session {
 
         // Atomic rename
         std::fs::rename(&temp_path, &path)?;
-        tracing::info!("Session saved to {:?}", path);
+        tracing::info!("Workspace saved to {:?}", path);
 
         Ok(())
     }
 
-    /// Delete session for a working directory
-    pub fn delete(working_dir: &Path) -> Result<(), SessionError> {
-        let path = get_session_path(working_dir)?;
+    /// Delete workspace for a working directory
+    pub fn delete(working_dir: &Path) -> Result<(), WorkspaceError> {
+        let path = get_workspace_path(working_dir)?;
         if path.exists() {
             std::fs::remove_file(path)?;
         }
         Ok(())
     }
 
-    /// Create a new session with current timestamp
+    /// Create a new workspace with current timestamp
     pub fn new(working_dir: PathBuf) -> Self {
         Self {
-            version: SESSION_VERSION,
+            version: WORKSPACE_VERSION,
             working_dir,
             split_layout: SerializedSplitNode::Leaf {
                 file_path: None,
@@ -720,9 +720,9 @@ impl Session {
             },
             active_split_id: 0,
             split_states: HashMap::new(),
-            config_overrides: SessionConfigOverrides::default(),
+            config_overrides: WorkspaceConfigOverrides::default(),
             file_explorer: FileExplorerState::default(),
-            histories: SessionHistories::default(),
+            histories: WorkspaceHistories::default(),
             search_options: SearchOptions::default(),
             bookmarks: HashMap::new(),
             terminals: Vec::new(),
@@ -748,7 +748,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_session_path_percent_encoding() {
+    fn test_workspace_path_percent_encoding() {
         // Test basic path encoding - readable with underscores for separators
         let encoded = encode_path_for_filename(Path::new("/home/user/project"));
         assert_eq!(encoded, "home_user_project");
@@ -759,12 +759,12 @@ mod tests {
         assert_eq!(decoded, PathBuf::from("/home/user/project"));
 
         // Different paths should give different encodings
-        let path1 = get_session_path(Path::new("/home/user/project")).unwrap();
-        let path2 = get_session_path(Path::new("/home/user/other")).unwrap();
+        let path1 = get_workspace_path(Path::new("/home/user/project")).unwrap();
+        let path2 = get_workspace_path(Path::new("/home/user/other")).unwrap();
         assert_ne!(path1, path2);
 
         // Same path should give same encoding
-        let path1_again = get_session_path(Path::new("/home/user/project")).unwrap();
+        let path1_again = get_workspace_path(Path::new("/home/user/project")).unwrap();
         assert_eq!(path1, path1_again);
 
         // Filename should end with .json and be readable
@@ -797,18 +797,18 @@ mod tests {
     }
 
     #[test]
-    fn test_session_serialization() {
-        let session = Session::new(PathBuf::from("/home/user/test"));
-        let json = serde_json::to_string(&session).unwrap();
-        let restored: Session = serde_json::from_str(&json).unwrap();
+    fn test_workspace_serialization() {
+        let workspace = Workspace::new(PathBuf::from("/home/user/test"));
+        let json = serde_json::to_string(&workspace).unwrap();
+        let restored: Workspace = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(session.version, restored.version);
-        assert_eq!(session.working_dir, restored.working_dir);
+        assert_eq!(workspace.version, restored.version);
+        assert_eq!(workspace.working_dir, restored.working_dir);
     }
 
     #[test]
-    fn test_session_config_overrides_skip_none() {
-        let overrides = SessionConfigOverrides::default();
+    fn test_workspace_config_overrides_skip_none() {
+        let overrides = WorkspaceConfigOverrides::default();
         let json = serde_json::to_string(&overrides).unwrap();
 
         // Empty overrides should serialize to empty object
@@ -816,8 +816,8 @@ mod tests {
     }
 
     #[test]
-    fn test_session_config_overrides_with_values() {
-        let overrides = SessionConfigOverrides {
+    fn test_workspace_config_overrides_with_values() {
+        let overrides = WorkspaceConfigOverrides {
             line_wrap: Some(false),
             ..Default::default()
         };
@@ -942,11 +942,11 @@ mod tests {
     }
 
     #[test]
-    fn test_full_session_round_trip() {
-        let mut session = Session::new(PathBuf::from("/home/user/myproject"));
+    fn test_full_workspace_round_trip() {
+        let mut workspace = Workspace::new(PathBuf::from("/home/user/myproject"));
 
         // Configure split layout
-        session.split_layout = SerializedSplitNode::Split {
+        workspace.split_layout = SerializedSplitNode::Split {
             direction: SerializedSplitDirection::Horizontal,
             first: Box::new(SerializedSplitNode::Leaf {
                 file_path: Some(PathBuf::from("README.md")),
@@ -959,10 +959,10 @@ mod tests {
             ratio: 0.6,
             split_id: 0,
         };
-        session.active_split_id = 1;
+        workspace.active_split_id = 1;
 
         // Add split state
-        session.split_states.insert(
+        workspace.split_states.insert(
             1,
             SerializedSplitViewState {
                 open_tabs: vec![
@@ -980,7 +980,7 @@ mod tests {
         );
 
         // Add bookmarks
-        session.bookmarks.insert(
+        workspace.bookmarks.insert(
             'm',
             SerializedBookmark {
                 file_path: PathBuf::from("src/main.rs"),
@@ -989,15 +989,15 @@ mod tests {
         );
 
         // Set search options
-        session.search_options.case_sensitive = true;
-        session.search_options.use_regex = true;
+        workspace.search_options.case_sensitive = true;
+        workspace.search_options.use_regex = true;
 
         // Serialize and deserialize
-        let json = serde_json::to_string_pretty(&session).unwrap();
-        let restored: Session = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string_pretty(&workspace).unwrap();
+        let restored: Workspace = serde_json::from_str(&json).unwrap();
 
         // Verify everything matches
-        assert_eq!(restored.version, SESSION_VERSION);
+        assert_eq!(restored.version, WORKSPACE_VERSION);
         assert_eq!(restored.working_dir, PathBuf::from("/home/user/myproject"));
         assert_eq!(restored.active_split_id, 1);
         assert!(restored.bookmarks.contains_key(&'m'));
@@ -1011,20 +1011,20 @@ mod tests {
     }
 
     #[test]
-    fn test_session_file_save_load() {
+    fn test_workspace_file_save_load() {
         use std::fs;
 
         // Create a temporary directory for testing
-        let temp_dir = std::env::temp_dir().join("fresh_session_test");
+        let temp_dir = std::env::temp_dir().join("fresh_workspace_test");
         let _ = fs::remove_dir_all(&temp_dir); // Clean up from previous runs
         fs::create_dir_all(&temp_dir).unwrap();
 
-        let session_path = temp_dir.join("test_session.json");
+        let workspace_path = temp_dir.join("test_workspace.json");
 
-        // Create a session
-        let mut session = Session::new(temp_dir.clone());
-        session.search_options.case_sensitive = true;
-        session.bookmarks.insert(
+        // Create a workspace
+        let mut workspace = Workspace::new(temp_dir.clone());
+        workspace.search_options.case_sensitive = true;
+        workspace.bookmarks.insert(
             'x',
             SerializedBookmark {
                 file_path: PathBuf::from("test.txt"),
@@ -1033,16 +1033,16 @@ mod tests {
         );
 
         // Save it directly to test path
-        let content = serde_json::to_string_pretty(&session).unwrap();
-        let temp_path = session_path.with_extension("json.tmp");
+        let content = serde_json::to_string_pretty(&workspace).unwrap();
+        let temp_path = workspace_path.with_extension("json.tmp");
         let mut file = std::fs::File::create(&temp_path).unwrap();
         std::io::Write::write_all(&mut file, content.as_bytes()).unwrap();
         file.sync_all().unwrap();
-        std::fs::rename(&temp_path, &session_path).unwrap();
+        std::fs::rename(&temp_path, &workspace_path).unwrap();
 
         // Load it back
-        let loaded_content = fs::read_to_string(&session_path).unwrap();
-        let loaded: Session = serde_json::from_str(&loaded_content).unwrap();
+        let loaded_content = fs::read_to_string(&workspace_path).unwrap();
+        let loaded: Workspace = serde_json::from_str(&loaded_content).unwrap();
 
         // Verify
         assert_eq!(loaded.working_dir, temp_dir);
@@ -1054,31 +1054,31 @@ mod tests {
     }
 
     #[test]
-    fn test_session_version_check() {
-        let session = Session::new(PathBuf::from("/test"));
-        assert_eq!(session.version, SESSION_VERSION);
+    fn test_workspace_version_check() {
+        let workspace = Workspace::new(PathBuf::from("/test"));
+        assert_eq!(workspace.version, WORKSPACE_VERSION);
 
         // Serialize with a future version number
-        let mut json_value: serde_json::Value = serde_json::to_value(&session).unwrap();
+        let mut json_value: serde_json::Value = serde_json::to_value(&workspace).unwrap();
         json_value["version"] = serde_json::json!(999);
 
         let json = serde_json::to_string(&json_value).unwrap();
-        let restored: Session = serde_json::from_str(&json).unwrap();
+        let restored: Workspace = serde_json::from_str(&json).unwrap();
 
         // Should still deserialize, but version is 999
         assert_eq!(restored.version, 999);
     }
 
     #[test]
-    fn test_empty_session_histories() {
-        let histories = SessionHistories::default();
+    fn test_empty_workspace_histories() {
+        let histories = WorkspaceHistories::default();
         let json = serde_json::to_string(&histories).unwrap();
 
         // Empty histories should serialize to empty object (due to skip_serializing_if)
         assert_eq!(json, "{}");
 
         // But should deserialize back correctly
-        let restored: SessionHistories = serde_json::from_str(&json).unwrap();
+        let restored: WorkspaceHistories = serde_json::from_str(&json).unwrap();
         assert!(restored.search.is_empty());
         assert!(restored.replace.is_empty());
     }

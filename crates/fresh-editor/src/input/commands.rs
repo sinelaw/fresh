@@ -261,6 +261,14 @@ pub fn get_all_commands() -> Vec<Command> {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
         },
+        Command {
+            name: t!("cmd.detach").to_string(),
+            description: t!("cmd.detach_desc").to_string(),
+            action: Action::Detach,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
         // Edit operations
         Command {
             name: t!("cmd.undo").to_string(),

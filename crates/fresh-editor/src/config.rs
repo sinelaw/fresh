@@ -169,6 +169,20 @@ impl CursorStyle {
         }
     }
 
+    /// Get the ANSI escape sequence for this cursor style (DECSCUSR)
+    /// Used for session mode where we can't write directly to terminal
+    pub fn to_escape_sequence(self) -> &'static [u8] {
+        match self {
+            Self::Default => b"\x1b[0 q",
+            Self::BlinkingBlock => b"\x1b[1 q",
+            Self::SteadyBlock => b"\x1b[2 q",
+            Self::BlinkingUnderline => b"\x1b[3 q",
+            Self::SteadyUnderline => b"\x1b[4 q",
+            Self::BlinkingBar => b"\x1b[5 q",
+            Self::SteadyBar => b"\x1b[6 q",
+        }
+    }
+
     /// Parse from string (for command palette)
     pub fn parse(s: &str) -> Option<Self> {
         match s {
@@ -1408,6 +1422,14 @@ impl MenuConfig {
                     MenuItem::Action {
                         label: t!("menu.file.switch_project").to_string(),
                         action: "switch_project".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.file.detach").to_string(),
+                        action: "detach".to_string(),
                         args: HashMap::new(),
                         when: None,
                         checkbox: None,

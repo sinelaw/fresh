@@ -913,7 +913,7 @@ fn is_empty_diff(value: &serde_json::Value) -> bool {
 /// - No hidden global state dependencies
 #[derive(Debug, Clone)]
 pub struct DirectoryContext {
-    /// Data directory for persistent state (recovery, sessions, history)
+    /// Data directory for persistent state (recovery, workspaces, history)
     /// e.g., ~/.local/share/fresh on Linux, ~/Library/Application Support/fresh on macOS
     pub data_dir: std::path::PathBuf,
 
@@ -977,9 +977,9 @@ impl DirectoryContext {
         self.data_dir.join("recovery")
     }
 
-    /// Get the sessions directory path
-    pub fn sessions_dir(&self) -> std::path::PathBuf {
-        self.data_dir.join("sessions")
+    /// Get the workspaces directory path
+    pub fn workspaces_dir(&self) -> std::path::PathBuf {
+        self.data_dir.join("workspaces")
     }
 
     /// Get the history file path for a specific prompt type
@@ -1013,7 +1013,7 @@ impl DirectoryContext {
 
     /// Get the terminal directory for a specific working directory
     pub fn terminal_dir_for(&self, working_dir: &std::path::Path) -> std::path::PathBuf {
-        let encoded = crate::session::encode_path_for_filename(working_dir);
+        let encoded = crate::workspace::encode_path_for_filename(working_dir);
         self.terminals_dir().join(encoded)
     }
 

@@ -24,7 +24,6 @@ mod popup_actions;
 mod prompt_actions;
 mod recovery_actions;
 mod render;
-pub mod session;
 mod settings_actions;
 mod shell_command;
 mod split_actions;
@@ -37,6 +36,7 @@ pub mod types;
 mod undo_actions;
 mod view_actions;
 pub mod warning_domains;
+pub mod workspace;
 
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
@@ -227,6 +227,16 @@ pub struct Editor {
 
     /// Should the editor quit?
     should_quit: bool,
+
+    /// Should the client detach (keep server running)?
+    should_detach: bool,
+
+    /// Running in session/server mode (use hardware cursor only, no REVERSED style)
+    session_mode: bool,
+
+    /// Pending escape sequences to send to client (session mode only)
+    /// These get prepended to the next render output
+    pending_escape_sequences: Vec<u8>,
 
     /// If set, the editor should restart with this new working directory
     /// This is used by Open Folder to do a clean context switch
@@ -1083,6 +1093,9 @@ impl Editor {
             keybindings,
             clipboard: crate::services::clipboard::Clipboard::new(),
             should_quit: false,
+            should_detach: false,
+            session_mode: false,
+            pending_escape_sequences: Vec::new(),
             restart_with_dir: None,
             status_message: None,
             plugin_status_message: None,
@@ -2650,6 +2663,36 @@ impl Editor {
     /// Check if the editor should quit
     pub fn should_quit(&self) -> bool {
         self.should_quit
+    }
+
+    /// Check if the client should detach (keep server running)
+    pub fn should_detach(&self) -> bool {
+        self.should_detach
+    }
+
+    /// Clear the detach flag (after processing)
+    pub fn clear_detach(&mut self) {
+        self.should_detach = false;
+    }
+
+    /// Set session mode (use hardware cursor only, no REVERSED style for software cursor)
+    pub fn set_session_mode(&mut self, session_mode: bool) {
+        self.session_mode = session_mode;
+    }
+
+    /// Check if running in session mode
+    pub fn is_session_mode(&self) -> bool {
+        self.session_mode
+    }
+
+    /// Queue escape sequences to be sent to the client (session mode only)
+    pub fn queue_escape_sequences(&mut self, sequences: &[u8]) {
+        self.pending_escape_sequences.extend_from_slice(sequences);
+    }
+
+    /// Take pending escape sequences, clearing the queue
+    pub fn take_pending_escape_sequences(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.pending_escape_sequences)
     }
 
     /// Check if the editor should restart with a new working directory

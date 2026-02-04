@@ -231,6 +231,9 @@ impl Editor {
             Action::ForceQuit => {
                 self.should_quit = true;
             }
+            Action::Detach => {
+                self.should_detach = true;
+            }
             Action::Save => {
                 // Check if buffer has a file path - if not, redirect to SaveAs
                 if self.active_state().buffer.file_path().is_none() {
@@ -2768,8 +2771,14 @@ impl Editor {
             self.config.editor.cursor_style = style;
 
             // Apply the cursor style to the terminal
-            use std::io::stdout;
-            let _ = crossterm::execute!(stdout(), style.to_crossterm_style());
+            if self.session_mode {
+                // In session mode, queue the escape sequence to be sent to the client
+                self.queue_escape_sequences(style.to_escape_sequence());
+            } else {
+                // In normal mode, write directly to stdout
+                use std::io::stdout;
+                let _ = crossterm::execute!(stdout(), style.to_crossterm_style());
+            }
 
             // Persist to config file
             self.save_cursor_style_to_config();

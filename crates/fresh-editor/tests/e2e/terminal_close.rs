@@ -353,7 +353,7 @@ fn test_closed_terminal_not_restored_from_session() {
         );
 
         // Save session
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Second session: restore and verify terminal doesn't come back
@@ -367,7 +367,7 @@ fn test_closed_terminal_not_restored_from_session() {
         .unwrap();
 
         // Restore session
-        let restored = harness.editor_mut().try_restore_session().unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "Session should have been restored");
         harness.render().unwrap();
 

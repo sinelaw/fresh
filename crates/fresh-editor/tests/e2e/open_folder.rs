@@ -430,7 +430,7 @@ fn test_switch_project_restart_flow_with_sessions() {
     // Create a shared directory context for consistent session storage (isolated for testing)
     let context_temp = TempDir::new().unwrap();
     let dir_context = fresh::config_io::DirectoryContext::for_testing(context_temp.path());
-    fs::create_dir_all(dir_context.sessions_dir()).unwrap();
+    fs::create_dir_all(dir_context.workspaces_dir()).unwrap();
 
     // Phase 1: Start in project_a, open file, save session
     {
@@ -452,7 +452,7 @@ fn test_switch_project_restart_flow_with_sessions() {
         harness.assert_screen_contains("Content from Project A");
 
         // Save session for project_a
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Phase 2: Start fresh in project_a - session should restore
@@ -467,7 +467,7 @@ fn test_switch_project_restart_flow_with_sessions() {
         .unwrap();
 
         // Restore session
-        let restored = harness.editor_mut().try_restore_session().unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "Session should be restored for project_a");
 
         harness.render().unwrap();
@@ -488,7 +488,7 @@ fn test_switch_project_restart_flow_with_sessions() {
         .unwrap();
 
         // Restore session (project_a's file)
-        harness.editor_mut().try_restore_session().unwrap();
+        harness.editor_mut().try_restore_workspace().unwrap();
         harness.render().unwrap();
         harness.assert_screen_contains("main_a.txt");
 
@@ -565,7 +565,7 @@ fn test_switch_project_restart_flow_with_sessions() {
         harness.assert_screen_contains("Content from Project B");
 
         // Save session for project_b
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
     }
 
     // Phase 5: Start fresh in project_b - session should restore project_b's file
@@ -580,7 +580,7 @@ fn test_switch_project_restart_flow_with_sessions() {
         .unwrap();
 
         // Restore session
-        let restored = harness.editor_mut().try_restore_session().unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "Session should be restored for project_b");
 
         harness.render().unwrap();
@@ -603,7 +603,7 @@ fn test_switch_project_restart_flow_with_sessions() {
         .unwrap();
 
         // Restore session
-        let restored = harness.editor_mut().try_restore_session().unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "Session should be restored for project_a");
 
         harness.render().unwrap();
@@ -676,7 +676,7 @@ fn test_session_persistence_across_project_switches() {
     // Create a shared directory context for session persistence (isolated for testing)
     let context_temp = TempDir::new().unwrap();
     let dir_context = DirectoryContext::for_testing(context_temp.path());
-    fs::create_dir_all(dir_context.sessions_dir()).unwrap();
+    fs::create_dir_all(dir_context.workspaces_dir()).unwrap();
 
     // Phase 1: Start in project A, open file, switch to project B
     {
@@ -695,7 +695,7 @@ fn test_session_persistence_across_project_switches() {
         harness.assert_screen_contains("file_a.txt");
 
         // Save session before switching
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
 
         // Switch to project B
         switch_to_project(&mut harness, &project_b);
@@ -726,7 +726,7 @@ fn test_session_persistence_across_project_switches() {
         harness.assert_screen_contains("file_b.txt");
 
         // Save session before switching
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
 
         // Switch back to project A
         switch_to_project(&mut harness, &project_a);
@@ -750,7 +750,7 @@ fn test_session_persistence_across_project_switches() {
         .unwrap();
 
         // Restore session
-        let restored = harness.editor_mut().try_restore_session().unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "Session should be restored for project A");
 
         harness.render().unwrap();
@@ -760,7 +760,7 @@ fn test_session_persistence_across_project_switches() {
         harness.assert_screen_not_contains("file_b.txt");
 
         // Save session and switch to project B
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
         switch_to_project(&mut harness, &project_b);
         assert!(harness.should_quit());
     }
@@ -777,7 +777,7 @@ fn test_session_persistence_across_project_switches() {
         .unwrap();
 
         // Restore session
-        let restored = harness.editor_mut().try_restore_session().unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "Session should be restored for project B");
 
         harness.render().unwrap();
@@ -787,7 +787,7 @@ fn test_session_persistence_across_project_switches() {
         harness.assert_screen_not_contains("file_a.txt");
 
         // Switch back to project A for one more verification
-        harness.editor_mut().save_session().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
         switch_to_project(&mut harness, &project_a);
         assert!(harness.should_quit());
     }
@@ -804,7 +804,7 @@ fn test_session_persistence_across_project_switches() {
         .unwrap();
 
         // Restore session
-        let restored = harness.editor_mut().try_restore_session().unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "Session should still be restored for project A");
 
         harness.render().unwrap();

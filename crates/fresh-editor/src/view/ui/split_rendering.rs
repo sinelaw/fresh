@@ -376,6 +376,8 @@ struct LineRenderInput<'a> {
     left_column: usize,
     /// Whether to show relative line numbers (distance from cursor)
     relative_line_numbers: bool,
+    /// Session mode: use hardware cursor only, skip REVERSED style for software cursor
+    session_mode: bool,
 }
 
 /// Context for computing the style of a single character
@@ -391,6 +393,8 @@ struct CharStyleContext<'a> {
     viewport_overlays: &'a [(crate::view::overlay::Overlay, Range<usize>)],
     primary_cursor_position: usize,
     is_active: bool,
+    /// Session mode: use hardware cursor only, skip REVERSED style for software cursor
+    session_mode: bool,
 }
 
 /// Output from compute_char_style
@@ -670,9 +674,18 @@ fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     let is_secondary_cursor = ctx.is_cursor && ctx.byte_pos != Some(ctx.primary_cursor_position);
     if ctx.is_active {
         if ctx.is_cursor {
-            // Apply REVERSED to all cursor positions (primary and secondary)
-            // This ensures the character under the cursor is always visible
-            style = style.add_modifier(Modifier::REVERSED);
+            if ctx.session_mode {
+                // Session mode: rely on hardware cursor for primary cursor, no REVERSED
+                // (REVERSED + hardware cursor = double inversion = invisible cursor)
+                // Secondary cursors still need visual indicator via REVERSED
+                if is_secondary_cursor {
+                    style = style.add_modifier(Modifier::REVERSED);
+                }
+            } else {
+                // Normal mode: apply REVERSED to all cursor positions (primary and secondary)
+                // This ensures the character under the cursor is always visible
+                style = style.add_modifier(Modifier::REVERSED);
+            }
         }
     } else if ctx.is_cursor {
         style = style.fg(ctx.theme.editor_fg).bg(ctx.theme.inactive_cursor);
@@ -739,6 +752,7 @@ impl SplitRenderer {
         relative_line_numbers: bool,
         tab_bar_visible: bool,
         use_terminal_bg: bool,
+        session_mode: bool,
     ) -> (
         Vec<(
             crate::model::event::SplitId,
@@ -978,6 +992,7 @@ impl SplitRenderer {
                     hide_cursor,
                     relative_line_numbers,
                     use_terminal_bg,
+                    session_mode,
                 );
 
                 // Store view line mappings for mouse click handling
@@ -3073,6 +3088,7 @@ impl SplitRenderer {
             estimated_lines,
             left_column,
             relative_line_numbers,
+            session_mode,
         } = input;
 
         let selection_ranges = &selection.ranges;
@@ -3370,6 +3386,7 @@ impl SplitRenderer {
                         viewport_overlays,
                         primary_cursor_position,
                         is_active,
+                        session_mode,
                     });
 
                     // Determine display character (tabs already expanded in ViewLineIterator)
@@ -3938,6 +3955,7 @@ impl SplitRenderer {
         hide_cursor: bool,
         relative_line_numbers: bool,
         use_terminal_bg: bool,
+        session_mode: bool,
     ) -> Vec<ViewLineMapping> {
         let _span = tracing::trace_span!("render_buffer_in_split").entered();
 
@@ -4109,6 +4127,7 @@ impl SplitRenderer {
             estimated_lines,
             left_column: viewport.left_column,
             relative_line_numbers,
+            session_mode,
         });
 
         let mut lines = render_output.lines;
@@ -4383,6 +4402,7 @@ mod tests {
             estimated_lines,
             left_column: viewport.left_column,
             relative_line_numbers: false,
+            session_mode: false,
         });
 
         (

@@ -591,10 +591,10 @@ impl Editor {
     /// This looks up the file's saved state from the global file states store
     /// and applies it to both the EditorState (cursor) and SplitViewState (viewport).
     fn restore_global_file_state(&mut self, buffer_id: BufferId, path: &Path, split_id: SplitId) {
-        use crate::session::PersistedFileSession;
+        use crate::workspace::PersistedFileWorkspace;
 
-        // Load the per-file session for this path (lazy load from disk)
-        let file_state = match PersistedFileSession::load(path) {
+        // Load the per-file state for this path (lazy load from disk)
+        let file_state = match PersistedFileWorkspace::load(path) {
             Some(state) => state,
             None => return, // No saved state for this file
         };
@@ -622,8 +622,8 @@ impl Editor {
 
     /// Save file state when a buffer is closed (for per-file session persistence)
     fn save_file_state_on_close(&self, buffer_id: BufferId) {
-        use crate::session::{
-            PersistedFileSession, SerializedCursor, SerializedFileState, SerializedScroll,
+        use crate::workspace::{
+            PersistedFileWorkspace, SerializedCursor, SerializedFileState, SerializedScroll,
         };
 
         // Get the file path for this buffer
@@ -672,7 +672,7 @@ impl Editor {
         };
 
         // Save to disk
-        PersistedFileSession::save(&abs_path, file_state);
+        PersistedFileWorkspace::save(&abs_path, file_state);
         tracing::debug!("Saved file state on close for {:?}", abs_path);
     }
 
