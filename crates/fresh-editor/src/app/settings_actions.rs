@@ -134,6 +134,13 @@ impl Editor {
         // Update keybindings
         self.keybindings = KeybindingResolver::new(&self.config);
 
+        // Update LSP configs
+        if let Some(ref mut lsp) = self.lsp {
+            for (language, lsp_config) in &self.config.lsp {
+                lsp.set_language_config(language.clone(), lsp_config.clone());
+            }
+        }
+
         // Save ONLY the changes to disk (preserves external edits to the config file)
         let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
 

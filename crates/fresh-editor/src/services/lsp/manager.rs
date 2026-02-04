@@ -373,7 +373,8 @@ impl LspManager {
             }
         };
 
-        if !config.enabled {
+        // Skip enabled check if user explicitly requested start (via allowed_languages)
+        if !config.enabled && !self.allowed_languages.contains(language) {
             tracing::debug!("force_spawn: LSP for {} is not enabled in config", language);
             return None;
         }

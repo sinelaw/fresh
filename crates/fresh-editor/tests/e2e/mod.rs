@@ -27,6 +27,7 @@ pub mod line_wrapping;
 pub mod live_grep;
 pub mod locale;
 pub mod lsp;
+pub mod lsp_config;
 pub mod lsp_order;
 pub mod macros;
 pub mod margin;
