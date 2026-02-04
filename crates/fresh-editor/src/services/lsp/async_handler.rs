@@ -3033,6 +3033,9 @@ pub struct LspHandle {
     /// Unique identifier for this handle instance
     id: u64,
 
+    /// Language this handle serves
+    language: String,
+
     /// Channel for sending commands to the task
     command_tx: mpsc::Sender<LspCommand>,
 
@@ -3112,6 +3115,7 @@ impl LspHandle {
 
         Ok(Self {
             id,
+            language,
             command_tx,
             state,
             runtime: runtime.clone(),
@@ -3121,6 +3125,11 @@ impl LspHandle {
     /// Get the unique ID for this handle instance
     pub fn id(&self) -> u64 {
         self.id
+    }
+
+    /// Get the language this handle serves
+    pub fn language(&self) -> &str {
+        &self.language
     }
 
     /// Initialize the server (non-blocking)
@@ -3208,7 +3217,26 @@ impl LspHandle {
     }
 
     /// Notify document opened
+    ///
+    /// The `language_id` should match this handle's language. If it doesn't,
+    /// a warning is logged but the notification is still sent (the server
+    /// will receive it with the specified language_id).
     pub fn did_open(&self, uri: Uri, text: String, language_id: String) -> Result<(), String> {
+        // Verify the document language matches this handle's language
+        if language_id != self.language {
+            tracing::warn!(
+                "did_open: document language '{}' does not match LSP handle language '{}' for {}",
+                language_id,
+                self.language,
+                uri.as_str()
+            );
+            // Return early - don't send to wrong LSP
+            return Err(format!(
+                "Language mismatch: document is '{}' but LSP handles '{}'",
+                language_id, self.language
+            ));
+        }
+
         // Send command to LspTask which will queue it if not initialized yet
         self.command_tx
             .try_send(LspCommand::DidOpen {

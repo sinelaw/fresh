@@ -1664,30 +1664,6 @@ impl Editor {
         self.pending_lsp_confirmation.is_some()
     }
 
-    /// Try to get or spawn an LSP handle, showing confirmation popup if needed
-    ///
-    /// This is the recommended way to access LSP functionality. It checks if
-    /// confirmation is required and shows the popup if so.
-    ///
-    /// Returns:
-    /// - `Some(true)` if LSP is ready (handle was already available or spawned)
-    /// - `Some(false)` if confirmation popup was shown (user needs to respond)
-    /// - `None` if LSP is not available (disabled, not configured, not auto-start, or failed)
-    pub fn try_get_lsp_with_confirmation(&mut self, language: &str) -> Option<bool> {
-        use crate::services::lsp::manager::LspSpawnResult;
-
-        let result = {
-            let lsp = self.lsp.as_mut()?;
-            lsp.try_spawn(language)
-        };
-
-        match result {
-            LspSpawnResult::Spawned => Some(true),
-            LspSpawnResult::NotAutoStart => None, // Not configured for auto-start
-            LspSpawnResult::Failed => None,
-        }
-    }
-
     /// Navigate popup selection (next item)
     pub fn popup_select_next(&mut self) {
         let event = Event::PopupSelectNext;
