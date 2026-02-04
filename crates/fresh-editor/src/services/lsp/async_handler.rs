@@ -3754,9 +3754,9 @@ mod tests {
 
         // did_open now succeeds and queues the command for when server is initialized
         let result = handle.did_open(
-            "file:///test.rs".parse().unwrap(),
+            "file:///test.txt".parse().unwrap(),
             "fn main() {}".to_string(),
-            "rust".to_string(),
+            "test".to_string(),
         );
 
         // Should succeed (command is queued)
