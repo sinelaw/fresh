@@ -3400,6 +3400,119 @@ mod tests {
     }
 
     #[test]
+    fn test_move_line_up_large_file_unloaded_chunks() {
+        use crate::model::buffer::TextBuffer;
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join("test_large_file_move_line_up.txt");
+
+        let mut content = String::new();
+        for i in 0..200 {
+            content.push_str(&format!("Line {i:04}\n"));
+        }
+        fs::write(&test_file, &content).unwrap();
+
+        let large_file_threshold = 500;
+        let buffer =
+            TextBuffer::load_from_file(&test_file, large_file_threshold, test_fs()).unwrap();
+
+        let mut state = EditorState::new(80, 24, large_file_threshold, test_fs());
+        state.buffer = buffer;
+
+        let line_len = "Line 0000\n".len();
+        let target_line = 120usize;
+        let target_start = line_len * target_line;
+
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: state.cursors.primary().position,
+            new_position: target_start,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        let events = action_to_events(&mut state, Action::MoveLineUp, 4, false, 80, 24).unwrap();
+        for event in events {
+            state.apply(&event);
+        }
+
+        let line_119_start = line_len * (target_line - 1);
+        let line_120_start = line_len * target_line;
+        let line_119 = state.get_text_range(line_119_start, line_119_start + line_len);
+        let line_120 = state.get_text_range(line_120_start, line_120_start + line_len);
+
+        assert_eq!(line_119, "Line 0120\n");
+        assert_eq!(line_120, "Line 0119\n");
+
+        fs::remove_file(&test_file).ok();
+    }
+
+    #[test]
+    fn test_move_line_down_large_file_selection_block() {
+        use crate::model::buffer::TextBuffer;
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join("test_large_file_move_line_down.txt");
+
+        let mut content = String::new();
+        for i in 0..200 {
+            content.push_str(&format!("Line {i:04}\n"));
+        }
+        fs::write(&test_file, &content).unwrap();
+
+        let large_file_threshold = 500;
+        let buffer =
+            TextBuffer::load_from_file(&test_file, large_file_threshold, test_fs()).unwrap();
+
+        let mut state = EditorState::new(80, 24, large_file_threshold, test_fs());
+        state.buffer = buffer;
+
+        let line_len = "Line 0000\n".len();
+        let start_line = 50usize;
+        let end_line_exclusive = 53usize; // selects lines 50..=52
+        let selection_start = line_len * start_line;
+        let selection_end = line_len * end_line_exclusive;
+
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: state.cursors.primary().position,
+            new_position: selection_end,
+            old_anchor: None,
+            new_anchor: Some(selection_start),
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        let events = action_to_events(&mut state, Action::MoveLineDown, 4, false, 80, 24).unwrap();
+        for event in events {
+            state.apply(&event);
+        }
+
+        let line_50 = state.get_text_range(selection_start, selection_start + line_len);
+        let line_51 =
+            state.get_text_range(selection_start + line_len, selection_start + line_len * 2);
+        let line_52 = state.get_text_range(
+            selection_start + line_len * 2,
+            selection_start + line_len * 3,
+        );
+        let line_53 = state.get_text_range(
+            selection_start + line_len * 3,
+            selection_start + line_len * 4,
+        );
+
+        assert_eq!(line_50, "Line 0053\n");
+        assert_eq!(line_51, "Line 0050\n");
+        assert_eq!(line_52, "Line 0051\n");
+        assert_eq!(line_53, "Line 0052\n");
+
+        fs::remove_file(&test_file).ok();
+    }
+
+    #[test]
     fn test_move_up_basic() {
         let mut state = EditorState::new(
             80,
