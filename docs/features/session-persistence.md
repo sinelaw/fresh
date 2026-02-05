@@ -91,8 +91,7 @@ When reattaching, terminal size may differ and some applications may not render 
 ### Known Issues
 
 1. **Stale sockets**: If Fresh crashes, socket files may remain. See [Socket Locations](#socket-locations) for cleanup.
-2. **Single client**: Only one client can attach at a time.
-3. **Signal handling**: Some signals don't propagate to server terminals.
+2. **Signal handling**: Some signals don't propagate to server terminals.
 
 ## Troubleshooting
 

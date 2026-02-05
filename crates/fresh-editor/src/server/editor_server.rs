@@ -56,6 +56,8 @@ pub struct EditorServer {
     shutdown: Arc<AtomicBool>,
     /// Effective terminal size (from the primary/first client)
     term_size: TermSize,
+    /// Index of the client that most recently provided input (for per-client detach)
+    last_input_client: Option<usize>,
 }
 
 /// A connected client with its own input parser
@@ -65,6 +67,8 @@ struct ConnectedClient {
     env: std::collections::HashMap<String, Option<String>>,
     id: u64,
     input_parser: InputParser,
+    /// Whether this client needs a full screen render on next frame
+    needs_full_render: bool,
 }
 
 impl EditorServer {
@@ -93,6 +97,7 @@ impl EditorServer {
             last_client_activity: Instant::now(),
             shutdown: Arc::new(AtomicBool::new(false)),
             term_size: TermSize::new(80, 24), // Default until first client connects
+            last_input_client: None,
         })
     }
 
@@ -144,21 +149,19 @@ impl EditorServer {
                         Ok(client) => {
                             tracing::info!("Client {} connected", client.id);
 
-                            // Initialize editor on first-ever client, or update size if this is
-                            // the first client after all others disconnected
+                            // Initialize editor on first-ever client, or update size if reconnecting
                             if self.editor.is_none() {
                                 // First time - initialize editor
                                 self.term_size = client.term_size;
                                 self.initialize_editor()?;
                             } else if self.clients.is_empty() {
-                                // Reconnecting after detach - update terminal size if different
+                                // Reconnecting after all clients disconnected - update terminal size
                                 if self.term_size != client.term_size {
                                     self.term_size = client.term_size;
                                     self.update_terminal_size()?;
                                 }
-                                // Force full redraw for reconnecting client
-                                self.invalidate_terminal_state();
                             }
+                            // Note: full redraw is handled via client.needs_full_render flag
 
                             self.clients.push(client);
                             self.last_client_activity = Instant::now();
@@ -178,7 +181,10 @@ impl EditorServer {
 
             // Process client messages and get input events
             tracing::debug!("[server] main loop: calling process_clients");
-            let (input_events, resize_occurred) = self.process_clients()?;
+            let (input_events, resize_occurred, input_source) = self.process_clients()?;
+            if let Some(idx) = input_source {
+                self.last_input_client = Some(idx);
+            }
             if !input_events.is_empty() {
                 tracing::debug!(
                     "[server] process_clients returned {} events",
@@ -202,8 +208,25 @@ impl EditorServer {
                 .map(|e| e.should_detach())
                 .unwrap_or(false);
             if detach_requested {
-                tracing::info!("Client requested detach");
-                self.disconnect_all_clients("Detached")?;
+                // Detach only the client that triggered it (via last input)
+                if let Some(idx) = self.last_input_client.take() {
+                    if idx < self.clients.len() {
+                        tracing::info!("Client {} requested detach", self.clients[idx].id);
+                        let client = self.clients.remove(idx);
+                        let teardown = terminal_teardown_sequences();
+                        let _ = client.conn.write_data(&teardown);
+                        let quit_msg =
+                            serde_json::to_string(&ServerControl::Quit {
+                                reason: "Detached".to_string(),
+                            })
+                            .unwrap_or_default();
+                        let _ = client.conn.write_control(&quit_msg);
+                    }
+                } else {
+                    // Fallback: if we can't determine which client, detach all
+                    tracing::info!("Detach requested but no input source, detaching all");
+                    self.disconnect_all_clients("Detached")?;
+                }
                 // Reset the detach flag
                 if let Some(ref mut editor) = self.editor {
                     editor.clear_detach();
@@ -390,13 +413,15 @@ impl EditorServer {
             env: hello.env,
             id: client_id,
             input_parser: InputParser::new(),
+            needs_full_render: true,
         })
     }
 
     /// Process messages from connected clients
-    /// Returns (input_events, resize_occurred)
-    fn process_clients(&mut self) -> io::Result<(Vec<Event>, bool)> {
+    /// Returns (input_events, resize_occurred, index of client that provided input)
+    fn process_clients(&mut self) -> io::Result<(Vec<Event>, bool, Option<usize>)> {
         let mut disconnected = Vec::new();
+        let mut input_source_client: Option<usize> = None;
         let mut input_events = Vec::new();
         let mut resize_occurred = false;
         let mut control_messages: Vec<(usize, ClientControl)> = Vec::new();
@@ -423,6 +448,9 @@ impl EditorServer {
                         client.id,
                         events.len()
                     );
+                    if !events.is_empty() {
+                        input_source_client = Some(idx);
+                    }
                     input_events.extend(events);
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
@@ -533,14 +561,18 @@ impl EditorServer {
 
         // Remove disconnected clients
         for idx in disconnected.into_iter().rev() {
-            let mut client = self.clients.remove(idx);
+            let client = self.clients.remove(idx);
             // Send teardown sequences
             let teardown = terminal_teardown_sequences();
             let _ = client.conn.write_data(&teardown);
             tracing::info!("Client {} disconnected", client.id);
+            // Invalidate input source if that client disconnected
+            if input_source_client == Some(idx) {
+                input_source_client = None;
+            }
         }
 
-        Ok((input_events, resize_occurred))
+        Ok((input_events, resize_occurred, input_source_client))
     }
 
     /// Update terminal size after resize
@@ -555,18 +587,6 @@ impl EditorServer {
         }
 
         Ok(())
-    }
-
-    /// Invalidate terminal state to force a full redraw
-    /// Call this when a client reconnects so they get the complete screen
-    fn invalidate_terminal_state(&mut self) {
-        if let Some(ref mut terminal) = self.terminal {
-            // Reset backend style state
-            terminal.backend_mut().reset_style_state();
-            // Clear terminal's previous buffer to force full redraw
-            // This makes ratatui think the entire screen has changed
-            let _ = terminal.clear();
-        }
     }
 
     /// Handle an input event
@@ -611,6 +631,14 @@ impl EditorServer {
             return Ok(());
         };
 
+        // Check if any client needs a full render (e.g., newly connected)
+        let any_needs_full = self.clients.iter().any(|c| c.needs_full_render);
+        if any_needs_full {
+            // Force full redraw by invalidating terminal state
+            terminal.backend_mut().reset_style_state();
+            let _ = terminal.clear();
+        }
+
         // Take any pending escape sequences (e.g., cursor style changes)
         let pending_sequences = editor.take_pending_escape_sequences();
 
@@ -642,6 +670,8 @@ impl EditorServer {
                     tracing::warn!("Failed to send to client {}: {}", client.id, e);
                 }
             }
+            // Clear full render flag after sending
+            client.needs_full_render = false;
         }
 
         Ok(())
