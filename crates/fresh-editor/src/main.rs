@@ -2099,6 +2099,42 @@ fn run_open_files_command(session_name: Option<&str>, files: &[String]) -> Anyho
 
     let working_dir = std::env::current_dir()?;
 
+    // Build file requests BEFORE starting server, filtering out directories
+    let mut file_requests: Vec<FileRequest> = Vec::new();
+    let mut skipped_dirs = 0;
+
+    for f in files {
+        let loc = parse_file_location(f);
+        // Resolve relative paths to absolute paths based on client's working directory
+        let abs_path = if loc.path.is_relative() {
+            working_dir.join(&loc.path)
+        } else {
+            loc.path.clone()
+        };
+        // Canonicalize to resolve symlinks and normalize
+        let canonical_path = abs_path.canonicalize().unwrap_or(abs_path);
+
+        if canonical_path.is_dir() {
+            skipped_dirs += 1;
+            eprintln!("Skipping directory: {}", canonical_path.display());
+            continue;
+        }
+
+        file_requests.push(FileRequest {
+            path: canonical_path.to_string_lossy().to_string(),
+            line: loc.line,
+            column: loc.column,
+        });
+    }
+
+    // Check if we have any files to open BEFORE starting the server
+    if file_requests.is_empty() {
+        if skipped_dirs > 0 {
+            eprintln!("No files to open (only directories were specified).");
+        }
+        return Ok(());
+    }
+
     // Determine socket paths based on session name or working directory
     let socket_paths = if let Some(name) = session_name {
         SocketPaths::for_session_name(name)?
@@ -2162,40 +2198,6 @@ fn run_open_files_command(session_name: Option<&str>, files: &[String]) -> Anyho
         _ => {
             return Err(anyhow::anyhow!("Unexpected server response"));
         }
-    }
-
-    // Build file requests, filtering out directories
-    let mut file_requests: Vec<FileRequest> = Vec::new();
-    let mut skipped_dirs = 0;
-
-    for f in files {
-        let loc = parse_file_location(f);
-        // Resolve relative paths to absolute paths based on client's working directory
-        let abs_path = if loc.path.is_relative() {
-            working_dir.join(&loc.path)
-        } else {
-            loc.path.clone()
-        };
-        // Canonicalize to resolve symlinks and normalize
-        let canonical_path = abs_path.canonicalize().unwrap_or(abs_path);
-
-        if canonical_path.is_dir() {
-            skipped_dirs += 1;
-            eprintln!("Skipping directory: {}", canonical_path.display());
-            continue;
-        }
-        file_requests.push(FileRequest {
-            path: canonical_path.to_string_lossy().to_string(),
-            line: loc.line,
-            column: loc.column,
-        });
-    }
-
-    if file_requests.is_empty() {
-        if skipped_dirs > 0 {
-            eprintln!("No files to open (only directories were specified).");
-        }
-        return Ok(());
     }
 
     // Send OpenFiles command
