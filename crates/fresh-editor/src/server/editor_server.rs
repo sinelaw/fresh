@@ -215,11 +215,10 @@ impl EditorServer {
                         let client = self.clients.remove(idx);
                         let teardown = terminal_teardown_sequences();
                         let _ = client.conn.write_data(&teardown);
-                        let quit_msg =
-                            serde_json::to_string(&ServerControl::Quit {
-                                reason: "Detached".to_string(),
-                            })
-                            .unwrap_or_default();
+                        let quit_msg = serde_json::to_string(&ServerControl::Quit {
+                            reason: "Detached".to_string(),
+                        })
+                        .unwrap_or_default();
                         let _ = client.conn.write_control(&quit_msg);
                     }
                 } else {
@@ -634,6 +633,10 @@ impl EditorServer {
         // Check if any client needs a full render (e.g., newly connected)
         let any_needs_full = self.clients.iter().any(|c| c.needs_full_render);
         if any_needs_full {
+            tracing::info!(
+                "Full render requested for {} client(s)",
+                self.clients.iter().filter(|c| c.needs_full_render).count()
+            );
             // Force full redraw by invalidating terminal state
             terminal.backend_mut().reset_style_state();
             let _ = terminal.clear();
