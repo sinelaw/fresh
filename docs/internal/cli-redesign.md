@@ -65,11 +65,12 @@ Commands:
 fresh session <COMMAND>
 
 Commands:
-  list, ls     List active sessions
-  attach, a    Attach to an existing session
-  new, n       Start a new named session
-  kill, k      Terminate a session
-  info         Show details about a session
+  list, ls       List active sessions
+  attach, a      Attach to an existing session
+  new, n         Start a new named session
+  open-file, o   Open files in a running session
+  kill, k        Terminate a session
+  info           Show details about a session
 ```
 
 Examples:
@@ -88,6 +89,11 @@ fresh session kill              # Kill session for current directory
 fresh session kill myproject    # Kill named session
 fresh session kill --all        # Kill all sessions
 fresh session k                 # Short alias
+
+fresh session open-file . main.rs        # Open file in current directory session
+fresh session open-file proj src/lib.rs  # Open file in named session
+fresh session open-file . main.rs:42:10  # Open at specific line:col
+fresh session o . file.rs                # Short alias
 
 fresh session info              # Info about current directory's session
 fresh session info myproject    # Info about named session
@@ -193,11 +199,12 @@ runs as a background daemon, and you can attach/detach like tmux.
 Usage: fresh session <COMMAND>
 
 Commands:
-  list, ls     List active sessions
-  attach, a    Attach to a session
-  new, n       Start a new named session
-  kill, k      Terminate a session
-  info         Show session details
+  list, ls       List active sessions
+  attach, a      Attach to a session
+  new, n         Start a new named session
+  open-file, o   Open files in a running session
+  kill, k        Terminate a session
+  info           Show session details
 
 Options:
   -h, --help   Print help
@@ -206,6 +213,7 @@ Examples:
   fresh session list              Show all running sessions
   fresh session attach            Attach to session for current directory
   fresh session attach myproject  Attach to named session
+  fresh session open-file . main.rs  Open file in current dir session
   fresh session kill --all        Terminate all sessions
 ```
 
@@ -292,8 +300,9 @@ Examples:
 |-----------------------------------|-------------------------------------------|
 | `fresh session list`              | List active sessions                      |
 | `fresh session attach [NAME]`     | Attach to session                         |
-| `fresh session kill [NAME]`       | Terminate a session                       |
 | `fresh session new NAME`          | Start new named session                   |
+| `fresh session open-file NAME FILES` | Open files in a running session        |
+| `fresh session kill [NAME]`       | Terminate a session                       |
 | `fresh -a [NAME]`                 | Shortcut for `session attach`             |
 
 ### Internal/Hidden Flags

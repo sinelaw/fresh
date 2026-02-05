@@ -51,6 +51,7 @@ Detaching exits only the client; the server keeps running.
 | `fresh -a <name>` | Attach to named session |
 | `fresh --cmd session list` | List running sessions |
 | `fresh --cmd session new <name>` | Start a new named session |
+| `fresh --cmd session open-file <name> <files>` | Open files in a running session |
 | `fresh --cmd session kill` | Kill session for current directory |
 | `fresh --cmd session kill <name>` | Kill named session |
 | `fresh --cmd session kill --all` | Kill all sessions |
@@ -64,6 +65,23 @@ fresh --cmd session new feature-work
 fresh --cmd session list
 fresh -a feature-work
 ```
+
+### Opening Files in a Running Session
+
+Open files in an existing session without attaching to it:
+
+```bash
+# Open file in current directory session (use "." for session name)
+fresh --cmd session open-file . src/main.rs
+
+# Open file at specific line and column
+fresh --cmd session open-file myproject src/lib.rs:42:10
+
+# Open multiple files
+fresh --cmd session open-file . file1.rs file2.rs
+```
+
+This is useful for integrating Fresh with file managers or other tools—files open in the existing editor without starting a new terminal session.
 
 ### Detaching
 
