@@ -2082,9 +2082,11 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
 
 /// Open files in a running session without attaching
 fn run_open_files_command(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> {
+    use fresh::server::daemon::is_process_running;
     use fresh::server::protocol::{
         ClientControl, ClientHello, FileRequest, ServerControl, TermSize, PROTOCOL_VERSION,
     };
+    use fresh::server::spawn_server_detached;
 
     if files.is_empty() {
         eprintln!("No files specified.");
@@ -2100,13 +2102,26 @@ fn run_open_files_command(session_name: Option<&str>, files: &[String]) -> Anyho
         SocketPaths::for_working_dir(&working_dir)?
     };
 
-    // Check if server is running
-    if !socket_paths.is_server_alive() {
-        let session_desc = session_name.unwrap_or("current directory");
-        eprintln!("No session running for {}.", session_desc);
-        eprintln!("Start one with: fresh -a");
-        return Ok(());
-    }
+    // Clean up stale sockets if server is dead
+    socket_paths.cleanup_if_stale();
+
+    // Start server if not running (like nvr does by default)
+    let server_was_started = if !socket_paths.is_server_alive() {
+        let _pid = spawn_server_detached(session_name)?;
+
+        // Wait for server to be ready
+        loop {
+            if let Ok(Some(pid)) = socket_paths.read_pid() {
+                if is_process_running(pid) {
+                    break;
+                }
+            }
+            std::thread::yield_now();
+        }
+        true
+    } else {
+        false
+    };
 
     // Connect to server
     let conn = fresh::server::ipc::ClientConnection::connect(&socket_paths)?;
@@ -2185,7 +2200,14 @@ fn run_open_files_command(session_name: Option<&str>, files: &[String]) -> Anyho
     })?;
     conn.write_control(&msg)?;
 
-    eprintln!("Opened {} file(s) in session.", file_requests.len());
+    if server_was_started {
+        eprintln!(
+            "Started new session and opened {} file(s).",
+            file_requests.len()
+        );
+    } else {
+        eprintln!("Opened {} file(s) in session.", file_requests.len());
+    }
     Ok(())
 }
 
