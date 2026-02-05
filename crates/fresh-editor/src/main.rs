@@ -34,22 +34,26 @@ use std::{
 #[command(version, propagate_version = true)]
 #[command(after_help = concat!(
     "Commands (use --cmd):\n",
-    "  session list       List active sessions\n",
-    "  session attach     Attach to a session\n",
-    "  session new        Start a new named session\n",
-    "  session kill       Terminate a session\n",
-    "  config show        Print effective configuration\n",
-    "  config paths       Show directories used by Fresh\n",
-    "  init               Initialize a new plugin/theme/language\n",
+    "  session list            List active sessions\n",
+    "  session attach [NAME]   Attach to a session (NAME or current dir)\n",
+    "  session new NAME        Start a new named session\n",
+    "  session kill [NAME]     Terminate a session\n",
+    "  session NAME open-file FILES  Open files in a running session\n",
+    "  config show             Print effective configuration\n",
+    "  config paths            Show directories used by Fresh\n",
+    "  init                    Initialize a new plugin/theme/language\n",
     "\n",
     "Examples:\n",
-    "  fresh file.txt              Open a file\n",
-    "  fresh --cmd session list    List sessions\n",
-    "  fresh -a                    Attach to session for current directory"
+    "  fresh file.txt                            Open a file\n",
+    "  fresh -a                                  Attach to session (current dir)\n",
+    "  fresh -a mysession                        Attach to named session\n",
+    "  fresh --cmd session new proj              Start session named 'proj'\n",
+    "  fresh --cmd session . open-file main.rs   Open file in current dir session\n",
+    "  fresh --cmd session proj open-file a.rs   Open file in 'proj' session"
 ))]
 struct Cli {
     /// Run a command instead of opening files
-    /// Commands: session (list|attach|new|kill), config (show|paths), init
+    /// Commands: session (list|attach|new|kill|open-file), config (show|paths), init
     #[arg(long, num_args = 1.., value_name = "COMMAND")]
     cmd: Vec<String>,
 
@@ -57,7 +61,7 @@ struct Cli {
     #[arg(value_name = "FILES")]
     files: Vec<String>,
 
-    /// Attach to session (shortcut for `fresh --cmd session attach`)
+    /// Attach to session. Use -a for current dir, -a NAME for named session
     #[arg(short = 'a', long, value_name = "NAME", num_args = 0..=1, default_missing_value = "")]
     attach: Option<String>,
 
@@ -143,25 +147,76 @@ struct Args {
     list_sessions: bool,
     session_name: Option<String>,
     kill: Option<Option<String>>,
+    /// Open files in a session without attaching (session_name, files)
+    open_files_in_session: Option<(Option<String>, Vec<String>)>,
 }
 
 impl From<Cli> for Args {
     fn from(cli: Cli) -> Self {
         // Parse --cmd arguments to determine command
-        let (list_sessions, kill, attach, session_name, dump_config, show_paths, init, files) =
-            if !cli.cmd.is_empty() {
-                // Parse command from --cmd arguments
-                let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
-                match cmd_args.as_slice() {
-                    // Session commands
-                    ["session", "list", ..]
-                    | ["s", "list", ..]
-                    | ["session", "ls", ..]
-                    | ["s", "ls", ..] => (true, None, false, None, false, false, None, cli.files),
-                    ["session", "attach", name, ..]
-                    | ["s", "attach", name, ..]
-                    | ["session", "a", name, ..]
-                    | ["s", "a", name, ..] => (
+        let (
+            list_sessions,
+            kill,
+            attach,
+            session_name,
+            dump_config,
+            show_paths,
+            init,
+            files,
+            open_files_in_session,
+        ) = if !cli.cmd.is_empty() {
+            // Parse command from --cmd arguments
+            let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
+            match cmd_args.as_slice() {
+                // Session commands
+                ["session", "list", ..]
+                | ["s", "list", ..]
+                | ["session", "ls", ..]
+                | ["s", "ls", ..] => (true, None, false, None, false, false, None, cli.files, None),
+                // Open file in session: fresh --cmd session <name> open-file <files...>
+                ["session", name, "open-file", files @ ..]
+                | ["s", name, "open-file", files @ ..] => {
+                    let session = if *name == "." {
+                        None
+                    } else {
+                        Some((*name).to_string())
+                    };
+                    let file_list: Vec<String> = files.iter().map(|s| (*s).to_string()).collect();
+                    (
+                        false,
+                        None,
+                        false,
+                        None,
+                        false,
+                        false,
+                        None,
+                        vec![],
+                        Some((session, file_list)),
+                    )
+                }
+                ["session", "attach", name, ..]
+                | ["s", "attach", name, ..]
+                | ["session", "a", name, ..]
+                | ["s", "a", name, ..] => (
+                    false,
+                    None,
+                    true,
+                    Some((*name).to_string()),
+                    false,
+                    false,
+                    None,
+                    cli.files,
+                    None,
+                ),
+                ["session", "attach"] | ["s", "attach"] | ["session", "a"] | ["s", "a"] => {
+                    (false, None, true, None, false, false, None, cli.files, None)
+                }
+                ["session", "new", name, rest @ ..]
+                | ["s", "new", name, rest @ ..]
+                | ["session", "n", name, rest @ ..]
+                | ["s", "n", name, rest @ ..] => {
+                    let files: Vec<String> = rest.iter().map(|s| (*s).to_string()).collect();
+                    (
                         false,
                         None,
                         true,
@@ -169,130 +224,121 @@ impl From<Cli> for Args {
                         false,
                         false,
                         None,
-                        cli.files,
-                    ),
-                    ["session", "attach"] | ["s", "attach"] | ["session", "a"] | ["s", "a"] => {
-                        (false, None, true, None, false, false, None, cli.files)
-                    }
-                    ["session", "new", name, rest @ ..]
-                    | ["s", "new", name, rest @ ..]
-                    | ["session", "n", name, rest @ ..]
-                    | ["s", "n", name, rest @ ..] => {
-                        let files: Vec<String> = rest.iter().map(|s| (*s).to_string()).collect();
-                        (
-                            false,
-                            None,
-                            true,
-                            Some((*name).to_string()),
-                            false,
-                            false,
-                            None,
-                            files,
-                        )
-                    }
-                    ["session", "kill", "--all"]
-                    | ["s", "kill", "--all"]
-                    | ["session", "k", "--all"]
-                    | ["s", "k", "--all"] => (
-                        false,
-                        Some(Some("--all".to_string())),
-                        false,
+                        files,
                         None,
-                        false,
-                        false,
-                        None,
-                        cli.files,
-                    ),
-                    ["session", "kill", name, ..]
-                    | ["s", "kill", name, ..]
-                    | ["session", "k", name, ..]
-                    | ["s", "k", name, ..] => (
-                        false,
-                        Some(Some((*name).to_string())),
-                        false,
-                        None,
-                        false,
-                        false,
-                        None,
-                        cli.files,
-                    ),
-                    ["session", "kill"] | ["s", "kill"] | ["session", "k"] | ["s", "k"] => (
-                        false,
-                        Some(None),
-                        false,
-                        None,
-                        false,
-                        false,
-                        None,
-                        cli.files,
-                    ),
-                    ["session", "info", name, ..] | ["s", "info", name, ..] => {
-                        // Info not fully implemented, treat as list for now
-                        let _ = name;
-                        (true, None, false, None, false, false, None, cli.files)
-                    }
-                    ["session", "info"] | ["s", "info"] => {
-                        (true, None, false, None, false, false, None, cli.files)
-                    }
-                    // Config commands
-                    ["config", "show"] | ["config", "dump"] => {
-                        (false, None, false, None, true, false, None, cli.files)
-                    }
-                    ["config", "paths"] => (false, None, false, None, false, true, None, cli.files),
-                    // Init command
-                    ["init", pkg_type, ..] => (
-                        false,
-                        None,
-                        false,
-                        None,
-                        false,
-                        false,
-                        Some(Some((*pkg_type).to_string())),
-                        cli.files,
-                    ),
-                    ["init"] => (
-                        false,
-                        None,
-                        false,
-                        None,
-                        false,
-                        false,
-                        Some(None),
-                        cli.files,
-                    ),
-                    // Unknown command
-                    _ => {
-                        eprintln!("Unknown command: {}", cli.cmd.join(" "));
-                        eprintln!("Available commands: session (list|attach|new|kill|info), config (show|paths), init");
-                        std::process::exit(1);
-                    }
+                    )
                 }
-            } else {
-                // No --cmd - check for -a shortcut and internal flags
-                let attach = cli.attach.is_some();
-                let session_name = if attach {
-                    let name = cli.attach.unwrap();
-                    if name.is_empty() {
-                        cli.session_name
-                    } else {
-                        Some(name)
-                    }
-                } else {
-                    // Use --session-name if provided (for internal --server use)
-                    cli.session_name
-                };
-
-                (
+                ["session", "kill", "--all"]
+                | ["s", "kill", "--all"]
+                | ["session", "k", "--all"]
+                | ["s", "k", "--all"] => (
+                    false,
+                    Some(Some("--all".to_string())),
                     false,
                     None,
-                    attach,
-                    session_name,
-                    cli.dump_config,
-                    cli.show_paths,
-                    cli.init,
+                    false,
+                    false,
+                    None,
                     cli.files,
-                )
+                    None,
+                ),
+                ["session", "kill", name, ..]
+                | ["s", "kill", name, ..]
+                | ["session", "k", name, ..]
+                | ["s", "k", name, ..] => (
+                    false,
+                    Some(Some((*name).to_string())),
+                    false,
+                    None,
+                    false,
+                    false,
+                    None,
+                    cli.files,
+                    None,
+                ),
+                ["session", "kill"] | ["s", "kill"] | ["session", "k"] | ["s", "k"] => (
+                    false,
+                    Some(None),
+                    false,
+                    None,
+                    false,
+                    false,
+                    None,
+                    cli.files,
+                    None,
+                ),
+                ["session", "info", name, ..] | ["s", "info", name, ..] => {
+                    // Info not fully implemented, treat as list for now
+                    let _ = name;
+                    (true, None, false, None, false, false, None, cli.files, None)
+                }
+                ["session", "info"] | ["s", "info"] => {
+                    (true, None, false, None, false, false, None, cli.files, None)
+                }
+                // Config commands
+                ["config", "show"] | ["config", "dump"] => {
+                    (false, None, false, None, true, false, None, cli.files, None)
+                }
+                ["config", "paths"] => {
+                    (false, None, false, None, false, true, None, cli.files, None)
+                }
+                // Init command
+                ["init", pkg_type, ..] => (
+                    false,
+                    None,
+                    false,
+                    None,
+                    false,
+                    false,
+                    Some(Some((*pkg_type).to_string())),
+                    cli.files,
+                    None,
+                ),
+                ["init"] => (
+                    false,
+                    None,
+                    false,
+                    None,
+                    false,
+                    false,
+                    Some(None),
+                    cli.files,
+                    None,
+                ),
+                // Unknown command
+                _ => {
+                    eprintln!("Unknown command: {}", cli.cmd.join(" "));
+                    eprintln!("Available commands: session (list|attach|new|kill|info|open-file), config (show|paths), init");
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            // No --cmd - check for -a shortcut and internal flags
+            let attach = cli.attach.is_some();
+            let session_name = if attach {
+                let name = cli.attach.unwrap();
+                if name.is_empty() || name == "." {
+                    cli.session_name
+                } else {
+                    Some(name)
+                }
+            } else {
+                // Use --session-name if provided (for internal --server use)
+                cli.session_name
             };
+
+            (
+                false,
+                None,
+                attach,
+                session_name,
+                cli.dump_config,
+                cli.show_paths,
+                cli.init,
+                cli.files,
+                None,
+            )
+        };
 
         Args {
             files,
@@ -313,6 +359,7 @@ impl From<Cli> for Args {
             list_sessions,
             session_name,
             kill,
+            open_files_in_session,
         }
     }
 }
@@ -1919,7 +1966,7 @@ fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> 
     }
 
     // Connect and send quit command
-    let mut conn = ClientConnection::connect(&socket_paths)?;
+    let conn = ClientConnection::connect(&socket_paths)?;
 
     // We need to do a minimal handshake first
     use fresh::server::protocol::{ClientHello, TermSize};
@@ -2029,11 +2076,112 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
     Ok(())
 }
 
+/// Open files in a running session without attaching
+fn run_open_files_command(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> {
+    use fresh::server::protocol::{
+        ClientControl, ClientHello, FileRequest, ServerControl, TermSize, PROTOCOL_VERSION,
+    };
+
+    if files.is_empty() {
+        eprintln!("No files specified.");
+        return Ok(());
+    }
+
+    let working_dir = std::env::current_dir()?;
+
+    // Determine socket paths based on session name or working directory
+    let socket_paths = if let Some(name) = session_name {
+        SocketPaths::for_session_name(name)?
+    } else {
+        SocketPaths::for_working_dir(&working_dir)?
+    };
+
+    // Check if server is running
+    if !socket_paths.is_server_alive() {
+        let session_desc = session_name.unwrap_or("current directory");
+        eprintln!("No session running for {}.", session_desc);
+        eprintln!("Start one with: fresh -a");
+        return Ok(());
+    }
+
+    // Connect to server
+    let conn = fresh::server::ipc::ClientConnection::connect(&socket_paths)?;
+
+    // Perform handshake
+    let hello = ClientHello::new(TermSize::new(80, 24)); // Size doesn't matter, we're not rendering
+    let hello_json = serde_json::to_string(&ClientControl::Hello(hello))?;
+    conn.write_control(&hello_json)?;
+
+    // Read server response
+    let response = conn
+        .read_control()?
+        .ok_or_else(|| anyhow::anyhow!("Server closed connection during handshake"))?;
+
+    let server_msg: ServerControl = serde_json::from_str(&response)?;
+
+    match server_msg {
+        ServerControl::Hello(server_hello) => {
+            if server_hello.protocol_version != PROTOCOL_VERSION {
+                eprintln!(
+                    "Version mismatch: server is v{}",
+                    server_hello.server_version
+                );
+                return Ok(());
+            }
+        }
+        ServerControl::VersionMismatch(mismatch) => {
+            eprintln!("Version mismatch: server is v{}", mismatch.server_version);
+            return Ok(());
+        }
+        ServerControl::Error { message } => {
+            return Err(anyhow::anyhow!("Server error: {}", message));
+        }
+        _ => {
+            return Err(anyhow::anyhow!("Unexpected server response"));
+        }
+    }
+
+    // Build file requests, filtering out directories
+    let mut file_requests: Vec<FileRequest> = Vec::new();
+    let mut skipped_dirs = 0;
+
+    for f in files {
+        let loc = parse_file_location(f);
+        if loc.path.is_dir() {
+            skipped_dirs += 1;
+            eprintln!("Skipping directory: {}", loc.path.display());
+            continue;
+        }
+        file_requests.push(FileRequest {
+            path: loc.path.to_string_lossy().to_string(),
+            line: loc.line,
+            column: loc.column,
+        });
+    }
+
+    if file_requests.is_empty() {
+        if skipped_dirs > 0 {
+            eprintln!("No files to open (only directories were specified).");
+        }
+        return Ok(());
+    }
+
+    // Send OpenFiles command
+    let msg = serde_json::to_string(&ClientControl::OpenFiles {
+        files: file_requests.clone(),
+    })?;
+    conn.write_control(&msg)?;
+
+    eprintln!("Opened {} file(s) in session.", file_requests.len());
+    Ok(())
+}
+
 /// Attach to an existing session, starting a server if needed
 fn run_attach_command(args: &Args) -> AnyhowResult<()> {
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-    use fresh::client::ClientConfig;
-    use fresh::server::protocol::TermSize;
+    use fresh::server::protocol::{
+        ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
+    };
     use fresh::server::spawn_server_detached;
 
     // Initialize tracing to a file for debugging
@@ -2102,17 +2250,57 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
         eprintln!("Server started.");
     }
 
-    let config = ClientConfig {
-        socket_paths,
-        term_size: TermSize::new(cols, rows),
-    };
+    let term_size = TermSize::new(cols, rows);
+
+    // Perform handshake
+    let hello = ClientHello::new(term_size);
+    let hello_json = serde_json::to_string(&ClientControl::Hello(hello))?;
+    conn.write_control(&hello_json)?;
+
+    // Read server response
+    let response = conn
+        .read_control()?
+        .ok_or_else(|| anyhow::anyhow!("Server closed connection during handshake"))?;
+
+    let server_msg: ServerControl = serde_json::from_str(&response)?;
+
+    match server_msg {
+        ServerControl::Hello(server_hello) => {
+            if server_hello.protocol_version != PROTOCOL_VERSION {
+                eprintln!(
+                    "Version mismatch: server is v{}",
+                    server_hello.server_version
+                );
+                eprintln!("Please restart the server with the same version as the client.");
+                return Ok(());
+            }
+            tracing::info!(
+                "Connected to session '{}' (server {})",
+                server_hello.session_id,
+                server_hello.server_version
+            );
+        }
+        ServerControl::VersionMismatch(mismatch) => {
+            eprintln!("Version mismatch: server is v{}", mismatch.server_version);
+            eprintln!("Please restart the server with the same version as the client.");
+            return Ok(());
+        }
+        ServerControl::Error { message } => {
+            return Err(anyhow::anyhow!("Server error: {}", message));
+        }
+        _ => {
+            return Err(anyhow::anyhow!("Unexpected server response"));
+        }
+    }
+
+    // Continue to relay loop
 
     // Enable raw mode - the server sends terminal setup sequences (alternate screen, etc.)
     // but we need raw mode so key presses are forwarded immediately
     enable_raw_mode()?;
 
-    // Run the client with the established connection
-    let result = client::run_client_with_connection(config, conn);
+    // Run the client relay loop (handshake already done)
+    let result = client::run_client_relay(conn);
 
     // Disable raw mode before printing any messages
     let _ = disable_raw_mode();
@@ -2260,6 +2448,11 @@ fn real_main() -> AnyhowResult<()> {
     // Handle --server: run as daemon server
     if args.server {
         return run_server_command(&args);
+    }
+
+    // Handle open-file in session: send files to running session without attaching
+    if let Some((session_name, files)) = &args.open_files_in_session {
+        return run_open_files_command(session_name.as_deref(), files);
     }
 
     // Handle --attach: connect to existing session

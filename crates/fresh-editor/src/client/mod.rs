@@ -62,7 +62,7 @@ pub fn run_client(config: ClientConfig) -> io::Result<ClientExitReason> {
 /// Run the client with an already-established connection
 ///
 /// This is useful when the caller has already established a connection
-/// (e.g., after retrying connection attempts).
+/// (e.g., after retrying connection attempts). Performs handshake then relay.
 pub fn run_client_with_connection(
     config: ClientConfig,
     mut conn: ClientConnection,
@@ -107,6 +107,16 @@ pub fn run_client_with_connection(
         }
     }
 
+    run_client_relay(conn)
+}
+
+/// Run the relay loop with an already-handshaked connection
+///
+/// Use this when handshake has already been performed externally.
+/// Caller must have already enabled raw mode.
+pub fn run_client_relay(
+    #[allow(unused_mut)] mut conn: ClientConnection,
+) -> io::Result<ClientExitReason> {
     // Set up for relay
     // On Windows, don't set nonblocking here - the relay loop uses try_read() which handles this
     // Setting nonblocking can fail with error 233 if the pipe state isn't fully established

@@ -115,6 +115,16 @@ pub enum ClientControl {
     Detach,
     /// Request to quit (shutdown server if last client)
     Quit,
+    /// Request to open files in the editor
+    OpenFiles { files: Vec<FileRequest> },
+}
+
+/// A file to open with optional line/column position
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileRequest {
+    pub path: String,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
 }
 
 /// Control messages from server to client
@@ -252,6 +262,13 @@ mod tests {
             ClientControl::Ping,
             ClientControl::Detach,
             ClientControl::Quit,
+            ClientControl::OpenFiles {
+                files: vec![FileRequest {
+                    path: "/test/file.txt".to_string(),
+                    line: Some(10),
+                    column: Some(5),
+                }],
+            },
         ];
 
         for variant in variants {

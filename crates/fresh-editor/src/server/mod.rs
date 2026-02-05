@@ -17,8 +17,9 @@ pub mod editor_server;
 pub mod input_parser;
 pub mod ipc;
 pub mod protocol;
-pub mod runner;
 
+#[cfg(test)]
+mod runner;
 #[cfg(test)]
 mod tests;
 
@@ -30,4 +31,5 @@ pub use editor_server::{EditorServer, EditorServerConfig};
 pub use input_parser::InputParser;
 pub use ipc::{ServerListener, SocketPaths};
 pub use protocol::{ClientHello, ControlMessage, ServerHello, PROTOCOL_VERSION};
+#[cfg(test)]
 pub use runner::{Server, ServerConfig};

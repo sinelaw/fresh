@@ -360,6 +360,13 @@ impl Server {
                 // TODO: Check for unsaved changes, prompt, etc.
                 self.shutdown.store(true, Ordering::SeqCst);
             }
+            ClientControl::OpenFiles { .. } => {
+                // This runner doesn't have an editor, so we can't open files
+                tracing::warn!(
+                    "Client {} sent OpenFiles but no editor is running",
+                    client.id
+                );
+            }
         }
         Ok(())
     }

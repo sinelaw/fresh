@@ -554,6 +554,26 @@ impl EditorServer {
                     tracing::info!("Client {} detached", idx);
                     disconnected.push(idx);
                 }
+                ClientControl::OpenFiles { files } => {
+                    if let Some(ref mut editor) = self.editor {
+                        let mut first = true;
+                        for file_req in files {
+                            let path = std::path::PathBuf::from(&file_req.path);
+                            let result = if first {
+                                editor.open_file(&path)
+                            } else {
+                                editor.open_file_no_focus(&path)
+                            };
+                            if result.is_ok() && first {
+                                if let Some(line) = file_req.line {
+                                    editor.goto_line_col(line, file_req.column);
+                                }
+                            }
+                            first = false;
+                        }
+                        resize_occurred = true; // Force re-render
+                    }
+                }
                 ClientControl::Quit => unreachable!(), // Handled above
             }
         }
