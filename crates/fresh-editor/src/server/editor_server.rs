@@ -428,12 +428,14 @@ impl EditorServer {
         for (idx, client) in self.clients.iter_mut().enumerate() {
             // Read from data socket
             let mut buf = [0u8; 4096];
+            let mut data_eof = false;
             tracing::debug!("[server] reading from client {} data socket", client.id);
             match client.conn.read_data(&mut buf) {
                 Ok(0) => {
                     tracing::debug!("[server] Client {} data stream closed (EOF)", client.id);
                     disconnected.push(idx);
-                    continue;
+                    data_eof = true;
+                    // Don't continue - still need to check control socket for pending messages
                 }
                 Ok(n) => {
                     tracing::debug!(
@@ -456,9 +458,11 @@ impl EditorServer {
                 Err(e) => {
                     tracing::warn!("[server] Client {} data read error: {}", client.id, e);
                     disconnected.push(idx);
-                    continue;
+                    data_eof = true;
+                    // Don't continue - still need to check control socket for pending messages
                 }
             }
+            let _ = data_eof; // Suppress unused warning
 
             // Check control socket
             // On Windows, don't toggle nonblocking mode - it fails on named pipes
@@ -517,7 +521,12 @@ impl EditorServer {
         }
 
         // Process control messages
+        eprintln!(
+            "[server] Processing {} control messages",
+            control_messages.len()
+        );
         for (idx, msg) in control_messages {
+            eprintln!("[server] Control message from client {}: {:?}", idx, msg);
             // Always process Quit, even from disconnected clients
             if let ClientControl::Quit = msg {
                 tracing::info!("Client requested quit, shutting down");
@@ -525,8 +534,11 @@ impl EditorServer {
                 continue;
             }
 
-            // Skip other messages from disconnected clients
-            if disconnected.contains(&idx) {
+            // Always process OpenFiles - it's a one-shot command from clients that disconnect immediately
+            if let ClientControl::OpenFiles { .. } = msg {
+                // Fall through to process it
+            } else if disconnected.contains(&idx) {
+                // Skip other messages from disconnected clients
                 continue;
             }
 
@@ -557,7 +569,7 @@ impl EditorServer {
                 ClientControl::OpenFiles { files } => {
                     if let Some(ref mut editor) = self.editor {
                         let mut first = true;
-                        for file_req in files {
+                        for file_req in &files {
                             let path = std::path::PathBuf::from(&file_req.path);
                             let result = if first {
                                 editor.open_file(&path)

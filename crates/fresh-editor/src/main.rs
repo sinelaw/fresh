@@ -34,22 +34,26 @@ use std::{
 #[command(version, propagate_version = true)]
 #[command(after_help = concat!(
     "Commands (use --cmd):\n",
-    "  session list            List active sessions\n",
-    "  session attach [NAME]   Attach to a session (NAME or current dir)\n",
-    "  session new NAME        Start a new named session\n",
-    "  session kill [NAME]     Terminate a session\n",
-    "  session NAME open-file FILES  Open files in a running session\n",
-    "  config show             Print effective configuration\n",
-    "  config paths            Show directories used by Fresh\n",
-    "  init                    Initialize a new plugin/theme/language\n",
+    "  config show               Print effective configuration\n",
+    "  config paths              Show directories used by Fresh\n",
+    "  init                      Initialize a new plugin/theme/language\n",
+    "\n",
+    "Session commands:\n",
+    "  session list              List active sessions\n",
+    "  session attach [NAME]     Attach to a session (NAME or current dir)\n",
+    "  session new NAME          Start a new named session\n",
+    "  session kill [NAME]       Terminate a session\n",
+    "  session open-file NAME FILES   Open files in a running session\n",
     "\n",
     "Examples:\n",
-    "  fresh file.txt                            Open a file\n",
-    "  fresh -a                                  Attach to session (current dir)\n",
-    "  fresh -a mysession                        Attach to named session\n",
-    "  fresh --cmd session new proj              Start session named 'proj'\n",
-    "  fresh --cmd session . open-file main.rs   Open file in current dir session\n",
-    "  fresh --cmd session proj open-file a.rs   Open file in 'proj' session"
+    "  fresh file.txt                               Open a file\n",
+    "  fresh -a                                     Attach to session (current dir)\n",
+    "  fresh -a mysession                           Attach to named session\n",
+    "  fresh --cmd session new proj                 Start session named 'proj'\n",
+    "  fresh --cmd session open-file . main.rs     Open file in current dir session\n",
+    "  fresh --cmd session open-file proj a.rs     Open file in 'proj' session\n",
+    "\n",
+    "Documentation: https://getfresh.dev/docs"
 ))]
 struct Cli {
     /// Run a command instead of opening files
@@ -173,9 +177,9 @@ impl From<Cli> for Args {
                 | ["s", "list", ..]
                 | ["session", "ls", ..]
                 | ["s", "ls", ..] => (true, None, false, None, false, false, None, cli.files, None),
-                // Open file in session: fresh --cmd session <name> open-file <files...>
-                ["session", name, "open-file", files @ ..]
-                | ["s", name, "open-file", files @ ..] => {
+                // Open file in session: fresh --cmd session open-file <name> <files...>
+                ["session", "open-file", name, files @ ..]
+                | ["s", "open-file", name, files @ ..] => {
                     let session = if *name == "." {
                         None
                     } else {
@@ -2147,13 +2151,22 @@ fn run_open_files_command(session_name: Option<&str>, files: &[String]) -> Anyho
 
     for f in files {
         let loc = parse_file_location(f);
-        if loc.path.is_dir() {
+        // Resolve relative paths to absolute paths based on client's working directory
+        let abs_path = if loc.path.is_relative() {
+            working_dir.join(&loc.path)
+        } else {
+            loc.path.clone()
+        };
+        // Canonicalize to resolve symlinks and normalize
+        let canonical_path = abs_path.canonicalize().unwrap_or(abs_path);
+
+        if canonical_path.is_dir() {
             skipped_dirs += 1;
-            eprintln!("Skipping directory: {}", loc.path.display());
+            eprintln!("Skipping directory: {}", canonical_path.display());
             continue;
         }
         file_requests.push(FileRequest {
-            path: loc.path.to_string_lossy().to_string(),
+            path: canonical_path.to_string_lossy().to_string(),
             line: loc.line,
             column: loc.column,
         });
