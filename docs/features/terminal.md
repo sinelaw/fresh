@@ -40,6 +40,7 @@ In scrollback mode, you can use standard editor navigation:
 ## Tips and Quirks
 
 *   **Workspace Persistence:** Terminal scrollback is preserved when you close and reopen Fresh. Your scrollback history is maintained, but all running processes are terminated and lost.
+*   **Session Persistence (Experimental):** Use `fresh -a` to start in session mode, then detach with `Ctrl+Shift+D` to keep terminal processes running in the background. Reattach with `fresh -a`. See [Session Persistence](./session-persistence.md) for details.
 *   **Automatic Scroll:** When new output arrives while you're in scrollback mode, the terminal automatically returns to terminal mode to show the latest output. Disable this with the `terminal.jump_to_end_on_output` config option.
 *   **Resizing:** The terminal automatically resizes when you resize the editor or split panes.
 

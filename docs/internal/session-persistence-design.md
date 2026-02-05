@@ -1,10 +1,28 @@
 # Session Persistence Design (tmux-style)
 
+> **Status**: Experimental (implemented in v0.1.99+)
+>
+> This feature is functional but considered experimental. The implementation may have edge cases and the API may change. See [user documentation](../features/session-persistence.md) for usage.
+
 This document describes the design for tmux-style session persistence in Fresh, enabling users to detach from and reattach to editor sessions while background processes continue running.
+
+## Implementation Status
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Detach/Reattach | Done | `Ctrl+Shift+D` or command palette |
+| Layout Persistence | Done | Via existing workspace system |
+| Buffer State | Done | Cursor positions, unsaved changes preserved |
+| Shell Continuity | Done | Terminal processes survive detach |
+| CLI (`list`, `kill`, `attach`) | Done | See `fresh --help` |
+| Named Sessions | Done | `--session <name>` flag |
+| Cross-platform IPC | Done | Unix sockets + Windows named pipes |
+| Multi-Client | Not implemented | Only one client at a time |
+| Resurrection (crash recovery) | Not implemented | Server crash loses state |
 
 ## Overview
 
-Fresh will adopt a **client-server architecture** where:
+Fresh adopts a **client-server architecture** where:
 - **Server (daemon)**: Holds editor state, manages buffers, owns PTYs, runs in background
 - **Client (UI)**: Lightweight renderer that connects to server, sends input, receives display updates
 

@@ -9,5 +9,6 @@ Fresh provides a comprehensive set of features to help you be productive.
 - [Search and Replace](./search-replace.md) - Powerful search with regex support
 - [LSP Integration](./lsp.md) - Language server support for diagnostics and completion
 - [Integrated Terminal](./terminal.md) - Run shell commands without leaving the editor
+- [Session Persistence](./session-persistence.md) - Detach and reattach to sessions (Experimental)
 - [Themes](./themes.md) - Customizable color themes
 - [Encoding](./encoding.md) - Text encoding detection and conversion

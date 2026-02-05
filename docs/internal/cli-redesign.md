@@ -1,6 +1,8 @@
 # Fresh CLI Redesign
 
-**Status**: Implemented
+**Status**: Implemented (Experimental)
+
+> **Note**: The session persistence features (`open`, `attach`, `list`, `kill`) are experimental. See [Session Persistence](../features/session-persistence.md) for user documentation.
 
 ---
 
