@@ -1431,7 +1431,7 @@ impl MenuConfig {
                         label: t!("menu.file.detach").to_string(),
                         action: "detach".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::SESSION_MODE.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {

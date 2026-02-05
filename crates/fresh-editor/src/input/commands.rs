@@ -1,6 +1,7 @@
 //! Command palette system for executing editor actions by name
 
 use crate::input::keybindings::{Action, KeyContext};
+use crate::types::context_keys;
 use rust_i18n::t;
 
 /// Source of a command (builtin or from a plugin)
@@ -266,7 +267,7 @@ pub fn get_all_commands() -> Vec<Command> {
             description: t!("cmd.detach_desc").to_string(),
             action: Action::Detach,
             contexts: vec![],
-            custom_contexts: vec![],
+            custom_contexts: vec![context_keys::SESSION_MODE.to_string()],
             source: CommandSource::Builtin,
         },
         // Edit operations

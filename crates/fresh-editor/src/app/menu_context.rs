@@ -32,6 +32,9 @@ impl Editor {
         let lsp_available = self.is_lsp_available();
         let formatter_available = self.is_formatter_available();
 
+        // Session mode (for detach command availability)
+        let session_mode = self.session_mode;
+
         // Apply all context values
         self.menu_state
             .context
@@ -48,7 +51,8 @@ impl Editor {
             .set(context_keys::FILE_EXPLORER_SHOW_GITIGNORED, show_gitignored)
             .set(context_keys::HAS_SELECTION, has_selection)
             .set(context_keys::MENU_BAR, menu_bar)
-            .set(context_keys::FORMATTER_AVAILABLE, formatter_available);
+            .set(context_keys::FORMATTER_AVAILABLE, formatter_available)
+            .set(context_keys::SESSION_MODE, session_mode);
     }
 
     /// Check if line numbers are visible in the active buffer.
