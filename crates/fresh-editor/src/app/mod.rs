@@ -234,6 +234,9 @@ pub struct Editor {
     /// Running in session/server mode (use hardware cursor only, no REVERSED style)
     session_mode: bool,
 
+    /// Session name for display in status bar (session mode only)
+    session_name: Option<String>,
+
     /// Pending escape sequences to send to client (session mode only)
     /// These get prepended to the next render output
     pending_escape_sequences: Vec<u8>,
@@ -1095,6 +1098,7 @@ impl Editor {
             should_quit: false,
             should_detach: false,
             session_mode: false,
+            session_name: None,
             pending_escape_sequences: Vec::new(),
             restart_with_dir: None,
             status_message: None,
@@ -2691,6 +2695,16 @@ impl Editor {
     /// Check if running in session mode
     pub fn is_session_mode(&self) -> bool {
         self.session_mode
+    }
+
+    /// Set the session name for display in status bar
+    pub fn set_session_name(&mut self, name: Option<String>) {
+        self.session_name = name;
+    }
+
+    /// Get the session name (for status bar display)
+    pub fn session_name(&self) -> Option<&str> {
+        self.session_name.as_deref()
     }
 
     /// Queue escape sequences to be sent to the client (session mode only)

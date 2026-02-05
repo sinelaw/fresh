@@ -582,6 +582,9 @@ impl Editor {
             // Get remote connection info if editing remote files
             let remote_connection = self.remote_connection_info().map(|s| s.to_string());
 
+            // Get session name for display (only in session mode)
+            let session_name = self.session_name().map(|s| s.to_string());
+
             let status_bar_layout = StatusBarRenderer::render_status_bar(
                 frame,
                 main_chunks[status_bar_idx],
@@ -598,6 +601,7 @@ impl Editor {
                 general_warning_count,        // Pass general warning count for badge
                 status_bar_hover,             // Pass hover state for indicator styling
                 remote_connection.as_deref(), // Pass remote connection info
+                session_name.as_deref(),      // Pass session name for status bar display
             );
 
             // Store status bar layout for click detection

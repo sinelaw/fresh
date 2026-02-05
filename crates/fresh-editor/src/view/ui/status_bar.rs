@@ -261,6 +261,7 @@ impl StatusBarRenderer {
     /// * `warning_level` - LSP warning level (for coloring LSP indicator)
     /// * `general_warning_count` - Number of general warnings (for badge display)
     /// * `remote_connection` - Optional remote connection info (e.g., "user@host")
+    /// * `session_name` - Optional session name (for session persistence mode)
     ///
     /// # Returns
     /// Layout information with positions of clickable indicators
@@ -281,6 +282,7 @@ impl StatusBarRenderer {
         general_warning_count: usize,
         hover: StatusBarHover,
         remote_connection: Option<&str>,
+        session_name: Option<&str>,
     ) -> StatusBarLayout {
         Self::render_status(
             frame,
@@ -298,6 +300,7 @@ impl StatusBarRenderer {
             general_warning_count,
             hover,
             remote_connection,
+            session_name,
         )
     }
 
@@ -481,6 +484,7 @@ impl StatusBarRenderer {
         general_warning_count: usize,
         hover: StatusBarHover,
         remote_connection: Option<&str>,
+        session_name: Option<&str>,
     ) -> StatusBarLayout {
         // Initialize layout tracking
         let mut layout = StatusBarLayout::default();
@@ -591,21 +595,24 @@ impl StatusBarRenderer {
         };
 
         // Build left status (file info, position, diagnostics, messages)
-        // Remote indicator comes first (if present), then filename
+        // Session/Remote indicator comes first (if present), then filename
         // Line and column are 0-indexed internally, but displayed as 1-indexed (standard editor convention)
         // For virtual buffers with hidden cursors, don't show line/column info
         let remote_prefix = remote_connection
             .map(|conn| format!("[SSH:{}] ", conn))
             .unwrap_or_default();
+        let session_prefix = session_name
+            .map(|name| format!("[{}] ", name))
+            .unwrap_or_default();
         let base_status = if state.show_cursors {
             format!(
-                "{remote_prefix}{filename}{modified} | Ln {}, Col {}{diagnostics_summary}{cursor_count_indicator}",
+                "{session_prefix}{remote_prefix}{filename}{modified} | Ln {}, Col {}{diagnostics_summary}{cursor_count_indicator}",
                 line + 1,
                 col + 1
             )
         } else {
             // Virtual buffer - just show filename and modified indicator
-            format!("{remote_prefix}{filename}{modified}{diagnostics_summary}")
+            format!("{session_prefix}{remote_prefix}{filename}{modified}{diagnostics_summary}")
         };
 
         // Track where the message starts for click detection

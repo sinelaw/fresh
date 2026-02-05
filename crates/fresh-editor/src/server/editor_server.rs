@@ -281,6 +281,18 @@ impl EditorServer {
         // Enable session mode - use hardware cursor only, no REVERSED software cursor
         editor.set_session_mode(true);
 
+        // Set session name for status bar display
+        let session_display_name = self.config.session_name.clone().unwrap_or_else(|| {
+            // Use the directory name as a short display name for unnamed sessions
+            self.config
+                .working_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "session".to_string())
+        });
+        editor.set_session_name(Some(session_display_name));
+
         self.terminal = Some(terminal);
         self.editor = Some(editor);
 
