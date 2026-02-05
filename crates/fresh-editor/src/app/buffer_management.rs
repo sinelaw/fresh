@@ -738,6 +738,14 @@ impl Editor {
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 state.apply(&event);
             }
+
+            // Also update the split view state cursor (which is what's actually displayed)
+            let split_id = self.split_manager.active_split();
+            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                view_state.cursors.primary_mut().position = position;
+                view_state.cursors.primary_mut().anchor = None;
+                view_state.cursors.primary_mut().sticky_column = target_col;
+            }
         }
     }
 

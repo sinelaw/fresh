@@ -568,20 +568,15 @@ impl EditorServer {
                 }
                 ClientControl::OpenFiles { files } => {
                     if let Some(ref mut editor) = self.editor {
-                        let mut first = true;
                         for file_req in &files {
                             let path = std::path::PathBuf::from(&file_req.path);
-                            let result = if first {
-                                editor.open_file(&path)
-                            } else {
-                                editor.open_file_no_focus(&path)
-                            };
-                            if result.is_ok() && first {
-                                if let Some(line) = file_req.line {
-                                    editor.goto_line_col(line, file_req.column);
-                                }
-                            }
-                            first = false;
+                            tracing::debug!(
+                                "Queuing file open: {:?} line={:?} col={:?}",
+                                path,
+                                file_req.line,
+                                file_req.column
+                            );
+                            editor.queue_file_open(path, file_req.line, file_req.column);
                         }
                         resize_occurred = true; // Force re-render
                     }
