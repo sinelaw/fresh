@@ -71,6 +71,12 @@
     "status.restore_failed": "Помилка відновлення NuGet: %{error}",
     "status.restore_error": "Помилка відновлення NuGet: %{error}"
   },
+  "vi": {
+    "status.restoring_packages": "Đang khôi phục gói NuGet cho %{project}...",
+    "status.restore_completed": "Hoàn tất khôi phục NuGet cho %{project}",
+    "status.restore_failed": "Khôi phục NuGet thất bại: %{error}",
+    "status.restore_error": "Lỗi khôi phục NuGet: %{error}"
+  },
   "zh-CN": {
     "status.restoring_packages": "正在为%{project}恢复NuGet包...",
     "status.restore_completed": "%{project}的NuGet恢复已完成",

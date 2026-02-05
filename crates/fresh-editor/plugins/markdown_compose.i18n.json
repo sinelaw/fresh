@@ -203,6 +203,23 @@
     "suggestion.standard": "Стандартний - ширина за замовчуванням",
     "suggestion.wide": "Широкий - більше контенту на рядок"
   },
+  "vi": {
+    "cmd.toggle_compose": "Markdown: Bật/tắt chế độ soạn thảo",
+    "cmd.toggle_compose_desc": "Bật/tắt chế độ soạn thảo (ngắt dòng mềm, căn giữa lề)",
+    "cmd.set_compose_width": "Markdown: Đặt chiều rộng soạn thảo",
+    "cmd.set_compose_width_desc": "Đặt chiều rộng cho ngắt dòng và lề trong chế độ soạn thảo",
+    "status.plugin_ready": "Plugin Markdown sẵn sàng",
+    "status.not_markdown_file": "Không phải tệp Markdown",
+    "status.compose_off": "Soạn thảo Markdown: TẮT",
+    "status.compose_on": "Soạn thảo Markdown: BẬT (ngắt dòng mềm, căn giữa)",
+    "status.width_set": "Đã đặt chiều rộng soạn thảo Markdown thành %{width}",
+    "status.invalid_width": "Chiều rộng không hợp lệ - phải từ 20 đến 300",
+    "prompt.compose_width": "Chiều rộng soạn thảo: ",
+    "suggestion.narrow": "Hẹp - phù hợp cho bảng bên",
+    "suggestion.classic": "Cổ điển - chiều rộng terminal truyền thống",
+    "suggestion.standard": "Tiêu chuẩn - chiều rộng mặc định",
+    "suggestion.wide": "Rộng - nhiều nội dung hơn trên mỗi dòng"
+  },
   "zh-CN": {
     "cmd.toggle_compose": "Markdown: 切换撰写模式",
     "cmd.toggle_compose_desc": "切换撰写模式 (软换行，居中边距)",

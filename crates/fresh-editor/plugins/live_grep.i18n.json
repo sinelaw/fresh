@@ -155,6 +155,19 @@
     "status.cancelled": "Live grep скасовано",
     "prompt.live_grep": "Live grep: "
   },
+  "vi": {
+    "cmd.live_grep": "Live Grep (Tìm trong tệp)",
+    "cmd.live_grep_desc": "Tìm kiếm văn bản trong dự án với xem trước trực tiếp",
+    "status.ready": "Live Grep sẵn sàng - sử dụng bảng lệnh hoặc gán 'start_live_grep'",
+    "status.type_to_search": "Nhập để tìm kiếm (tối thiểu 2 ký tự)...",
+    "status.found_matches": "Tìm thấy %{count} kết quả",
+    "status.no_matches": "Không tìm thấy kết quả",
+    "status.search_error": "Lỗi tìm kiếm: %{error}",
+    "status.opened_file": "Đã mở %{file}:%{line}",
+    "status.no_file_selected": "Chưa chọn tệp",
+    "status.cancelled": "Đã hủy live grep",
+    "prompt.live_grep": "Live grep: "
+  },
   "zh-CN": {
     "cmd.live_grep": "实时 Grep (文件内搜索)",
     "cmd.live_grep_desc": "在整个项目中搜索文本并实时预览",

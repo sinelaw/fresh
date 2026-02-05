@@ -71,6 +71,12 @@
     "suggestion.new_file": "%{filename} (новий файл)",
     "suggestion.new_file_desc": "Файл ще не існує"
   },
+  "vi": {
+    "status.loaded": "Đã tải plugin hoàn thành đường dẫn thành công",
+    "suggestion.directory": "thư mục",
+    "suggestion.new_file": "%{filename} (tệp mới)",
+    "suggestion.new_file_desc": "Tệp chưa tồn tại"
+  },
   "zh-CN": {
     "status.loaded": "路径补全插件加载成功",
     "suggestion.directory": "目录",

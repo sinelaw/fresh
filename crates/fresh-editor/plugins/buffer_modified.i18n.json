@@ -59,6 +59,11 @@
     "status.initialized": "Buffer Modified: ініціалізовано для %{path}",
     "status.cleared_on_save": "Buffer Modified: очищено при збереженні"
   },
+  "vi": {
+    "status.loaded": "Đã tải plugin Buffer Modified",
+    "status.initialized": "Buffer Modified: đã khởi tạo cho %{path}",
+    "status.cleared_on_save": "Buffer Modified: đã xóa khi lưu"
+  },
   "zh-CN": {
     "status.loaded": "Buffer Modified插件已加载",
     "status.initialized": "Buffer Modified: 已为%{path}初始化",

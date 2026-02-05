@@ -83,6 +83,13 @@
     "status.no_file": "Git Gutter: Nemaye vidkrytoho faylu",
     "status.changes": "Git Gutter: Vyyavleno %{count} zmin(y)"
   },
+  "vi": {
+    "cmd.refresh": "Git Gutter: Làm mới",
+    "cmd.refresh_desc": "Làm mới chỉ báo git gutter cho buffer hiện tại",
+    "status.ready": "Plugin Git Gutter sẵn sàng",
+    "status.no_file": "Git Gutter: Không có tệp mở",
+    "status.changes": "Git Gutter: Phát hiện %{count} thay đổi"
+  },
   "zh-CN": {
     "cmd.refresh": "Git Gutter: 刷新",
     "cmd.refresh_desc": "刷新当前缓冲区的Git Gutter指示器",

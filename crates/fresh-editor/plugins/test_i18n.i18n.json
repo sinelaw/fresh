@@ -59,6 +59,11 @@
     "cmd.test_desc": "Команда для тестування локалізації плагінів",
     "msg.hello": "Привіт, %{name}! Ваша мова — %{locale}."
   },
+  "vi": {
+    "cmd.test": "Lệnh kiểm tra bản địa hóa",
+    "cmd.test_desc": "Lệnh để kiểm tra bản địa hóa plugin",
+    "msg.hello": "Xin chào, %{name}! Ngôn ngữ của bạn là %{locale}."
+  },
   "zh-CN": {
     "cmd.test": "本地化测试命令",
     "cmd.test_desc": "用于测试插件本地化的命令",

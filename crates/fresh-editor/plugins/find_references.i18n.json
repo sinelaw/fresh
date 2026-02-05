@@ -251,6 +251,27 @@
     "panel.no_references": "Посилання не знайдено",
     "panel.help": "[Вгору/Вниз] навігація  [RET] перехід  [q/Esc] закрити"
   },
+  "vi": {
+    "cmd.show_references": "Hiển thị bảng tham chiếu",
+    "cmd.show_references_desc": "Hiển thị tham chiếu hiện tại",
+    "cmd.hide_references": "Ẩn bảng tham chiếu",
+    "cmd.hide_references_desc": "Đóng bảng tham chiếu",
+    "status.ready": "Đã tải plugin tìm tham chiếu",
+    "status.no_references": "Không tìm thấy tham chiếu cho '%{symbol}'",
+    "status.found_references": "Tìm thấy %{count} tham chiếu%{limit} - Lên/Xuống điều hướng, RET nhảy, q đóng",
+    "status.showing_first": " (hiển thị %{max} đầu tiên)",
+    "status.reference_index": "Tham chiếu %{current}/%{total}",
+    "status.jumped_to": "Đã nhảy đến %{file}:%{line}",
+    "status.no_references_to_jump": "Không có tham chiếu để nhảy đến",
+    "status.source_split_unavailable": "Chia màn hình nguồn không khả dụng",
+    "status.move_cursor": "Di chuyển con trỏ đến dòng tham chiếu",
+    "status.closed": "Đã đóng bảng tham chiếu",
+    "status.failed_open_panel": "Không thể mở bảng tham chiếu",
+    "panel.header": "Tham chiếu đến %{symbol} (%{count}%{limit})",
+    "panel.limited": ", giới hạn %{max}",
+    "panel.no_references": "Không tìm thấy tham chiếu",
+    "panel.help": "[Lên/Xuống] điều hướng  [RET] nhảy  [q/Esc] đóng"
+  },
   "zh-CN": {
     "cmd.show_references": "显示引用面板",
     "cmd.show_references_desc": "显示当前引用",

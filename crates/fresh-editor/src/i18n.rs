@@ -207,6 +207,7 @@ pub fn locale_display_name(locale: &str) -> Option<(&'static str, &'static str)>
         "ru" => Some(("Russian", "Русский")),
         "th" => Some(("Thai", "ไทย")),
         "uk" => Some(("Ukrainian", "Українська")),
+        "vi" => Some(("Vietnamese", "Tiếng Việt")),
         "zh-CN" => Some(("Chinese (Simplified)", "简体中文")),
         _ => None,
     }

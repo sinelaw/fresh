@@ -215,6 +215,24 @@
     "panel.all_files": "Усі файли",
     "panel.current_file": "Поточний файл"
   },
+  "vi": {
+    "cmd.show_diagnostics_panel": "Hiển thị bảng chẩn đoán",
+    "cmd.show_diagnostics_panel_desc": "Mở bảng chẩn đoán",
+    "cmd.toggle_diagnostics_panel": "Bật/tắt bảng chẩn đoán",
+    "cmd.toggle_diagnostics_panel_desc": "Bật/tắt bảng chẩn đoán",
+    "status.loaded": "Plugin bảng chẩn đoán đã tải",
+    "status.failed_to_open": "Không thể mở bảng chẩn đoán",
+    "status.closed": "Đã đóng bảng chẩn đoán",
+    "status.jumped_to": "Đã nhảy đến %{file}:%{line}",
+    "status.move_to_diagnostic": "Di chuyển con trỏ đến dòng chẩn đoán",
+    "status.showing": "Đang hiển thị: %{label}",
+    "status.refreshed": "Đã làm mới chẩn đoán",
+    "status.diagnostics_count": "Chẩn đoán: %{count} mục | a: bật/tắt bộ lọc | RET: đi đến | q: đóng",
+    "panel.header": "Chẩn đoán (%{filter}):",
+    "panel.no_diagnostics": "Không có chẩn đoán",
+    "panel.all_files": "Tất cả tệp",
+    "panel.current_file": "Tệp hiện tại"
+  },
   "zh-CN": {
     "cmd.show_diagnostics_panel": "显示诊断面板",
     "cmd.show_diagnostics_panel_desc": "打开诊断面板",

@@ -203,6 +203,23 @@
     "status.config_not_found": "Не вдалося знайти конфігурацію .clangd у робочому просторі",
     "status.file_status": "Статус файлу Clangd: %{status}"
   },
+  "vi": {
+    "cmd.project_setup": "Clangd: Thiết lập Dự án",
+    "cmd.project_setup_desc": "Phân tích trạng thái sẵn sàng clangd C/C++ (compile_commands.json, .clangd)",
+    "cmd.switch_source_header": "Clangd: Chuyển đổi Nguồn/Header",
+    "cmd.switch_source_header_desc": "Nhảy đến cặp header/nguồn sử dụng clangd",
+    "cmd.open_project_config": "Clangd: Mở Cấu hình Dự án",
+    "cmd.open_project_config_desc": "Mở tệp .clangd gần nhất",
+    "status.plugin_loaded": "Đã tải plugin hỗ trợ Clangd (chuyển đổi header + lệnh cấu hình)",
+    "status.no_active_file": "Clangd: không có tệp đang hoạt động để chuyển đổi",
+    "status.unsupported_file_type": "Clangd: loại tệp không được hỗ trợ để chuyển đổi header",
+    "status.opened_corresponding_file": "Clangd: đã mở tệp tương ứng",
+    "status.no_matching_found": "Clangd: không tìm thấy header/nguồn phù hợp",
+    "status.switch_failed": "Clangd chuyển đổi nguồn/header thất bại: %{error}",
+    "status.opened_config": "Đã mở cấu hình .clangd",
+    "status.config_not_found": "Không tìm thấy cấu hình .clangd trong không gian làm việc",
+    "status.file_status": "Trạng thái tệp Clangd: %{status}"
+  },
   "zh-CN": {
     "cmd.project_setup": "Clangd: 项目设置",
     "cmd.project_setup_desc": "分析C/C++ clangd就绪状态 (compile_commands.json, .clangd)",

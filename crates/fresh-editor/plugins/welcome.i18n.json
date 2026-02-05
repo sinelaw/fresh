@@ -215,6 +215,24 @@
     "text.greeting": "Привіт з TypeScript! Система плагінів працює!",
     "text.comment": "// Цей коментар був вставлений плагіном TypeScript!"
   },
+  "vi": {
+    "cmd.open_help": "Demo Plugin: Mở Trợ giúp",
+    "cmd.open_help_desc": "Mở trang trợ giúp trình soạn thảo (sử dụng hành động tích hợp)",
+    "cmd.save_file": "Demo Plugin: Lưu Tệp",
+    "cmd.save_file_desc": "Lưu tệp hiện tại (sử dụng hành động tích hợp)",
+    "cmd.say_hello": "Demo Plugin: Chào",
+    "cmd.say_hello_desc": "Chèn lời chào thân thiện vào buffer",
+    "cmd.insert_time": "Demo Plugin: Chèn Thời gian",
+    "cmd.insert_time_desc": "Chèn thời gian hiện tại tại vị trí con trỏ",
+    "cmd.insert_comment": "Demo Plugin: Chèn Chú thích",
+    "cmd.insert_comment_desc": "Chèn chú thích mẫu tại vị trí con trỏ",
+    "status.loaded": "Plugin đang hoạt động! Welcome Plugin đã tải thành công!",
+    "status.greeting_inserted": "Đã chèn lời chào tại vị trí con trỏ",
+    "status.time_inserted": "Đã chèn thời gian tại vị trí con trỏ",
+    "status.comment_inserted": "Plugin đã chèn chú thích",
+    "text.greeting": "Xin chào từ TypeScript! Hệ thống plugin đang hoạt động!",
+    "text.comment": "// Chú thích này được chèn bởi plugin TypeScript!"
+  },
   "zh-CN": {
     "cmd.open_help": "插件演示: 打开帮助",
     "cmd.open_help_desc": "打开编辑器帮助页面（使用内置操作）",

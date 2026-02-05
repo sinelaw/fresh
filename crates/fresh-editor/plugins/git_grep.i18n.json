@@ -155,6 +155,19 @@
     "status.no_selection": "Fayl ne vybrano",
     "status.cancelled": "Git grep skasovano"
   },
+  "vi": {
+    "cmd.grep": "Git Grep",
+    "cmd.grep_desc": "Tìm kiếm văn bản trong các tệp được git theo dõi",
+    "prompt.grep": "Git grep: ",
+    "status.ready": "Plugin Git Grep sẵn sàng",
+    "status.type_to_search": "Nhập để tìm kiếm...",
+    "status.found": "Tìm thấy %{count} kết quả",
+    "status.no_matches": "Không tìm thấy kết quả",
+    "status.error": "Lỗi git grep: %{error}",
+    "status.opened": "Đã mở: %{location}",
+    "status.no_selection": "Chưa chọn tệp",
+    "status.cancelled": "Đã hủy git grep"
+  },
   "zh-CN": {
     "cmd.grep": "Git Grep",
     "cmd.grep_desc": "在Git跟踪的文件中搜索文本",
