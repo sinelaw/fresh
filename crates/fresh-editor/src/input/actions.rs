@@ -2412,15 +2412,38 @@ pub fn action_to_events(
                 let line_text = state.get_text_range(line_start, line_end);
                 let line_ending = state.buffer.line_ending().as_str();
                 // If the line doesn't end with a newline, prepend one
-                let insert_text = if line_text.ends_with('\n') || line_text.ends_with("\r\n") {
+                let has_trailing_newline = line_text.ends_with('\n') || line_text.ends_with("\r\n");
+                let insert_text = if has_trailing_newline {
                     line_text
                 } else {
                     format!("{}{}", line_ending, line_text)
                 };
+                let insert_len = insert_text.len();
                 events.push(Event::Insert {
                     position: line_end,
                     text: insert_text,
                     cursor_id,
+                });
+
+                // Move cursor to start of the newly duplicated line.
+                // After the Insert, apply_insert places cursor at line_end + insert_len.
+                // The new line starts at line_end (if original had trailing newline)
+                // or line_end + line_ending.len() (if we prepended a newline).
+                let new_line_start = if has_trailing_newline {
+                    line_end
+                } else {
+                    line_end + line_ending.len()
+                };
+                let cursor = state.cursors.get(cursor_id);
+                let old_sticky = cursor.map(|c| c.sticky_column).unwrap_or(0);
+                events.push(Event::MoveCursor {
+                    cursor_id,
+                    old_position: line_end + insert_len,
+                    new_position: new_line_start,
+                    old_anchor: None,
+                    new_anchor: None,
+                    old_sticky_column: old_sticky,
+                    new_sticky_column: 0,
                 });
             }
         }

@@ -126,6 +126,50 @@ fn test_duplicate_selected_lines() {
     );
 }
 
+/// Test that cursor moves to the newly duplicated line after duplicate
+/// The cursor should land on the duplicate (below), not stay on the original.
+#[test]
+fn test_duplicate_line_cursor_on_new_line() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type multiple lines and go to line 1
+    harness.type_text("first\nsecond\nthird").unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Duplicate line 1
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(">command"))
+        .unwrap();
+    harness.type_text("duplicate line").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify the line was duplicated
+    let buffer_content = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        buffer_content, "first\nfirst\nsecond\nthird",
+        "Line should be duplicated"
+    );
+
+    // Now type a character - it should appear on the NEW (duplicated) line, not the original
+    harness.type_text("X").unwrap();
+    harness.render().unwrap();
+
+    let buffer_content = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        buffer_content, "first\nXfirst\nsecond\nthird",
+        "Cursor should be on the duplicated line (line 2), typing should insert there"
+    );
+}
+
 /// Test undo after duplicate line
 #[test]
 fn test_duplicate_line_undo() {
