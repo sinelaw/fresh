@@ -656,12 +656,15 @@ pub struct Editor {
     /// When switching to a terminal in this set, terminal mode is automatically re-entered.
     terminal_mode_resume: std::collections::HashSet<BufferId>,
 
-    /// Timestamp of the previous mouse click (for double-click detection)
+    /// Timestamp of the previous mouse click (for multi-click detection)
     previous_click_time: Option<std::time::Instant>,
 
-    /// Position of the previous mouse click (for double-click detection)
-    /// Double-click is only detected if both clicks are at the same position
+    /// Position of the previous mouse click (for multi-click detection)
+    /// Multi-click is only detected if all clicks are at the same position
     previous_click_position: Option<(u16, u16)>,
+
+    /// Click count for multi-click detection (1=single, 2=double, 3=triple)
+    click_count: u8,
 
     /// Settings UI state (when settings modal is open)
     pub(crate) settings_state: Option<crate::view::settings::SettingsState>,
@@ -1254,6 +1257,7 @@ impl Editor {
             terminal_mode_resume: std::collections::HashSet::new(),
             previous_click_time: None,
             previous_click_position: None,
+            click_count: 0,
             settings_state: None,
             calibration_wizard: None,
             event_debug: None,

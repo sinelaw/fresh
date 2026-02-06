@@ -29,34 +29,45 @@ impl Editor {
         let col = mouse_event.column;
         let row = mouse_event.row;
 
-        // Detect double-click for left button down events (used by all handlers)
-        let is_double_click = if matches!(mouse_event.kind, MouseEventKind::Down(MouseButton::Left))
-        {
-            let now = self.time_source.now();
-            let is_double = if let (Some(previous_time), Some(previous_pos)) =
-                (self.previous_click_time, self.previous_click_position)
-            {
-                let double_click_threshold =
-                    std::time::Duration::from_millis(self.config.editor.double_click_time_ms);
-                let within_time = now.duration_since(previous_time) < double_click_threshold;
-                let same_position = previous_pos == (col, row);
-                within_time && same_position
-            } else {
-                false
-            };
+        // Detect multi-click (double/triple) for left button down events
+        let (is_double_click, is_triple_click) =
+            if matches!(mouse_event.kind, MouseEventKind::Down(MouseButton::Left)) {
+                let now = self.time_source.now();
+                let is_consecutive = if let (Some(previous_time), Some(previous_pos)) =
+                    (self.previous_click_time, self.previous_click_position)
+                {
+                    let threshold =
+                        std::time::Duration::from_millis(self.config.editor.double_click_time_ms);
+                    let within_time = now.duration_since(previous_time) < threshold;
+                    let same_position = previous_pos == (col, row);
+                    within_time && same_position
+                } else {
+                    false
+                };
 
-            // Update click tracking
-            if is_double {
-                self.previous_click_time = None;
-                self.previous_click_position = None;
-            } else {
+                // Update click tracking
+                if is_consecutive {
+                    self.click_count += 1;
+                } else {
+                    self.click_count = 1;
+                }
                 self.previous_click_time = Some(now);
                 self.previous_click_position = Some((col, row));
-            }
-            is_double
-        } else {
-            false
-        };
+
+                let is_triple = self.click_count >= 3;
+                let is_double = self.click_count == 2;
+
+                if is_triple {
+                    // Reset after triple-click so the next click starts fresh
+                    self.click_count = 0;
+                    self.previous_click_time = None;
+                    self.previous_click_position = None;
+                }
+
+                (is_double, is_triple)
+            } else {
+                (false, false)
+            };
 
         // When settings modal is open, capture all mouse events
         if self.settings_state.as_ref().is_some_and(|s| s.visible) {
@@ -100,6 +111,12 @@ impl Editor {
 
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                if is_triple_click {
+                    // Triple click detected - select entire line
+                    self.handle_mouse_triple_click(col, row)?;
+                    needs_render = true;
+                    return Ok(needs_render);
+                }
                 if is_double_click {
                     // Double click detected - both clicks within time threshold AND at same position
                     self.handle_mouse_double_click(col, row)?;
@@ -989,6 +1006,111 @@ impl Editor {
 
         Ok(())
     }
+    /// Handle mouse triple click (down event)
+    /// Triple-click in editor area selects the entire line under the cursor.
+    pub(super) fn handle_mouse_triple_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
+        tracing::debug!("handle_mouse_triple_click at col={}, row={}", col, row);
+
+        // Handle popups: dismiss if clicking outside, block if clicking inside
+        if self.is_mouse_over_any_popup(col, row) {
+            return Ok(());
+        } else {
+            self.dismiss_transient_popups();
+        }
+
+        // Find which split/buffer was clicked
+        let split_areas = self.cached_layout.split_areas.clone();
+        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
+            &split_areas
+        {
+            if col >= content_rect.x
+                && col < content_rect.x + content_rect.width
+                && row >= content_rect.y
+                && row < content_rect.y + content_rect.height
+            {
+                if self.is_terminal_buffer(*buffer_id) {
+                    return Ok(());
+                }
+
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
+
+                // Use the same pattern as handle_editor_double_click:
+                // first focus and position cursor, then select line
+                self.handle_editor_triple_click(col, row, *split_id, *buffer_id, *content_rect)?;
+                return Ok(());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle triple-click in editor content area - selects the entire line under cursor
+    fn handle_editor_triple_click(
+        &mut self,
+        col: u16,
+        row: u16,
+        split_id: crate::model::event::SplitId,
+        buffer_id: BufferId,
+        content_rect: ratatui::layout::Rect,
+    ) -> AnyhowResult<()> {
+        use crate::model::event::Event;
+
+        // Focus this split
+        self.focus_split(split_id, buffer_id);
+
+        // Get cached view line mappings for this split
+        let cached_mappings = self
+            .cached_layout
+            .view_line_mappings
+            .get(&split_id)
+            .cloned();
+
+        let fallback = self
+            .split_view_states
+            .get(&split_id)
+            .map(|vs| vs.viewport.top_byte)
+            .unwrap_or(0);
+
+        // Calculate clicked position in buffer
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            let gutter_width = state.margins.left_total_width() as u16;
+
+            let Some(target_position) = Self::screen_to_buffer_position(
+                col,
+                row,
+                content_rect,
+                gutter_width,
+                &cached_mappings,
+                fallback,
+                true,
+            ) else {
+                return Ok(());
+            };
+
+            // Move cursor to clicked position first
+            let primary_cursor_id = state.cursors.primary_id();
+            let event = Event::MoveCursor {
+                cursor_id: primary_cursor_id,
+                old_position: 0,
+                new_position: target_position,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            };
+
+            if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+                event_log.append(event.clone());
+            }
+            state.apply(&event);
+        }
+
+        // Now select the entire line
+        self.handle_action(Action::SelectLine)?;
+
+        Ok(())
+    }
+
     /// Handle mouse click (down event)
     pub(super) fn handle_mouse_click(
         &mut self,
