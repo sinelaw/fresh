@@ -392,6 +392,14 @@ pub fn get_all_commands() -> Vec<Command> {
             source: CommandSource::Builtin,
         },
         Command {
+            name: t!("cmd.duplicate_line").to_string(),
+            description: t!("cmd.duplicate_line_desc").to_string(),
+            action: Action::DuplicateLine,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
             name: t!("cmd.recenter").to_string(),
             description: t!("cmd.recenter_desc").to_string(),
             action: Action::Recenter,

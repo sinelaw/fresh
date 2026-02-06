@@ -11,6 +11,7 @@ pub mod command_palette;
 pub mod crash_repro;
 pub mod crlf_rendering;
 pub mod document_model;
+pub mod duplicate_line;
 pub mod emacs_actions;
 pub mod encoding;
 pub mod explorer_menu;

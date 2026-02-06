@@ -2369,6 +2369,60 @@ pub fn action_to_events(
             }
         }
 
+        Action::DuplicateLine => {
+            // Duplicate the current line (or selected lines) below
+            // Process cursors in reverse order to avoid position shifts
+            let mut cursor_data: Vec<_> = state
+                .cursors
+                .iter()
+                .filter_map(|(cursor_id, cursor)| {
+                    if let Some(range) = cursor.selection_range() {
+                        // Has selection: duplicate selected lines
+                        let start_line = state.buffer.get_line_number(range.start);
+                        let end_line = state.buffer.get_line_number(range.end.saturating_sub(1).max(range.start));
+                        let line_start = state.buffer.line_start_offset(start_line)?;
+                        // Get end of last line
+                        let mut iter = state.buffer.line_iterator(
+                            state.buffer.line_start_offset(end_line)?,
+                            estimated_line_length,
+                        );
+                        let end_line_start = iter.current_position();
+                        iter.next_line().map(|(_, content)| {
+                            let line_end = end_line_start + content.len();
+                            (cursor_id, line_start, line_end)
+                        })
+                    } else {
+                        // No selection: duplicate current line
+                        let mut iter = state
+                            .buffer
+                            .line_iterator(cursor.position, estimated_line_length);
+                        let line_start = iter.current_position();
+                        iter.next_line().map(|(_, content)| {
+                            let line_end = line_start + content.len();
+                            (cursor_id, line_start, line_end)
+                        })
+                    }
+                })
+                .collect();
+            cursor_data.sort_by_key(|(_, start, _)| std::cmp::Reverse(*start));
+
+            for (cursor_id, line_start, line_end) in cursor_data {
+                let line_text = state.get_text_range(line_start, line_end);
+                let line_ending = state.buffer.line_ending().as_str();
+                // If the line doesn't end with a newline, prepend one
+                let insert_text = if line_text.ends_with('\n') || line_text.ends_with("\r\n") {
+                    line_text
+                } else {
+                    format!("{}{}", line_ending, line_text)
+                };
+                events.push(Event::Insert {
+                    position: line_end,
+                    text: insert_text,
+                    cursor_id,
+                });
+            }
+        }
+
         Action::Recenter => {
             // Scroll so that the cursor is centered in the view
             // This is handled specially - we emit a Recenter event

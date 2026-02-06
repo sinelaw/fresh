@@ -296,6 +296,7 @@ pub enum Action {
     DeleteToLineStart,
     TransposeChars,
     OpenLine,
+    DuplicateLine,
 
     // View
     Recenter,
@@ -661,6 +662,7 @@ impl Action {
             "delete_to_line_start" => Self::DeleteToLineStart,
             "transpose_chars" => Self::TransposeChars,
             "open_line" => Self::OpenLine,
+            "duplicate_line" => Self::DuplicateLine,
             "recenter" => Self::Recenter,
             "set_mark" => Self::SetMark,
 
@@ -977,6 +979,7 @@ impl Action {
                 | Action::DeleteToLineStart
                 | Action::TransposeChars
                 | Action::OpenLine
+                | Action::DuplicateLine
                 // Clipboard editing (but not Copy)
                 | Action::Cut
                 | Action::Paste
@@ -1003,6 +1006,7 @@ impl Action {
                 | Action::DeleteToLineStart
                 | Action::TransposeChars
                 | Action::OpenLine
+                | Action::DuplicateLine
                 | Action::Cut
                 | Action::Paste
         )
@@ -1731,6 +1735,7 @@ impl KeybindingResolver {
             Action::DeleteToLineStart => t!("action.delete_to_line_start"),
             Action::TransposeChars => t!("action.transpose_chars"),
             Action::OpenLine => t!("action.open_line"),
+            Action::DuplicateLine => t!("action.duplicate_line"),
             Action::Recenter => t!("action.recenter"),
             Action::SetMark => t!("action.set_mark"),
             Action::Copy => t!("action.copy"),
