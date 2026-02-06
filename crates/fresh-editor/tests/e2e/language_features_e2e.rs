@@ -157,6 +157,51 @@ fn test_typst_file_extension() {
     );
 }
 
+/// Test that default LSP configurations exist for common languages
+/// Issue #946: Add more default LSP configurations
+#[test]
+fn test_default_lsp_configs_exist() {
+    let config = Config::default();
+
+    // Languages that should have LSP configs
+    let expected_languages = vec![
+        ("rust", "rust-analyzer"),
+        ("python", "pylsp"),
+        ("javascript", "typescript-language-server"),
+        ("typescript", "typescript-language-server"),
+        ("html", "vscode-html-language-server"),
+        ("css", "vscode-css-language-server"),
+        ("c", "clangd"),
+        ("cpp", "clangd"),
+        ("go", "gopls"),
+        ("json", "vscode-json-language-server"),
+        ("csharp", "csharp-ls"),
+        ("java", "jdtls"),
+        ("bash", "bash-language-server"),
+        ("lua", "lua-language-server"),
+        ("ruby", "solargraph"),
+        ("php", "phpactor"),
+        ("yaml", "yaml-language-server"),
+        ("toml", "taplo"),
+        ("typst", "tinymist"),
+    ];
+
+    for (language, expected_command) in expected_languages {
+        let lsp_config = config.lsp.get(language);
+        assert!(
+            lsp_config.is_some(),
+            "Missing default LSP config for language: {}",
+            language
+        );
+        let lsp_config = lsp_config.unwrap();
+        assert_eq!(
+            lsp_config.command, expected_command,
+            "Wrong LSP command for {}: expected {}, got {}",
+            language, expected_command, lsp_config.command
+        );
+    }
+}
+
 /// Test Ctrl+D multicursor
 #[test]
 fn test_ctrl_d_multicursor_e2e() {

@@ -3019,6 +3019,87 @@ impl Config {
                 initialization_options: None,
             },
         );
+
+        // bash-language-server (installed via npm install -g bash-language-server)
+        lsp.insert(
+            "bash".to_string(),
+            LspServerConfig {
+                command: "bash-language-server".to_string(),
+                args: vec!["start".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+            },
+        );
+
+        // lua-language-server (https://github.com/LuaLS/lua-language-server)
+        // Install via package manager or download from releases
+        lsp.insert(
+            "lua".to_string(),
+            LspServerConfig {
+                command: "lua-language-server".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+            },
+        );
+
+        // solargraph - Ruby Language Server (installed via gem install solargraph)
+        lsp.insert(
+            "ruby".to_string(),
+            LspServerConfig {
+                command: "solargraph".to_string(),
+                args: vec!["stdio".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+            },
+        );
+
+        // phpactor - PHP Language Server (https://phpactor.readthedocs.io)
+        // Install via composer global require phpactor/phpactor
+        lsp.insert(
+            "php".to_string(),
+            LspServerConfig {
+                command: "phpactor".to_string(),
+                args: vec!["language-server".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+            },
+        );
+
+        // yaml-language-server (installed via npm install -g yaml-language-server)
+        lsp.insert(
+            "yaml".to_string(),
+            LspServerConfig {
+                command: "yaml-language-server".to_string(),
+                args: vec!["--stdio".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+            },
+        );
+
+        // taplo - TOML Language Server (https://taplo.tamasfe.dev)
+        // Install via cargo install taplo-cli or npm install -g @taplo/cli
+        lsp.insert(
+            "toml".to_string(),
+            LspServerConfig {
+                command: "taplo".to_string(),
+                args: vec!["lsp".to_string(), "stdio".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+            },
+        );
     }
 
     /// Validate the configuration
