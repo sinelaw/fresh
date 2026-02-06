@@ -143,9 +143,7 @@ impl Language {
             "html" => Some(Language::HTML),
             "css" => Some(Language::CSS),
             "c" | "h" => Some(Language::C),
-            "cpp" | "hpp" | "cc" | "hh" | "cxx" | "hxx" | "cppm" | "ixx" => {
-                Some(Language::Cpp)
-            }
+            "cpp" | "hpp" | "cc" | "hh" | "cxx" | "hxx" | "cppm" | "ixx" => Some(Language::Cpp),
             "go" => Some(Language::Go),
             "json" => Some(Language::Json),
             "java" => Some(Language::Java),

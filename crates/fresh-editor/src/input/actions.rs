@@ -2379,7 +2379,9 @@ pub fn action_to_events(
                     if let Some(range) = cursor.selection_range() {
                         // Has selection: duplicate selected lines
                         let start_line = state.buffer.get_line_number(range.start);
-                        let end_line = state.buffer.get_line_number(range.end.saturating_sub(1).max(range.start));
+                        let end_line = state
+                            .buffer
+                            .get_line_number(range.end.saturating_sub(1).max(range.start));
                         let line_start = state.buffer.line_start_offset(start_line)?;
                         // Get end of last line
                         let mut iter = state.buffer.line_iterator(
