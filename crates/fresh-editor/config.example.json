@@ -326,6 +326,19 @@
       "textmate_grammar": null,
       "show_whitespace_tabs": true,
       "use_tabs": false
+    },
+    "typst": {
+      "extensions": [
+        "typ"
+      ],
+      "filenames": [],
+      "grammar": "Typst",
+      "comment_prefix": "//",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true,
+      "use_tabs": false
     }
   },
   "lsp": {
@@ -545,6 +558,18 @@
     "templ": {
       "command": "templ",
       "args": ["lsp"],
+      "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "typst": {
+      "command": "tinymist",
+      "args": [],
       "enabled": true,
       "auto_start": false,
       "process_limits": {

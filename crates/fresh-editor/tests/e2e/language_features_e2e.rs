@@ -136,6 +136,27 @@ fn test_cpp20_module_file_extensions() {
     );
 }
 
+/// Test that Typst (.typ) files are detected as typst language
+/// Issue #944: Add Typst language support
+#[test]
+fn test_typst_file_extension() {
+    let temp_dir = TempDir::new().unwrap();
+
+    let typ_file = temp_dir.path().join("document.typ");
+    std::fs::write(&typ_file, "#set text(size: 12pt)\n= Hello World\n").unwrap();
+
+    let mut harness =
+        EditorTestHarness::create(80, 24, HarnessOptions::new().without_empty_plugins_dir())
+            .unwrap();
+    harness.open_file(&typ_file).unwrap();
+
+    let language = &harness.editor().active_state().language;
+    assert_eq!(
+        language, "typst",
+        ".typ files should be detected as Typst (issue #944)"
+    );
+}
+
 /// Test Ctrl+D multicursor
 #[test]
 fn test_ctrl_d_multicursor_e2e() {

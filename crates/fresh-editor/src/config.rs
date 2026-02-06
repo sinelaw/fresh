@@ -2729,6 +2729,25 @@ impl Config {
             },
         );
 
+        languages.insert(
+            "typst".to_string(),
+            LanguageConfig {
+                extensions: vec!["typ".to_string()],
+                filenames: vec![],
+                grammar: "Typst".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                use_tabs: false,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+            },
+        );
+
         languages
     }
 
@@ -2980,6 +2999,20 @@ impl Config {
             LspServerConfig {
                 command: "templ".to_string(),
                 args: vec!["lsp".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+            },
+        );
+
+        // tinymist - Typst Language Server (https://github.com/Myriad-Dreamin/tinymist)
+        // Install via cargo install tinymist or download from releases
+        lsp.insert(
+            "typst".to_string(),
+            LspServerConfig {
+                command: "tinymist".to_string(),
+                args: vec![],
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
