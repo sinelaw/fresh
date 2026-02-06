@@ -85,20 +85,32 @@ impl InputHandler for TerminalModeInputHandler<'_> {
 
 /// Check if a key combination should re-enter terminal mode from read-only view.
 /// Returns true if the key should trigger terminal mode entry.
+///
+/// In scrollback mode, any plain character key (without Ctrl/Alt modifiers)
+/// exits scrollback and returns to terminal mode. This matches the behavior
+/// of most terminal emulators where typing resumes the live terminal.
 pub fn should_enter_terminal_mode(event: &KeyEvent) -> bool {
     let code = event.code;
     let modifiers = event.modifiers;
 
     // Ctrl+Space, Ctrl+], or Ctrl+` to enter terminal mode
     if modifiers.contains(KeyModifiers::CONTROL) {
-        matches!(
+        return matches!(
             code,
             KeyCode::Char(' ') | KeyCode::Char(']') | KeyCode::Char('`')
-        )
-    } else {
-        // 'q' alone also enters terminal mode (quick toggle)
-        code == KeyCode::Char('q')
+        );
     }
+
+    // Any plain character key (no Ctrl/Alt) exits scrollback mode
+    // This includes Enter, Tab, Backspace, and regular characters
+    if !modifiers.contains(KeyModifiers::ALT) {
+        return matches!(
+            code,
+            KeyCode::Char(_) | KeyCode::Enter | KeyCode::Tab | KeyCode::Backspace
+        );
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -201,9 +213,21 @@ mod tests {
         )));
         // 'q' alone
         assert!(should_enter_terminal_mode(&key(KeyCode::Char('q'))));
-        // Other keys should not
-        assert!(!should_enter_terminal_mode(&key(KeyCode::Char('a'))));
-        assert!(!should_enter_terminal_mode(&key(KeyCode::Enter)));
+        // Any plain character key should exit scrollback (issue #863)
+        assert!(should_enter_terminal_mode(&key(KeyCode::Char('a'))));
+        assert!(should_enter_terminal_mode(&key(KeyCode::Enter)));
+        assert!(should_enter_terminal_mode(&key(KeyCode::Tab)));
+        assert!(should_enter_terminal_mode(&key(KeyCode::Backspace)));
+        // Navigation keys should NOT exit scrollback (used for scrolling)
+        assert!(!should_enter_terminal_mode(&key(KeyCode::PageUp)));
+        assert!(!should_enter_terminal_mode(&key(KeyCode::PageDown)));
+        assert!(!should_enter_terminal_mode(&key(KeyCode::Up)));
+        assert!(!should_enter_terminal_mode(&key(KeyCode::Down)));
+        // Alt+key should NOT exit scrollback (used for UI keybindings)
+        assert!(!should_enter_terminal_mode(&key_with_mods(
+            KeyCode::Char('a'),
+            KeyModifiers::ALT
+        )));
     }
 
     #[test]
