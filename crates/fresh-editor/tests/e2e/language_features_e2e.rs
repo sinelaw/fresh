@@ -102,6 +102,40 @@ fn test_word_movement_e2e() {
     assert_eq!(cursor.position, 4);
 }
 
+/// Test that C++20 module file extensions (.cppm and .ixx) are detected as C++
+/// Issue #955: C++20 module file extensions should be treated as C++
+#[test]
+fn test_cpp20_module_file_extensions() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Test .cppm extension
+    let cppm_file = temp_dir.path().join("module.cppm");
+    std::fs::write(&cppm_file, "export module hello;").unwrap();
+
+    let mut harness =
+        EditorTestHarness::create(80, 24, HarnessOptions::new().without_empty_plugins_dir())
+            .unwrap();
+    harness.open_file(&cppm_file).unwrap();
+
+    let language = &harness.editor().active_state().language;
+    assert_eq!(
+        language, "cpp",
+        ".cppm files should be detected as C++ (issue #955)"
+    );
+
+    // Test .ixx extension
+    let ixx_file = temp_dir.path().join("module.ixx");
+    std::fs::write(&ixx_file, "export module hello;").unwrap();
+
+    harness.open_file(&ixx_file).unwrap();
+
+    let language = &harness.editor().active_state().language;
+    assert_eq!(
+        language, "cpp",
+        ".ixx files should be detected as C++ (issue #955)"
+    );
+}
+
 /// Test Ctrl+D multicursor
 #[test]
 fn test_ctrl_d_multicursor_e2e() {
