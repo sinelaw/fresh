@@ -95,6 +95,8 @@
   "action.move_left": "Di chuyển con trỏ sang trái",
   "action.move_line_end": "Di chuyển đến cuối dòng",
   "action.move_line_start": "Di chuyển đến đầu dòng",
+  "action.move_line_up": "Di chuyển dòng lên",
+  "action.move_line_down": "Di chuyển dòng xuống",
   "action.move_page_down": "Di chuyển xuống một trang",
   "action.move_page_up": "Di chuyển lên một trang",
   "action.move_right": "Di chuyển con trỏ sang phải",

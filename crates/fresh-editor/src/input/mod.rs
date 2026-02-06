@@ -12,6 +12,7 @@ pub mod handler;
 pub mod input_history;
 pub mod key_translator;
 pub mod keybindings;
+mod line_move;
 pub mod multi_cursor;
 pub mod position_history;
 pub mod quick_open;

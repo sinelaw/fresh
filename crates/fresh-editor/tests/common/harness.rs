@@ -1237,9 +1237,109 @@ impl EditorTestHarness {
             }
         }
 
-        // Ignore Alt modifier keys for shadow
         if modifiers.contains(KeyModifiers::ALT) {
-            return;
+            match code {
+                KeyCode::Up => {
+                    let len = self.shadow_string.len();
+                    if len == 0 {
+                        return;
+                    }
+                    let line_start = self.shadow_string[..self.shadow_cursor]
+                        .rfind('\n')
+                        .map(|pos| pos + 1)
+                        .unwrap_or(0);
+                    if line_start == 0 {
+                        return;
+                    }
+                    let line_end = self.shadow_string[self.shadow_cursor..]
+                        .find('\n')
+                        .map(|pos| self.shadow_cursor + pos)
+                        .unwrap_or(len);
+                    let prev_line_end = line_start.saturating_sub(1);
+                    let prev_line_start = self.shadow_string[..prev_line_end]
+                        .rfind('\n')
+                        .map(|pos| pos + 1)
+                        .unwrap_or(0);
+                    let line_has_newline = line_end < len;
+                    let line_end_with_sep = if line_has_newline {
+                        line_end + 1
+                    } else {
+                        line_end
+                    };
+
+                    let before_prev = &self.shadow_string[..prev_line_start];
+                    let prev_line = &self.shadow_string[prev_line_start..prev_line_end];
+                    let cur_line = &self.shadow_string[line_start..line_end];
+                    let after_cur = &self.shadow_string[line_end_with_sep..];
+
+                    let mut new_string = String::with_capacity(self.shadow_string.len());
+                    new_string.push_str(before_prev);
+                    new_string.push_str(cur_line);
+                    new_string.push('\n');
+                    new_string.push_str(prev_line);
+                    if line_has_newline {
+                        new_string.push('\n');
+                    }
+                    new_string.push_str(after_cur);
+
+                    let column = self.shadow_cursor.saturating_sub(line_start);
+                    self.shadow_cursor = prev_line_start + column.min(cur_line.len());
+                    self.shadow_string = new_string;
+                    return;
+                }
+                KeyCode::Down => {
+                    let len = self.shadow_string.len();
+                    if len == 0 {
+                        return;
+                    }
+                    let line_start = self.shadow_string[..self.shadow_cursor]
+                        .rfind('\n')
+                        .map(|pos| pos + 1)
+                        .unwrap_or(0);
+                    let line_end = self.shadow_string[self.shadow_cursor..]
+                        .find('\n')
+                        .map(|pos| self.shadow_cursor + pos)
+                        .unwrap_or(len);
+                    if line_end == len {
+                        return;
+                    }
+                    let next_line_start = line_end + 1;
+                    let next_line_end = self.shadow_string[next_line_start..]
+                        .find('\n')
+                        .map(|pos| next_line_start + pos)
+                        .unwrap_or(len);
+                    let next_has_newline = next_line_end < len;
+                    let next_end_with_sep = if next_has_newline {
+                        next_line_end + 1
+                    } else {
+                        next_line_end
+                    };
+
+                    let before_line = &self.shadow_string[..line_start];
+                    let cur_line = &self.shadow_string[line_start..line_end];
+                    let next_line = &self.shadow_string[next_line_start..next_line_end];
+                    let after_next = &self.shadow_string[next_end_with_sep..];
+
+                    let mut new_string = String::with_capacity(self.shadow_string.len());
+                    new_string.push_str(before_line);
+                    new_string.push_str(next_line);
+                    new_string.push('\n');
+                    new_string.push_str(cur_line);
+                    if next_has_newline {
+                        new_string.push('\n');
+                    }
+                    new_string.push_str(after_next);
+
+                    let column = self.shadow_cursor.saturating_sub(line_start);
+                    let new_line_start = line_start + next_line.len() + 1;
+                    self.shadow_cursor = new_line_start + column.min(cur_line.len());
+                    self.shadow_string = new_string;
+                    return;
+                }
+                _ => {
+                    return;
+                }
+            }
         }
 
         match code {

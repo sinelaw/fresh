@@ -113,6 +113,23 @@ fn test_multiline_editing() {
     harness.assert_buffer_content("Line 1\n>>> Line 2\nLine 3");
 }
 
+#[test]
+fn test_move_line_up_down_shortcuts() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.enable_shadow_validation();
+
+    harness.type_text("A\nB\nC").unwrap();
+
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+
+    harness.send_key(KeyCode::Up, KeyModifiers::ALT).unwrap();
+    harness.assert_buffer_content("B\nA\nC");
+
+    harness.send_key(KeyCode::Down, KeyModifiers::ALT).unwrap();
+    harness.assert_buffer_content("A\nB\nC");
+}
+
 /// Test basic editing operations: insert, modify, delete, newline
 /// This test verifies both buffer state and rendered screen output
 #[test]
