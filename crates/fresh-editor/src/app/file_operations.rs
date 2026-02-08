@@ -54,9 +54,9 @@ impl Editor {
             let buffer_id = self.active_buffer();
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 if state.language == "text" {
-                    if let Some(filename) = p.file_name().and_then(|n| n.to_str()) {
-                        state.set_language_from_name(filename, &self.grammar_registry);
-                    }
+                    // Use full path for proper syntax detection (shebang reading)
+                    // set_language_from_name will extract just the filename for matching
+                    state.set_language_from_name(&p.display().to_string(), &self.grammar_registry);
                 }
             }
         }
