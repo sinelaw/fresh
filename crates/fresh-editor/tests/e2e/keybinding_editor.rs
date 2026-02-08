@@ -903,3 +903,39 @@ fn test_footer_hints_displayed() {
     harness.assert_screen_contains("Help");
     harness.assert_screen_contains("Close");
 }
+
+// ========================
+// Unicode / narrow terminal
+// ========================
+
+/// Test that the keybinding editor renders correctly at narrow widths
+/// where key display strings containing multi-byte Unicode characters
+/// (e.g. "Alt+Shift+↓") may be truncated by column width.
+/// Regression test: pad_right used byte indexing which panics on
+/// multi-byte char boundaries.
+#[test]
+fn test_render_narrow_terminal_unicode_keys() {
+    // At width 80, key_col_width = floor(78 * 0.16) = 12.
+    // "Alt+Shift+↓" is 13 bytes but ↓ spans bytes 10..13,
+    // so byte index 12 is not a char boundary and would panic.
+    let mut harness = EditorTestHarness::new(80, 40).unwrap();
+    open_keybinding_editor(&mut harness);
+
+    // Search for "block_select" to filter to bindings with Alt+Shift+arrow
+    // keys (e.g. Alt+Shift+↓), ensuring they are in the visible viewport
+    // when rendered with narrow column widths.
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for ch in "block_select".chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+    // This render triggers pad_right on the filtered bindings which include
+    // "Alt+Shift+↓" — at key_col_width=12 this panics on the byte boundary.
+    harness.render().unwrap();
+
+    // Should not panic and should display the editor
+    harness.assert_screen_contains("Keybinding Editor");
+}

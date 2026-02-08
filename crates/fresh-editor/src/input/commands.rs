@@ -1227,6 +1227,15 @@ pub fn get_all_commands() -> Vec<Command> {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
         },
+        // Keybinding editor
+        Command {
+            name: t!("cmd.open_keybinding_editor").to_string(),
+            description: t!("cmd.open_keybinding_editor_desc").to_string(),
+            action: Action::OpenKeybindingEditor,
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
         // Input calibration
         Command {
             name: t!("cmd.calibrate_input").to_string(),

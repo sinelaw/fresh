@@ -1053,12 +1053,14 @@ fn render_confirm_dialog(
     frame.render_widget(Paragraph::new(Line::from(spans)), chunks[2]);
 }
 
-/// Right-pad a string to a given width, truncating if necessary
+/// Right-pad a string to a given width (in chars), truncating if necessary
 fn pad_right(s: &str, width: usize) -> String {
-    if s.len() >= width {
-        s[..width].to_string()
+    let char_count = s.chars().count();
+    if char_count >= width {
+        s.chars().take(width).collect()
     } else {
-        format!("{:width$}", s, width = width)
+        let padding = width - char_count;
+        format!("{}{}", s, " ".repeat(padding))
     }
 }
 

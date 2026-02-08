@@ -469,6 +469,8 @@
   "cmd.open_line_desc": "Insert newline at cursor without moving cursor",
   "cmd.open_settings": "Open Settings",
   "cmd.open_settings_desc": "Open the settings editor",
+  "cmd.open_keybinding_editor": "Open Keybinding Editor",
+  "cmd.open_keybinding_editor_desc": "Open the keybinding editor to view and customize keyboard shortcuts",
   "cmd.calibrate_input": "Calibrate Keyboard",
   "cmd.calibrate_input_desc": "Run the keyboard calibration wizard for terminal issues",
   "cmd.open_terminal": "Open Terminal",
