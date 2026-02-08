@@ -1,4 +1,4 @@
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
 use std::io::Write;
@@ -9,7 +9,14 @@ use std::io::Write;
 /// set_language_from_name, which then tries to read the file relative to the working dir.
 #[test]
 fn test_save_shebang_detection_outside_workdir() {
-    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_project_root()
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
 
     // Create file with NO extension outside project directory
     // Should detect bash from shebang alone
@@ -128,7 +135,14 @@ fn test_save_shebang_detection_outside_workdir() {
 /// Bug: saving a new file with "Save As" doesn't trigger language detection until the NEXT save
 #[test]
 fn test_save_as_detects_language() {
-    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_project_root()
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
     let project_dir = harness.project_dir().unwrap();
 
     // 1. Create a new buffer (implicitly text/plain)

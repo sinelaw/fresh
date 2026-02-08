@@ -152,6 +152,10 @@ pub struct HarnessOptions {
     /// Preserve the keybinding map from the config (don't force "default").
     /// Set this when testing a specific keymap like emacs.
     pub preserve_keybinding_map: bool,
+    /// Use full grammar registry with syntax highlighting support.
+    /// Defaults to false (uses empty registry for fast test startup).
+    /// Set to true only for tests that need syntax highlighting or shebang detection.
+    pub use_full_grammar_registry: bool,
 }
 
 impl HarnessOptions {
@@ -168,6 +172,7 @@ impl HarnessOptions {
             slow_fs_config: None,
             filesystem: None,
             preserve_keybinding_map: false,
+            use_full_grammar_registry: false,
         }
     }
 
@@ -231,6 +236,14 @@ impl HarnessOptions {
     /// Use this when testing a specific keymap like emacs or vscode.
     pub fn with_preserved_keybinding_map(mut self) -> Self {
         self.preserve_keybinding_map = true;
+        self
+    }
+
+    /// Use full grammar registry with syntax highlighting support.
+    /// By default, tests use an empty registry for fast startup.
+    /// Only enable this for tests that need syntax highlighting or shebang detection.
+    pub fn with_full_grammar_registry(mut self) -> Self {
+        self.use_full_grammar_registry = true;
         self
     }
 }
@@ -406,16 +419,26 @@ impl EditorTestHarness {
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
 
+        // Create grammar registry if requested (slow, only for tests that need syntax highlighting)
+        let grammar_registry = if options.use_full_grammar_registry {
+            Some(fresh::primitives::grammar::GrammarRegistry::for_editor(
+                dir_context.config_dir.clone(),
+            ))
+        } else {
+            None // Use empty registry for fast test startup
+        };
+
         // Create editor
         let mut editor = Editor::for_test(
             config,
             width,
             height,
             Some(working_dir),
-            dir_context,
+            dir_context.clone(),
             fresh::view::color_support::ColorCapability::TrueColor,
             filesystem,
             Some(time_source),
+            grammar_registry,
         )?;
 
         // Process any pending plugin commands

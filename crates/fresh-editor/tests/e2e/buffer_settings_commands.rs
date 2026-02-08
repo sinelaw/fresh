@@ -347,7 +347,10 @@ fn test_toggle_line_numbers_persists_across_file_changes() {
 
     // Step 4: Overwrite the file externally (not using the editor)
     harness.sleep(FILE_CHANGE_DELAY);
-    write_and_sync(&file_path, "Modified line 1\nModified line 2\nModified line 3\nModified line 4");
+    write_and_sync(
+        &file_path,
+        "Modified line 1\nModified line 2\nModified line 3\nModified line 4",
+    );
 
     // Wait for auto-revert to process the external change
     let expected_content = "Modified line 1\nModified line 2\nModified line 3\nModified line 4";
