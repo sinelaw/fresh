@@ -462,6 +462,8 @@
   "cmd.open_line_desc": "Inserir nova linha no cursor sem mover o cursor",
   "cmd.open_settings": "Abrir Configurações",
   "cmd.open_settings_desc": "Abrir o editor de configurações",
+  "cmd.open_keybinding_editor": "Abrir editor de atalhos de teclado",
+  "cmd.open_keybinding_editor_desc": "Abrir o editor de atalhos de teclado para visualizar e personalizar os atalhos",
   "cmd.open_terminal": "Abrir Terminal",
   "cmd.open_terminal_desc": "Abrir um novo terminal na divisão atual",
   "cmd.paste": "Colar",

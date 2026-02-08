@@ -462,6 +462,8 @@
   "cmd.open_line_desc": "แทรกบรรทัดใหม่ที่เคอร์เซอร์โดยไม่เลื่อนเคอร์เซอร์",
   "cmd.open_settings": "เปิดการตั้งค่า",
   "cmd.open_settings_desc": "เปิดหน้าต่างแก้ไขการตั้งค่า",
+  "cmd.open_keybinding_editor": "เปิดตัวแก้ไขปุ่มลัด",
+  "cmd.open_keybinding_editor_desc": "เปิดตัวแก้ไขปุ่มลัดเพื่อดูและปรับแต่งแป้นพิมพ์ลัด",
   "cmd.open_terminal": "เปิดเทอร์มินัล",
   "cmd.open_terminal_desc": "เปิดเทอร์มินัลใหม่ในการแบ่งส่วนปัจจุบัน",
   "cmd.paste": "วาง",

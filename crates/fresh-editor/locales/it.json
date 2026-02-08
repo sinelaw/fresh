@@ -462,6 +462,8 @@
   "cmd.open_line_desc": "Inserisce una nuova riga sotto il cursore senza spostarlo",
   "cmd.open_settings": "Apri impostazioni",
   "cmd.open_settings_desc": "Apre l'editor delle impostazioni",
+  "cmd.open_keybinding_editor": "Apri editor scorciatoie da tastiera",
+  "cmd.open_keybinding_editor_desc": "Apre l'editor delle scorciatoie da tastiera per visualizzare e personalizzare le combinazioni di tasti",
   "cmd.open_terminal": "Apri terminale",
   "cmd.open_terminal_desc": "Apre un nuovo terminale nella divisione corrente",
   "cmd.paste": "Incolla",

@@ -462,6 +462,8 @@
   "cmd.open_line_desc": "커서를 이동하지 않고 커서 위치에 새 줄 삽입",
   "cmd.open_settings": "설정 열기",
   "cmd.open_settings_desc": "설정 편집기 열기",
+  "cmd.open_keybinding_editor": "키 바인딩 편집기 열기",
+  "cmd.open_keybinding_editor_desc": "키 바인딩 편집기를 열어 키보드 단축키를 확인하고 사용자 지정합니다",
   "cmd.open_terminal": "터미널 열기",
   "cmd.open_terminal_desc": "현재 분할에 새 터미널 열기",
   "cmd.paste": "붙여넣기",

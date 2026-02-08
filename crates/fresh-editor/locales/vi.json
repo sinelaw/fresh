@@ -471,6 +471,8 @@
   "cmd.open_line_desc": "Chèn dòng mới tại con trỏ mà không di chuyển con trỏ",
   "cmd.open_settings": "Mở cài đặt",
   "cmd.open_settings_desc": "Mở trình chỉnh sửa cài đặt",
+  "cmd.open_keybinding_editor": "Mở trình chỉnh sửa phím tắt",
+  "cmd.open_keybinding_editor_desc": "Mở trình chỉnh sửa phím tắt để xem và tùy chỉnh các phím tắt bàn phím",
   "cmd.calibrate_input": "Hiệu chỉnh bàn phím",
   "cmd.calibrate_input_desc": "Chạy trình hướng dẫn hiệu chỉnh bàn phím cho vấn đề terminal",
   "cmd.open_terminal": "Mở Terminal",

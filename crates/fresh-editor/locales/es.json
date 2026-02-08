@@ -462,6 +462,8 @@
   "cmd.open_line_desc": "Insertar nueva línea en el cursor sin mover el cursor",
   "cmd.open_settings": "Abrir configuración",
   "cmd.open_settings_desc": "Abrir el editor de configuración",
+  "cmd.open_keybinding_editor": "Abrir editor de atajos de teclado",
+  "cmd.open_keybinding_editor_desc": "Abrir el editor de atajos de teclado para ver y personalizar las combinaciones de teclas",
   "cmd.open_terminal": "Abrir terminal",
   "cmd.open_terminal_desc": "Abrir un nuevo terminal en el panel actual",
   "cmd.paste": "Pegar",

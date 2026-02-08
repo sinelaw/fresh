@@ -462,6 +462,8 @@
   "cmd.open_line_desc": "在光标处插入换行但不移动光标",
   "cmd.open_settings": "打开设置",
   "cmd.open_settings_desc": "打开设置编辑器",
+  "cmd.open_keybinding_editor": "打开快捷键编辑器",
+  "cmd.open_keybinding_editor_desc": "打开快捷键编辑器以查看和自定义键盘快捷键",
   "cmd.open_terminal": "打开终端",
   "cmd.open_terminal_desc": "在当前分割中打开新终端",
   "cmd.paste": "粘贴",

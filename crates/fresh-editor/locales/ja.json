@@ -462,6 +462,8 @@
   "cmd.open_line_desc": "カーソルを移動せずにカーソル位置に改行を挿入します",
   "cmd.open_settings": "設定を開く",
   "cmd.open_settings_desc": "設定エディタを開きます",
+  "cmd.open_keybinding_editor": "キーバインドエディタを開く",
+  "cmd.open_keybinding_editor_desc": "キーバインドエディタを開いてキーボードショートカットを表示・カスタマイズします",
   "cmd.open_terminal": "ターミナルを開く",
   "cmd.open_terminal_desc": "現在の分割で新しいターミナルを開きます",
   "cmd.paste": "貼り付け",

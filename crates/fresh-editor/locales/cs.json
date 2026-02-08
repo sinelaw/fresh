@@ -462,6 +462,8 @@
   "cmd.open_line_desc": "Vložit nový řádek na pozici kurzoru bez posunutí kurzoru",
   "cmd.open_settings": "Otevřít nastavení",
   "cmd.open_settings_desc": "Otevřít editor nastavení",
+  "cmd.open_keybinding_editor": "Otevřít editor klávesových zkratek",
+  "cmd.open_keybinding_editor_desc": "Otevřít editor klávesových zkratek pro zobrazení a přizpůsobení klávesových zkratek",
   "cmd.open_terminal": "Otevřít terminál",
   "cmd.open_terminal_desc": "Otevřít nový terminál v aktuálním rozdělení",
   "cmd.paste": "Vložit",

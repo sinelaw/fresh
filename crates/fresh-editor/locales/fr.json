@@ -462,6 +462,8 @@
   "cmd.open_line_desc": "Insérer un saut de ligne au niveau du curseur sans déplacer le curseur",
   "cmd.open_settings": "Ouvrir les paramètres",
   "cmd.open_settings_desc": "Ouvrir l'éditeur de paramètres",
+  "cmd.open_keybinding_editor": "Ouvrir l'éditeur de raccourcis clavier",
+  "cmd.open_keybinding_editor_desc": "Ouvrir l'éditeur de raccourcis clavier pour afficher et personnaliser les raccourcis",
   "cmd.open_terminal": "Ouvrir le terminal",
   "cmd.open_terminal_desc": "Ouvrir un nouveau terminal dans la division actuelle",
   "cmd.paste": "Coller",

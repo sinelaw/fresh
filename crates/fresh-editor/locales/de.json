@@ -462,6 +462,8 @@
   "cmd.open_line_desc": "Neue Zeile am Cursor einfügen ohne Cursor zu bewegen",
   "cmd.open_settings": "Einstellungen öffnen",
   "cmd.open_settings_desc": "Den Einstellungseditor öffnen",
+  "cmd.open_keybinding_editor": "Tastenkürzel-Editor öffnen",
+  "cmd.open_keybinding_editor_desc": "Tastenkürzel-Editor zum Anzeigen und Anpassen von Tastenkombinationen öffnen",
   "cmd.open_terminal": "Terminal öffnen",
   "cmd.open_terminal_desc": "Ein neues Terminal im aktuellen Split öffnen",
   "cmd.paste": "Einfügen",
