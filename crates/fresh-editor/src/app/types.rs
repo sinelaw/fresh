@@ -817,4 +817,53 @@ impl CachedLayout {
 
         Some((new_pos, goal_visual_col))
     }
+
+    /// Get the start byte position of the visual row containing the given byte position.
+    /// If the cursor is already at the visual row start and this is a wrapped continuation,
+    /// moves to the previous visual row's start (within the same logical line).
+    /// Get the start byte position of the visual row containing the given byte position.
+    /// When `allow_advance` is true and the cursor is already at the row start,
+    /// moves to the previous visual row's start.
+    pub fn visual_line_start(
+        &self,
+        split_id: SplitId,
+        byte_pos: usize,
+        allow_advance: bool,
+    ) -> Option<usize> {
+        let mappings = self.view_line_mappings.get(&split_id)?;
+        let row_idx = self.find_visual_row(split_id, byte_pos)?;
+        let row = mappings.get(row_idx)?;
+        let row_start = row.first_source_byte()?;
+
+        if allow_advance && byte_pos == row_start && row_idx > 0 {
+            let prev_row = mappings.get(row_idx - 1)?;
+            prev_row.first_source_byte()
+        } else {
+            Some(row_start)
+        }
+    }
+
+    /// Get the end byte position of the visual row containing the given byte position.
+    /// If the cursor is already at the visual row end and the next row is a wrapped continuation,
+    /// moves to the next visual row's end (within the same logical line).
+    /// Get the end byte position of the visual row containing the given byte position.
+    /// When `allow_advance` is true and the cursor is already at the row end,
+    /// advances to the next visual row's end.
+    pub fn visual_line_end(
+        &self,
+        split_id: SplitId,
+        byte_pos: usize,
+        allow_advance: bool,
+    ) -> Option<usize> {
+        let mappings = self.view_line_mappings.get(&split_id)?;
+        let row_idx = self.find_visual_row(split_id, byte_pos)?;
+        let row = mappings.get(row_idx)?;
+
+        if allow_advance && byte_pos == row.line_end_byte && row_idx + 1 < mappings.len() {
+            let next_row = mappings.get(row_idx + 1)?;
+            Some(next_row.line_end_byte)
+        } else {
+            Some(row.line_end_byte)
+        }
+    }
 }

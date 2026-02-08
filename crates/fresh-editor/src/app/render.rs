@@ -1985,15 +1985,37 @@ impl Editor {
         split_id: SplitId,
         _estimated_line_length: usize,
     ) -> Option<Vec<Event>> {
-        // Determine direction and whether this is a selection action
+        // Classify the action
+        enum VisualAction {
+            UpDown { direction: i8, is_select: bool },
+            LineEnd { is_select: bool },
+            LineStart { is_select: bool },
+        }
+
         // Note: We don't intercept BlockSelectUp/Down because block selection has
         // special semantics (setting block_anchor) that require the default handler
-        let (direction, is_select) = match action {
-            Action::MoveUp => (-1i8, false),
-            Action::MoveDown => (1, false),
-            Action::SelectUp => (-1, true),
-            Action::SelectDown => (1, true),
-            _ => return None, // Not a visual line movement action
+        let visual_action = match action {
+            Action::MoveUp => VisualAction::UpDown {
+                direction: -1,
+                is_select: false,
+            },
+            Action::MoveDown => VisualAction::UpDown {
+                direction: 1,
+                is_select: false,
+            },
+            Action::SelectUp => VisualAction::UpDown {
+                direction: -1,
+                is_select: true,
+            },
+            Action::SelectDown => VisualAction::UpDown {
+                direction: 1,
+                is_select: true,
+            },
+            Action::MoveLineEnd => VisualAction::LineEnd { is_select: false },
+            Action::SelectLineEnd => VisualAction::LineEnd { is_select: true },
+            Action::MoveLineStart => VisualAction::LineStart { is_select: false },
+            Action::SelectLineStart => VisualAction::LineStart { is_select: true },
+            _ => return None, // Not a visual line action
         };
 
         // First, collect cursor data we need (to avoid borrow conflicts)
@@ -2003,12 +2025,33 @@ impl Editor {
                 .cursors
                 .iter()
                 .map(|(cursor_id, cursor)| {
+                    // Check if cursor is at a physical line boundary:
+                    // - at_line_ending: byte at cursor position is a newline or at buffer end
+                    // - at_line_start: cursor is at position 0 or preceded by a newline
+                    let at_line_ending = if cursor.position < state.buffer.len() {
+                        let bytes = state
+                            .buffer
+                            .slice_bytes(cursor.position..cursor.position + 1);
+                        bytes.first() == Some(&b'\n') || bytes.first() == Some(&b'\r')
+                    } else {
+                        true // end of buffer is a boundary
+                    };
+                    let at_line_start = if cursor.position == 0 {
+                        true
+                    } else {
+                        let prev = state
+                            .buffer
+                            .slice_bytes(cursor.position - 1..cursor.position);
+                        prev.first() == Some(&b'\n')
+                    };
                     (
                         cursor_id,
                         cursor.position,
                         cursor.anchor,
                         cursor.sticky_column,
                         cursor.deselect_on_move,
+                        at_line_ending,
+                        at_line_start,
                     )
                 })
                 .collect()
@@ -2016,48 +2059,88 @@ impl Editor {
 
         let mut events = Vec::new();
 
-        for (cursor_id, position, anchor, sticky_column, deselect_on_move) in cursor_data {
-            // Calculate current visual column from cached layout
-            // If we can't find the position in the layout, bail out and let the default handler deal with it
-            let current_visual_col =
-                match self.cached_layout.byte_to_visual_column(split_id, position) {
-                    Some(col) => col,
-                    None => return None, // Position not in cached layout, use default handler
-                };
+        for (
+            cursor_id,
+            position,
+            anchor,
+            sticky_column,
+            deselect_on_move,
+            at_line_ending,
+            at_line_start,
+        ) in cursor_data
+        {
+            let (new_pos, new_sticky) = match &visual_action {
+                VisualAction::UpDown { direction, .. } => {
+                    // Calculate current visual column from cached layout
+                    let current_visual_col =
+                        match self.cached_layout.byte_to_visual_column(split_id, position) {
+                            Some(col) => col,
+                            None => return None,
+                        };
 
-            // Use sticky column if set, otherwise use current visual column
-            let goal_visual_col = if sticky_column > 0 {
-                sticky_column
-            } else {
-                current_visual_col
+                    let goal_visual_col = if sticky_column > 0 {
+                        sticky_column
+                    } else {
+                        current_visual_col
+                    };
+
+                    match self.cached_layout.move_visual_line(
+                        split_id,
+                        position,
+                        goal_visual_col,
+                        *direction,
+                    ) {
+                        Some(result) => result,
+                        None => continue, // At boundary, skip this cursor
+                    }
+                }
+                VisualAction::LineEnd { .. } => {
+                    // Allow advancing to next visual segment only if not at a physical line ending
+                    let allow_advance = !at_line_ending;
+                    match self
+                        .cached_layout
+                        .visual_line_end(split_id, position, allow_advance)
+                    {
+                        Some(end_pos) => (end_pos, 0),
+                        None => return None,
+                    }
+                }
+                VisualAction::LineStart { .. } => {
+                    // Allow advancing to previous visual segment only if not at a physical line start
+                    let allow_advance = !at_line_start;
+                    match self
+                        .cached_layout
+                        .visual_line_start(split_id, position, allow_advance)
+                    {
+                        Some(start_pos) => (start_pos, 0),
+                        None => return None,
+                    }
+                }
             };
 
-            // Try to move using cached layout
-            let move_result =
-                self.cached_layout
-                    .move_visual_line(split_id, position, goal_visual_col, direction);
+            let is_select = match &visual_action {
+                VisualAction::UpDown { is_select, .. } => *is_select,
+                VisualAction::LineEnd { is_select } => *is_select,
+                VisualAction::LineStart { is_select } => *is_select,
+            };
 
-            if let Some((new_pos, new_sticky)) = move_result {
-                // Determine anchor based on action type
-                let new_anchor = if is_select {
-                    Some(anchor.unwrap_or(position))
-                } else if deselect_on_move {
-                    None
-                } else {
-                    anchor
-                };
+            let new_anchor = if is_select {
+                Some(anchor.unwrap_or(position))
+            } else if deselect_on_move {
+                None
+            } else {
+                anchor
+            };
 
-                events.push(Event::MoveCursor {
-                    cursor_id,
-                    old_position: position,
-                    new_position: new_pos,
-                    old_anchor: anchor,
-                    new_anchor,
-                    old_sticky_column: sticky_column,
-                    new_sticky_column: new_sticky,
-                });
-            }
-            // If move_result is None, we're at a boundary - don't generate an event
+            events.push(Event::MoveCursor {
+                cursor_id,
+                old_position: position,
+                new_position: new_pos,
+                old_anchor: anchor,
+                new_anchor,
+                old_sticky_column: sticky_column,
+                new_sticky_column: new_sticky,
+            });
         }
 
         if events.is_empty() {

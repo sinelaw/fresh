@@ -51,43 +51,103 @@ fn test_line_wrapping_disabled() {
     assert!(!harness.get_buffer_content().unwrap().contains('\n'));
 }
 
-/// Test cursor navigation with wrapped lines - Home key
+/// Test cursor navigation with wrapped lines - Home key goes to visual line start
 #[test]
 fn test_wrapped_line_navigation_home() {
     let mut harness = EditorTestHarness::new(60, 24).unwrap();
 
     // Type a long line that will wrap
+    // With 60-col terminal, gutter=8, scrollbar=1, text width=51
     let long_text = "This is a very long line of text that will definitely exceed the terminal width and should wrap to multiple lines.";
     harness.type_text(long_text).unwrap();
 
-    // Cursor should be at the end
+    // Cursor should be at the end (on last wrapped segment)
     assert_eq!(harness.cursor_position(), long_text.len());
 
-    // Press Home - should go to start of the physical line, not the wrapped line
+    // Render to populate cached layout
+    harness.render().unwrap();
+
+    // Press Home - should go to start of the visual (wrapped) segment the cursor is on
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
-    // Cursor should be at position 0
-    assert_eq!(harness.cursor_position(), 0);
+    // The cursor was on the last wrapped segment; Home should move to start of that segment,
+    // not to position 0 (which is on the first segment)
+    let pos_after_home = harness.cursor_position();
+    assert!(
+        pos_after_home > 0,
+        "Home from last wrapped segment should go to start of that visual segment, not position 0. Got {}",
+        pos_after_home
+    );
+
+    // Keep pressing Home until we reach physical line start
+    let mut pos = pos_after_home;
+    while pos > 0 {
+        harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+        let new_pos = harness.cursor_position();
+        assert!(
+            new_pos < pos,
+            "Home should make progress toward line start. Was {}, now {}",
+            pos,
+            new_pos
+        );
+        pos = new_pos;
+    }
+    assert_eq!(
+        pos, 0,
+        "Repeated Home presses should reach physical line start"
+    );
 }
 
-/// Test cursor navigation with wrapped lines - End key
+/// Test cursor navigation with wrapped lines - End key goes to visual line end
 #[test]
 fn test_wrapped_line_navigation_end() {
     let mut harness = EditorTestHarness::new(60, 24).unwrap();
 
-    // Type a long line
+    // Type a long line that will wrap
+    // With 60-col terminal, gutter=8, scrollbar=1, text width=51
     let long_text = "This is a very long line of text that will definitely exceed the terminal width and should wrap to multiple lines.";
     harness.type_text(long_text).unwrap();
 
-    // Move to start
-    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    // Move to document start (Ctrl+Home) to reliably get to position 0
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     assert_eq!(harness.cursor_position(), 0);
 
-    // Press End - should go to end of the physical line, not just the wrapped portion
+    // Render to populate cached layout
+    harness.render().unwrap();
+
+    // Press End - should go to end of the VISUAL line (first wrapped segment), not the physical line end
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
 
-    // Cursor should be at the end of the line
-    assert_eq!(harness.cursor_position(), long_text.len());
+    let pos_after_end = harness.cursor_position();
+    // Should NOT be at the end of the entire line
+    assert!(
+        pos_after_end < long_text.len(),
+        "End from first wrapped segment should go to end of visual segment, not end of physical line. Got {} (full length {})",
+        pos_after_end,
+        long_text.len()
+    );
+
+    // Pressing End again should go to end of the physical line
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    // Now we're on the next segment; End goes to its end.
+    // Keep pressing End until we reach physical line end
+    let mut pos = harness.cursor_position();
+    while pos < long_text.len() {
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        let new_pos = harness.cursor_position();
+        assert!(
+            new_pos > pos,
+            "End key should make progress toward line end"
+        );
+        pos = new_pos;
+    }
+    assert_eq!(
+        pos,
+        long_text.len(),
+        "Repeated End presses should eventually reach physical line end"
+    );
 }
 
 /// Test cursor navigation with wrapped lines - Left/Right arrows
@@ -128,8 +188,10 @@ fn test_wrapped_line_editing_middle() {
     let long_text = "This is a very long line of text that will definitely exceed the terminal width and should wrap.";
     harness.type_text(long_text).unwrap();
 
-    // Move to the middle of the line
-    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    // Move to the start of the line using Ctrl+Home (document start)
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     for _ in 0..20 {
         harness
             .send_key(KeyCode::Right, KeyModifiers::NONE)
@@ -280,8 +342,7 @@ fn test_wrapped_line_numbers() {
     );
 }
 
-/// Test that horizontal scrolling is disabled when line wrapping is enabled
-/// Bug: pressing "end" on a wrapped line causes horizontal scroll, breaking the visual wrapping
+/// Test that pressing End on a wrapped line goes to visual line end, no horizontal scroll
 #[test]
 fn test_wrapped_line_no_horizontal_scroll() {
     let mut harness = EditorTestHarness::new(60, 24).unwrap();
@@ -290,8 +351,10 @@ fn test_wrapped_line_no_horizontal_scroll() {
     let long_text = "A fast, lightweight terminal text editor written in Rust. Handles files of any size with instant startup, low memory usage, and modern IDE features.";
     harness.type_text(long_text).unwrap();
 
-    // Move cursor to start of line
-    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    // Move cursor to document start (Ctrl+Home)
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     let screen_before = harness.screen_to_string();
@@ -306,23 +369,21 @@ fn test_wrapped_line_no_horizontal_scroll() {
         "Should show 'lightweight' in wrapped portion"
     );
 
-    // Press End to go to end of line
+    // Press End - should go to end of VISUAL line (first segment), not physical line end
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     let screen_after = harness.screen_to_string();
 
-    // BUG: Currently the screen will show horizontally scrolled content
-    // After fix: the line should still be wrapped and show the beginning
     // The screen should STILL show the beginning of the line (no horizontal scroll)
-    assert!(screen_after.contains("A fast") || screen_after.contains("lightweight"),
+    // because End only moved to end of first visual segment
+    assert!(screen_after.contains("A fast"),
             "After pressing End, line should still be wrapped and visible from start (no horizontal scroll). Screen:\n{screen_after}");
 
-    // The cursor is at the end, but the line should still wrap from the beginning
-    assert_eq!(
-        harness.cursor_position(),
-        long_text.len(),
-        "Cursor should be at end of line"
+    // The cursor should NOT be at the physical line end - it should be at the end of the first visual segment
+    assert!(
+        harness.cursor_position() < long_text.len(),
+        "Cursor should be at end of visual line segment, not end of physical line"
     );
 }
 
@@ -345,15 +406,17 @@ fn test_wrapped_line_cursor_positioning() {
     // Cursor should be at end of text
     assert_eq!(harness.cursor_position(), long_text.len());
 
-    // Move to start of line with Home
-    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    // Move to start of line with Ctrl+Home (document start) to reliably reach position 0
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     let (start_x, start_y) = harness.screen_cursor_position();
     assert_eq!(
         harness.cursor_position(),
         0,
-        "Cursor should be at position 0 after Home"
+        "Cursor should be at position 0 after Ctrl+Home"
     );
 
     // Cursor at position 0 should be at x=GUTTER_WIDTH (after gutter)
@@ -452,21 +515,37 @@ fn test_wrapped_line_cursor_positioning() {
         "Screen should still show start of text (no horizontal scroll)"
     );
 
-    // Now press End to jump to end
+    // Now press End to jump to end of current visual segment
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    let (end_x, end_y) = harness.screen_cursor_position();
+    let end_pos_after_end = harness.cursor_position();
+    let (_end_x, end_y) = harness.screen_cursor_position();
+
+    // End key now goes to visual line end, not physical line end
+    // Keep pressing End until we reach physical line end
+    let mut pos = end_pos_after_end;
+    while pos < long_text.len() {
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        let new_pos = harness.cursor_position();
+        assert!(
+            new_pos > pos,
+            "End key should make progress toward line end"
+        );
+        pos = new_pos;
+    }
+
+    let (_end_x, end_y) = harness.screen_cursor_position();
     assert_eq!(
         harness.cursor_position(),
         long_text.len(),
-        "Cursor should be at end after End key"
+        "Cursor should be at end after repeated End keys"
     );
     eprintln!(
-        "After End: buffer_pos={}, screen=({}, {})",
+        "After End(s): buffer_pos={}, screen_y={}",
         long_text.len(),
-        end_x,
-        end_y
+        end_y,
     );
 
     // Verify cursor ended up on a later line (text wrapped at least once)
@@ -523,15 +602,17 @@ fn test_wrapped_line_cursor_positioning() {
         "Cursor should have wrapped back up when moving left across wrap boundaries"
     );
 
-    // Finally, press Home to go back to start
-    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    // Finally, press Ctrl+Home to go back to document start (position 0)
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     let (final_x, final_y) = harness.screen_cursor_position();
     assert_eq!(
         harness.cursor_position(),
         0,
-        "Cursor should be at position 0 after final Home"
+        "Cursor should be at position 0 after Ctrl+Home"
     );
     assert_eq!(
         final_x, GUTTER_WIDTH,
@@ -980,8 +1061,10 @@ fn test_wrapped_line_cursor_no_empty_space() {
     let long_text = "The quick brown fox jumps over the lazy dog and runs through the forest.";
     harness.type_text(long_text).unwrap();
 
-    // Move to start
-    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    // Move to document start (Ctrl+Home) to reliably get to position 0
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     let (_start_x, start_y) = harness.screen_cursor_position();
@@ -1820,6 +1903,152 @@ fn test_visual_line_movement_up_down() {
         "Buffer position {} should be around 20 after Up",
         up_pos
     );
+}
+
+/// Test that End key navigates to end of visual (wrapped) line segment
+/// and Home key navigates to start of visual segment
+/// This is the fix for issue #979: End key should go to end of visual line, not physical line
+#[test]
+fn test_end_key_goes_to_visual_line_end() {
+    let mut harness = EditorTestHarness::new(60, 24).unwrap();
+
+    // With 60-col terminal, gutter width ~8, scrollbar=1, text width=51
+    // Create a line that wraps into 3 segments
+    let long_text = "A fast, lightweight terminal text editor written in Rust. Handles files of any size with instant startup, low memory usage, and modern IDE features.";
+    harness.type_text(long_text).unwrap();
+
+    // Go to physical line start using Ctrl+Home (document start)
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        harness.cursor_position(),
+        0,
+        "Should be at physical line start"
+    );
+
+    let (start_x, start_y) = harness.screen_cursor_position();
+    eprintln!("Cursor at position 0: screen=({}, {})", start_x, start_y);
+
+    // Press End - should go to end of first visual segment (not end of physical line)
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let end_pos_1 = harness.cursor_position();
+    let (end_x_1, end_y_1) = harness.screen_cursor_position();
+    eprintln!(
+        "After first End: pos={}, screen=({}, {})",
+        end_pos_1, end_x_1, end_y_1
+    );
+
+    // Cursor should still be on the same visual row (y coordinate unchanged)
+    assert_eq!(
+        end_y_1, start_y,
+        "End should keep cursor on same visual row"
+    );
+
+    // Cursor should be at end of first segment, NOT at end of physical line
+    assert!(
+        end_pos_1 < long_text.len(),
+        "End should go to visual line end ({}), not physical line end ({})",
+        end_pos_1,
+        long_text.len()
+    );
+    assert!(
+        end_pos_1 > 0,
+        "End should move cursor forward from position 0"
+    );
+
+    // Press End again - should go to end of second visual segment
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let end_pos_2 = harness.cursor_position();
+    let (_end_x_2, end_y_2) = harness.screen_cursor_position();
+    eprintln!("After second End: pos={}, screen_y={}", end_pos_2, end_y_2);
+
+    assert!(
+        end_pos_2 > end_pos_1,
+        "Second End should move past first visual line end"
+    );
+    // Should be on the next visual row
+    assert_eq!(
+        end_y_2,
+        start_y + 1,
+        "Second End should move to next visual row"
+    );
+
+    // Press End once more - should reach end of physical line (last segment)
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let end_pos_3 = harness.cursor_position();
+    eprintln!("After third End: pos={}", end_pos_3);
+
+    assert_eq!(
+        end_pos_3,
+        long_text.len(),
+        "Third End should reach physical line end"
+    );
+}
+
+/// Test that Home key navigates to start of visual (wrapped) line segment
+/// Companion to test_end_key_goes_to_visual_line_end for issue #979
+#[test]
+fn test_home_key_goes_to_visual_line_start() {
+    let mut harness = EditorTestHarness::new(60, 24).unwrap();
+
+    // Create a line that wraps into 3 segments
+    let long_text = "A fast, lightweight terminal text editor written in Rust. Handles files of any size with instant startup, low memory usage, and modern IDE features.";
+    harness.type_text(long_text).unwrap();
+    harness.render().unwrap();
+
+    // Cursor is at end of text (on last wrapped segment)
+    assert_eq!(harness.cursor_position(), long_text.len());
+
+    let (_end_x, end_y) = harness.screen_cursor_position();
+
+    // Press Home - should go to start of the LAST visual segment (not physical line start)
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let home_pos_1 = harness.cursor_position();
+    let (_home_x_1, home_y_1) = harness.screen_cursor_position();
+    eprintln!(
+        "After first Home: pos={}, screen_y={}",
+        home_pos_1, home_y_1
+    );
+
+    // Should still be on the same visual row as before
+    assert_eq!(
+        home_y_1, end_y,
+        "Home should keep cursor on same visual row"
+    );
+    assert!(
+        home_pos_1 > 0,
+        "Home from last segment should NOT go to position 0, got {}",
+        home_pos_1
+    );
+
+    // Press Home again - should go to start of previous visual segment
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let home_pos_2 = harness.cursor_position();
+    eprintln!("After second Home: pos={}", home_pos_2);
+
+    assert!(home_pos_2 < home_pos_1, "Second Home should move backward");
+
+    // Press Home once more - should reach physical line start
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let home_pos_3 = harness.cursor_position();
+    eprintln!("After third Home: pos={}", home_pos_3);
+
+    assert_eq!(home_pos_3, 0, "Third Home should reach physical line start");
 }
 
 /// Test Alt+Shift+Up/Down (block select) works with line wrapping enabled
