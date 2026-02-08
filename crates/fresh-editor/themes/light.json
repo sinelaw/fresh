@@ -41,7 +41,7 @@
     "prompt_bg": [230, 240, 250],
     "prompt_selection_fg": "Black",
     "prompt_selection_bg": [173, 214, 255],
-    "popup_border_fg": [180, 180, 180],
+    "popup_border_fg": [140, 140, 140],
     "popup_bg": [232, 238, 245],
     "popup_selection_bg": [209, 226, 243],
     "popup_text_fg": [30, 30, 30],

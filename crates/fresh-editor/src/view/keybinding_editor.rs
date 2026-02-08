@@ -53,7 +53,7 @@ pub fn render_keybinding_editor(
         .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.popup_border_fg))
-        .style(Style::default().bg(theme.popup_bg).fg(theme.editor_fg));
+        .style(Style::default().bg(theme.popup_bg).fg(theme.popup_text_fg));
 
     let inner = block.inner(modal_area);
     frame.render_widget(block, modal_area);
@@ -116,7 +116,7 @@ fn render_header(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme
     let mut path_spans = vec![
         Span::styled(
             format!(" {} ", t!("keybinding_editor.label_config")),
-            Style::default().fg(theme.line_number_fg),
+            Style::default().fg(theme.popup_text_fg),
         ),
         Span::styled(
             &editor.config_file_path,
@@ -126,11 +126,11 @@ fn render_header(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme
     if !editor.keymap_names.is_empty() {
         path_spans.push(Span::styled(
             format!("  {} ", t!("keybinding_editor.label_maps")),
-            Style::default().fg(theme.line_number_fg),
+            Style::default().fg(theme.popup_text_fg),
         ));
         path_spans.push(Span::styled(
             editor.keymap_names.join(", "),
-            Style::default().fg(theme.editor_fg),
+            Style::default().fg(theme.popup_text_fg),
         ));
     }
     frame.render_widget(Paragraph::new(Line::from(path_spans)), chunks[0]);
@@ -146,13 +146,16 @@ fn render_header(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme
                             .fg(theme.help_key_fg)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(&editor.search_query, Style::default().fg(theme.editor_fg)),
+                    Span::styled(
+                        &editor.search_query,
+                        Style::default().fg(theme.popup_text_fg),
+                    ),
                 ];
                 if editor.search_focused {
                     spans.push(Span::styled("_", Style::default().fg(theme.cursor)));
                     spans.push(Span::styled(
                         format!("  {}", t!("keybinding_editor.search_text_hint")),
-                        Style::default().fg(theme.line_number_fg),
+                        Style::default().fg(theme.popup_text_fg),
                     ));
                 }
                 spans
@@ -170,10 +173,10 @@ fn render_header(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme
                             .fg(theme.diagnostic_warning_fg)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(key_text, Style::default().fg(theme.editor_fg)),
+                    Span::styled(key_text, Style::default().fg(theme.popup_text_fg)),
                     Span::styled(
                         format!("  {}", t!("keybinding_editor.search_record_hint")),
-                        Style::default().fg(theme.line_number_fg),
+                        Style::default().fg(theme.popup_text_fg),
                     ),
                 ]
             }
@@ -184,7 +187,7 @@ fn render_header(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme
             Span::styled(" ", Style::default()),
             Span::styled(
                 t!("keybinding_editor.search_hint").to_string(),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
         ]);
         frame.render_widget(Paragraph::new(hint), chunks[1]);
@@ -207,31 +210,31 @@ fn render_header(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme
     let filter_spans = vec![
         Span::styled(
             format!(" {} ", t!("keybinding_editor.label_context")),
-            Style::default().fg(theme.line_number_fg),
+            Style::default().fg(theme.popup_text_fg),
         ),
         Span::styled(
             format!("[{}]", editor.context_filter_display()),
             Style::default().fg(if editor.context_filter == ContextFilter::All {
-                theme.editor_fg
+                theme.popup_text_fg
             } else {
                 theme.diagnostic_info_fg
             }),
         ),
         Span::styled(
             format!("  {} ", t!("keybinding_editor.label_source")),
-            Style::default().fg(theme.line_number_fg),
+            Style::default().fg(theme.popup_text_fg),
         ),
         Span::styled(
             format!("[{}]", editor.source_filter_display()),
             Style::default().fg(if editor.source_filter == SourceFilter::All {
-                theme.editor_fg
+                theme.popup_text_fg
             } else {
                 theme.diagnostic_info_fg
             }),
         ),
         Span::styled(
             format!("  {}", count_str),
-            Style::default().fg(theme.line_number_fg),
+            Style::default().fg(theme.popup_text_fg),
         ),
         Span::styled(
             if editor.has_changes {
@@ -320,7 +323,7 @@ fn render_table(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme:
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 format!(" {}", sep),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ))),
             Rect {
                 y: area.y + 1,
@@ -355,21 +358,21 @@ fn render_table(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme:
         let is_selected = editor.scroll_offset + display_idx == editor.selected;
 
         let (row_bg, row_fg) = if is_selected {
-            (theme.selection_bg, theme.editor_fg)
+            (theme.popup_selection_bg, theme.popup_text_fg)
         } else {
-            (theme.popup_bg, theme.editor_fg)
+            (theme.popup_bg, theme.popup_text_fg)
         };
 
         let key_style = Style::default()
             .fg(if is_selected {
-                theme.editor_fg
+                theme.popup_text_fg
             } else {
                 theme.help_key_fg
             })
             .bg(row_bg);
         let action_name_style = Style::default()
             .fg(if is_selected {
-                theme.editor_fg
+                theme.popup_text_fg
             } else {
                 theme.diagnostic_info_fg
             })
@@ -379,18 +382,18 @@ fn render_table(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme:
             .fg(if is_selected {
                 row_fg
             } else {
-                theme.line_number_fg
+                theme.popup_text_fg
             })
             .bg(row_bg);
         let source_style = Style::default()
             .fg(if binding.source == BindingSource::Custom {
                 if is_selected {
-                    theme.editor_fg
+                    theme.popup_text_fg
                 } else {
                     theme.diagnostic_info_fg
                 }
             } else {
-                context_style.fg.unwrap_or(theme.line_number_fg)
+                context_style.fg.unwrap_or(theme.popup_text_fg)
             })
             .bg(row_bg);
 
@@ -460,17 +463,17 @@ fn render_footer(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme
             Span::styled(" Esc", Style::default().fg(theme.help_key_fg)),
             Span::styled(
                 format!(":{}  ", t!("keybinding_editor.footer_cancel")),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
             Span::styled("Tab", Style::default().fg(theme.help_key_fg)),
             Span::styled(
                 format!(":{}  ", t!("keybinding_editor.footer_toggle_mode")),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
             Span::styled("Enter", Style::default().fg(theme.help_key_fg)),
             Span::styled(
                 format!(":{}", t!("keybinding_editor.footer_confirm")),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
         ]
     } else {
@@ -478,52 +481,52 @@ fn render_footer(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme
             Span::styled(" Enter", Style::default().fg(theme.help_key_fg)),
             Span::styled(
                 format!(":{}  ", t!("keybinding_editor.footer_edit")),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
             Span::styled("a", Style::default().fg(theme.help_key_fg)),
             Span::styled(
                 format!(":{}  ", t!("keybinding_editor.footer_add")),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
             Span::styled("d", Style::default().fg(theme.help_key_fg)),
             Span::styled(
                 format!(":{}  ", t!("keybinding_editor.footer_delete")),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
             Span::styled("/", Style::default().fg(theme.help_key_fg)),
             Span::styled(
                 format!(":{}  ", t!("keybinding_editor.footer_search")),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
             Span::styled("r", Style::default().fg(theme.help_key_fg)),
             Span::styled(
                 format!(":{}  ", t!("keybinding_editor.footer_record_key")),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
             Span::styled("c", Style::default().fg(theme.help_key_fg)),
             Span::styled(
                 format!(":{}  ", t!("keybinding_editor.footer_context")),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
             Span::styled("s", Style::default().fg(theme.help_key_fg)),
             Span::styled(
                 format!(":{}  ", t!("keybinding_editor.footer_source")),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
             Span::styled("?", Style::default().fg(theme.help_key_fg)),
             Span::styled(
                 format!(":{}  ", t!("keybinding_editor.footer_help")),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
             Span::styled("Ctrl+S", Style::default().fg(theme.help_key_fg)),
             Span::styled(
                 format!(":{}  ", t!("keybinding_editor.footer_save")),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
             Span::styled("Esc", Style::default().fg(theme.help_key_fg)),
             Span::styled(
                 format!(":{}", t!("keybinding_editor.footer_close")),
-                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
         ]
     };
@@ -550,7 +553,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect, theme: &Theme) {
         .title(format!(" {} ", t!("keybinding_editor.help_title")))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.popup_border_fg))
-        .style(Style::default().bg(theme.popup_bg).fg(theme.editor_fg));
+        .style(Style::default().bg(theme.popup_bg).fg(theme.popup_text_fg));
     let inner = block.inner(dialog_area);
     frame.render_widget(block, dialog_area);
 
@@ -607,7 +610,7 @@ fn help_line<'a>(key: &'a str, desc: &'a str, theme: &Theme, is_header: bool) ->
         Line::from(vec![Span::styled(
             key,
             Style::default()
-                .fg(theme.editor_fg)
+                .fg(theme.popup_text_fg)
                 .add_modifier(Modifier::BOLD),
         )])
     } else {
@@ -618,7 +621,7 @@ fn help_line<'a>(key: &'a str, desc: &'a str, theme: &Theme, is_header: bool) ->
                     .fg(theme.help_key_fg)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(desc, Style::default().fg(theme.editor_fg)),
+            Span::styled(desc, Style::default().fg(theme.popup_text_fg)),
         ])
     }
 }
@@ -657,7 +660,7 @@ fn render_edit_dialog(
         .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.popup_border_fg))
-        .style(Style::default().bg(theme.popup_bg).fg(theme.editor_fg));
+        .style(Style::default().bg(theme.popup_bg).fg(theme.popup_text_fg));
     let inner = block.inner(dialog_area);
     frame.render_widget(block, dialog_area);
 
@@ -683,7 +686,7 @@ fn render_edit_dialog(
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             format!(" {}", instr),
-            Style::default().fg(theme.line_number_fg),
+            Style::default().fg(theme.popup_text_fg),
         ))),
         chunks[0],
     );
@@ -708,14 +711,14 @@ fn render_edit_dialog(
             .fg(theme.help_key_fg)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme.line_number_fg)
+        Style::default().fg(theme.popup_text_fg)
     };
     let key_value_style = if key_focused {
         Style::default()
-            .fg(theme.editor_fg)
+            .fg(theme.popup_text_fg)
             .add_modifier(Modifier::UNDERLINED)
     } else {
-        Style::default().fg(theme.editor_fg)
+        Style::default().fg(theme.popup_text_fg)
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -735,13 +738,13 @@ fn render_edit_dialog(
             .fg(theme.help_key_fg)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme.line_number_fg)
+        Style::default().fg(theme.popup_text_fg)
     };
     let has_error = dialog.action_error.is_some();
     let action_value_style = if has_error {
         Style::default().fg(theme.diagnostic_error_fg)
     } else {
-        Style::default().fg(theme.editor_fg)
+        Style::default().fg(theme.popup_text_fg)
     };
     let action_placeholder;
     let action_display = if dialog.action_text.is_empty() && dialog.mode != EditMode::EditingAction
@@ -770,11 +773,11 @@ fn render_edit_dialog(
         if description.to_lowercase() != dialog.action_text.replace('_', " ").to_lowercase() {
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled("            ", Style::default().fg(theme.line_number_fg)),
+                    Span::styled("            ", Style::default().fg(theme.popup_text_fg)),
                     Span::styled(
                         format!("\u{2192} {}", description),
                         Style::default()
-                            .fg(theme.line_number_fg)
+                            .fg(theme.popup_text_fg)
                             .add_modifier(Modifier::ITALIC),
                     ),
                 ])),
@@ -790,7 +793,7 @@ fn render_edit_dialog(
             .fg(theme.help_key_fg)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme.line_number_fg)
+        Style::default().fg(theme.popup_text_fg)
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -800,12 +803,12 @@ fn render_edit_dialog(
             ),
             Span::styled(
                 format!("[{}]", dialog.context),
-                Style::default().fg(theme.editor_fg),
+                Style::default().fg(theme.popup_text_fg),
             ),
             if ctx_focused {
                 Span::styled(
                     format!("  {}", t!("keybinding_editor.context_change_hint")),
-                    Style::default().fg(theme.line_number_fg),
+                    Style::default().fg(theme.popup_text_fg),
                 )
             } else {
                 Span::raw("")
@@ -850,7 +853,7 @@ fn render_edit_dialog(
             .bg(theme.help_key_fg)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme.editor_fg)
+        Style::default().fg(theme.popup_text_fg)
     };
     let cancel_style = if btn_focused && dialog.selected_button == 1 {
         Style::default()
@@ -858,7 +861,7 @@ fn render_edit_dialog(
             .bg(theme.help_key_fg)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme.editor_fg)
+        Style::default().fg(theme.popup_text_fg)
     };
     // Store field areas for mouse hit testing
     editor.layout.dialog_key_field = Some(chunks[2]);
@@ -933,7 +936,7 @@ fn render_autocomplete_popup(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.popup_border_fg))
-        .style(Style::default().bg(theme.popup_bg).fg(theme.editor_fg));
+        .style(Style::default().bg(theme.popup_bg).fg(theme.popup_text_fg));
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
@@ -962,7 +965,7 @@ fn render_autocomplete_popup(
                 .bg(theme.help_key_fg)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(theme.editor_fg).bg(theme.popup_bg)
+            Style::default().fg(theme.popup_text_fg).bg(theme.popup_bg)
         };
 
         // Pad the suggestion to fill the width
@@ -997,7 +1000,7 @@ fn render_confirm_dialog(
         .title(format!(" {} ", t!("keybinding_editor.confirm_title")))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.diagnostic_warning_fg))
-        .style(Style::default().bg(theme.popup_bg).fg(theme.editor_fg));
+        .style(Style::default().bg(theme.popup_bg).fg(theme.popup_text_fg));
     let inner = block.inner(dialog_area);
     frame.render_widget(block, dialog_area);
 
@@ -1011,7 +1014,7 @@ fn render_confirm_dialog(
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             format!(" {}", t!("keybinding_editor.confirm_message")),
-            Style::default().fg(theme.editor_fg),
+            Style::default().fg(theme.popup_text_fg),
         ))),
         chunks[0],
     );
@@ -1032,7 +1035,7 @@ fn render_confirm_dialog(
                 .bg(theme.help_key_fg)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(theme.editor_fg)
+            Style::default().fg(theme.popup_text_fg)
         };
         let text = format!(" {} ", opt);
         let text_len = text.len() as u16;
