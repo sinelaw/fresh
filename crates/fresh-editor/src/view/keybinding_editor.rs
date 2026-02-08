@@ -7,12 +7,13 @@ use crate::app::keybinding_editor::{
 };
 use crate::input::keybindings::{format_keybinding, KeybindingResolver};
 use crate::view::theme::Theme;
+use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 use rust_i18n::t;
@@ -456,10 +457,15 @@ fn render_table(frame: &mut Frame, area: Rect, editor: &mut KeybindingEditor, th
 
     // Scrollbar
     if editor.scroll.needs_scrollbar() {
-        let mut scrollbar_state =
-            ScrollbarState::new(editor.filtered_indices.len()).position(scroll_offset);
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
-        frame.render_stateful_widget(scrollbar, table_area, &mut scrollbar_state);
+        let sb_area = Rect::new(
+            table_area.x + table_area.width.saturating_sub(1),
+            table_area.y,
+            1,
+            table_area.height,
+        );
+        let sb_state = editor.scroll.to_scrollbar_state();
+        let sb_colors = ScrollbarColors::from_theme(theme);
+        render_scrollbar(frame, sb_area, &sb_state, &sb_colors);
     }
 }
 
