@@ -11,40 +11,64 @@ use std::io::Write;
 fn test_save_shebang_detection_outside_workdir() {
     let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
 
-    // Create a temporary file outside the project directory
+    // Create file with NO extension outside project directory
+    // Should detect bash from shebang alone
     let temp_dir = std::env::temp_dir();
-    let script_name = format!("test_script_{}", std::process::id());
+    let script_name = format!("testscript{}", std::process::id());
     let script_path = temp_dir.join(&script_name);
 
-    // Create a shell script with shebang but no extension
+    eprintln!("Test script path: {}", script_path.display());
+    eprintln!("Project dir: {:?}", harness.project_dir());
+
     {
         let mut file = fs::File::create(&script_path).unwrap();
         writeln!(file, "#!/usr/bin/env bash").unwrap();
         writeln!(file, "echo 'Hello, World!'").unwrap();
+        writeln!(file, "date").unwrap();
     }
+
+    // Open file - should detect bash from shebang
+    harness.open_file(&script_path).unwrap();
+    harness.render().unwrap();
 
     // Open the file from outside the working directory
     harness.open_file(&script_path).unwrap();
     harness.render().unwrap();
 
-    // Check if the shebang line has syntax highlighting (colored)
-    // The shebang "#!/usr/bin/env bash" should be highlighted as a comment
-    let has_initial_colors = (0..20).any(|col| {
-        if let Some(style) = harness.get_cell_style(col, 0) {
-            style.fg.is_some()
-        } else {
-            false
-        }
-    });
+    // Delay and capture initial state
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    harness.render().unwrap();
 
-    if !has_initial_colors {
-        // Skip test if shebang detection doesn't work in test environment
-        eprintln!("Skipping test: shebang detection not working in test environment");
-        let _ = fs::remove_file(&script_path);
-        return;
-    }
+    eprintln!("\n=== INITIAL STATE (before save) ===");
+    eprintln!("{}", harness.screen_to_string());
 
-    // Make a small edit to mark buffer as modified
+    // Find the "echo" keyword and check its color
+    let (echo_col, echo_row) = harness
+        .find_text_on_screen("echo")
+        .expect("Should find 'echo' on screen");
+    let initial_echo_color = harness
+        .get_cell_style(echo_col, echo_row)
+        .expect("Should get style for 'echo'")
+        .fg;
+
+    eprintln!(
+        "\nInitial 'echo' color at ({}, {}): {:?}",
+        echo_col, echo_row, initial_echo_color
+    );
+
+    // Bash syntax highlighting should color the "echo" command (not white)
+    assert_ne!(
+        initial_echo_color,
+        Some(ratatui::style::Color::White),
+        "Initial 'echo' should be syntax highlighted (not white)"
+    );
+
+    // Move down one line so we don't break the shebang when editing
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Go to end of line and add a comment
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.type_text("\n# test comment").unwrap();
     harness.render().unwrap();
 
@@ -54,30 +78,46 @@ fn test_save_shebang_detection_outside_workdir() {
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
+
+    // Wait for save to complete (buffer becomes unmodified)
+    harness
+        .wait_until(|h| !h.editor().active_state().buffer.is_modified())
+        .unwrap();
+
+    // Wait for save and delay
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    // Scroll down and back to force buffer re-render with current highlighter
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Give it a moment for processing
-    harness.sleep(std::time::Duration::from_millis(100));
-    harness.render().unwrap();
+    eprintln!("\n=== AFTER SAVE (with re-render) ===");
+    eprintln!("{}", harness.screen_to_string());
 
-    // After save, check if syntax highlighting is still present
-    // Check the comment we just added should be colored (line 2)
-    let has_final_colors = (0..20).any(|col| {
-        if let Some(style) = harness.get_cell_style(col, 2) {
-            style.fg.is_some()
-        } else {
-            false
-        }
-    });
+    // Check the same "echo" on line 2 - it should still be colored
+    let (final_echo_col, final_echo_row) = harness
+        .find_text_on_screen("echo")
+        .expect("Should find 'echo' on screen");
+    let final_echo_color = harness
+        .get_cell_style(final_echo_col, final_echo_row)
+        .expect("Should get style for 'echo'")
+        .fg;
 
-    // The key assertion: syntax highlighting colors should still be present after save
-    // Without the fix: Colors disappear because highlighter becomes None
-    // With the fix: Colors remain because highlighter can still read the file
-    assert!(
-        has_final_colors,
+    eprintln!(
+        "\nFinal 'echo' color at ({}, {}): {:?}",
+        final_echo_col, final_echo_row, final_echo_color
+    );
+
+    // The key assertion: "echo" should still be highlighted after save
+    // Without the fix: highlighter becomes None during save, colors lost after re-render
+    // With the fix: highlighter preserved, colors maintained
+    assert_eq!(
+        final_echo_color, initial_echo_color,
         "Syntax highlighting should be preserved after saving file outside working directory. \
-         Bug: set_language_from_name was called with filename only, causing syntect to fail \
-         reading the file and losing all highlighting colors."
+         Bug: set_language_from_name was called with filename only, causing highlighter to fail. \
+         Initial 'echo' color: {:?}, Final 'echo' color: {:?}",
+        initial_echo_color, final_echo_color
     );
 
     // Clean up

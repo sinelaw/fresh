@@ -789,7 +789,7 @@ impl Editor {
     }
 
     /// Create a new editor for testing with custom backends
-    /// Uses empty grammar registry for fast initialization
+    /// Uses full grammar registry for proper syntax highlighting (including shebang detection)
     #[allow(clippy::too_many_arguments)]
     pub fn for_test(
         config: Config,
@@ -801,6 +801,8 @@ impl Editor {
         filesystem: Arc<dyn FileSystem + Send + Sync>,
         time_source: Option<SharedTimeSource>,
     ) -> AnyhowResult<Self> {
+        let grammar_registry =
+            crate::primitives::grammar::GrammarRegistry::for_editor(dir_context.config_dir.clone());
         Self::with_options(
             config,
             width,
@@ -811,7 +813,7 @@ impl Editor {
             dir_context,
             time_source,
             color_capability,
-            crate::primitives::grammar::GrammarRegistry::empty(),
+            grammar_registry,
         )
     }
 
