@@ -25,7 +25,8 @@ impl Editor {
             || self.active_state().popups.is_visible()
             || self.menu_state.active_menu.is_some()
             || self.settings_state.as_ref().is_some_and(|s| s.visible)
-            || self.calibration_wizard.is_some();
+            || self.calibration_wizard.is_some()
+            || self.keybinding_editor.is_some();
 
         if in_modal {
             return None;

@@ -2,6 +2,7 @@
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use portable_pty::{native_pty_system, PtySize};
 
 /// Helper to open the keybinding editor directly
 fn open_keybinding_editor(harness: &mut EditorTestHarness) {
@@ -398,6 +399,47 @@ fn test_edit_dialog_tab_focus() {
 
     // Close
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Test that Tab in the edit dialog cycles through ALL controls including
+/// both Save and Cancel buttons, not just the button area as a single stop.
+/// Full cycle: Key -> Action -> Context -> Save -> Cancel -> Key
+#[test]
+fn test_edit_dialog_tab_cycles_through_cancel() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    open_keybinding_editor(&mut harness);
+
+    // Open edit dialog
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Edit Keybinding");
+
+    // Tab: Key(0) -> Action(1)
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Tab: Action(1) -> Context(2)
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Tab: Context(2) -> Buttons/Save(3, btn=0)
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Edit Keybinding");
+
+    // Tab: Save(3, btn=0) -> Cancel(3, btn=1)
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    // Cancel button should now be highlighted — pressing Enter now should close dialog
+    harness.assert_screen_contains("Edit Keybinding");
+
+    // Press Enter on Cancel — should close the dialog without saving
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("Edit Keybinding");
+
+    // Keybinding editor should still be open (dialog closed, not the editor)
+    harness.assert_screen_contains("Keybinding Editor");
 }
 
 // ========================
@@ -980,4 +1022,65 @@ fn test_selected_item_stays_visible_when_scrolling() {
             i + 1,
         );
     }
+}
+
+// ========================
+// Terminal mode interaction
+// ========================
+
+/// Test that when terminal mode is active, opening the keybinding editor
+/// captures key input — keys go to the editor, not the terminal PTY.
+/// Regression test: dispatch_terminal_input's in_modal check didn't include
+/// keybinding_editor.is_some(), so keys were swallowed by terminal mode.
+#[test]
+fn test_keybinding_editor_captures_keys_over_terminal_mode() {
+    // Skip if PTY not available
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping test: PTY not available");
+        return;
+    }
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Open a terminal — this enters terminal mode automatically
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "Should be in terminal mode after opening terminal"
+    );
+
+    // Now open the keybinding editor modal
+    open_keybinding_editor(&mut harness);
+    harness.assert_screen_contains("Keybinding Editor");
+
+    // The ">" selection indicator should be visible at the first row
+    harness.assert_screen_contains(">");
+
+    // Press Down several times — these keys should go to the keybinding editor
+    // (moving the selection), NOT to the terminal PTY.
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // The editor should still be visible and the selection should have moved
+    harness.assert_screen_contains("Keybinding Editor");
+    // The ">" indicator must still be on screen (moved down)
+    harness.assert_screen_contains(">");
+
+    // Press Escape — should close the editor, not be eaten by terminal
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Keybinding editor should be closed now
+    harness.assert_screen_not_contains("Keybinding Editor");
 }

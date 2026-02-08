@@ -719,20 +719,26 @@ fn render_edit_dialog(
     } else {
         &dialog.key_display
     };
+    let field_bg = if key_focused {
+        theme.popup_selection_bg
+    } else {
+        theme.popup_bg
+    };
     let key_label_style = if key_focused {
         Style::default()
             .fg(theme.help_key_fg)
+            .bg(field_bg)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme.popup_text_fg)
+        Style::default().fg(theme.popup_text_fg).bg(field_bg)
     };
-    let key_value_style = if key_focused {
-        Style::default()
-            .fg(theme.popup_text_fg)
-            .add_modifier(Modifier::UNDERLINED)
-    } else {
-        Style::default().fg(theme.popup_text_fg)
-    };
+    let key_value_style = Style::default().fg(theme.popup_text_fg).bg(field_bg);
+    if key_focused {
+        frame.render_widget(
+            Paragraph::new("").style(Style::default().bg(field_bg)),
+            chunks[2],
+        );
+    }
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
@@ -746,18 +752,24 @@ fn render_edit_dialog(
 
     // Action field
     let action_focused = dialog.focus_area == 1;
+    let field_bg = if action_focused {
+        theme.popup_selection_bg
+    } else {
+        theme.popup_bg
+    };
     let action_label_style = if action_focused {
         Style::default()
             .fg(theme.help_key_fg)
+            .bg(field_bg)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme.popup_text_fg)
+        Style::default().fg(theme.popup_text_fg).bg(field_bg)
     };
     let has_error = dialog.action_error.is_some();
     let action_value_style = if has_error {
-        Style::default().fg(theme.diagnostic_error_fg)
+        Style::default().fg(theme.diagnostic_error_fg).bg(field_bg)
     } else {
-        Style::default().fg(theme.popup_text_fg)
+        Style::default().fg(theme.popup_text_fg).bg(field_bg)
     };
     let action_placeholder;
     let action_display = if dialog.action_text.is_empty() && dialog.mode != EditMode::EditingAction
@@ -767,6 +779,12 @@ fn render_edit_dialog(
     } else {
         &dialog.action_text
     };
+    if action_focused {
+        frame.render_widget(
+            Paragraph::new("").style(Style::default().bg(field_bg)),
+            chunks[3],
+        );
+    }
     let mut action_spans = vec![
         Span::styled(
             format!("   {:9}", t!("keybinding_editor.label_action")),
@@ -775,7 +793,10 @@ fn render_edit_dialog(
         Span::styled(action_display, action_value_style),
     ];
     if action_focused && dialog.mode == EditMode::EditingAction {
-        action_spans.push(Span::styled("_", Style::default().fg(theme.cursor)));
+        action_spans.push(Span::styled(
+            "_",
+            Style::default().fg(theme.cursor).bg(field_bg),
+        ));
     }
     frame.render_widget(Paragraph::new(Line::from(action_spans)), chunks[3]);
 
@@ -801,13 +822,25 @@ fn render_edit_dialog(
 
     // Context field
     let ctx_focused = dialog.focus_area == 2;
+    let field_bg = if ctx_focused {
+        theme.popup_selection_bg
+    } else {
+        theme.popup_bg
+    };
     let ctx_label_style = if ctx_focused {
         Style::default()
             .fg(theme.help_key_fg)
+            .bg(field_bg)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme.popup_text_fg)
+        Style::default().fg(theme.popup_text_fg).bg(field_bg)
     };
+    if ctx_focused {
+        frame.render_widget(
+            Paragraph::new("").style(Style::default().bg(field_bg)),
+            chunks[5],
+        );
+    }
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
@@ -816,12 +849,12 @@ fn render_edit_dialog(
             ),
             Span::styled(
                 format!("[{}]", dialog.context),
-                Style::default().fg(theme.popup_text_fg),
+                Style::default().fg(theme.popup_text_fg).bg(field_bg),
             ),
             if ctx_focused {
                 Span::styled(
                     format!("  {}", t!("keybinding_editor.context_change_hint")),
-                    Style::default().fg(theme.popup_text_fg),
+                    Style::default().fg(theme.popup_text_fg).bg(field_bg),
                 )
             } else {
                 Span::raw("")
@@ -1386,6 +1419,7 @@ fn handle_edit_dialog_input(
                         }
                     } else {
                         dialog.focus_area = 3;
+                        dialog.selected_button = 0;
                         dialog.mode = EditMode::EditingContext;
                     }
                 }
@@ -1442,6 +1476,7 @@ fn handle_edit_dialog_input(
             match (event.code, event.modifiers) {
                 (KeyCode::Tab, KeyModifiers::NONE) => {
                     dialog.focus_area = 3;
+                    dialog.selected_button = 0;
                 }
                 (KeyCode::BackTab, _) => {
                     dialog.focus_area = 1;
@@ -1472,6 +1507,7 @@ fn handle_edit_dialog_input(
                 }
                 (KeyCode::Enter, _) => {
                     dialog.focus_area = 3;
+                    dialog.selected_button = 0;
                 }
                 _ => {}
             }
@@ -1480,12 +1516,24 @@ fn handle_edit_dialog_input(
             // Buttons area
             match (event.code, event.modifiers) {
                 (KeyCode::Tab, KeyModifiers::NONE) => {
-                    dialog.focus_area = 0;
-                    dialog.mode = EditMode::RecordingKey;
+                    if dialog.selected_button < 1 {
+                        // Move from Save to Cancel
+                        dialog.selected_button = 1;
+                    } else {
+                        // Wrap from Cancel to Key field
+                        dialog.focus_area = 0;
+                        dialog.mode = EditMode::RecordingKey;
+                    }
                 }
                 (KeyCode::BackTab, _) => {
-                    dialog.focus_area = 2;
-                    dialog.mode = EditMode::EditingContext;
+                    if dialog.selected_button > 0 {
+                        // Move from Cancel to Save
+                        dialog.selected_button = 0;
+                    } else {
+                        // Wrap from Save to Context field
+                        dialog.focus_area = 2;
+                        dialog.mode = EditMode::EditingContext;
+                    }
                 }
                 (KeyCode::Left, _) => {
                     if dialog.selected_button > 0 {
