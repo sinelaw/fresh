@@ -764,8 +764,8 @@
   "keybinding_editor.btn_save": "Lưu",
   "keybinding_editor.confirm_message": "Bạn có thay đổi phím tắt chưa được lưu.",
   "keybinding_editor.confirm_title": "Thay đổi chưa lưu",
-  "keybinding_editor.conflicts_label": "\u26a0 Xung đột:",
-  "keybinding_editor.context_change_hint": "\u2190/\u2192 để thay đổi",
+  "keybinding_editor.conflicts_label": "⚠ Xung đột:",
+  "keybinding_editor.context_change_hint": "←/→ để thay đổi",
   "keybinding_editor.dialog_add_title": "Thêm phím tắt",
   "keybinding_editor.dialog_edit_title": "Sửa phím tắt",
   "keybinding_editor.error_key_action_required": "Phím và hành động là bắt buộc",
@@ -1185,5 +1185,12 @@
   "warning.one_logged": "1 cảnh báo đã được ghi.",
   "warning.title": "Cảnh báo",
   "warning.view_log": "Xem nhật ký",
-  "warnings.none": "Không có cảnh báo"
+  "warnings.none": "Không có cảnh báo",
+  "action.lsp_toggle_for_buffer": "LSP: Bật/Tắt LSP cho bộ đệm hiện tại",
+  "cmd.toggle_lsp_for_buffer": "Bật/Tắt LSP cho bộ đệm hiện tại",
+  "cmd.toggle_lsp_for_buffer_desc": "Bật hoặc tắt LSP chỉ cho bộ đệm hiện tại",
+  "lsp.disabled.user": "Đã tắt bởi người dùng",
+  "lsp.disabled_for_buffer": "LSP đã tắt cho bộ đệm hiện tại",
+  "lsp.enabled_for_buffer": "LSP đã bật cho bộ đệm hiện tại",
+  "menu.lsp.toggle_for_buffer": "Bật/Tắt LSP cho bộ đệm hiện tại"
 }

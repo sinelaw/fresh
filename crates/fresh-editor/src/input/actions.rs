@@ -2659,6 +2659,7 @@ pub fn action_to_events(
         | Action::LspCodeActions
         | Action::LspRestart
         | Action::LspStop
+        | Action::LspToggleForBuffer
         | Action::ToggleInlayHints
         | Action::ToggleMouseHover
         | Action::ToggleLineNumbers

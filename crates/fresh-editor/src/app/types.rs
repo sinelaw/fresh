@@ -208,7 +208,7 @@ impl BufferMetadata {
         // Use canonicalized forms first to handle macOS /var -> /private/var differences.
         let display_name = Self::display_name_for_path(&path, working_dir);
 
-        // Check if this is a library file (outside project or in vendor directories)
+        // Check if this is a library file (in vendor directories)
         let (lsp_enabled, lsp_disabled_reason) = if Self::is_library_path(&path, working_dir) {
             (false, Some(t!("lsp.disabled.library_file").to_string()))
         } else {
@@ -231,18 +231,12 @@ impl BufferMetadata {
         }
     }
 
-    /// Check if a path is a library file (outside project root or in vendor directories)
+    /// Check if a path is a library file (in vendor directories)
     ///
     /// Library files include:
-    /// - Files outside the working directory
     /// - Files in common vendor/dependency directories (.cargo, node_modules, etc.)
-    pub fn is_library_path(path: &Path, working_dir: &Path) -> bool {
-        // Check if outside working directory
-        if !path.starts_with(working_dir) {
-            return true;
-        }
-
-        // Check for common library paths within the project
+    pub fn is_library_path(path: &Path, _working_dir: &Path) -> bool {
+        // Check for common library paths
         let path_str = path.to_string_lossy();
 
         // Rust: .cargo directory (can be within project for vendor'd crates)

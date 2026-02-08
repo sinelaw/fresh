@@ -508,6 +508,7 @@ pub enum Action {
     LspCodeActions,
     LspRestart,
     LspStop,
+    LspToggleForBuffer,
     ToggleInlayHints,
     ToggleMouseHover,
 
@@ -867,6 +868,7 @@ impl Action {
             "lsp_code_actions" => LspCodeActions,
             "lsp_restart" => LspRestart,
             "lsp_stop" => LspStop,
+            "lsp_toggle_for_buffer" => LspToggleForBuffer,
             "toggle_inlay_hints" => ToggleInlayHints,
             "toggle_mouse_hover" => ToggleMouseHover,
 
@@ -1935,6 +1937,7 @@ impl KeybindingResolver {
             Action::LspCodeActions => t!("action.lsp_code_actions"),
             Action::LspRestart => t!("action.lsp_restart"),
             Action::LspStop => t!("action.lsp_stop"),
+            Action::LspToggleForBuffer => t!("action.lsp_toggle_for_buffer"),
             Action::ToggleInlayHints => t!("action.toggle_inlay_hints"),
             Action::ToggleMouseHover => t!("action.toggle_mouse_hover"),
             Action::ToggleLineNumbers => t!("action.toggle_line_numbers"),

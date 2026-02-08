@@ -764,8 +764,8 @@
   "keybinding_editor.btn_save": "บันทึก",
   "keybinding_editor.confirm_message": "คุณมีการเปลี่ยนแปลงคีย์ลัดที่ยังไม่ได้บันทึก",
   "keybinding_editor.confirm_title": "การเปลี่ยนแปลงที่ยังไม่ได้บันทึก",
-  "keybinding_editor.conflicts_label": "\u26a0 ขัดแย้ง:",
-  "keybinding_editor.context_change_hint": "\u2190/\u2192 เพื่อเปลี่ยน",
+  "keybinding_editor.conflicts_label": "⚠ ขัดแย้ง:",
+  "keybinding_editor.context_change_hint": "←/→ เพื่อเปลี่ยน",
   "keybinding_editor.dialog_add_title": "เพิ่มคีย์ลัด",
   "keybinding_editor.dialog_edit_title": "แก้ไขคีย์ลัด",
   "keybinding_editor.error_key_action_required": "ต้องระบุปุ่มและการกระทำ",
@@ -1185,5 +1185,12 @@
   "whitespace.already_has_newline": "ไฟล์ลงท้ายด้วยบรรทัดใหม่อยู่แล้ว",
   "whitespace.newline_added": "เพิ่มบรรทัดใหม่ท้ายไฟล์แล้ว",
   "whitespace.no_trailing": "ไม่มีช่องว่างท้ายบรรทัดให้ลบ",
-  "whitespace.trimmed": "ตัดช่องว่างท้ายบรรทัดแล้ว"
+  "whitespace.trimmed": "ตัดช่องว่างท้ายบรรทัดแล้ว",
+  "action.lsp_toggle_for_buffer": "LSP: สลับ LSP สำหรับบัฟเฟอร์ปัจจุบัน",
+  "cmd.toggle_lsp_for_buffer": "สลับ LSP สำหรับบัฟเฟอร์ปัจจุบัน",
+  "cmd.toggle_lsp_for_buffer_desc": "เปิดหรือปิด LSP สำหรับบัฟเฟอร์ปัจจุบันเท่านั้น",
+  "lsp.disabled.user": "ถูกปิดใช้งานโดยผู้ใช้",
+  "lsp.disabled_for_buffer": "LSP ถูกปิดใช้งานสำหรับบัฟเฟอร์ปัจจุบัน",
+  "lsp.enabled_for_buffer": "LSP ถูกเปิดใช้งานสำหรับบัฟเฟอร์ปัจจุบัน",
+  "menu.lsp.toggle_for_buffer": "สลับ LSP สำหรับบัฟเฟอร์ปัจจุบัน"
 }

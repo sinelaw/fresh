@@ -764,8 +764,8 @@
   "keybinding_editor.btn_save": "Enregistrer",
   "keybinding_editor.confirm_message": "Vous avez des modifications de raccourcis non enregistrées.",
   "keybinding_editor.confirm_title": "Modifications non enregistrées",
-  "keybinding_editor.conflicts_label": "\u26a0 Conflits :",
-  "keybinding_editor.context_change_hint": "\u2190/\u2192 pour changer",
+  "keybinding_editor.conflicts_label": "⚠ Conflits :",
+  "keybinding_editor.context_change_hint": "←/→ pour changer",
   "keybinding_editor.dialog_add_title": "Ajouter un raccourci",
   "keybinding_editor.dialog_edit_title": "Modifier le raccourci",
   "keybinding_editor.error_key_action_required": "La touche et l'action sont requises",
@@ -1185,5 +1185,12 @@
   "whitespace.already_has_newline": "Le fichier se termine déjà par un saut de ligne",
   "whitespace.newline_added": "Saut de ligne final ajouté",
   "whitespace.no_trailing": "Aucun espace de fin à supprimer",
-  "whitespace.trimmed": "Espaces de fin supprimés"
+  "whitespace.trimmed": "Espaces de fin supprimés",
+  "action.lsp_toggle_for_buffer": "LSP : Basculer LSP pour le tampon actuel",
+  "cmd.toggle_lsp_for_buffer": "Basculer LSP pour le tampon actuel",
+  "cmd.toggle_lsp_for_buffer_desc": "Activer ou désactiver LSP uniquement pour le tampon actuel",
+  "lsp.disabled.user": "Désactivé par l'utilisateur",
+  "lsp.disabled_for_buffer": "LSP désactivé pour le tampon actuel",
+  "lsp.enabled_for_buffer": "LSP activé pour le tampon actuel",
+  "menu.lsp.toggle_for_buffer": "Basculer LSP pour le tampon actuel"
 }

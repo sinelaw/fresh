@@ -764,8 +764,8 @@
   "keybinding_editor.btn_save": "저장",
   "keybinding_editor.confirm_message": "저장되지 않은 키 바인딩 변경사항이 있습니다.",
   "keybinding_editor.confirm_title": "저장되지 않은 변경사항",
-  "keybinding_editor.conflicts_label": "\u26a0 충돌:",
-  "keybinding_editor.context_change_hint": "\u2190/\u2192 변경",
+  "keybinding_editor.conflicts_label": "⚠ 충돌:",
+  "keybinding_editor.context_change_hint": "←/→ 변경",
   "keybinding_editor.dialog_add_title": "키 바인딩 추가",
   "keybinding_editor.dialog_edit_title": "키 바인딩 편집",
   "keybinding_editor.error_key_action_required": "키와 액션이 필요합니다",
@@ -1185,5 +1185,12 @@
   "whitespace.already_has_newline": "파일이 이미 줄바꿈으로 끝납니다",
   "whitespace.newline_added": "마지막 줄바꿈이 추가되었습니다",
   "whitespace.no_trailing": "제거할 후행 공백이 없습니다",
-  "whitespace.trimmed": "후행 공백이 제거되었습니다"
+  "whitespace.trimmed": "후행 공백이 제거되었습니다",
+  "action.lsp_toggle_for_buffer": "LSP: 현재 버퍼의 LSP 전환",
+  "cmd.toggle_lsp_for_buffer": "현재 버퍼의 LSP 전환",
+  "cmd.toggle_lsp_for_buffer_desc": "현재 버퍼에 대해서만 LSP 활성화 또는 비활성화",
+  "lsp.disabled.user": "사용자에 의해 비활성화됨",
+  "lsp.disabled_for_buffer": "현재 버퍼에 대해 LSP가 비활성화되었습니다",
+  "lsp.enabled_for_buffer": "현재 버퍼에 대해 LSP가 활성화되었습니다",
+  "menu.lsp.toggle_for_buffer": "현재 버퍼의 LSP 전환"
 }

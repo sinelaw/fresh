@@ -764,8 +764,8 @@
   "keybinding_editor.btn_save": "保存",
   "keybinding_editor.confirm_message": "您有未保存的快捷键更改。",
   "keybinding_editor.confirm_title": "未保存的更改",
-  "keybinding_editor.conflicts_label": "\u26a0 冲突：",
-  "keybinding_editor.context_change_hint": "\u2190/\u2192 切换",
+  "keybinding_editor.conflicts_label": "⚠ 冲突：",
+  "keybinding_editor.context_change_hint": "←/→ 切换",
   "keybinding_editor.dialog_add_title": "添加快捷键",
   "keybinding_editor.dialog_edit_title": "编辑快捷键",
   "keybinding_editor.error_key_action_required": "按键和操作为必填项",
@@ -1185,5 +1185,12 @@
   "whitespace.already_has_newline": "文件已以换行符结尾",
   "whitespace.newline_added": "已添加最终换行符",
   "whitespace.no_trailing": "没有尾随空格需要删除",
-  "whitespace.trimmed": "已删除尾随空格"
+  "whitespace.trimmed": "已删除尾随空格",
+  "action.lsp_toggle_for_buffer": "LSP：切换当前缓冲区的 LSP",
+  "cmd.toggle_lsp_for_buffer": "切换当前缓冲区的 LSP",
+  "cmd.toggle_lsp_for_buffer_desc": "仅为当前缓冲区启用或禁用 LSP",
+  "lsp.disabled.user": "用户已禁用",
+  "lsp.disabled_for_buffer": "已为当前缓冲区禁用 LSP",
+  "lsp.enabled_for_buffer": "已为当前缓冲区启用 LSP",
+  "menu.lsp.toggle_for_buffer": "切换当前缓冲区的 LSP"
 }

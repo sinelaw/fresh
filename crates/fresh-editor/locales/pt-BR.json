@@ -764,8 +764,8 @@
   "keybinding_editor.btn_save": "Salvar",
   "keybinding_editor.confirm_message": "Você tem alterações de atalhos não salvas.",
   "keybinding_editor.confirm_title": "Alterações não salvas",
-  "keybinding_editor.conflicts_label": "\u26a0 Conflitos:",
-  "keybinding_editor.context_change_hint": "\u2190/\u2192 para alterar",
+  "keybinding_editor.conflicts_label": "⚠ Conflitos:",
+  "keybinding_editor.context_change_hint": "←/→ para alterar",
   "keybinding_editor.dialog_add_title": "Adicionar atalho de teclado",
   "keybinding_editor.dialog_edit_title": "Editar atalho de teclado",
   "keybinding_editor.error_key_action_required": "Tecla e ação são obrigatórias",
@@ -1185,5 +1185,12 @@
   "whitespace.already_has_newline": "O arquivo já termina com nova linha",
   "whitespace.newline_added": "Nova linha final adicionada",
   "whitespace.no_trailing": "Nenhum espaço em branco final para remover",
-  "whitespace.trimmed": "Espaços em branco finais removidos"
+  "whitespace.trimmed": "Espaços em branco finais removidos",
+  "action.lsp_toggle_for_buffer": "LSP: Alternar LSP para o buffer atual",
+  "cmd.toggle_lsp_for_buffer": "Alternar LSP para o buffer atual",
+  "cmd.toggle_lsp_for_buffer_desc": "Ativar ou desativar LSP apenas para o buffer atual",
+  "lsp.disabled.user": "Desativado pelo usuário",
+  "lsp.disabled_for_buffer": "LSP desativado para o buffer atual",
+  "lsp.enabled_for_buffer": "LSP ativado para o buffer atual",
+  "menu.lsp.toggle_for_buffer": "Alternar LSP para o buffer atual"
 }

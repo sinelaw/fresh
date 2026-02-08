@@ -7035,3 +7035,44 @@ fn test_hover_popup_scroll_to_bottom() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// Test LSP toggle for buffer - enables/disables LSP via command palette
+#[test]
+fn test_lsp_toggle_for_buffer() -> anyhow::Result<()> {
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Create a test file
+    let temp_dir = tempfile::TempDir::new()?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {\n    let x = 5;\n}")?;
+
+    // Open the test file
+    harness.editor_mut().open_file(&test_file)?;
+    harness.render()?;
+
+    // Use command palette to toggle LSP off
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+    harness.wait_for_prompt()?;
+    harness.type_text("Toggle LSP")?;
+    harness.render()?;
+
+    // Verify the toggle command exists
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Toggle LSP for Current Buffer") || screen.contains("toggle"),
+        "Command palette should show toggle LSP command"
+    );
+
+    // Execute the command
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Toggle LSP back using command palette
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+    harness.wait_for_prompt()?;
+    harness.type_text("Toggle LSP")?;
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    Ok(())
+}

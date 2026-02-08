@@ -764,8 +764,8 @@
   "keybinding_editor.btn_save": "Guardar",
   "keybinding_editor.confirm_message": "Tiene cambios de atajos sin guardar.",
   "keybinding_editor.confirm_title": "Cambios sin guardar",
-  "keybinding_editor.conflicts_label": "\u26a0 Conflictos:",
-  "keybinding_editor.context_change_hint": "\u2190/\u2192 para cambiar",
+  "keybinding_editor.conflicts_label": "⚠ Conflictos:",
+  "keybinding_editor.context_change_hint": "←/→ para cambiar",
   "keybinding_editor.dialog_add_title": "Agregar atajo de teclado",
   "keybinding_editor.dialog_edit_title": "Editar atajo de teclado",
   "keybinding_editor.error_key_action_required": "Se requiere tecla y acción",
@@ -1185,5 +1185,12 @@
   "whitespace.already_has_newline": "El archivo ya termina con nueva línea",
   "whitespace.newline_added": "Nueva línea final añadida",
   "whitespace.no_trailing": "No hay espacios en blanco finales que eliminar",
-  "whitespace.trimmed": "Espacios en blanco finales eliminados"
+  "whitespace.trimmed": "Espacios en blanco finales eliminados",
+  "action.lsp_toggle_for_buffer": "LSP: Alternar LSP para el buffer actual",
+  "cmd.toggle_lsp_for_buffer": "Alternar LSP para el buffer actual",
+  "cmd.toggle_lsp_for_buffer_desc": "Activar o desactivar LSP solo para el buffer actual",
+  "lsp.disabled.user": "Desactivado por el usuario",
+  "lsp.disabled_for_buffer": "LSP desactivado para el buffer actual",
+  "lsp.enabled_for_buffer": "LSP activado para el buffer actual",
+  "menu.lsp.toggle_for_buffer": "Alternar LSP para el buffer actual"
 }

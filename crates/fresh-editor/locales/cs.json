@@ -764,8 +764,8 @@
   "keybinding_editor.btn_save": "Uložit",
   "keybinding_editor.confirm_message": "Máte neuložené změny klávesových zkratek.",
   "keybinding_editor.confirm_title": "Neuložené změny",
-  "keybinding_editor.conflicts_label": "\u26a0 Konflikty:",
-  "keybinding_editor.context_change_hint": "\u2190/\u2192 pro změnu",
+  "keybinding_editor.conflicts_label": "⚠ Konflikty:",
+  "keybinding_editor.context_change_hint": "←/→ pro změnu",
   "keybinding_editor.dialog_add_title": "Přidat klávesovou zkratku",
   "keybinding_editor.dialog_edit_title": "Upravit klávesovou zkratku",
   "keybinding_editor.error_key_action_required": "Klávesa a akce jsou povinné",
@@ -1185,5 +1185,12 @@
   "whitespace.already_has_newline": "Soubor již končí novým řádkem",
   "whitespace.newline_added": "Přidán koncový nový řádek",
   "whitespace.no_trailing": "Žádné koncové mezery k odstranění",
-  "whitespace.trimmed": "Koncové mezery odstraněny"
+  "whitespace.trimmed": "Koncové mezery odstraněny",
+  "action.lsp_toggle_for_buffer": "LSP: Přepnout LSP pro aktuální vyrovnávací paměť",
+  "cmd.toggle_lsp_for_buffer": "Přepnout LSP pro aktuální vyrovnávací paměť",
+  "cmd.toggle_lsp_for_buffer_desc": "Povolit nebo zakázat LSP pouze pro aktuální vyrovnávací paměť",
+  "lsp.disabled.user": "Zakázáno uživatelem",
+  "lsp.disabled_for_buffer": "LSP zakázáno pro aktuální vyrovnávací paměť",
+  "lsp.enabled_for_buffer": "LSP povoleno pro aktuální vyrovnávací paměť",
+  "menu.lsp.toggle_for_buffer": "Přepnout LSP pro aktuální vyrovnávací paměť"
 }

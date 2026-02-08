@@ -985,6 +985,14 @@ pub fn get_all_commands() -> Vec<Command> {
             source: CommandSource::Builtin,
         },
         Command {
+            name: t!("cmd.toggle_lsp_for_buffer").to_string(),
+            description: t!("cmd.toggle_lsp_for_buffer_desc").to_string(),
+            action: Action::LspToggleForBuffer,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
             name: t!("cmd.toggle_mouse_hover").to_string(),
             description: t!("cmd.toggle_mouse_hover_desc").to_string(),
             action: Action::ToggleMouseHover,

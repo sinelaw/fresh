@@ -1966,6 +1966,14 @@ impl MenuConfig {
                         when: None,
                         checkbox: None,
                     },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.lsp.toggle_for_buffer").to_string(),
+                        action: "lsp_toggle_for_buffer".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
                 ],
             },
             // Explorer menu (only visible when file explorer is focused)

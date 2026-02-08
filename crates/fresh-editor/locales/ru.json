@@ -764,8 +764,8 @@
   "keybinding_editor.btn_save": "Сохранить",
   "keybinding_editor.confirm_message": "У вас есть несохранённые изменения привязок клавиш.",
   "keybinding_editor.confirm_title": "Несохранённые изменения",
-  "keybinding_editor.conflicts_label": "\u26a0 Конфликты:",
-  "keybinding_editor.context_change_hint": "\u2190/\u2192 для изменения",
+  "keybinding_editor.conflicts_label": "⚠ Конфликты:",
+  "keybinding_editor.context_change_hint": "←/→ для изменения",
   "keybinding_editor.dialog_add_title": "Добавить привязку клавиш",
   "keybinding_editor.dialog_edit_title": "Редактировать привязку клавиш",
   "keybinding_editor.error_key_action_required": "Клавиша и действие обязательны",
@@ -1185,5 +1185,12 @@
   "whitespace.already_has_newline": "Файл уже заканчивается переводом строки",
   "whitespace.newline_added": "Добавлен завершающий перевод строки",
   "whitespace.no_trailing": "Нет конечных пробелов для удаления",
-  "whitespace.trimmed": "Конечные пробелы удалены"
+  "whitespace.trimmed": "Конечные пробелы удалены",
+  "action.lsp_toggle_for_buffer": "LSP: Переключить LSP для текущего буфера",
+  "cmd.toggle_lsp_for_buffer": "Переключить LSP для текущего буфера",
+  "cmd.toggle_lsp_for_buffer_desc": "Включить или отключить LSP только для текущего буфера",
+  "lsp.disabled.user": "Отключено пользователем",
+  "lsp.disabled_for_buffer": "LSP отключен для текущего буфера",
+  "lsp.enabled_for_buffer": "LSP включен для текущего буфера",
+  "menu.lsp.toggle_for_buffer": "Переключить LSP для текущего буфера"
 }

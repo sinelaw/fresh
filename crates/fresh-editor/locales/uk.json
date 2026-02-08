@@ -764,8 +764,8 @@
   "keybinding_editor.btn_save": "Зберегти",
   "keybinding_editor.confirm_message": "У вас є незбережені зміни прив'язок клавіш.",
   "keybinding_editor.confirm_title": "Незбережені зміни",
-  "keybinding_editor.conflicts_label": "\u26a0 Конфлікти:",
-  "keybinding_editor.context_change_hint": "\u2190/\u2192 для зміни",
+  "keybinding_editor.conflicts_label": "⚠ Конфлікти:",
+  "keybinding_editor.context_change_hint": "←/→ для зміни",
   "keybinding_editor.dialog_add_title": "Додати прив'язку клавіш",
   "keybinding_editor.dialog_edit_title": "Редагувати прив'язку клавіш",
   "keybinding_editor.error_key_action_required": "Клавіша та дія обов'язкові",
@@ -1185,5 +1185,12 @@
   "whitespace.already_has_newline": "Файл вже закінчується переносом рядка",
   "whitespace.newline_added": "Додано завершальний перенос рядка",
   "whitespace.no_trailing": "Немає кінцевих пробілів для видалення",
-  "whitespace.trimmed": "Кінцеві пробіли видалено"
+  "whitespace.trimmed": "Кінцеві пробіли видалено",
+  "action.lsp_toggle_for_buffer": "LSP: Перемкнути LSP для поточного буфера",
+  "cmd.toggle_lsp_for_buffer": "Перемкнути LSP для поточного буфера",
+  "cmd.toggle_lsp_for_buffer_desc": "Увімкнути або вимкнути LSP лише для поточного буфера",
+  "lsp.disabled.user": "Вимкнено користувачем",
+  "lsp.disabled_for_buffer": "LSP вимкнено для поточного буфера",
+  "lsp.enabled_for_buffer": "LSP увімкнено для поточного буфера",
+  "menu.lsp.toggle_for_buffer": "Перемкнути LSP для поточного буфера"
 }

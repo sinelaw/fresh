@@ -546,6 +546,9 @@ impl Editor {
             Action::LspStop => {
                 self.handle_lsp_stop();
             }
+            Action::LspToggleForBuffer => {
+                self.handle_lsp_toggle_for_buffer();
+            }
             Action::ToggleInlayHints => {
                 self.toggle_inlay_hints();
             }

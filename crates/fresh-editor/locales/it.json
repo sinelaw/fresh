@@ -764,8 +764,8 @@
   "keybinding_editor.btn_save": "Salva",
   "keybinding_editor.confirm_message": "Hai modifiche alle scorciatoie non salvate.",
   "keybinding_editor.confirm_title": "Modifiche non salvate",
-  "keybinding_editor.conflicts_label": "\u26a0 Conflitti:",
-  "keybinding_editor.context_change_hint": "\u2190/\u2192 per cambiare",
+  "keybinding_editor.conflicts_label": "⚠ Conflitti:",
+  "keybinding_editor.context_change_hint": "←/→ per cambiare",
   "keybinding_editor.dialog_add_title": "Aggiungi scorciatoia",
   "keybinding_editor.dialog_edit_title": "Modifica scorciatoia",
   "keybinding_editor.error_key_action_required": "Tasto e azione sono obbligatori",
@@ -1185,5 +1185,12 @@
   "whitespace.already_has_newline": "Il file termina già con una nuova riga",
   "whitespace.newline_added": "Nuova riga finale aggiunta",
   "whitespace.no_trailing": "Nessuno spazio bianco finale da rimuovere",
-  "whitespace.trimmed": "Spazi bianchi finali rimossi"
+  "whitespace.trimmed": "Spazi bianchi finali rimossi",
+  "action.lsp_toggle_for_buffer": "LSP: Attiva/Disattiva LSP per il buffer corrente",
+  "cmd.toggle_lsp_for_buffer": "Attiva/Disattiva LSP per il buffer corrente",
+  "cmd.toggle_lsp_for_buffer_desc": "Attivare o disattivare LSP solo per il buffer corrente",
+  "lsp.disabled.user": "Disabilitato dall'utente",
+  "lsp.disabled_for_buffer": "LSP disabilitato per il buffer corrente",
+  "lsp.enabled_for_buffer": "LSP attivato per il buffer corrente",
+  "menu.lsp.toggle_for_buffer": "Attiva/Disattiva LSP per il buffer corrente"
 }

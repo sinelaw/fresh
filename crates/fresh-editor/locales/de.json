@@ -764,8 +764,8 @@
   "keybinding_editor.btn_save": "Speichern",
   "keybinding_editor.confirm_message": "Sie haben ungespeicherte Tastenzuordnungen.",
   "keybinding_editor.confirm_title": "Ungespeicherte Änderungen",
-  "keybinding_editor.conflicts_label": "\u26a0 Konflikte:",
-  "keybinding_editor.context_change_hint": "\u2190/\u2192 zum Ändern",
+  "keybinding_editor.conflicts_label": "⚠ Konflikte:",
+  "keybinding_editor.context_change_hint": "←/→ zum Ändern",
   "keybinding_editor.dialog_add_title": "Tastenzuordnung hinzufügen",
   "keybinding_editor.dialog_edit_title": "Tastenzuordnung bearbeiten",
   "keybinding_editor.error_key_action_required": "Taste und Aktion sind erforderlich",
@@ -1185,5 +1185,12 @@
   "whitespace.already_has_newline": "Datei endet bereits mit Zeilenumbruch",
   "whitespace.newline_added": "Abschließender Zeilenumbruch hinzugefügt",
   "whitespace.no_trailing": "Keine Leerzeichen am Zeilenende vorhanden",
-  "whitespace.trimmed": "Leerzeichen am Zeilenende entfernt"
+  "whitespace.trimmed": "Leerzeichen am Zeilenende entfernt",
+  "action.lsp_toggle_for_buffer": "LSP: LSP für aktuellen Puffer umschalten",
+  "cmd.toggle_lsp_for_buffer": "LSP für aktuellen Puffer umschalten",
+  "cmd.toggle_lsp_for_buffer_desc": "LSP nur für den aktuellen Puffer aktivieren oder deaktivieren",
+  "lsp.disabled.user": "Vom Benutzer deaktiviert",
+  "lsp.disabled_for_buffer": "LSP für aktuellen Puffer deaktiviert",
+  "lsp.enabled_for_buffer": "LSP für aktuellen Puffer aktiviert",
+  "menu.lsp.toggle_for_buffer": "LSP für aktuellen Puffer umschalten"
 }

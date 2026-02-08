@@ -764,8 +764,8 @@
   "keybinding_editor.btn_save": "保存",
   "keybinding_editor.confirm_message": "未保存のキーバインド変更があります。",
   "keybinding_editor.confirm_title": "未保存の変更",
-  "keybinding_editor.conflicts_label": "\u26a0 競合:",
-  "keybinding_editor.context_change_hint": "\u2190/\u2192 で変更",
+  "keybinding_editor.conflicts_label": "⚠ 競合:",
+  "keybinding_editor.context_change_hint": "←/→ で変更",
   "keybinding_editor.dialog_add_title": "キーバインドを追加",
   "keybinding_editor.dialog_edit_title": "キーバインドを編集",
   "keybinding_editor.error_key_action_required": "キーとアクションは必須です",
@@ -1185,5 +1185,12 @@
   "whitespace.already_has_newline": "ファイルは既に改行で終わっています",
   "whitespace.newline_added": "最終改行を追加しました",
   "whitespace.no_trailing": "削除する末尾の空白がありません",
-  "whitespace.trimmed": "末尾の空白を削除しました"
+  "whitespace.trimmed": "末尾の空白を削除しました",
+  "action.lsp_toggle_for_buffer": "LSP: 現在のバッファのLSPを切り替え",
+  "cmd.toggle_lsp_for_buffer": "現在のバッファのLSPを切り替え",
+  "cmd.toggle_lsp_for_buffer_desc": "現在のバッファのみでLSPを有効または無効にする",
+  "lsp.disabled.user": "ユーザーによって無効化",
+  "lsp.disabled_for_buffer": "現在のバッファでLSPが無効化されました",
+  "lsp.enabled_for_buffer": "現在のバッファでLSPが有効化されました",
+  "menu.lsp.toggle_for_buffer": "現在のバッファのLSPを切り替え"
 }
