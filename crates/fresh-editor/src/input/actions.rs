@@ -915,7 +915,7 @@ pub fn action_to_events(
                 let mut cursor_line_end_position: Option<usize> = None;
 
                 if auto_indent {
-                    let use_tabs = state.use_tabs;
+                    let use_tabs = state.buffer_settings.use_tabs;
                     if let Some(language) = state.highlighter.language() {
                         // Use tree-sitter-based indent when we have a highlighter
                         if let Some(indent_width) = state
@@ -1136,7 +1136,7 @@ pub fn action_to_events(
 
         Action::InsertTab => {
             // Insert a tab character or spaces based on language config
-            let tab_str = if state.use_tabs {
+            let tab_str = if state.buffer_settings.use_tabs {
                 "\t".to_string()
             } else {
                 " ".repeat(tab_size)

@@ -669,7 +669,7 @@ impl Editor {
                 let current = self
                     .buffers
                     .get(&self.active_buffer())
-                    .map(|s| s.tab_size.to_string())
+                    .map(|s| s.buffer_settings.tab_size.to_string())
                     .unwrap_or_else(|| "4".to_string());
                 self.start_prompt_with_initial_text(
                     "Tab size: ".to_string(),
@@ -691,8 +691,8 @@ impl Editor {
             }
             Action::ToggleIndentationStyle => {
                 if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
-                    state.use_tabs = !state.use_tabs;
-                    let status = if state.use_tabs {
+                    state.buffer_settings.use_tabs = !state.buffer_settings.use_tabs;
+                    let status = if state.buffer_settings.use_tabs {
                         "Indentation: Tabs"
                     } else {
                         "Indentation: Spaces"
@@ -702,8 +702,9 @@ impl Editor {
             }
             Action::ToggleTabIndicators => {
                 if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
-                    state.show_whitespace_tabs = !state.show_whitespace_tabs;
-                    let status = if state.show_whitespace_tabs {
+                    state.buffer_settings.show_whitespace_tabs =
+                        !state.buffer_settings.show_whitespace_tabs;
+                    let status = if state.buffer_settings.show_whitespace_tabs {
                         "Tab indicators: Visible"
                     } else {
                         "Tab indicators: Hidden"

@@ -2,11 +2,16 @@
 //! - Set Tab Size
 //! - Toggle Indentation: Spaces ↔ Tabs
 //! - Toggle Tab Indicators
+//! - Toggle Line Numbers
 //! - Reset Buffer Settings
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
+use std::fs::File;
+use std::io::Write;
+use std::path::Path;
+use std::time::Duration;
 use tempfile::TempDir;
 
 /// Helper to run a command from the command palette
@@ -275,4 +280,136 @@ fn test_reset_buffer_settings_command() {
         "After reset, Go should use tabs again. Got: {:?}",
         content_reset
     );
+}
+
+/// Delay between file writes to ensure filesystem notifications are received.
+const FILE_CHANGE_DELAY: Duration = Duration::from_millis(2100);
+
+/// Write content to a file and sync to disk to ensure filesystem notifications fire.
+fn write_and_sync(path: &Path, content: &str) {
+    let mut file = File::create(path).unwrap();
+    file.write_all(content.as_bytes()).unwrap();
+    file.sync_all().unwrap();
+    drop(file);
+
+    // Also sync the parent directory to ensure the directory entry is flushed
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
+}
+
+/// Test that "Toggle Line Numbers" persists across external file changes and saves.
+///
+/// This test verifies that when line numbers are toggled off, the setting is
+/// preserved through:
+/// 1. External file modifications (auto-revert)
+/// 2. User edits
+/// 3. File saves
+#[test]
+#[cfg_attr(target_os = "macos", ignore)] // FSEvents coalescing can cause flaky timing
+fn test_toggle_line_numbers_persists_across_file_changes() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Create initial file with some content
+    write_and_sync(&file_path, "Initial line 1\nInitial line 2\nInitial line 3");
+
+    let config = Config::default();
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Step 1: Verify line numbers are enabled by default
+    let screen_initial = harness.screen_to_string();
+    assert!(
+        screen_initial.contains("1 │"),
+        "Line numbers should be visible by default. Screen:\n{}",
+        screen_initial
+    );
+
+    // Step 2: Disable line numbers using command palette
+    run_command(&mut harness, "Toggle Line Numbers");
+
+    // Step 3: Verify line numbers are now hidden
+    let screen_after_toggle = harness.screen_to_string();
+    assert!(
+        !screen_after_toggle.contains("1 │"),
+        "Line numbers should be hidden after toggle. Screen:\n{}",
+        screen_after_toggle
+    );
+    assert!(
+        !screen_after_toggle.contains("2 │"),
+        "Line numbers should be hidden after toggle. Screen:\n{}",
+        screen_after_toggle
+    );
+
+    // Step 4: Overwrite the file externally (not using the editor)
+    harness.sleep(FILE_CHANGE_DELAY);
+    write_and_sync(&file_path, "Modified line 1\nModified line 2\nModified line 3\nModified line 4");
+
+    // Wait for auto-revert to process the external change
+    let expected_content = "Modified line 1\nModified line 2\nModified line 3\nModified line 4";
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap() == expected_content)
+        .expect("Auto-revert should update buffer content");
+
+    // Step 5: Verify line numbers are still disabled after auto-revert
+    harness.render().unwrap();
+    let screen_after_revert = harness.screen_to_string();
+    assert!(
+        !screen_after_revert.contains("1 │"),
+        "Line numbers should remain hidden after auto-revert. Screen:\n{}",
+        screen_after_revert
+    );
+    assert!(
+        !screen_after_revert.contains("2 │"),
+        "Line numbers should remain hidden after auto-revert. Screen:\n{}",
+        screen_after_revert
+    );
+    // Verify the new content is displayed
+    harness.assert_screen_contains("Modified line 1");
+
+    // Step 6: Make an edit in the buffer
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("\nEdited line 5").unwrap();
+    harness.render().unwrap();
+
+    // Step 7: Verify line numbers are still disabled after editing
+    let screen_after_edit = harness.screen_to_string();
+    assert!(
+        !screen_after_edit.contains("1 │"),
+        "Line numbers should remain hidden after editing. Screen:\n{}",
+        screen_after_edit
+    );
+    assert!(
+        !screen_after_edit.contains("5 │"),
+        "Line numbers should remain hidden after editing. Screen:\n{}",
+        screen_after_edit
+    );
+
+    // Step 8: Save the file
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Step 9: Verify line numbers are still disabled after saving
+    let screen_after_save = harness.screen_to_string();
+    assert!(
+        !screen_after_save.contains("1 │"),
+        "Line numbers should remain hidden after save. Screen:\n{}",
+        screen_after_save
+    );
+    assert!(
+        !screen_after_save.contains("5 │"),
+        "Line numbers should remain hidden after save. Screen:\n{}",
+        screen_after_save
+    );
+
+    // Verify the edited content is still visible
+    harness.assert_screen_contains("Edited line 5");
 }

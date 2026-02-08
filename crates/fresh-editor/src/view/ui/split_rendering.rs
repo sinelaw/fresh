@@ -2116,8 +2116,13 @@ impl SplitRenderer {
         // Enable ANSI awareness for non-binary content to handle escape sequences correctly
         let is_binary = state.buffer.is_binary();
         let ansi_aware = !is_binary; // ANSI parsing for normal text files
-        let source_lines: Vec<ViewLine> =
-            ViewLineIterator::new(&tokens, is_binary, ansi_aware, state.tab_size).collect();
+        let source_lines: Vec<ViewLine> = ViewLineIterator::new(
+            &tokens,
+            is_binary,
+            ansi_aware,
+            state.buffer_settings.tab_size,
+        )
+        .collect();
 
         // Inject virtual lines (LineAbove/LineBelow) from VirtualTextManager
         let lines = Self::inject_virtual_lines(source_lines, state);
@@ -3402,7 +3407,7 @@ impl SplitRenderer {
                         "\\n"
                     } else if ch == '\n' {
                         ""
-                    } else if is_tab_start && state.show_whitespace_tabs {
+                    } else if is_tab_start && state.buffer_settings.show_whitespace_tabs {
                         // Visual indicator for tab: show → at the first position
                         tab_indicator = "→".to_string();
                         &tab_indicator

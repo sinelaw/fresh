@@ -100,9 +100,9 @@ impl Editor {
 
         // Apply settings to buffer
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
-            state.tab_size = tab_size;
-            state.use_tabs = use_tabs;
-            state.show_whitespace_tabs = show_whitespace_tabs;
+            state.buffer_settings.tab_size = tab_size;
+            state.buffer_settings.use_tabs = use_tabs;
+            state.buffer_settings.show_whitespace_tabs = show_whitespace_tabs;
         }
 
         self.set_status_message(t!("toggle.buffer_settings_reset").to_string());

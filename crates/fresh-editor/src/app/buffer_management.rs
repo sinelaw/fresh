@@ -212,12 +212,13 @@ impl Editor {
         // with fallback to global editor config for tab_size
         // Use the buffer's stored language (already set by from_file_with_languages)
         if let Some(lang_config) = self.config.languages.get(&state.language) {
-            state.show_whitespace_tabs = lang_config.show_whitespace_tabs;
-            state.use_tabs = lang_config.use_tabs;
+            state.buffer_settings.show_whitespace_tabs = lang_config.show_whitespace_tabs;
+            state.buffer_settings.use_tabs = lang_config.use_tabs;
             // Use language-specific tab_size if set, otherwise fall back to global
-            state.tab_size = lang_config.tab_size.unwrap_or(self.config.editor.tab_size);
+            state.buffer_settings.tab_size =
+                lang_config.tab_size.unwrap_or(self.config.editor.tab_size);
         } else {
-            state.tab_size = self.config.editor.tab_size;
+            state.buffer_settings.tab_size = self.config.editor.tab_size;
         }
 
         // Apply line_numbers default from config
@@ -864,7 +865,7 @@ impl Editor {
         state.buffer.clear_modified();
 
         // Set tab size from config
-        state.tab_size = self.config.editor.tab_size;
+        state.buffer_settings.tab_size = self.config.editor.tab_size;
 
         // Apply line_numbers default from config
         state

@@ -590,7 +590,7 @@ impl Editor {
         match trimmed.parse::<usize>() {
             Ok(val) if val > 0 => {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    state.tab_size = val;
+                    state.buffer_settings.tab_size = val;
                 }
                 self.set_status_message(t!("settings.tab_size_set", value = val).to_string());
             }

@@ -39,6 +39,42 @@ pub enum ViewMode {
     Compose,
 }
 
+/// Per-buffer user settings that should be preserved across file reloads (auto-revert).
+///
+/// These are user overrides that apply to a specific buffer, separate from:
+/// - File-derived state (syntax highlighting, language detection)
+/// - View-specific state (scroll position, line wrap - those live in SplitViewState)
+///
+/// TODO: Consider moving view-related settings (line numbers, debug mode) to SplitViewState
+/// to allow per-split preferences. Currently line numbers is in margins (coupled with plugin
+/// gutters), and debug_highlight_mode is in EditorState, but both could arguably be per-view
+/// rather than per-buffer.
+#[derive(Debug, Clone)]
+pub struct BufferSettings {
+    /// Whether to show whitespace tab indicators (→) for this buffer
+    /// Set based on language config; can be toggled per-buffer by user
+    pub show_whitespace_tabs: bool,
+
+    /// Whether pressing Tab should insert a tab character instead of spaces.
+    /// Set based on language config; can be toggled per-buffer by user
+    pub use_tabs: bool,
+
+    /// Tab size (number of spaces per tab character) for rendering.
+    /// Used for visual display of tab characters and indent calculations.
+    /// Set based on language config; can be changed per-buffer by user
+    pub tab_size: usize,
+}
+
+impl Default for BufferSettings {
+    fn default() -> Self {
+        Self {
+            show_whitespace_tabs: true,
+            use_tabs: false,
+            tab_size: 4,
+        }
+    }
+}
+
 /// The complete editor state - everything needed to represent the current editing session
 ///
 /// NOTE: Viewport is NOT stored here - it lives in SplitViewState.
@@ -97,17 +133,9 @@ pub struct EditorState {
     /// instead of the normal buffer rendering path
     pub is_composite_buffer: bool,
 
-    /// Whether to show whitespace tab indicators (→) for this buffer
-    /// Set based on language config; defaults to true
-    pub show_whitespace_tabs: bool,
-
-    /// Whether pressing Tab should insert a tab character instead of spaces.
-    /// Set based on language config; defaults to false (insert spaces).
-    pub use_tabs: bool,
-
-    /// Tab size (number of spaces per tab character) for rendering.
-    /// Used for visual display of tab characters and indent calculations.
-    pub tab_size: usize,
+    /// Per-buffer user settings (tab size, indentation style, etc.)
+    /// These settings are preserved across file reloads (auto-revert)
+    pub buffer_settings: BufferSettings,
 
     /// Semantic highlighter for word occurrence highlighting
     pub reference_highlighter: ReferenceHighlighter,
@@ -171,9 +199,7 @@ impl EditorState {
             show_cursors: true,
             editing_disabled: false,
             is_composite_buffer: false,
-            show_whitespace_tabs: true,
-            use_tabs: false,
-            tab_size: 4, // Default tab size
+            buffer_settings: BufferSettings::default(),
             reference_highlighter: ReferenceHighlighter::new(),
             view_mode: ViewMode::Source,
             debug_highlight_mode: false,
@@ -264,9 +290,7 @@ impl EditorState {
             show_cursors: true,
             editing_disabled: false,
             is_composite_buffer: false,
-            show_whitespace_tabs: true,
-            use_tabs: false,
-            tab_size: 4,
+            buffer_settings: BufferSettings::default(),
             reference_highlighter,
             view_mode: ViewMode::Source,
             debug_highlight_mode: false,
@@ -332,9 +356,7 @@ impl EditorState {
             show_cursors: true,
             editing_disabled: false,
             is_composite_buffer: false,
-            show_whitespace_tabs: true,
-            use_tabs: false,
-            tab_size: 4,
+            buffer_settings: BufferSettings::default(),
             reference_highlighter,
             view_mode: ViewMode::Source,
             debug_highlight_mode: false,
@@ -385,9 +407,7 @@ impl EditorState {
             show_cursors: true,
             editing_disabled: false,
             is_composite_buffer: false,
-            show_whitespace_tabs: true,
-            use_tabs: false,
-            tab_size: 4,
+            buffer_settings: BufferSettings::default(),
             reference_highlighter,
             view_mode: ViewMode::Source,
             debug_highlight_mode: false,

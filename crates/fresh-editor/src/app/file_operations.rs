@@ -151,6 +151,12 @@ impl Editor {
             .unwrap_or((0, 0));
         let old_cursors = self.active_state().cursors.clone();
 
+        // Preserve user settings before reloading
+        let old_buffer_settings = self.active_state().buffer_settings.clone();
+        // TODO: Consider moving line numbers to SplitViewState (per-view setting)
+        // For now, preserve line number visibility across revert
+        let old_show_line_numbers = self.active_state().margins.show_line_numbers;
+
         // Load the file content fresh from disk
         let mut new_state = EditorState::from_file_with_languages(
             &path,
@@ -171,6 +177,11 @@ impl Editor {
             cursor.clear_selection();
         });
         new_state.cursors = restored_cursors;
+
+        // Restore user settings (tab size, indentation, etc.)
+        new_state.buffer_settings = old_buffer_settings;
+        // Restore line number visibility
+        new_state.margins.set_line_numbers(old_show_line_numbers);
 
         // Replace the current buffer with the new state
         let buffer_id = self.active_buffer();
@@ -621,8 +632,22 @@ impl Editor {
         buffer_id: BufferId,
         path: &Path,
     ) -> anyhow::Result<()> {
+        // Preserve user settings before reloading
+        // TODO: Consider moving line numbers to SplitViewState (per-view setting)
+        let (old_cursors, old_buffer_settings, old_show_line_numbers) = self
+            .buffers
+            .get(&buffer_id)
+            .map(|s| {
+                (
+                    s.cursors.clone(),
+                    s.buffer_settings.clone(),
+                    s.margins.show_line_numbers,
+                )
+            })
+            .unwrap_or_default();
+
         // Load the file content fresh from disk
-        let new_state = EditorState::from_file_with_languages(
+        let mut new_state = EditorState::from_file_with_languages(
             path,
             self.terminal_width,
             self.terminal_height,
@@ -635,24 +660,22 @@ impl Editor {
         // Get the new file size for clamping
         let new_file_size = new_state.buffer.len();
 
-        // Get old cursors before replacing the buffer
-        let old_cursors = self
-            .buffers
-            .get(&buffer_id)
-            .map(|s| s.cursors.clone())
-            .unwrap_or_default();
+        // Restore cursor positions (clamped to valid range for new file size)
+        let mut restored_cursors = old_cursors;
+        restored_cursors.map(|cursor| {
+            cursor.position = cursor.position.min(new_file_size);
+            cursor.clear_selection();
+        });
+        new_state.cursors = restored_cursors;
+
+        // Restore user settings (tab size, indentation, etc.)
+        new_state.buffer_settings = old_buffer_settings;
+        // Restore line number visibility
+        new_state.margins.set_line_numbers(old_show_line_numbers);
 
         // Replace the buffer content
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             *state = new_state;
-
-            // Restore cursor positions (clamped to valid range for new file size)
-            let mut restored_cursors = old_cursors;
-            restored_cursors.map(|cursor| {
-                cursor.position = cursor.position.min(new_file_size);
-                cursor.clear_selection();
-            });
-            state.cursors = restored_cursors;
         }
 
         // Clear the undo/redo history for this buffer
