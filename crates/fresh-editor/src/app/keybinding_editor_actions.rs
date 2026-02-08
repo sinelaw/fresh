@@ -220,7 +220,7 @@ impl Editor {
                 let first_row_y = layout.table_first_row_y;
                 if point_in_rect(table_area, col, row) && row >= first_row_y {
                     let clicked_row = (row - first_row_y) as usize;
-                    let new_selected = editor.scroll_offset + clicked_row;
+                    let new_selected = editor.scroll.offset as usize + clicked_row;
                     if new_selected < editor.filtered_indices.len() {
                         editor.selected = new_selected;
                     }

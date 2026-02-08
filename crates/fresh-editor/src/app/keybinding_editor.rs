@@ -219,10 +219,8 @@ pub struct KeybindingEditor {
     pub filtered_indices: Vec<usize>,
     /// Currently selected index (within filtered list)
     pub selected: usize,
-    /// Scroll offset for the table
-    pub scroll_offset: usize,
-    /// Number of visible rows (set during render)
-    pub visible_rows: usize,
+    /// Scroll state (offset, viewport, content_height) — shared with render
+    pub scroll: crate::view::ui::ScrollState,
 
     /// Whether search is active (search bar visible)
     pub search_active: bool,
@@ -294,8 +292,7 @@ impl KeybindingEditor {
             bindings,
             filtered_indices,
             selected: 0,
-            scroll_offset: 0,
-            visible_rows: 20,
+            scroll: crate::view::ui::ScrollState::default(),
             search_active: false,
             search_focused: false,
             search_query: String::new(),
@@ -547,8 +544,9 @@ impl KeybindingEditor {
 
     /// Page up
     pub fn page_up(&mut self) {
-        if self.selected > self.visible_rows {
-            self.selected -= self.visible_rows;
+        let page = self.scroll.viewport as usize;
+        if self.selected > page {
+            self.selected -= page;
         } else {
             self.selected = 0;
         }
@@ -557,8 +555,8 @@ impl KeybindingEditor {
 
     /// Page down
     pub fn page_down(&mut self) {
-        self.selected =
-            (self.selected + self.visible_rows).min(self.filtered_indices.len().saturating_sub(1));
+        let page = self.scroll.viewport as usize;
+        self.selected = (self.selected + page).min(self.filtered_indices.len().saturating_sub(1));
         self.ensure_visible();
     }
 
@@ -569,14 +567,7 @@ impl KeybindingEditor {
 
     /// Ensure the selected item is visible
     fn ensure_visible(&mut self) {
-        if self.visible_rows == 0 {
-            return;
-        }
-        if self.selected < self.scroll_offset {
-            self.scroll_offset = self.selected;
-        } else if self.selected >= self.scroll_offset + self.visible_rows {
-            self.scroll_offset = self.selected - self.visible_rows + 1;
-        }
+        self.scroll.ensure_visible(self.selected as u16, 1);
     }
 
     /// Start text search (preserves existing query when re-focusing)

@@ -939,3 +939,45 @@ fn test_render_narrow_terminal_unicode_keys() {
     // Should not panic and should display the editor
     harness.assert_screen_contains("Keybinding Editor");
 }
+
+// ========================
+// Scroll / selection visibility
+// ========================
+
+/// Test that the selected item (">" indicator) stays visible no matter how
+/// many times we press Down or Up. Regression test: editor.visible_rows was
+/// hardcoded to 20 and never synced from the actual rendered viewport, so on
+/// shorter terminals the selection would scroll out of view.
+#[test]
+fn test_selected_item_stays_visible_when_scrolling() {
+    // Use a short terminal where visible rows in the table (~13) is much
+    // less than the total number of bindings, forcing scroll to kick in.
+    let mut harness = EditorTestHarness::new(120, 24).unwrap();
+    open_keybinding_editor(&mut harness);
+
+    // The ">" indicator marks the selected row. It must always be visible.
+    harness.assert_screen_contains(">");
+
+    // Press Down 40 times — well past the visible area.
+    // After every key press the ">" indicator must remain on screen.
+    for i in 0..40 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        assert!(
+            harness.screen_to_string().contains(">"),
+            "Selection indicator '>' not visible after pressing Down {} times",
+            i + 1,
+        );
+    }
+
+    // Now press Up all the way back to the top.
+    for i in 0..40 {
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        assert!(
+            harness.screen_to_string().contains(">"),
+            "Selection indicator '>' not visible after pressing Up {} times",
+            i + 1,
+        );
+    }
+}

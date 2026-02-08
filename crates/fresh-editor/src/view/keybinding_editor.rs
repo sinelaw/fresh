@@ -249,7 +249,7 @@ fn render_header(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme
 }
 
 /// Render the keybinding table
-fn render_table(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme: &Theme) {
+fn render_table(frame: &mut Frame, area: Rect, editor: &mut KeybindingEditor, theme: &Theme) {
     if area.height < 2 {
         return;
     }
@@ -340,12 +340,19 @@ fn render_table(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme:
         ..area
     };
 
+    // Sync scroll state with actual viewport dimensions
+    editor.scroll.set_viewport(table_area.height);
+    editor
+        .scroll
+        .set_content_height(editor.filtered_indices.len() as u16);
+
     let visible_rows = table_area.height as usize;
+    let scroll_offset = editor.scroll.offset as usize;
 
     for (display_idx, &binding_idx) in editor
         .filtered_indices
         .iter()
-        .skip(editor.scroll_offset)
+        .skip(scroll_offset)
         .take(visible_rows)
         .enumerate()
     {
@@ -355,7 +362,7 @@ fn render_table(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme:
         }
 
         let binding = &editor.bindings[binding_idx];
-        let is_selected = editor.scroll_offset + display_idx == editor.selected;
+        let is_selected = scroll_offset + display_idx == editor.selected;
 
         let (row_bg, row_fg) = if is_selected {
             (theme.popup_selection_bg, theme.popup_text_fg)
@@ -448,9 +455,9 @@ fn render_table(frame: &mut Frame, area: Rect, editor: &KeybindingEditor, theme:
     }
 
     // Scrollbar
-    if editor.filtered_indices.len() > visible_rows {
+    if editor.scroll.needs_scrollbar() {
         let mut scrollbar_state =
-            ScrollbarState::new(editor.filtered_indices.len()).position(editor.scroll_offset);
+            ScrollbarState::new(editor.filtered_indices.len()).position(scroll_offset);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
         frame.render_stateful_widget(scrollbar, table_area, &mut scrollbar_state);
     }
@@ -1157,7 +1164,7 @@ fn handle_main_input(editor: &mut KeybindingEditor, event: &KeyEvent) -> Keybind
         }
         (KeyCode::Home, _) => {
             editor.selected = 0;
-            editor.scroll_offset = 0;
+            editor.scroll.offset = 0;
             KeybindingEditorAction::Consumed
         }
         (KeyCode::End, _) => {
