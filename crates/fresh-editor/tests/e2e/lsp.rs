@@ -7076,3 +7076,374 @@ fn test_lsp_toggle_for_buffer() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// Test that LSP diagnostics are properly cleared after edits that fix the code.
+///
+/// This reproduces a bug where diagnostic overlays become stale after multiple edits:
+/// 1. Start with valid code (no diagnostics)
+/// 2. Send diagnostics for an error (overlays are added)
+/// 3. Edit the buffer (simulating the user fixing the code)
+/// 4. Send empty diagnostics (no more errors)
+/// 5. Verify that all diagnostic overlays are removed
+///
+/// The bug was in the diagnostic caching: when empty diagnostics were sent after
+/// the code was fixed, the cache hash matched a previous empty-diagnostics state,
+/// causing the clear to be skipped and stale overlays to persist.
+#[test]
+fn test_lsp_diagnostics_cleared_after_edit_fix() -> anyhow::Result<()> {
+    use fresh::services::async_bridge::AsyncMessage;
+    use fresh::view::overlay::OverlayNamespace;
+    use lsp_types::Diagnostic;
+
+    let mut harness = EditorTestHarness::new(120, 30)?;
+
+    // Create a test file with valid C code
+    let temp_dir = tempfile::TempDir::new()?;
+    let test_file = temp_dir.path().join("test.c");
+    std::fs::write(
+        &test_file,
+        "#include <stdio.h>\n\nint main() {\n    printf(\"hello\\n\");\n    return 0;\n}\n",
+    )?;
+
+    // Open the file
+    harness.editor_mut().open_file(&test_file)?;
+    harness.render()?;
+
+    let uri = url::Url::from_file_path(&test_file)
+        .ok()
+        .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok())
+        .expect("Should create URI");
+    let uri_str = uri.as_str().to_string();
+
+    // Step 1: Send empty diagnostics (initial clean state)
+    if let Some(bridge) = harness.editor().async_bridge() {
+        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
+            uri: uri_str.clone(),
+            diagnostics: vec![],
+        });
+    }
+    harness.process_async_and_render()?;
+
+    // Verify: no diagnostic overlays
+    let diagnostic_ns = OverlayNamespace::from_string("lsp-diagnostic".to_string());
+    let diag_count = harness
+        .editor()
+        .active_state()
+        .overlays
+        .all()
+        .iter()
+        .filter(|o| o.namespace.as_ref() == Some(&diagnostic_ns))
+        .count();
+    assert_eq!(diag_count, 0, "Should start with 0 diagnostic overlays");
+
+    // Verify: no error shown in status bar
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("E:1") && !screen.contains("E:2"),
+        "Should have no errors in status bar initially"
+    );
+
+    // Step 2: Simulate the user introducing an error (e.g., changing printf to AAABBB)
+    // The editor buffer is modified, then the LSP sends diagnostics for the error.
+
+    // First, modify the buffer: go to "printf" and replace it
+    // "printf" starts at line 3 (0-indexed), column 4
+    // Navigate there
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?; // line 2
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?; // line 3
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?; // line 4 (printf line)
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE)?;
+    // Move to start of "printf" (skip 4 spaces)
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
+    }
+    // Select "printf" (6 chars)
+    for _ in 0..6 {
+        harness.send_key(KeyCode::Right, KeyModifiers::SHIFT)?;
+    }
+    // Type replacement
+    harness.type_text("AAABBB")?;
+    harness.render()?;
+
+    // Verify the buffer content changed
+    let content = harness.get_buffer_content().unwrap();
+    assert!(
+        content.contains("AAABBB"),
+        "Buffer should contain AAABBB after edit"
+    );
+    assert!(
+        !content.contains("printf"),
+        "Buffer should not contain printf after edit"
+    );
+
+    // Now send diagnostics for the error (simulating LSP response)
+    let error_diagnostic = Diagnostic {
+        range: lsp_types::Range {
+            start: lsp_types::Position {
+                line: 3,
+                character: 4,
+            },
+            end: lsp_types::Position {
+                line: 3,
+                character: 10,
+            },
+        },
+        severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+        code: None,
+        code_description: None,
+        source: Some("clangd".to_string()),
+        message: "use of undeclared identifier 'AAABBB'".to_string(),
+        related_information: None,
+        tags: None,
+        data: None,
+    };
+
+    if let Some(bridge) = harness.editor().async_bridge() {
+        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
+            uri: uri_str.clone(),
+            diagnostics: vec![error_diagnostic],
+        });
+    }
+    harness.process_async_and_render()?;
+
+    // Verify: diagnostic overlay was added
+    let diag_count = harness
+        .editor()
+        .active_state()
+        .overlays
+        .all()
+        .iter()
+        .filter(|o| o.namespace.as_ref() == Some(&diagnostic_ns))
+        .count();
+    assert_eq!(
+        diag_count, 1,
+        "Should have 1 diagnostic overlay after error introduced"
+    );
+
+    // Verify: error shown in status bar
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("E:1"),
+        "Status bar should show E:1 after error, got: {}",
+        screen.lines().last().unwrap_or("")
+    );
+
+    // Step 3: Fix the code by replacing AAABBB back with printf
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE)?;
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
+    }
+    for _ in 0..6 {
+        harness.send_key(KeyCode::Right, KeyModifiers::SHIFT)?;
+    }
+    harness.type_text("printf")?;
+    harness.render()?;
+
+    // Verify the buffer is fixed
+    let content = harness.get_buffer_content().unwrap();
+    assert!(
+        content.contains("printf"),
+        "Buffer should contain printf after fix"
+    );
+    assert!(
+        !content.contains("AAABBB"),
+        "Buffer should not contain AAABBB after fix"
+    );
+
+    // Step 4: Send empty diagnostics (simulating LSP response after fix)
+    if let Some(bridge) = harness.editor().async_bridge() {
+        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
+            uri: uri_str.clone(),
+            diagnostics: vec![],
+        });
+    }
+    harness.process_async_and_render()?;
+
+    // Step 5: Verify that ALL diagnostic overlays are cleared
+    let diag_count = harness
+        .editor()
+        .active_state()
+        .overlays
+        .all()
+        .iter()
+        .filter(|o| o.namespace.as_ref() == Some(&diagnostic_ns))
+        .count();
+    assert_eq!(
+        diag_count, 0,
+        "All diagnostic overlays should be cleared after fix, but {} remain",
+        diag_count
+    );
+
+    // Verify: no error in status bar
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("E:1"),
+        "Status bar should not show E:1 after fix, got: {}",
+        screen.lines().last().unwrap_or("")
+    );
+
+    Ok(())
+}
+
+/// Test that diagnostic cache does not prevent clearing overlays when
+/// diagnostics cycle back to a previously-seen state.
+///
+/// Sequence: empty -> [error] -> empty -> [error] -> empty
+/// Each transition should properly update overlays regardless of cache hits.
+#[test]
+fn test_lsp_diagnostics_cache_does_not_stale_on_cycle() -> anyhow::Result<()> {
+    use fresh::services::async_bridge::AsyncMessage;
+    use fresh::view::overlay::OverlayNamespace;
+    use lsp_types::Diagnostic;
+
+    let mut harness = EditorTestHarness::new(120, 30)?;
+
+    let temp_dir = tempfile::TempDir::new()?;
+    let test_file = temp_dir.path().join("test.c");
+    std::fs::write(&test_file, "int main() {\n    return 0;\n}\n")?;
+
+    harness.editor_mut().open_file(&test_file)?;
+    harness.render()?;
+
+    let uri = url::Url::from_file_path(&test_file)
+        .ok()
+        .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok())
+        .expect("Should create URI");
+    let uri_str = uri.as_str().to_string();
+    let diagnostic_ns = OverlayNamespace::from_string("lsp-diagnostic".to_string());
+
+    let make_error = || Diagnostic {
+        range: lsp_types::Range {
+            start: lsp_types::Position {
+                line: 1,
+                character: 4,
+            },
+            end: lsp_types::Position {
+                line: 1,
+                character: 12,
+            },
+        },
+        severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+        code: None,
+        code_description: None,
+        source: Some("test".to_string()),
+        message: "error on return".to_string(),
+        related_information: None,
+        tags: None,
+        data: None,
+    };
+
+    let count_diags = |h: &EditorTestHarness| -> usize {
+        let ns = OverlayNamespace::from_string("lsp-diagnostic".to_string());
+        h.editor()
+            .active_state()
+            .overlays
+            .all()
+            .iter()
+            .filter(|o| o.namespace.as_ref() == Some(&ns))
+            .count()
+    };
+
+    // Cycle 1: empty -> error -> empty
+    // Send empty diagnostics (initial)
+    if let Some(bridge) = harness.editor().async_bridge() {
+        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
+            uri: uri_str.clone(),
+            diagnostics: vec![],
+        });
+    }
+    harness.process_async_and_render()?;
+    assert_eq!(count_diags(&harness), 0, "Cycle 1: should start clean");
+
+    // Edit the buffer to trigger a change (delete semicolon)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Send error diagnostic
+    if let Some(bridge) = harness.editor().async_bridge() {
+        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
+            uri: uri_str.clone(),
+            diagnostics: vec![make_error()],
+        });
+    }
+    harness.process_async_and_render()?;
+    assert_eq!(
+        count_diags(&harness),
+        1,
+        "Cycle 1: should have 1 error after break"
+    );
+
+    // Fix it (add semicolon back)
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.type_text(";")?;
+    harness.render()?;
+
+    // Send empty diagnostics
+    if let Some(bridge) = harness.editor().async_bridge() {
+        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
+            uri: uri_str.clone(),
+            diagnostics: vec![],
+        });
+    }
+    harness.process_async_and_render()?;
+    assert_eq!(
+        count_diags(&harness),
+        0,
+        "Cycle 1: should be clean after fix"
+    );
+
+    // Cycle 2: error -> empty (cache should not block this)
+    // Break it again
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Send error diagnostic again
+    if let Some(bridge) = harness.editor().async_bridge() {
+        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
+            uri: uri_str.clone(),
+            diagnostics: vec![make_error()],
+        });
+    }
+    harness.process_async_and_render()?;
+    assert_eq!(
+        count_diags(&harness),
+        1,
+        "Cycle 2: should have 1 error after second break"
+    );
+
+    // Fix it again
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.type_text(";")?;
+    harness.render()?;
+
+    // Send empty diagnostics again - this is where the cache bug would strike
+    if let Some(bridge) = harness.editor().async_bridge() {
+        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
+            uri: uri_str.clone(),
+            diagnostics: vec![],
+        });
+    }
+    harness.process_async_and_render()?;
+
+    // THIS IS THE KEY ASSERTION: the diagnostic should be cleared
+    // even though we've sent empty diagnostics before (cache hit scenario)
+    let final_count = count_diags(&harness);
+    assert_eq!(
+        final_count, 0,
+        "Cycle 2: diagnostic overlays should be cleared after second fix, but {} remain. \
+         This indicates the diagnostic cache incorrectly prevented clearing stale overlays.",
+        final_count
+    );
+
+    // Also verify status bar is clean
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("E:1"),
+        "Status bar should not show errors after second fix"
+    );
+
+    Ok(())
+}

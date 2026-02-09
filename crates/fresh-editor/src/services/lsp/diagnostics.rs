@@ -84,10 +84,23 @@ pub fn apply_diagnostics_to_state_cached(
         if let Some(&cached_hash) = cache.get(&cache_key) {
             if cached_hash == new_hash {
                 // Diagnostics haven't changed for this buffer, skip all work
+                tracing::info!(
+                    "DIAG CACHE HIT: skipping {} diagnostics for {} (hash={})",
+                    diagnostics.len(),
+                    cache_key,
+                    new_hash
+                );
                 return;
             }
         }
     }
+
+    tracing::info!(
+        "DIAG CACHE MISS: applying {} diagnostics for {} (hash={})",
+        diagnostics.len(),
+        cache_key,
+        new_hash
+    );
 
     // Diagnostics have changed, do the expensive update
     apply_diagnostics_to_state(state, diagnostics, theme);
