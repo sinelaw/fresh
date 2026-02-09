@@ -3830,8 +3830,15 @@ impl SplitRenderer {
                 let implicit_line_num = current_source_line_num + 1;
 
                 if state.margins.left_config.enabled {
-                    // Indicator column (space)
-                    implicit_line_spans.push(Span::styled(" ", Style::default()));
+                    // Indicator column: check for diagnostic markers on this implicit line
+                    if decorations.diagnostic_lines.contains(&implicit_line_num) {
+                        implicit_line_spans.push(Span::styled(
+                            "●",
+                            Style::default().fg(ratatui::style::Color::Red),
+                        ));
+                    } else {
+                        implicit_line_spans.push(Span::styled(" ", Style::default()));
+                    }
 
                     // Line number
                     let estimated_lines = (state.buffer.len() / 80).max(1);

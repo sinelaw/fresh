@@ -7900,10 +7900,7 @@ log("STOPPED")
     // Create test file with bare `int x` on the LAST content line (trailing error).
     // This matches the original bug scenario exactly.
     let test_file = temp_dir.path().join("test.c");
-    std::fs::write(
-        &test_file,
-        "int main() {\n    return 0;\n}\n    int x\n",
-    )?;
+    std::fs::write(&test_file, "int main() {\n    return 0;\n}\n    int x\n")?;
 
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
@@ -7962,8 +7959,8 @@ log("STOPPED")
     // AFTER "int x". The ● gutter marker should appear on that line or the int x line.
     // Content area starts at screen row 2 (after menu bar and tab bar).
     // File line 4 (int x) = screen row 5, file line 5 (empty) = screen row 6.
-    let intx_row = 2 + 3;     // file line 4 (1-indexed) → screen row 5
-    let diag_row = 2 + 4;     // file line 5 (1-indexed, empty trailing line) → screen row 6
+    let intx_row = 2 + 3; // file line 4 (1-indexed) → screen row 5
+    let diag_row = 2 + 4; // file line 5 (1-indexed, empty trailing line) → screen row 6
     let intx_content = harness.get_screen_row(intx_row);
     let diag_content = harness.get_screen_row(diag_row);
 
@@ -7979,9 +7976,7 @@ log("STOPPED")
          Row {} (diag):  '{}'\n\
          This reproduces the bug where E:N shows in the status bar but the ● gutter marker \
          is missing on trailing error lines.\nFull screen:\n{}",
-        intx_row, intx_content,
-        diag_row, diag_content,
-        screen
+        intx_row, intx_content, diag_row, diag_content, screen
     );
 
     Ok(())

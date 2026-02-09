@@ -352,8 +352,17 @@ impl OverlayManager {
 
                 let range = *start_pos..*end_pos;
 
-                // Only include if actually overlaps viewport
-                if range.start < end && range.end > start {
+                // Only include if actually overlaps viewport.
+                // For zero-width ranges (e.g. diagnostics at a single position),
+                // check that the point is within [start, end] (inclusive).
+                // For non-zero ranges, check standard overlap: start < end && end > start.
+                let included = if range.start == range.end {
+                    range.start >= start && range.start <= end
+                } else {
+                    range.start < end && range.end > start
+                };
+
+                if included {
                     Some((overlay, range))
                 } else {
                     None
