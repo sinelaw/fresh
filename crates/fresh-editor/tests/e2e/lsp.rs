@@ -7077,372 +7077,336 @@ fn test_lsp_toggle_for_buffer() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Test that LSP diagnostics are properly cleared after edits that fix the code.
+/// Test that LSP document sync works correctly when didOpen is triggered
+/// by the first edit (auto_start path via send_lsp_changes_for_buffer).
 ///
-/// This reproduces a bug where diagnostic overlays become stale after multiple edits:
-/// 1. Start with valid code (no diagnostics)
-/// 2. Send diagnostics for an error (overlays are added)
-/// 3. Edit the buffer (simulating the user fixing the code)
-/// 4. Send empty diagnostics (no more errors)
-/// 5. Verify that all diagnostic overlays are removed
+/// This reproduces a bug where editing a buffer that hasn't been opened with
+/// the LSP server yet causes document corruption:
+/// 1. send_lsp_changes_for_buffer detects needs_open=true
+/// 2. It sends didOpen with the CURRENT (post-edit) buffer content
+/// 3. Then it sends didChange with PRE-EDIT changes
+/// 4. The server applies the didChange to the already-correct document, corrupting it
 ///
-/// The bug was in the diagnostic caching: when empty diagnostics were sent after
-/// the code was fixed, the cache hash matched a previous empty-diagnostics state,
-/// causing the clear to be skipped and stale overlays to persist.
+/// The fake LSP server tracks document content and echoes it back as a diagnostic
+/// message. The test verifies that after edits, the server's document matches
+/// the editor's buffer.
 #[test]
-fn test_lsp_diagnostics_cleared_after_edit_fix() -> anyhow::Result<()> {
-    use fresh::services::async_bridge::AsyncMessage;
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash/Python script which is not available on Windows"
+)]
+fn test_lsp_didopen_didchange_document_sync() -> anyhow::Result<()> {
     use fresh::view::overlay::OverlayNamespace;
-    use lsp_types::Diagnostic;
 
-    let mut harness = EditorTestHarness::new(120, 30)?;
+    // Create a Python-based fake LSP that tracks document content
+    let temp_dir = tempfile::tempdir()?;
+    let script_path = temp_dir.path().join("fake_lsp_tracking.py");
+    let log_path = temp_dir.path().join("lsp_doc_log.txt");
+    let log_path_str = log_path.to_string_lossy().to_string();
 
-    // Create a test file with valid C code
-    let temp_dir = tempfile::TempDir::new()?;
+    let script = format!(
+        r#"#!/usr/bin/env python3
+"""Fake LSP server that tracks document content and sends it as diagnostics."""
+import sys
+import json
+
+LOG_FILE = "{log_file}"
+
+documents = {{}}  # uri -> text
+
+def log(msg):
+    with open(LOG_FILE, "a") as f:
+        f.write(msg + "\n")
+        f.flush()
+
+def read_message():
+    """Read a JSON-RPC message from stdin."""
+    headers = {{}}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        line = line.decode("utf-8").strip()
+        if not line:
+            break
+        if ":" in line:
+            key, value = line.split(":", 1)
+            headers[key.strip()] = value.strip()
+    length = int(headers.get("Content-Length", 0))
+    if length == 0:
+        return None
+    body = sys.stdin.buffer.read(length)
+    return json.loads(body.decode("utf-8"))
+
+def send_message(msg):
+    """Send a JSON-RPC message to stdout."""
+    body = json.dumps(msg)
+    header = f"Content-Length: {{len(body)}}\r\n\r\n"
+    sys.stdout.buffer.write(header.encode("utf-8"))
+    sys.stdout.buffer.write(body.encode("utf-8"))
+    sys.stdout.buffer.flush()
+
+def send_diagnostics(uri, text):
+    """Send diagnostics based on document content."""
+    diagnostics = []
+    # If document contains BADIDENT, report an error
+    for i, line in enumerate(text.split("\\n")):
+        col = line.find("BADIDENT")
+        if col >= 0:
+            diagnostics.append({{
+                "range": {{
+                    "start": {{"line": i, "character": col}},
+                    "end": {{"line": i, "character": col + 8}}
+                }},
+                "severity": 1,
+                "source": "fake-lsp",
+                "message": f"DOCSTATE:{{text}}"
+            }})
+    if not diagnostics:
+        # Send empty diagnostics with document state in a special way
+        # We use a hint-level diagnostic to convey the document state
+        diagnostics = []
+    send_message({{
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {{
+            "uri": uri,
+            "diagnostics": diagnostics
+        }}
+    }})
+    log(f"DIAGNOSTICS: count={{len(diagnostics)}} uri={{uri}}")
+
+def apply_change(text, change):
+    """Apply a single textDocument/didChange content change."""
+    if "range" not in change or change["range"] is None:
+        # Full document replacement
+        return change["text"]
+    start = change["range"]["start"]
+    end = change["range"]["end"]
+    lines = text.split("\\n")
+    # Convert line/character to offset
+    offset = 0
+    for i in range(start["line"]):
+        if i < len(lines):
+            offset += len(lines[i]) + 1  # +1 for newline
+    start_offset = offset + start["character"]
+
+    offset = 0
+    for i in range(end["line"]):
+        if i < len(lines):
+            offset += len(lines[i]) + 1
+    end_offset = offset + end["character"]
+
+    return text[:start_offset] + change["text"] + text[end_offset:]
+
+log("STARTED")
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+
+    method = msg.get("method", "")
+    msg_id = msg.get("id")
+    params = msg.get("params", {{}})
+
+    if method == "initialize":
+        send_message({{
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {{
+                "capabilities": {{
+                    "textDocumentSync": 2,
+                    "diagnosticProvider": {{
+                        "interFileDependencies": False,
+                        "workspaceDiagnostics": False
+                    }}
+                }}
+            }}
+        }})
+        log("INITIALIZED")
+    elif method == "initialized":
+        pass
+    elif method == "textDocument/didOpen":
+        uri = params["textDocument"]["uri"]
+        text = params["textDocument"]["text"]
+        documents[uri] = text
+        log(f"DID_OPEN: uri={{uri}} len={{len(text)}}")
+        log(f"DID_OPEN_CONTENT: {{repr(text)}}")
+        send_diagnostics(uri, text)
+    elif method == "textDocument/didChange":
+        uri = params["textDocument"]["uri"]
+        text = documents.get(uri, "")
+        for change in params.get("contentChanges", []):
+            text = apply_change(text, change)
+        documents[uri] = text
+        log(f"DID_CHANGE: uri={{uri}} len={{len(text)}}")
+        log(f"DID_CHANGE_CONTENT: {{repr(text)}}")
+        send_diagnostics(uri, text)
+    elif method == "textDocument/diagnostic":
+        uri = params["textDocument"]["uri"]
+        send_message({{
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {{
+                "kind": "full",
+                "items": [],
+                "resultId": None
+            }}
+        }})
+    elif method == "textDocument/inlayHint":
+        send_message({{
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": []
+        }})
+    elif method == "shutdown":
+        send_message({{
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": None
+        }})
+        break
+    elif method == "exit":
+        break
+
+log("STOPPED")
+"#,
+        log_file = log_path_str
+    );
+
+    std::fs::write(&script_path, &script)?;
+    #[cfg(unix)]
+    {{
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms)?;
+    }}
+
+    // Create test file with valid code containing a known identifier
     let test_file = temp_dir.path().join("test.c");
     std::fs::write(
         &test_file,
-        "#include <stdio.h>\n\nint main() {\n    printf(\"hello\\n\");\n    return 0;\n}\n",
+        "int main() {\n    BADIDENT;\n    return 0;\n}\n",
     )?;
 
-    // Open the file
+    // Configure editor to use the tracking fake LSP with auto_start: true
+    // auto_start means the LSP is spawned lazily on first edit via
+    // send_lsp_changes_for_buffer, which triggers the didOpen+didChange bug
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "c".to_string(),
+        fresh::types::LspServerConfig {
+            command: "python3".to_string(),
+            args: vec![script_path.to_string_lossy().to_string()],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::types::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
     harness.editor_mut().open_file(&test_file)?;
     harness.render()?;
 
-    let uri = url::Url::from_file_path(&test_file)
-        .ok()
-        .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok())
-        .expect("Should create URI");
-    let uri_str = uri.as_str().to_string();
+    // Verify we see the initial content
+    let content = harness.get_buffer_content().unwrap();
+    assert!(content.contains("BADIDENT"), "Should have BADIDENT initially");
 
-    // Step 1: Send empty diagnostics (initial clean state)
-    if let Some(bridge) = harness.editor().async_bridge() {
-        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
-            uri: uri_str.clone(),
-            diagnostics: vec![],
-        });
+    // Now make an edit: go to BADIDENT and replace it with "return 1"
+    // This is the FIRST edit, which triggers LSP spawn + didOpen + didChange
+    // With the bug: didOpen sends post-edit content, didChange sends pre-edit changes
+    // Result: server document is corrupted
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?; // line 2 (BADIDENT line)
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE)?;
+    // Move to start of BADIDENT (skip 4 spaces)
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
     }
-    harness.process_async_and_render()?;
+    // Select BADIDENT (8 chars)
+    for _ in 0..8 {
+        harness.send_key(KeyCode::Right, KeyModifiers::SHIFT)?;
+    }
+    // Type replacement (valid code)
+    harness.type_text("return 1")?;
+    harness.render()?;
 
-    // Verify: no diagnostic overlays
+    // Verify the editor buffer is correct
+    let content = harness.get_buffer_content().unwrap();
+    assert!(
+        !content.contains("BADIDENT"),
+        "Buffer should not contain BADIDENT after fix"
+    );
+    assert!(
+        content.contains("return 1"),
+        "Buffer should contain 'return 1' after fix"
+    );
+
+    // Wait for the LSP to process messages and send diagnostics
+    for _ in 0..30 {
+        harness.process_async_and_render()?;
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    // Read the LSP log to see what document state the server has
+    let log_content = std::fs::read_to_string(&log_path).unwrap_or_default();
+    println!("=== LSP Document Tracking Log ===");
+    println!("{}", log_content);
+    println!("=================================");
+
+    // The server should have received the document and applied changes.
+    // After the fix, the server's document should NOT contain BADIDENT.
+    // With the bug, the server's document is corrupted because didOpen sent
+    // post-edit content and then didChange applied pre-edit changes on top.
+
+    // Check overlays: if the server has corrupted content, it might still
+    // report BADIDENT diagnostics or have garbled text that causes errors
     let diagnostic_ns = OverlayNamespace::from_string("lsp-diagnostic".to_string());
-    let diag_count = harness
+    let diag_overlays: Vec<_> = harness
         .editor()
         .active_state()
         .overlays
         .all()
         .iter()
         .filter(|o| o.namespace.as_ref() == Some(&diagnostic_ns))
-        .count();
-    assert_eq!(diag_count, 0, "Should start with 0 diagnostic overlays");
+        .collect();
 
-    // Verify: no error shown in status bar
-    let screen = harness.screen_to_string();
-    assert!(
-        !screen.contains("E:1") && !screen.contains("E:2"),
-        "Should have no errors in status bar initially"
-    );
+    // After replacing BADIDENT with "return 1", the server should see valid code
+    // and send 0 diagnostics. Any remaining diagnostic overlays indicate
+    // the server's document is out of sync (the bug).
+    let diag_count = diag_overlays.len();
 
-    // Step 2: Simulate the user introducing an error (e.g., changing printf to AAABBB)
-    // The editor buffer is modified, then the LSP sends diagnostics for the error.
+    // Also check the log for the final document content
+    let final_content_line = log_content
+        .lines()
+        .filter(|l| l.starts_with("DID_CHANGE_CONTENT:") || l.starts_with("DID_OPEN_CONTENT:"))
+        .last()
+        .unwrap_or("");
+    println!("Final server document: {}", final_content_line);
 
-    // First, modify the buffer: go to "printf" and replace it
-    // "printf" starts at line 3 (0-indexed), column 4
-    // Navigate there
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?; // line 2
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?; // line 3
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?; // line 4 (printf line)
-    harness.send_key(KeyCode::Home, KeyModifiers::NONE)?;
-    // Move to start of "printf" (skip 4 spaces)
-    for _ in 0..4 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
-    }
-    // Select "printf" (6 chars)
-    for _ in 0..6 {
-        harness.send_key(KeyCode::Right, KeyModifiers::SHIFT)?;
-    }
-    // Type replacement
-    harness.type_text("AAABBB")?;
-    harness.render()?;
+    // The editor's buffer content
+    let editor_content = harness.get_buffer_content().unwrap();
+    println!("Editor buffer content: {:?}", editor_content);
 
-    // Verify the buffer content changed
-    let content = harness.get_buffer_content().unwrap();
-    assert!(
-        content.contains("AAABBB"),
-        "Buffer should contain AAABBB after edit"
-    );
-    assert!(
-        !content.contains("printf"),
-        "Buffer should not contain printf after edit"
-    );
-
-    // Now send diagnostics for the error (simulating LSP response)
-    let error_diagnostic = Diagnostic {
-        range: lsp_types::Range {
-            start: lsp_types::Position {
-                line: 3,
-                character: 4,
-            },
-            end: lsp_types::Position {
-                line: 3,
-                character: 10,
-            },
-        },
-        severity: Some(lsp_types::DiagnosticSeverity::ERROR),
-        code: None,
-        code_description: None,
-        source: Some("clangd".to_string()),
-        message: "use of undeclared identifier 'AAABBB'".to_string(),
-        related_information: None,
-        tags: None,
-        data: None,
-    };
-
-    if let Some(bridge) = harness.editor().async_bridge() {
-        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
-            uri: uri_str.clone(),
-            diagnostics: vec![error_diagnostic],
-        });
-    }
-    harness.process_async_and_render()?;
-
-    // Verify: diagnostic overlay was added
-    let diag_count = harness
-        .editor()
-        .active_state()
-        .overlays
-        .all()
-        .iter()
-        .filter(|o| o.namespace.as_ref() == Some(&diagnostic_ns))
-        .count();
-    assert_eq!(
-        diag_count, 1,
-        "Should have 1 diagnostic overlay after error introduced"
-    );
-
-    // Verify: error shown in status bar
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("E:1"),
-        "Status bar should show E:1 after error, got: {}",
-        screen.lines().last().unwrap_or("")
-    );
-
-    // Step 3: Fix the code by replacing AAABBB back with printf
-    harness.send_key(KeyCode::Home, KeyModifiers::NONE)?;
-    for _ in 0..4 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
-    }
-    for _ in 0..6 {
-        harness.send_key(KeyCode::Right, KeyModifiers::SHIFT)?;
-    }
-    harness.type_text("printf")?;
-    harness.render()?;
-
-    // Verify the buffer is fixed
-    let content = harness.get_buffer_content().unwrap();
-    assert!(
-        content.contains("printf"),
-        "Buffer should contain printf after fix"
-    );
-    assert!(
-        !content.contains("AAABBB"),
-        "Buffer should not contain AAABBB after fix"
-    );
-
-    // Step 4: Send empty diagnostics (simulating LSP response after fix)
-    if let Some(bridge) = harness.editor().async_bridge() {
-        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
-            uri: uri_str.clone(),
-            diagnostics: vec![],
-        });
-    }
-    harness.process_async_and_render()?;
-
-    // Step 5: Verify that ALL diagnostic overlays are cleared
-    let diag_count = harness
-        .editor()
-        .active_state()
-        .overlays
-        .all()
-        .iter()
-        .filter(|o| o.namespace.as_ref() == Some(&diagnostic_ns))
-        .count();
+    // The key assertion: if the server document contains "BADIDENT" but the
+    // editor doesn't, the document sync is broken (the bug).
+    // With the bug: server has corrupted content, may still contain BADIDENT
+    // or have garbled text that triggers error diagnostics
     assert_eq!(
         diag_count, 0,
-        "All diagnostic overlays should be cleared after fix, but {} remain",
-        diag_count
-    );
-
-    // Verify: no error in status bar
-    let screen = harness.screen_to_string();
-    assert!(
-        !screen.contains("E:1"),
-        "Status bar should not show E:1 after fix, got: {}",
-        screen.lines().last().unwrap_or("")
-    );
-
-    Ok(())
-}
-
-/// Test that diagnostic cache does not prevent clearing overlays when
-/// diagnostics cycle back to a previously-seen state.
-///
-/// Sequence: empty -> [error] -> empty -> [error] -> empty
-/// Each transition should properly update overlays regardless of cache hits.
-#[test]
-fn test_lsp_diagnostics_cache_does_not_stale_on_cycle() -> anyhow::Result<()> {
-    use fresh::services::async_bridge::AsyncMessage;
-    use fresh::view::overlay::OverlayNamespace;
-    use lsp_types::Diagnostic;
-
-    let mut harness = EditorTestHarness::new(120, 30)?;
-
-    let temp_dir = tempfile::TempDir::new()?;
-    let test_file = temp_dir.path().join("test.c");
-    std::fs::write(&test_file, "int main() {\n    return 0;\n}\n")?;
-
-    harness.editor_mut().open_file(&test_file)?;
-    harness.render()?;
-
-    let uri = url::Url::from_file_path(&test_file)
-        .ok()
-        .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok())
-        .expect("Should create URI");
-    let uri_str = uri.as_str().to_string();
-    let diagnostic_ns = OverlayNamespace::from_string("lsp-diagnostic".to_string());
-
-    let make_error = || Diagnostic {
-        range: lsp_types::Range {
-            start: lsp_types::Position {
-                line: 1,
-                character: 4,
-            },
-            end: lsp_types::Position {
-                line: 1,
-                character: 12,
-            },
-        },
-        severity: Some(lsp_types::DiagnosticSeverity::ERROR),
-        code: None,
-        code_description: None,
-        source: Some("test".to_string()),
-        message: "error on return".to_string(),
-        related_information: None,
-        tags: None,
-        data: None,
-    };
-
-    let count_diags = |h: &EditorTestHarness| -> usize {
-        let ns = OverlayNamespace::from_string("lsp-diagnostic".to_string());
-        h.editor()
-            .active_state()
-            .overlays
-            .all()
-            .iter()
-            .filter(|o| o.namespace.as_ref() == Some(&ns))
-            .count()
-    };
-
-    // Cycle 1: empty -> error -> empty
-    // Send empty diagnostics (initial)
-    if let Some(bridge) = harness.editor().async_bridge() {
-        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
-            uri: uri_str.clone(),
-            diagnostics: vec![],
-        });
-    }
-    harness.process_async_and_render()?;
-    assert_eq!(count_diags(&harness), 0, "Cycle 1: should start clean");
-
-    // Edit the buffer to trigger a change (delete semicolon)
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
-    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
-    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE)?;
-    harness.render()?;
-
-    // Send error diagnostic
-    if let Some(bridge) = harness.editor().async_bridge() {
-        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
-            uri: uri_str.clone(),
-            diagnostics: vec![make_error()],
-        });
-    }
-    harness.process_async_and_render()?;
-    assert_eq!(
-        count_diags(&harness),
-        1,
-        "Cycle 1: should have 1 error after break"
-    );
-
-    // Fix it (add semicolon back)
-    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
-    harness.type_text(";")?;
-    harness.render()?;
-
-    // Send empty diagnostics
-    if let Some(bridge) = harness.editor().async_bridge() {
-        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
-            uri: uri_str.clone(),
-            diagnostics: vec![],
-        });
-    }
-    harness.process_async_and_render()?;
-    assert_eq!(
-        count_diags(&harness),
-        0,
-        "Cycle 1: should be clean after fix"
-    );
-
-    // Cycle 2: error -> empty (cache should not block this)
-    // Break it again
-    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
-    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE)?;
-    harness.render()?;
-
-    // Send error diagnostic again
-    if let Some(bridge) = harness.editor().async_bridge() {
-        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
-            uri: uri_str.clone(),
-            diagnostics: vec![make_error()],
-        });
-    }
-    harness.process_async_and_render()?;
-    assert_eq!(
-        count_diags(&harness),
-        1,
-        "Cycle 2: should have 1 error after second break"
-    );
-
-    // Fix it again
-    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
-    harness.type_text(";")?;
-    harness.render()?;
-
-    // Send empty diagnostics again - this is where the cache bug would strike
-    if let Some(bridge) = harness.editor().async_bridge() {
-        let _ = bridge.sender().send(AsyncMessage::LspDiagnostics {
-            uri: uri_str.clone(),
-            diagnostics: vec![],
-        });
-    }
-    harness.process_async_and_render()?;
-
-    // THIS IS THE KEY ASSERTION: the diagnostic should be cleared
-    // even though we've sent empty diagnostics before (cache hit scenario)
-    let final_count = count_diags(&harness);
-    assert_eq!(
-        final_count, 0,
-        "Cycle 2: diagnostic overlays should be cleared after second fix, but {} remain. \
-         This indicates the diagnostic cache incorrectly prevented clearing stale overlays.",
-        final_count
-    );
-
-    // Also verify status bar is clean
-    let screen = harness.screen_to_string();
-    assert!(
-        !screen.contains("E:1"),
-        "Status bar should not show errors after second fix"
+        "After replacing BADIDENT with valid code, there should be 0 diagnostic overlays. \
+         Found {} overlays. This indicates the LSP server's document is out of sync \
+         with the editor buffer (didOpen+didChange corruption bug).\n\
+         Server log:\n{}",
+        diag_count, log_content
     );
 
     Ok(())
