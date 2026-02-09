@@ -7711,3 +7711,273 @@ log("STOPPED")
 
     Ok(())
 }
+
+/// Test that the diagnostic gutter marker (●) appears on a trailing error line.
+///
+/// This reproduces the bug where opening a file like:
+/// ```
+/// int main() {
+///     return 0;
+/// }
+///     int x
+/// ```
+/// shows `E:1` in the status bar but NO `●` gutter marker on the trailing error line.
+#[test]
+fn test_lsp_diagnostic_gutter_marker_on_trailing_line() -> anyhow::Result<()> {
+    // Create a Python-based fake LSP that sends diagnostics for bare "int x" (no semicolon)
+    let temp_dir = tempfile::tempdir()?;
+    let script_path = temp_dir.path().join("fake_lsp_gutter.py");
+    let log_path = temp_dir.path().join("lsp_gutter_log.txt");
+    let log_path_str = log_path.to_string_lossy().to_string();
+
+    let script = format!(
+        r#"#!/usr/bin/env python3
+"""Fake LSP server that sends diagnostics for bare 'int x' declarations (no semicolon)."""
+import sys
+import json
+
+LOG_FILE = "{log_file}"
+
+documents = {{}}
+
+def log(msg):
+    with open(LOG_FILE, "a") as f:
+        f.write(msg + "\n")
+        f.flush()
+
+def read_message():
+    headers = {{}}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        line = line.decode("utf-8").strip()
+        if not line:
+            break
+        if ":" in line:
+            key, value = line.split(":", 1)
+            headers[key.strip()] = value.strip()
+    length = int(headers.get("Content-Length", 0))
+    if length == 0:
+        return None
+    body = sys.stdin.buffer.read(length)
+    return json.loads(body.decode("utf-8"))
+
+def send_message(msg):
+    body = json.dumps(msg)
+    header = f"Content-Length: {{len(body)}}\r\n\r\n"
+    sys.stdout.buffer.write(header.encode("utf-8"))
+    sys.stdout.buffer.write(body.encode("utf-8"))
+    sys.stdout.buffer.flush()
+
+def send_diagnostics(uri, text):
+    diagnostics = []
+    for i, line in enumerate(text.split("\n")):
+        stripped = line.strip()
+        # Detect bare "int x" without semicolon - mimics clangd error for stray declaration
+        if stripped == "int x":
+            col = len(line) - len(line.lstrip())
+            diagnostics.append({{
+                "range": {{
+                    "start": {{"line": i, "character": col}},
+                    "end": {{"line": i, "character": col + 5}}
+                }},
+                "severity": 1,
+                "source": "fake-lsp",
+                "message": "expected ';' at end of declaration"
+            }})
+    send_message({{
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {{
+            "uri": uri,
+            "diagnostics": diagnostics
+        }}
+    }})
+    log(f"DIAGNOSTICS: count={{len(diagnostics)}}")
+
+def apply_change(text, change):
+    if "range" not in change or change["range"] is None:
+        return change["text"]
+    start = change["range"]["start"]
+    end = change["range"]["end"]
+    lines = text.split("\n")
+    offset = 0
+    for i in range(start["line"]):
+        if i < len(lines):
+            offset += len(lines[i]) + 1
+    start_offset = offset + start["character"]
+    offset = 0
+    for i in range(end["line"]):
+        if i < len(lines):
+            offset += len(lines[i]) + 1
+    end_offset = offset + end["character"]
+    return text[:start_offset] + change["text"] + text[end_offset:]
+
+log("STARTED")
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+
+    method = msg.get("method", "")
+    msg_id = msg.get("id")
+    params = msg.get("params", {{}})
+
+    if method == "initialize":
+        send_message({{
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {{
+                "capabilities": {{
+                    "textDocumentSync": 2,
+                    "diagnosticProvider": {{
+                        "interFileDependencies": False,
+                        "workspaceDiagnostics": False
+                    }}
+                }}
+            }}
+        }})
+        log("INITIALIZED")
+    elif method == "initialized":
+        pass
+    elif method == "textDocument/didOpen":
+        uri = params["textDocument"]["uri"]
+        text = params["textDocument"]["text"]
+        documents[uri] = text
+        log(f"DID_OPEN: len={{len(text)}}")
+        send_diagnostics(uri, text)
+    elif method == "textDocument/didChange":
+        uri = params["textDocument"]["uri"]
+        text = documents.get(uri, "")
+        for change in params.get("contentChanges", []):
+            text = apply_change(text, change)
+        documents[uri] = text
+        log(f"DID_CHANGE: len={{len(text)}}")
+        send_diagnostics(uri, text)
+    elif method == "textDocument/diagnostic":
+        send_message({{
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {{
+                "kind": "full",
+                "items": [],
+                "resultId": None
+            }}
+        }})
+    elif method == "textDocument/inlayHint":
+        send_message({{
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": []
+        }})
+    elif method == "shutdown":
+        send_message({{
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": None
+        }})
+        break
+    elif method == "exit":
+        break
+
+log("STOPPED")
+"#,
+        log_file = log_path_str
+    );
+
+    std::fs::write(&script_path, &script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms)?;
+    }
+
+    // Create test file with bare `int x` on the LAST content line (trailing error).
+    // This matches the original bug scenario exactly.
+    let test_file = temp_dir.path().join("test.c");
+    std::fs::write(
+        &test_file,
+        "int main() {\n    return 0;\n}\n    int x\n",
+    )?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "c".to_string(),
+        fresh::types::LspServerConfig {
+            command: "python3".to_string(),
+            args: vec![script_path.to_string_lossy().to_string()],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::types::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.editor_mut().open_file(&test_file)?;
+    harness.render()?;
+
+    // Trigger LSP spawn with a trivial edit
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL)?;
+    harness.type_text(" ")?;
+    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Wait for LSP to start and send initial diagnostics
+    for _ in 0..30 {
+        harness.process_async_and_render()?;
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    // Verify status bar shows error indicator
+    let screen = harness.screen_to_string();
+    let status_bar = harness.get_status_bar();
+    let log_content = std::fs::read_to_string(&log_path).unwrap_or_default();
+
+    println!("Full screen:");
+    println!("{}", screen);
+    println!("Status bar: {}", status_bar);
+    println!("LSP log:\n{}", log_content);
+
+    assert!(
+        status_bar.contains("E:"),
+        "Status bar should show error indicator E: for the trailing 'int x' line.\n\
+         Status bar: {}\nLSP log:\n{}",
+        status_bar,
+        log_content
+    );
+
+    // `int x` is on file line 4 (1-indexed), which is screen row 5
+    // Content area starts at row 2 (after menu bar and tab bar), so line 4 = row 2+3 = row 5
+    let error_screen_row = 2 + 3;
+    let row_content = harness.get_screen_row(error_screen_row);
+
+    println!(
+        "Screen row {} (int x line): '{}'",
+        error_screen_row, row_content
+    );
+
+    // The ● gutter marker should appear on the row containing `int x`
+    assert!(
+        row_content.contains("\u{25CF}") || row_content.contains("●"),
+        "Expected diagnostic gutter marker ● on the trailing 'int x' error line (screen row {}).\n\
+         Row content: '{}'\n\
+         This reproduces the bug where E:N shows in the status bar but the ● gutter marker \
+         is missing on trailing error lines.\nFull screen:\n{}",
+        error_screen_row,
+        row_content,
+        screen
+    );
+
+    Ok(())
+}
