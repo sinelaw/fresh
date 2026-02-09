@@ -7429,6 +7429,10 @@ log("STOPPED")
 /// Uses a Python-based fake LSP server that tracks document content and sends diagnostics
 /// based on whether "BADIDENT" appears in the document.
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "Uses Python-based fake LSP server which may not be available on Windows"
+)]
 fn test_lsp_diagnostics_rendered_after_selection_replace() -> anyhow::Result<()> {
     // Create a Python-based fake LSP that tracks document content
     let temp_dir = tempfile::tempdir()?;
@@ -7723,6 +7727,10 @@ log("STOPPED")
 /// ```
 /// shows `E:1` in the status bar but NO `●` gutter marker on the trailing error line.
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "Uses Python-based fake LSP server which may not be available on Windows"
+)]
 fn test_lsp_diagnostic_gutter_marker_on_trailing_line() -> anyhow::Result<()> {
     // Create a Python-based fake LSP that sends diagnostics for bare "int x" (no semicolon)
     let temp_dir = tempfile::tempdir()?;
