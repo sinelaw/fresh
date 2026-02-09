@@ -2294,6 +2294,27 @@ impl Editor {
         self.adjust_other_split_cursors_for_event(&bulk_edit);
         // Note: Do NOT clear search overlays - markers track through edits for F3/Shift+F3
 
+        // Notify LSP of the change using full document replacement.
+        // Bulk edits combine multiple Delete+Insert operations into a single tree pass,
+        // so computing individual incremental LSP changes is not feasible. Instead,
+        // send the full document content which is always correct.
+        let buffer_id = self.active_buffer();
+        let full_content_change = self
+            .buffers
+            .get(&buffer_id)
+            .and_then(|s| s.buffer.to_string())
+            .map(|text| {
+                vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text,
+                }]
+            })
+            .unwrap_or_default();
+        if !full_content_change.is_empty() {
+            self.send_lsp_changes_for_buffer(buffer_id, full_content_change);
+        }
+
         Some(bulk_edit)
     }
 

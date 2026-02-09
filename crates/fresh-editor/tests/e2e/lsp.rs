@@ -7150,7 +7150,7 @@ def send_diagnostics(uri, text):
     """Send diagnostics based on document content."""
     diagnostics = []
     # If document contains BADIDENT, report an error
-    for i, line in enumerate(text.split("\\n")):
+    for i, line in enumerate(text.split("\n")):
         col = line.find("BADIDENT")
         if col >= 0:
             diagnostics.append({{
@@ -7183,7 +7183,7 @@ def apply_change(text, change):
         return change["text"]
     start = change["range"]["start"]
     end = change["range"]["end"]
-    lines = text.split("\\n")
+    lines = text.split("\n")
     # Convert line/character to offset
     offset = 0
     for i in range(start["line"]):
@@ -7238,6 +7238,7 @@ while True:
         uri = params["textDocument"]["uri"]
         text = documents.get(uri, "")
         for change in params.get("contentChanges", []):
+            log(f"DID_CHANGE_RAW: {{json.dumps(change)}}")
             text = apply_change(text, change)
         documents[uri] = text
         log(f"DID_CHANGE: uri={{uri}} len={{len(text)}}")
