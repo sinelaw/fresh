@@ -7278,12 +7278,14 @@ log("STOPPED")
 
     std::fs::write(&script_path, &script)?;
     #[cfg(unix)]
-    {{
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&script_path)?.permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&script_path, perms)?;
-    }}
+    {
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+    }
 
     // Create test file with valid code containing a known identifier
     let test_file = temp_dir.path().join("test.c");
@@ -7320,7 +7322,10 @@ log("STOPPED")
 
     // Verify we see the initial content
     let content = harness.get_buffer_content().unwrap();
-    assert!(content.contains("BADIDENT"), "Should have BADIDENT initially");
+    assert!(
+        content.contains("BADIDENT"),
+        "Should have BADIDENT initially"
+    );
 
     // Now make an edit: go to BADIDENT and replace it with "return 1"
     // This is the FIRST edit, which triggers LSP spawn + didOpen + didChange
