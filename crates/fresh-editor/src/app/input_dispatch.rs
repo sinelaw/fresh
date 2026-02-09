@@ -166,7 +166,12 @@ impl Editor {
                 .popups
                 .dispatch_input(event, &mut ctx);
             self.process_deferred_actions(ctx);
-            return Some(result);
+            // If the popup handler returned Ignored (e.g., non-word character,
+            // Ctrl+key, arrow keys), fall through to normal input handling.
+            // The deferred ClosePopup action was already processed above.
+            if result != InputResult::Ignored {
+                return Some(result);
+            }
         }
 
         None

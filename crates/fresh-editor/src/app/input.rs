@@ -89,6 +89,12 @@ impl Editor {
             return Ok(());
         }
 
+        // If a modal was dismissed (e.g., completion popup closed and returned Ignored),
+        // recalculate the context so the key is processed in the correct context.
+        if context != self.get_key_context() {
+            context = self.get_key_context();
+        }
+
         // Only check buffer mode keybindings if we're not in a higher-priority context
         // (Menu, Prompt, Popup should take precedence over mode bindings)
         let should_check_mode_bindings = matches!(

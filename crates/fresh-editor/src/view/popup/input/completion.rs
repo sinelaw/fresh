@@ -39,15 +39,16 @@ pub fn handle_completion_input(
             InputResult::Consumed
         }
 
-        // Arrow navigation
+        // Arrow navigation (Up/Down navigate the list)
         KeyCode::Up | KeyCode::Down if event.modifiers.is_empty() => {
             // We can't use popup here since it was moved, but the caller will handle this
             InputResult::Consumed
         }
 
-        // Type-to-filter: allow both lowercase and uppercase letters
+        // Type-to-filter: only word characters (letters, digits, underscore)
         KeyCode::Char(c)
-            if event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT =>
+            if (event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT)
+                && (c.is_alphanumeric() || c == '_') =>
         {
             ctx.defer(DeferredAction::PopupTypeChar(c));
             InputResult::Consumed
@@ -59,8 +60,12 @@ pub fn handle_completion_input(
             InputResult::Consumed
         }
 
-        // Consume all other keys (modal behavior)
-        _ => InputResult::Consumed,
+        // All other keys (non-word chars, arrows, Ctrl+key, Delete, etc.)
+        // close the popup and pass through to normal input handling
+        _ => {
+            ctx.defer(DeferredAction::ClosePopup);
+            InputResult::Ignored
+        }
     }
 }
 
@@ -89,7 +94,7 @@ pub fn handle_completion_input_with_popup(
             InputResult::Consumed
         }
 
-        // Arrow navigation
+        // Arrow navigation (Up/Down navigate the list)
         KeyCode::Up if event.modifiers.is_empty() => {
             popup.select_prev();
             InputResult::Consumed
@@ -99,9 +104,10 @@ pub fn handle_completion_input_with_popup(
             InputResult::Consumed
         }
 
-        // Type-to-filter: allow both lowercase and uppercase letters
+        // Type-to-filter: only word characters (letters, digits, underscore)
         KeyCode::Char(c)
-            if event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT =>
+            if (event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT)
+                && (c.is_alphanumeric() || c == '_') =>
         {
             ctx.defer(DeferredAction::PopupTypeChar(c));
             InputResult::Consumed
@@ -113,7 +119,11 @@ pub fn handle_completion_input_with_popup(
             InputResult::Consumed
         }
 
-        // Consume all other keys (modal behavior)
-        _ => InputResult::Consumed,
+        // All other keys (non-word chars, arrows, Ctrl+key, Delete, etc.)
+        // close the popup and pass through to normal input handling
+        _ => {
+            ctx.defer(DeferredAction::ClosePopup);
+            InputResult::Ignored
+        }
     }
 }
