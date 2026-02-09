@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use interprocess::local_socket::{
-    prelude::*, traits::ListenerNonblockingMode, Listener, ListenerOptions, Stream,
+    prelude::*, Listener, ListenerNonblockingMode, ListenerOptions, Stream,
 };
 
 use crate::workspace::encode_path_for_filename;
