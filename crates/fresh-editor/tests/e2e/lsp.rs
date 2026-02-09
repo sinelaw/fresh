@@ -7774,17 +7774,18 @@ def send_diagnostics(uri, text):
     diagnostics = []
     for i, line in enumerate(text.split("\n")):
         stripped = line.strip()
-        # Detect bare "int x" without semicolon - mimics clangd error for stray declaration
+        # Detect bare "int x" without semicolon - mimics clangd behavior exactly:
+        # clangd reports the diagnostic as a zero-width range at the START of the
+        # NEXT line (line i+1, char 0), not on the "int x" line itself.
         if stripped == "int x":
-            col = len(line) - len(line.lstrip())
             diagnostics.append({{
                 "range": {{
-                    "start": {{"line": i, "character": col}},
-                    "end": {{"line": i, "character": col + 5}}
+                    "start": {{"line": i + 1, "character": 0}},
+                    "end": {{"line": i + 1, "character": 0}}
                 }},
                 "severity": 1,
                 "source": "fake-lsp",
-                "message": "expected ';' at end of declaration"
+                "message": "Expected ';' after top level declarator"
             }})
     send_message({{
         "jsonrpc": "2.0",
@@ -7957,25 +7958,29 @@ log("STOPPED")
         log_content
     );
 
-    // `int x` is on file line 4 (1-indexed), which is screen row 5
-    // Content area starts at row 2 (after menu bar and tab bar), so line 4 = row 2+3 = row 5
-    let error_screen_row = 2 + 3;
-    let row_content = harness.get_screen_row(error_screen_row);
+    // Clangd reports the diagnostic at line 5 (0-indexed), char 0 - the empty line
+    // AFTER "int x". The ● gutter marker should appear on that line or the int x line.
+    // Content area starts at screen row 2 (after menu bar and tab bar).
+    // File line 4 (int x) = screen row 5, file line 5 (empty) = screen row 6.
+    let intx_row = 2 + 3;     // file line 4 (1-indexed) → screen row 5
+    let diag_row = 2 + 4;     // file line 5 (1-indexed, empty trailing line) → screen row 6
+    let intx_content = harness.get_screen_row(intx_row);
+    let diag_content = harness.get_screen_row(diag_row);
 
-    println!(
-        "Screen row {} (int x line): '{}'",
-        error_screen_row, row_content
-    );
+    println!("Screen row {} (int x line): '{}'", intx_row, intx_content);
+    println!("Screen row {} (diag line):  '{}'", diag_row, diag_content);
 
-    // The ● gutter marker should appear on the row containing `int x`
+    // The ● gutter marker should appear on at least one of these rows
+    let has_marker = intx_content.contains("●") || diag_content.contains("●");
     assert!(
-        row_content.contains("\u{25CF}") || row_content.contains("●"),
-        "Expected diagnostic gutter marker ● on the trailing 'int x' error line (screen row {}).\n\
-         Row content: '{}'\n\
+        has_marker,
+        "Expected diagnostic gutter marker ● near the trailing 'int x' error line.\n\
+         Row {} (int x): '{}'\n\
+         Row {} (diag):  '{}'\n\
          This reproduces the bug where E:N shows in the status bar but the ● gutter marker \
          is missing on trailing error lines.\nFull screen:\n{}",
-        error_screen_row,
-        row_content,
+        intx_row, intx_content,
+        diag_row, diag_content,
         screen
     );
 
