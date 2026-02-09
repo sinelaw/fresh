@@ -7417,3 +7417,297 @@ log("STOPPED")
 
     Ok(())
 }
+
+/// Test that LSP diagnostics are displayed in rendered output and update correctly after edits.
+///
+/// This is an end-to-end test that examines the final rendered screen output (per README
+/// guidelines) rather than internal state. It verifies:
+/// 1. Diagnostic indicators appear in rendered output when code has errors
+/// 2. After editing to fix the error, diagnostic indicators disappear from rendered output
+/// 3. The LSP server's document stays in sync through selection replacement (bulk edit path)
+///
+/// Uses a Python-based fake LSP server that tracks document content and sends diagnostics
+/// based on whether "BADIDENT" appears in the document.
+#[test]
+fn test_lsp_diagnostics_rendered_after_selection_replace() -> anyhow::Result<()> {
+    // Create a Python-based fake LSP that tracks document content
+    let temp_dir = tempfile::tempdir()?;
+    let script_path = temp_dir.path().join("fake_lsp_render.py");
+    let log_path = temp_dir.path().join("lsp_render_log.txt");
+    let log_path_str = log_path.to_string_lossy().to_string();
+
+    let script = format!(
+        r#"#!/usr/bin/env python3
+"""Fake LSP server that sends diagnostics based on document content."""
+import sys
+import json
+
+LOG_FILE = "{log_file}"
+
+documents = {{}}
+
+def log(msg):
+    with open(LOG_FILE, "a") as f:
+        f.write(msg + "\n")
+        f.flush()
+
+def read_message():
+    headers = {{}}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        line = line.decode("utf-8").strip()
+        if not line:
+            break
+        if ":" in line:
+            key, value = line.split(":", 1)
+            headers[key.strip()] = value.strip()
+    length = int(headers.get("Content-Length", 0))
+    if length == 0:
+        return None
+    body = sys.stdin.buffer.read(length)
+    return json.loads(body.decode("utf-8"))
+
+def send_message(msg):
+    body = json.dumps(msg)
+    header = f"Content-Length: {{len(body)}}\r\n\r\n"
+    sys.stdout.buffer.write(header.encode("utf-8"))
+    sys.stdout.buffer.write(body.encode("utf-8"))
+    sys.stdout.buffer.flush()
+
+def send_diagnostics(uri, text):
+    diagnostics = []
+    for i, line in enumerate(text.split("\n")):
+        col = line.find("BADIDENT")
+        if col >= 0:
+            diagnostics.append({{
+                "range": {{
+                    "start": {{"line": i, "character": col}},
+                    "end": {{"line": i, "character": col + 8}}
+                }},
+                "severity": 1,
+                "source": "fake-lsp",
+                "message": "Unknown identifier BADIDENT"
+            }})
+    send_message({{
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {{
+            "uri": uri,
+            "diagnostics": diagnostics
+        }}
+    }})
+    log(f"DIAGNOSTICS: count={{len(diagnostics)}}")
+
+def apply_change(text, change):
+    if "range" not in change or change["range"] is None:
+        return change["text"]
+    start = change["range"]["start"]
+    end = change["range"]["end"]
+    lines = text.split("\n")
+    offset = 0
+    for i in range(start["line"]):
+        if i < len(lines):
+            offset += len(lines[i]) + 1
+    start_offset = offset + start["character"]
+    offset = 0
+    for i in range(end["line"]):
+        if i < len(lines):
+            offset += len(lines[i]) + 1
+    end_offset = offset + end["character"]
+    return text[:start_offset] + change["text"] + text[end_offset:]
+
+log("STARTED")
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+
+    method = msg.get("method", "")
+    msg_id = msg.get("id")
+    params = msg.get("params", {{}})
+
+    if method == "initialize":
+        send_message({{
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {{
+                "capabilities": {{
+                    "textDocumentSync": 2,
+                    "diagnosticProvider": {{
+                        "interFileDependencies": False,
+                        "workspaceDiagnostics": False
+                    }}
+                }}
+            }}
+        }})
+        log("INITIALIZED")
+    elif method == "initialized":
+        pass
+    elif method == "textDocument/didOpen":
+        uri = params["textDocument"]["uri"]
+        text = params["textDocument"]["text"]
+        documents[uri] = text
+        log(f"DID_OPEN: len={{len(text)}}")
+        send_diagnostics(uri, text)
+    elif method == "textDocument/didChange":
+        uri = params["textDocument"]["uri"]
+        text = documents.get(uri, "")
+        for change in params.get("contentChanges", []):
+            text = apply_change(text, change)
+        documents[uri] = text
+        log(f"DID_CHANGE: len={{len(text)}}")
+        send_diagnostics(uri, text)
+    elif method == "textDocument/diagnostic":
+        send_message({{
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {{
+                "kind": "full",
+                "items": [],
+                "resultId": None
+            }}
+        }})
+    elif method == "textDocument/inlayHint":
+        send_message({{
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": []
+        }})
+    elif method == "shutdown":
+        send_message({{
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": None
+        }})
+        break
+    elif method == "exit":
+        break
+
+log("STOPPED")
+"#,
+        log_file = log_path_str
+    );
+
+    std::fs::write(&script_path, &script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms)?;
+    }
+
+    // Create test file: valid code EXCEPT line with BADIDENT
+    let test_file = temp_dir.path().join("test.c");
+    std::fs::write(
+        &test_file,
+        "int main() {\n    BADIDENT;\n    return 0;\n}\n",
+    )?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "c".to_string(),
+        fresh::types::LspServerConfig {
+            command: "python3".to_string(),
+            args: vec![script_path.to_string_lossy().to_string()],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::types::ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.editor_mut().open_file(&test_file)?;
+    harness.render()?;
+
+    // Trigger LSP spawn by making a trivial edit (auto_start LSP spawns on first edit).
+    // Go to end of file, type a space and delete it.
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL)?;
+    harness.type_text(" ")?;
+    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Wait for LSP to start and send initial diagnostics
+    for _ in 0..30 {
+        harness.process_async_and_render()?;
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    // === Step 1: Verify diagnostics are visible in rendered output ===
+    let screen = harness.screen_to_string();
+    let status_bar = harness.get_status_bar();
+    println!("Initial screen (with BADIDENT):");
+    println!("Status bar: {}", status_bar);
+
+    assert!(
+        screen.contains("E:") || screen.contains("\u{25CF}"),
+        "Expected diagnostic indicators in rendered output when BADIDENT is present.\n\
+         Status bar: {}\nScreen:\n{}",
+        status_bar,
+        screen
+    );
+
+    // === Step 2: Select BADIDENT and replace with valid code ===
+    // Navigate to BADIDENT on line 2 (cursor may be at end, so go to top first)
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL)?;
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE)?;
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
+    }
+    // Select BADIDENT (8 chars)
+    for _ in 0..8 {
+        harness.send_key(KeyCode::Right, KeyModifiers::SHIFT)?;
+    }
+    // Type replacement - this goes through the bulk edit path (Delete + Insert)
+    harness.type_text("return 1")?;
+    harness.render()?;
+
+    // Verify buffer content is correct
+    let content = harness.get_buffer_content().unwrap();
+    assert!(
+        !content.contains("BADIDENT"),
+        "Buffer should not contain BADIDENT after replacement"
+    );
+    assert!(
+        content.contains("return 1"),
+        "Buffer should contain 'return 1' after replacement"
+    );
+
+    // Wait for LSP to process the changes and send updated diagnostics
+    for _ in 0..30 {
+        harness.process_async_and_render()?;
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    // === Step 3: Verify diagnostics are GONE from rendered output ===
+    let screen_after = harness.screen_to_string();
+    let status_bar_after = harness.get_status_bar();
+    let log_content = std::fs::read_to_string(&log_path).unwrap_or_default();
+
+    println!("Screen after fix (BADIDENT replaced with return 1):");
+    println!("Status bar: {}", status_bar_after);
+    println!("LSP log:\n{}", log_content);
+
+    // The status bar should NOT contain error indicators
+    assert!(
+        !status_bar_after.contains("E:"),
+        "After replacing BADIDENT with valid code, rendered status bar should not show error \
+         indicators. This means the LSP server's document is out of sync with the editor.\n\
+         Status bar: {}\nLSP log:\n{}",
+        status_bar_after,
+        log_content
+    );
+
+    Ok(())
+}

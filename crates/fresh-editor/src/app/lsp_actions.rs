@@ -81,7 +81,14 @@ impl Editor {
                 use crate::services::lsp::manager::LspSpawnResult;
                 if lsp.try_spawn(&lang_id) == LspSpawnResult::Spawned {
                     if let Some(handle) = lsp.get_handle_mut(&lang_id) {
+                        let handle_id = handle.id();
                         let _ = handle.did_open(uri, content, lang_id);
+
+                        // Mark buffer as opened with this handle so that
+                        // send_lsp_changes_for_buffer doesn't re-send didOpen
+                        if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+                            metadata.lsp_opened_with.insert(handle_id);
+                        }
                     }
                 }
             }
