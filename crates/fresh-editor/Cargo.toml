@@ -167,13 +167,13 @@ alacritty_terminal = { version = "0.25", optional = true }
 portable-pty = { version = "0.9", optional = true }
 
 # Session persistence / client-server IPC
-interprocess = { version = "2", features = ["tokio"] }
+interprocess = { version = "2.2", features = ["tokio"] }
 
 # Embedded plugins support (optional)
 include_dir = { version = "0.7", optional = true }
 tempfile = { version = "3.24", optional = true }
 trash = { version = "5.2.5", optional = true }
-open = { version = "5", optional = true }
+open = { version = "5.3", optional = true }
 
 [dev-dependencies]
 proptest = "1.9"

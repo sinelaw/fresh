@@ -217,7 +217,7 @@ nix profile add github:sinelaw/fresh
 ### From crates.io
 
 ```bash
-cargo install fresh-editor
+cargo install --locked fresh-editor
 ```
 
 ### From source

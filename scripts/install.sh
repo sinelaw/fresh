@@ -238,7 +238,7 @@ do_install_cargo() {
         cargo binstall -y "${BIN_NAME}"
     else
         log_info "Compiling from source (slow)..."
-        cargo install "${BIN_NAME}"
+        cargo install --locked "${BIN_NAME}"
     fi
 }
 

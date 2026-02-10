@@ -145,9 +145,9 @@
       "additionalProperties": {
         "$ref": "#/$defs/PluginConfig"
       },
+      "default": {},
       "x-standalone-category": true,
-      "x-no-add": true,
-      "default": {}
+      "x-no-add": true
     },
     "packages": {
       "description": "Package manager settings for plugin/theme installation",
@@ -197,256 +197,256 @@
         "line_numbers": {
           "description": "Show line numbers in the gutter (default for new buffers)",
           "type": "boolean",
-          "x-section": "Display",
-          "default": true
+          "default": true,
+          "x-section": "Display"
         },
         "relative_line_numbers": {
           "description": "Show line numbers relative to cursor position",
           "type": "boolean",
-          "x-section": "Display",
-          "default": false
+          "default": false,
+          "x-section": "Display"
         },
         "line_wrap": {
           "description": "Wrap long lines to fit the window width (default for new views)",
           "type": "boolean",
-          "x-section": "Display",
-          "default": true
+          "default": true,
+          "x-section": "Display"
         },
         "syntax_highlighting": {
           "description": "Enable syntax highlighting for code files",
           "type": "boolean",
-          "x-section": "Display",
-          "default": true
+          "default": true,
+          "x-section": "Display"
         },
         "show_menu_bar": {
           "description": "Whether the menu bar is visible by default.\nThe menu bar provides access to menus (File, Edit, View, etc.) at the top of the screen.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
           "type": "boolean",
-          "x-section": "Display",
-          "default": true
+          "default": true,
+          "x-section": "Display"
         },
         "show_tab_bar": {
           "description": "Whether the tab bar is visible by default.\nThe tab bar shows open files in each split pane.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
           "type": "boolean",
-          "x-section": "Display",
-          "default": true
+          "default": true,
+          "x-section": "Display"
         },
         "use_terminal_bg": {
           "description": "Use the terminal's default background color instead of the theme's editor background.\nWhen enabled, the editor background inherits from the terminal emulator,\nallowing transparency or custom terminal backgrounds to show through.\nDefault: false",
           "type": "boolean",
-          "x-section": "Display",
-          "default": false
+          "default": false,
+          "x-section": "Display"
         },
         "cursor_style": {
           "description": "Cursor style for the terminal cursor.\nOptions: blinking_block, steady_block, blinking_bar, steady_bar, blinking_underline, steady_underline\nDefault: blinking_block",
           "$ref": "#/$defs/CursorStyle",
-          "x-section": "Display",
-          "default": "default"
+          "default": "default",
+          "x-section": "Display"
         },
         "tab_size": {
           "description": "Number of spaces per tab character",
           "type": "integer",
           "format": "uint",
           "minimum": 0,
-          "x-section": "Editing",
-          "default": 4
+          "default": 4,
+          "x-section": "Editing"
         },
         "auto_indent": {
           "description": "Automatically indent new lines based on the previous line",
           "type": "boolean",
-          "x-section": "Editing",
-          "default": true
+          "default": true,
+          "x-section": "Editing"
         },
         "scroll_offset": {
           "description": "Minimum lines to keep visible above/below cursor when scrolling",
           "type": "integer",
           "format": "uint",
           "minimum": 0,
-          "x-section": "Editing",
-          "default": 3
+          "default": 3,
+          "x-section": "Editing"
         },
         "default_line_ending": {
           "description": "Default line ending format for new files.\nFiles loaded from disk will use their detected line ending format.\nOptions: \"lf\" (Unix/Linux/macOS), \"crlf\" (Windows), \"cr\" (Classic Mac)\nDefault: \"lf\"",
           "$ref": "#/$defs/LineEndingOption",
-          "x-section": "Editing",
-          "default": "lf"
+          "default": "lf",
+          "x-section": "Editing"
         },
         "trim_trailing_whitespace_on_save": {
           "description": "Remove trailing whitespace from lines when saving.\nDefault: false",
           "type": "boolean",
-          "x-section": "Editing",
-          "default": false
+          "default": false,
+          "x-section": "Editing"
         },
         "ensure_final_newline_on_save": {
           "description": "Ensure files end with a newline when saving.\nDefault: false",
           "type": "boolean",
-          "x-section": "Editing",
-          "default": false
+          "default": false,
+          "x-section": "Editing"
         },
         "highlight_matching_brackets": {
           "description": "Highlight matching bracket pairs when cursor is on a bracket.\nDefault: true",
           "type": "boolean",
-          "x-section": "Bracket Matching",
-          "default": true
+          "default": true,
+          "x-section": "Bracket Matching"
         },
         "rainbow_brackets": {
           "description": "Use rainbow colors for nested brackets based on nesting depth.\nRequires highlight_matching_brackets to be enabled.\nDefault: true",
           "type": "boolean",
-          "x-section": "Bracket Matching",
-          "default": true
+          "default": true,
+          "x-section": "Bracket Matching"
         },
         "quick_suggestions": {
           "description": "Enable quick suggestions (VS Code-like behavior).\nWhen enabled, completion suggestions appear automatically while typing,\nnot just on trigger characters (like `.` or `::`).\nDefault: true",
           "type": "boolean",
-          "x-section": "Completion",
-          "default": true
+          "default": true,
+          "x-section": "Completion"
         },
         "quick_suggestions_delay_ms": {
           "description": "Delay in milliseconds before showing completion suggestions.\nLower values (10-50ms) feel more responsive but may be distracting.\nHigher values (100-500ms) reduce noise while typing.\nTrigger characters (like `.`) bypass this delay.\nDefault: 10 (matches VS Code)",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
-          "x-section": "Completion",
-          "default": 10
+          "default": 10,
+          "x-section": "Completion"
         },
         "suggest_on_trigger_characters": {
           "description": "Whether trigger characters (like `.`, `::`, `->`) immediately show completions.\nWhen true, typing a trigger character bypasses quick_suggestions_delay_ms.\nDefault: true",
           "type": "boolean",
-          "x-section": "Completion",
-          "default": true
+          "default": true,
+          "x-section": "Completion"
         },
         "accept_suggestion_on_enter": {
           "description": "Controls whether pressing Enter accepts the selected completion.\n- \"on\": Enter always accepts the completion\n- \"off\": Enter inserts a newline (use Tab to accept)\n- \"smart\": Enter accepts only if the completion text differs from typed text\nDefault: \"on\"",
           "$ref": "#/$defs/AcceptSuggestionOnEnter",
-          "x-section": "Completion",
-          "default": "on"
+          "default": "on",
+          "x-section": "Completion"
         },
         "enable_inlay_hints": {
           "description": "Whether to enable LSP inlay hints (type hints, parameter hints, etc.)",
           "type": "boolean",
-          "x-section": "LSP",
-          "default": true
+          "default": true,
+          "x-section": "LSP"
         },
         "enable_semantic_tokens_full": {
           "description": "Whether to request full-document LSP semantic tokens.\nRange requests are still used when supported.\nDefault: false (range-only to avoid heavy full refreshes).",
           "type": "boolean",
-          "x-section": "LSP",
-          "default": false
+          "default": false,
+          "x-section": "LSP"
         },
         "mouse_hover_enabled": {
           "description": "Whether mouse hover triggers LSP hover requests.\nWhen enabled, hovering over code with the mouse will show documentation.\nDefault: true",
           "type": "boolean",
-          "x-section": "Mouse",
-          "default": true
+          "default": true,
+          "x-section": "Mouse"
         },
         "mouse_hover_delay_ms": {
           "description": "Delay in milliseconds before a mouse hover triggers an LSP hover request.\nLower values show hover info faster but may cause more LSP server load.\nDefault: 500ms",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
-          "x-section": "Mouse",
-          "default": 500
+          "default": 500,
+          "x-section": "Mouse"
         },
         "double_click_time_ms": {
           "description": "Time window in milliseconds for detecting double-clicks.\nTwo clicks within this time are treated as a double-click (word selection).\nDefault: 500ms",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
-          "x-section": "Mouse",
-          "default": 500
+          "default": 500,
+          "x-section": "Mouse"
         },
         "recovery_enabled": {
           "description": "Whether to enable file recovery (Emacs-style auto-save)\nWhen enabled, buffers are periodically saved to recovery files\nso they can be recovered if the editor crashes.",
           "type": "boolean",
-          "x-section": "Recovery",
-          "default": true
+          "default": true,
+          "x-section": "Recovery"
         },
         "auto_save_interval_secs": {
           "description": "Auto-save interval in seconds for file recovery\nModified buffers are saved to recovery files at this interval.\nDefault: 2 seconds for fast recovery with minimal data loss.\nSet to 0 to disable periodic auto-save (manual recovery only).",
           "type": "integer",
           "format": "uint32",
           "minimum": 0,
-          "x-section": "Recovery",
-          "default": 2
+          "default": 2,
+          "x-section": "Recovery"
         },
         "auto_revert_poll_interval_ms": {
           "description": "Poll interval in milliseconds for auto-reverting open buffers.\nWhen auto-revert is enabled, file modification times are checked at this interval.\nLower values detect external changes faster but use more CPU.\nDefault: 2000ms (2 seconds)",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
-          "x-section": "Recovery",
-          "default": 2000
+          "default": 2000,
+          "x-section": "Recovery"
         },
         "keyboard_disambiguate_escape_codes": {
           "description": "Enable keyboard enhancement: disambiguate escape codes using CSI-u sequences.\nThis allows unambiguous reading of Escape and modified keys.\nRequires terminal support (kitty keyboard protocol).\nDefault: true",
           "type": "boolean",
-          "x-section": "Keyboard",
-          "default": true
+          "default": true,
+          "x-section": "Keyboard"
         },
         "keyboard_report_event_types": {
           "description": "Enable keyboard enhancement: report key event types (repeat/release).\nAdds extra events when keys are autorepeated or released.\nRequires terminal support (kitty keyboard protocol).\nDefault: false",
           "type": "boolean",
-          "x-section": "Keyboard",
-          "default": false
+          "default": false,
+          "x-section": "Keyboard"
         },
         "keyboard_report_alternate_keys": {
           "description": "Enable keyboard enhancement: report alternate keycodes.\nSends alternate keycodes in addition to the base keycode.\nRequires terminal support (kitty keyboard protocol).\nDefault: true",
           "type": "boolean",
-          "x-section": "Keyboard",
-          "default": true
+          "default": true,
+          "x-section": "Keyboard"
         },
         "keyboard_report_all_keys_as_escape_codes": {
           "description": "Enable keyboard enhancement: report all keys as escape codes.\nRepresents all keyboard events as CSI-u sequences.\nRequired for repeat/release events on plain-text keys.\nRequires terminal support (kitty keyboard protocol).\nDefault: false",
           "type": "boolean",
-          "x-section": "Keyboard",
-          "default": false
+          "default": false,
+          "x-section": "Keyboard"
         },
         "highlight_timeout_ms": {
           "description": "Maximum time in milliseconds for syntax highlighting per frame",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
-          "x-section": "Performance",
-          "default": 5
+          "default": 5,
+          "x-section": "Performance"
         },
         "snapshot_interval": {
           "description": "Undo history snapshot interval (number of edits between snapshots)",
           "type": "integer",
           "format": "uint",
           "minimum": 0,
-          "x-section": "Performance",
-          "default": 100
+          "default": 100,
+          "x-section": "Performance"
         },
         "highlight_context_bytes": {
           "description": "Number of bytes to look back/forward from the viewport for syntax highlighting context.\nLarger values improve accuracy for multi-line constructs (strings, comments, nested blocks)\nbut may slow down highlighting for very large files.\nDefault: 10KB (10000 bytes)",
           "type": "integer",
           "format": "uint",
           "minimum": 0,
-          "x-section": "Performance",
-          "default": 10000
+          "default": 10000,
+          "x-section": "Performance"
         },
         "large_file_threshold_bytes": {
           "description": "File size threshold in bytes for \"large file\" behavior\nFiles larger than this will:\n- Skip LSP features\n- Use constant-size scrollbar thumb (1 char)\n\nFiles smaller will count actual lines for accurate scrollbar rendering",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
-          "x-section": "Performance",
-          "default": 1048576
+          "default": 1048576,
+          "x-section": "Performance"
         },
         "estimated_line_length": {
           "description": "Estimated average line length in bytes (used for large file line estimation)\nThis is used by LineIterator to estimate line positions in large files\nwithout line metadata. Typical values: 80-120 bytes.",
           "type": "integer",
           "format": "uint",
           "minimum": 0,
-          "x-section": "Performance",
-          "default": 80
+          "default": 80,
+          "x-section": "Performance"
         },
         "file_tree_poll_interval_ms": {
           "description": "Poll interval in milliseconds for refreshing expanded directories in the file explorer.\nDirectory modification times are checked at this interval to detect new/deleted files.\nLower values detect changes faster but use more CPU.\nDefault: 3000ms (3 seconds)",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
-          "x-section": "Performance",
-          "default": 3000
+          "default": 3000,
+          "x-section": "Performance"
         }
       }
     },
