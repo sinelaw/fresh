@@ -131,9 +131,10 @@ impl Editor {
 
         // Show the popup
         use crate::model::event::{
-            PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+            PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
         };
         let popup_data = PopupData {
+            kind: PopupKindHint::Completion,
             title: Some(t!("lsp.popup_completion").to_string()),
             description: None,
             transient: false,

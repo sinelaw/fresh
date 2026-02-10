@@ -1439,7 +1439,7 @@ impl Editor {
     /// they want to start the LSP server for the given language.
     pub fn show_lsp_confirmation_popup(&mut self, language: &str) {
         use crate::model::event::{
-            PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+            PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
         };
 
         // Store the pending confirmation
@@ -1461,6 +1461,7 @@ impl Editor {
         };
 
         let popup = PopupData {
+            kind: PopupKindHint::List,
             title: Some(format!("Start LSP Server: {}?", server_info)),
             description: None,
             transient: false,

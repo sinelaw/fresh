@@ -254,9 +254,27 @@ pub enum UnderlineStyle {
     Dashed,
 }
 
+/// What kind of popup this is — determines input handling behavior.
+///
+/// This replaces the old approach of inferring popup kind from the title string,
+/// which broke when titles were translated to non-English locales.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PopupKindHint {
+    /// LSP completion popup - supports type-to-filter, Tab/Enter accept
+    Completion,
+    /// Generic list popup - navigate and select
+    #[default]
+    List,
+    /// Generic text popup - read-only
+    Text,
+}
+
 /// Popup data for events (must be serializable)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PopupData {
+    /// Popup kind — determines input handling behavior.
+    #[serde(default)]
+    pub kind: PopupKindHint,
     pub title: Option<String>,
     /// Optional description text shown above the content
     #[serde(default)]

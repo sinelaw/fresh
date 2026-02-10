@@ -5366,6 +5366,7 @@ impl Editor {
 
                 // Create popup with message + action list
                 let popup = crate::model::event::PopupData {
+                    kind: crate::model::event::PopupKindHint::List,
                     title: Some(title),
                     description: Some(message),
                     transient: false,

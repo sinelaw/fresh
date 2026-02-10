@@ -11,7 +11,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 #[test]
 fn test_lsp_completion_popup_text_not_mangled() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -20,6 +20,7 @@ fn test_lsp_completion_popup_text_not_mangled() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -88,7 +89,7 @@ fn test_lsp_completion_popup_text_not_mangled() -> anyhow::Result<()> {
 #[test]
 fn test_lsp_completion_replaces_word() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -105,6 +106,7 @@ fn test_lsp_completion_replaces_word() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -182,7 +184,7 @@ fn test_lsp_diagnostics_display() -> anyhow::Result<()> {
 #[test]
 fn test_lsp_completion_popup() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -195,6 +197,7 @@ fn test_lsp_completion_popup() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -353,7 +356,7 @@ fn test_lsp_clear_diagnostics() -> anyhow::Result<()> {
 #[test]
 fn test_lsp_completion_navigation() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -362,6 +365,7 @@ fn test_lsp_completion_navigation() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -420,7 +424,7 @@ fn test_lsp_completion_navigation() -> anyhow::Result<()> {
 #[test]
 fn test_lsp_completion_cancel() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -433,6 +437,7 @@ fn test_lsp_completion_cancel() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -476,7 +481,7 @@ fn test_lsp_completion_cancel() -> anyhow::Result<()> {
 #[test]
 fn test_lsp_completion_after_dot() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -489,6 +494,7 @@ fn test_lsp_completion_after_dot() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -540,7 +546,7 @@ fn test_lsp_completion_after_dot() -> anyhow::Result<()> {
 #[test]
 fn test_lsp_completion_after_dot_with_partial() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -553,6 +559,7 @@ fn test_lsp_completion_after_dot_with_partial() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -592,7 +599,7 @@ fn test_lsp_completion_after_dot_with_partial() -> anyhow::Result<()> {
 #[test]
 fn test_lsp_completion_filtering() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -607,6 +614,7 @@ fn test_lsp_completion_filtering() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -687,7 +695,7 @@ fn test_lsp_completion_filtering() -> anyhow::Result<()> {
 #[test]
 fn test_lsp_completion_popup_size() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -700,6 +708,7 @@ fn test_lsp_completion_popup_size() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -1285,7 +1294,7 @@ fn test_semantic_tokens_range_only_viewport_highlighting() -> anyhow::Result<()>
 #[test]
 fn test_lsp_completion_popup_hides_background() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -1306,6 +1315,7 @@ fn test_lsp_completion_popup_hides_background() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -3793,7 +3803,9 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> anyhow::Result<()> {
 /// 4. render_with_hover() tries to render the popup at an out-of-bounds position
 #[test]
 fn test_hover_popup_at_right_edge_does_not_panic() -> anyhow::Result<()> {
-    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
 
     // Use the exact dimensions from the panic: width 199, height 44
     let mut harness = EditorTestHarness::new(199, 44)?;
@@ -3803,6 +3815,7 @@ fn test_hover_popup_at_right_edge_does_not_panic() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Text,
             title: Some("Hover".to_string()),
             description: None,
             transient: true,
@@ -3841,7 +3854,9 @@ fn test_hover_popup_at_right_edge_does_not_panic() -> anyhow::Result<()> {
 /// 4. Opening any prompt
 #[test]
 fn test_hover_popup_dismissed_on_focus_change() -> anyhow::Result<()> {
-    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -3850,6 +3865,7 @@ fn test_hover_popup_dismissed_on_focus_change() -> anyhow::Result<()> {
         let state = harness.editor_mut().active_state_mut();
         state.apply(&Event::ShowPopup {
             popup: PopupData {
+                kind: PopupKindHint::Text,
                 title: Some("Hover".to_string()),
                 description: None,
                 transient: true,
@@ -4075,7 +4091,9 @@ fn test_hover_popup_persists_within_symbol_and_popup() -> anyhow::Result<()> {
 /// a scrollbar should be rendered to indicate more content is available.
 #[test]
 fn test_hover_popup_shows_scrollbar_for_long_content() -> anyhow::Result<()> {
-    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
 
     let mut harness = EditorTestHarness::new(100, 30)?;
 
@@ -4089,6 +4107,7 @@ fn test_hover_popup_shows_scrollbar_for_long_content() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Text,
             title: Some("Hover".to_string()),
             description: None,
             transient: true,
@@ -4148,7 +4167,9 @@ fn test_hover_popup_shows_scrollbar_for_long_content() -> anyhow::Result<()> {
 /// - Have a maximum of 40 rows
 #[test]
 fn test_hover_popup_dynamic_height() -> anyhow::Result<()> {
-    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
 
     // Test with a tall terminal (60 rows)
     // 60% of 60 = 36, which is within the 15-40 range
@@ -4162,6 +4183,7 @@ fn test_hover_popup_dynamic_height() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Text,
             title: Some("Hover".to_string()),
             description: None,
             transient: true,
@@ -4197,7 +4219,9 @@ fn test_hover_popup_dynamic_height() -> anyhow::Result<()> {
 /// scrolling should scroll the popup content instead of dismissing it.
 #[test]
 fn test_hover_popup_mouse_scroll() -> anyhow::Result<()> {
-    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
 
     let mut harness = EditorTestHarness::new(100, 30)?;
 
@@ -4208,6 +4232,7 @@ fn test_hover_popup_mouse_scroll() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Text,
             title: Some("Hover".to_string()),
             description: None,
             transient: true,
@@ -4270,7 +4295,9 @@ fn test_hover_popup_mouse_scroll() -> anyhow::Result<()> {
 /// count original lines.
 #[test]
 fn test_hover_popup_height_accounts_for_wrapped_lines() -> anyhow::Result<()> {
-    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
 
     let mut harness = EditorTestHarness::new(100, 40)?;
 
@@ -4289,6 +4316,7 @@ fn test_hover_popup_height_accounts_for_wrapped_lines() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Text,
             title: Some("Hover".to_string()),
             description: None,
             transient: true,
@@ -4330,7 +4358,7 @@ fn test_hover_popup_height_accounts_for_wrapped_lines() -> anyhow::Result<()> {
 #[test]
 fn test_popup_home_key_selects_first_item() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -4348,6 +4376,7 @@ fn test_popup_home_key_selects_first_item() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -4389,7 +4418,7 @@ fn test_popup_home_key_selects_first_item() -> anyhow::Result<()> {
 #[test]
 fn test_popup_end_key_selects_last_item() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -4407,6 +4436,7 @@ fn test_popup_end_key_selects_last_item() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -4443,7 +4473,7 @@ fn test_popup_end_key_selects_last_item() -> anyhow::Result<()> {
 fn test_popup_mouse_wheel_scrolls() -> anyhow::Result<()> {
     use crossterm::event::{MouseEvent, MouseEventKind};
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -4461,6 +4491,7 @@ fn test_popup_mouse_wheel_scrolls() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -4528,7 +4559,7 @@ fn test_popup_mouse_wheel_scrolls() -> anyhow::Result<()> {
 #[test]
 fn test_popup_scrollbar_visible_for_long_list() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -4546,6 +4577,7 @@ fn test_popup_scrollbar_visible_for_long_list() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -4593,7 +4625,7 @@ fn test_popup_scrollbar_visible_for_long_list() -> anyhow::Result<()> {
 #[test]
 fn test_popup_no_scrollbar_for_short_list() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -4611,6 +4643,7 @@ fn test_popup_no_scrollbar_for_short_list() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -4646,7 +4679,7 @@ fn test_popup_no_scrollbar_for_short_list() -> anyhow::Result<()> {
 fn test_popup_mouse_wheel_scroll_up() -> anyhow::Result<()> {
     use crossterm::event::{MouseEvent, MouseEventKind};
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -4664,6 +4697,7 @@ fn test_popup_mouse_wheel_scroll_up() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -4736,7 +4770,7 @@ fn test_popup_mouse_wheel_scroll_up() -> anyhow::Result<()> {
 #[test]
 fn test_completion_type_to_filter_basic() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -4777,6 +4811,7 @@ fn test_completion_type_to_filter_basic() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -4864,7 +4899,7 @@ fn test_completion_type_to_filter_basic() -> anyhow::Result<()> {
 #[test]
 fn test_completion_type_to_filter_uppercase() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -4905,6 +4940,7 @@ fn test_completion_type_to_filter_uppercase() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -5005,7 +5041,7 @@ fn test_completion_type_to_filter_uppercase() -> anyhow::Result<()> {
 #[test]
 fn test_completion_type_to_filter_closes_on_no_match() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -5028,6 +5064,7 @@ fn test_completion_type_to_filter_closes_on_no_match() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -5076,7 +5113,7 @@ fn test_completion_type_to_filter_closes_on_no_match() -> anyhow::Result<()> {
 #[test]
 fn test_completion_backspace_refilters() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -5107,6 +5144,7 @@ fn test_completion_backspace_refilters() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -5171,7 +5209,7 @@ fn test_completion_backspace_refilters() -> anyhow::Result<()> {
 #[test]
 fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -5208,6 +5246,7 @@ fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -5287,7 +5326,7 @@ fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
 fn test_completion_accept_on_enter_off() -> anyhow::Result<()> {
     use fresh::config::AcceptSuggestionOnEnter;
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     // Configure accept_suggestion_on_enter to "off"
@@ -5313,6 +5352,7 @@ fn test_completion_accept_on_enter_off() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -5371,7 +5411,7 @@ fn test_completion_accept_on_enter_off() -> anyhow::Result<()> {
 fn test_completion_accept_on_enter_on() -> anyhow::Result<()> {
     use fresh::config::AcceptSuggestionOnEnter;
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     // Ensure accept_suggestion_on_enter is "on" (default)
@@ -5397,6 +5437,7 @@ fn test_completion_accept_on_enter_on() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -5449,7 +5490,7 @@ fn test_completion_accept_on_enter_on() -> anyhow::Result<()> {
 #[test]
 fn test_completion_snippet_cursor_position() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -5462,6 +5503,7 @@ fn test_completion_snippet_cursor_position() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -5503,7 +5545,7 @@ fn test_completion_snippet_cursor_position() -> anyhow::Result<()> {
 #[test]
 fn test_completion_snippet_with_default() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -5516,6 +5558,7 @@ fn test_completion_snippet_with_default() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -5560,7 +5603,7 @@ fn test_completion_snippet_with_default() -> anyhow::Result<()> {
 #[test]
 fn test_completion_plain_text_no_snippet() -> anyhow::Result<()> {
     use fresh::model::event::{
-        Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+        Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
     };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
@@ -5573,6 +5616,7 @@ fn test_completion_plain_text_no_snippet() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -6244,7 +6288,9 @@ fn test_hover_popup_follows_mouse_when_lsp_returns_no_range() -> anyhow::Result<
 #[test]
 fn test_hover_popup_scrollbar_click_scrolls_content() -> anyhow::Result<()> {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
 
     let mut harness = EditorTestHarness::new(100, 30)?;
 
@@ -6258,6 +6304,7 @@ fn test_hover_popup_scrollbar_click_scrolls_content() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Text,
             title: Some("Hover".to_string()),
             description: None,
             transient: true,
@@ -6630,7 +6677,9 @@ fn test_hover_no_duplicate_popup_when_moving_within_symbol() -> anyhow::Result<(
 /// 3. Double-click should also respect these rules
 #[test]
 fn test_hover_popup_click_dismissal() -> anyhow::Result<()> {
-    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -6649,6 +6698,7 @@ fn test_hover_popup_click_dismissal() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Text,
             title: Some("Hover Info".to_string()),
             description: None,
             transient: true, // This is key - hover popups are transient
@@ -6688,7 +6738,9 @@ fn test_hover_popup_click_dismissal() -> anyhow::Result<()> {
 /// Test that clicking inside a hover popup does NOT move the editor cursor
 #[test]
 fn test_hover_popup_click_inside_does_not_move_cursor() -> anyhow::Result<()> {
-    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -6706,6 +6758,7 @@ fn test_hover_popup_click_inside_does_not_move_cursor() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Text,
             title: Some("Hover Info".to_string()),
             description: None,
             transient: true,
@@ -6757,7 +6810,9 @@ fn test_hover_popup_click_inside_does_not_move_cursor() -> anyhow::Result<()> {
 #[test]
 fn test_hover_popup_double_click_dismissal() -> anyhow::Result<()> {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -6769,6 +6824,7 @@ fn test_hover_popup_double_click_dismissal() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Text,
             title: Some("Hover Info".to_string()),
             description: None,
             transient: true,
@@ -6835,7 +6891,9 @@ fn test_hover_popup_double_click_dismissal() -> anyhow::Result<()> {
 #[test]
 fn test_hover_popup_double_click_inside_blocked() -> anyhow::Result<()> {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -6853,6 +6911,7 @@ fn test_hover_popup_double_click_inside_blocked() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Text,
             title: Some("Hover".to_string()),
             description: None,
             transient: true,
@@ -6921,7 +6980,9 @@ fn test_hover_popup_double_click_inside_blocked() -> anyhow::Result<()> {
 /// the user can scroll all the way to see the last line of content.
 #[test]
 fn test_hover_popup_scroll_to_bottom() -> anyhow::Result<()> {
-    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
 
     let mut harness = EditorTestHarness::new(100, 30)?;
 
@@ -6990,6 +7051,7 @@ fn test_hover_popup_scroll_to_bottom() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Text,
             title: Some("Hover Info".to_string()),
             description: None,
             transient: true,

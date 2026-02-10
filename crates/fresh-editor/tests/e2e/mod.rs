@@ -29,6 +29,7 @@ pub mod line_wrapping;
 pub mod live_grep;
 pub mod locale;
 pub mod lsp;
+pub mod lsp_completion_french_locale;
 pub mod lsp_completion_popup_behavior;
 pub mod lsp_config;
 pub mod lsp_order;

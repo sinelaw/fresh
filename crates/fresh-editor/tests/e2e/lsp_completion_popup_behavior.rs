@@ -9,7 +9,7 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::model::event::{
-    Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+    Event, PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
 };
 
 /// Helper: set up an editor with a completion popup showing three "calculate_*" items.
@@ -52,6 +52,7 @@ fn setup_completion_popup(prefix: &str) -> anyhow::Result<EditorTestHarness> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,
@@ -580,6 +581,7 @@ fn test_completion_underscore_filters() -> anyhow::Result<()> {
     let state = harness.editor_mut().active_state_mut();
     state.apply(&Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
             description: None,
             transient: false,

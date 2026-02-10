@@ -25,7 +25,6 @@ use crate::view::reference_highlight_overlay::ReferenceHighlightOverlay;
 use crate::view::virtual_text::VirtualTextManager;
 use anyhow::Result;
 use ratatui::style::{Color, Style};
-use rust_i18n::t;
 use std::cell::RefCell;
 use std::ops::Range;
 use std::sync::Arc;
@@ -943,17 +942,11 @@ fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
         PopupPositionData::BottomRight => PopupPosition::BottomRight,
     };
 
-    // Determine popup kind based on title and content type
-    let completion_title = t!("lsp.popup_completion").to_string();
-    let kind = if data.title.as_ref() == Some(&completion_title) {
-        PopupKind::Completion
-    } else {
-        match &content {
-            PopupContent::List { .. } => PopupKind::List,
-            PopupContent::Text(_) => PopupKind::Text,
-            PopupContent::Markdown(_) => PopupKind::Text,
-            PopupContent::Custom(_) => PopupKind::Text,
-        }
+    // Map the explicit kind hint to PopupKind for input handling
+    let kind = match data.kind {
+        crate::model::event::PopupKindHint::Completion => PopupKind::Completion,
+        crate::model::event::PopupKindHint::List => PopupKind::List,
+        crate::model::event::PopupKindHint::Text => PopupKind::Text,
     };
 
     Popup {

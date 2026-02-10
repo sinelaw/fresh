@@ -48,41 +48,28 @@ impl Editor {
         }
 
         // Check if this is an LSP confirmation popup
-        let lsp_confirmation_action = if let Some(popup) = self.active_state().popups.top() {
-            if let Some(title) = &popup.title {
-                if title.starts_with("Start LSP Server:") {
-                    popup.selected_item().and_then(|item| item.data.clone())
-                } else {
-                    None
-                }
-            } else {
-                None
+        if self.pending_lsp_confirmation.is_some() {
+            let action = self
+                .active_state()
+                .popups
+                .top()
+                .and_then(|p| p.selected_item())
+                .and_then(|item| item.data.clone());
+            if let Some(action) = action {
+                self.hide_popup();
+                self.handle_lsp_confirmation_response(&action);
+                return PopupConfirmResult::EarlyReturn;
             }
-        } else {
-            None
-        };
-
-        // Handle LSP confirmation if present
-        if let Some(action) = lsp_confirmation_action {
-            self.hide_popup();
-            self.handle_lsp_confirmation_response(&action);
-            return PopupConfirmResult::EarlyReturn;
         }
 
         // If it's a completion popup, insert the selected item
-        let completion_text = if let Some(popup) = self.active_state().popups.top() {
-            if let Some(title) = &popup.title {
-                if title == "Completion" {
-                    popup.selected_item().and_then(|item| item.data.clone())
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let completion_text = self
+            .active_state()
+            .popups
+            .top()
+            .filter(|p| p.kind == crate::view::popup::PopupKind::Completion)
+            .and_then(|p| p.selected_item())
+            .and_then(|item| item.data.clone());
 
         // Perform the completion if we have text
         if let Some(text) = completion_text {
@@ -369,11 +356,12 @@ impl Editor {
 
         // Update the popup with filtered items
         use crate::model::event::{
-            PopupContentData, PopupData, PopupListItemData, PopupPositionData,
+            PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
         };
 
         let popup_data = PopupData {
-            title: Some("Completion".to_string()),
+            kind: PopupKindHint::Completion,
+            title: Some(t!("lsp.popup_completion").to_string()),
             description: None,
             transient: false,
             content: PopupContentData::List {

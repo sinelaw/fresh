@@ -419,7 +419,9 @@ fn test_overlay_events() {
 /// Test popup events - showing, navigating, and hiding popups
 #[test]
 fn test_popup_events() {
-    use fresh::model::event::{PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+    use fresh::model::event::{
+        PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
+    };
 
     let mut state = EditorState::new(
         80,
@@ -430,6 +432,7 @@ fn test_popup_events() {
 
     // Create a popup with list items
     let popup_data = PopupData {
+        kind: PopupKindHint::List,
         title: Some("Test Popup".to_string()),
         description: None,
         transient: false,

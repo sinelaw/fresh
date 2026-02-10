@@ -1983,7 +1983,9 @@ fn test_blinking_bar_selection_first_char_color() {
 /// file explorer area).
 #[test]
 fn test_hover_popup_position_with_file_explorer() {
-    use fresh::model::event::{Event, PopupContentData, PopupData, PopupPositionData};
+    use fresh::model::event::{
+        Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+    };
     use std::time::Duration;
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
@@ -2016,6 +2018,7 @@ fn test_hover_popup_position_with_file_explorer() {
     let popup_marker = "HOVER_POPUP_MARKER_898";
     harness.apply_event(Event::ShowPopup {
         popup: PopupData {
+            kind: PopupKindHint::Text,
             title: None,
             description: None,
             transient: false,
