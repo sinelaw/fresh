@@ -649,6 +649,11 @@ type VirtualBufferResult = {
 */
 interface EditorAPI {
 	/**
+	* Get the plugin API version. Plugins can check this to verify
+	* the editor supports the features they need.
+	*/
+	apiVersion(): number;
+	/**
 	* Get the active buffer ID (0 if none)
 	*/
 	getActiveBufferId(): number;

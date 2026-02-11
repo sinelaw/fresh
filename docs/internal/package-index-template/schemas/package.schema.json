@@ -52,6 +52,11 @@
           "pattern": "^\\d+\\.\\d+\\.\\d+",
           "description": "Minimum required Fresh version"
         },
+        "min_api_version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum required plugin API version (integer, e.g. 2)"
+        },
         "entry": {
           "type": "string",
           "description": "Plugin entry point file (for plugins)"

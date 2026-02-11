@@ -491,6 +491,12 @@ pub struct JsEditorApi {
 impl JsEditorApi {
     // === Buffer Queries ===
 
+    /// Get the plugin API version. Plugins can check this to verify
+    /// the editor supports the features they need.
+    pub fn api_version(&self) -> u32 {
+        2
+    }
+
     /// Get the active buffer ID (0 if none)
     pub fn get_active_buffer_id(&self) -> u32 {
         self.state_snapshot

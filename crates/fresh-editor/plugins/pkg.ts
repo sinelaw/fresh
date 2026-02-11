@@ -118,6 +118,7 @@ interface PackageManifest {
   repository?: string;
   fresh?: {
     min_version?: string;
+    min_api_version?: number;
     entry?: string;
     themes?: Array<{
       file: string;
@@ -653,6 +654,18 @@ function validatePackage(packageDir: string, packageName: string): ValidationRes
       valid: false,
       error: `Invalid package.json - 'type' must be 'plugin', 'theme', 'language', or 'bundle', got '${manifest.type}'`
     };
+  }
+
+  // Warn if package requires a newer plugin API version
+  if (manifest.fresh?.min_api_version) {
+    const currentApi = editor.apiVersion();
+    if (manifest.fresh.min_api_version > currentApi) {
+      editor.warn(
+        `[pkg] Package '${packageName}' requires plugin API version ${manifest.fresh.min_api_version}, ` +
+        `but this editor only supports version ${currentApi}. Some features may not work. ` +
+        `Update Fresh to get the latest plugin API.`
+      );
+    }
   }
 
   // For plugins, validate entry file exists
