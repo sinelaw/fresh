@@ -191,6 +191,8 @@ interface InstalledPackage {
   version: string;
   commit?: string;
   manifest?: PackageManifest;
+  /** Original local path if installed from a local directory */
+  localSource?: string;
 }
 
 interface LockfileEntry {
@@ -554,6 +556,7 @@ function getInstalledPackages(type: "plugin" | "theme" | "language" | "bundle"):
         // Try to get git remote
         const gitConfigPath = editor.pathJoin(pkgPath, ".git", "config");
         let source = "";
+        let localSource: string | undefined;
         if (editor.fileExists(gitConfigPath)) {
           const gitConfig = editor.readFile(gitConfigPath);
           if (gitConfig) {
@@ -564,13 +567,24 @@ function getInstalledPackages(type: "plugin" | "theme" | "language" | "bundle"):
           }
         }
 
+        // Check for .fresh-source.json (local path or monorepo installs)
+        if (!source) {
+          const freshSourcePath = editor.pathJoin(pkgPath, ".fresh-source.json");
+          const freshSource = readJsonFile<{ local_path?: string; original_url?: string }>(freshSourcePath);
+          if (freshSource?.local_path) {
+            localSource = freshSource.local_path;
+            source = freshSource.original_url || freshSource.local_path;
+          }
+        }
+
         packages.push({
           name: entry.name,
           path: pkgPath,
           type,
           source,
           version: manifest?.version || "unknown",
-          manifest
+          manifest,
+          localSource,
         });
       }
     }
@@ -1349,6 +1363,85 @@ async function updatePackage(pkg: InstalledPackage): Promise<boolean> {
 }
 
 /**
+ * Reinstall a package from its original local path.
+ * Removes the installed copy and re-copies from the source directory.
+ */
+async function reinstallPackage(pkg: InstalledPackage): Promise<boolean> {
+  if (!pkg.localSource) {
+    editor.setStatus(`Cannot reinstall ${pkg.name}: no local source path`);
+    return false;
+  }
+
+  const sourcePath = pkg.localSource;
+
+  if (!editor.fileExists(sourcePath)) {
+    editor.setStatus(`Source path no longer exists: ${sourcePath}`);
+    return false;
+  }
+
+  editor.setStatus(`Reinstalling ${pkg.name} from ${sourcePath}...`);
+
+  // Unload plugin first if applicable
+  if (pkg.type === "plugin") {
+    const loadedPlugins = await editor.listPlugins();
+    const plugin = loadedPlugins.find((p: { path: string }) => p.path.startsWith(pkg.path));
+    if (plugin) {
+      await editor.unloadPlugin(plugin.name).catch(() => {});
+    }
+  }
+
+  // Remove old copy
+  const rmResult = await editor.spawnProcess("rm", ["-rf", pkg.path]);
+  if (rmResult.exit_code !== 0) {
+    editor.setStatus(`Failed to remove old copy: ${rmResult.stderr}`);
+    return false;
+  }
+
+  // Re-copy from source
+  const copyResult = await editor.spawnProcess("cp", ["-r", sourcePath, pkg.path]);
+  if (copyResult.exit_code !== 0) {
+    editor.setStatus(`Failed to copy from source: ${copyResult.stderr}`);
+    return false;
+  }
+
+  // Re-write the .fresh-source.json marker
+  const sourceInfo = {
+    local_path: sourcePath,
+    original_url: pkg.source,
+    installed_at: new Date().toISOString()
+  };
+  await writeJsonFile(editor.pathJoin(pkg.path, ".fresh-source.json"), sourceInfo);
+
+  // Re-read manifest for validation and reload
+  const validation = validatePackage(pkg.path, pkg.name);
+  if (!validation.valid) {
+    editor.setStatus(`Reinstalled ${pkg.name} but package is invalid: ${validation.error}`);
+    return false;
+  }
+
+  const manifest = validation.manifest;
+
+  // Reload
+  if (manifest?.type === "plugin" && validation.entryPath) {
+    await editor.loadPlugin(validation.entryPath);
+    editor.setStatus(`Reinstalled and activated ${pkg.name}`);
+  } else if (manifest?.type === "theme") {
+    editor.reloadThemes();
+    editor.setStatus(`Reinstalled theme ${pkg.name}`);
+  } else if (manifest?.type === "language") {
+    await loadLanguagePack(pkg.path, manifest);
+    editor.setStatus(`Reinstalled language pack ${pkg.name}`);
+  } else if (manifest?.type === "bundle") {
+    await loadBundle(pkg.path, manifest);
+    editor.setStatus(`Reinstalled bundle ${pkg.name}`);
+  } else {
+    editor.setStatus(`Reinstalled ${pkg.name}`);
+  }
+
+  return true;
+}
+
+/**
  * Remove a package
  */
 async function removePackage(pkg: InstalledPackage): Promise<boolean> {
@@ -1401,14 +1494,24 @@ async function updateAllPackages(): Promise<void> {
 
   for (const pkg of all) {
     editor.setStatus(`Updating ${pkg.name} (${updated + failed + 1}/${all.length})...`);
-    const result = await gitCommand(["-C", `${pkg.path}`, "pull", "--ff-only"]);
 
-    if (result.exit_code === 0) {
-      if (!result.stdout.includes("Already up to date")) {
+    if (pkg.localSource) {
+      // Local packages: reinstall from source path
+      const ok = await reinstallPackage(pkg);
+      if (ok) {
         updated++;
+      } else {
+        failed++;
       }
     } else {
-      failed++;
+      const result = await gitCommand(["-C", `${pkg.path}`, "pull", "--ff-only"]);
+      if (result.exit_code === 0) {
+        if (!result.stdout.includes("Already up to date")) {
+          updated++;
+        }
+      } else {
+        failed++;
+      }
     }
   }
 
@@ -1851,6 +1954,9 @@ function getActionButtons(): string[] {
   const item = items[pkgState.selectedIndex];
 
   if (item.installed) {
+    if (item.installedPackage?.localSource) {
+      return ["Reinstall", "Uninstall"];
+    }
     return item.updateAvailable ? ["Update", "Uninstall"] : ["Uninstall"];
   } else {
     return ["Install"];
@@ -2539,7 +2645,11 @@ globalThis.pkg_activate = async function(): Promise<void> {
     const actions = getActionButtons();
     const actionName = actions[focus.index];
 
-    if (actionName === "Update" && item.installedPackage) {
+    if (actionName === "Reinstall" && item.installedPackage) {
+      await reinstallPackage(item.installedPackage);
+      pkgState.items = buildPackageList();
+      updatePkgManagerView();
+    } else if (actionName === "Update" && item.installedPackage) {
       await updatePackage(item.installedPackage);
       pkgState.items = buildPackageList();
       updatePkgManagerView();
@@ -2752,12 +2862,16 @@ globalThis.pkg_update = function(): void {
     id: "pkg-update",
     format: (pkg) => ({
       label: pkg.name,
-      description: `${pkg.type} | ${pkg.version}`,
+      description: `${pkg.type} | ${pkg.version}${pkg.localSource ? " (local)" : ""}`,
       metadata: pkg
     }),
     preview: false,
     onSelect: async (pkg) => {
-      await updatePackage(pkg);
+      if (pkg.localSource) {
+        await reinstallPackage(pkg);
+      } else {
+        await updatePackage(pkg);
+      }
     }
   });
 
