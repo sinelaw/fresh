@@ -5544,6 +5544,32 @@ mod tests {
     }
 
     #[test]
+    fn test_api_version() {
+        let (mut backend, _rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis._apiVersion = editor.apiVersion();
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let version: u32 = ctx.globals().get("_apiVersion").unwrap();
+                assert_eq!(version, 2);
+            });
+    }
+
+    #[test]
     fn test_api_unload_plugin_rejects_on_error() {
         let (mut backend, rx) = create_test_backend();
 
