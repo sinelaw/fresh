@@ -284,6 +284,8 @@ pub struct BufferInfo {
     pub modified: bool,
     /// Length of buffer in bytes
     pub length: usize,
+    /// Whether this is a virtual buffer (not backed by a file)
+    pub is_virtual: bool,
 }
 
 fn serialize_path<S: serde::Serializer>(path: &Option<PathBuf>, s: S) -> Result<S::Ok, S::Error> {
@@ -2538,6 +2540,7 @@ mod tests {
                 path: Some(std::path::PathBuf::from("/test/file.txt")),
                 modified: true,
                 length: 100,
+                is_virtual: false,
             };
             snapshot.buffers.insert(BufferId(1), buffer_info);
         }
@@ -2577,6 +2580,7 @@ mod tests {
                     path: Some(std::path::PathBuf::from("/file1.txt")),
                     modified: false,
                     length: 50,
+                    is_virtual: false,
                 },
             );
             snapshot.buffers.insert(
@@ -2586,6 +2590,7 @@ mod tests {
                     path: Some(std::path::PathBuf::from("/file2.txt")),
                     modified: true,
                     length: 100,
+                    is_virtual: false,
                 },
             );
             snapshot.buffers.insert(
@@ -2595,6 +2600,7 @@ mod tests {
                     path: None,
                     modified: false,
                     length: 0,
+                    is_virtual: true,
                 },
             );
         }

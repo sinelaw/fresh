@@ -53,6 +53,14 @@ impl Editor {
             };
             state.apply(&event);
             // Note: Overlays are ephemeral, not added to event log for undo/redo
+
+            // Request a re-render so overlays added asynchronously (e.g. after
+            // an external process returns) become visible without requiring
+            // the user to type or scroll.
+            #[cfg(feature = "plugins")]
+            {
+                self.plugin_render_requested = true;
+            }
         }
     }
 

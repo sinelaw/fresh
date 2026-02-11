@@ -880,7 +880,11 @@ impl Editor {
         let mut buffers = HashMap::new();
         let mut event_logs = HashMap::new();
 
-        let buffer_id = BufferId(0);
+        // Buffer IDs start at 1 (not 0) because the plugin API returns 0 to
+        // mean "no active buffer" from getActiveBufferId().  JavaScript treats
+        // 0 as falsy (`if (!bufferId)` would wrongly reject buffer 0), so
+        // using 1-based IDs avoids this entire class of bugs in plugins.
+        let buffer_id = BufferId(1);
         let mut state = EditorState::new(
             width,
             height,
@@ -1096,7 +1100,7 @@ impl Editor {
         let mut editor = Editor {
             buffers,
             event_logs,
-            next_buffer_id: 1,
+            next_buffer_id: 2,
             config,
             user_config_raw,
             dir_context: dir_context.clone(),
@@ -4293,11 +4297,17 @@ impl Editor {
             snapshot.buffer_text_properties.clear();
 
             for (buffer_id, state) in &self.buffers {
+                let is_virtual = self
+                    .buffer_metadata
+                    .get(buffer_id)
+                    .map(|m| m.is_virtual())
+                    .unwrap_or(false);
                 let buffer_info = BufferInfo {
                     id: *buffer_id,
                     path: state.buffer.file_path().map(|p| p.to_path_buf()),
                     modified: state.buffer.is_modified(),
                     length: state.buffer.len(),
+                    is_virtual,
                 };
                 snapshot.buffers.insert(*buffer_id, buffer_info);
 

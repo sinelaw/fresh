@@ -250,6 +250,10 @@ type BufferInfo = {
 	* Length of buffer in bytes
 	*/
 	length: number;
+	/**
+	* Whether this is a virtual buffer (not backed by a file)
+	*/
+	is_virtual: boolean;
 };
 type JsDiagnostic = {
 	/**
@@ -824,6 +828,16 @@ interface EditorAPI {
 	* Check if path is absolute
 	*/
 	pathIsAbsolute(path: string): boolean;
+	/**
+	* Get the UTF-8 byte length of a JavaScript string.
+	* 
+	* JS strings are UTF-16 internally, so `str.length` returns the number of
+	* UTF-16 code units, not the number of bytes in a UTF-8 encoding.  The
+	* editor API uses byte offsets for all buffer positions (overlays, cursor,
+	* getBufferText ranges, etc.).  This helper lets plugins convert JS string
+	* lengths / regex match indices to the byte offsets the editor expects.
+	*/
+	utf8ByteLength(text: string): number;
 	/**
 	* Check if file exists
 	*/

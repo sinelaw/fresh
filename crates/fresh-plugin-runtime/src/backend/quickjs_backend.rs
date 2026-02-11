@@ -1118,6 +1118,17 @@ impl JsEditorApi {
         Path::new(&path).is_absolute()
     }
 
+    /// Get the UTF-8 byte length of a JavaScript string.
+    ///
+    /// JS strings are UTF-16 internally, so `str.length` returns the number of
+    /// UTF-16 code units, not the number of bytes in a UTF-8 encoding.  The
+    /// editor API uses byte offsets for all buffer positions (overlays, cursor,
+    /// getBufferText ranges, etc.).  This helper lets plugins convert JS string
+    /// lengths / regex match indices to the byte offsets the editor expects.
+    pub fn utf8_byte_length(&self, text: String) -> u32 {
+        text.len() as u32
+    }
+
     // === File System ===
 
     /// Check if file exists
@@ -4924,6 +4935,7 @@ mod tests {
                     path: Some(PathBuf::from("/test1.txt")),
                     modified: false,
                     length: 100,
+                    is_virtual: false,
                 },
             );
             state.buffers.insert(
@@ -4933,6 +4945,7 @@ mod tests {
                     path: Some(PathBuf::from("/test2.txt")),
                     modified: true,
                     length: 200,
+                    is_virtual: false,
                 },
             );
         }
