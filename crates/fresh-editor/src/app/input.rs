@@ -666,6 +666,8 @@ impl Editor {
             Action::ToggleFileExplorer => self.toggle_file_explorer(),
             Action::ToggleMenuBar => self.toggle_menu_bar(),
             Action::ToggleTabBar => self.toggle_tab_bar(),
+            Action::ToggleVerticalScrollbar => self.toggle_vertical_scrollbar(),
+            Action::ToggleHorizontalScrollbar => self.toggle_horizontal_scrollbar(),
             Action::ToggleLineNumbers => self.toggle_line_numbers(),
             Action::ToggleMouseCapture => self.toggle_mouse_capture(),
             Action::ToggleMouseHover => self.toggle_mouse_hover(),
@@ -1356,6 +1358,44 @@ impl Editor {
                 top_byte_before,
                 view_state.viewport.top_byte
             );
+        }
+
+        Ok(())
+    }
+
+    /// Handle horizontal scroll (Shift+ScrollWheel or native ScrollLeft/ScrollRight)
+    pub(super) fn handle_horizontal_scroll(
+        &mut self,
+        _col: u16,
+        _row: u16,
+        delta: i32,
+    ) -> AnyhowResult<()> {
+        self.sync_editor_state_to_split_view_state();
+
+        let active_split = self.split_manager.active_split();
+
+        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            // Don't scroll horizontally when line wrap is enabled
+            if view_state.viewport.line_wrap_enabled {
+                return Ok(());
+            }
+
+            let columns_to_scroll = delta.unsigned_abs() as usize;
+            if delta < 0 {
+                // Scroll left
+                view_state.viewport.left_column = view_state
+                    .viewport
+                    .left_column
+                    .saturating_sub(columns_to_scroll);
+            } else {
+                // Scroll right
+                view_state.viewport.left_column = view_state
+                    .viewport
+                    .left_column
+                    .saturating_add(columns_to_scroll);
+            }
+            // Skip ensure_visible so the scroll position isn't undone during render
+            view_state.viewport.set_skip_ensure_visible();
         }
 
         Ok(())

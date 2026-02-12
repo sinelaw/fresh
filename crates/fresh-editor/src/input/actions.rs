@@ -2630,6 +2630,8 @@ pub fn action_to_events(
         | Action::ToggleFileExplorer
         | Action::ToggleMenuBar
         | Action::ToggleTabBar
+        | Action::ToggleVerticalScrollbar
+        | Action::ToggleHorizontalScrollbar
         | Action::FocusFileExplorer
         | Action::FocusEditor
         | Action::SetBackground

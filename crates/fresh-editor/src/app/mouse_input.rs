@@ -156,6 +156,9 @@ impl Editor {
                 self.mouse_state.dragging_scrollbar = None;
                 self.mouse_state.drag_start_row = None;
                 self.mouse_state.drag_start_top_byte = None;
+                self.mouse_state.dragging_horizontal_scrollbar = None;
+                self.mouse_state.drag_start_hcol = None;
+                self.mouse_state.drag_start_left_column = None;
                 self.mouse_state.dragging_separator = None;
                 self.mouse_state.drag_start_position = None;
                 self.mouse_state.drag_start_ratio = None;
@@ -216,8 +219,16 @@ impl Editor {
                 self.update_lsp_hover_state(col, row);
             }
             MouseEventKind::ScrollUp => {
-                // Check if prompt with suggestions is active and should handle scroll
-                if self.handle_prompt_scroll(-3) {
+                // Shift+ScrollUp => horizontal scroll left
+                if mouse_event
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::SHIFT)
+                {
+                    self.handle_horizontal_scroll(col, row, -3)?;
+                    self.sync_split_view_state_to_editor_state();
+                    needs_render = true;
+                } else if self.handle_prompt_scroll(-3) {
+                    // Check if prompt with suggestions is active and should handle scroll
                     needs_render = true;
                 } else if self.is_file_open_active() && self.handle_file_open_scroll(-3) {
                     // Check if file browser is active and should handle scroll
@@ -242,8 +253,16 @@ impl Editor {
                 }
             }
             MouseEventKind::ScrollDown => {
-                // Check if prompt with suggestions is active and should handle scroll
-                if self.handle_prompt_scroll(3) {
+                // Shift+ScrollDown => horizontal scroll right
+                if mouse_event
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::SHIFT)
+                {
+                    self.handle_horizontal_scroll(col, row, 3)?;
+                    self.sync_split_view_state_to_editor_state();
+                    needs_render = true;
+                } else if self.handle_prompt_scroll(3) {
+                    // Check if prompt with suggestions is active and should handle scroll
                     needs_render = true;
                 } else if self.is_file_open_active() && self.handle_file_open_scroll(3) {
                     needs_render = true;
@@ -265,6 +284,18 @@ impl Editor {
                     self.sync_split_view_state_to_editor_state();
                     needs_render = true;
                 }
+            }
+            MouseEventKind::ScrollLeft => {
+                // Native horizontal scroll left
+                self.handle_horizontal_scroll(col, row, -3)?;
+                self.sync_split_view_state_to_editor_state();
+                needs_render = true;
+            }
+            MouseEventKind::ScrollRight => {
+                // Native horizontal scroll right
+                self.handle_horizontal_scroll(col, row, 3)?;
+                self.sync_split_view_state_to_editor_state();
+                needs_render = true;
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 // Handle right-click for context menus
@@ -1402,6 +1433,63 @@ impl Editor {
             return Ok(());
         }
 
+        // Check if click is on horizontal scrollbar
+        let hscrollbar_hit = self
+            .cached_layout
+            .horizontal_scrollbar_areas
+            .iter()
+            .find_map(
+                |(split_id, buffer_id, hscrollbar_rect, max_content_width)| {
+                    if col >= hscrollbar_rect.x
+                        && col < hscrollbar_rect.x + hscrollbar_rect.width
+                        && row >= hscrollbar_rect.y
+                        && row < hscrollbar_rect.y + hscrollbar_rect.height
+                    {
+                        Some((*split_id, *buffer_id, *hscrollbar_rect, *max_content_width))
+                    } else {
+                        None
+                    }
+                },
+            );
+
+        if let Some((split_id, buffer_id, hscrollbar_rect, max_content_width)) = hscrollbar_hit {
+            self.focus_split(split_id, buffer_id);
+
+            // Set up drag state for horizontal scrollbar
+            let current_left_column = self
+                .split_view_states
+                .get(&split_id)
+                .map(|vs| vs.viewport.left_column)
+                .unwrap_or(0);
+            self.mouse_state.dragging_horizontal_scrollbar = Some(split_id);
+            self.mouse_state.drag_start_hcol = Some(col);
+            self.mouse_state.drag_start_left_column = Some(current_left_column);
+
+            // Click on horizontal scrollbar - jump to position
+            let relative_col = col.saturating_sub(hscrollbar_rect.x) as f64;
+            let track_width = hscrollbar_rect.width as f64;
+            let ratio = if track_width > 1.0 {
+                (relative_col / (track_width - 1.0)).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+
+            // Map ratio to left_column using the real max_content_width
+            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                let visible_width = view_state.viewport.width as usize;
+                let max_scroll = max_content_width.saturating_sub(visible_width);
+                let target_col = (ratio * max_scroll as f64).round() as usize;
+                view_state.viewport.left_column = target_col.min(max_scroll);
+                view_state.viewport.set_skip_ensure_visible();
+                // Update drag start to the new position for smooth dragging
+                self.mouse_state.drag_start_left_column = Some(view_state.viewport.left_column);
+                self.mouse_state.drag_start_hcol = Some(col);
+            }
+
+            self.sync_split_view_state_to_editor_state();
+            return Ok(());
+        }
+
         // Check if click is on status bar indicators
         if let Some((status_row, _status_x, _status_width)) = self.cached_layout.status_bar_area {
             if row == status_row {
@@ -1709,6 +1797,33 @@ impl Editor {
                             *scrollbar_rect,
                         )?;
                     }
+                    return Ok(());
+                }
+            }
+        }
+
+        // If dragging horizontal scrollbar, update horizontal scroll position
+        if let Some(dragging_split_id) = self.mouse_state.dragging_horizontal_scrollbar {
+            for (split_id, _buffer_id, hscrollbar_rect, max_content_width) in
+                &self.cached_layout.horizontal_scrollbar_areas
+            {
+                if *split_id == dragging_split_id {
+                    let track_width = hscrollbar_rect.width as f64;
+                    if track_width <= 1.0 {
+                        break;
+                    }
+                    let relative_col = col.saturating_sub(hscrollbar_rect.x) as f64;
+                    let ratio = (relative_col / (track_width - 1.0)).clamp(0.0, 1.0);
+
+                    if let Some(view_state) = self.split_view_states.get_mut(&dragging_split_id) {
+                        let visible_width = view_state.viewport.width as usize;
+                        let max_scroll = max_content_width.saturating_sub(visible_width);
+                        let target_col = (ratio * max_scroll as f64).round() as usize;
+                        view_state.viewport.left_column = target_col.min(max_scroll);
+                        view_state.viewport.set_skip_ensure_visible();
+                    }
+
+                    self.sync_split_view_state_to_editor_state();
                     return Ok(());
                 }
             }

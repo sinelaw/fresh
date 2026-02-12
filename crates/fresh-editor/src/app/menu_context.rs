@@ -23,6 +23,8 @@ impl Editor {
         let inlay_hints = self.config.editor.enable_inlay_hints;
         let has_selection = self.has_active_selection();
         let menu_bar = self.menu_bar_visible;
+        let vertical_scrollbar = self.config.editor.show_vertical_scrollbar;
+        let horizontal_scrollbar = self.config.editor.show_horizontal_scrollbar;
 
         // File explorer state
         let show_hidden = self.is_file_explorer_showing_hidden();
@@ -52,7 +54,9 @@ impl Editor {
             .set(context_keys::HAS_SELECTION, has_selection)
             .set(context_keys::MENU_BAR, menu_bar)
             .set(context_keys::FORMATTER_AVAILABLE, formatter_available)
-            .set(context_keys::SESSION_MODE, session_mode);
+            .set(context_keys::SESSION_MODE, session_mode)
+            .set(context_keys::VERTICAL_SCROLLBAR, vertical_scrollbar)
+            .set(context_keys::HORIZONTAL_SCROLLBAR, horizontal_scrollbar);
     }
 
     /// Check if line numbers are visible in the active buffer.

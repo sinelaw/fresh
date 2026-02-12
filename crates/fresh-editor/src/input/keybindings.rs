@@ -483,6 +483,9 @@ pub enum Action {
     ToggleMenuBar,
     // Tab bar visibility
     ToggleTabBar,
+    // Scrollbar visibility
+    ToggleVerticalScrollbar,
+    ToggleHorizontalScrollbar,
     FocusFileExplorer,
     FocusEditor,
     FileExplorerUp,
@@ -844,6 +847,8 @@ impl Action {
             "toggle_file_explorer" => ToggleFileExplorer,
             "toggle_menu_bar" => ToggleMenuBar,
             "toggle_tab_bar" => ToggleTabBar,
+            "toggle_vertical_scrollbar" => ToggleVerticalScrollbar,
+            "toggle_horizontal_scrollbar" => ToggleHorizontalScrollbar,
             "focus_file_explorer" => FocusFileExplorer,
             "focus_editor" => FocusEditor,
             "file_explorer_up" => FileExplorerUp,
@@ -1916,6 +1921,8 @@ impl KeybindingResolver {
             Action::ToggleFileExplorer => t!("action.toggle_file_explorer"),
             Action::ToggleMenuBar => t!("action.toggle_menu_bar"),
             Action::ToggleTabBar => t!("action.toggle_tab_bar"),
+            Action::ToggleVerticalScrollbar => t!("action.toggle_vertical_scrollbar"),
+            Action::ToggleHorizontalScrollbar => t!("action.toggle_horizontal_scrollbar"),
             Action::FocusFileExplorer => t!("action.focus_file_explorer"),
             Action::FocusEditor => t!("action.focus_editor"),
             Action::FileExplorerUp => t!("action.file_explorer_up"),

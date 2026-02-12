@@ -476,6 +476,21 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub show_tab_bar: bool,
 
+    /// Whether the vertical scrollbar is visible in each split pane.
+    /// Can be toggled at runtime via command palette or keybinding.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_vertical_scrollbar: bool,
+
+    /// Whether the horizontal scrollbar is visible in each split pane.
+    /// The horizontal scrollbar appears when line wrap is disabled and content extends beyond the viewport.
+    /// Can be toggled at runtime via command palette or keybinding.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_horizontal_scrollbar: bool,
+
     /// Use the terminal's default background color instead of the theme's editor background.
     /// When enabled, the editor background inherits from the terminal emulator,
     /// allowing transparency or custom terminal backgrounds to show through.
@@ -822,6 +837,8 @@ impl Default for EditorConfig {
             accept_suggestion_on_enter: default_accept_suggestion_on_enter(),
             show_menu_bar: true,
             show_tab_bar: true,
+            show_vertical_scrollbar: true,
+            show_horizontal_scrollbar: false,
             use_terminal_bg: false,
         }
     }
@@ -1599,6 +1616,21 @@ impl MenuConfig {
                         args: HashMap::new(),
                         when: None,
                         checkbox: Some(context_keys::MOUSE_CAPTURE.to_string()),
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.view.vertical_scrollbar").to_string(),
+                        action: "toggle_vertical_scrollbar".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some(context_keys::VERTICAL_SCROLLBAR.to_string()),
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.view.horizontal_scrollbar").to_string(),
+                        action: "toggle_horizontal_scrollbar".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some(context_keys::HORIZONTAL_SCROLLBAR.to_string()),
                     },
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {

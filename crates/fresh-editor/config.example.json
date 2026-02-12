@@ -870,6 +870,23 @@
             "separator": true
           },
           {
+            "label": "Vertical Scrollbar",
+            "action": "toggle_vertical_scrollbar",
+            "args": {},
+            "when": null,
+            "checkbox": "vertical_scrollbar"
+          },
+          {
+            "label": "Horizontal Scrollbar",
+            "action": "toggle_horizontal_scrollbar",
+            "args": {},
+            "when": null,
+            "checkbox": "horizontal_scrollbar"
+          },
+          {
+            "separator": true
+          },
+          {
             "label": "Set Background...",
             "action": "set_background",
             "args": {},

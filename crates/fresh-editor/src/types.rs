@@ -24,6 +24,8 @@ pub mod context_keys {
     pub const FORMATTER_AVAILABLE: &str = "formatter_available";
     pub const INLAY_HINTS: &str = "inlay_hints";
     pub const SESSION_MODE: &str = "session_mode";
+    pub const VERTICAL_SCROLLBAR: &str = "vertical_scrollbar";
+    pub const HORIZONTAL_SCROLLBAR: &str = "horizontal_scrollbar";
 }
 
 /// Configuration for process resource limits

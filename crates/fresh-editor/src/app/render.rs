@@ -359,35 +359,43 @@ impl Editor {
 
         let is_maximized = self.split_manager.is_maximized();
 
-        let (split_areas, tab_layouts, close_split_areas, maximize_split_areas, view_line_mappings) =
-            SplitRenderer::render_content(
-                frame,
-                editor_content_area,
-                &self.split_manager,
-                &mut self.buffers,
-                &self.buffer_metadata,
-                &mut self.event_logs,
-                &self.composite_buffers,
-                &mut self.composite_view_states,
-                &self.theme,
-                self.ansi_background.as_ref(),
-                self.background_fade,
-                lsp_waiting,
-                self.config.editor.large_file_threshold_bytes,
-                self.config.editor.line_wrap,
-                self.config.editor.estimated_line_length,
-                self.config.editor.highlight_context_bytes,
-                Some(&mut self.split_view_states),
-                hide_cursor,
-                hovered_tab,
-                hovered_close_split,
-                hovered_maximize_split,
-                is_maximized,
-                self.config.editor.relative_line_numbers,
-                self.tab_bar_visible,
-                self.config.editor.use_terminal_bg,
-                self.session_mode,
-            );
+        let (
+            split_areas,
+            tab_layouts,
+            close_split_areas,
+            maximize_split_areas,
+            view_line_mappings,
+            horizontal_scrollbar_areas,
+        ) = SplitRenderer::render_content(
+            frame,
+            editor_content_area,
+            &self.split_manager,
+            &mut self.buffers,
+            &self.buffer_metadata,
+            &mut self.event_logs,
+            &self.composite_buffers,
+            &mut self.composite_view_states,
+            &self.theme,
+            self.ansi_background.as_ref(),
+            self.background_fade,
+            lsp_waiting,
+            self.config.editor.large_file_threshold_bytes,
+            self.config.editor.line_wrap,
+            self.config.editor.estimated_line_length,
+            self.config.editor.highlight_context_bytes,
+            Some(&mut self.split_view_states),
+            hide_cursor,
+            hovered_tab,
+            hovered_close_split,
+            hovered_maximize_split,
+            is_maximized,
+            self.config.editor.relative_line_numbers,
+            self.tab_bar_visible,
+            self.config.editor.use_terminal_bg,
+            self.session_mode,
+            self.config.editor.show_vertical_scrollbar,
+            self.config.editor.show_horizontal_scrollbar,
+        );
 
         // Detect viewport changes and fire hooks
         // Compare against previous frame's viewport state (stored in self.previous_viewports)
@@ -454,6 +462,7 @@ impl Editor {
         self.render_terminal_splits(frame, &split_areas);
 
         self.cached_layout.split_areas = split_areas;
+        self.cached_layout.horizontal_scrollbar_areas = horizontal_scrollbar_areas;
         self.cached_layout.tab_layouts = tab_layouts;
         self.cached_layout.close_split_areas = close_split_areas;
         self.cached_layout.maximize_split_areas = maximize_split_areas;

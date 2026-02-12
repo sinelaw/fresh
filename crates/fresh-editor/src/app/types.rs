@@ -610,8 +610,14 @@ impl TabDragState {
 /// Mouse state tracking
 #[derive(Debug, Clone, Default)]
 pub(super) struct MouseState {
-    /// Whether we're currently dragging a scrollbar
+    /// Whether we're currently dragging a vertical scrollbar
     pub dragging_scrollbar: Option<SplitId>,
+    /// Whether we're currently dragging a horizontal scrollbar
+    pub dragging_horizontal_scrollbar: Option<SplitId>,
+    /// Initial mouse column when starting horizontal scrollbar drag
+    pub drag_start_hcol: Option<u16>,
+    /// Initial left_column when starting horizontal scrollbar drag
+    pub drag_start_left_column: Option<usize>,
     /// Last mouse position
     pub last_position: Option<(u16, u16)>,
     /// Mouse hover for LSP: byte position being hovered, timer start, and screen position
@@ -711,6 +717,9 @@ pub(crate) struct CachedLayout {
     /// Individual split areas with their scrollbar areas and thumb positions
     /// (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end)
     pub split_areas: Vec<(SplitId, BufferId, Rect, Rect, usize, usize)>,
+    /// Horizontal scrollbar areas per split
+    /// (split_id, buffer_id, horizontal_scrollbar_rect, max_content_width)
+    pub horizontal_scrollbar_areas: Vec<(SplitId, BufferId, Rect, usize)>,
     /// Split separator positions for drag resize
     /// (split_id, direction, x, y, length)
     pub separator_areas: Vec<(SplitId, SplitDirection, u16, u16, u16)>,

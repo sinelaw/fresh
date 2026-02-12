@@ -668,6 +668,20 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_vertical_scrollbar",
+        desc_key: "cmd.toggle_vertical_scrollbar_desc",
+        action: || Action::ToggleVerticalScrollbar,
+        contexts: &[Normal, FileExplorer, Terminal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.toggle_horizontal_scrollbar",
+        desc_key: "cmd.toggle_horizontal_scrollbar_desc",
+        action: || Action::ToggleHorizontalScrollbar,
+        contexts: &[Normal, FileExplorer, Terminal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.focus_file_explorer",
         desc_key: "cmd.focus_file_explorer_desc",
         action: || Action::FocusFileExplorer,

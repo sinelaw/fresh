@@ -170,6 +170,8 @@ pub struct PartialEditorConfig {
     pub accept_suggestion_on_enter: Option<AcceptSuggestionOnEnter>,
     pub show_menu_bar: Option<bool>,
     pub show_tab_bar: Option<bool>,
+    pub show_vertical_scrollbar: Option<bool>,
+    pub show_horizontal_scrollbar: Option<bool>,
     pub use_terminal_bg: Option<bool>,
 }
 
@@ -237,6 +239,10 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.accept_suggestion_on_enter);
         self.show_menu_bar.merge_from(&other.show_menu_bar);
         self.show_tab_bar.merge_from(&other.show_tab_bar);
+        self.show_vertical_scrollbar
+            .merge_from(&other.show_vertical_scrollbar);
+        self.show_horizontal_scrollbar
+            .merge_from(&other.show_horizontal_scrollbar);
         self.use_terminal_bg.merge_from(&other.use_terminal_bg);
     }
 }
@@ -435,6 +441,8 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             accept_suggestion_on_enter: Some(cfg.accept_suggestion_on_enter),
             show_menu_bar: Some(cfg.show_menu_bar),
             show_tab_bar: Some(cfg.show_tab_bar),
+            show_vertical_scrollbar: Some(cfg.show_vertical_scrollbar),
+            show_horizontal_scrollbar: Some(cfg.show_horizontal_scrollbar),
             use_terminal_bg: Some(cfg.use_terminal_bg),
         }
     }
@@ -531,6 +539,12 @@ impl PartialEditorConfig {
                 .unwrap_or(defaults.accept_suggestion_on_enter),
             show_menu_bar: self.show_menu_bar.unwrap_or(defaults.show_menu_bar),
             show_tab_bar: self.show_tab_bar.unwrap_or(defaults.show_tab_bar),
+            show_vertical_scrollbar: self
+                .show_vertical_scrollbar
+                .unwrap_or(defaults.show_vertical_scrollbar),
+            show_horizontal_scrollbar: self
+                .show_horizontal_scrollbar
+                .unwrap_or(defaults.show_horizontal_scrollbar),
             use_terminal_bg: self.use_terminal_bg.unwrap_or(defaults.use_terminal_bg),
         }
     }
