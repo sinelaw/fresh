@@ -6,6 +6,7 @@
 //! - Uses arboard crate for reading from system clipboard
 //! - Supports copying HTML-formatted text for rich text editors
 //! - Gracefully falls back to internal clipboard if system clipboard is unavailable
+//! - Respects clipboard configuration to disable problematic methods
 
 use crossterm::clipboard::CopyToClipboard;
 use crossterm::execute;
@@ -23,15 +24,28 @@ pub struct Clipboard {
     internal: String,
     /// When true, paste() uses internal clipboard only (for testing)
     internal_only: bool,
+    /// When true, OSC 52 escape sequences are used for clipboard copy
+    use_osc52: bool,
+    /// When true, system clipboard (arboard/X11/Wayland) is used for copy/paste
+    use_system_clipboard: bool,
 }
 
 impl Clipboard {
-    /// Create a new empty clipboard
+    /// Create a new empty clipboard with all methods enabled
     pub fn new() -> Self {
         Self {
             internal: String::new(),
             internal_only: false,
+            use_osc52: true,
+            use_system_clipboard: true,
         }
+    }
+
+    /// Update clipboard configuration from editor config.
+    /// Called on initialization and when config is reloaded.
+    pub fn apply_config(&mut self, config: &crate::config::ClipboardConfig) {
+        self.use_osc52 = config.use_osc52;
+        self.use_system_clipboard = config.use_system_clipboard;
     }
 
     /// Enable internal-only mode (for testing)
@@ -47,6 +61,10 @@ impl Clipboard {
     /// Returns true if successful, false otherwise.
     pub fn copy_html(&mut self, html: &str, plain_text: &str) -> bool {
         self.internal = plain_text.to_string();
+
+        if !self.use_system_clipboard {
+            return false;
+        }
 
         if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
             // Create clipboard if it doesn't exist yet
@@ -82,46 +100,52 @@ impl Clipboard {
     /// Tries multiple methods to maximize compatibility:
     /// 1. OSC 52 escape sequence (works in Konsole, Kitty, Alacritty, Wezterm, xterm, iTerm2)
     /// 2. arboard crate (works via X11/Wayland APIs in Gnome Console, XFCE Terminal, etc.)
+    ///
+    /// Methods can be disabled via clipboard configuration.
     pub fn copy(&mut self, text: String) {
         self.internal = text.clone();
 
         // Try OSC 52 first (works in modern terminals)
         // Note: This doesn't "fail" in a detectable way - it just sends escape sequences
         // that the terminal may or may not handle
-        let osc52_result = execute!(stdout(), CopyToClipboard::to_clipboard_from(&text));
-        if let Err(e) = &osc52_result {
-            tracing::debug!("Crossterm OSC 52 clipboard copy failed: {}", e);
+        if self.use_osc52 {
+            let osc52_result = execute!(stdout(), CopyToClipboard::to_clipboard_from(&text));
+            if let Err(e) = &osc52_result {
+                tracing::debug!("Crossterm OSC 52 clipboard copy failed: {}", e);
+            }
+            // Ensure the escape sequence is flushed to the terminal
+            let _ = stdout().flush();
         }
-        // Ensure the escape sequence is flushed to the terminal
-        let _ = stdout().flush();
 
         // Also try arboard (works via X11/Wayland in terminals without OSC 52 support)
         // This provides coverage for Gnome Console, XFCE Terminal, and similar
         //
         // Important: On X11, the clipboard owner must stay alive to respond to paste requests.
         // We store the clipboard in a static so it lives for the application lifetime.
-        if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
-            // Create clipboard if it doesn't exist yet
-            if guard.is_none() {
-                match arboard::Clipboard::new() {
-                    Ok(cb) => *guard = Some(cb),
-                    Err(e) => {
-                        tracing::debug!("arboard clipboard init failed: {}", e);
+        if self.use_system_clipboard {
+            if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
+                // Create clipboard if it doesn't exist yet
+                if guard.is_none() {
+                    match arboard::Clipboard::new() {
+                        Ok(cb) => *guard = Some(cb),
+                        Err(e) => {
+                            tracing::debug!("arboard clipboard init failed: {}", e);
+                        }
                     }
                 }
-            }
 
-            // Try to set text on the clipboard
-            if let Some(clipboard) = guard.as_mut() {
-                if let Err(e) = clipboard.set_text(&text) {
-                    tracing::debug!("arboard copy failed: {}, recreating clipboard", e);
-                    // If set_text fails, try recreating the clipboard
-                    drop(guard);
-                    if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
-                        if let Ok(new_clipboard) = arboard::Clipboard::new() {
-                            *guard = Some(new_clipboard);
-                            if let Some(cb) = guard.as_mut() {
-                                let _ = cb.set_text(&text);
+                // Try to set text on the clipboard
+                if let Some(clipboard) = guard.as_mut() {
+                    if let Err(e) = clipboard.set_text(&text) {
+                        tracing::debug!("arboard copy failed: {}, recreating clipboard", e);
+                        // If set_text fails, try recreating the clipboard
+                        drop(guard);
+                        if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
+                            if let Ok(new_clipboard) = arboard::Clipboard::new() {
+                                *guard = Some(new_clipboard);
+                                if let Some(cb) = guard.as_mut() {
+                                    let _ = cb.set_text(&text);
+                                }
                             }
                         }
                     }
@@ -141,19 +165,21 @@ impl Clipboard {
         }
 
         // Try arboard crate via the static clipboard (reads from system clipboard)
-        if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
-            // Create clipboard if it doesn't exist yet
-            if guard.is_none() {
-                if let Ok(cb) = arboard::Clipboard::new() {
-                    *guard = Some(cb);
+        if self.use_system_clipboard {
+            if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
+                // Create clipboard if it doesn't exist yet
+                if guard.is_none() {
+                    if let Ok(cb) = arboard::Clipboard::new() {
+                        *guard = Some(cb);
+                    }
                 }
-            }
 
-            if let Some(clipboard) = guard.as_mut() {
-                if let Ok(text) = clipboard.get_text() {
-                    if !text.is_empty() {
-                        self.internal = text.clone();
-                        return Some(text);
+                if let Some(clipboard) = guard.as_mut() {
+                    if let Ok(text) = clipboard.get_text() {
+                        if !text.is_empty() {
+                            self.internal = text.clone();
+                            return Some(text);
+                        }
                     }
                 }
             }
@@ -194,16 +220,18 @@ impl Clipboard {
         }
 
         // Check system clipboard via the static clipboard
-        if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
-            if guard.is_none() {
-                if let Ok(cb) = arboard::Clipboard::new() {
-                    *guard = Some(cb);
+        if self.use_system_clipboard {
+            if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
+                if guard.is_none() {
+                    if let Ok(cb) = arboard::Clipboard::new() {
+                        *guard = Some(cb);
+                    }
                 }
-            }
 
-            if let Some(clipboard) = guard.as_mut() {
-                if let Ok(text) = clipboard.get_text() {
-                    return text.is_empty();
+                if let Some(clipboard) = guard.as_mut() {
+                    if let Ok(text) = clipboard.get_text() {
+                        return text.is_empty();
+                    }
                 }
             }
         }
@@ -230,5 +258,42 @@ mod tests {
         let mut clipboard = Clipboard::new();
         clipboard.copy("hello".to_string());
         assert_eq!(clipboard.get_internal(), "hello");
+    }
+
+    #[test]
+    fn test_clipboard_config_disables_osc52() {
+        let mut clipboard = Clipboard::new();
+        let config = crate::config::ClipboardConfig {
+            use_osc52: false,
+            use_system_clipboard: true,
+        };
+        clipboard.apply_config(&config);
+        assert!(!clipboard.use_osc52);
+        assert!(clipboard.use_system_clipboard);
+    }
+
+    #[test]
+    fn test_clipboard_config_disables_system() {
+        let mut clipboard = Clipboard::new();
+        let config = crate::config::ClipboardConfig {
+            use_osc52: true,
+            use_system_clipboard: false,
+        };
+        clipboard.apply_config(&config);
+        assert!(clipboard.use_osc52);
+        assert!(!clipboard.use_system_clipboard);
+    }
+
+    #[test]
+    fn test_clipboard_internal_only_mode() {
+        let mut clipboard = Clipboard::new();
+        let config = crate::config::ClipboardConfig {
+            use_osc52: false,
+            use_system_clipboard: false,
+        };
+        clipboard.apply_config(&config);
+
+        clipboard.copy("internal only".to_string());
+        assert_eq!(clipboard.get_internal(), "internal only");
     }
 }

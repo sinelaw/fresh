@@ -1290,6 +1290,9 @@ impl Editor {
             composite_view_states: HashMap::new(),
         };
 
+        // Apply clipboard configuration
+        editor.clipboard.apply_config(&editor.config.clipboard);
+
         #[cfg(feature = "plugins")]
         {
             editor.update_plugin_state_snapshot();

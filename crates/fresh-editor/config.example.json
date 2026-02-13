@@ -31,6 +31,10 @@
     "custom_ignore_patterns": [],
     "width": 0.3
   },
+  "clipboard": {
+    "use_osc52": true,
+    "use_system_clipboard": true
+  },
   "terminal": {
     "jump_to_end_on_output": true
   },

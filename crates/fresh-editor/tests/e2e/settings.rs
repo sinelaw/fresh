@@ -877,7 +877,9 @@ fn test_settings_from_terminal_mode_captures_input() {
     harness.assert_screen_contains("Settings");
 
     // Now try to use Settings navigation - press Down to navigate categories
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    // Categories: General, Clipboard, Editor, ...
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Clipboard
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Editor
     harness.render().unwrap();
 
     // The Settings should respond to navigation, not the terminal
@@ -1076,7 +1078,9 @@ fn test_settings_descriptions_render_properly() {
     harness.open_settings().unwrap();
 
     // Navigate to Editor category which has settings with descriptions
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    // Categories: General, Clipboard, Editor, ...
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Clipboard
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Editor
     harness.render().unwrap();
 
     // Switch to settings panel
@@ -1278,8 +1282,9 @@ fn test_settings_percentage_value_saves_correctly() {
     // Open settings
     harness.open_settings().unwrap();
 
-    // Navigate to File Explorer category (down three times from General)
-    // Categories: General, Editor, File Browser, File Explorer, Menu, Terminal, Warnings
+    // Navigate to File Explorer category (down four times from General)
+    // Categories: General, Clipboard, Editor, File Browser, File Explorer, ...
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Clipboard
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // Editor
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // File Browser
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // File Explorer
@@ -1778,15 +1783,15 @@ fn test_category_selection_indicator_visible() {
         screen
     );
 
-    // Navigate down to Editor category
+    // Navigate down to Clipboard category
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Now Editor should have the ">" indicator
+    // Now Clipboard should have the ">" indicator
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains(">● Editor") || screen.contains(">  Editor"),
-        "Expected '>' indicator on Editor category when focused. Screen: {}",
+        screen.contains(">● Clipboard") || screen.contains(">  Clipboard"),
+        "Expected '>' indicator on Clipboard category when focused. Screen: {}",
         screen
     );
 
@@ -1794,12 +1799,12 @@ fn test_category_selection_indicator_visible() {
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Now Editor should not have the ">" indicator (panel not focused)
-    harness.assert_screen_not_contains(">● Editor");
-    harness.assert_screen_not_contains(">  Editor");
+    // Now Clipboard should not have the ">" indicator (panel not focused)
+    harness.assert_screen_not_contains(">● Clipboard");
+    harness.assert_screen_not_contains(">  Clipboard");
 
-    // But Editor should still be visible (just highlighted differently)
-    harness.assert_screen_contains("Editor");
+    // But Clipboard should still be visible (just highlighted differently)
+    harness.assert_screen_contains("Clipboard");
 
     // Close settings
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();

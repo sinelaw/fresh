@@ -88,6 +88,14 @@
         "show_hidden": false
       }
     },
+    "clipboard": {
+      "description": "Clipboard settings (which clipboard methods to use)",
+      "$ref": "#/$defs/ClipboardConfig",
+      "default": {
+        "use_osc52": true,
+        "use_system_clipboard": true
+      }
+    },
     "terminal": {
       "description": "Terminal settings",
       "$ref": "#/$defs/TerminalConfig",
@@ -526,6 +534,22 @@
           "description": "Whether to show hidden files (starting with .) by default in Open File dialog",
           "type": "boolean",
           "default": false
+        }
+      }
+    },
+    "ClipboardConfig": {
+      "description": "Clipboard configuration\n\nControls which clipboard methods are used for copy/paste operations.\nBy default, all methods are enabled and the editor tries them in order:\n1. OSC 52 escape sequences (works in modern terminals like Kitty, Alacritty, Wezterm)\n2. System clipboard via X11/Wayland APIs (works in Gnome Console, XFCE Terminal, etc.)\n3. Internal clipboard (always available as fallback)\n\nIf you experience hangs or issues (e.g., when using PuTTY or certain SSH setups),\nyou can disable specific methods.",
+      "type": "object",
+      "properties": {
+        "use_osc52": {
+          "description": "Enable OSC 52 escape sequences for clipboard access (default: true)\nDisable this if your terminal doesn't support OSC 52 or if it causes hangs",
+          "type": "boolean",
+          "default": true
+        },
+        "use_system_clipboard": {
+          "description": "Enable system clipboard access via X11/Wayland APIs (default: true)\nDisable this if you don't have a display server or it causes issues",
+          "type": "boolean",
+          "default": true
         }
       }
     },

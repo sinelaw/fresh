@@ -381,6 +381,10 @@ pub struct Config {
     #[serde(default)]
     pub file_browser: FileBrowserConfig,
 
+    /// Clipboard settings (which clipboard methods to use)
+    #[serde(default)]
+    pub clipboard: ClipboardConfig,
+
     /// Terminal settings
     #[serde(default)]
     pub terminal: TerminalConfig,
@@ -853,6 +857,38 @@ pub struct FileExplorerConfig {
 
 fn default_explorer_width() -> f32 {
     0.3 // 30% of screen width
+}
+
+/// Clipboard configuration
+///
+/// Controls which clipboard methods are used for copy/paste operations.
+/// By default, all methods are enabled and the editor tries them in order:
+/// 1. OSC 52 escape sequences (works in modern terminals like Kitty, Alacritty, Wezterm)
+/// 2. System clipboard via X11/Wayland APIs (works in Gnome Console, XFCE Terminal, etc.)
+/// 3. Internal clipboard (always available as fallback)
+///
+/// If you experience hangs or issues (e.g., when using PuTTY or certain SSH setups),
+/// you can disable specific methods.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ClipboardConfig {
+    /// Enable OSC 52 escape sequences for clipboard access (default: true)
+    /// Disable this if your terminal doesn't support OSC 52 or if it causes hangs
+    #[serde(default = "default_true")]
+    pub use_osc52: bool,
+
+    /// Enable system clipboard access via X11/Wayland APIs (default: true)
+    /// Disable this if you don't have a display server or it causes issues
+    #[serde(default = "default_true")]
+    pub use_system_clipboard: bool,
+}
+
+impl Default for ClipboardConfig {
+    fn default() -> Self {
+        Self {
+            use_osc52: true,
+            use_system_clipboard: true,
+        }
+    }
 }
 
 /// Terminal configuration
@@ -1337,6 +1373,7 @@ impl Default for Config {
             editor: EditorConfig::default(),
             file_explorer: FileExplorerConfig::default(),
             file_browser: FileBrowserConfig::default(),
+            clipboard: ClipboardConfig::default(),
             terminal: TerminalConfig::default(),
             keybindings: vec![], // User customizations only; defaults come from active_keybinding_map
             keybinding_maps: HashMap::new(), // User-defined maps go here

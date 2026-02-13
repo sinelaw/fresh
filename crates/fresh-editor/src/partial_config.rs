@@ -4,9 +4,10 @@
 //! enabling a 4-level overlay architecture (System → User → Project → Session).
 
 use crate::config::{
-    AcceptSuggestionOnEnter, CursorStyle, FileBrowserConfig, FileExplorerConfig, FormatterConfig,
-    HighlighterPreference, Keybinding, KeybindingMapName, KeymapConfig, LanguageConfig,
-    LineEndingOption, OnSaveAction, PluginConfig, TerminalConfig, ThemeName, WarningsConfig,
+    AcceptSuggestionOnEnter, ClipboardConfig, CursorStyle, FileBrowserConfig, FileExplorerConfig,
+    FormatterConfig, HighlighterPreference, Keybinding, KeybindingMapName, KeymapConfig,
+    LanguageConfig, LineEndingOption, OnSaveAction, PluginConfig, TerminalConfig, ThemeName,
+    WarningsConfig,
 };
 use crate::types::LspServerConfig;
 use serde::{Deserialize, Serialize};
@@ -80,6 +81,7 @@ pub struct PartialConfig {
     pub editor: Option<PartialEditorConfig>,
     pub file_explorer: Option<PartialFileExplorerConfig>,
     pub file_browser: Option<PartialFileBrowserConfig>,
+    pub clipboard: Option<PartialClipboardConfig>,
     pub terminal: Option<PartialTerminalConfig>,
     pub keybindings: Option<Vec<Keybinding>>,
     pub keybinding_maps: Option<HashMap<String, KeymapConfig>>,
@@ -102,6 +104,7 @@ impl Merge for PartialConfig {
         merge_partial(&mut self.editor, &other.editor);
         merge_partial(&mut self.file_explorer, &other.file_explorer);
         merge_partial(&mut self.file_browser, &other.file_browser);
+        merge_partial(&mut self.clipboard, &other.clipboard);
         merge_partial(&mut self.terminal, &other.terminal);
         merge_partial(&mut self.warnings, &other.warnings);
         merge_partial(&mut self.packages, &other.packages);
@@ -273,6 +276,22 @@ pub struct PartialFileBrowserConfig {
 impl Merge for PartialFileBrowserConfig {
     fn merge_from(&mut self, other: &Self) {
         self.show_hidden.merge_from(&other.show_hidden);
+    }
+}
+
+/// Partial clipboard configuration.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PartialClipboardConfig {
+    pub use_osc52: Option<bool>,
+    pub use_system_clipboard: Option<bool>,
+}
+
+impl Merge for PartialClipboardConfig {
+    fn merge_from(&mut self, other: &Self) {
+        self.use_osc52.merge_from(&other.use_osc52);
+        self.use_system_clipboard
+            .merge_from(&other.use_system_clipboard);
     }
 }
 
@@ -578,6 +597,26 @@ impl PartialFileBrowserConfig {
     }
 }
 
+impl From<&ClipboardConfig> for PartialClipboardConfig {
+    fn from(cfg: &ClipboardConfig) -> Self {
+        Self {
+            use_osc52: Some(cfg.use_osc52),
+            use_system_clipboard: Some(cfg.use_system_clipboard),
+        }
+    }
+}
+
+impl PartialClipboardConfig {
+    pub fn resolve(self, defaults: &ClipboardConfig) -> ClipboardConfig {
+        ClipboardConfig {
+            use_osc52: self.use_osc52.unwrap_or(defaults.use_osc52),
+            use_system_clipboard: self
+                .use_system_clipboard
+                .unwrap_or(defaults.use_system_clipboard),
+        }
+    }
+}
+
 impl From<&TerminalConfig> for PartialTerminalConfig {
     fn from(cfg: &TerminalConfig) -> Self {
         Self {
@@ -709,6 +748,7 @@ impl From<&crate::config::Config> for PartialConfig {
             editor: Some(PartialEditorConfig::from(&cfg.editor)),
             file_explorer: Some(PartialFileExplorerConfig::from(&cfg.file_explorer)),
             file_browser: Some(PartialFileBrowserConfig::from(&cfg.file_browser)),
+            clipboard: Some(PartialClipboardConfig::from(&cfg.clipboard)),
             terminal: Some(PartialTerminalConfig::from(&cfg.terminal)),
             keybindings: Some(cfg.keybindings.clone()),
             keybinding_maps: Some(cfg.keybinding_maps.clone()),
@@ -829,6 +869,10 @@ impl PartialConfig {
                 .file_browser
                 .map(|e| e.resolve(&defaults.file_browser))
                 .unwrap_or_else(|| defaults.file_browser.clone()),
+            clipboard: self
+                .clipboard
+                .map(|e| e.resolve(&defaults.clipboard))
+                .unwrap_or_else(|| defaults.clipboard.clone()),
             terminal: self
                 .terminal
                 .map(|e| e.resolve(&defaults.terminal))

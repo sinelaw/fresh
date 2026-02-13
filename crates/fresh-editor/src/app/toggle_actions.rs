@@ -259,6 +259,9 @@ impl Editor {
         // Always reload keybindings (complex types don't implement PartialEq)
         self.keybindings = KeybindingResolver::new(&self.config);
 
+        // Update clipboard configuration
+        self.clipboard.apply_config(&self.config.clipboard);
+
         // Update LSP configs
         if let Some(ref mut lsp) = self.lsp {
             for (language, lsp_config) in &self.config.lsp {
