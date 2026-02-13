@@ -718,8 +718,8 @@ pub(crate) struct CachedLayout {
     /// (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end)
     pub split_areas: Vec<(SplitId, BufferId, Rect, Rect, usize, usize)>,
     /// Horizontal scrollbar areas per split
-    /// (split_id, buffer_id, horizontal_scrollbar_rect, max_content_width)
-    pub horizontal_scrollbar_areas: Vec<(SplitId, BufferId, Rect, usize)>,
+    /// (split_id, buffer_id, horizontal_scrollbar_rect, max_content_width, thumb_start_col, thumb_end_col)
+    pub horizontal_scrollbar_areas: Vec<(SplitId, BufferId, Rect, usize, usize, usize)>,
     /// Split separator positions for drag resize
     /// (split_id, direction, x, y, length)
     pub separator_areas: Vec<(SplitId, SplitDirection, u16, u16, u16)>,

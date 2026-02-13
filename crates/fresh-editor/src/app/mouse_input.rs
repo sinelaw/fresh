@@ -1439,51 +1439,66 @@ impl Editor {
             .horizontal_scrollbar_areas
             .iter()
             .find_map(
-                |(split_id, buffer_id, hscrollbar_rect, max_content_width)| {
+                |(
+                    split_id,
+                    buffer_id,
+                    hscrollbar_rect,
+                    max_content_width,
+                    thumb_start,
+                    thumb_end,
+                )| {
                     if col >= hscrollbar_rect.x
                         && col < hscrollbar_rect.x + hscrollbar_rect.width
                         && row >= hscrollbar_rect.y
                         && row < hscrollbar_rect.y + hscrollbar_rect.height
                     {
-                        Some((*split_id, *buffer_id, *hscrollbar_rect, *max_content_width))
+                        let relative_col = col.saturating_sub(hscrollbar_rect.x) as usize;
+                        let is_on_thumb = relative_col >= *thumb_start && relative_col < *thumb_end;
+                        Some((
+                            *split_id,
+                            *buffer_id,
+                            *hscrollbar_rect,
+                            *max_content_width,
+                            is_on_thumb,
+                        ))
                     } else {
                         None
                     }
                 },
             );
 
-        if let Some((split_id, buffer_id, hscrollbar_rect, max_content_width)) = hscrollbar_hit {
+        if let Some((split_id, buffer_id, hscrollbar_rect, max_content_width, is_on_thumb)) =
+            hscrollbar_hit
+        {
             self.focus_split(split_id, buffer_id);
-
-            // Set up drag state for horizontal scrollbar
-            let current_left_column = self
-                .split_view_states
-                .get(&split_id)
-                .map(|vs| vs.viewport.left_column)
-                .unwrap_or(0);
             self.mouse_state.dragging_horizontal_scrollbar = Some(split_id);
-            self.mouse_state.drag_start_hcol = Some(col);
-            self.mouse_state.drag_start_left_column = Some(current_left_column);
 
-            // Click on horizontal scrollbar - jump to position
-            let relative_col = col.saturating_sub(hscrollbar_rect.x) as f64;
-            let track_width = hscrollbar_rect.width as f64;
-            let ratio = if track_width > 1.0 {
-                (relative_col / (track_width - 1.0)).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-
-            // Map ratio to left_column using the real max_content_width
-            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
-                let visible_width = view_state.viewport.width as usize;
-                let max_scroll = max_content_width.saturating_sub(visible_width);
-                let target_col = (ratio * max_scroll as f64).round() as usize;
-                view_state.viewport.left_column = target_col.min(max_scroll);
-                view_state.viewport.set_skip_ensure_visible();
-                // Update drag start to the new position for smooth dragging
-                self.mouse_state.drag_start_left_column = Some(view_state.viewport.left_column);
+            if is_on_thumb {
+                // Click on thumb - start drag from current position (don't jump)
                 self.mouse_state.drag_start_hcol = Some(col);
+                if let Some(view_state) = self.split_view_states.get(&split_id) {
+                    self.mouse_state.drag_start_left_column = Some(view_state.viewport.left_column);
+                }
+            } else {
+                // Click on track - jump to position
+                self.mouse_state.drag_start_hcol = None;
+                self.mouse_state.drag_start_left_column = None;
+
+                let relative_col = col.saturating_sub(hscrollbar_rect.x) as f64;
+                let track_width = hscrollbar_rect.width as f64;
+                let ratio = if track_width > 1.0 {
+                    (relative_col / (track_width - 1.0)).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+
+                if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                    let visible_width = view_state.viewport.width as usize;
+                    let max_scroll = max_content_width.saturating_sub(visible_width);
+                    let target_col = (ratio * max_scroll as f64).round() as usize;
+                    view_state.viewport.left_column = target_col.min(max_scroll);
+                    view_state.viewport.set_skip_ensure_visible();
+                }
             }
 
             self.sync_split_view_state_to_editor_state();
@@ -1804,23 +1819,55 @@ impl Editor {
 
         // If dragging horizontal scrollbar, update horizontal scroll position
         if let Some(dragging_split_id) = self.mouse_state.dragging_horizontal_scrollbar {
-            for (split_id, _buffer_id, hscrollbar_rect, max_content_width) in
-                &self.cached_layout.horizontal_scrollbar_areas
+            for (
+                split_id,
+                _buffer_id,
+                hscrollbar_rect,
+                max_content_width,
+                _thumb_start,
+                _thumb_end,
+            ) in &self.cached_layout.horizontal_scrollbar_areas
             {
                 if *split_id == dragging_split_id {
                     let track_width = hscrollbar_rect.width as f64;
                     if track_width <= 1.0 {
                         break;
                     }
-                    let relative_col = col.saturating_sub(hscrollbar_rect.x) as f64;
-                    let ratio = (relative_col / (track_width - 1.0)).clamp(0.0, 1.0);
 
-                    if let Some(view_state) = self.split_view_states.get_mut(&dragging_split_id) {
-                        let visible_width = view_state.viewport.width as usize;
-                        let max_scroll = max_content_width.saturating_sub(visible_width);
-                        let target_col = (ratio * max_scroll as f64).round() as usize;
-                        view_state.viewport.left_column = target_col.min(max_scroll);
-                        view_state.viewport.set_skip_ensure_visible();
+                    if let (Some(drag_start_hcol), Some(drag_start_left_column)) = (
+                        self.mouse_state.drag_start_hcol,
+                        self.mouse_state.drag_start_left_column,
+                    ) {
+                        // Relative drag from thumb - move proportionally to mouse offset
+                        let col_offset = (col as i32) - (drag_start_hcol as i32);
+                        if let Some(view_state) = self.split_view_states.get_mut(&dragging_split_id)
+                        {
+                            let visible_width = view_state.viewport.width as usize;
+                            let max_scroll = max_content_width.saturating_sub(visible_width);
+                            if max_scroll > 0 {
+                                // Convert pixel offset to scroll offset
+                                let scroll_per_pixel = max_scroll as f64 / (track_width - 1.0);
+                                let scroll_offset =
+                                    (col_offset as f64 * scroll_per_pixel).round() as i64;
+                                let new_left =
+                                    (drag_start_left_column as i64 + scroll_offset).max(0) as usize;
+                                view_state.viewport.left_column = new_left.min(max_scroll);
+                                view_state.viewport.set_skip_ensure_visible();
+                            }
+                        }
+                    } else {
+                        // Jump drag (started from track) - jump to absolute position
+                        let relative_col = col.saturating_sub(hscrollbar_rect.x) as f64;
+                        let ratio = (relative_col / (track_width - 1.0)).clamp(0.0, 1.0);
+
+                        if let Some(view_state) = self.split_view_states.get_mut(&dragging_split_id)
+                        {
+                            let visible_width = view_state.viewport.width as usize;
+                            let max_scroll = max_content_width.saturating_sub(visible_width);
+                            let target_col = (ratio * max_scroll as f64).round() as usize;
+                            view_state.viewport.left_column = target_col.min(max_scroll);
+                            view_state.viewport.set_skip_ensure_visible();
+                        }
                     }
 
                     self.sync_split_view_state_to_editor_state();

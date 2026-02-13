@@ -769,7 +769,14 @@ impl SplitRenderer {
         Vec<(crate::model::event::SplitId, u16, u16, u16)>, // close split button areas
         Vec<(crate::model::event::SplitId, u16, u16, u16)>, // maximize split button areas
         HashMap<crate::model::event::SplitId, Vec<ViewLineMapping>>, // view line mappings for mouse clicks
-        Vec<(crate::model::event::SplitId, BufferId, Rect, usize)>, // horizontal scrollbar areas (rect + max_content_width)
+        Vec<(
+            crate::model::event::SplitId,
+            BufferId,
+            Rect,
+            usize,
+            usize,
+            usize,
+        )>, // horizontal scrollbar areas (rect + max_content_width + thumb_start + thumb_end)
     ) {
         let _span = tracing::trace_span!("render_content").entered();
 
@@ -784,6 +791,8 @@ impl SplitRenderer {
             crate::model::event::SplitId,
             BufferId,
             Rect,
+            usize,
+            usize,
             usize,
         )> = Vec::new();
         let mut tab_layouts: HashMap<
@@ -959,6 +968,8 @@ impl SplitRenderer {
                                 buffer_id,
                                 layout.horizontal_scrollbar_rect,
                                 0, // composite buffers don't horizontal-scroll
+                                0,
+                                0,
                             ));
                         }
                     }
@@ -1055,21 +1066,23 @@ impl SplitRenderer {
                 // Compute the actual max line length for horizontal scrollbar
                 let max_content_width = if show_horizontal_scrollbar && !viewport.line_wrap_enabled
                 {
-                    Self::compute_max_line_length(state, large_file_threshold_bytes, &viewport)
+                    Self::compute_max_line_length(state, &mut viewport)
                 } else {
                     0
                 };
 
                 // Render horizontal scrollbar for this split
-                if show_horizontal_scrollbar {
+                let (hthumb_start, hthumb_end) = if show_horizontal_scrollbar {
                     Self::render_horizontal_scrollbar(
                         frame,
                         &viewport,
                         layout.horizontal_scrollbar_rect,
                         is_active,
                         max_content_width,
-                    );
-                }
+                    )
+                } else {
+                    (0, 0)
+                };
 
                 // Restore the original cursors after rendering content and scrollbar
                 Self::restore_split_state(state, saved_cursors);
@@ -1104,6 +1117,8 @@ impl SplitRenderer {
                         buffer_id,
                         layout.horizontal_scrollbar_rect,
                         max_content_width,
+                        hthumb_start,
+                        hthumb_end,
                     ));
                 }
             }
@@ -2153,13 +2168,13 @@ impl SplitRenderer {
         (thumb_start, thumb_end)
     }
 
-    /// Compute the maximum line length in the buffer (in display columns).
-    /// For files under the large file threshold, scans all lines.
-    /// For large files, falls back to a reasonable estimate.
+    /// Compute the maximum line length encountered so far (in display columns).
+    /// Only scans the currently visible lines (plus a small margin) and updates
+    /// the running maximum stored in the viewport. This avoids scanning the
+    /// entire file, which would break large file support.
     fn compute_max_line_length(
         state: &mut EditorState,
-        large_file_threshold_bytes: u64,
-        viewport: &crate::view::viewport::Viewport,
+        viewport: &mut crate::view::viewport::Viewport,
     ) -> usize {
         let buffer_len = state.buffer.len();
         let visible_width = viewport.width as usize;
@@ -2167,46 +2182,45 @@ impl SplitRenderer {
         let min_width = left_column + visible_width;
 
         if buffer_len == 0 {
-            return min_width;
+            return viewport.max_line_length_seen.max(min_width);
         }
 
-        // For large files, don't scan the entire buffer
-        if buffer_len > large_file_threshold_bytes as usize {
-            return min_width;
-        }
-
-        // Scan all lines to find the actual max line length
-        let mut max_len: usize = 0;
-        let mut iter = state.buffer.line_iterator(0, 80);
+        // Scan only the visible lines (with a small margin) to update the running maximum
+        let visible_lines = viewport.height as usize + 5; // small margin beyond visible area
+        let mut lines_scanned = 0usize;
+        let mut iter = state.buffer.line_iterator(viewport.top_byte, 80);
         loop {
+            if lines_scanned >= visible_lines {
+                break;
+            }
             match iter.next_line() {
                 Some((_byte_offset, content)) => {
-                    // Use the string length in chars as an approximation of display columns
-                    // This is correct for ASCII and close enough for most Unicode
                     let display_len = content.len();
-                    if display_len > max_len {
-                        max_len = display_len;
+                    if display_len > viewport.max_line_length_seen {
+                        viewport.max_line_length_seen = display_len;
                     }
+                    lines_scanned += 1;
                 }
                 None => break,
             }
         }
 
-        max_len.max(min_width)
+        viewport.max_line_length_seen.max(min_width)
     }
 
     /// Render a horizontal scrollbar for a split.
     /// `max_content_width` should be the actual max line length (from compute_max_line_length).
+    /// Returns (thumb_start_col, thumb_end_col) for mouse hit testing.
     fn render_horizontal_scrollbar(
         frame: &mut Frame,
         viewport: &crate::view::viewport::Viewport,
         hscrollbar_rect: Rect,
         is_active: bool,
         max_content_width: usize,
-    ) {
+    ) -> (usize, usize) {
         let width = hscrollbar_rect.width as usize;
         if width == 0 || hscrollbar_rect.height == 0 {
-            return;
+            return (0, 0);
         }
 
         let track_color = if is_active {
@@ -2222,7 +2236,7 @@ impl SplitRenderer {
                 let paragraph = Paragraph::new(" ").style(Style::default().bg(track_color));
                 frame.render_widget(paragraph, cell_area);
             }
-            return;
+            return (0, width);
         }
 
         let visible_width = viewport.width as usize;
@@ -2268,6 +2282,8 @@ impl SplitRenderer {
             let paragraph = Paragraph::new(" ").style(style);
             frame.render_widget(paragraph, cell_area);
         }
+
+        (thumb_start, thumb_end)
     }
 
     #[allow(clippy::too_many_arguments)]

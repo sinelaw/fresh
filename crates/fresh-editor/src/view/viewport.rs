@@ -49,6 +49,10 @@ pub struct Viewport {
     /// This is set after scroll actions (Ctrl+Up/Down) to prevent the scroll
     /// from being immediately undone by ensure_visible
     skip_ensure_visible: bool,
+
+    /// Maximum line length encountered so far (in display columns).
+    /// Updated incrementally as visible lines are rendered, avoiding full-file scans.
+    pub max_line_length_seen: usize,
 }
 
 impl Viewport {
@@ -66,6 +70,7 @@ impl Viewport {
             needs_sync: false,
             skip_resize_sync: false,
             skip_ensure_visible: false,
+            max_line_length_seen: 0,
         }
     }
 
