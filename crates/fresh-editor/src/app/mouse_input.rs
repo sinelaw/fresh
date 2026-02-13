@@ -1824,8 +1824,8 @@ impl Editor {
                 _buffer_id,
                 hscrollbar_rect,
                 max_content_width,
-                _thumb_start,
-                _thumb_end,
+                thumb_start,
+                thumb_end,
             ) in &self.cached_layout.horizontal_scrollbar_areas
             {
                 if *split_id == dragging_split_id {
@@ -1839,14 +1839,16 @@ impl Editor {
                         self.mouse_state.drag_start_left_column,
                     ) {
                         // Relative drag from thumb - move proportionally to mouse offset
+                        // Use thumb size to compute the correct ratio so thumb tracks with mouse
                         let col_offset = (col as i32) - (drag_start_hcol as i32);
                         if let Some(view_state) = self.split_view_states.get_mut(&dragging_split_id)
                         {
                             let visible_width = view_state.viewport.width as usize;
                             let max_scroll = max_content_width.saturating_sub(visible_width);
                             if max_scroll > 0 {
-                                // Convert pixel offset to scroll offset
-                                let scroll_per_pixel = max_scroll as f64 / (track_width - 1.0);
+                                let thumb_size = thumb_end.saturating_sub(*thumb_start).max(1);
+                                let track_travel = (track_width - thumb_size as f64).max(1.0);
+                                let scroll_per_pixel = max_scroll as f64 / track_travel;
                                 let scroll_offset =
                                     (col_offset as f64 * scroll_per_pixel).round() as i64;
                                 let new_left =

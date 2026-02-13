@@ -1066,7 +1066,14 @@ impl SplitRenderer {
                 // Compute the actual max line length for horizontal scrollbar
                 let max_content_width = if show_horizontal_scrollbar && !viewport.line_wrap_enabled
                 {
-                    Self::compute_max_line_length(state, &mut viewport)
+                    let mcw = Self::compute_max_line_length(state, &mut viewport);
+                    // Clamp left_column so content can't scroll past the end of the longest line
+                    let visible_width = viewport.width as usize;
+                    let max_scroll = mcw.saturating_sub(visible_width);
+                    if viewport.left_column > max_scroll {
+                        viewport.left_column = max_scroll;
+                    }
+                    mcw
                 } else {
                     0
                 };
@@ -2178,11 +2185,9 @@ impl SplitRenderer {
     ) -> usize {
         let buffer_len = state.buffer.len();
         let visible_width = viewport.width as usize;
-        let left_column = viewport.left_column;
-        let min_width = left_column + visible_width;
 
         if buffer_len == 0 {
-            return viewport.max_line_length_seen.max(min_width);
+            return viewport.max_line_length_seen.max(visible_width);
         }
 
         // Scan only the visible lines (with a small margin) to update the running maximum
@@ -2205,7 +2210,9 @@ impl SplitRenderer {
             }
         }
 
-        viewport.max_line_length_seen.max(min_width)
+        // Return at least visible_width (not left_column + visible_width) to avoid
+        // a feedback loop where scrolling right increases the limit further
+        viewport.max_line_length_seen.max(visible_width)
     }
 
     /// Render a horizontal scrollbar for a split.

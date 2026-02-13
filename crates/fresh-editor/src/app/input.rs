@@ -1388,11 +1388,17 @@ impl Editor {
                     .left_column
                     .saturating_sub(columns_to_scroll);
             } else {
-                // Scroll right
-                view_state.viewport.left_column = view_state
+                // Scroll right - clamp to max_line_length_seen
+                let visible_width = view_state.viewport.width as usize;
+                let max_scroll = view_state
+                    .viewport
+                    .max_line_length_seen
+                    .saturating_sub(visible_width);
+                let new_left = view_state
                     .viewport
                     .left_column
                     .saturating_add(columns_to_scroll);
+                view_state.viewport.left_column = new_left.min(max_scroll);
             }
             // Skip ensure_visible so the scroll position isn't undone during render
             view_state.viewport.set_skip_ensure_visible();
