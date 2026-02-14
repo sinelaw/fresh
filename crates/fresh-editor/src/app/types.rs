@@ -840,13 +840,19 @@ impl CachedLayout {
 
         let target_mapping = mappings.get(target_row)?;
 
-        // Try to get byte at goal visual column.  If that column has no source
-        // byte (e.g. padding on a wrapped continuation line), search outward
-        // for the nearest valid source byte at minimal visual distance.
-        let new_pos = target_mapping
-            .source_byte_at_visual_col(goal_visual_col)
-            .or_else(|| target_mapping.nearest_source_byte(goal_visual_col))
-            .unwrap_or(target_mapping.line_end_byte);
+        // Try to get byte at goal visual column.  If the goal column is past
+        // the end of visible content, land at line_end_byte (the newline or
+        // end of buffer).  If the column exists but has no source byte (e.g.
+        // padding on a wrapped continuation line), search outward for the
+        // nearest valid source byte at minimal visual distance.
+        let new_pos = if goal_visual_col >= target_mapping.visual_to_char.len() {
+            target_mapping.line_end_byte
+        } else {
+            target_mapping
+                .source_byte_at_visual_col(goal_visual_col)
+                .or_else(|| target_mapping.nearest_source_byte(goal_visual_col))
+                .unwrap_or(target_mapping.line_end_byte)
+        };
 
         Some((new_pos, goal_visual_col))
     }
