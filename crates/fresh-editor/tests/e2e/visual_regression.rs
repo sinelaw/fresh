@@ -114,6 +114,7 @@ fn long_function() {
             priority: 100,
             message: Some("unused variable: `unused_var`".to_string()),
             extend_to_line_end: false,
+            url: None,
         });
 
         // Add margin indicators

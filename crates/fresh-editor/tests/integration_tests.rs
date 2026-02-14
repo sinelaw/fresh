@@ -368,6 +368,7 @@ fn test_overlay_events() {
         priority: 100,
         message: Some("Error here".to_string()),
         extend_to_line_end: false,
+        url: None,
     });
 
     // Check overlay was added
@@ -389,6 +390,7 @@ fn test_overlay_events() {
         priority: 50,
         message: Some("Warning here".to_string()),
         extend_to_line_end: false,
+        url: None,
     });
 
     // Position 4 should have both overlays, sorted by priority (ascending)
@@ -530,6 +532,7 @@ fn test_overlay_undo_redo() {
         priority: 100,
         message: None,
         extend_to_line_end: false,
+        url: None,
     };
     log.append(event2.clone());
     state.apply(&event2);
@@ -656,6 +659,7 @@ fn test_overlay_priority_layering() {
         priority: 10,
         message: Some("Hint message".to_string()),
         extend_to_line_end: false,
+        url: None,
     });
 
     // Add high priority overlay (error) overlapping
@@ -669,6 +673,7 @@ fn test_overlay_priority_layering() {
         priority: 100,
         message: Some("Error message".to_string()),
         extend_to_line_end: false,
+        url: None,
     });
 
     // Position 3 should have both overlays, sorted by priority
@@ -716,6 +721,7 @@ fn test_diagnostic_overlay_visual_rendering() {
         priority: 100,
         message: Some("unused variable: `x`".to_string()),
         extend_to_line_end: false,
+        url: None,
     });
 
     // Render again to apply the overlay styling
@@ -912,6 +918,7 @@ mod event_inverse_tests {
             priority: 100,
             message: Some("error".to_string()),
             extend_to_line_end: false,
+            url: None,
         };
 
         // AddOverlay is ephemeral and has no inverse

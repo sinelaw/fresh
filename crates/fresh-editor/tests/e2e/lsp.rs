@@ -165,6 +165,7 @@ fn test_lsp_diagnostics_display() -> anyhow::Result<()> {
         priority: 100,
         message: Some("unused variable: `x`".to_string()),
         extend_to_line_end: false,
+        url: None,
     });
 
     harness.render()?;
@@ -277,6 +278,7 @@ fn test_lsp_diagnostics_status_bar() -> anyhow::Result<()> {
         priority: 100, // Error priority
         message: Some("unused variable: `x`".to_string()),
         extend_to_line_end: false,
+        url: None,
     });
 
     // Add warning diagnostic
@@ -287,6 +289,7 @@ fn test_lsp_diagnostics_status_bar() -> anyhow::Result<()> {
         priority: 50, // Warning priority
         message: Some("unused variable: `y`".to_string()),
         extend_to_line_end: false,
+        url: None,
     });
 
     harness.render()?;
@@ -326,6 +329,7 @@ fn test_lsp_clear_diagnostics() -> anyhow::Result<()> {
         priority: 100,
         message: Some("test error".to_string()),
         extend_to_line_end: false,
+        url: None,
     });
 
     harness.render()?;

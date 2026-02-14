@@ -274,6 +274,45 @@ impl Write for CaptureBuffer {
     }
 }
 
+/// Strip OSC 8 hyperlink escape sequences from a string.
+///
+/// Removes both `ESC ] 8 ; params ; url BEL` sequences and the
+/// variant without ESC prefix (as seen in ratatui cell symbols after
+/// post-render OSC 8 application).
+///
+/// # Examples
+/// ```
+/// assert_eq!(strip_osc8("\x1b]8;;https://example.com\x07Click\x1b]8;;\x07"), "Click");
+/// assert_eq!(strip_osc8("plain text"), "plain text");
+/// ```
+pub fn strip_osc8(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // ESC ] 8 ; — standard OSC 8 start
+        if i + 3 < bytes.len()
+            && bytes[i] == 0x1b
+            && bytes[i + 1] == b']'
+            && bytes[i + 2] == b'8'
+            && bytes[i + 3] == b';'
+        {
+            i += 4;
+            // Skip until BEL (\x07)
+            while i < bytes.len() && bytes[i] != 0x07 {
+                i += 1;
+            }
+            if i < bytes.len() {
+                i += 1; // skip BEL
+            }
+        } else {
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    result
+}
+
 /// Virtual editor environment for testing
 /// Captures all rendering output without displaying to actual terminal
 pub struct EditorTestHarness {
@@ -1157,6 +1196,40 @@ impl EditorTestHarness {
         result
     }
 
+    /// Read a screen row as clean text, stripping OSC 8 hyperlink sequences.
+    ///
+    /// This reads cells directly from the ratatui buffer and strips any
+    /// OSC 8 escape sequences, producing clean text suitable for assertions.
+    /// Unlike `screen_to_string()`, this handles the 2-char chunking used
+    /// for OSC 8 rendering without garbling the output.
+    pub fn screen_row_text(&self, row: u16) -> String {
+        let buffer = self.buffer();
+        let width = buffer.area.width;
+        let mut s = String::new();
+        let mut col = 0u16;
+        while col < width {
+            let pos = buffer.index_of(col, row);
+            if let Some(cell) = buffer.content.get(pos) {
+                let sym = cell.symbol();
+                let stripped = strip_osc8(sym);
+                if stripped.len() > 1 {
+                    // This is a multi-char OSC 8 chunk — it contains chars
+                    // from this cell and the next cell(s). Push the stripped
+                    // content and skip the extra cells.
+                    let char_count = stripped.chars().count();
+                    s.push_str(&stripped);
+                    col += char_count as u16;
+                } else {
+                    s.push_str(&stripped);
+                    col += 1;
+                }
+            } else {
+                col += 1;
+            }
+        }
+        s.trim_end().to_string()
+    }
+
     /// Verify text appears on screen
     pub fn assert_screen_contains(&self, text: &str) {
         let screen = self.screen_to_string();
@@ -1962,6 +2035,38 @@ mod tests {
 
         let screen = harness.screen_to_string();
         assert!(!screen.is_empty());
+    }
+
+    #[test]
+    fn test_strip_osc8() {
+        // Plain text unchanged
+        assert_eq!(strip_osc8("hello world"), "hello world");
+
+        // Standard OSC 8 link
+        assert_eq!(
+            strip_osc8("\x1b]8;;https://example.com\x07Click\x1b]8;;\x07"),
+            "Click",
+        );
+
+        // Multiple OSC 8 links
+        assert_eq!(
+            strip_osc8(
+                "before \x1b]8;;url1\x07A\x1b]8;;\x07 mid \x1b]8;;url2\x07B\x1b]8;;\x07 after"
+            ),
+            "before A mid B after",
+        );
+
+        // 2-char chunk (as produced by apply_osc8_to_cells)
+        assert_eq!(strip_osc8("\x1b]8;;#install\x07Qu\x1b]8;;\x07"), "Qu",);
+
+        // Empty OSC 8 (link terminator)
+        assert_eq!(strip_osc8("\x1b]8;;\x07"), "");
+
+        // No BEL terminator (malformed) — consumed without output
+        assert_eq!(strip_osc8("\x1b]8;;url"), "");
+
+        // Empty string
+        assert_eq!(strip_osc8(""), "");
     }
 
     #[test]
