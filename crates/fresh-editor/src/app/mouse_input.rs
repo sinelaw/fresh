@@ -540,6 +540,12 @@ impl Editor {
             .map(|s| s.buffer.len())
             .unwrap_or(0);
 
+        // Get compose width for this split
+        let compose_width = self
+            .split_view_states
+            .get(&split_id)
+            .and_then(|vs| vs.compose_width);
+
         // Convert screen position to buffer byte position
         let Some(byte_pos) = Self::screen_to_buffer_position(
             col,
@@ -549,6 +555,7 @@ impl Editor {
             &cached_mappings,
             fallback,
             false, // Don't include gutter
+            compose_width,
         ) else {
             // Mouse is in gutter - clear hover state
             if self.mouse_state.lsp_hover_state.is_some() {
@@ -1003,6 +1010,12 @@ impl Editor {
             .map(|vs| vs.viewport.top_byte)
             .unwrap_or(0);
 
+        // Get compose width for this split
+        let compose_width = self
+            .split_view_states
+            .get(&split_id)
+            .and_then(|vs| vs.compose_width);
+
         // Calculate clicked position in buffer
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let gutter_width = state.margins.left_total_width() as u16;
@@ -1015,6 +1028,7 @@ impl Editor {
                 &cached_mappings,
                 fallback,
                 true, // Allow gutter clicks
+                compose_width,
             ) else {
                 return Ok(());
             };
@@ -1107,6 +1121,12 @@ impl Editor {
             .map(|vs| vs.viewport.top_byte)
             .unwrap_or(0);
 
+        // Get compose width for this split
+        let compose_width = self
+            .split_view_states
+            .get(&split_id)
+            .and_then(|vs| vs.compose_width);
+
         // Calculate clicked position in buffer
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let gutter_width = state.margins.left_total_width() as u16;
@@ -1119,6 +1139,7 @@ impl Editor {
                 &cached_mappings,
                 fallback,
                 true,
+                compose_width,
             ) else {
                 return Ok(());
             };
@@ -2014,6 +2035,12 @@ impl Editor {
             .map(|vs| vs.viewport.top_byte)
             .unwrap_or(0);
 
+        // Get compose width for this split
+        let compose_width = self
+            .split_view_states
+            .get(&split_id)
+            .and_then(|vs| vs.compose_width);
+
         // Calculate the target position from screen coordinates
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let gutter_width = state.margins.left_total_width() as u16;
@@ -2026,6 +2053,7 @@ impl Editor {
                 &cached_mappings,
                 fallback,
                 true, // Allow gutter clicks for drag selection
+                compose_width,
             ) else {
                 return Ok(());
             };

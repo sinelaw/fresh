@@ -1985,6 +1985,11 @@ impl Editor {
 
     /// Calculate buffer byte position from screen coordinates
     ///
+    /// When `compose_width` is set and narrower than the content area, the
+    /// content is centered with left padding.  View-line mappings are built
+    /// relative to that compose render area, so the same offset must be
+    /// applied here when converting screen coordinates.
+    ///
     /// Returns None if the position cannot be determined (e.g., click in gutter for click handler)
     pub(crate) fn screen_to_buffer_position(
         col: u16,
@@ -1994,7 +1999,27 @@ impl Editor {
         cached_mappings: &Option<Vec<crate::app::types::ViewLineMapping>>,
         fallback_position: usize,
         allow_gutter_click: bool,
+        compose_width: Option<u16>,
     ) -> Option<usize> {
+        // Adjust content_rect for compose layout centering
+        let content_rect = if let Some(cw) = compose_width {
+            let clamped = cw.min(content_rect.width).max(1);
+            if clamped < content_rect.width {
+                let pad_total = content_rect.width - clamped;
+                let left_pad = pad_total / 2;
+                ratatui::layout::Rect::new(
+                    content_rect.x + left_pad,
+                    content_rect.y,
+                    clamped,
+                    content_rect.height,
+                )
+            } else {
+                content_rect
+            }
+        } else {
+            content_rect
+        };
+
         // Calculate relative position in content area
         let content_col = col.saturating_sub(content_rect.x);
         let content_row = row.saturating_sub(content_rect.y);
@@ -2135,6 +2160,12 @@ impl Editor {
             .map(|vs| vs.viewport.top_byte)
             .unwrap_or(0);
 
+        // Get compose width for this split (adjusts content rect for centered layout)
+        let compose_width = self
+            .split_view_states
+            .get(&split_id)
+            .and_then(|vs| vs.compose_width);
+
         // Calculate clicked position in buffer
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let gutter_width = state.margins.left_total_width() as u16;
@@ -2147,6 +2178,7 @@ impl Editor {
                 &cached_mappings,
                 fallback,
                 true, // Allow gutter clicks - position cursor at start of line
+                compose_width,
             ) else {
                 return Ok(());
             };
@@ -2222,6 +2254,11 @@ impl Editor {
             self.mouse_state.drag_selection_split = Some(split_id);
             // For shift+click, anchor stays at selection start; otherwise anchor at click position
             self.mouse_state.drag_selection_anchor = Some(new_anchor.unwrap_or(target_position));
+
+            // Fire cursor_moved hook so plugins (e.g. markdown compose) can
+            // update cursor-aware conceals (auto-expose emphasis markers).
+            let line_info = self.calculate_event_line_info(&event);
+            self.trigger_plugin_hooks_for_event(&event, line_info);
         }
 
         Ok(())
