@@ -1467,12 +1467,11 @@ editor.on("prompt_confirmed", "onMarkdownComposeWidthConfirmed");
 
 // Set compose width command - starts interactive prompt
 globalThis.markdownSetComposeWidth = function(): void {
-  editor.startPrompt(editor.t("prompt.compose_width"), "markdown-compose-width");
+  const currentValue = config.composeWidth === null ? "None" : String(config.composeWidth);
+  editor.startPromptWithInitial(editor.t("prompt.compose_width"), "markdown-compose-width", currentValue);
   editor.setPromptSuggestions([
-    { text: "60", description: editor.t("suggestion.narrow") },
-    { text: "72", description: editor.t("suggestion.classic") },
-    { text: "80", description: editor.t("suggestion.standard") },
-    { text: "100", description: editor.t("suggestion.wide") },
+    { text: "None", description: editor.t("suggestion.none") },
+    { text: "120", description: editor.t("suggestion.default") },
   ]);
 };
 
@@ -1483,7 +1482,20 @@ globalThis.onMarkdownComposeWidthConfirmed = function(args: {
 }): void {
   if (args.prompt_type !== "markdown-compose-width") return;
 
-  const width = parseInt(args.input, 10);
+  const input = args.input.trim();
+  if (input.toLowerCase() === "none") {
+    config.composeWidth = null;
+    editor.setStatus(editor.t("status.width_none"));
+
+    const bufferId = editor.getActiveBufferId();
+    if (composeBuffers.has(bufferId)) {
+      editor.setLayoutHints(bufferId, null, { composeWidth: null });
+      editor.refreshLines(bufferId);
+    }
+    return;
+  }
+
+  const width = parseInt(input, 10);
   if (!isNaN(width) && width > 20 && width < 300) {
     config.composeWidth = width;
     editor.setStatus(editor.t("status.width_set", { width: String(width) }));

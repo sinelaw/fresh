@@ -11,10 +11,9 @@
     "status.width_set": "Markdown compose width set to %{width}",
     "status.invalid_width": "Invalid width - must be between 20 and 300",
     "prompt.compose_width": "Compose width: ",
-    "suggestion.narrow": "Narrow - good for side panels",
-    "suggestion.classic": "Classic - traditional terminal width",
-    "suggestion.standard": "Standard - default width",
-    "suggestion.wide": "Wide - more content per line"
+    "status.width_none": "Markdown compose width: using viewport width",
+    "suggestion.none": "Use viewport width",
+    "suggestion.default": "Default compose width"
   },
   "cs": {
     "cmd.toggle_compose": "Markdown: Prepnout rezim psani",
@@ -28,10 +27,9 @@
     "status.width_set": "Sirka Markdown psani nastavena na %{width}",
     "status.invalid_width": "Neplatna sirka - musi byt mezi 20 a 300",
     "prompt.compose_width": "Sirka psani: ",
-    "suggestion.narrow": "Uzky - vhodne pro bocni panely",
-    "suggestion.classic": "Klasicky - tradicni sirka terminalu",
-    "suggestion.standard": "Standardni - vychozi sirka",
-    "suggestion.wide": "Siroky - vice obsahu na radek"
+    "status.width_none": "Sirka Markdown psani: pouziva sirku okna",
+    "suggestion.none": "Pouzit sirku okna",
+    "suggestion.default": "Vychozi sirka psani"
   },
   "de": {
     "cmd.toggle_compose": "Markdown: Kompositionsmodus umschalten",
@@ -45,10 +43,9 @@
     "status.width_set": "Markdown-Kompositionsbreite auf %{width} gesetzt",
     "status.invalid_width": "Ungultige Breite - muss zwischen 20 und 300 liegen",
     "prompt.compose_width": "Kompositionsbreite: ",
-    "suggestion.narrow": "Schmal - gut fur Seitenpanels",
-    "suggestion.classic": "Klassisch - traditionelle Terminalbreite",
-    "suggestion.standard": "Standard - Standardbreite",
-    "suggestion.wide": "Breit - mehr Inhalt pro Zeile"
+    "status.width_none": "Markdown-Kompositionsbreite: Fensterbreite verwenden",
+    "suggestion.none": "Fensterbreite verwenden",
+    "suggestion.default": "Standard-Kompositionsbreite"
   },
   "es": {
     "cmd.toggle_compose": "Markdown: Alternar Composicion",
@@ -62,10 +59,9 @@
     "status.width_set": "Ancho de composicion Markdown establecido en %{width}",
     "status.invalid_width": "Ancho invalido - debe estar entre 20 y 300",
     "prompt.compose_width": "Ancho de composicion: ",
-    "suggestion.narrow": "Estrecho - bueno para paneles laterales",
-    "suggestion.classic": "Clasico - ancho de terminal tradicional",
-    "suggestion.standard": "Estandar - ancho predeterminado",
-    "suggestion.wide": "Amplio - mas contenido por linea"
+    "status.width_none": "Ancho de composicion Markdown: usando ancho de ventana",
+    "suggestion.none": "Usar ancho de ventana",
+    "suggestion.default": "Ancho de composicion predeterminado"
   },
   "fr": {
     "cmd.toggle_compose": "Markdown: Basculer la Composition",
@@ -79,10 +75,9 @@
     "status.width_set": "Largeur de composition Markdown definie a %{width}",
     "status.invalid_width": "Largeur invalide - doit etre entre 20 et 300",
     "prompt.compose_width": "Largeur de composition: ",
-    "suggestion.narrow": "Etroit - bon pour les panneaux lateraux",
-    "suggestion.classic": "Classique - largeur de terminal traditionnelle",
-    "suggestion.standard": "Standard - largeur par defaut",
-    "suggestion.wide": "Large - plus de contenu par ligne"
+    "status.width_none": "Largeur de composition Markdown: utilise la largeur de la fenetre",
+    "suggestion.none": "Utiliser la largeur de la fenetre",
+    "suggestion.default": "Largeur de composition par defaut"
   },
   "it": {
     "cmd.toggle_compose": "Markdown: Alterna Composizione",
@@ -96,10 +91,9 @@
     "status.width_set": "Larghezza composizione Markdown impostata a %{width}",
     "status.invalid_width": "Larghezza non valida - deve essere compresa tra 20 e 300",
     "prompt.compose_width": "Larghezza composizione: ",
-    "suggestion.narrow": "Stretto - ottimo per i pannelli laterali",
-    "suggestion.classic": "Classico - larghezza terminale tradizionale",
-    "suggestion.standard": "Standard - larghezza predefinita",
-    "suggestion.wide": "Largo - più contenuto per riga"
+    "status.width_none": "Larghezza composizione Markdown: usa la larghezza della finestra",
+    "suggestion.none": "Usa la larghezza della finestra",
+    "suggestion.default": "Larghezza di composizione predefinita"
   },
   "ja": {
     "cmd.toggle_compose": "Markdown: 作成モード切り替え",
@@ -113,10 +107,9 @@
     "status.width_set": "Markdown作成幅を%{width}に設定しました",
     "status.invalid_width": "無効な幅 - 20から300の間である必要があります",
     "prompt.compose_width": "作成幅: ",
-    "suggestion.narrow": "狭い - サイドパネルに最適",
-    "suggestion.classic": "クラシック - 従来のターミナル幅",
-    "suggestion.standard": "標準 - デフォルト幅",
-    "suggestion.wide": "広い - 1行あたりのコンテンツが増加"
+    "status.width_none": "Markdown作成幅: ウィンドウ幅を使用",
+    "suggestion.none": "ウィンドウ幅を使用",
+    "suggestion.default": "デフォルトの作成幅"
   },
   "ko": {
     "cmd.toggle_compose": "Markdown: 작성 모드 전환",
@@ -130,10 +123,9 @@
     "status.width_set": "Markdown 작성 너비가 %{width}(으)로 설정됨",
     "status.invalid_width": "잘못된 너비 - 20에서 300 사이여야 합니다",
     "prompt.compose_width": "작성 너비: ",
-    "suggestion.narrow": "좁음 - 사이드 패널에 적합",
-    "suggestion.classic": "클래식 - 전통적인 터미널 너비",
-    "suggestion.standard": "표준 - 기본 너비",
-    "suggestion.wide": "넓음 - 줄당 더 많은 콘텐츠"
+    "status.width_none": "Markdown 작성 너비: 창 너비 사용",
+    "suggestion.none": "창 너비 사용",
+    "suggestion.default": "기본 작성 너비"
   },
   "pt-BR": {
     "cmd.toggle_compose": "Markdown: Alternar Composicao",
@@ -147,10 +139,9 @@
     "status.width_set": "Largura de composicao Markdown definida para %{width}",
     "status.invalid_width": "Largura invalida - deve estar entre 20 e 300",
     "prompt.compose_width": "Largura de composicao: ",
-    "suggestion.narrow": "Estreito - bom para paineis laterais",
-    "suggestion.classic": "Classico - largura tradicional de terminal",
-    "suggestion.standard": "Padrao - largura padrao",
-    "suggestion.wide": "Largo - mais conteudo por linha"
+    "status.width_none": "Largura de composicao Markdown: usando largura da janela",
+    "suggestion.none": "Usar largura da janela",
+    "suggestion.default": "Largura de composicao padrao"
   },
   "ru": {
     "cmd.toggle_compose": "Markdown: Переключить режим редактирования",
@@ -164,10 +155,9 @@
     "status.width_set": "Ширина редактирования Markdown установлена на %{width}",
     "status.invalid_width": "Неверная ширина - должна быть от 20 до 300",
     "prompt.compose_width": "Ширина редактирования: ",
-    "suggestion.narrow": "Узкий - подходит для боковых панелей",
-    "suggestion.classic": "Классический - традиционная ширина терминала",
-    "suggestion.standard": "Стандартный - ширина по умолчанию",
-    "suggestion.wide": "Широкий - больше контента на строку"
+    "status.width_none": "Ширина редактирования Markdown: используется ширина окна",
+    "suggestion.none": "Использовать ширину окна",
+    "suggestion.default": "Ширина редактирования по умолчанию"
   },
   "th": {
     "cmd.toggle_compose": "Markdown: สลับโหมดเขียน",
@@ -181,10 +171,9 @@
     "status.width_set": "ตั้งความกว้างการเขียน Markdown เป็น %{width}",
     "status.invalid_width": "ความกว้างไม่ถูกต้อง - ต้องอยู่ระหว่าง 20 ถึง 300",
     "prompt.compose_width": "ความกว้างการเขียน: ",
-    "suggestion.narrow": "แคบ - เหมาะสำหรับแผงด้านข้าง",
-    "suggestion.classic": "คลาสสิก - ความกว้างเทอร์มินัลแบบดั้งเดิม",
-    "suggestion.standard": "มาตรฐาน - ความกว้างเริ่มต้น",
-    "suggestion.wide": "กว้าง - เนื้อหามากขึ้นต่อบรรทัด"
+    "status.width_none": "ความกว้างการเขียน Markdown: ใช้ความกว้างหน้าต่าง",
+    "suggestion.none": "ใช้ความกว้างหน้าต่าง",
+    "suggestion.default": "ความกว้างการเขียนเริ่มต้น"
   },
   "uk": {
     "cmd.toggle_compose": "Markdown: Перемкнути режим редагування",
@@ -198,10 +187,9 @@
     "status.width_set": "Ширину редагування Markdown встановлено на %{width}",
     "status.invalid_width": "Невірна ширина - має бути від 20 до 300",
     "prompt.compose_width": "Ширина редагування: ",
-    "suggestion.narrow": "Вузький - підходить для бічних панелей",
-    "suggestion.classic": "Класичний - традиційна ширина терміналу",
-    "suggestion.standard": "Стандартний - ширина за замовчуванням",
-    "suggestion.wide": "Широкий - більше контенту на рядок"
+    "status.width_none": "Ширина редагування Markdown: використовується ширина вікна",
+    "suggestion.none": "Використовувати ширину вікна",
+    "suggestion.default": "Ширина редагування за замовчуванням"
   },
   "vi": {
     "cmd.toggle_compose": "Markdown: Bật/tắt chế độ soạn thảo",
@@ -215,10 +203,9 @@
     "status.width_set": "Đã đặt chiều rộng soạn thảo Markdown thành %{width}",
     "status.invalid_width": "Chiều rộng không hợp lệ - phải từ 20 đến 300",
     "prompt.compose_width": "Chiều rộng soạn thảo: ",
-    "suggestion.narrow": "Hẹp - phù hợp cho bảng bên",
-    "suggestion.classic": "Cổ điển - chiều rộng terminal truyền thống",
-    "suggestion.standard": "Tiêu chuẩn - chiều rộng mặc định",
-    "suggestion.wide": "Rộng - nhiều nội dung hơn trên mỗi dòng"
+    "status.width_none": "Chiều rộng soạn thảo Markdown: dùng chiều rộng cửa sổ",
+    "suggestion.none": "Dùng chiều rộng cửa sổ",
+    "suggestion.default": "Chiều rộng soạn thảo mặc định"
   },
   "zh-CN": {
     "cmd.toggle_compose": "Markdown: 切换撰写模式",
@@ -232,9 +219,8 @@
     "status.width_set": "Markdown撰写宽度已设置为%{width}",
     "status.invalid_width": "无效宽度 - 必须在20到300之间",
     "prompt.compose_width": "撰写宽度: ",
-    "suggestion.narrow": "窄 - 适合侧边面板",
-    "suggestion.classic": "经典 - 传统终端宽度",
-    "suggestion.standard": "标准 - 默认宽度",
-    "suggestion.wide": "宽 - 每行更多内容"
+    "status.width_none": "Markdown撰写宽度: 使用窗口宽度",
+    "suggestion.none": "使用窗口宽度",
+    "suggestion.default": "默认撰写宽度"
   }
 }
