@@ -830,9 +830,25 @@ pub fn plugin_api_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let referenced_types = collect_referenced_types(&methods);
     let types_const = format_ident!("{}_REFERENCED_TYPES", impl_name.to_uppercase());
 
+    // Strip #[plugin_api(...)] attributes from method parameters before emitting,
+    // since plugin_api is a proc_macro_attribute and can't appear on parameters.
+    // The attribute was already read during parse_method for ts_type overrides.
+    let mut cleaned_input = input.clone();
+    for item in &mut cleaned_input.items {
+        if let ImplItem::Fn(method) = item {
+            for arg in &mut method.sig.inputs {
+                if let FnArg::Typed(pat_type) = arg {
+                    pat_type
+                        .attrs
+                        .retain(|attr| !attr.path().is_ident("plugin_api"));
+                }
+            }
+        }
+    }
+
     // Generate output: original impl + constants
     let expanded = quote! {
-        #input
+        #cleaned_input
 
         /// TypeScript preamble (header, getEditor, ProcessHandle, BufferId, SplitId)
         ///

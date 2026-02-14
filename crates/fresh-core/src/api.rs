@@ -480,9 +480,19 @@ pub struct OverlayOptions {
     #[serde(default)]
     pub italic: bool,
 
+    /// Whether to render with strikethrough
+    #[serde(default)]
+    pub strikethrough: bool,
+
     /// Whether to extend background color to end of line
     #[serde(default)]
     pub extend_to_line_end: bool,
+
+    /// Optional URL for OSC 8 terminal hyperlinks.
+    /// When set, the overlay text becomes a clickable hyperlink in terminals
+    /// that support OSC 8 escape sequences.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 impl Default for OverlayOptions {
@@ -493,7 +503,9 @@ impl Default for OverlayOptions {
             underline: false,
             bold: false,
             italic: false,
+            strikethrough: false,
             extend_to_line_end: false,
+            url: None,
         }
     }
 }
@@ -969,6 +981,59 @@ pub enum PluginCommand {
     ClearVirtualTextNamespace {
         buffer_id: BufferId,
         namespace: String,
+    },
+
+    /// Add a conceal range that hides or replaces a byte range during rendering.
+    /// Used for Typora-style seamless markdown: hiding syntax markers like `**`, `[](url)`, etc.
+    AddConceal {
+        buffer_id: BufferId,
+        /// Namespace for bulk removal (shared with overlay namespace system)
+        namespace: OverlayNamespace,
+        /// Byte range to conceal
+        start: usize,
+        end: usize,
+        /// Optional replacement text to show instead. None = hide completely.
+        replacement: Option<String>,
+    },
+
+    /// Clear all conceal ranges in a namespace
+    ClearConcealNamespace {
+        buffer_id: BufferId,
+        namespace: OverlayNamespace,
+    },
+
+    /// Remove all conceal ranges that overlap with a byte range
+    /// Used for targeted invalidation when content in a range changes
+    ClearConcealsInRange {
+        buffer_id: BufferId,
+        start: usize,
+        end: usize,
+    },
+
+    /// Add a soft break point for marker-based line wrapping.
+    /// The break is stored as a marker that auto-adjusts on buffer edits,
+    /// eliminating the flicker caused by async view_transform round-trips.
+    AddSoftBreak {
+        buffer_id: BufferId,
+        /// Namespace for bulk removal (shared with overlay namespace system)
+        namespace: OverlayNamespace,
+        /// Byte offset where the break should be injected
+        position: usize,
+        /// Number of hanging indent spaces after the break
+        indent: u16,
+    },
+
+    /// Clear all soft breaks in a namespace
+    ClearSoftBreakNamespace {
+        buffer_id: BufferId,
+        namespace: OverlayNamespace,
+    },
+
+    /// Remove all soft breaks that fall within a byte range
+    ClearSoftBreaksInRange {
+        buffer_id: BufferId,
+        start: usize,
+        end: usize,
     },
 
     /// Refresh lines for a buffer (clear seen_lines cache to re-trigger lines_changed hook)
@@ -2562,7 +2627,9 @@ mod tests {
                 underline: true,
                 bold: false,
                 italic: false,
+                strikethrough: false,
                 extend_to_line_end: false,
+                url: None,
             },
         );
         assert!(result.is_ok());

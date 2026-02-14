@@ -87,6 +87,8 @@ pub enum Event {
         message: Option<String>,
         /// Whether to extend the overlay's background to the end of the visual line
         extend_to_line_end: bool,
+        /// Optional URL for OSC 8 terminal hyperlinks
+        url: Option<String>,
     },
 
     /// Remove overlay by handle

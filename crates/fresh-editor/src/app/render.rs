@@ -243,6 +243,8 @@ impl Editor {
                         .last()
                         .and_then(|t| t.source_offset)
                         .unwrap_or(viewport_start);
+                    let cursor_positions: Vec<usize> =
+                        state.cursors.iter().map(|(_, c)| c.position).collect();
                     self.plugin_manager.run_hook(
                         "view_transform_request",
                         crate::services::plugins::hooks::HookArgs::ViewTransformRequest {
@@ -251,8 +253,16 @@ impl Editor {
                             viewport_start,
                             viewport_end,
                             tokens: base_tokens,
+                            cursor_positions,
                         },
                     );
+
+                    // We just sent fresh base tokens to the plugin, so any
+                    // future SubmitViewTransform from this request will be valid.
+                    // Clear the stale flag so the response will be accepted.
+                    if let Some(vs) = self.split_view_states.get_mut(&split_id) {
+                        vs.view_transform_stale = false;
+                    }
 
                     // Use the split area height as visible line count
                     let visible_count = split_area.height as usize;
@@ -312,6 +322,35 @@ impl Editor {
 
             // Process any plugin commands (like AddOverlay) that resulted from the hooks
             let commands = self.plugin_manager.process_commands();
+            if !commands.is_empty() {
+                let cmd_names: Vec<&str> = commands
+                    .iter()
+                    .map(|c| match c {
+                        fresh_core::api::PluginCommand::AddOverlay { .. } => "AddOverlay",
+                        fresh_core::api::PluginCommand::AddConceal { .. } => "AddConceal",
+                        fresh_core::api::PluginCommand::ClearOverlaysInRange { .. } => {
+                            "ClearOverlaysInRange"
+                        }
+                        fresh_core::api::PluginCommand::ClearConcealsInRange { .. } => {
+                            "ClearConcealsInRange"
+                        }
+                        fresh_core::api::PluginCommand::ClearNamespace { .. } => "ClearNamespace",
+                        fresh_core::api::PluginCommand::ClearConcealNamespace { .. } => {
+                            "ClearConcealNamespace"
+                        }
+                        fresh_core::api::PluginCommand::AddSoftBreak { .. } => "AddSoftBreak",
+                        fresh_core::api::PluginCommand::ClearSoftBreakNamespace { .. } => {
+                            "ClearSoftBreakNamespace"
+                        }
+                        fresh_core::api::PluginCommand::ClearSoftBreaksInRange { .. } => {
+                            "ClearSoftBreaksInRange"
+                        }
+                        fresh_core::api::PluginCommand::RefreshLines { .. } => "RefreshLines",
+                        _ => "Other",
+                    })
+                    .collect();
+                tracing::info!(count = commands.len(), cmds = ?cmd_names, "process_commands during render");
+            }
             for command in commands {
                 if let Err(e) = self.handle_plugin_command(command) {
                     tracing::error!("Error handling plugin command: {}", e);
@@ -1326,6 +1365,7 @@ impl Editor {
             priority,
             message,
             extend_to_line_end: false,
+            url: None,
         };
         self.apply_event_to_active_buffer(&event);
         // Return the handle of the last added overlay
@@ -1961,20 +2001,13 @@ impl Editor {
             .map(|vs| vs.viewport.height)
             .unwrap_or(24);
 
-        // Check if line wrapping is enabled for this split
-        let line_wrap_enabled = self
-            .split_view_states
-            .get(&active_split)
-            .map(|vs| vs.viewport.line_wrap_enabled)
-            .unwrap_or(false);
-
-        // Handle visual line movement using cached layout when line wrap is enabled
-        if line_wrap_enabled {
-            if let Some(events) =
-                self.handle_visual_line_movement(&action, active_split, estimated_line_length)
-            {
-                return Some(events);
-            }
+        // Always try visual line movement first — it uses the cached layout to
+        // move through soft-wrapped rows.  Returns None when the layout can't
+        // resolve the movement, falling through to logical movement below.
+        if let Some(events) =
+            self.handle_visual_line_movement(&action, active_split, estimated_line_length)
+        {
+            return Some(events);
         }
 
         convert_action_to_events(
@@ -2021,10 +2054,21 @@ impl Editor {
                 direction: 1,
                 is_select: true,
             },
-            Action::MoveLineEnd => VisualAction::LineEnd { is_select: false },
-            Action::SelectLineEnd => VisualAction::LineEnd { is_select: true },
-            Action::MoveLineStart => VisualAction::LineStart { is_select: false },
-            Action::SelectLineStart => VisualAction::LineStart { is_select: true },
+            // When line wrapping is off, Home/End should move to the physical line
+            // start/end, not the visual (horizontally-scrolled) row boundary.
+            // Fall through to the standard handler which uses line_iterator.
+            Action::MoveLineEnd if self.config.editor.line_wrap => {
+                VisualAction::LineEnd { is_select: false }
+            }
+            Action::SelectLineEnd if self.config.editor.line_wrap => {
+                VisualAction::LineEnd { is_select: true }
+            }
+            Action::MoveLineStart if self.config.editor.line_wrap => {
+                VisualAction::LineStart { is_select: false }
+            }
+            Action::SelectLineStart if self.config.editor.line_wrap => {
+                VisualAction::LineStart { is_select: true }
+            }
             _ => return None, // Not a visual line action
         };
 

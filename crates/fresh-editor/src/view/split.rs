@@ -97,6 +97,11 @@ pub struct SplitViewState {
     /// Optional view transform payload for this split/viewport
     pub view_transform: Option<ViewTransformPayload>,
 
+    /// True when the buffer was edited since the last view_transform_request hook fired.
+    /// While true, incoming SubmitViewTransform commands are rejected as stale
+    /// (their tokens have source_offsets from before the edit).
+    pub view_transform_stale: bool,
+
     /// Computed layout for this view (from view_transform or base tokens)
     /// This is View state - each split has its own Layout
     pub layout: Option<Layout>,
@@ -132,6 +137,7 @@ impl SplitViewState {
             compose_column_guides: None,
             compose_prev_line_numbers: None,
             view_transform: None,
+            view_transform_stale: false,
             layout: None,
             layout_dirty: true, // Start dirty so first operation builds layout
             focus_history: Vec::new(),
@@ -152,6 +158,7 @@ impl SplitViewState {
             compose_column_guides: None,
             compose_prev_line_numbers: None,
             view_transform: None,
+            view_transform_stale: false,
             layout: None,
             layout_dirty: true, // Start dirty so first operation builds layout
             focus_history: Vec::new(),

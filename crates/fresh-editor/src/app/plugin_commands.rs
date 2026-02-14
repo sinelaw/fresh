@@ -50,6 +50,7 @@ impl Editor {
                 priority: 10,
                 message: None,
                 extend_to_line_end: options.extend_to_line_end,
+                url: options.url.clone(),
             };
             state.apply(&event);
             // Note: Overlays are ephemeral, not added to event log for undo/redo
@@ -250,6 +251,103 @@ impl Editor {
             state
                 .virtual_texts
                 .clear_namespace(&mut state.marker_list, &ns);
+        }
+    }
+
+    // ==================== Conceal Commands ====================
+
+    /// Handle AddConceal command - add a conceal range that hides or replaces bytes
+    pub(super) fn handle_add_conceal(
+        &mut self,
+        buffer_id: BufferId,
+        namespace: OverlayNamespace,
+        start: usize,
+        end: usize,
+        replacement: Option<String>,
+    ) {
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state
+                .conceals
+                .add(&mut state.marker_list, namespace, start..end, replacement);
+            #[cfg(feature = "plugins")]
+            {
+                self.plugin_render_requested = true;
+            }
+        }
+    }
+
+    /// Handle ClearConcealNamespace command
+    pub(super) fn handle_clear_conceal_namespace(
+        &mut self,
+        buffer_id: BufferId,
+        namespace: OverlayNamespace,
+    ) {
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state
+                .conceals
+                .clear_namespace(&namespace, &mut state.marker_list);
+        }
+    }
+
+    /// Handle ClearConcealsInRange command
+    pub(super) fn handle_clear_conceals_in_range(
+        &mut self,
+        buffer_id: BufferId,
+        start: usize,
+        end: usize,
+    ) {
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state
+                .conceals
+                .remove_in_range(&(start..end), &mut state.marker_list);
+        }
+    }
+
+    // ==================== Soft Break Commands ====================
+
+    /// Handle AddSoftBreak command
+    pub(super) fn handle_add_soft_break(
+        &mut self,
+        buffer_id: BufferId,
+        namespace: OverlayNamespace,
+        position: usize,
+        indent: u16,
+    ) {
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state
+                .soft_breaks
+                .add(&mut state.marker_list, namespace, position, indent);
+            #[cfg(feature = "plugins")]
+            {
+                self.plugin_render_requested = true;
+            }
+        }
+    }
+
+    /// Handle ClearSoftBreakNamespace command
+    pub(super) fn handle_clear_soft_break_namespace(
+        &mut self,
+        buffer_id: BufferId,
+        namespace: OverlayNamespace,
+    ) {
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state
+                .soft_breaks
+                .clear_namespace(&namespace, &mut state.marker_list);
+        }
+    }
+
+    /// Handle ClearSoftBreaksInRange command
+    pub(super) fn handle_clear_soft_breaks_in_range(
+        &mut self,
+        buffer_id: BufferId,
+        start: usize,
+        end: usize,
+    ) {
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state
+                .soft_breaks
+                .remove_in_range(start, end, &mut state.marker_list);
         }
     }
 
@@ -892,6 +990,17 @@ impl Editor {
             .or_insert_with(|| {
                 SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buffer_id)
             });
+        // Reject stale view transforms — the buffer was edited since the
+        // view_transform_request that produced this response, so the token
+        // source_offsets are from before the edit. Applying them would cause
+        // conceals to appear at wrong positions for one frame (flicker).
+        if view_state.view_transform_stale {
+            tracing::trace!(
+                "Rejecting stale SubmitViewTransform for split {:?}",
+                target_split
+            );
+            return;
+        }
         view_state.view_transform = Some(payload);
     }
 

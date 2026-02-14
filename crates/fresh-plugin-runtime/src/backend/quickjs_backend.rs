@@ -1476,12 +1476,16 @@ impl JsEditorApi {
     ///
     /// Theme key examples: "ui.status_bar_fg", "editor.selection_bg", "syntax.keyword"
     ///
+    /// Options: fg, bg (RGB array or theme key string), bold, italic, underline,
+    /// strikethrough, extend_to_line_end (all booleans, default false).
+    ///
     /// Example usage in TypeScript:
     /// ```typescript
     /// editor.addOverlay(bufferId, "my-namespace", 0, 10, {
     ///   fg: "syntax.keyword",           // theme key
     ///   bg: [40, 40, 50],               // RGB array
     ///   bold: true,
+    ///   strikethrough: true,
     /// });
     /// ```
     pub fn add_overlay<'js>(
@@ -1517,7 +1521,9 @@ impl JsEditorApi {
         let underline: bool = options.get("underline").unwrap_or(false);
         let bold: bool = options.get("bold").unwrap_or(false);
         let italic: bool = options.get("italic").unwrap_or(false);
+        let strikethrough: bool = options.get("strikethrough").unwrap_or(false);
         let extend_to_line_end: bool = options.get("extendToLineEnd").unwrap_or(false);
+        let url: Option<String> = options.get("url").ok();
 
         let options = OverlayOptions {
             fg,
@@ -1525,7 +1531,9 @@ impl JsEditorApi {
             underline,
             bold,
             italic,
+            strikethrough,
             extend_to_line_end,
+            url,
         };
 
         let _ = self.command_sender.send(PluginCommand::AddOverlay {
@@ -1575,6 +1583,90 @@ impl JsEditorApi {
             .send(PluginCommand::RemoveOverlay {
                 buffer_id: BufferId(buffer_id as usize),
                 handle: OverlayHandle(handle),
+            })
+            .is_ok()
+    }
+
+    // === Conceal Ranges ===
+
+    /// Add a conceal range that hides or replaces a byte range during rendering
+    pub fn add_conceal(
+        &self,
+        buffer_id: u32,
+        namespace: String,
+        start: u32,
+        end: u32,
+        replacement: Option<String>,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::AddConceal {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace: OverlayNamespace::from_string(namespace),
+                start: start as usize,
+                end: end as usize,
+                replacement,
+            })
+            .is_ok()
+    }
+
+    /// Clear all conceal ranges in a namespace
+    pub fn clear_conceal_namespace(&self, buffer_id: u32, namespace: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::ClearConcealNamespace {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace: OverlayNamespace::from_string(namespace),
+            })
+            .is_ok()
+    }
+
+    /// Clear all conceal ranges that overlap with a byte range
+    pub fn clear_conceals_in_range(&self, buffer_id: u32, start: u32, end: u32) -> bool {
+        self.command_sender
+            .send(PluginCommand::ClearConcealsInRange {
+                buffer_id: BufferId(buffer_id as usize),
+                start: start as usize,
+                end: end as usize,
+            })
+            .is_ok()
+    }
+
+    // === Soft Breaks ===
+
+    /// Add a soft break point for marker-based line wrapping
+    pub fn add_soft_break(
+        &self,
+        buffer_id: u32,
+        namespace: String,
+        position: u32,
+        indent: u32,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::AddSoftBreak {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace: OverlayNamespace::from_string(namespace),
+                position: position as usize,
+                indent: indent as u16,
+            })
+            .is_ok()
+    }
+
+    /// Clear all soft breaks in a namespace
+    pub fn clear_soft_break_namespace(&self, buffer_id: u32, namespace: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::ClearSoftBreakNamespace {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace: OverlayNamespace::from_string(namespace),
+            })
+            .is_ok()
+    }
+
+    /// Clear all soft breaks that fall within a byte range
+    pub fn clear_soft_breaks_in_range(&self, buffer_id: u32, start: u32, end: u32) -> bool {
+        self.command_sender
+            .send(PluginCommand::ClearSoftBreaksInRange {
+                buffer_id: BufferId(buffer_id as usize),
+                start: start as usize,
+                end: end as usize,
             })
             .is_ok()
     }
@@ -1646,6 +1738,34 @@ impl JsEditorApi {
                 split_id: split_id.map(|id| SplitId(id as usize)),
             })
             .is_ok()
+    }
+
+    /// Set layout hints (compose width, column guides) for a buffer/split
+    /// without going through the view_transform pipeline.
+    pub fn set_layout_hints<'js>(
+        &self,
+        buffer_id: u32,
+        split_id: Option<u32>,
+        #[plugin_api(ts_type = "LayoutHints")] hints: rquickjs::Object<'js>,
+    ) -> rquickjs::Result<bool> {
+        use fresh_core::api::LayoutHints;
+
+        let compose_width: Option<u16> = hints.get("composeWidth").ok();
+        let column_guides: Option<Vec<u16>> = hints.get("columnGuides").ok();
+        let parsed_hints = LayoutHints {
+            compose_width,
+            column_guides,
+        };
+
+        Ok(self
+            .command_sender
+            .send(PluginCommand::SetLayoutHints {
+                buffer_id: BufferId(buffer_id as usize),
+                split_id: split_id.map(|id| SplitId(id as usize)),
+                range: 0..0,
+                hints: parsed_hints,
+            })
+            .is_ok())
     }
 
     // === File Explorer ===

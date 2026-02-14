@@ -16,12 +16,14 @@ use crate::primitives::indent::IndentCalculator;
 use crate::primitives::reference_highlighter::ReferenceHighlighter;
 use crate::primitives::text_property::TextPropertyManager;
 use crate::view::bracket_highlight_overlay::BracketHighlightOverlay;
+use crate::view::conceal::ConcealManager;
 use crate::view::margin::{MarginAnnotation, MarginContent, MarginManager, MarginPosition};
 use crate::view::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
 use crate::view::popup::{
     Popup, PopupContent, PopupKind, PopupListItem, PopupManager, PopupPosition,
 };
 use crate::view::reference_highlight_overlay::ReferenceHighlightOverlay;
+use crate::view::soft_break::SoftBreakManager;
 use crate::view::virtual_text::VirtualTextManager;
 use anyhow::Result;
 use ratatui::style::{Color, Style};
@@ -132,6 +134,12 @@ pub struct EditorState {
     /// Virtual text manager for inline hints (type hints, parameter hints, etc.)
     pub virtual_texts: VirtualTextManager,
 
+    /// Conceal ranges for hiding/replacing byte ranges during rendering
+    pub conceals: ConcealManager,
+
+    /// Soft break points for marker-based line wrapping during rendering
+    pub soft_breaks: SoftBreakManager,
+
     /// Popups for floating windows (completion, documentation, etc.)
     pub popups: PopupManager,
 
@@ -200,6 +208,8 @@ impl EditorState {
             overlays: OverlayManager::new(),
             marker_list: MarkerList::new(),
             virtual_texts: VirtualTextManager::new(),
+            conceals: ConcealManager::new(),
+            soft_breaks: SoftBreakManager::new(),
             popups: PopupManager::new(),
             margins: MarginManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
@@ -285,6 +295,8 @@ impl EditorState {
             overlays: OverlayManager::new(),
             marker_list,
             virtual_texts: VirtualTextManager::new(),
+            conceals: ConcealManager::new(),
+            soft_breaks: SoftBreakManager::new(),
             popups: PopupManager::new(),
             margins: MarginManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0),
@@ -345,6 +357,8 @@ impl EditorState {
             overlays: OverlayManager::new(),
             marker_list,
             virtual_texts: VirtualTextManager::new(),
+            conceals: ConcealManager::new(),
+            soft_breaks: SoftBreakManager::new(),
             popups: PopupManager::new(),
             margins: MarginManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0),
@@ -390,6 +404,8 @@ impl EditorState {
             overlays: OverlayManager::new(),
             marker_list,
             virtual_texts: VirtualTextManager::new(),
+            conceals: ConcealManager::new(),
+            soft_breaks: SoftBreakManager::new(),
             popups: PopupManager::new(),
             margins: MarginManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0),
@@ -611,6 +627,7 @@ impl EditorState {
                 priority,
                 message,
                 extend_to_line_end,
+                url,
             } => {
                 tracing::debug!(
                     "AddOverlay: namespace={:?}, range={:?}, face={:?}, priority={}",
@@ -632,6 +649,7 @@ impl EditorState {
                 overlay.namespace = namespace.clone();
                 overlay.message = message.clone();
                 overlay.extend_to_line_end = *extend_to_line_end;
+                overlay.url = url.clone();
 
                 let actual_range = overlay.range(&self.marker_list);
                 tracing::debug!(
@@ -872,6 +890,9 @@ fn convert_event_face_to_overlay_face(event_face: &EventOverlayFace) -> OverlayF
             }
             if options.underline {
                 modifiers |= Modifier::UNDERLINED;
+            }
+            if options.strikethrough {
+                modifiers |= Modifier::CROSSED_OUT;
             }
             if !modifiers.is_empty() {
                 style = style.add_modifier(modifiers);

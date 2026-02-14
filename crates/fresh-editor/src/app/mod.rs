@@ -2671,14 +2671,23 @@ impl Editor {
     ///
     /// Called after buffer content changes (Insert/Delete) to mark
     /// layouts as dirty, forcing rebuild on next access.
+    /// Also clears any cached view transform since its token source_offsets
+    /// become stale after buffer edits.
     fn invalidate_layouts_for_buffer(&mut self, buffer_id: BufferId) {
         // Find all splits that display this buffer
         let splits_for_buffer = self.split_manager.splits_for_buffer(buffer_id);
 
-        // Invalidate layout for each split
+        // Invalidate layout and clear stale view transform for each split
         for split_id in splits_for_buffer {
             if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
                 view_state.invalidate_layout();
+                // Clear cached view transform — its token source_offsets are from
+                // before the edit and would cause conceals to be applied at wrong positions.
+                // The view_transform_request hook will fire on the next render to rebuild it.
+                view_state.view_transform = None;
+                // Mark as stale so that any pending SubmitViewTransform commands
+                // (from a previous view_transform_request) are rejected.
+                view_state.view_transform_stale = true;
             }
         }
     }
@@ -4514,6 +4523,53 @@ impl Editor {
                 namespace,
             } => {
                 self.handle_clear_virtual_text_namespace(buffer_id, namespace);
+            }
+
+            // ==================== Conceal Commands ====================
+            PluginCommand::AddConceal {
+                buffer_id,
+                namespace,
+                start,
+                end,
+                replacement,
+            } => {
+                self.handle_add_conceal(buffer_id, namespace, start, end, replacement);
+            }
+            PluginCommand::ClearConcealNamespace {
+                buffer_id,
+                namespace,
+            } => {
+                self.handle_clear_conceal_namespace(buffer_id, namespace);
+            }
+            PluginCommand::ClearConcealsInRange {
+                buffer_id,
+                start,
+                end,
+            } => {
+                self.handle_clear_conceals_in_range(buffer_id, start, end);
+            }
+
+            // ==================== Soft Break Commands ====================
+            PluginCommand::AddSoftBreak {
+                buffer_id,
+                namespace,
+                position,
+                indent,
+            } => {
+                self.handle_add_soft_break(buffer_id, namespace, position, indent);
+            }
+            PluginCommand::ClearSoftBreakNamespace {
+                buffer_id,
+                namespace,
+            } => {
+                self.handle_clear_soft_break_namespace(buffer_id, namespace);
+            }
+            PluginCommand::ClearSoftBreaksInRange {
+                buffer_id,
+                start,
+                end,
+            } => {
+                self.handle_clear_soft_breaks_in_range(buffer_id, start, end);
             }
 
             // ==================== Menu Commands ====================

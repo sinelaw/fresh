@@ -170,6 +170,8 @@ pub enum HookArgs {
         viewport_end: usize,
         /// Base tokens (Text, Newline, Space) from the source
         tokens: Vec<ViewTokenWire>,
+        /// Byte positions of all cursors in this buffer
+        cursor_positions: Vec<usize>,
     },
 
     /// Mouse click event
@@ -563,6 +565,7 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<String> {
             viewport_start,
             viewport_end,
             tokens,
+            cursor_positions,
         } => {
             let tokens_json: Vec<serde_json::Value> = tokens
                 .iter()
@@ -586,6 +589,7 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<String> {
                 "viewport_start": viewport_start,
                 "viewport_end": viewport_end,
                 "tokens": tokens_json,
+                "cursor_positions": cursor_positions,
             })
         }
         HookArgs::MouseClick {

@@ -17,6 +17,8 @@ pub mod color_support;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod composite_view;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
+pub mod conceal;
+#[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod controls;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod dimming;
@@ -26,6 +28,8 @@ pub mod margin;
 pub mod overlay;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod scroll_sync;
+#[cfg(any(feature = "runtime", feature = "wasm"))]
+pub mod soft_break;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod ui;
 #[cfg(any(feature = "runtime", feature = "wasm"))]

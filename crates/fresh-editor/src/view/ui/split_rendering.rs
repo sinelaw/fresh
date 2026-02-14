@@ -2321,6 +2321,41 @@ impl SplitRenderer {
         // Use plugin transform if available, otherwise use base tokens
         let mut tokens = view_transform.map(|vt| vt.tokens).unwrap_or(base_tokens);
 
+        // Apply soft breaks — marker-based line wrapping that survives edits without flicker
+        if !state.soft_breaks.is_empty() {
+            let viewport_end = tokens
+                .iter()
+                .filter_map(|t| t.source_offset)
+                .last()
+                .unwrap_or(viewport.top_byte)
+                + 1;
+            let soft_breaks = state.soft_breaks.query_viewport(
+                viewport.top_byte,
+                viewport_end,
+                &state.marker_list,
+            );
+            if !soft_breaks.is_empty() {
+                tokens = Self::apply_soft_breaks(tokens, &soft_breaks);
+            }
+        }
+
+        // Apply conceal ranges - filter/replace tokens that fall within concealed byte ranges
+        if !state.conceals.is_empty() {
+            let viewport_end = tokens
+                .iter()
+                .filter_map(|t| t.source_offset)
+                .last()
+                .unwrap_or(viewport.top_byte)
+                + 1;
+            let conceal_ranges =
+                state
+                    .conceals
+                    .query_viewport(viewport.top_byte, viewport_end, &state.marker_list);
+            if !conceal_ranges.is_empty() {
+                tokens = Self::apply_conceal_ranges(tokens, &conceal_ranges);
+            }
+        }
+
         // Apply wrapping transform - always enabled for safety, but with different thresholds.
         // When line_wrap is on: wrap at viewport width for normal text flow.
         // When line_wrap is off: wrap at MAX_SAFE_LINE_WIDTH to prevent memory exhaustion
@@ -2461,6 +2496,228 @@ impl SplitRenderer {
         }
 
         result
+    }
+
+    /// Apply soft breaks to a token stream.
+    ///
+    /// Walks tokens with a sorted break list `[(position, indent)]`.
+    /// When a token's `source_offset` matches a break position:
+    /// - For Space tokens: replace with Newline + indent Spaces
+    /// - For other tokens: insert Newline + indent Spaces before the token
+    /// Tokens without source_offset (injected/virtual) pass through unchanged.
+    fn apply_soft_breaks(
+        tokens: Vec<fresh_core::api::ViewTokenWire>,
+        soft_breaks: &[(usize, u16)],
+    ) -> Vec<fresh_core::api::ViewTokenWire> {
+        use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
+
+        if soft_breaks.is_empty() {
+            return tokens;
+        }
+
+        let mut output = Vec::with_capacity(tokens.len() + soft_breaks.len() * 2);
+        let mut break_idx = 0;
+
+        for token in tokens {
+            let offset = match token.source_offset {
+                Some(o) => o,
+                None => {
+                    // Injected tokens pass through
+                    output.push(token);
+                    continue;
+                }
+            };
+
+            // Check if any break points match this token's position
+            // Advance past any break positions that are before this token
+            while break_idx < soft_breaks.len() && soft_breaks[break_idx].0 < offset {
+                break_idx += 1;
+            }
+
+            if break_idx < soft_breaks.len() && soft_breaks[break_idx].0 == offset {
+                let indent = soft_breaks[break_idx].1;
+                break_idx += 1;
+
+                match &token.kind {
+                    ViewTokenWireKind::Space => {
+                        // Replace the Space with Newline + indent Spaces
+                        output.push(ViewTokenWire {
+                            source_offset: None,
+                            kind: ViewTokenWireKind::Newline,
+                            style: None,
+                        });
+                        for _ in 0..indent {
+                            output.push(ViewTokenWire {
+                                source_offset: None,
+                                kind: ViewTokenWireKind::Space,
+                                style: None,
+                            });
+                        }
+                    }
+                    _ => {
+                        // Insert Newline + indent Spaces before the token
+                        output.push(ViewTokenWire {
+                            source_offset: None,
+                            kind: ViewTokenWireKind::Newline,
+                            style: None,
+                        });
+                        for _ in 0..indent {
+                            output.push(ViewTokenWire {
+                                source_offset: None,
+                                kind: ViewTokenWireKind::Space,
+                                style: None,
+                            });
+                        }
+                        output.push(token);
+                    }
+                }
+            } else {
+                output.push(token);
+            }
+        }
+
+        output
+    }
+
+    /// Apply conceal ranges to a token stream.
+    ///
+    /// Handles partial token overlap: if a Text token spans bytes that are
+    /// partially concealed, the token is split at conceal boundaries.
+    /// Non-text tokens (Space, Newline) are treated as single-byte.
+    ///
+    /// Tokens without source_offset (injected/virtual) always pass through.
+    fn apply_conceal_ranges(
+        tokens: Vec<fresh_core::api::ViewTokenWire>,
+        conceal_ranges: &[(std::ops::Range<usize>, Option<&str>)],
+    ) -> Vec<fresh_core::api::ViewTokenWire> {
+        use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
+        use std::collections::HashSet;
+
+        if conceal_ranges.is_empty() {
+            return tokens;
+        }
+
+        let mut output = Vec::with_capacity(tokens.len());
+        let mut emitted_replacements: HashSet<usize> = HashSet::new();
+
+        // Helper: check if a byte offset is concealed, returns (is_concealed, conceal_index)
+        let is_concealed = |byte_offset: usize| -> Option<usize> {
+            for (idx, (range, _)) in conceal_ranges.iter().enumerate() {
+                if byte_offset >= range.start && byte_offset < range.end {
+                    return Some(idx);
+                }
+            }
+            None
+        };
+
+        for token in tokens {
+            let offset = match token.source_offset {
+                Some(o) => o,
+                None => {
+                    // Injected tokens always pass through
+                    output.push(token);
+                    continue;
+                }
+            };
+
+            match &token.kind {
+                ViewTokenWireKind::Text(text) => {
+                    // Text tokens may span multiple bytes. We need to check
+                    // each character's byte offset against conceal ranges and
+                    // split the token at conceal boundaries.
+                    let mut current_byte = offset;
+                    let mut visible_start: Option<usize> = None; // byte offset of visible run start
+                    let mut visible_chars = String::new();
+
+                    for ch in text.chars() {
+                        let ch_len = ch.len_utf8();
+
+                        if let Some(cidx) = is_concealed(current_byte) {
+                            // This char is concealed - flush any visible run first
+                            if !visible_chars.is_empty() {
+                                output.push(ViewTokenWire {
+                                    source_offset: visible_start,
+                                    kind: ViewTokenWireKind::Text(std::mem::take(
+                                        &mut visible_chars,
+                                    )),
+                                    style: token.style.clone(),
+                                });
+                                visible_start = None;
+                            }
+
+                            // Emit replacement text once per conceal range.
+                            // Split into first-char (with source_offset for cursor/click
+                            // positioning) and remaining chars (with None source_offset).
+                            // Without this split, the view pipeline's byte-advancing logic
+                            // (`source + byte_idx`) causes multi-character replacements to
+                            // "claim" buffer byte positions beyond the concealed range,
+                            // leading to ghost cursors and mispositioned hardware cursors.
+                            if let Some(repl) = conceal_ranges[cidx].1 {
+                                if !emitted_replacements.contains(&cidx) {
+                                    emitted_replacements.insert(cidx);
+                                    if !repl.is_empty() {
+                                        let mut chars = repl.chars();
+                                        if let Some(first_ch) = chars.next() {
+                                            // First character maps to the concealed range start
+                                            output.push(ViewTokenWire {
+                                                source_offset: Some(conceal_ranges[cidx].0.start),
+                                                kind: ViewTokenWireKind::Text(first_ch.to_string()),
+                                                style: None,
+                                            });
+                                            let rest: String = chars.collect();
+                                            if !rest.is_empty() {
+                                                // Remaining characters are synthetic — no source mapping
+                                                output.push(ViewTokenWire {
+                                                    source_offset: None,
+                                                    kind: ViewTokenWireKind::Text(rest),
+                                                    style: None,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // Visible char - accumulate
+                            if visible_start.is_none() {
+                                visible_start = Some(current_byte);
+                            }
+                            visible_chars.push(ch);
+                        }
+
+                        current_byte += ch_len;
+                    }
+
+                    // Flush remaining visible chars
+                    if !visible_chars.is_empty() {
+                        output.push(ViewTokenWire {
+                            source_offset: visible_start,
+                            kind: ViewTokenWireKind::Text(visible_chars),
+                            style: token.style.clone(),
+                        });
+                    }
+                }
+                ViewTokenWireKind::Space
+                | ViewTokenWireKind::Newline
+                | ViewTokenWireKind::Break => {
+                    // Single-byte tokens: conceal or pass through
+                    if is_concealed(offset).is_some() {
+                        // Skip concealed space/newline
+                    } else {
+                        output.push(token);
+                    }
+                }
+                ViewTokenWireKind::BinaryByte(_) => {
+                    if is_concealed(offset).is_some() {
+                        // Skip concealed binary byte
+                    } else {
+                        output.push(token);
+                    }
+                }
+            }
+        }
+
+        output
     }
 
     fn build_base_tokens(
@@ -3870,19 +4127,38 @@ impl SplitRenderer {
             if !line_spans.is_empty() {
                 // Find cursor position and track last visible x by iterating through line_view_map
                 // Note: line_view_map includes both gutter and content character mappings
+                //
+                // When the cursor byte falls inside a concealed range (e.g. syntax markers
+                // hidden by compose-mode plugins), no view_map entry will exactly match
+                // primary_cursor_position.  In that case we fall back to the nearest
+                // visible byte that is >= the cursor byte on the same line — this keeps
+                // the cursor visible for the one frame between cursor movement and the
+                // plugin's conceal-refresh response.
+                let mut nearest_fallback: Option<(u16, usize)> = None; // (screen_x, byte_distance)
                 for (screen_x, source_offset) in line_view_map.iter().enumerate() {
                     if let Some(src) = source_offset {
-                        // Check if this is the primary cursor position
-                        // Only set cursor on the FIRST screen position that maps to cursor byte
-                        // (important for tabs where multiple spaces map to same byte)
+                        // Exact match: cursor byte is visible
                         if *src == primary_cursor_position && !have_cursor {
                             cursor_screen_x = screen_x as u16;
                             cursor_screen_y = current_y;
                             have_cursor = true;
                         }
-                        // Track the last visible position (rightmost character with a source mapping)
-                        // This is used for EOF cursor placement
+                        // Track nearest visible byte >= cursor position for fallback
+                        if !have_cursor && *src >= primary_cursor_position {
+                            let dist = *src - primary_cursor_position;
+                            if nearest_fallback.is_none() || dist < nearest_fallback.unwrap().1 {
+                                nearest_fallback = Some((screen_x as u16, dist));
+                            }
+                        }
                         last_visible_x = screen_x as u16;
+                    }
+                }
+                // Fallback: cursor byte was concealed — snap to nearest visible byte
+                if !have_cursor {
+                    if let Some((fallback_x, _)) = nearest_fallback {
+                        cursor_screen_x = fallback_x;
+                        cursor_screen_y = current_y;
+                        have_cursor = true;
                     }
                 }
             }
@@ -3951,6 +4227,12 @@ impl SplitRenderer {
                 }
             }
 
+            // For virtual rows (no source bytes), inherit from previous row
+            let prev_line_end_byte = view_line_mappings
+                .last()
+                .map(|prev: &ViewLineMapping| prev.line_end_byte)
+                .unwrap_or(0);
+
             // Calculate line_end_byte for this line
             let line_end_byte = if current_view_line.ends_with_newline {
                 // Position ON the newline - find the last source byte (the newline's position)
@@ -3959,7 +4241,7 @@ impl SplitRenderer {
                     .iter()
                     .rev()
                     .find_map(|m| *m)
-                    .unwrap_or(0)
+                    .unwrap_or(prev_line_end_byte)
             } else {
                 // Position AFTER the last character - find last source byte and add char length
                 if let Some((char_idx, &Some(last_byte_start))) = current_view_line
@@ -3976,7 +4258,10 @@ impl SplitRenderer {
                         last_byte_start
                     }
                 } else {
-                    0
+                    // Virtual row with no source bytes (e.g. table border from conceals).
+                    // Inherit line_end_byte from the previous row so cursor movement
+                    // through virtual rows lands at a valid source position.
+                    prev_line_end_byte
                 }
             };
 
@@ -4386,6 +4671,56 @@ impl SplitRenderer {
             .style(Style::default().bg(effective_editor_bg));
         frame.render_widget(Paragraph::new(lines).block(editor_block), render_area);
 
+        // Resolve cursor screen position early so we can avoid clobbering it
+        // with OSC 8 2-char chunks.
+        let buffer_ends_with_newline = if !state.buffer.is_empty() {
+            let last_char = state.get_text_range(state.buffer.len() - 1, state.buffer.len());
+            last_char == "\n"
+        } else {
+            false
+        };
+
+        let cursor = Self::resolve_cursor_fallback(
+            render_output.cursor,
+            selection.primary_cursor_position,
+            state.buffer.len(),
+            buffer_ends_with_newline,
+            render_output.last_line_end,
+            render_output.content_lines_rendered,
+            gutter_width,
+        );
+
+        let cursor_screen_pos = if is_active && state.show_cursors && !hide_cursor {
+            cursor.map(|(cx, cy)| {
+                let screen_x = render_area.x.saturating_add(cx);
+                let max_y = render_area.height.saturating_sub(1);
+                let screen_y = render_area.y.saturating_add(cy.min(max_y));
+                (screen_x, screen_y)
+            })
+        } else {
+            None
+        };
+
+        // TODO: Re-enable OSC 8 hyperlink overlays once we fix the ratatui
+        // Buffer::diff interaction. The 2-char chunking writes OSC 8 escape
+        // sequences into cell symbols, but ratatui's diff uses
+        // `symbol().width()` (unicode_width) to compute how many subsequent
+        // cells to skip. Because the URL inside the OSC 8 string contains
+        // printable characters, the width is ~30 instead of 2, causing the
+        // diff to skip legitimate cell updates. This leads to stale cells in
+        // the backend buffer when the overlay column range shifts (e.g.
+        // concealed → unconcealed transitions). The fix is to apply OSC 8
+        // after the ratatui diff, directly to the backend buffer.
+        //
+        // Self::apply_hyperlink_overlays(
+        //     frame,
+        //     &decorations.viewport_overlays,
+        //     &render_output.view_line_mappings,
+        //     render_area,
+        //     gutter_width,
+        //     cursor_screen_pos,
+        // );
+
         // Render column guides if present (for tables, etc.)
         if let Some(guides) = compose_column_guides {
             let guide_style = Style::default()
@@ -4410,49 +4745,138 @@ impl SplitRenderer {
             }
         }
 
-        let buffer_ends_with_newline = if !state.buffer.is_empty() {
-            let last_char = state.get_text_range(state.buffer.len() - 1, state.buffer.len());
-            last_char == "\n"
-        } else {
-            false
-        };
+        if let Some((screen_x, screen_y)) = cursor_screen_pos {
+            frame.set_cursor_position((screen_x, screen_y));
 
-        let cursor = Self::resolve_cursor_fallback(
-            render_output.cursor,
-            selection.primary_cursor_position,
-            state.buffer.len(),
-            buffer_ends_with_newline,
-            render_output.last_line_end,
-            render_output.content_lines_rendered,
-            gutter_width,
-        );
-
-        if is_active && state.show_cursors && !hide_cursor {
-            if let Some((cursor_screen_x, cursor_screen_y)) = cursor {
-                // cursor_screen_x already includes gutter width from line_view_map
-                let screen_x = render_area.x.saturating_add(cursor_screen_x);
-
-                // Clamp cursor_screen_y to stay within the render area bounds.
-                // This prevents the cursor from jumping to the status bar when
-                // the cursor is at EOF and the buffer ends with a newline.
-                // Issue #468: "Cursor is jumping on statusbar"
-                let max_y = render_area.height.saturating_sub(1);
-                let clamped_cursor_y = cursor_screen_y.min(max_y);
-                let screen_y = render_area.y.saturating_add(clamped_cursor_y);
-
-                frame.set_cursor_position((screen_x, screen_y));
-
-                if let Some(event_log) = event_log {
-                    let cursor_pos = state.cursors.primary().position;
-                    let buffer_len = state.buffer.len();
-                    event_log.log_render_state(cursor_pos, screen_x, screen_y, buffer_len);
-                }
+            if let Some(event_log) = event_log {
+                let cursor_pos = state.cursors.primary().position;
+                let buffer_len = state.buffer.len();
+                event_log.log_render_state(cursor_pos, screen_x, screen_y, buffer_len);
             }
         }
 
         // Extract view line mappings for mouse click handling
         // This maps screen coordinates to buffer byte positions
         render_output.view_line_mappings
+    }
+
+    /// Post-process the rendered frame to apply OSC 8 hyperlink escape sequences
+    /// for any overlays that have a URL set.
+    ///
+    /// Uses view_line_mappings to translate overlay byte ranges into screen
+    /// positions, then wraps the corresponding cells with OSC 8 sequences so
+    /// they become clickable in terminals that support the protocol.
+    fn apply_hyperlink_overlays(
+        frame: &mut Frame,
+        viewport_overlays: &[(crate::view::overlay::Overlay, Range<usize>)],
+        view_line_mappings: &[ViewLineMapping],
+        render_area: Rect,
+        gutter_width: usize,
+        cursor_screen_pos: Option<(u16, u16)>,
+    ) {
+        let hyperlink_overlays: Vec<_> = viewport_overlays
+            .iter()
+            .filter(|(overlay, _)| overlay.url.is_some())
+            .collect();
+
+        if hyperlink_overlays.is_empty() {
+            return;
+        }
+
+        let buf = frame.buffer_mut();
+        for (screen_row, mapping) in view_line_mappings.iter().enumerate() {
+            let y = render_area.y + screen_row as u16;
+            if y >= render_area.y + render_area.height {
+                break;
+            }
+            for (overlay, range) in &hyperlink_overlays {
+                let url = overlay.url.as_ref().unwrap();
+                // Find screen columns in this row whose source byte falls in range
+                let mut run_start: Option<u16> = None;
+                let content_x_offset = render_area.x + gutter_width as u16;
+                for (char_idx, maybe_byte) in mapping.char_source_bytes.iter().enumerate() {
+                    let in_range = maybe_byte
+                        .map(|b| b >= range.start && b < range.end)
+                        .unwrap_or(false);
+                    let screen_x = content_x_offset + char_idx as u16;
+                    if in_range && screen_x < render_area.x + render_area.width {
+                        if run_start.is_none() {
+                            run_start = Some(screen_x);
+                        }
+                    } else if let Some(start_x) = run_start.take() {
+                        Self::apply_osc8_to_cells(
+                            buf,
+                            start_x,
+                            screen_x,
+                            y,
+                            url,
+                            cursor_screen_pos,
+                        );
+                    }
+                }
+                // Flush trailing run
+                if let Some(start_x) = run_start {
+                    let end_x = content_x_offset + mapping.char_source_bytes.len() as u16;
+                    let end_x = end_x.min(render_area.x + render_area.width);
+                    Self::apply_osc8_to_cells(buf, start_x, end_x, y, url, cursor_screen_pos);
+                }
+            }
+        }
+    }
+
+    /// Apply OSC 8 hyperlink escape sequences to a run of buffer cells.
+    ///
+    /// Uses 2-character chunking to work around Crossterm width accounting
+    /// issues with OSC sequences (same approach as popup hyperlinks).
+    /// When the cursor falls on the second character of a 2-char chunk, the
+    /// chunk is split into two 1-char chunks so the terminal cursor remains
+    /// visible on the correct cell.
+    fn apply_osc8_to_cells(
+        buf: &mut ratatui::buffer::Buffer,
+        start_x: u16,
+        end_x: u16,
+        y: u16,
+        url: &str,
+        cursor_pos: Option<(u16, u16)>,
+    ) {
+        let area = *buf.area();
+        if y < area.y || y >= area.y + area.height {
+            return;
+        }
+        let max_x = area.x + area.width;
+        // If the cursor is on this row, note its x so we can avoid
+        // swallowing it into the second half of a 2-char chunk.
+        let cursor_x = cursor_pos.and_then(|(cx, cy)| if cy == y { Some(cx) } else { None });
+        let mut x = start_x;
+        while x < end_x {
+            if x >= max_x {
+                break;
+            }
+            // Determine chunk size: normally 2, but use 1 if the cursor
+            // sits on the second cell of the pair so it stays addressable.
+            let chunk_size = if cursor_x == Some(x + 1) { 1 } else { 2 };
+
+            let mut chunk = String::new();
+            let chunk_start = x;
+            for _ in 0..chunk_size {
+                if x >= end_x || x >= max_x {
+                    break;
+                }
+                let sym = buf[(x, y)].symbol().to_string();
+                chunk.push_str(&sym);
+                x += 1;
+            }
+            if !chunk.is_empty() {
+                let actual_chunk_len = x - chunk_start;
+                let hyperlink = format!("\x1B]8;;{}\x07{}\x1B]8;;\x07", url, chunk);
+                buf[(chunk_start, y)].set_symbol(&hyperlink);
+                // Clear trailing cells that were folded into this chunk so
+                // ratatui's diff picks up the change when chunking shifts.
+                for cx in (chunk_start + 1)..chunk_start + actual_chunk_len {
+                    buf[(cx, y)].set_symbol("");
+                }
+            }
+        }
     }
 
     /// Apply styles from original line_spans to a wrapped segment
@@ -5819,5 +6243,206 @@ mod tests {
                 line.text.len()
             );
         }
+    }
+
+    /// Helper: strip OSC 8 escape sequences from a string, returning plain text.
+    fn strip_osc8(s: &str) -> String {
+        let mut result = String::with_capacity(s.len());
+        let bytes = s.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if i + 3 < bytes.len()
+                && bytes[i] == 0x1b
+                && bytes[i + 1] == b']'
+                && bytes[i + 2] == b'8'
+                && bytes[i + 3] == b';'
+            {
+                i += 4;
+                while i < bytes.len() && bytes[i] != 0x07 {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    i += 1;
+                }
+            } else {
+                result.push(bytes[i] as char);
+                i += 1;
+            }
+        }
+        result
+    }
+
+    /// Read a row from a ratatui buffer, skipping the second cell of 2-char
+    /// OSC 8 chunks so we get clean text.
+    fn read_row(buf: &ratatui::buffer::Buffer, y: u16) -> String {
+        let width = buf.area().width;
+        let mut s = String::new();
+        let mut col = 0u16;
+        while col < width {
+            let cell = &buf[(col, y)];
+            let stripped = strip_osc8(cell.symbol());
+            let chars = stripped.chars().count();
+            if chars > 1 {
+                s.push_str(&stripped);
+                col += chars as u16;
+            } else {
+                s.push_str(&stripped);
+                col += 1;
+            }
+        }
+        s.trim_end().to_string()
+    }
+
+    #[test]
+    fn test_apply_osc8_to_cells_preserves_adjacent_cells() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+
+        // Simulate: "[Quick Install](#installation)" in a 40-wide buffer row 0
+        let text = "[Quick Install](#installation)";
+        let area = Rect::new(0, 0, 40, 1);
+        let mut buf = Buffer::empty(area);
+        for (i, ch) in text.chars().enumerate() {
+            if (i as u16) < 40 {
+                buf[(i as u16, 0)].set_symbol(&ch.to_string());
+            }
+        }
+
+        // Overlay covers "Quick Install" = cols 1..14 (bytes 9..22 mapped to screen)
+        let url = "https://example.com";
+
+        // Apply with cursor at col 0 (not inside the overlay range)
+        SplitRenderer::apply_osc8_to_cells(&mut buf, 1, 14, 0, url, Some((0, 0)));
+
+        let row = read_row(&buf, 0);
+        assert_eq!(
+            row, text,
+            "After OSC 8 application, reading the row should reproduce the original text"
+        );
+
+        // Cell 14 = ']' must not be touched
+        let cell14 = strip_osc8(buf[(14, 0)].symbol());
+        assert_eq!(cell14, "]", "Cell 14 (']') must not be modified by OSC 8");
+
+        // Cell 0 = '[' must not be touched
+        let cell0 = strip_osc8(buf[(0, 0)].symbol());
+        assert_eq!(cell0, "[", "Cell 0 ('[') must not be modified by OSC 8");
+    }
+
+    #[test]
+    fn test_apply_osc8_stable_across_reapply() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+
+        let text = "[Quick Install](#installation)";
+        let area = Rect::new(0, 0, 40, 1);
+
+        // First render: apply OSC 8 with cursor at col 0
+        let mut buf1 = Buffer::empty(area);
+        for (i, ch) in text.chars().enumerate() {
+            if (i as u16) < 40 {
+                buf1[(i as u16, 0)].set_symbol(&ch.to_string());
+            }
+        }
+        SplitRenderer::apply_osc8_to_cells(
+            &mut buf1,
+            1,
+            14,
+            0,
+            "https://example.com",
+            Some((0, 0)),
+        );
+        let row1 = read_row(&buf1, 0);
+
+        // Second render: fresh buffer, same text, apply OSC 8 with cursor at col 5
+        let mut buf2 = Buffer::empty(area);
+        for (i, ch) in text.chars().enumerate() {
+            if (i as u16) < 40 {
+                buf2[(i as u16, 0)].set_symbol(&ch.to_string());
+            }
+        }
+        SplitRenderer::apply_osc8_to_cells(
+            &mut buf2,
+            1,
+            14,
+            0,
+            "https://example.com",
+            Some((5, 0)),
+        );
+        let row2 = read_row(&buf2, 0);
+
+        assert_eq!(row1, text);
+        assert_eq!(row2, text);
+    }
+
+    #[test]
+    #[ignore = "OSC 8 hyperlinks disabled pending ratatui diff fix"]
+    fn test_apply_osc8_diff_between_renders() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+
+        // Simulate ratatui's diff-based update: a "concealed" render followed
+        // by an "unconcealed" render. The backend buffer accumulates diffs.
+        let area = Rect::new(0, 0, 40, 1);
+
+        // --- Render 1: concealed text "Quick Install" at cols 0..12, rest is space ---
+        let concealed = "Quick Install";
+        let mut frame1 = Buffer::empty(area);
+        for (i, ch) in concealed.chars().enumerate() {
+            frame1[(i as u16, 0)].set_symbol(&ch.to_string());
+        }
+        // OSC 8 covers cols 0..13 (concealed mapping)
+        SplitRenderer::apply_osc8_to_cells(
+            &mut frame1,
+            0,
+            13,
+            0,
+            "https://example.com",
+            Some((0, 5)),
+        );
+
+        // Simulate backend: starts empty, apply diff from frame1
+        let mut prev = Buffer::empty(area);
+        let mut backend = Buffer::empty(area);
+        let diff1 = prev.diff(&frame1);
+        for (x, y, cell) in &diff1 {
+            backend[(*x, *y)] = (*cell).clone();
+        }
+
+        // --- Render 2: unconcealed "[Quick Install](#installation)" ---
+        let full = "[Quick Install](#installation)";
+        let mut frame2 = Buffer::empty(area);
+        for (i, ch) in full.chars().enumerate() {
+            if (i as u16) < 40 {
+                frame2[(i as u16, 0)].set_symbol(&ch.to_string());
+            }
+        }
+        // OSC 8 covers cols 1..14 (unconcealed mapping)
+        SplitRenderer::apply_osc8_to_cells(
+            &mut frame2,
+            1,
+            14,
+            0,
+            "https://example.com",
+            Some((0, 0)),
+        );
+
+        // Apply diff from frame1→frame2 to backend
+        let diff2 = frame1.diff(&frame2);
+        for (x, y, cell) in &diff2 {
+            backend[(*x, *y)] = (*cell).clone();
+        }
+
+        // Backend should now show the full text when read
+        let row = read_row(&backend, 0);
+        assert_eq!(
+            row, full,
+            "After diff-based update from concealed to unconcealed, \
+             backend should show full text"
+        );
+
+        // Specifically, cell 14 must be ']'
+        let cell14 = strip_osc8(backend[(14, 0)].symbol());
+        assert_eq!(cell14, "]", "Cell 14 must be ']' after unconcealed render");
     }
 }

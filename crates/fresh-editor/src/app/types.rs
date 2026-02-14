@@ -683,6 +683,29 @@ impl ViewLineMapping {
         self.char_source_bytes.get(char_idx).copied().flatten()
     }
 
+    /// Find the nearest source byte to a given visual column, searching outward.
+    /// Returns the source byte at the closest valid visual column.
+    pub fn nearest_source_byte(&self, goal_col: usize) -> Option<usize> {
+        let width = self.visual_to_char.len();
+        if width == 0 {
+            return None;
+        }
+        // Search outward from goal_col: try +1, -1, +2, -2, ...
+        for delta in 1..width {
+            if goal_col + delta < width {
+                if let Some(byte) = self.source_byte_at_visual_col(goal_col + delta) {
+                    return Some(byte);
+                }
+            }
+            if delta <= goal_col {
+                if let Some(byte) = self.source_byte_at_visual_col(goal_col - delta) {
+                    return Some(byte);
+                }
+            }
+        }
+        None
+    }
+
     /// Check if this visual row contains the given byte position
     #[inline]
     pub fn contains_byte(&self, byte_pos: usize) -> bool {
@@ -817,9 +840,12 @@ impl CachedLayout {
 
         let target_mapping = mappings.get(target_row)?;
 
-        // Try to get byte at goal visual column, or clamp to line end
+        // Try to get byte at goal visual column.  If that column has no source
+        // byte (e.g. padding on a wrapped continuation line), search outward
+        // for the nearest valid source byte at minimal visual distance.
         let new_pos = target_mapping
             .source_byte_at_visual_col(goal_visual_col)
+            .or_else(|| target_mapping.nearest_source_byte(goal_visual_col))
             .unwrap_or(target_mapping.line_end_byte);
 
         Some((new_pos, goal_visual_col))

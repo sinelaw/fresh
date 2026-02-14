@@ -499,6 +499,10 @@ type CreateVirtualBufferInSplitOptions = {
 	*/
 	lineWrap?: boolean;
 	/**
+	* Place the new buffer before (left/top of) the existing content (default: false)
+	*/
+	before?: boolean;
+	/**
 	* Initial content entries with optional properties
 	*/
 	entries?: Array<TextPropertyEntry>;
@@ -963,12 +967,16 @@ interface EditorAPI {
 	* 
 	* Theme key examples: "ui.status_bar_fg", "editor.selection_bg", "syntax.keyword"
 	* 
+	* Options: fg, bg (RGB array or theme key string), bold, italic, underline,
+	* strikethrough, extend_to_line_end (all booleans, default false).
+	* 
 	* Example usage in TypeScript:
 	* ```typescript
 	* editor.addOverlay(bufferId, "my-namespace", 0, 10, {
 	* fg: "syntax.keyword",           // theme key
 	* bg: [40, 40, 50],               // RGB array
 	* bold: true,
+	* strikethrough: true,
 	* });
 	* ```
 	*/
@@ -990,6 +998,30 @@ interface EditorAPI {
 	*/
 	removeOverlay(bufferId: number, handle: string): boolean;
 	/**
+	* Add a conceal range that hides or replaces a byte range during rendering
+	*/
+	addConceal(bufferId: number, namespace: string, start: number, end: number, replacement: string | null): boolean;
+	/**
+	* Clear all conceal ranges in a namespace
+	*/
+	clearConcealNamespace(bufferId: number, namespace: string): boolean;
+	/**
+	* Clear all conceal ranges that overlap with a byte range
+	*/
+	clearConcealsInRange(bufferId: number, start: number, end: number): boolean;
+	/**
+	* Add a soft break point for marker-based line wrapping
+	*/
+	addSoftBreak(bufferId: number, namespace: string, position: number, indent: number): boolean;
+	/**
+	* Clear all soft breaks in a namespace
+	*/
+	clearSoftBreakNamespace(bufferId: number, namespace: string): boolean;
+	/**
+	* Clear all soft breaks that fall within a byte range
+	*/
+	clearSoftBreaksInRange(bufferId: number, start: number, end: number): boolean;
+	/**
 	* Submit a view transform for a buffer/split
 	* 
 	* Accepts tokens in the simple format:
@@ -1003,6 +1035,11 @@ interface EditorAPI {
 	* Clear view transform for a buffer/split
 	*/
 	clearViewTransform(bufferId: number, splitId: number | null): boolean;
+	/**
+	* Set layout hints (compose width, column guides) for a buffer/split
+	* without going through the view_transform pipeline.
+	*/
+	setLayoutHints(bufferId: number, splitId: number | null, hints: LayoutHints): boolean;
 	/**
 	* Set file explorer decorations for a namespace
 	*/
@@ -1087,8 +1124,7 @@ interface EditorAPI {
 	*/
 	setSplitRatio(splitId: number, ratio: number): boolean;
 	/**
-	* Set a label on a split (e.g., "sidebar") to mark it as managed.
-	* Labeled splits are skipped when opening files — files prefer unlabeled splits.
+	* Set a label on a split (e.g., "sidebar")
 	*/
 	setSplitLabel(splitId: number, label: string): boolean;
 	/**
@@ -1096,7 +1132,7 @@ interface EditorAPI {
 	*/
 	clearSplitLabel(splitId: number): boolean;
 	/**
-	* Find a split by its label. Returns the split ID or null if not found.
+	* Find a split by label (async)
 	*/
 	getSplitByLabel(label: string): Promise<number | null>;
 	/**
@@ -1214,6 +1250,18 @@ interface EditorAPI {
 	* Kill a background process
 	*/
 	killBackgroundProcess(processId: number): boolean;
+	/**
+	* Create a new terminal in a split (async, returns TerminalResult)
+	*/
+	createTerminal(opts?: CreateTerminalOptions): Promise<TerminalResult>;
+	/**
+	* Send input data to a terminal
+	*/
+	sendTerminalInput(terminalId: number, data: string): boolean;
+	/**
+	* Close a terminal
+	*/
+	closeTerminal(terminalId: number): boolean;
 	/**
 	* Force refresh of line display
 	*/

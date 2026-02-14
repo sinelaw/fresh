@@ -195,6 +195,7 @@ mod tests {
             message: None,
             extend_to_line_end: false,
             namespace: None,
+            url: None,
         };
 
         let buffer_id = BufferId(1);

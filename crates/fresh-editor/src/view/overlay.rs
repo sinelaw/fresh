@@ -76,6 +76,10 @@ pub struct Overlay {
     /// Whether to extend the overlay's background to the end of the visual line
     /// Used for full-width line highlighting (e.g., in diff views)
     pub extend_to_line_end: bool,
+
+    /// Optional URL for OSC 8 terminal hyperlinks.
+    /// When set, the rendered text in this overlay becomes a clickable hyperlink.
+    pub url: Option<String>,
 }
 
 impl Overlay {
@@ -100,6 +104,7 @@ impl Overlay {
             priority: 0,
             message: None,
             extend_to_line_end: false,
+            url: None,
         }
     }
 
