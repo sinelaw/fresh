@@ -899,10 +899,7 @@ pub enum PluginCommand {
     SetLineNumbers { buffer_id: BufferId, enabled: bool },
 
     /// Set the view mode for a buffer ("source" or "compose")
-    SetViewMode {
-        buffer_id: BufferId,
-        mode: String,
-    },
+    SetViewMode { buffer_id: BufferId, mode: String },
 
     /// Enable/disable line wrapping for a buffer
     SetLineWrap {

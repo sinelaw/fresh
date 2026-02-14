@@ -628,7 +628,10 @@ impl Editor {
         {
             let buffer_id = self.active_buffer();
             self.update_plugin_state_snapshot();
-            tracing::debug!("Firing buffer_activated for active buffer {:?} after workspace restore", buffer_id);
+            tracing::debug!(
+                "Firing buffer_activated for active buffer {:?} after workspace restore",
+                buffer_id
+            );
             self.plugin_manager.run_hook(
                 "buffer_activated",
                 crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },

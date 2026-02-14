@@ -2389,9 +2389,7 @@ fn test_compose_mode_cursor_monotonic_through_tables() {
     let mut down_positions = vec![prev_pos];
 
     for i in 0..total_downs {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
 
         let pos = harness.cursor_position();
@@ -2413,9 +2411,7 @@ fn test_compose_mode_cursor_monotonic_through_tables() {
     let mut up_positions = vec![prev_pos];
 
     for i in 0..total_ups {
-        harness
-            .send_key(KeyCode::Up, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
 
         let pos = harness.cursor_position();
@@ -2503,16 +2499,12 @@ fn test_compose_mode_cursor_column_sticky_on_list() {
         if pos >= item2_byte {
             break;
         }
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
     }
 
     // Press Home to go to column 0 of the "2." line
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     let pos_on_item2 = harness.cursor_position();
@@ -2521,9 +2513,7 @@ fn test_compose_mode_cursor_column_sticky_on_list() {
 
     // Now press Up — cursor should land near the same visual column on the
     // line above, NOT at the end of the line above
-    harness
-        .send_key(KeyCode::Up, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     let pos_after_up = harness.cursor_position();
@@ -2617,9 +2607,7 @@ fn test_compose_mode_cursor_column_zero_sticky_through_wrapped_list() {
     harness.render().unwrap();
 
     // Press Home to ensure we start at column 0
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     let start_col = harness.screen_cursor_position().0;
@@ -2633,9 +2621,7 @@ fn test_compose_mode_cursor_column_zero_sticky_through_wrapped_list() {
     let total_presses = 25; // enough to traverse all 5 items + wrapping
     let max_drift = 10; // allow for indentation on wrapped continuation lines
     for i in 0..total_presses {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
 
         let screen = harness.screen_cursor_position();
@@ -2653,9 +2639,7 @@ fn test_compose_mode_cursor_column_zero_sticky_through_wrapped_list() {
 
     // --- Move Up back to the top ---
     for i in 0..total_presses {
-        harness
-            .send_key(KeyCode::Up, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
 
         let screen = harness.screen_cursor_position();
@@ -2802,9 +2786,7 @@ Done.
 
     // Move down: heading(1) → blank(2) → header(3) → separator(4) → data row(5)
     for _ in 0..4 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
     }
     // Move right into the bold span (past the leading pipe + space + **)
@@ -2977,9 +2959,7 @@ End.
         .unwrap();
     harness.render().unwrap();
     for _ in 0..4 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
     }
     settle(&mut harness);
@@ -2996,9 +2976,7 @@ End.
 
         // Move down to next row (skip on the last iteration)
         if i + 1 < labels.len() {
-            harness
-                .send_key(KeyCode::Down, KeyModifiers::NONE)
-                .unwrap();
+            harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
             settle(&mut harness);
         }
     }
@@ -3015,9 +2993,7 @@ End.
 
         // Move up to previous row (skip on the last iteration)
         if i > 0 {
-            harness
-                .send_key(KeyCode::Up, KeyModifiers::NONE)
-                .unwrap();
+            harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
             settle(&mut harness);
         }
     }
@@ -3025,9 +3001,7 @@ End.
     // --- Move up past the table: all rows should be concealed ---
     // From Alpha row, move up past separator and header to above the table
     for _ in 0..3 {
-        harness
-            .send_key(KeyCode::Up, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
     }
     settle(&mut harness);
@@ -3118,8 +3092,7 @@ Done.
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.lines()
-                .any(|l| l.contains("│") && l.contains("Editing"))
+            s.lines().any(|l| l.contains("│") && l.contains("Editing"))
         })
         .unwrap();
 
@@ -3130,14 +3103,10 @@ Done.
         .unwrap();
     harness.render().unwrap();
     for _ in 0..4 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
     }
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..3 {
         harness.process_async_and_render().unwrap();
         std::thread::sleep(Duration::from_millis(50));
@@ -3179,7 +3148,12 @@ Done.
         if cursors.len() != 1 {
             failures.push(format!(
                 "Step {}: expected 1 cursor, found {} at byte {} (screen {},{}).\n  Cursors: {:?}",
-                step, cursors.len(), byte, col, row, cursors,
+                step,
+                cursors.len(),
+                byte,
+                col,
+                row,
+                cursors,
             ));
         }
 
@@ -3212,7 +3186,12 @@ Done.
                 failures.push(format!(
                     "Step {}: cursor stuck at ({},{}) for {} consecutive steps \
                      (byte {} → {}). Cursor not rendering correctly.",
-                    step, col, row, stuck_count + 1, prev_byte, byte,
+                    step,
+                    col,
+                    row,
+                    stuck_count + 1,
+                    prev_byte,
+                    byte,
                 ));
             }
         } else {
@@ -3313,7 +3292,9 @@ Another line here.
         .unwrap();
     harness.wait_for_prompt().unwrap();
     harness.type_text("Set Compose Width").unwrap();
-    harness.wait_for_screen_contains("Set Compose Width").unwrap();
+    harness
+        .wait_for_screen_contains("Set Compose Width")
+        .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -3366,17 +3347,25 @@ Another line here.
         let (cursor_col, cursor_row) = harness.screen_cursor_position();
 
         assert_eq!(
-            cursor_row, target_row,
+            cursor_row,
+            target_row,
             "After clicking at column {} on row {}, cursor should be on the same row. \
              Got row {}.\nScreen:\n{}",
-            click_col, target_row, cursor_row, harness.screen_to_string(),
+            click_col,
+            target_row,
+            cursor_row,
+            harness.screen_to_string(),
         );
 
         assert_eq!(
-            cursor_col, click_col,
+            cursor_col,
+            click_col,
             "After clicking at column {} on row {}, cursor should be at the same column. \
              Got column {}.\nScreen:\n{}",
-            click_col, target_row, cursor_col, harness.screen_to_string(),
+            click_col,
+            target_row,
+            cursor_col,
+            harness.screen_to_string(),
         );
     }
 }
@@ -3661,7 +3650,11 @@ fn test_compose_mode_width_survives_session_restore() {
 
     // A second file that is NOT in compose mode
     let other_path = project_root.join("other.txt");
-    std::fs::write(&other_path, "This is a plain text file, not in compose mode.\n").unwrap();
+    std::fs::write(
+        &other_path,
+        "This is a plain text file, not in compose mode.\n",
+    )
+    .unwrap();
 
     // Count consecutive x characters in each screen line that contains x's.
     // Handles both compose mode (no line numbers, just x's) and source mode
@@ -3777,8 +3770,7 @@ fn test_compose_mode_width_survives_session_restore() {
         assert_eq!(
             restored_lengths[0], 40,
             "After restore, compose width should still be 40, got {:?}.\nScreen:\n{}",
-            restored_lengths,
-            screen_restored,
+            restored_lengths, screen_restored,
         );
 
         // Switch to the other (non-compose) buffer and verify it's normal
