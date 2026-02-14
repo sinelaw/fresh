@@ -620,6 +620,21 @@ impl Editor {
             self.buffers.len()
         );
 
+        // Fire buffer_activated for the active buffer so plugins can
+        // re-enable compose mode (the plugin's composeBuffers set is empty
+        // after restart). Only fires for the active buffer — other buffers
+        // will get buffer_activated when the user switches to them.
+        #[cfg(feature = "plugins")]
+        {
+            let buffer_id = self.active_buffer();
+            self.update_plugin_state_snapshot();
+            tracing::debug!("Firing buffer_activated for active buffer {:?} after workspace restore", buffer_id);
+            self.plugin_manager.run_hook(
+                "buffer_activated",
+                crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
+            );
+        }
+
         Ok(())
     }
 
@@ -1017,19 +1032,27 @@ impl Editor {
                     break;
                 }
             }
+        }
 
-            // Set this buffer as active in the split
+        // Restore view mode BEFORE activating the buffer, so plugins can
+        // discover compose mode via BufferInfo.view_mode on buffer_activated
+        let restored_view_mode = match split_state.view_mode {
+            SerializedViewMode::Source => ViewMode::Source,
+            SerializedViewMode::Compose => ViewMode::Compose,
+        };
+        view_state.view_mode = restored_view_mode.clone();
+        view_state.compose_width = split_state.compose_width;
+
+        if let Some(active_id) = active_buffer_id {
+            if let Some(editor_state) = self.buffers.get_mut(&active_id) {
+                editor_state.compose.view_mode = restored_view_mode;
+            }
+
+            // Set this buffer as active in the split (fires buffer_activated hook)
             let _ = self
                 .split_manager
                 .set_split_buffer(current_split_id, active_id);
         }
-
-        // Restore view mode
-        view_state.view_mode = match split_state.view_mode {
-            SerializedViewMode::Source => ViewMode::Source,
-            SerializedViewMode::Compose => ViewMode::Compose,
-        };
-        view_state.compose_width = split_state.compose_width;
         view_state.tab_scroll_offset = split_state.tab_scroll_offset;
     }
 }

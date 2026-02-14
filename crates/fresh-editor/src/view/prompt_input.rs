@@ -138,15 +138,19 @@ impl InputHandler for Prompt {
                     if let Some(selected) = self.selected_suggestion {
                         let new_selected = if selected == 0 { 0 } else { selected - 1 };
                         self.selected_suggestion = Some(new_selected);
-                        // For non-plugin prompts (except QuickOpen), update input to match selected suggestion
-                        if !matches!(
-                            self.prompt_type,
-                            crate::view::prompt::PromptType::Plugin { .. }
-                                | crate::view::prompt::PromptType::QuickOpen
-                        ) {
+                        // For non-plugin prompts (except QuickOpen), or plugin prompts
+                        // with sync_input_on_navigate, update input to match selected suggestion
+                        let should_sync = self.sync_input_on_navigate
+                            || !matches!(
+                                self.prompt_type,
+                                crate::view::prompt::PromptType::Plugin { .. }
+                                    | crate::view::prompt::PromptType::QuickOpen
+                            );
+                        if should_sync {
                             if let Some(suggestion) = self.suggestions.get(new_selected) {
                                 self.input = suggestion.get_value().to_string();
                                 self.cursor_pos = self.input.len();
+                                self.selection_anchor = Some(0);
                             }
                         }
                         // For theme selection, trigger live preview
@@ -178,15 +182,19 @@ impl InputHandler for Prompt {
                     if let Some(selected) = self.selected_suggestion {
                         let new_selected = (selected + 1).min(self.suggestions.len() - 1);
                         self.selected_suggestion = Some(new_selected);
-                        // For non-plugin prompts (except QuickOpen), update input to match selected suggestion
-                        if !matches!(
-                            self.prompt_type,
-                            crate::view::prompt::PromptType::Plugin { .. }
-                                | crate::view::prompt::PromptType::QuickOpen
-                        ) {
+                        // For non-plugin prompts (except QuickOpen), or plugin prompts
+                        // with sync_input_on_navigate, update input to match selected suggestion
+                        let should_sync = self.sync_input_on_navigate
+                            || !matches!(
+                                self.prompt_type,
+                                crate::view::prompt::PromptType::Plugin { .. }
+                                    | crate::view::prompt::PromptType::QuickOpen
+                            );
+                        if should_sync {
                             if let Some(suggestion) = self.suggestions.get(new_selected) {
                                 self.input = suggestion.get_value().to_string();
                                 self.cursor_pos = self.input.len();
+                                self.selection_anchor = Some(0);
                             }
                         }
                         // For theme selection, trigger live preview

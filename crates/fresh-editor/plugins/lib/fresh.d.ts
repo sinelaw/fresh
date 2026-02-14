@@ -254,6 +254,14 @@ type BufferInfo = {
 	* Whether this is a virtual buffer (not backed by a file)
 	*/
 	is_virtual: boolean;
+	/**
+	* Current view mode: "source" or "compose"
+	*/
+	view_mode: string;
+	/**
+	* Compose width (if set), from the active split's view state
+	*/
+	compose_width: number | null;
 };
 type JsDiagnostic = {
 	/**
@@ -1091,6 +1099,7 @@ interface EditorAPI {
 	* Uses typed Vec<Suggestion> - serde validates field names at runtime
 	*/
 	setPromptSuggestions(suggestions: Suggestion[]): boolean;
+	setPromptInputSync(sync: boolean): boolean;
 	/**
 	* Define a buffer mode (takes bindings as array of [key, command] pairs)
 	*/
@@ -1155,6 +1164,10 @@ interface EditorAPI {
 	* Enable or disable line numbers for a buffer
 	*/
 	setLineNumbers(bufferId: number, enabled: boolean): boolean;
+	/**
+	* Set the view mode for a buffer ("source" or "compose")
+	*/
+	setViewMode(bufferId: number, mode: string): boolean;
 	/**
 	* Enable or disable line wrapping for a buffer/split
 	*/

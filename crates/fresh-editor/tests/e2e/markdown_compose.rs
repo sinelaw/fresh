@@ -3485,3 +3485,337 @@ End.
         screen_after,
     );
 }
+
+/// Test setting compose width via command palette, verifying that a long line
+/// wraps at different lengths when the width is changed.
+#[test]
+fn test_compose_mode_set_width_via_command_palette() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crate::common::tracing::init_tracing_from_env;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use std::time::Duration;
+
+    init_tracing_from_env();
+
+    // 200 x's — long enough to wrap at any compose width we test
+    let long_line = "x".repeat(200);
+    let md_content = format!("# Width Test\n\n{}\n", long_line);
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("width_test.md");
+    std::fs::write(&md_path, &md_content).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 25, Default::default(), project_root)
+            .unwrap();
+
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+
+    // Helper: collect lengths of all x-only lines
+    let x_line_lengths = |screen: &str| -> Vec<usize> {
+        screen
+            .lines()
+            .filter(|l| {
+                let trimmed = l.trim();
+                !trimmed.is_empty() && trimmed.chars().all(|c| c == 'x')
+            })
+            .map(|l| l.trim().len())
+            .collect::<Vec<_>>()
+    };
+
+    // Helper: open command palette and run a command by name
+    let run_command = |h: &mut EditorTestHarness, name: &str| {
+        h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+            .unwrap();
+        h.wait_for_prompt().unwrap();
+        h.type_text(name).unwrap();
+        h.wait_for_screen_contains(name).unwrap();
+        h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    };
+
+    // Helper: let compose mode settle after a change
+    let settle = |h: &mut EditorTestHarness| {
+        for _ in 0..10 {
+            h.process_async_and_render().unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            h.advance_time(Duration::from_millis(50));
+        }
+        h.render().unwrap();
+    };
+
+    // Enable compose mode
+    run_command(&mut harness, "Toggle Compose");
+    harness.wait_for_prompt_closed().unwrap();
+    settle(&mut harness);
+
+    let screen_default = harness.screen_to_string();
+    let default_lengths = x_line_lengths(&screen_default);
+    println!("=== DEFAULT (no compose width set) ===");
+    println!("x-line lengths: {:?}", default_lengths);
+    println!("{}", screen_default);
+
+    // --- Set compose width to 40 by typing ---
+    run_command(&mut harness, "Set Compose Width");
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("40").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    settle(&mut harness);
+
+    let screen_40 = harness.screen_to_string();
+    let w40_lengths = x_line_lengths(&screen_40);
+    println!("=== AFTER SET WIDTH TO 40 ===");
+    println!("x-line lengths: {:?}", w40_lengths);
+    println!("{}", screen_40);
+
+    assert_eq!(
+        w40_lengths[0], 40,
+        "With compose width 40, first x-line should be 40 chars, got {:?}",
+        w40_lengths,
+    );
+
+    // --- Open prompt again and just press Enter (should keep width=40) ---
+    run_command(&mut harness, "Set Compose Width");
+    harness.wait_for_prompt().unwrap();
+    // Don't change anything, just confirm the pre-filled value
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    settle(&mut harness);
+
+    let screen_reconfirm = harness.screen_to_string();
+    let reconfirm_lengths = x_line_lengths(&screen_reconfirm);
+    println!("=== AFTER RE-CONFIRMING (should still be 40) ===");
+    println!("x-line lengths: {:?}", reconfirm_lengths);
+    println!("{}", screen_reconfirm);
+
+    assert_eq!(
+        reconfirm_lengths[0], 40,
+        "After re-confirming without changes, width should still be 40, got {:?}",
+        reconfirm_lengths,
+    );
+
+    // --- Set compose width to 60 by typing ---
+    run_command(&mut harness, "Set Compose Width");
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("60").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    settle(&mut harness);
+
+    let screen_60 = harness.screen_to_string();
+    let w60_lengths = x_line_lengths(&screen_60);
+    println!("=== AFTER SET WIDTH TO 60 ===");
+    println!("x-line lengths: {:?}", w60_lengths);
+    println!("{}", screen_60);
+
+    assert_eq!(
+        w60_lengths[0], 60,
+        "With compose width 60, first x-line should be 60 chars, got {:?}",
+        w60_lengths,
+    );
+}
+
+/// Test that compose width can be changed after restoring a workspace session.
+///
+/// Reproduces a bug where a persisted compose_width (e.g. from a previous session)
+/// is stuck and cannot be changed via the Set Compose Width command, because the
+/// plugin's config.composeWidth is out of sync with the restored view state.
+#[test]
+fn test_compose_mode_width_survives_session_restore() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crate::common::tracing::init_tracing_from_env;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use std::time::Duration;
+
+    init_tracing_from_env();
+
+    let long_line = "x".repeat(200);
+    let md_content = format!("# Session Test\n\n{}\n", long_line);
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("session_test.md");
+    std::fs::write(&md_path, &md_content).unwrap();
+
+    // A second file that is NOT in compose mode
+    let other_path = project_root.join("other.txt");
+    std::fs::write(&other_path, "This is a plain text file, not in compose mode.\n").unwrap();
+
+    // Count consecutive x characters in each screen line that contains x's.
+    // Handles both compose mode (no line numbers, just x's) and source mode
+    // (line numbers like "3 │ xxxx").
+    let x_line_lengths = |screen: &str| -> Vec<usize> {
+        screen
+            .lines()
+            .filter_map(|l| {
+                // Find the longest run of consecutive x's in the line
+                let max_run = l
+                    .chars()
+                    .fold((0usize, 0usize), |(max, cur), c| {
+                        if c == 'x' {
+                            (max.max(cur + 1), cur + 1)
+                        } else {
+                            (max, 0)
+                        }
+                    })
+                    .0;
+                if max_run >= 10 {
+                    Some(max_run)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let run_command = |h: &mut EditorTestHarness, name: &str| {
+        h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+            .unwrap();
+        h.wait_for_prompt().unwrap();
+        h.type_text(name).unwrap();
+        h.wait_for_screen_contains(name).unwrap();
+        h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    };
+
+    let settle = |h: &mut EditorTestHarness| {
+        for _ in 0..10 {
+            h.process_async_and_render().unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            h.advance_time(Duration::from_millis(50));
+        }
+        h.render().unwrap();
+    };
+
+    // --- Session 1: open both files, enable compose on md, set width to 40, save ---
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            25,
+            Default::default(),
+            project_root.clone(),
+        )
+        .unwrap();
+
+        harness.open_file(&other_path).unwrap();
+        harness.render().unwrap();
+        harness.open_file(&md_path).unwrap();
+        harness.render().unwrap();
+
+        run_command(&mut harness, "Toggle Compose");
+        harness.wait_for_prompt_closed().unwrap();
+        settle(&mut harness);
+
+        run_command(&mut harness, "Set Compose Width");
+        harness.wait_for_prompt().unwrap();
+        harness.type_text("40").unwrap();
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        harness.wait_for_prompt_closed().unwrap();
+        settle(&mut harness);
+
+        let screen = harness.screen_to_string();
+        let lengths = x_line_lengths(&screen);
+        println!("=== SESSION 1: width=40 ===");
+        println!("x-line lengths: {:?}", lengths);
+        println!("{}", screen);
+        assert_eq!(
+            lengths[0], 40,
+            "Session 1: width should be 40, got {:?}",
+            lengths,
+        );
+
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // --- Session 2: restore, verify both buffers, then change compose width ---
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            25,
+            Default::default(),
+            project_root.clone(),
+        )
+        .unwrap();
+
+        harness.editor_mut().try_restore_workspace().unwrap();
+        settle(&mut harness);
+
+        // The md file should be active (it was last opened) and in compose mode
+        let screen_restored = harness.screen_to_string();
+        let restored_lengths = x_line_lengths(&screen_restored);
+        println!("=== SESSION 2: md file after restore ===");
+        println!("x-line lengths: {:?}", restored_lengths);
+        println!("{}", screen_restored);
+        assert!(
+            !restored_lengths.is_empty(),
+            "After restore, should see x-lines on screen.\nScreen:\n{}",
+            screen_restored,
+        );
+        assert_eq!(
+            restored_lengths[0], 40,
+            "After restore, compose width should still be 40, got {:?}.\nScreen:\n{}",
+            restored_lengths,
+            screen_restored,
+        );
+
+        // Switch to the other (non-compose) buffer and verify it's normal
+        harness.open_file(&other_path).unwrap();
+        settle(&mut harness);
+        let screen_other = harness.screen_to_string();
+        println!("=== SESSION 2: other.txt (non-compose) ===");
+        println!("{}", screen_other);
+        assert!(
+            screen_other.contains("plain text file"),
+            "other.txt should show its content normally.\nScreen:\n{}",
+            screen_other,
+        );
+
+        // Switch back to the md file
+        harness.open_file(&md_path).unwrap();
+        settle(&mut harness);
+
+        // Now try to change width to 60
+        run_command(&mut harness, "Set Compose Width");
+        harness.wait_for_prompt().unwrap();
+        harness.type_text("60").unwrap();
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        harness.wait_for_prompt_closed().unwrap();
+        settle(&mut harness);
+
+        let screen_60 = harness.screen_to_string();
+        let w60_lengths = x_line_lengths(&screen_60);
+        println!("=== SESSION 2: after changing to 60 ===");
+        println!("x-line lengths: {:?}", w60_lengths);
+        println!("{}", screen_60);
+        assert_eq!(
+            w60_lengths[0], 60,
+            "After changing width to 60 in restored session, got {:?}",
+            w60_lengths,
+        );
+    }
+}

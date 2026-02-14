@@ -356,6 +356,9 @@ function enableMarkdownCompose(bufferId: number): void {
   if (!composeBuffers.has(bufferId)) {
     composeBuffers.add(bufferId);
 
+    // Tell Rust side this buffer is in compose mode (persisted in session)
+    editor.setViewMode(bufferId, "compose");
+
     // Hide line numbers in compose mode
     editor.setLineNumbers(bufferId, false);
 
@@ -378,6 +381,9 @@ function disableMarkdownCompose(bufferId: number): void {
     composeBuffers.delete(bufferId);
     lastCursorLine.delete(bufferId);
     tableColumnWidths.delete(bufferId);
+
+    // Tell Rust side this buffer is back in source mode
+    editor.setViewMode(bufferId, "source");
 
     // Re-enable line numbers
     editor.setLineNumbers(bufferId, true);
@@ -1455,6 +1461,28 @@ globalThis.onMarkdownViewportChanged = function(data: {
   editor.refreshLines(data.buffer_id);
 };
 
+// Re-enable compose mode for buffers restored from a saved session.
+// The Rust side restores ViewMode::Compose and compose_width, but the plugin's
+// composeBuffers set is empty after restart. This hook detects the mismatch
+// and re-enables compose mode so the plugin takes over rendering.
+globalThis.onMarkdownBufferActivated = function(data: { buffer_id: number }): void {
+  const bufferId = data.buffer_id;
+  if (composeBuffers.has(bufferId)) return;
+
+  const info = editor.getBufferInfo(bufferId);
+  if (!info || !isMarkdownFile(info.path)) return;
+
+  if (info.view_mode === "compose") {
+    // Restore config.composeWidth from the persisted session value
+    // before enabling compose mode, so enableMarkdownCompose uses
+    // the correct width (same path as a fresh toggle).
+    if (info.compose_width != null) {
+      config.composeWidth = info.compose_width;
+    }
+    enableMarkdownCompose(bufferId);
+  }
+};
+
 // Register hooks
 editor.on("lines_changed", "onMarkdownLinesChanged");
 editor.on("after_insert", "onMarkdownAfterInsert");
@@ -1464,11 +1492,13 @@ editor.on("cursor_moved", "onMarkdownCursorMoved");
 editor.on("buffer_closed", "onMarkdownBufferClosed");
 editor.on("viewport_changed", "onMarkdownViewportChanged");
 editor.on("prompt_confirmed", "onMarkdownComposeWidthConfirmed");
+editor.on("buffer_activated", "onMarkdownBufferActivated");
 
 // Set compose width command - starts interactive prompt
 globalThis.markdownSetComposeWidth = function(): void {
   const currentValue = config.composeWidth === null ? "None" : String(config.composeWidth);
   editor.startPromptWithInitial(editor.t("prompt.compose_width"), "markdown-compose-width", currentValue);
+  editor.setPromptInputSync(true);
   editor.setPromptSuggestions([
     { text: "None", description: editor.t("suggestion.none") },
     { text: "120", description: editor.t("suggestion.default") },

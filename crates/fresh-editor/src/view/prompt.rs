@@ -154,6 +154,9 @@ pub struct Prompt {
     /// Tracks the input value when suggestions were last set by a plugin.
     /// Used to skip Rust-side filtering when plugin has already filtered for this input.
     pub suggestions_set_for_input: Option<String>,
+    /// When true, navigating suggestions updates the input text (selected) to match.
+    /// Used by plugin prompts that want picker-like behavior (e.g. compose width).
+    pub sync_input_on_navigate: bool,
 }
 
 impl Prompt {
@@ -169,6 +172,7 @@ impl Prompt {
             selected_suggestion: None,
             selection_anchor: None,
             suggestions_set_for_input: None,
+            sync_input_on_navigate: false,
         }
     }
 
@@ -196,6 +200,7 @@ impl Prompt {
             selected_suggestion,
             selection_anchor: None,
             suggestions_set_for_input: None,
+            sync_input_on_navigate: false,
         }
     }
 
@@ -222,6 +227,7 @@ impl Prompt {
             selected_suggestion: None,
             selection_anchor,
             suggestions_set_for_input: None,
+            sync_input_on_navigate: false,
         }
     }
 

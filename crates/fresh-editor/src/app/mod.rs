@@ -3480,7 +3480,11 @@ impl Editor {
         if let Some(prompt) = self.prompt.take() {
             let selected_index = prompt.selected_suggestion;
             // For prompts with suggestions, prefer the selected suggestion over raw input
-            let final_input = if matches!(
+            let final_input = if prompt.sync_input_on_navigate {
+                // When sync_input_on_navigate is set, the input field is kept in sync
+                // with the selected suggestion, so always use the input value
+                prompt.input.clone()
+            } else if matches!(
                 prompt.prompt_type,
                 PromptType::Command
                     | PromptType::OpenFile
@@ -4314,12 +4318,24 @@ impl Editor {
                     .get(buffer_id)
                     .map(|m| m.is_virtual())
                     .unwrap_or(false);
+                let view_mode = match state.compose.view_mode {
+                    crate::state::ViewMode::Source => "source",
+                    crate::state::ViewMode::Compose => "compose",
+                };
+                // Find compose_width from any split that has this buffer active
+                let compose_width = self
+                    .split_view_states
+                    .values()
+                    .find(|vs| vs.open_buffers.contains(buffer_id))
+                    .and_then(|vs| vs.compose_width);
                 let buffer_info = BufferInfo {
                     id: *buffer_id,
                     path: state.buffer.file_path().map(|p| p.to_path_buf()),
                     modified: state.buffer.is_modified(),
                     length: state.buffer.len(),
                     is_virtual,
+                    view_mode: view_mode.to_string(),
+                    compose_width,
                 };
                 snapshot.buffers.insert(*buffer_id, buffer_info);
 
@@ -4654,6 +4670,9 @@ impl Editor {
             PluginCommand::SetLineNumbers { buffer_id, enabled } => {
                 self.handle_set_line_numbers(buffer_id, enabled);
             }
+            PluginCommand::SetViewMode { buffer_id, mode } => {
+                self.handle_set_view_mode(buffer_id, &mode);
+            }
             PluginCommand::SetLineWrap {
                 buffer_id,
                 split_id,
@@ -4751,6 +4770,11 @@ impl Editor {
             }
             PluginCommand::SetPromptSuggestions { suggestions } => {
                 self.handle_set_prompt_suggestions(suggestions);
+            }
+            PluginCommand::SetPromptInputSync { sync } => {
+                if let Some(prompt) = &mut self.prompt {
+                    prompt.sync_input_on_navigate = sync;
+                }
             }
 
             // ==================== Command/Mode Registration ====================

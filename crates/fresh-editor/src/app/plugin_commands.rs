@@ -956,6 +956,24 @@ impl Editor {
         view_state.compose_column_guides = hints.column_guides;
     }
 
+    /// Handle SetViewMode command
+    pub(super) fn handle_set_view_mode(&mut self, buffer_id: BufferId, mode: &str) {
+        use crate::state::ViewMode;
+        let view_mode = match mode {
+            "compose" => ViewMode::Compose,
+            _ => ViewMode::Source,
+        };
+        // Set on the buffer's EditorState
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.compose.view_mode = view_mode.clone();
+        }
+        // Set on the active split's SplitViewState
+        let active_split = self.split_manager.active_split();
+        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.view_mode = view_mode;
+        }
+    }
+
     /// Handle SetLineNumbers command
     pub(super) fn handle_set_line_numbers(&mut self, buffer_id: BufferId, enabled: bool) {
         if let Some(state) = self.buffers.get_mut(&buffer_id) {

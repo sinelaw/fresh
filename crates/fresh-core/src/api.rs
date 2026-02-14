@@ -315,6 +315,10 @@ pub struct BufferInfo {
     pub length: usize,
     /// Whether this is a virtual buffer (not backed by a file)
     pub is_virtual: bool,
+    /// Current view mode: "source" or "compose"
+    pub view_mode: String,
+    /// Compose width (if set), from the active split's view state
+    pub compose_width: Option<u16>,
 }
 
 fn serialize_path<S: serde::Serializer>(path: &Option<PathBuf>, s: S) -> Result<S::Ok, S::Error> {
@@ -894,6 +898,12 @@ pub enum PluginCommand {
     /// Enable/disable line numbers for a buffer
     SetLineNumbers { buffer_id: BufferId, enabled: bool },
 
+    /// Set the view mode for a buffer ("source" or "compose")
+    SetViewMode {
+        buffer_id: BufferId,
+        mode: String,
+    },
+
     /// Enable/disable line wrapping for a buffer
     SetLineWrap {
         buffer_id: BufferId,
@@ -1118,6 +1128,9 @@ pub enum PluginCommand {
     /// Update the suggestions list for the current prompt
     /// Uses the editor's Suggestion type
     SetPromptSuggestions { suggestions: Vec<Suggestion> },
+
+    /// When enabled, navigating suggestions updates the prompt input text
+    SetPromptInputSync { sync: bool },
 
     /// Add a menu item to an existing menu
     /// Add a menu item to an existing menu
@@ -2345,6 +2358,11 @@ impl PluginApi {
         self.send_command(PluginCommand::SetPromptSuggestions { suggestions })
     }
 
+    /// Enable/disable syncing prompt input text when navigating suggestions
+    pub fn set_prompt_input_sync(&self, sync: bool) -> Result<(), String> {
+        self.send_command(PluginCommand::SetPromptInputSync { sync })
+    }
+
     /// Add a menu item to an existing menu
     pub fn add_menu_item(
         &self,
@@ -2715,6 +2733,8 @@ mod tests {
                 modified: true,
                 length: 100,
                 is_virtual: false,
+                view_mode: "source".to_string(),
+                compose_width: None,
             };
             snapshot.buffers.insert(BufferId(1), buffer_info);
         }
@@ -2755,6 +2775,8 @@ mod tests {
                     modified: false,
                     length: 50,
                     is_virtual: false,
+                    view_mode: "source".to_string(),
+                    compose_width: None,
                 },
             );
             snapshot.buffers.insert(
@@ -2765,6 +2787,8 @@ mod tests {
                     modified: true,
                     length: 100,
                     is_virtual: false,
+                    view_mode: "source".to_string(),
+                    compose_width: None,
                 },
             );
             snapshot.buffers.insert(
@@ -2775,6 +2799,8 @@ mod tests {
                     modified: false,
                     length: 0,
                     is_virtual: true,
+                    view_mode: "source".to_string(),
+                    compose_width: None,
                 },
             );
         }

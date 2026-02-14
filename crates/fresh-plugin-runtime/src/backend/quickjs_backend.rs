@@ -1989,6 +1989,12 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    pub fn set_prompt_input_sync(&self, sync: bool) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetPromptInputSync { sync })
+            .is_ok()
+    }
+
     // === Modes ===
 
     /// Define a buffer mode (takes bindings as array of [key, command] pairs)
@@ -2204,6 +2210,16 @@ impl JsEditorApi {
             .send(PluginCommand::SetLineNumbers {
                 buffer_id: BufferId(buffer_id as usize),
                 enabled,
+            })
+            .is_ok()
+    }
+
+    /// Set the view mode for a buffer ("source" or "compose")
+    pub fn set_view_mode(&self, buffer_id: u32, mode: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetViewMode {
+                buffer_id: BufferId(buffer_id as usize),
+                mode,
             })
             .is_ok()
     }
@@ -5169,6 +5185,8 @@ mod tests {
                     modified: false,
                     length: 100,
                     is_virtual: false,
+                    view_mode: "source".to_string(),
+                    compose_width: None,
                 },
             );
             state.buffers.insert(
@@ -5179,6 +5197,8 @@ mod tests {
                     modified: true,
                     length: 200,
                     is_virtual: false,
+                    view_mode: "source".to_string(),
+                    compose_width: None,
                 },
             );
         }
