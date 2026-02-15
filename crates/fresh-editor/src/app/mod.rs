@@ -5405,10 +5405,14 @@ impl Editor {
                     self.split_manager.set_active_split(split_id);
                     self.split_manager.set_active_buffer_id(buffer_id);
 
-                    // Apply line_wrap setting if provided
-                    if let Some(wrap) = line_wrap {
-                        if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
-                            view_state.viewport.line_wrap_enabled = wrap;
+                    // Switch per-buffer view state in the target split
+                    if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                        view_state.switch_buffer(buffer_id);
+                        view_state.add_buffer(buffer_id);
+
+                        // Apply line_wrap setting if provided
+                        if let Some(wrap) = line_wrap {
+                            view_state.active_state_mut().viewport.line_wrap_enabled = wrap;
                         }
                     }
 
