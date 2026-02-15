@@ -384,7 +384,7 @@ fn test_tab_preserves_selection() {
     );
 
     // Verify selection is still active and covers the indented lines
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert!(
         cursor.selection_range().is_some(),
         "Selection should be preserved after indenting"
@@ -432,7 +432,7 @@ fn test_shift_tab_preserves_selection() {
     );
 
     // Verify selection is still active
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert!(
         cursor.selection_range().is_some(),
         "Selection should be preserved after dedenting"
@@ -475,7 +475,7 @@ fn test_multiple_indent_dedent_preserves_selection() {
     assert_eq!(content, "        Line 1\n        Line 2");
 
     // Verify selection is preserved
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert!(
         cursor.selection_range().is_some(),
         "Selection should still be active"
@@ -490,7 +490,7 @@ fn test_multiple_indent_dedent_preserves_selection() {
     assert_eq!(content, "    Line 1\n    Line 2");
 
     // Verify selection is still preserved
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert!(
         cursor.selection_range().is_some(),
         "Selection should still be active after dedent"
@@ -519,7 +519,7 @@ fn test_dedent_moves_cursor_without_selection() {
     harness.render().unwrap();
 
     // Verify cursor is at position 8
-    let cursor_before = harness.editor().active_state().cursors.primary().position;
+    let cursor_before = harness.editor().active_cursors().primary().position;
     assert_eq!(
         cursor_before, 8,
         "Cursor should be at position 8 before dedent"
@@ -536,14 +536,14 @@ fn test_dedent_moves_cursor_without_selection() {
     assert_eq!(content, "Hello world", "Line should be dedented");
 
     // Verify cursor moved back by 4 (the amount of indentation removed)
-    let cursor_after = harness.editor().active_state().cursors.primary().position;
+    let cursor_after = harness.editor().active_cursors().primary().position;
     assert_eq!(
         cursor_after, 4,
         "Cursor should have moved from position 8 to 4 (moved back by 4)"
     );
 
     // Verify no selection
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert!(
         cursor.selection_range().is_none(),
         "Should not have a selection"
@@ -568,40 +568,39 @@ fn test_multicursor_indent_with_selections() {
     // Line two: "Line two" (9-17)
     // Line three: "Line three" (18-28)
 
-    let editor = harness.editor_mut();
-    let state = editor.active_state_mut();
-
     // Add two more cursors with selections (already have primary cursor)
     // Cursor 1 (CursorId(1)): Select "Line" on first line (anchor 0, position 4)
-    state.apply(&Event::AddCursor {
-        cursor_id: CursorId(1),
-        position: 4,
-        anchor: Some(0),
-    });
+    harness
+        .editor_mut()
+        .apply_event_to_active_buffer(&Event::AddCursor {
+            cursor_id: CursorId(1),
+            position: 4,
+            anchor: Some(0),
+        });
 
     // Cursor 2 (CursorId(2)): Select "Line" on second line (anchor 9, position 13)
-    state.apply(&Event::AddCursor {
-        cursor_id: CursorId(2),
-        position: 13,
-        anchor: Some(9),
-    });
+    harness
+        .editor_mut()
+        .apply_event_to_active_buffer(&Event::AddCursor {
+            cursor_id: CursorId(2),
+            position: 13,
+            anchor: Some(9),
+        });
 
     // Cursor 3 (CursorId(3)): Select "Line" on third line (anchor 18, position 22)
-    state.apply(&Event::AddCursor {
-        cursor_id: CursorId(3),
-        position: 22,
-        anchor: Some(18),
-    });
-
-    let _ = state;
-    let _ = editor;
+    harness
+        .editor_mut()
+        .apply_event_to_active_buffer(&Event::AddCursor {
+            cursor_id: CursorId(3),
+            position: 22,
+            anchor: Some(18),
+        });
 
     harness.render().unwrap();
 
     // Verify initial cursor positions
     {
-        let state = harness.editor().active_state();
-        let cursors: Vec<_> = state.cursors.iter().collect();
+        let cursors: Vec<_> = harness.editor().active_cursors().iter().collect();
         assert_eq!(
             cursors.len(),
             4,
@@ -609,17 +608,17 @@ fn test_multicursor_indent_with_selections() {
         );
 
         // Check cursor 1
-        let c1 = state.cursors.get(CursorId(1)).unwrap();
+        let c1 = harness.editor().active_cursors().get(CursorId(1)).unwrap();
         assert_eq!(c1.position, 4);
         assert_eq!(c1.anchor, Some(0));
 
         // Check cursor 2
-        let c2 = state.cursors.get(CursorId(2)).unwrap();
+        let c2 = harness.editor().active_cursors().get(CursorId(2)).unwrap();
         assert_eq!(c2.position, 13);
         assert_eq!(c2.anchor, Some(9));
 
         // Check cursor 3
-        let c3 = state.cursors.get(CursorId(3)).unwrap();
+        let c3 = harness.editor().active_cursors().get(CursorId(3)).unwrap();
         assert_eq!(c3.position, 22);
         assert_eq!(c3.anchor, Some(18));
     }
@@ -645,11 +644,11 @@ fn test_multicursor_indent_with_selections() {
         );
 
         // Verify all cursors and selections shifted correctly
-        let state = harness.editor().active_state();
+        let cursors = harness.editor().active_cursors();
         let indent_offset = indent_count * 4;
 
         // Cursor 1: original (0-4), shifts by 4 per indent on its line
-        let c1 = state.cursors.get(CursorId(1)).unwrap();
+        let c1 = cursors.get(CursorId(1)).unwrap();
         assert_eq!(
             c1.position,
             4 + indent_offset,
@@ -664,7 +663,7 @@ fn test_multicursor_indent_with_selections() {
         );
 
         // Cursor 2: original (9-13), line 1 and line 2 both indented
-        let c2 = state.cursors.get(CursorId(2)).unwrap();
+        let c2 = cursors.get(CursorId(2)).unwrap();
         assert_eq!(
             c2.position,
             13 + indent_offset * 2,
@@ -679,7 +678,7 @@ fn test_multicursor_indent_with_selections() {
         );
 
         // Cursor 3: original (18-22), all three lines indented
-        let c3 = state.cursors.get(CursorId(3)).unwrap();
+        let c3 = cursors.get(CursorId(3)).unwrap();
         assert_eq!(
             c3.position,
             22 + indent_offset * 3,
@@ -717,10 +716,10 @@ fn test_multicursor_indent_with_selections() {
         );
 
         // Verify cursor positions
-        let state = harness.editor().active_state();
+        let cursors = harness.editor().active_cursors();
         let indent_offset = remaining_indents * 4;
 
-        let c1 = state.cursors.get(CursorId(1)).unwrap();
+        let c1 = cursors.get(CursorId(1)).unwrap();
         assert_eq!(
             c1.position,
             4 + indent_offset,
@@ -734,7 +733,7 @@ fn test_multicursor_indent_with_selections() {
             dedent_count
         );
 
-        let c2 = state.cursors.get(CursorId(2)).unwrap();
+        let c2 = cursors.get(CursorId(2)).unwrap();
         assert_eq!(
             c2.position,
             13 + indent_offset * 2,
@@ -748,7 +747,7 @@ fn test_multicursor_indent_with_selections() {
             dedent_count
         );
 
-        let c3 = state.cursors.get(CursorId(3)).unwrap();
+        let c3 = cursors.get(CursorId(3)).unwrap();
         assert_eq!(
             c3.position,
             22 + indent_offset * 3,
@@ -765,15 +764,15 @@ fn test_multicursor_indent_with_selections() {
 
     // Verify we're back to original state
     {
-        let state = harness.editor().active_state();
-        let cursors: Vec<_> = state.cursors.iter().collect();
+        let cursors = harness.editor().active_cursors();
+        let cursors_vec: Vec<_> = cursors.iter().collect();
         assert_eq!(
-            cursors.len(),
+            cursors_vec.len(),
             4,
             "Should still have 4 cursors (1 primary + 3 added)"
         );
 
-        let c1 = state.cursors.get(CursorId(1)).unwrap();
+        let c1 = cursors.get(CursorId(1)).unwrap();
         assert_eq!(c1.position, 4, "Final: Cursor 1 position back to original");
         assert_eq!(
             c1.anchor,
@@ -781,7 +780,7 @@ fn test_multicursor_indent_with_selections() {
             "Final: Cursor 1 anchor back to original"
         );
 
-        let c2 = state.cursors.get(CursorId(2)).unwrap();
+        let c2 = cursors.get(CursorId(2)).unwrap();
         assert_eq!(c2.position, 13, "Final: Cursor 2 position back to original");
         assert_eq!(
             c2.anchor,
@@ -789,7 +788,7 @@ fn test_multicursor_indent_with_selections() {
             "Final: Cursor 2 anchor back to original"
         );
 
-        let c3 = state.cursors.get(CursorId(3)).unwrap();
+        let c3 = cursors.get(CursorId(3)).unwrap();
         assert_eq!(c3.position, 22, "Final: Cursor 3 position back to original");
         assert_eq!(
             c3.anchor,

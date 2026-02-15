@@ -9,7 +9,7 @@
 
 use super::*;
 use crate::input::keybindings::Action;
-use crate::model::event::{SplitDirection, SplitId};
+use crate::model::event::{CursorId, SplitDirection, SplitId};
 use crate::services::plugins::hooks::HookArgs;
 use crate::view::popup_mouse::{popup_areas_to_layout_info, PopupHitTester};
 use crate::view::prompt::PromptType;
@@ -225,7 +225,6 @@ impl Editor {
                     .contains(crossterm::event::KeyModifiers::SHIFT)
                 {
                     self.handle_horizontal_scroll(col, row, -3)?;
-                    self.sync_split_view_state_to_editor_state();
                     needs_render = true;
                 } else if self.handle_prompt_scroll(-3) {
                     // Check if prompt with suggestions is active and should handle scroll
@@ -248,7 +247,6 @@ impl Editor {
                     self.dismiss_transient_popups();
                     self.handle_mouse_scroll(col, row, -3)?;
                     // Sync viewport from SplitViewState to EditorState so rendering sees the scroll
-                    self.sync_split_view_state_to_editor_state();
                     needs_render = true;
                 }
             }
@@ -259,7 +257,6 @@ impl Editor {
                     .contains(crossterm::event::KeyModifiers::SHIFT)
                 {
                     self.handle_horizontal_scroll(col, row, 3)?;
-                    self.sync_split_view_state_to_editor_state();
                     needs_render = true;
                 } else if self.handle_prompt_scroll(3) {
                     // Check if prompt with suggestions is active and should handle scroll
@@ -281,20 +278,17 @@ impl Editor {
                     self.dismiss_transient_popups();
                     self.handle_mouse_scroll(col, row, 3)?;
                     // Sync viewport from SplitViewState to EditorState so rendering sees the scroll
-                    self.sync_split_view_state_to_editor_state();
                     needs_render = true;
                 }
             }
             MouseEventKind::ScrollLeft => {
                 // Native horizontal scroll left
                 self.handle_horizontal_scroll(col, row, -3)?;
-                self.sync_split_view_state_to_editor_state();
                 needs_render = true;
             }
             MouseEventKind::ScrollRight => {
                 // Native horizontal scroll right
                 self.handle_horizontal_scroll(col, row, 3)?;
-                self.sync_split_view_state_to_editor_state();
                 needs_render = true;
             }
             MouseEventKind::Down(MouseButton::Right) => {
@@ -1034,7 +1028,11 @@ impl Editor {
             };
 
             // Move cursor to clicked position first
-            let primary_cursor_id = state.cursors.primary_id();
+            let primary_cursor_id = self
+                .split_view_states
+                .get(&split_id)
+                .map(|vs| vs.cursors.primary_id())
+                .unwrap_or(CursorId(0));
             let event = Event::MoveCursor {
                 cursor_id: primary_cursor_id,
                 old_position: 0,
@@ -1048,7 +1046,13 @@ impl Editor {
             if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
                 event_log.append(event.clone());
             }
-            state.apply(&event);
+            if let Some(cursors) = self
+                .split_view_states
+                .get_mut(&split_id)
+                .map(|vs| &mut vs.cursors)
+            {
+                state.apply(cursors, &event);
+            }
         }
 
         // Now select the word under cursor
@@ -1145,7 +1149,11 @@ impl Editor {
             };
 
             // Move cursor to clicked position first
-            let primary_cursor_id = state.cursors.primary_id();
+            let primary_cursor_id = self
+                .split_view_states
+                .get(&split_id)
+                .map(|vs| vs.cursors.primary_id())
+                .unwrap_or(CursorId(0));
             let event = Event::MoveCursor {
                 cursor_id: primary_cursor_id,
                 old_position: 0,
@@ -1159,7 +1167,13 @@ impl Editor {
             if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
                 event_log.append(event.clone());
             }
-            state.apply(&event);
+            if let Some(cursors) = self
+                .split_view_states
+                .get_mut(&split_id)
+                .map(|vs| &mut vs.cursors)
+            {
+                state.apply(cursors, &event);
+            }
         }
 
         // Now select the entire line
@@ -1522,7 +1536,6 @@ impl Editor {
                 }
             }
 
-            self.sync_split_view_state_to_editor_state();
             return Ok(());
         }
 
@@ -1893,7 +1906,6 @@ impl Editor {
                         }
                     }
 
-                    self.sync_split_view_state_to_editor_state();
                     return Ok(());
                 }
             }
@@ -2059,7 +2071,11 @@ impl Editor {
             };
 
             // Move cursor to target position while keeping anchor to create selection
-            let primary_cursor_id = state.cursors.primary_id();
+            let primary_cursor_id = self
+                .split_view_states
+                .get(&split_id)
+                .map(|vs| vs.cursors.primary_id())
+                .unwrap_or(CursorId(0));
             let event = Event::MoveCursor {
                 cursor_id: primary_cursor_id,
                 old_position: 0,
@@ -2073,7 +2089,13 @@ impl Editor {
             if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
                 event_log.append(event.clone());
             }
-            state.apply(&event);
+            if let Some(cursors) = self
+                .split_view_states
+                .get_mut(&split_id)
+                .map(|vs| &mut vs.cursors)
+            {
+                state.apply(cursors, &event);
+            }
         }
 
         Ok(())

@@ -23,7 +23,7 @@ fn test_selection_visual_rendering() {
     harness.render().unwrap();
 
     // Verify the cursor has a selection in the buffer
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let cursor_pos = cursor.position;
     let selection = cursor.selection_range();
     assert!(selection.is_some(), "Cursor should have a selection");
@@ -124,7 +124,7 @@ fn test_select_word() {
         .unwrap();
 
     // Verify the selection
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let selection = cursor.selection_range();
     assert!(selection.is_some(), "Cursor should have a selection");
 
@@ -157,7 +157,7 @@ fn test_select_word_at_start() {
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -187,7 +187,7 @@ fn test_select_word_at_end() {
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -224,7 +224,7 @@ fn test_select_line() {
         .unwrap();
 
     // Verify the selection includes the entire line
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let selection = cursor.selection_range();
     assert!(selection.is_some(), "Cursor should have a selection");
 
@@ -257,7 +257,7 @@ fn test_select_line_first() {
         .send_key(KeyCode::Char('l'), KeyModifiers::CONTROL)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -282,7 +282,7 @@ fn test_select_line_last() {
         .send_key(KeyCode::Char('l'), KeyModifiers::CONTROL)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -337,9 +337,8 @@ fn test_select_word_multi_cursor() {
         .unwrap();
 
     // This test validates multi-cursor infrastructure is ready
-    let state = harness.editor().active_state();
     assert!(
-        state.cursors.count() >= 1,
+        harness.editor().active_cursors().count() >= 1,
         "Should have at least one cursor"
     );
 }
@@ -366,7 +365,7 @@ fn test_expand_selection() {
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -382,7 +381,7 @@ fn test_expand_selection() {
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -398,7 +397,7 @@ fn test_expand_selection() {
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -431,7 +430,7 @@ fn test_expand_selection_no_initial_selection() {
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -480,7 +479,7 @@ fn test_expand_selection_large_buffer_performance() {
         .unwrap();
 
     // Verify it works correctly
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert!(
         cursor.selection_range().is_some(),
         "Should have a selection"
@@ -528,7 +527,7 @@ fn test_expand_selection_very_large_buffer() {
     harness
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert!(
         cursor.selection_range().is_some(),
         "Should have selection at start"
@@ -543,7 +542,7 @@ fn test_expand_selection_very_large_buffer() {
     harness
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert!(
         cursor.selection_range().is_some(),
         "Should have selection in middle"
@@ -595,7 +594,7 @@ fn test_select_word_after_scrolling() {
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -652,7 +651,7 @@ fn test_expand_selection_after_scrolling() {
     harness
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -667,7 +666,7 @@ fn test_expand_selection_after_scrolling() {
     harness
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -705,7 +704,7 @@ fn test_expand_selection_across_lines() {
     harness
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -720,7 +719,7 @@ fn test_expand_selection_across_lines() {
     harness
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -735,7 +734,7 @@ fn test_expand_selection_across_lines() {
     harness
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -765,7 +764,7 @@ fn test_expand_selection_from_line_end() {
     harness
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -783,7 +782,7 @@ fn test_expand_selection_from_line_end() {
     harness
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -808,7 +807,7 @@ fn test_select_word_with_hyphen() {
     harness
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -831,7 +830,7 @@ fn test_select_word_with_underscore() {
     harness
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -854,7 +853,7 @@ fn test_select_word_with_numbers() {
     harness
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -877,7 +876,7 @@ fn test_select_word_with_at_symbol() {
     harness
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -900,7 +899,7 @@ fn test_select_word_with_dot() {
     harness
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -928,7 +927,7 @@ fn test_expand_selection_on_non_word_char() {
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range();
 
     // Should select punctuation only: "**-" (stops at word boundary)
@@ -963,7 +962,7 @@ fn test_expand_selection_on_word_char() {
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -991,7 +990,7 @@ fn test_expand_selection_from_middle_of_word() {
         .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -1020,7 +1019,7 @@ fn test_select_word_left_on_non_word_char() {
         .send_key(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range();
 
     assert!(
@@ -1044,7 +1043,7 @@ fn test_select_word_left_on_non_word_char() {
         .send_key(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -1077,7 +1076,7 @@ fn test_select_prev_word_with_special_chars() {
     harness
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -1095,7 +1094,7 @@ fn test_select_prev_word_with_special_chars() {
     harness
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -1113,7 +1112,7 @@ fn test_select_prev_word_with_special_chars() {
     harness
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -1134,7 +1133,7 @@ fn test_select_prev_word_with_special_chars() {
     harness
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -1155,7 +1154,7 @@ fn test_select_prev_word_with_special_chars() {
     harness
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -1176,7 +1175,7 @@ fn test_select_prev_word_with_special_chars() {
     harness
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()
@@ -1194,7 +1193,7 @@ fn test_select_prev_word_with_special_chars() {
     harness
         .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
         .unwrap();
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness
         .editor_mut()

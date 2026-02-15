@@ -736,7 +736,7 @@ impl EditorTestHarness {
             let is_redo =
                 modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('y'));
             if is_undo || is_redo {
-                self.shadow_cursor = self.editor.active_state().cursors.primary().position;
+                self.shadow_cursor = self.editor.active_cursors().primary().position;
             }
         }
 
@@ -1650,7 +1650,7 @@ impl EditorTestHarness {
 
     /// Get the primary cursor position
     pub fn cursor_position(&self) -> usize {
-        self.editor.active_state().cursors.primary().position
+        self.editor.active_cursors().primary().position
     }
 
     /// Get the buffer length in bytes
@@ -1678,7 +1678,7 @@ impl EditorTestHarness {
 
     /// Get the number of cursors
     pub fn cursor_count(&self) -> usize {
-        self.editor.active_state().cursors.count()
+        self.editor.active_cursors().count()
     }
 
     /// Count the number of search highlight overlays in the current buffer
@@ -1837,16 +1837,12 @@ impl EditorTestHarness {
 
     /// Get the primary cursor's selection range, if any
     pub fn get_selection_range(&self) -> Option<std::ops::Range<usize>> {
-        self.editor
-            .active_state()
-            .cursors
-            .primary()
-            .selection_range()
+        self.editor.active_cursors().primary().selection_range()
     }
 
     /// Check if there's an active selection
     pub fn has_selection(&self) -> bool {
-        !self.editor.active_state().cursors.primary().collapsed()
+        !self.editor.active_cursors().primary().collapsed()
     }
 
     /// Get the selected text (if any)

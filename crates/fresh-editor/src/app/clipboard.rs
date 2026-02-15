@@ -43,13 +43,10 @@ impl Editor {
     /// For block selections, copies only the rectangular region.
     pub fn copy_selection(&mut self) {
         // Check if any cursor has a block selection (takes priority)
-        let has_block_selection = {
-            let state = self.active_state();
-            state
-                .cursors
-                .iter()
-                .any(|(_, cursor)| cursor.has_block_selection())
-        };
+        let has_block_selection = self
+            .active_cursors()
+            .iter()
+            .any(|(_, cursor)| cursor.has_block_selection());
 
         if has_block_selection {
             // Block selection: copy rectangular region
@@ -62,24 +59,18 @@ impl Editor {
         }
 
         // Check if any cursor has a normal selection
-        let has_selection = {
-            let state = self.active_state();
-            state
-                .cursors
-                .iter()
-                .any(|(_, cursor)| cursor.selection_range().is_some())
-        };
+        let has_selection = self
+            .active_cursors()
+            .iter()
+            .any(|(_, cursor)| cursor.selection_range().is_some());
 
         if has_selection {
             // Original behavior: copy selected text
-            let ranges: Vec<_> = {
-                let state = self.active_state();
-                state
-                    .cursors
-                    .iter()
-                    .filter_map(|(_, cursor)| cursor.selection_range())
-                    .collect()
-            };
+            let ranges: Vec<_> = self
+                .active_cursors()
+                .iter()
+                .filter_map(|(_, cursor)| cursor.selection_range())
+                .collect();
 
             let mut text = String::new();
             let state = self.active_state_mut();
@@ -99,10 +90,14 @@ impl Editor {
             // No selection: copy entire line(s) for each cursor
             let estimated_line_length = 80;
             let mut text = String::new();
-            let state = self.active_state_mut();
 
             // Collect cursor positions first
-            let positions: Vec<_> = state.cursors.iter().map(|(_, c)| c.position).collect();
+            let positions: Vec<_> = self
+                .active_cursors()
+                .iter()
+                .map(|(_, c)| c.position)
+                .collect();
+            let state = self.active_state_mut();
 
             for pos in positions {
                 let mut iter = state.buffer.line_iterator(pos, estimated_line_length);
@@ -133,22 +128,19 @@ impl Editor {
         let estimated_line_length = 120;
 
         // Collect block selection info from all cursors
-        let block_infos: Vec<_> = {
-            let state = self.active_state();
-            state
-                .cursors
-                .iter()
-                .filter_map(|(_, cursor)| {
-                    if !cursor.has_block_selection() {
-                        return None;
-                    }
-                    let block_anchor = cursor.block_anchor?;
-                    let anchor_byte = cursor.anchor?; // byte offset of anchor
-                    let cursor_byte = cursor.position;
-                    Some((block_anchor, anchor_byte, cursor_byte))
-                })
-                .collect()
-        };
+        let block_infos: Vec<_> = self
+            .active_cursors()
+            .iter()
+            .filter_map(|(_, cursor)| {
+                if !cursor.has_block_selection() {
+                    return None;
+                }
+                let block_anchor = cursor.block_anchor?;
+                let anchor_byte = cursor.anchor?; // byte offset of anchor
+                let cursor_byte = cursor.position;
+                Some((block_anchor, anchor_byte, cursor_byte))
+            })
+            .collect();
 
         let mut result = String::new();
 
@@ -223,13 +215,10 @@ impl Editor {
     /// Otherwise, copies the selected text as HTML with inline CSS styles.
     pub fn copy_selection_with_theme(&mut self, theme_name: &str) {
         // Check if there's a selection first
-        let has_selection = {
-            let state = self.active_state();
-            state
-                .cursors
-                .iter()
-                .any(|(_, cursor)| cursor.selection_range().is_some())
-        };
+        let has_selection = self
+            .active_cursors()
+            .iter()
+            .any(|(_, cursor)| cursor.selection_range().is_some());
 
         if !has_selection {
             self.status_message = Some(t!("clipboard.no_selection").to_string());
@@ -253,14 +242,11 @@ impl Editor {
         };
 
         // Collect ranges and their byte offsets
-        let ranges: Vec<_> = {
-            let state = self.active_state();
-            state
-                .cursors
-                .iter()
-                .filter_map(|(_, cursor)| cursor.selection_range())
-                .collect()
-        };
+        let ranges: Vec<_> = self
+            .active_cursors()
+            .iter()
+            .filter_map(|(_, cursor)| cursor.selection_range())
+            .collect();
 
         if ranges.is_empty() {
             self.status_message = Some(t!("clipboard.no_selection").to_string());
@@ -397,13 +383,10 @@ impl Editor {
     /// If no selection exists, cuts the entire current line (like VSCode/Rider/Zed).
     pub fn cut_selection(&mut self) {
         // Check if any cursor has a selection
-        let has_selection = {
-            let state = self.active_state();
-            state
-                .cursors
-                .iter()
-                .any(|(_, cursor)| cursor.selection_range().is_some())
-        };
+        let has_selection = self
+            .active_cursors()
+            .iter()
+            .any(|(_, cursor)| cursor.selection_range().is_some());
 
         // Copy first (this handles both selection and whole-line cases)
         self.copy_selection();
@@ -411,19 +394,16 @@ impl Editor {
         if has_selection {
             // Delete selected text from all cursors
             // IMPORTANT: Sort deletions by position to ensure we process from end to start
-            let mut deletions: Vec<_> = {
-                let state = self.active_state();
-                state
-                    .cursors
-                    .iter()
-                    .filter_map(|(_, c)| c.selection_range())
-                    .collect()
-            };
+            let mut deletions: Vec<_> = self
+                .active_cursors()
+                .iter()
+                .filter_map(|(_, c)| c.selection_range())
+                .collect();
             // Sort by start position so reverse iteration processes from end to start
             deletions.sort_by_key(|r| r.start);
 
+            let primary_id = self.active_cursors().primary_id();
             let state = self.active_state_mut();
-            let primary_id = state.cursors.primary_id();
             let events: Vec<_> = deletions
                 .iter()
                 .rev()
@@ -457,10 +437,13 @@ impl Editor {
 
             // Collect line ranges for each cursor
             // IMPORTANT: Sort deletions by position to ensure we process from end to start
+            let positions: Vec<_> = self
+                .active_cursors()
+                .iter()
+                .map(|(_, c)| c.position)
+                .collect();
             let mut deletions: Vec<_> = {
                 let state = self.active_state_mut();
-                let positions: Vec<_> = state.cursors.iter().map(|(_, c)| c.position).collect();
-
                 positions
                     .into_iter()
                     .filter_map(|pos| {
@@ -476,8 +459,8 @@ impl Editor {
             // Sort by start position so reverse iteration processes from end to start
             deletions.sort_by_key(|r| r.start);
 
+            let primary_id = self.active_cursors().primary_id();
             let state = self.active_state_mut();
-            let primary_id = state.cursors.primary_id();
             let events: Vec<_> = deletions
                 .iter()
                 .rev()
@@ -565,9 +548,8 @@ impl Editor {
         let mut events = Vec::new();
 
         // Collect cursor info sorted in reverse order by position
-        let state = self.active_state();
-        let mut cursor_data: Vec<_> = state
-            .cursors
+        let mut cursor_data: Vec<_> = self
+            .active_cursors()
             .iter()
             .map(|(cursor_id, cursor)| {
                 let selection = cursor.selection_range();
@@ -657,14 +639,15 @@ impl Editor {
     /// Add a cursor at the next occurrence of the selected text
     /// If no selection, first selects the entire word at cursor position
     pub fn add_cursor_at_next_match(&mut self) {
+        let cursors = self.active_cursors().clone();
         let state = self.active_state_mut();
-        match add_cursor_at_next_match(state) {
+        match add_cursor_at_next_match(state, &cursors) {
             AddCursorResult::Success {
                 cursor,
                 total_cursors,
             } => {
                 // Create AddCursor event with the next cursor ID
-                let next_id = CursorId(self.active_state().cursors.count());
+                let next_id = CursorId(self.active_cursors().count());
                 let event = Event::AddCursor {
                     cursor_id: next_id,
                     position: cursor.position,
@@ -683,8 +666,8 @@ impl Editor {
                 word_end,
             } => {
                 // Select the word by updating the primary cursor
-                let primary_id = self.active_state().cursors.primary_id();
-                let primary = self.active_state().cursors.primary();
+                let primary_id = self.active_cursors().primary_id();
+                let primary = self.active_cursors().primary();
                 let event = Event::MoveCursor {
                     cursor_id: primary_id,
                     old_position: primary.position,
@@ -707,14 +690,15 @@ impl Editor {
 
     /// Add a cursor above the primary cursor at the same column
     pub fn add_cursor_above(&mut self) {
+        let cursors = self.active_cursors().clone();
         let state = self.active_state_mut();
-        match add_cursor_above(state) {
+        match add_cursor_above(state, &cursors) {
             AddCursorResult::Success {
                 cursor,
                 total_cursors,
             } => {
                 // Create AddCursor event with the next cursor ID
-                let next_id = CursorId(self.active_state().cursors.count());
+                let next_id = CursorId(self.active_cursors().count());
                 let event = Event::AddCursor {
                     cursor_id: next_id,
                     position: cursor.position,
@@ -737,14 +721,15 @@ impl Editor {
 
     /// Add a cursor below the primary cursor at the same column
     pub fn add_cursor_below(&mut self) {
+        let cursors = self.active_cursors().clone();
         let state = self.active_state_mut();
-        match add_cursor_below(state) {
+        match add_cursor_below(state, &cursors) {
             AddCursorResult::Success {
                 cursor,
                 total_cursors,
             } => {
                 // Create AddCursor event with the next cursor ID
-                let next_id = CursorId(self.active_state().cursors.count());
+                let next_id = CursorId(self.active_cursors().count());
                 let event = Event::AddCursor {
                     cursor_id: next_id,
                     position: cursor.position,
@@ -771,13 +756,16 @@ impl Editor {
 
     /// Yank (copy) from cursor to next word start
     pub fn yank_word_forward(&mut self) {
+        let cursor_positions: Vec<_> = self
+            .active_cursors()
+            .iter()
+            .map(|(_, c)| c.position)
+            .collect();
         let ranges: Vec<_> = {
             let state = self.active_state();
-            state
-                .cursors
-                .iter()
-                .filter_map(|(_, cursor)| {
-                    let start = cursor.position;
+            cursor_positions
+                .into_iter()
+                .filter_map(|start| {
                     let end = find_word_start_right(&state.buffer, start);
                     if end > start {
                         Some(start..end)
@@ -812,13 +800,16 @@ impl Editor {
 
     /// Yank (copy) from previous word start to cursor
     pub fn yank_word_backward(&mut self) {
+        let cursor_positions: Vec<_> = self
+            .active_cursors()
+            .iter()
+            .map(|(_, c)| c.position)
+            .collect();
         let ranges: Vec<_> = {
             let state = self.active_state();
-            state
-                .cursors
-                .iter()
-                .filter_map(|(_, cursor)| {
-                    let end = cursor.position;
+            cursor_positions
+                .into_iter()
+                .filter_map(|end| {
                     let start = find_word_start_left(&state.buffer, end);
                     if start < end {
                         Some(start..end)
@@ -855,14 +846,11 @@ impl Editor {
         let estimated_line_length = 80;
 
         // First collect cursor positions with immutable borrow
-        let cursor_positions: Vec<_> = {
-            let state = self.active_state();
-            state
-                .cursors
-                .iter()
-                .map(|(_, cursor)| cursor.position)
-                .collect()
-        };
+        let cursor_positions: Vec<_> = self
+            .active_cursors()
+            .iter()
+            .map(|(_, cursor)| cursor.position)
+            .collect();
 
         // Now compute ranges with mutable borrow (line_iterator needs &mut self)
         let state = self.active_state_mut();
@@ -905,14 +893,11 @@ impl Editor {
         let estimated_line_length = 80;
 
         // First collect cursor positions with immutable borrow
-        let cursor_positions: Vec<_> = {
-            let state = self.active_state();
-            state
-                .cursors
-                .iter()
-                .map(|(_, cursor)| cursor.position)
-                .collect()
-        };
+        let cursor_positions: Vec<_> = self
+            .active_cursors()
+            .iter()
+            .map(|(_, cursor)| cursor.position)
+            .collect();
 
         // Now compute ranges with mutable borrow (line_iterator needs &mut self)
         let state = self.active_state_mut();

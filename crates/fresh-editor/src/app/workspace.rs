@@ -745,7 +745,12 @@ impl Editor {
                 *state = new_state;
                 // Move cursor to end of buffer
                 let total = state.buffer.total_bytes();
-                state.primary_cursor_mut().position = total;
+                // Update cursor position in all splits that show this buffer
+                for vs in self.split_view_states.values_mut() {
+                    if vs.open_buffers.contains(&buffer_id) {
+                        vs.cursors.primary_mut().position = total;
+                    }
+                }
                 // Terminal buffers should never be considered "modified"
                 state.buffer.set_modified(false);
                 // Start in scrollback mode (editing disabled)
@@ -1062,11 +1067,7 @@ impl Editor {
                 view_state.active_state_mut().compose_width = split_state.compose_width;
             }
 
-            // Also set cursor in EditorState (authoritative for editing operations)
-            if let Some(editor_state) = self.buffers.get_mut(&active_id) {
-                let buf_state = view_state.active_state();
-                editor_state.cursors = buf_state.cursors.clone();
-            }
+            // Cursors now live in SplitViewState, no need to sync to EditorState
 
             // Set this buffer as active in the split (fires buffer_activated hook)
             let _ = self

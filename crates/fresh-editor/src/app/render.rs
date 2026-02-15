@@ -243,8 +243,11 @@ impl Editor {
                         .last()
                         .and_then(|t| t.source_offset)
                         .unwrap_or(viewport_start);
-                    let cursor_positions: Vec<usize> =
-                        state.cursors.iter().map(|(_, c)| c.position).collect();
+                    let cursor_positions: Vec<usize> = self
+                        .split_view_states
+                        .get(&split_id)
+                        .map(|vs| vs.cursors.iter().map(|(_, c)| c.position).collect())
+                        .unwrap_or_default();
                     self.plugin_manager.run_hook(
                         "view_transform_request",
                         crate::services::plugins::hooks::HookArgs::ViewTransformRequest {
@@ -634,10 +637,19 @@ impl Editor {
             // Get session name for display (only in session mode)
             let session_name = self.session_name().map(|s| s.to_string());
 
+            let active_split = self.split_manager.active_split();
+            let active_buf = self.active_buffer();
+            let default_cursors = crate::model::cursor::Cursors::new();
+            let status_cursors = self
+                .split_view_states
+                .get(&active_split)
+                .map(|vs| &vs.cursors)
+                .unwrap_or(&default_cursors);
             let status_bar_layout = StatusBarRenderer::render_status_bar(
                 frame,
                 main_chunks[status_bar_idx],
-                self.active_state_mut(), // Use the mutable reference
+                self.buffers.get_mut(&active_buf).unwrap(),
+                status_cursors,
                 &status_message,
                 &plugin_status_message,
                 &lsp_status,
@@ -767,13 +779,18 @@ impl Editor {
                 .map(|area| area.width)
                 .unwrap_or(0);
 
+            let primary_cursor = self
+                .split_view_states
+                .get(&active_split)
+                .map(|vs| *vs.cursors.primary());
             let state = self.active_state_mut();
             if state.popups.is_visible() {
                 // Get the primary cursor position for popup positioning
-                let primary_cursor = state.cursors.primary();
+                let primary_cursor =
+                    primary_cursor.unwrap_or_else(|| crate::model::cursor::Cursor::new(0));
                 let cursor_screen_pos = viewport
                     .as_ref()
-                    .map(|vp| vp.cursor_screen_position(&mut state.buffer, primary_cursor))
+                    .map(|vp| vp.cursor_screen_position(&mut state.buffer, &primary_cursor))
                     .unwrap_or((0, 0));
 
                 // Adjust cursor position to account for tab bar (1 line offset)
@@ -2010,8 +2027,16 @@ impl Editor {
             return Some(events);
         }
 
+        let buffer_id = self.active_buffer();
+        let state = self.buffers.get_mut(&buffer_id).unwrap();
+        let cursors = &mut self
+            .split_view_states
+            .get_mut(&active_split)
+            .unwrap()
+            .cursors;
         convert_action_to_events(
-            self.active_state_mut(),
+            state,
+            cursors,
             action,
             tab_size,
             auto_indent,
@@ -2074,9 +2099,11 @@ impl Editor {
 
         // First, collect cursor data we need (to avoid borrow conflicts)
         let cursor_data: Vec<_> = {
-            let state = self.active_state();
-            state
-                .cursors
+            let active_split = self.split_manager.active_split();
+            let active_buffer = self.split_manager.active_buffer_id().unwrap();
+            let cursors = &self.split_view_states.get(&active_split).unwrap().cursors;
+            let state = self.buffers.get(&active_buffer).unwrap();
+            cursors
                 .iter()
                 .map(|(cursor_id, cursor)| {
                     // Check if cursor is at a physical line boundary:
@@ -2450,10 +2477,7 @@ impl Editor {
         }
 
         // Find the first match at or after the current cursor position
-        let cursor_pos = {
-            let state = self.active_state();
-            state.cursors.primary().position
-        };
+        let cursor_pos = self.active_cursors().primary().position;
         let current_match_index = matches
             .iter()
             .position(|&pos| pos >= cursor_pos)
@@ -2464,15 +2488,15 @@ impl Editor {
         {
             let active_split = self.split_manager.active_split();
             let active_buffer = self.active_buffer();
-            let state = self.active_state_mut();
-            state.cursors.primary_mut().position = match_pos;
-            state.cursors.primary_mut().anchor = None;
-            // Ensure cursor is visible - get viewport from SplitViewState
             if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+                view_state.cursors.primary_mut().position = match_pos;
+                view_state.cursors.primary_mut().anchor = None;
+                // Ensure cursor is visible
+                let cursor = *view_state.cursors.primary();
                 let state = self.buffers.get_mut(&active_buffer).unwrap();
                 view_state
                     .viewport
-                    .ensure_visible(&mut state.buffer, state.cursors.primary());
+                    .ensure_visible(&mut state.buffer, &cursor);
             }
         }
 
@@ -2564,15 +2588,15 @@ impl Editor {
             {
                 let active_split = self.split_manager.active_split();
                 let active_buffer = self.active_buffer();
-                let state = self.active_state_mut();
-                state.cursors.primary_mut().position = match_pos;
-                state.cursors.primary_mut().anchor = None;
-                // Ensure cursor is visible - get viewport from SplitViewState
                 if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+                    view_state.cursors.primary_mut().position = match_pos;
+                    view_state.cursors.primary_mut().anchor = None;
+                    // Ensure cursor is visible
+                    let cursor = *view_state.cursors.primary();
                     let state = self.buffers.get_mut(&active_buffer).unwrap();
                     view_state
                         .viewport
-                        .ensure_visible(&mut state.buffer, state.cursors.primary());
+                        .ensure_visible(&mut state.buffer, &cursor);
                 }
             }
 
@@ -2630,15 +2654,15 @@ impl Editor {
             {
                 let active_split = self.split_manager.active_split();
                 let active_buffer = self.active_buffer();
-                let state = self.active_state_mut();
-                state.cursors.primary_mut().position = match_pos;
-                state.cursors.primary_mut().anchor = None;
-                // Ensure cursor is visible - get viewport from SplitViewState
                 if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+                    view_state.cursors.primary_mut().position = match_pos;
+                    view_state.cursors.primary_mut().anchor = None;
+                    // Ensure cursor is visible
+                    let cursor = *view_state.cursors.primary();
                     let state = self.buffers.get_mut(&active_buffer).unwrap();
                     view_state
                         .viewport
-                        .ensure_visible(&mut state.buffer, state.cursors.primary());
+                        .ensure_visible(&mut state.buffer, &cursor);
                 }
             }
 
@@ -2668,7 +2692,7 @@ impl Editor {
         // If there's already a search active AND cursor is at a match position,
         // just continue to next match. Otherwise, clear and start fresh.
         if let Some(ref search_state) = self.search_state {
-            let cursor_pos = self.active_state().cursors.primary().position;
+            let cursor_pos = self.active_cursors().primary().position;
             if search_state.matches.contains(&cursor_pos) {
                 self.find_next();
                 return;
@@ -2683,14 +2707,14 @@ impl Editor {
         match search_text {
             Some(text) if !text.is_empty() => {
                 // Record cursor position before search
-                let cursor_before = self.active_state().cursors.primary().position;
+                let cursor_before = self.active_cursors().primary().position;
 
                 // Perform the search to set up search state
                 self.perform_search(&text);
 
                 // Check if we need to move to next match
                 if let Some(ref search_state) = self.search_state {
-                    let cursor_after = self.active_state().cursors.primary().position;
+                    let cursor_after = self.active_cursors().primary().position;
 
                     // If we started at a match (selection_start matches a search result),
                     // and perform_search didn't move us (or moved us to the same match),
@@ -2728,7 +2752,7 @@ impl Editor {
         // If there's already a search active AND cursor is at a match position,
         // just continue to previous match. Otherwise, clear and start fresh.
         if let Some(ref search_state) = self.search_state {
-            let cursor_pos = self.active_state().cursors.primary().position;
+            let cursor_pos = self.active_cursors().primary().position;
             if search_state.matches.contains(&cursor_pos) {
                 self.find_previous();
                 return;
@@ -2743,14 +2767,14 @@ impl Editor {
         match search_text {
             Some(text) if !text.is_empty() => {
                 // Record cursor position before search
-                let cursor_before = self.active_state().cursors.primary().position;
+                let cursor_before = self.active_cursors().primary().position;
 
                 // Perform the search to set up search state
                 self.perform_search(&text);
 
                 // If we found matches, navigate to previous
                 if let Some(ref search_state) = self.search_state {
-                    let cursor_after = self.active_state().cursors.primary().position;
+                    let cursor_after = self.active_cursors().primary().position;
 
                     // Check if we started at a match
                     let started_at_match = selection_start
@@ -2791,8 +2815,7 @@ impl Editor {
 
         // First get selection range and cursor position with immutable borrow
         let (selection_range, cursor_pos) = {
-            let state = self.active_state();
-            let primary = state.cursors.primary();
+            let primary = self.active_cursors().primary();
             (primary.selection_range(), primary.position)
         };
 
@@ -2926,7 +2949,7 @@ impl Editor {
         }
 
         // Get cursor info for the event
-        let cursor_id = self.active_state().cursors.primary_id();
+        let cursor_id = self.active_cursors().primary_id();
 
         // Create Delete+Insert events for each match
         // Events will be processed in reverse order by apply_events_as_bulk_edit
@@ -2986,9 +3009,9 @@ impl Editor {
         let compiled_regex = self.build_replace_regex(search);
 
         // Find the first match lazily (don't find all matches upfront)
+        let start_pos = self.active_cursors().primary().position;
         let (first_match_pos, first_match_len) = if let Some(ref regex) = compiled_regex {
             let state = self.active_state();
-            let start_pos = state.cursors.primary().position;
             let buffer_len = state.buffer.len();
             // Try from cursor to end, then wrap from beginning
             let found = state
@@ -3012,7 +3035,6 @@ impl Editor {
             (pos, match_len)
         } else {
             let state = self.active_state();
-            let start_pos = state.cursors.primary().position;
             let Some(pos) = state.buffer.find_next(search, start_pos) else {
                 self.set_status_message(t!("search.no_occurrences", search = search).to_string());
                 return;
@@ -3035,17 +3057,15 @@ impl Editor {
         // Move cursor to first match
         let active_split = self.split_manager.active_split();
         let active_buffer = self.active_buffer();
-        {
-            let state = self.active_state_mut();
-            state.cursors.primary_mut().position = first_match_pos;
-            state.cursors.primary_mut().anchor = None;
-        }
-        // Ensure cursor is visible - get viewport from SplitViewState
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.cursors.primary_mut().position = first_match_pos;
+            view_state.cursors.primary_mut().anchor = None;
+            // Ensure cursor is visible
+            let cursor = *view_state.cursors.primary();
             let state = self.buffers.get_mut(&active_buffer).unwrap();
             view_state
                 .viewport
-                .ensure_visible(&mut state.buffer, state.cursors.primary());
+                .ensure_visible(&mut state.buffer, &cursor);
         }
 
         // Show the query-replace prompt
@@ -3136,7 +3156,7 @@ impl Editor {
 
                 if total_count > 0 {
                     // Get cursor info for the event
-                    let cursor_id = self.active_state().cursors.primary_id();
+                    let cursor_id = self.active_cursors().primary_id();
 
                     // Create Delete+Insert events for each match
                     let mut events = Vec::with_capacity(total_count * 2);
@@ -3302,8 +3322,8 @@ impl Editor {
             .get_text_range(range.start, range.end);
 
         // Capture current cursor state for undo
-        let cursor_id = self.active_state().cursors.primary_id();
-        let cursor = *self.active_state().cursors.get(cursor_id).unwrap();
+        let cursor_id = self.active_cursors().primary_id();
+        let cursor = *self.active_cursors().primary();
         let old_position = cursor.position;
         let old_anchor = cursor.anchor;
         let old_sticky_column = cursor.sticky_column;
@@ -3353,17 +3373,15 @@ impl Editor {
         let match_pos = ir_state.current_match_pos;
         let active_split = self.split_manager.active_split();
         let active_buffer = self.active_buffer();
-        {
-            let state = self.active_state_mut();
-            state.cursors.primary_mut().position = match_pos;
-            state.cursors.primary_mut().anchor = None;
-        }
-        // Ensure cursor is visible - get viewport from SplitViewState
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.cursors.primary_mut().position = match_pos;
+            view_state.cursors.primary_mut().anchor = None;
+            // Ensure cursor is visible
+            let cursor = *view_state.cursors.primary();
             let state = self.buffers.get_mut(&active_buffer).unwrap();
             view_state
                 .viewport
-                .ensure_visible(&mut state.buffer, state.cursors.primary());
+                .ensure_visible(&mut state.buffer, &cursor);
         }
 
         // Update the prompt message (show [Wrapped] if we've wrapped around)
@@ -3397,9 +3415,9 @@ impl Editor {
     /// Smart home: toggle between line start and first non-whitespace character
     pub(super) fn smart_home(&mut self) {
         let estimated_line_length = self.config.editor.estimated_line_length;
+        let cursor = *self.active_cursors().primary();
+        let cursor_id = self.active_cursors().primary_id();
         let state = self.active_state_mut();
-        let cursor = *state.cursors.primary();
-        let cursor_id = state.cursors.primary_id();
 
         // Get line information
         let mut iter = state
@@ -3461,9 +3479,9 @@ impl Editor {
 
         let estimated_line_length = self.config.editor.estimated_line_length;
 
+        let cursor = *self.active_cursors().primary();
+        let cursor_id = self.active_cursors().primary_id();
         let state = self.active_state_mut();
-        let cursor = *state.cursors.primary();
-        let cursor_id = state.cursors.primary_id();
 
         // Save original selection info to restore after edit
         let original_anchor = cursor.anchor;
@@ -3628,9 +3646,9 @@ impl Editor {
 
     /// Go to matching bracket
     pub(super) fn goto_matching_bracket(&mut self) {
+        let cursor = *self.active_cursors().primary();
+        let cursor_id = self.active_cursors().primary_id();
         let state = self.active_state_mut();
-        let cursor = *state.cursors.primary();
-        let cursor_id = state.cursors.primary_id();
 
         let pos = cursor.position;
         if pos >= state.buffer.len() {
@@ -3727,10 +3745,10 @@ impl Editor {
     /// Jump to next error/diagnostic
     pub(super) fn jump_to_next_error(&mut self) {
         let diagnostic_ns = self.lsp_diagnostic_namespace.clone();
+        let cursor_pos = self.active_cursors().primary().position;
+        let cursor_id = self.active_cursors().primary_id();
+        let cursor = *self.active_cursors().primary();
         let state = self.active_state_mut();
-        let cursor_pos = state.cursors.primary().position;
-        let cursor_id = state.cursors.primary_id();
-        let cursor = *state.cursors.primary();
 
         // Get all diagnostic overlay positions
         let mut diagnostic_positions: Vec<usize> = state
@@ -3794,10 +3812,10 @@ impl Editor {
     /// Jump to previous error/diagnostic
     pub(super) fn jump_to_previous_error(&mut self) {
         let diagnostic_ns = self.lsp_diagnostic_namespace.clone();
+        let cursor_pos = self.active_cursors().primary().position;
+        let cursor_id = self.active_cursors().primary_id();
+        let cursor = *self.active_cursors().primary();
         let state = self.active_state_mut();
-        let cursor_pos = state.cursors.primary().position;
-        let cursor_id = state.cursors.primary_id();
-        let cursor = *state.cursors.primary();
 
         // Get all diagnostic overlay positions
         let mut diagnostic_positions: Vec<usize> = state
@@ -4172,7 +4190,7 @@ impl Editor {
     /// Set a bookmark at the current position
     pub(super) fn set_bookmark(&mut self, key: char) {
         let buffer_id = self.active_buffer();
-        let position = self.active_state().cursors.primary().position;
+        let position = self.active_cursors().primary().position;
         self.bookmarks.insert(
             key,
             Bookmark {
@@ -4198,18 +4216,18 @@ impl Editor {
             }
 
             // Move cursor to bookmark position
+            let cursor = *self.active_cursors().primary();
+            let cursor_id = self.active_cursors().primary_id();
             let state = self.active_state_mut();
-            let cursor_id = state.cursors.primary_id();
-            let old_pos = state.cursors.primary().position;
             let new_pos = bookmark.position.min(state.buffer.len());
 
             let event = Event::MoveCursor {
                 cursor_id,
-                old_position: old_pos,
+                old_position: cursor.position,
                 new_position: new_pos,
-                old_anchor: state.cursors.primary().anchor,
+                old_anchor: cursor.anchor,
                 new_anchor: None,
-                old_sticky_column: state.cursors.primary().sticky_column,
+                old_sticky_column: cursor.sticky_column,
                 new_sticky_column: 0,
             };
 
@@ -4480,9 +4498,9 @@ impl Editor {
         if let Some(buffer_id) = self.split_manager.buffer_for_split(active_split) {
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 let buffer = &mut state.buffer;
-                let cursor = *state.cursors.primary();
 
                 if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+                    let cursor = *view_state.cursors.primary();
                     // Update viewport to show cursor - this is what ensure_visible does
                     view_state.viewport.ensure_visible(buffer, &cursor);
 

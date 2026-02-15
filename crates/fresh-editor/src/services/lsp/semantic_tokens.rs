@@ -95,6 +95,7 @@ mod tests {
     }
     use super::*;
     use crate::config::LARGE_FILE_THRESHOLD_BYTES;
+    use crate::model::cursor::Cursors;
     use crate::model::event::{CursorId, Event};
     use crate::state::SemanticTokenSpan;
     use crate::view::theme::{Theme, THEME_DARK};
@@ -102,11 +103,15 @@ mod tests {
     #[test]
     fn semantic_token_overlays_shift_on_insert() {
         let mut state = EditorState::new(80, 24, LARGE_FILE_THRESHOLD_BYTES as usize, test_fs());
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "fn main() {}".to_string(),
-            cursor_id: CursorId::UNDO_SENTINEL,
-        });
+        let mut cursors = Cursors::new();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "fn main() {}".to_string(),
+                cursor_id: CursorId::UNDO_SENTINEL,
+            },
+        );
 
         let span = SemanticTokenSpan {
             range: 3..7, // "main"
@@ -136,11 +141,14 @@ mod tests {
             .range(&state.marker_list);
         assert_eq!(initial_range, 3..7);
 
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "abc".to_string(),
-            cursor_id: CursorId::UNDO_SENTINEL,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "abc".to_string(),
+                cursor_id: CursorId::UNDO_SENTINEL,
+            },
+        );
 
         let moved_range = state
             .overlays

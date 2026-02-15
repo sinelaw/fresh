@@ -1,7 +1,7 @@
 //! Line/selection move helpers for editor actions.
 
 use crate::model::buffer::Buffer;
-use crate::model::cursor::Cursor;
+use crate::model::cursor::{Cursor, Cursors};
 use crate::model::event::{CursorId, Event};
 use crate::state::EditorState;
 use std::ops::Range;
@@ -212,6 +212,7 @@ fn map_position_in_region(
 
 pub(crate) fn move_lines(
     state: &mut EditorState,
+    cursors: &Cursors,
     events: &mut Vec<Event>,
     direction: LineMoveDirection,
     estimated_line_length: usize,
@@ -222,8 +223,7 @@ pub(crate) fn move_lines(
     }
 
     let cursor_snapshots: Vec<(CursorId, Option<Range<usize>>, usize, Option<usize>, usize)> =
-        state
-            .cursors
+        cursors
             .iter()
             .map(|(cursor_id, cursor)| {
                 (
@@ -306,7 +306,7 @@ pub(crate) fn move_lines(
 
     move_regions.sort_by_key(|region| region.start);
 
-    let primary_cursor_id = state.cursors.primary_id();
+    let primary_cursor_id = cursors.primary_id();
     let has_trailing_newline = {
         let mut iter = state
             .buffer

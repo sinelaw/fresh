@@ -48,7 +48,7 @@ fn test_auto_close_parenthesis() {
     );
 
     // Cursor should be between the parens
-    let cursor_pos = harness.editor().active_state().cursors.primary().position;
+    let cursor_pos = harness.editor().active_cursors().primary().position;
     assert_eq!(
         cursor_pos, 8,
         "Cursor should be between parens (at position 8)"
@@ -939,7 +939,7 @@ fn test_jump_to_next_error() {
     harness.render().unwrap();
 
     // Check cursor position - should be at start of line 2 (byte offset 6)
-    let cursor_pos = harness.editor().active_state().cursors.primary().position;
+    let cursor_pos = harness.editor().active_cursors().primary().position;
     // Line 0: "line1\n" = 6 bytes, so line 1 starts at byte 6
     assert_eq!(
         cursor_pos, 6,
@@ -989,7 +989,7 @@ fn test_jump_to_previous_error() {
 
     // Check cursor position - should be at start of line 4
     // Line 0-2: "line1\nline2\nline3\n" = 18 bytes
-    let cursor_pos = harness.editor().active_state().cursors.primary().position;
+    let cursor_pos = harness.editor().active_cursors().primary().position;
     assert_eq!(
         cursor_pos, 18,
         "Cursor should jump to last error (line 4, byte 18)"
@@ -1030,7 +1030,7 @@ fn test_jump_to_next_error_wraps() {
     harness.send_key(KeyCode::F(8), KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    let cursor_pos = harness.editor().active_state().cursors.primary().position;
+    let cursor_pos = harness.editor().active_cursors().primary().position;
     assert_eq!(
         cursor_pos, 0,
         "Cursor should wrap to first error (line 1, byte 0)"
@@ -1066,7 +1066,7 @@ fn test_jump_to_error_no_diagnostics() {
     );
 
     // Cursor should not have moved
-    let cursor_pos = harness.editor().active_state().cursors.primary().position;
+    let cursor_pos = harness.editor().active_cursors().primary().position;
     assert_eq!(cursor_pos, 0, "Cursor should not move when no errors");
 }
 
@@ -1093,15 +1093,15 @@ fn test_jump_through_multiple_errors() {
 
     // Jump to next error - should be at line 0 (already there, or next one at line 1)
     harness.send_key(KeyCode::F(8), KeyModifiers::NONE).unwrap();
-    let pos1 = harness.editor().active_state().cursors.primary().position;
+    let pos1 = harness.editor().active_cursors().primary().position;
 
     // Jump again
     harness.send_key(KeyCode::F(8), KeyModifiers::NONE).unwrap();
-    let pos2 = harness.editor().active_state().cursors.primary().position;
+    let pos2 = harness.editor().active_cursors().primary().position;
 
     // Jump again
     harness.send_key(KeyCode::F(8), KeyModifiers::NONE).unwrap();
-    let pos3 = harness.editor().active_state().cursors.primary().position;
+    let pos3 = harness.editor().active_cursors().primary().position;
 
     // All positions should be different (cycling through errors)
     assert!(
@@ -1137,7 +1137,7 @@ fn test_block_selection_start() {
     harness.render().unwrap();
 
     // Check that selection mode is Block
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert_eq!(
         cursor.selection_mode,
         fresh::model::cursor::SelectionMode::Block,
@@ -1179,7 +1179,7 @@ fn test_block_selection_vertical() {
         .unwrap();
     harness.render().unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let anchor = cursor.block_anchor.unwrap();
 
     // Anchor should be at line 0, column 1
@@ -1224,7 +1224,7 @@ fn test_block_selection_rectangle() {
         .unwrap();
     harness.render().unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let anchor = cursor.block_anchor.unwrap();
 
     // Block should be: anchor at (0, 1), cursor at line 1
@@ -1277,7 +1277,7 @@ fn test_block_selection_left() {
         .unwrap();
     harness.render().unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let anchor = cursor.block_anchor.unwrap();
 
     // Anchor should be at column 3
@@ -1307,7 +1307,7 @@ fn test_block_selection_up() {
         .unwrap();
     harness.render().unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     let anchor = cursor.block_anchor.unwrap();
 
     // Anchor should be at line 2

@@ -1,5 +1,6 @@
 /// Test that overlay colors are correctly applied and rendered
 use fresh::config::LARGE_FILE_THRESHOLD_BYTES;
+use fresh::model::cursor::Cursors;
 use fresh::model::event::CursorId;
 use fresh::model::event::{Event, OverlayFace as EventOverlayFace};
 use fresh::model::filesystem::StdFileSystem;
@@ -14,30 +15,37 @@ fn test_fs() -> std::sync::Arc<dyn fresh::model::filesystem::FileSystem + Send +
 fn test_overlay_background_color_direct() {
     // Create a state with some content
     let mut state = EditorState::new(80, 24, LARGE_FILE_THRESHOLD_BYTES as usize, test_fs());
+    let mut cursors = Cursors::new();
 
     // Insert text using proper event so marker list is updated
     let text = "// TODO: test".to_string();
-    state.apply(&Event::Insert {
-        position: 0,
-        text: text.clone(),
-        cursor_id: CursorId(0),
-    });
+    state.apply(
+        &mut cursors,
+        &Event::Insert {
+            position: 0,
+            text: text.clone(),
+            cursor_id: CursorId(0),
+        },
+    );
 
     println!("Buffer content: {:?}", state.buffer.to_string().unwrap());
     println!("Buffer size: {}", state.buffer.len());
 
     // Directly add an overlay with orange background
-    state.apply(&Event::AddOverlay {
-        namespace: Some(OverlayNamespace::from_string("test_todo".to_string())),
-        range: 3..7, // "TODO"
-        face: EventOverlayFace::Background {
-            color: (255, 165, 0), // Orange
+    state.apply(
+        &mut cursors,
+        &Event::AddOverlay {
+            namespace: Some(OverlayNamespace::from_string("test_todo".to_string())),
+            range: 3..7, // "TODO"
+            face: EventOverlayFace::Background {
+                color: (255, 165, 0), // Orange
+            },
+            priority: 10,
+            message: None,
+            extend_to_line_end: false,
+            url: None,
         },
-        priority: 10,
-        message: None,
-        extend_to_line_end: false,
-        url: None,
-    });
+    );
 
     // Check that overlay was created by checking all positions
     println!("Checking overlays at different positions:");

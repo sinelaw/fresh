@@ -49,42 +49,45 @@ fn setup_completion_popup(prefix: &str) -> anyhow::Result<EditorTestHarness> {
     harness.editor_mut().set_completion_items(completion_items);
 
     // Show completion popup
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
-        popup: PopupData {
-            kind: PopupKindHint::Completion,
-            title: Some("Completion".to_string()),
-            description: None,
-            transient: false,
-            content: PopupContentData::List {
-                items: vec![
-                    PopupListItemData {
-                        text: "calculate_difference".to_string(),
-                        detail: Some("fn calculate_difference(a: i32, b: i32) -> i32".to_string()),
-                        icon: Some("λ".to_string()),
-                        data: Some("calculate_difference".to_string()),
-                    },
-                    PopupListItemData {
-                        text: "calculate_product".to_string(),
-                        detail: Some("fn calculate_product(a: i32, b: i32) -> i32".to_string()),
-                        icon: Some("λ".to_string()),
-                        data: Some("calculate_product".to_string()),
-                    },
-                    PopupListItemData {
-                        text: "calculate_sum".to_string(),
-                        detail: Some("fn calculate_sum(a: i32, b: i32) -> i32".to_string()),
-                        icon: Some("λ".to_string()),
-                        data: Some("calculate_sum".to_string()),
-                    },
-                ],
-                selected: 0,
+    harness
+        .apply_event(Event::ShowPopup {
+            popup: PopupData {
+                kind: PopupKindHint::Completion,
+                title: Some("Completion".to_string()),
+                description: None,
+                transient: false,
+                content: PopupContentData::List {
+                    items: vec![
+                        PopupListItemData {
+                            text: "calculate_difference".to_string(),
+                            detail: Some(
+                                "fn calculate_difference(a: i32, b: i32) -> i32".to_string(),
+                            ),
+                            icon: Some("λ".to_string()),
+                            data: Some("calculate_difference".to_string()),
+                        },
+                        PopupListItemData {
+                            text: "calculate_product".to_string(),
+                            detail: Some("fn calculate_product(a: i32, b: i32) -> i32".to_string()),
+                            icon: Some("λ".to_string()),
+                            data: Some("calculate_product".to_string()),
+                        },
+                        PopupListItemData {
+                            text: "calculate_sum".to_string(),
+                            detail: Some("fn calculate_sum(a: i32, b: i32) -> i32".to_string()),
+                            icon: Some("λ".to_string()),
+                            data: Some("calculate_sum".to_string()),
+                        },
+                    ],
+                    selected: 0,
+                },
+                position: PopupPositionData::BelowCursor,
+                width: 50,
+                max_height: 15,
+                bordered: true,
             },
-            position: PopupPositionData::BelowCursor,
-            width: 50,
-            max_height: 15,
-            bordered: true,
-        },
-    });
+        })
+        .unwrap();
 
     harness.render()?;
 
@@ -578,36 +581,37 @@ fn test_completion_underscore_filters() -> anyhow::Result<()> {
     ];
     harness.editor_mut().set_completion_items(completion_items);
 
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
-        popup: PopupData {
-            kind: PopupKindHint::Completion,
-            title: Some("Completion".to_string()),
-            description: None,
-            transient: false,
-            content: PopupContentData::List {
-                items: vec![
-                    PopupListItemData {
-                        text: "calculate_sum".to_string(),
-                        detail: None,
-                        icon: None,
-                        data: Some("calculate_sum".to_string()),
-                    },
-                    PopupListItemData {
-                        text: "calculated".to_string(),
-                        detail: None,
-                        icon: None,
-                        data: Some("calculated".to_string()),
-                    },
-                ],
-                selected: 0,
+    harness
+        .apply_event(Event::ShowPopup {
+            popup: PopupData {
+                kind: PopupKindHint::Completion,
+                title: Some("Completion".to_string()),
+                description: None,
+                transient: false,
+                content: PopupContentData::List {
+                    items: vec![
+                        PopupListItemData {
+                            text: "calculate_sum".to_string(),
+                            detail: None,
+                            icon: None,
+                            data: Some("calculate_sum".to_string()),
+                        },
+                        PopupListItemData {
+                            text: "calculated".to_string(),
+                            detail: None,
+                            icon: None,
+                            data: Some("calculated".to_string()),
+                        },
+                    ],
+                    selected: 0,
+                },
+                position: PopupPositionData::BelowCursor,
+                width: 50,
+                max_height: 15,
+                bordered: true,
             },
-            position: PopupPositionData::BelowCursor,
-            width: 50,
-            max_height: 15,
-            bordered: true,
-        },
-    });
+        })
+        .unwrap();
     harness.render()?;
 
     // Type underscore - should filter to only "calculate_sum"

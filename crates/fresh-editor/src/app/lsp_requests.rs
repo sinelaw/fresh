@@ -53,9 +53,9 @@ impl Editor {
 
         // Get the partial word at cursor to filter completions
         use crate::primitives::word_navigation::find_completion_word_start;
+        let cursor_pos = self.active_cursors().primary().position;
         let (word_start, cursor_pos) = {
             let state = self.active_state();
-            let cursor_pos = state.cursors.primary().position;
             let word_start = find_completion_word_start(&state.buffer, cursor_pos);
             (word_start, cursor_pos)
         };
@@ -159,8 +159,16 @@ impl Editor {
         // Store original items for type-to-filter
         self.completion_items = Some(items);
 
-        self.active_state_mut()
-            .apply(&crate::model::event::Event::ShowPopup { popup: popup_data });
+        {
+            let buffer_id = self.active_buffer();
+            let split_id = self.split_manager.active_split();
+            let state = self.buffers.get_mut(&buffer_id).unwrap();
+            let cursors = &mut self.split_view_states.get_mut(&split_id).unwrap().cursors;
+            state.apply(
+                cursors,
+                &crate::model::event::Event::ShowPopup { popup: popup_data },
+            );
+        }
 
         tracing::info!(
             "Showing completion popup with {} items",
@@ -232,14 +240,23 @@ impl Editor {
             let character = location.range.start.character as usize;
 
             // Calculate byte position from line and character
-            if let Some(state) = self.buffers.get(&buffer_id) {
-                let position = state.buffer.line_col_to_position(line, character);
+            let position = self
+                .buffers
+                .get(&buffer_id)
+                .map(|state| state.buffer.line_col_to_position(line, character));
 
-                // Move cursor
-                let cursor_id = state.cursors.primary_id();
-                let old_position = state.cursors.primary().position;
-                let old_anchor = state.cursors.primary().anchor;
-                let old_sticky_column = state.cursors.primary().sticky_column;
+            if let Some(position) = position {
+                // Move cursor - read cursor info from split view state
+                let (cursor_id, old_position, old_anchor, old_sticky_column) = {
+                    let cursors = self.active_cursors();
+                    let primary = cursors.primary();
+                    (
+                        cursors.primary_id(),
+                        primary.position,
+                        primary.anchor,
+                        primary.sticky_column,
+                    )
+                };
                 let event = crate::model::event::Event::MoveCursor {
                     cursor_id,
                     old_position,
@@ -250,8 +267,10 @@ impl Editor {
                     new_sticky_column: 0, // Reset sticky column for goto definition
                 };
 
+                let split_id = self.split_manager.active_split();
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    state.apply(&event);
+                    let cursors = &mut self.split_view_states.get_mut(&split_id).unwrap().cursors;
+                    state.apply(cursors, &event);
                 }
             }
 
@@ -399,8 +418,8 @@ impl Editor {
     /// Request LSP completion at current cursor position
     pub(crate) fn request_completion(&mut self) -> AnyhowResult<()> {
         // Get the current buffer and cursor position
+        let cursor_pos = self.active_cursors().primary().position;
         let state = self.active_state();
-        let cursor_pos = state.cursors.primary().position;
 
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
@@ -492,8 +511,8 @@ impl Editor {
     /// Request LSP go-to-definition at current cursor position
     pub(crate) fn request_goto_definition(&mut self) -> AnyhowResult<()> {
         // Get the current buffer and cursor position
+        let cursor_pos = self.active_cursors().primary().position;
         let state = self.active_state();
-        let cursor_pos = state.cursors.primary().position;
 
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
@@ -528,8 +547,8 @@ impl Editor {
     /// Request LSP hover documentation at current cursor position
     pub(crate) fn request_hover(&mut self) -> AnyhowResult<()> {
         // Get the current buffer and cursor position
+        let cursor_pos = self.active_cursors().primary().position;
         let state = self.active_state();
-        let cursor_pos = state.cursors.primary().position;
 
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
@@ -831,8 +850,8 @@ impl Editor {
     /// Request LSP find references at current cursor position
     pub(crate) fn request_references(&mut self) -> AnyhowResult<()> {
         // Get the current buffer and cursor position
+        let cursor_pos = self.active_cursors().primary().position;
         let state = self.active_state();
-        let cursor_pos = state.cursors.primary().position;
 
         // Extract the word under cursor for display
         let symbol = {
@@ -930,8 +949,8 @@ impl Editor {
     /// Request LSP signature help at current cursor position
     pub(crate) fn request_signature_help(&mut self) -> AnyhowResult<()> {
         // Get the current buffer and cursor position
+        let cursor_pos = self.active_cursors().primary().position;
         let state = self.active_state();
-        let cursor_pos = state.cursors.primary().position;
 
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
@@ -1084,21 +1103,21 @@ impl Editor {
     /// Request LSP code actions at current cursor position
     pub(crate) fn request_code_actions(&mut self) -> AnyhowResult<()> {
         // Get the current buffer and cursor position
+        let cursor_pos = self.active_cursors().primary().position;
+        let selection_range = self.active_cursors().primary().selection_range();
         let state = self.active_state();
-        let cursor_pos = state.cursors.primary().position;
 
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
 
         // Get selection range (if any) or use cursor position
-        let (start_line, start_char, end_line, end_char) =
-            if let Some(range) = state.cursors.primary().selection_range() {
-                let (s_line, s_char) = state.buffer.position_to_lsp_position(range.start);
-                let (e_line, e_char) = state.buffer.position_to_lsp_position(range.end);
-                (s_line as u32, s_char as u32, e_line as u32, e_char as u32)
-            } else {
-                (line as u32, character as u32, line as u32, character as u32)
-            };
+        let (start_line, start_char, end_line, end_char) = if let Some(range) = selection_range {
+            let (s_line, s_char) = state.buffer.position_to_lsp_position(range.start);
+            let (e_line, e_char) = state.buffer.position_to_lsp_position(range.end);
+            (s_line as u32, s_char as u32, e_line as u32, e_char as u32)
+        } else {
+            (line as u32, character as u32, line as u32, character as u32)
+        };
 
         // Get diagnostics at cursor position for context
         // TODO: Implement diagnostic retrieval when needed
@@ -1297,6 +1316,20 @@ impl Editor {
         let mut batch_events = Vec::new();
         let mut changes = 0;
 
+        // Get cursor_id for this buffer from split view state
+        let cursor_id = {
+            let split_id = self
+                .split_manager
+                .splits_for_buffer(buffer_id)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| self.split_manager.active_split());
+            self.split_view_states
+                .get(&split_id)
+                .map(|vs| vs.cursors.primary_id())
+                .unwrap_or_else(|| self.active_cursors().primary_id())
+        };
+
         // Create events for all edits
         for edit in edits {
             let state = self
@@ -1332,7 +1365,6 @@ impl Editor {
             // Delete old text
             if start_pos < end_pos {
                 let deleted_text = state.get_text_range(start_pos, end_pos);
-                let cursor_id = state.cursors.primary_id();
                 let delete_event = Event::Delete {
                     range: start_pos..end_pos,
                     deleted_text,
@@ -1343,11 +1375,6 @@ impl Editor {
 
             // Insert new text
             if !edit.new_text.is_empty() {
-                let state = self
-                    .buffers
-                    .get(&buffer_id)
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Buffer not found"))?;
-                let cursor_id = state.cursors.primary_id();
                 let insert_event = Event::Insert {
                     position: start_pos,
                     text: edit.new_text.clone(),
@@ -1548,17 +1575,30 @@ impl Editor {
         let lsp_changes = self.collect_lsp_changes(&batch_for_lsp);
         self.split_manager.set_active_buffer_id(original_active);
 
+        // Capture old cursor states from split view state
+        // Find a split that has this buffer in its keyed_states
+        let split_id_for_cursors = self
+            .split_manager
+            .splits_for_buffer(buffer_id)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| self.split_manager.active_split());
+        let old_cursors: Vec<(CursorId, usize, Option<usize>)> = self
+            .split_view_states
+            .get(&split_id_for_cursors)
+            .and_then(|vs| vs.keyed_states.get(&buffer_id))
+            .map(|bvs| {
+                bvs.cursors
+                    .iter()
+                    .map(|(id, c)| (id, c.position, c.anchor))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let state = self
             .buffers
             .get_mut(&buffer_id)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Buffer not found"))?;
-
-        // Capture old cursor states
-        let old_cursors: Vec<(CursorId, usize, Option<usize>)> = state
-            .cursors
-            .iter()
-            .map(|(id, c)| (id, c.position, c.anchor))
-            .collect();
 
         // Snapshot buffer state for undo (piece tree + buffers)
         let old_snapshot = state.buffer.snapshot_buffer_state();
@@ -1622,19 +1662,23 @@ impl Editor {
             })
             .collect();
 
-        // Apply new cursor positions
-        for (cursor_id, new_pos, new_anchor) in &new_cursors {
-            if let Some(cursor) = state.cursors.get_mut(*cursor_id) {
-                cursor.position = *new_pos;
-                cursor.anchor = *new_anchor;
-            }
-        }
-
         // Snapshot buffer state after edits (for redo)
         let new_snapshot = state.buffer.snapshot_buffer_state();
 
         // Invalidate syntax highlighting
         state.highlighter.invalidate_all();
+
+        // Apply new cursor positions to split view state
+        if let Some(vs) = self.split_view_states.get_mut(&split_id_for_cursors) {
+            if let Some(bvs) = vs.keyed_states.get_mut(&buffer_id) {
+                for (cursor_id, new_pos, new_anchor) in &new_cursors {
+                    if let Some(cursor) = bvs.cursors.get_mut(*cursor_id) {
+                        cursor.position = *new_pos;
+                        cursor.anchor = *new_anchor;
+                    }
+                }
+            }
+        }
 
         // Create BulkEdit event for undo log
         let bulk_edit = Event::BulkEdit {
@@ -1800,9 +1844,9 @@ impl Editor {
         use crate::primitives::word_navigation::{find_word_end, find_word_start};
 
         // Get the current buffer and cursor position
+        let cursor_pos = self.active_cursors().primary().position;
         let (word_start, word_end) = {
             let state = self.active_state();
-            let cursor_pos = state.cursors.primary().position;
 
             // Find the word boundaries
             let word_start = find_word_start(&state.buffer, cursor_pos);

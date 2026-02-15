@@ -16,20 +16,14 @@ fn test_undo_skips_readonly_movement_actions() {
     harness.assert_buffer_content("hello");
 
     // Cursor should be at end (position 5)
-    assert_eq!(
-        harness.editor().active_state().cursors.primary().position,
-        5
-    );
+    assert_eq!(harness.editor().active_cursors().primary().position, 5);
 
     // Move cursor left twice with arrow keys (readonly movements)
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
 
     // Now cursor should be between "hel" and "lo" (position 3)
-    assert_eq!(
-        harness.editor().active_state().cursors.primary().position,
-        3
-    );
+    assert_eq!(harness.editor().active_cursors().primary().position, 3);
 
     // Undo once - should undo the two cursor movements AND the last typed character 'o'
     harness
@@ -43,7 +37,7 @@ fn test_undo_skips_readonly_movement_actions() {
     // Cursor should be restored to where it was BEFORE the movements (position 4, end of "hell")
     // This is the key difference: cursor movements should be undone too!
     assert_eq!(
-        harness.editor().active_state().cursors.primary().position,
+        harness.editor().active_cursors().primary().position,
         4,
         "Cursor should be restored to position before movements"
     );
@@ -187,7 +181,7 @@ fn test_undo_to_save_point_marks_buffer_unmodified() {
     // ISSUE #191: Buffer should be NOT modified immediately when content matches saved state
     // There should NOT be an extra undo step needed
     let is_modified = harness.editor().active_state().buffer.is_modified();
-    let cursor_pos = harness.editor().active_state().cursors.primary().position;
+    let cursor_pos = harness.editor().active_cursors().primary().position;
 
     assert!(
         !is_modified,

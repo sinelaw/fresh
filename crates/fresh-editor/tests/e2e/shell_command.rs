@@ -372,7 +372,7 @@ fn test_shell_command_replace_preserves_cursor_position() {
     harness.render().unwrap();
 
     // Get cursor position before replacement
-    let cursor_pos_before = harness.editor().active_state().cursors.primary().position;
+    let cursor_pos_before = harness.editor().active_cursors().primary().position;
 
     // Run shell command to uppercase everything (replace mode)
     harness
@@ -397,7 +397,7 @@ fn test_shell_command_replace_preserves_cursor_position() {
     harness.assert_buffer_content("HELLO WORLD\nFOO BAR\nBAZ QUX\n");
 
     // Verify cursor is at same position as before
-    let cursor_pos_after = harness.editor().active_state().cursors.primary().position;
+    let cursor_pos_after = harness.editor().active_cursors().primary().position;
     assert_eq!(
         cursor_pos_before, cursor_pos_after,
         "Cursor position should be preserved after shell command replace"
@@ -434,7 +434,7 @@ fn test_shell_command_replace_clamps_cursor_when_buffer_shrinks() {
         .unwrap();
     harness.render().unwrap();
 
-    let cursor_pos_before = harness.editor().active_state().cursors.primary().position;
+    let cursor_pos_before = harness.editor().active_cursors().primary().position;
     assert!(
         cursor_pos_before > 20,
         "Cursor should be in the middle of the buffer"
@@ -467,7 +467,7 @@ fn test_shell_command_replace_clamps_cursor_when_buffer_shrinks() {
     harness.assert_buffer_content("short\n");
 
     // Cursor should be clamped to new buffer length
-    let cursor_pos_after = harness.editor().active_state().cursors.primary().position;
+    let cursor_pos_after = harness.editor().active_cursors().primary().position;
     let new_buffer_len = "short\n".len();
     assert!(
         cursor_pos_after <= new_buffer_len,

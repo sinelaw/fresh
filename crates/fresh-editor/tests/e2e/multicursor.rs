@@ -26,7 +26,7 @@ fn test_add_cursor_next_match_with_backward_selection() {
         .unwrap();
 
     // Verify cursor position
-    let primary = harness.editor().active_state().cursors.primary();
+    let primary = harness.editor().active_cursors().primary();
     assert_eq!(
         primary.position, 3,
         "Cursor should be at position 3 after first 'foo'"
@@ -45,7 +45,7 @@ fn test_add_cursor_next_match_with_backward_selection() {
         .unwrap();
 
     // Verify backward selection: position=0 (cursor at start), anchor=3 (selection end)
-    let primary = harness.editor().active_state().cursors.primary();
+    let primary = harness.editor().active_cursors().primary();
     assert_eq!(
         primary.position, 0,
         "After Shift+Left, cursor should be at start of selection"
@@ -61,14 +61,13 @@ fn test_add_cursor_next_match_with_backward_selection() {
     harness.render().unwrap();
 
     // Should now have 2 cursors
-    let state = harness.editor().active_state();
-    assert_eq!(state.cursors.iter().count(), 2);
+    assert_eq!(harness.editor().active_cursors().iter().count(), 2);
 
     // CRITICAL: Both cursors should have the same relative position within their selections
     // The original cursor is at position 0 (start of selection 0..3)
     // The new cursor should also be at the start of its selection (8..11)
     // i.e., new cursor position should be 8, not 11
-    for (id, cursor) in state.cursors.iter() {
+    for (id, cursor) in harness.editor().active_cursors().iter() {
         let selection = cursor
             .selection_range()
             .expect("Cursor should have selection");
@@ -120,7 +119,7 @@ fn test_add_cursor_next_match_with_forward_selection() {
         .unwrap();
 
     // Verify forward selection: position=3 (cursor at end), anchor=0 (selection start)
-    let primary = harness.editor().active_state().cursors.primary();
+    let primary = harness.editor().active_cursors().primary();
     assert_eq!(
         primary.position, 3,
         "After Shift+Right, cursor should be at end of selection"
@@ -136,8 +135,7 @@ fn test_add_cursor_next_match_with_forward_selection() {
     harness.render().unwrap();
 
     // Should now have 2 cursors
-    let state = harness.editor().active_state();
-    assert_eq!(state.cursors.iter().count(), 2);
+    assert_eq!(harness.editor().active_cursors().iter().count(), 2);
 
     // Type "X" to replace both selections - this should result in "X bar X"
     harness.type_text("X").unwrap();
@@ -170,7 +168,7 @@ fn test_add_cursor_next_match() {
         .unwrap();
 
     // Verify selection
-    let primary = harness.editor().active_state().cursors.primary();
+    let primary = harness.editor().active_cursors().primary();
     assert_eq!(primary.position, 3);
     assert_eq!(primary.anchor, Some(0));
 
@@ -179,7 +177,7 @@ fn test_add_cursor_next_match() {
     harness.render().unwrap();
 
     // Should now have 2 cursors
-    let cursors = &harness.editor().active_state().cursors;
+    let cursors = &harness.editor().active_cursors();
     assert_eq!(cursors.iter().count(), 2);
 
     // Press Ctrl+D again to add cursor at third "foo"
@@ -187,7 +185,7 @@ fn test_add_cursor_next_match() {
     harness.render().unwrap();
 
     // Should now have 3 cursors
-    let cursors = &harness.editor().active_state().cursors;
+    let cursors = &harness.editor().active_cursors();
     assert_eq!(cursors.iter().count(), 3);
 }
 
@@ -207,7 +205,7 @@ fn test_add_cursor_above() {
     harness.render().unwrap();
 
     // Should now have 2 cursors
-    let cursors = &harness.editor().active_state().cursors;
+    let cursors = &harness.editor().active_cursors();
     assert_eq!(cursors.iter().count(), 2);
 
     // Add cursor above again (to Line 1)
@@ -215,7 +213,7 @@ fn test_add_cursor_above() {
     harness.render().unwrap();
 
     // Should now have 3 cursors
-    let cursors = &harness.editor().active_state().cursors;
+    let cursors = &harness.editor().active_cursors();
     assert_eq!(cursors.iter().count(), 3);
 }
 
@@ -238,7 +236,7 @@ fn test_add_cursor_below() {
     harness.render().unwrap();
 
     // Should now have 2 cursors
-    let cursors = &harness.editor().active_state().cursors;
+    let cursors = &harness.editor().active_cursors();
     assert_eq!(cursors.iter().count(), 2);
 
     // Add cursor below again (to Line 3)
@@ -246,7 +244,7 @@ fn test_add_cursor_below() {
     harness.render().unwrap();
 
     // Should now have 3 cursors
-    let cursors = &harness.editor().active_state().cursors;
+    let cursors = &harness.editor().active_cursors();
     assert_eq!(cursors.iter().count(), 3);
 }
 
@@ -270,7 +268,7 @@ fn test_multi_cursor_typing() {
     harness.editor_mut().add_cursor_below(); // Now we have cursors on line 1, 2, and 3
 
     // Should have 3 cursors
-    let cursor_count = harness.editor().active_state().cursors.iter().count();
+    let cursor_count = harness.editor().active_cursors().iter().count();
     assert_eq!(cursor_count, 3, "Should have 3 cursors");
 
     // Type "xyz" with all three cursors
@@ -293,18 +291,14 @@ fn test_remove_secondary_cursors() {
     harness.editor_mut().add_cursor_above();
 
     // Should have 3 cursors
-    assert_eq!(harness.editor().active_state().cursors.iter().count(), 3);
+    assert_eq!(harness.editor().active_cursors().iter().count(), 3);
 
     // Remove secondary cursors
-    harness
-        .editor_mut()
-        .active_state_mut()
-        .cursors
-        .remove_secondary();
+    harness.editor_mut().active_cursors_mut().remove_secondary();
     harness.render().unwrap();
 
     // Should have only 1 cursor now
-    assert_eq!(harness.editor().active_state().cursors.iter().count(), 1);
+    assert_eq!(harness.editor().active_cursors().iter().count(), 1);
 }
 
 /// Test multi-cursor undo atomicity
@@ -328,7 +322,7 @@ fn test_multi_cursor_undo_atomic() {
     harness.editor_mut().add_cursor_below(); // Now we have cursors on line 1, 2, and 3
 
     // Should have 3 cursors
-    let cursor_count = harness.editor().active_state().cursors.iter().count();
+    let cursor_count = harness.editor().active_cursors().iter().count();
     assert_eq!(cursor_count, 3, "Should have 3 cursors");
 
     // Type "xyz" with all three cursors - this should create a batch event
@@ -379,7 +373,7 @@ fn test_multi_cursor_delete_undo_atomic() {
     harness.editor_mut().add_cursor_below();
 
     // Should have 3 cursors
-    assert_eq!(harness.editor().active_state().cursors.iter().count(), 3);
+    assert_eq!(harness.editor().active_cursors().iter().count(), 3);
 
     // Delete forward at all three cursors - should delete 'a', 'b', 'c'
     harness
@@ -414,21 +408,21 @@ fn test_add_cursor_undo() {
         .unwrap();
 
     // Should start with 1 cursor
-    assert_eq!(harness.editor().active_state().cursors.count(), 1);
+    assert_eq!(harness.editor().active_cursors().count(), 1);
 
     // Add a cursor below
     harness.editor_mut().add_cursor_below();
     harness.render().unwrap();
 
     // Should now have 2 cursors
-    assert_eq!(harness.editor().active_state().cursors.count(), 2);
+    assert_eq!(harness.editor().active_cursors().count(), 2);
 
     // Add another cursor below
     harness.editor_mut().add_cursor_below();
     harness.render().unwrap();
 
     // Should now have 3 cursors
-    assert_eq!(harness.editor().active_state().cursors.count(), 3);
+    assert_eq!(harness.editor().active_cursors().count(), 3);
 
     // Undo - should remove the last cursor added
     harness
@@ -437,7 +431,7 @@ fn test_add_cursor_undo() {
     harness.render().unwrap();
 
     // Should be back to 2 cursors
-    assert_eq!(harness.editor().active_state().cursors.count(), 2);
+    assert_eq!(harness.editor().active_cursors().count(), 2);
 
     // Undo again - should remove the second cursor
     harness
@@ -446,7 +440,7 @@ fn test_add_cursor_undo() {
     harness.render().unwrap();
 
     // Should be back to 1 cursor
-    assert_eq!(harness.editor().active_state().cursors.count(), 1);
+    assert_eq!(harness.editor().active_cursors().count(), 1);
 
     // Redo - should add cursor back
     harness
@@ -455,7 +449,7 @@ fn test_add_cursor_undo() {
     harness.render().unwrap();
 
     // Should be back to 2 cursors
-    assert_eq!(harness.editor().active_state().cursors.count(), 2);
+    assert_eq!(harness.editor().active_cursors().count(), 2);
 }
 
 /// Test that removing cursors can be undone
@@ -480,14 +474,14 @@ fn test_remove_cursor_undo() {
     harness.editor_mut().add_cursor_below();
 
     // Should have 3 cursors
-    assert_eq!(harness.editor().active_state().cursors.count(), 3);
+    assert_eq!(harness.editor().active_cursors().count(), 3);
 
     // Remove secondary cursors (using Escape)
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Should be back to 1 cursor
-    assert_eq!(harness.editor().active_state().cursors.count(), 1);
+    assert_eq!(harness.editor().active_cursors().count(), 1);
 
     // Undo - should restore the secondary cursors
     harness
@@ -496,7 +490,7 @@ fn test_remove_cursor_undo() {
     harness.render().unwrap();
 
     // Should be back to 3 cursors
-    assert_eq!(harness.editor().active_state().cursors.count(), 3);
+    assert_eq!(harness.editor().active_cursors().count(), 3);
 
     // Redo - should remove them again
     harness
@@ -505,7 +499,7 @@ fn test_remove_cursor_undo() {
     harness.render().unwrap();
 
     // Should be back to 1 cursor
-    assert_eq!(harness.editor().active_state().cursors.count(), 1);
+    assert_eq!(harness.editor().active_cursors().count(), 1);
 }
 
 /// Test undo beyond cursor add removes the cursor and undoes the edit
@@ -523,14 +517,14 @@ fn test_undo_beyond_cursor_add() {
         .unwrap();
 
     // Should start with 1 cursor
-    assert_eq!(harness.editor().active_state().cursors.count(), 1);
+    assert_eq!(harness.editor().active_cursors().count(), 1);
 
     // Add a cursor below
     harness.editor_mut().add_cursor_below();
     harness.render().unwrap();
 
     // Should now have 2 cursors
-    assert_eq!(harness.editor().active_state().cursors.count(), 2);
+    assert_eq!(harness.editor().active_cursors().count(), 2);
 
     // Type "xyz" with both cursors
     harness.type_text("xyz").unwrap();
@@ -548,7 +542,7 @@ fn test_undo_beyond_cursor_add() {
 
     // "xyz" should be gone, but we should still have 2 cursors
     harness.assert_buffer_content("aaa\nbbb\nccc");
-    assert_eq!(harness.editor().active_state().cursors.count(), 2);
+    assert_eq!(harness.editor().active_cursors().count(), 2);
 
     // Undo again - should remove the second cursor
     harness
@@ -557,7 +551,7 @@ fn test_undo_beyond_cursor_add() {
     harness.render().unwrap();
 
     // Should be back to 1 cursor
-    assert_eq!(harness.editor().active_state().cursors.count(), 1);
+    assert_eq!(harness.editor().active_cursors().count(), 1);
 
     // Redo - should add the cursor back
     harness
@@ -566,7 +560,7 @@ fn test_undo_beyond_cursor_add() {
     harness.render().unwrap();
 
     // Should have 2 cursors again
-    assert_eq!(harness.editor().active_state().cursors.count(), 2);
+    assert_eq!(harness.editor().active_cursors().count(), 2);
 
     // Redo 3 times - should redo all 3 character insertions
     for _ in 0..3 {
@@ -718,7 +712,7 @@ fn test_multi_cursor_comprehensive_abc_editing() {
     harness.editor_mut().add_cursor_below(); // Now we have cursors on line 1, 2, 3, and 4
 
     // Should have 4 cursors
-    let cursor_count = harness.editor().active_state().cursors.iter().count();
+    let cursor_count = harness.editor().active_cursors().iter().count();
     assert_eq!(cursor_count, 4, "Should have 4 cursors");
 
     // Test 1: Type "xyz" with all four cursors
@@ -739,7 +733,7 @@ fn test_multi_cursor_comprehensive_abc_editing() {
     harness.assert_buffer_content("abc1\nabc2\nabc3\nabc4");
 
     // Verify we still have 4 cursors after undo
-    assert_eq!(harness.editor().active_state().cursors.iter().count(), 4);
+    assert_eq!(harness.editor().active_cursors().iter().count(), 4);
 }
 
 /// Test single cursor visibility - comprehensive test moving through every position
@@ -967,7 +961,7 @@ fn test_cursor_visible_on_initial_empty_buffer() {
     );
     println!(
         "Cursor position: {}",
-        harness.editor().active_state().cursors.primary().position
+        harness.editor().active_cursors().primary().position
     );
 
     // Use the harness's cursor detection which handles both hardware cursor and REVERSED cells
@@ -1162,7 +1156,7 @@ fn test_cursor_visible_when_opening_file() {
     );
     println!(
         "Cursor position: {}",
-        harness.editor().active_state().cursors.primary().position
+        harness.editor().active_cursors().primary().position
     );
 
     // Use the harness's cursor detection which handles both hardware cursor and REVERSED cells
@@ -1201,7 +1195,7 @@ fn test_identical_lines_cursor_positions() {
     // Add first cursor below
     harness.editor_mut().add_cursor_below();
     println!("After adding 1st cursor below:");
-    for (id, cursor) in harness.editor().active_state().cursors.iter() {
+    for (id, cursor) in harness.editor().active_cursors().iter() {
         println!(
             "  Cursor {:?}: position={}, anchor={:?}",
             id, cursor.position, cursor.anchor
@@ -1211,7 +1205,7 @@ fn test_identical_lines_cursor_positions() {
     // Add second cursor below
     harness.editor_mut().add_cursor_below();
     println!("After adding 2nd cursor below:");
-    for (id, cursor) in harness.editor().active_state().cursors.iter() {
+    for (id, cursor) in harness.editor().active_cursors().iter() {
         println!(
             "  Cursor {:?}: position={}, anchor={:?}",
             id, cursor.position, cursor.anchor
@@ -1221,14 +1215,14 @@ fn test_identical_lines_cursor_positions() {
     // Add third cursor below
     harness.editor_mut().add_cursor_below();
     println!("After adding 3rd cursor below:");
-    for (id, cursor) in harness.editor().active_state().cursors.iter() {
+    for (id, cursor) in harness.editor().active_cursors().iter() {
         println!(
             "  Cursor {:?}: position={}, anchor={:?}",
             id, cursor.position, cursor.anchor
         );
     }
 
-    let cursor_count = harness.editor().active_state().cursors.iter().count();
+    let cursor_count = harness.editor().active_cursors().iter().count();
     println!("Total cursors: {cursor_count}");
     assert_eq!(cursor_count, 4, "Should have 4 cursors");
 
@@ -1266,7 +1260,7 @@ fn test_multi_cursor_end_key_positioning() {
 
     // Print initial cursor positions
     println!("Before End key:");
-    for (id, cursor) in harness.editor().active_state().cursors.iter() {
+    for (id, cursor) in harness.editor().active_cursors().iter() {
         println!("  Cursor {:?}: position={}", id, cursor.position);
     }
 
@@ -1276,7 +1270,7 @@ fn test_multi_cursor_end_key_positioning() {
 
     // Print cursor positions after End key
     println!("\nAfter End key:");
-    for (id, cursor) in harness.editor().active_state().cursors.iter() {
+    for (id, cursor) in harness.editor().active_cursors().iter() {
         println!("  Cursor {:?}: position={}", id, cursor.position);
     }
 
@@ -1286,8 +1280,7 @@ fn test_multi_cursor_end_key_positioning() {
     // Line 3: "Test" (12-15), cursor should be at 16 (after last char, no newline)
     let positions: Vec<usize> = harness
         .editor()
-        .active_state()
-        .cursors
+        .active_cursors()
         .iter()
         .map(|(_, c)| c.position)
         .collect();
@@ -1380,11 +1373,11 @@ fn test_esc_returns_to_original_cursor_position() {
     harness.editor_mut().add_cursor_below(); // Add to Line 4
 
     // Should have 4 cursors now
-    assert_eq!(harness.editor().active_state().cursors.iter().count(), 4);
+    assert_eq!(harness.editor().active_cursors().iter().count(), 4);
 
     // Print cursor positions for debugging
     println!("After adding cursors:");
-    for (id, cursor) in harness.editor().active_state().cursors.iter() {
+    for (id, cursor) in harness.editor().active_cursors().iter() {
         println!("  Cursor {:?}: position={}", id, cursor.position);
     }
 
@@ -1396,7 +1389,7 @@ fn test_esc_returns_to_original_cursor_position() {
     harness.render().unwrap();
 
     // Should have only 1 cursor now
-    assert_eq!(harness.editor().active_state().cursors.iter().count(), 1);
+    assert_eq!(harness.editor().active_cursors().iter().count(), 1);
 
     // The cursor should be at the ORIGINAL position (Line 1, position 0)
     // NOT at the last added cursor position (Line 4)
@@ -1503,14 +1496,14 @@ fn test_auto_close_parens_multiple_cursors() {
 
     // Should have 3 cursors
     assert_eq!(
-        harness.editor().active_state().cursors.iter().count(),
+        harness.editor().active_cursors().iter().count(),
         3,
         "Should have 3 cursors"
     );
 
     // Print cursor positions before typing
     println!("\nBefore typing 'foo()':");
-    for (id, cursor) in harness.editor().active_state().cursors.iter() {
+    for (id, cursor) in harness.editor().active_cursors().iter() {
         println!("  Cursor {:?}: position={}", id, cursor.position);
     }
 
@@ -1582,7 +1575,7 @@ fn test_multicursor_cut() {
 
     // Verify 3 cursors
     assert_eq!(
-        harness.editor().active_state().cursors.iter().count(),
+        harness.editor().active_cursors().iter().count(),
         3,
         "Should have 3 cursors"
     );
@@ -1597,7 +1590,7 @@ fn test_multicursor_cut() {
     harness.render().unwrap();
 
     // Verify all cursors have selections
-    for (id, cursor) in harness.editor().active_state().cursors.iter() {
+    for (id, cursor) in harness.editor().active_cursors().iter() {
         assert!(
             cursor.selection_range().is_some(),
             "Cursor {:?} should have a selection",
@@ -1658,7 +1651,7 @@ fn test_multicursor_cut_same_line() {
 
     // Should have 2 cursors
     assert_eq!(
-        harness.editor().active_state().cursors.iter().count(),
+        harness.editor().active_cursors().iter().count(),
         2,
         "Should have 2 cursors"
     );
@@ -1704,7 +1697,7 @@ fn test_multicursor_cut_undo_batched() {
 
     // Verify 3 cursors
     assert_eq!(
-        harness.editor().active_state().cursors.iter().count(),
+        harness.editor().active_cursors().iter().count(),
         3,
         "Should have 3 cursors"
     );

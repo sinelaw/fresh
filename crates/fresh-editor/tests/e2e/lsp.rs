@@ -17,8 +17,7 @@ fn test_lsp_completion_popup_text_not_mangled() -> anyhow::Result<()> {
     let mut harness = EditorTestHarness::new(80, 24)?;
 
     // Show a completion popup with realistic LSP data
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -46,7 +45,7 @@ fn test_lsp_completion_popup_text_not_mangled() -> anyhow::Result<()> {
             max_height: 15,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -103,8 +102,7 @@ fn test_lsp_completion_replaces_word() -> anyhow::Result<()> {
     assert_eq!(buffer_before, "test_f");
 
     // Show completion popup
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -124,7 +122,7 @@ fn test_lsp_completion_replaces_word() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -155,8 +153,7 @@ fn test_lsp_diagnostics_display() -> anyhow::Result<()> {
     harness.render()?;
 
     // Manually add a diagnostic overlay (simulating what LSP would do)
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::AddOverlay {
+    harness.apply_event(Event::AddOverlay {
         namespace: Some(OverlayNamespace::from_string("lsp-diagnostic".to_string())),
         range: 4..5, // "x"
         face: OverlayFace::Background {
@@ -166,7 +163,7 @@ fn test_lsp_diagnostics_display() -> anyhow::Result<()> {
         message: Some("unused variable: `x`".to_string()),
         extend_to_line_end: false,
         url: None,
-    });
+    })?;
 
     harness.render()?;
 
@@ -195,8 +192,7 @@ fn test_lsp_completion_popup() -> anyhow::Result<()> {
     harness.render()?;
 
     // Show a completion popup (simulating LSP response)
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -224,7 +220,7 @@ fn test_lsp_completion_popup() -> anyhow::Result<()> {
             max_height: 15,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -270,8 +266,7 @@ fn test_lsp_diagnostics_status_bar() -> anyhow::Result<()> {
     harness.render()?;
 
     // Add error diagnostic
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::AddOverlay {
+    harness.apply_event(Event::AddOverlay {
         namespace: Some(OverlayNamespace::from_string("lsp-diagnostic".to_string())),
         range: 4..5,
         face: OverlayFace::Background { color: (40, 0, 0) },
@@ -279,10 +274,10 @@ fn test_lsp_diagnostics_status_bar() -> anyhow::Result<()> {
         message: Some("unused variable: `x`".to_string()),
         extend_to_line_end: false,
         url: None,
-    });
+    })?;
 
     // Add warning diagnostic
-    state.apply(&Event::AddOverlay {
+    harness.apply_event(Event::AddOverlay {
         namespace: Some(OverlayNamespace::from_string("lsp-diagnostic".to_string())),
         range: 15..16,
         face: OverlayFace::Background { color: (40, 40, 0) },
@@ -290,7 +285,7 @@ fn test_lsp_diagnostics_status_bar() -> anyhow::Result<()> {
         message: Some("unused variable: `y`".to_string()),
         extend_to_line_end: false,
         url: None,
-    });
+    })?;
 
     harness.render()?;
 
@@ -321,8 +316,7 @@ fn test_lsp_clear_diagnostics() -> anyhow::Result<()> {
     harness.render()?;
 
     // Add diagnostic
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::AddOverlay {
+    harness.apply_event(Event::AddOverlay {
         namespace: Some(OverlayNamespace::from_string("lsp-diagnostic".to_string())),
         range: 4..5,
         face: OverlayFace::Background { color: (40, 0, 0) },
@@ -330,7 +324,7 @@ fn test_lsp_clear_diagnostics() -> anyhow::Result<()> {
         message: Some("test error".to_string()),
         extend_to_line_end: false,
         url: None,
-    });
+    })?;
 
     harness.render()?;
 
@@ -339,10 +333,9 @@ fn test_lsp_clear_diagnostics() -> anyhow::Result<()> {
     assert!(screen.contains("E:1"), "Expected error count in status bar");
 
     // Clear diagnostics using namespace
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ClearNamespace {
+    harness.apply_event(Event::ClearNamespace {
         namespace: OverlayNamespace::from_string("lsp-diagnostic".to_string()),
-    });
+    })?;
 
     harness.render()?;
 
@@ -366,8 +359,7 @@ fn test_lsp_completion_navigation() -> anyhow::Result<()> {
     let mut harness = EditorTestHarness::new(80, 24)?;
 
     // Show completion popup with multiple items
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -401,7 +393,7 @@ fn test_lsp_completion_navigation() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -438,8 +430,7 @@ fn test_lsp_completion_cancel() -> anyhow::Result<()> {
     harness.render()?;
 
     // Show completion popup
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -459,7 +450,7 @@ fn test_lsp_completion_cancel() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -495,8 +486,7 @@ fn test_lsp_completion_after_dot() -> anyhow::Result<()> {
     harness.render()?;
 
     // Show completion popup with method-like completions
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -524,7 +514,7 @@ fn test_lsp_completion_after_dot() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -560,8 +550,7 @@ fn test_lsp_completion_after_dot_with_partial() -> anyhow::Result<()> {
     harness.render()?;
 
     // Show completion popup
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -581,7 +570,7 @@ fn test_lsp_completion_after_dot_with_partial() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -615,8 +604,7 @@ fn test_lsp_completion_filtering() -> anyhow::Result<()> {
     // Manually show completion popup with mixed items (simulating what would be filtered)
     // In reality, the filtering happens in handle_completion_response, but we simulate
     // the expected result here to test the concept
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -648,7 +636,7 @@ fn test_lsp_completion_filtering() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -709,8 +697,7 @@ fn test_lsp_completion_popup_size() -> anyhow::Result<()> {
     harness.render()?;
 
     // Show completion popup with only 2 items but max_height of 15
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -738,7 +725,7 @@ fn test_lsp_completion_popup_size() -> anyhow::Result<()> {
             max_height: 15, // Much larger than needed for 2 items
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -1316,8 +1303,7 @@ fn test_lsp_completion_popup_hides_background() -> anyhow::Result<()> {
     harness.render()?;
 
     // Show a completion popup that will overlap with the buffer text
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -1345,7 +1331,7 @@ fn test_lsp_completion_popup_hides_background() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -3816,8 +3802,7 @@ fn test_hover_popup_at_right_edge_does_not_panic() -> anyhow::Result<()> {
 
     // Show a hover popup at the right edge of the screen (x = 199, which equals width)
     // This simulates what happens when mouse_hover_screen_position is at the right edge
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Text,
             title: Some("Hover".to_string()),
@@ -3833,7 +3818,7 @@ fn test_hover_popup_at_right_edge_does_not_panic() -> anyhow::Result<()> {
             max_height: 20,
             bordered: true,
         },
-    });
+    })?;
 
     // This render call triggers the panic in the buggy code
     harness.render()?;
@@ -3866,23 +3851,24 @@ fn test_hover_popup_dismissed_on_focus_change() -> anyhow::Result<()> {
 
     // Helper to show a hover popup
     fn show_hover_popup(harness: &mut EditorTestHarness) {
-        let state = harness.editor_mut().active_state_mut();
-        state.apply(&Event::ShowPopup {
-            popup: PopupData {
-                kind: PopupKindHint::Text,
-                title: Some("Hover".to_string()),
-                description: None,
-                transient: true,
-                content: PopupContentData::Text(vec![
-                    "fn example() -> i32".to_string(),
-                    "Returns an example value".to_string(),
-                ]),
-                position: PopupPositionData::BelowCursor,
-                width: 40,
-                max_height: 10,
-                bordered: true,
-            },
-        });
+        harness
+            .apply_event(Event::ShowPopup {
+                popup: PopupData {
+                    kind: PopupKindHint::Text,
+                    title: Some("Hover".to_string()),
+                    description: None,
+                    transient: true,
+                    content: PopupContentData::Text(vec![
+                        "fn example() -> i32".to_string(),
+                        "Returns an example value".to_string(),
+                    ]),
+                    position: PopupPositionData::BelowCursor,
+                    width: 40,
+                    max_height: 10,
+                    bordered: true,
+                },
+            })
+            .unwrap();
     }
 
     // Test 1: Hover popup dismissed when opening command palette
@@ -4108,8 +4094,7 @@ fn test_hover_popup_shows_scrollbar_for_long_content() -> anyhow::Result<()> {
         .map(|i| format!("Documentation line {}", i))
         .collect();
 
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Text,
             title: Some("Hover".to_string()),
@@ -4121,7 +4106,7 @@ fn test_hover_popup_shows_scrollbar_for_long_content() -> anyhow::Result<()> {
             max_height: 10, // Only 8 lines of content visible (10 - 2 for borders)
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -4184,8 +4169,7 @@ fn test_hover_popup_dynamic_height() -> anyhow::Result<()> {
         .map(|i| format!("Long documentation line number {}", i))
         .collect();
 
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Text,
             title: Some("Hover".to_string()),
@@ -4197,7 +4181,7 @@ fn test_hover_popup_dynamic_height() -> anyhow::Result<()> {
             max_height: 36, // Simulating 60% of 60 rows
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -4233,8 +4217,7 @@ fn test_hover_popup_mouse_scroll() -> anyhow::Result<()> {
     // With max_height=12 and borders=2, we have 10 visible lines
     let long_content: Vec<String> = (1..=20).map(|i| format!("Hover line {}", i)).collect();
 
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Text,
             title: Some("Hover".to_string()),
@@ -4246,7 +4229,7 @@ fn test_hover_popup_mouse_scroll() -> anyhow::Result<()> {
             max_height: 12, // Only 10 lines of content visible
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -4317,8 +4300,7 @@ fn test_hover_popup_height_accounts_for_wrapped_lines() -> anyhow::Result<()> {
         "End of docs".to_string(),
     ];
 
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Text,
             title: Some("Hover".to_string()),
@@ -4330,7 +4312,7 @@ fn test_hover_popup_height_accounts_for_wrapped_lines() -> anyhow::Result<()> {
             max_height: 20,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -4377,8 +4359,7 @@ fn test_popup_home_key_selects_first_item() -> anyhow::Result<()> {
         })
         .collect();
 
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -4390,7 +4371,7 @@ fn test_popup_home_key_selects_first_item() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -4437,8 +4418,7 @@ fn test_popup_end_key_selects_last_item() -> anyhow::Result<()> {
         })
         .collect();
 
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -4450,7 +4430,7 @@ fn test_popup_end_key_selects_last_item() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -4492,8 +4472,7 @@ fn test_popup_mouse_wheel_scrolls() -> anyhow::Result<()> {
         })
         .collect();
 
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -4505,7 +4484,7 @@ fn test_popup_mouse_wheel_scrolls() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -4578,8 +4557,7 @@ fn test_popup_scrollbar_visible_for_long_list() -> anyhow::Result<()> {
         })
         .collect();
 
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -4591,7 +4569,7 @@ fn test_popup_scrollbar_visible_for_long_list() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -4644,8 +4622,7 @@ fn test_popup_no_scrollbar_for_short_list() -> anyhow::Result<()> {
         })
         .collect();
 
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -4657,7 +4634,7 @@ fn test_popup_no_scrollbar_for_short_list() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -4698,8 +4675,7 @@ fn test_popup_mouse_wheel_scroll_up() -> anyhow::Result<()> {
         })
         .collect();
 
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -4711,7 +4687,7 @@ fn test_popup_mouse_wheel_scroll_up() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -4812,8 +4788,7 @@ fn test_completion_type_to_filter_basic() -> anyhow::Result<()> {
     harness.editor_mut().set_completion_items(completion_items);
 
     // Show completion popup with all items
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -4847,7 +4822,7 @@ fn test_completion_type_to_filter_basic() -> anyhow::Result<()> {
             max_height: 15,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -4941,8 +4916,7 @@ fn test_completion_type_to_filter_uppercase() -> anyhow::Result<()> {
     harness.editor_mut().set_completion_items(completion_items);
 
     // Show completion popup with all items
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -4976,7 +4950,7 @@ fn test_completion_type_to_filter_uppercase() -> anyhow::Result<()> {
             max_height: 15,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -5065,8 +5039,7 @@ fn test_completion_type_to_filter_closes_on_no_match() -> anyhow::Result<()> {
     harness.editor_mut().set_completion_items(completion_items);
 
     // Show completion popup
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -5086,7 +5059,7 @@ fn test_completion_type_to_filter_closes_on_no_match() -> anyhow::Result<()> {
             max_height: 15,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -5145,8 +5118,7 @@ fn test_completion_backspace_refilters() -> anyhow::Result<()> {
     harness.editor_mut().set_completion_items(completion_items);
 
     // Show completion popup with filtered items (only test_function matches "tes")
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -5166,7 +5138,7 @@ fn test_completion_backspace_refilters() -> anyhow::Result<()> {
             max_height: 15,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -5247,8 +5219,7 @@ fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
     harness.editor_mut().set_completion_items(completion_items);
 
     // Show completion popup
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -5282,7 +5253,7 @@ fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
             max_height: 15,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -5353,8 +5324,7 @@ fn test_completion_accept_on_enter_off() -> anyhow::Result<()> {
     harness.editor_mut().set_completion_items(completion_items);
 
     // Show completion popup
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -5374,7 +5344,7 @@ fn test_completion_accept_on_enter_off() -> anyhow::Result<()> {
             max_height: 15,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -5438,8 +5408,7 @@ fn test_completion_accept_on_enter_on() -> anyhow::Result<()> {
     harness.editor_mut().set_completion_items(completion_items);
 
     // Show completion popup
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -5459,7 +5428,7 @@ fn test_completion_accept_on_enter_on() -> anyhow::Result<()> {
             max_height: 15,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -5504,8 +5473,7 @@ fn test_completion_snippet_cursor_position() -> anyhow::Result<()> {
     harness.render()?;
 
     // Show completion popup with snippet
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -5526,7 +5494,7 @@ fn test_completion_snippet_cursor_position() -> anyhow::Result<()> {
             max_height: 15,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -5539,7 +5507,7 @@ fn test_completion_snippet_cursor_position() -> anyhow::Result<()> {
     assert_eq!(buffer, "println!()", "Snippet should expand without $0");
 
     // Verify cursor is positioned inside the parens (at position 9)
-    let cursor_pos = harness.editor().active_state().cursors.primary().position;
+    let cursor_pos = harness.editor().active_cursors().primary().position;
     assert_eq!(cursor_pos, 9, "Cursor should be inside the parentheses");
 
     Ok(())
@@ -5559,8 +5527,7 @@ fn test_completion_snippet_with_default() -> anyhow::Result<()> {
     harness.render()?;
 
     // Show completion popup with snippet containing default text
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -5581,7 +5548,7 @@ fn test_completion_snippet_with_default() -> anyhow::Result<()> {
             max_height: 15,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -5597,7 +5564,7 @@ fn test_completion_snippet_with_default() -> anyhow::Result<()> {
     );
 
     // Verify cursor is at $0 position (after the 4 spaces on line 2)
-    let cursor_pos = harness.editor().active_state().cursors.primary().position;
+    let cursor_pos = harness.editor().active_cursors().primary().position;
     assert_eq!(cursor_pos, 16, "Cursor should be at $0 position");
 
     Ok(())
@@ -5617,8 +5584,7 @@ fn test_completion_plain_text_no_snippet() -> anyhow::Result<()> {
     harness.render()?;
 
     // Show completion popup with plain text (no snippet syntax)
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Completion,
             title: Some("Completion".to_string()),
@@ -5639,7 +5605,7 @@ fn test_completion_plain_text_no_snippet() -> anyhow::Result<()> {
             max_height: 15,
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -5652,7 +5618,7 @@ fn test_completion_plain_text_no_snippet() -> anyhow::Result<()> {
     assert_eq!(buffer, "my_variable", "Plain text should be inserted as-is");
 
     // Cursor should be at end of inserted text
-    let cursor_pos = harness.editor().active_state().cursors.primary().position;
+    let cursor_pos = harness.editor().active_cursors().primary().position;
     assert_eq!(cursor_pos, 11, "Cursor should be at end of text");
 
     Ok(())
@@ -6305,8 +6271,7 @@ fn test_hover_popup_scrollbar_click_scrolls_content() -> anyhow::Result<()> {
         .map(|i| format!("Documentation line {}", i))
         .collect();
 
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Text,
             title: Some("Hover".to_string()),
@@ -6318,7 +6283,7 @@ fn test_hover_popup_scrollbar_click_scrolls_content() -> anyhow::Result<()> {
             max_height: 10, // Only 8 lines of content visible
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 
@@ -6699,8 +6664,7 @@ fn test_hover_popup_click_dismissal() -> anyhow::Result<()> {
     let _initial_cursor = harness.cursor_position();
 
     // Show a transient hover popup (simulating LSP hover response)
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Text,
             title: Some("Hover Info".to_string()),
@@ -6715,7 +6679,7 @@ fn test_hover_popup_click_dismissal() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
     harness.render()?;
 
     // Verify popup is visible
@@ -6759,8 +6723,7 @@ fn test_hover_popup_click_inside_does_not_move_cursor() -> anyhow::Result<()> {
     let cursor_before = harness.cursor_position();
 
     // Show a hover popup at a fixed position
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Text,
             title: Some("Hover Info".to_string()),
@@ -6777,7 +6740,7 @@ fn test_hover_popup_click_inside_does_not_move_cursor() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
     harness.render()?;
 
     // Verify popup is visible
@@ -6825,8 +6788,7 @@ fn test_hover_popup_double_click_dismissal() -> anyhow::Result<()> {
     harness.render()?;
 
     // Show a transient hover popup
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Text,
             title: Some("Hover Info".to_string()),
@@ -6838,7 +6800,7 @@ fn test_hover_popup_double_click_dismissal() -> anyhow::Result<()> {
             max_height: 10,
             bordered: true,
         },
-    });
+    })?;
     harness.render()?;
 
     // Verify popup is visible
@@ -6912,8 +6874,7 @@ fn test_hover_popup_double_click_inside_blocked() -> anyhow::Result<()> {
     let cursor_before = harness.cursor_position();
 
     // Show a hover popup positioned over the text
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Text,
             title: Some("Hover".to_string()),
@@ -6926,7 +6887,7 @@ fn test_hover_popup_double_click_inside_blocked() -> anyhow::Result<()> {
             max_height: 5,
             bordered: true,
         },
-    });
+    })?;
     harness.render()?;
 
     // Double-click inside the popup
@@ -7052,8 +7013,7 @@ fn test_hover_popup_scroll_to_bottom() -> anyhow::Result<()> {
     }
     long_content.push("=== END OF DOCUMENTATION ===".to_string());
 
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
+    harness.apply_event(Event::ShowPopup {
         popup: PopupData {
             kind: PopupKindHint::Text,
             title: Some("Hover Info".to_string()),
@@ -7065,7 +7025,7 @@ fn test_hover_popup_scroll_to_bottom() -> anyhow::Result<()> {
             max_height: 12, // Only 10 lines visible after borders
             bordered: true,
         },
-    });
+    })?;
 
     harness.render()?;
 

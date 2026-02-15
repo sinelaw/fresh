@@ -405,7 +405,7 @@ impl Editor {
 
     /// Replace the active buffer's content with new output.
     fn replace_buffer_with_output(&mut self, output: &str) -> Result<(), String> {
-        let cursor_id = self.active_state().cursors.primary_id();
+        let cursor_id = self.active_cursors().primary_id();
 
         // Get current buffer content
         let buffer_content = self.active_state().buffer.to_string().unwrap_or_default();
@@ -418,9 +418,9 @@ impl Editor {
         let buffer_len = buffer_content.len();
 
         // Capture cursor position and selection state before replacement
-        let old_cursor_pos = self.active_state().cursors.primary().position;
-        let old_anchor = self.active_state().cursors.primary().anchor;
-        let old_sticky_column = self.active_state().cursors.primary().sticky_column;
+        let old_cursor_pos = self.active_cursors().primary().position;
+        let old_anchor = self.active_cursors().primary().anchor;
+        let old_sticky_column = self.active_cursors().primary().sticky_column;
 
         // Delete all content and insert new
         let delete_event = Event::Delete {

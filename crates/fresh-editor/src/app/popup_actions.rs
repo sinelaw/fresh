@@ -92,9 +92,10 @@ impl Editor {
         };
 
         let (cursor_id, cursor_pos, word_start) = {
+            let cursors = self.active_cursors();
+            let cursor_id = cursors.primary_id();
+            let cursor_pos = cursors.primary().position;
             let state = self.active_state();
-            let cursor_id = state.cursors.primary_id();
-            let cursor_pos = state.cursors.primary().position;
             let word_start = find_completion_word_start(&state.buffer, cursor_pos);
             (cursor_id, cursor_pos, word_start)
         };
@@ -135,7 +136,7 @@ impl Editor {
         if let Some(offset) = cursor_offset {
             let new_cursor_pos = insert_pos + offset;
             // Get current cursor position after the insert
-            let current_pos = self.active_state().cursors.primary().position;
+            let current_pos = self.active_cursors().primary().position;
             if current_pos != new_cursor_pos {
                 let move_event = Event::MoveCursor {
                     cursor_id,
@@ -146,7 +147,11 @@ impl Editor {
                     old_sticky_column: 0,
                     new_sticky_column: 0,
                 };
-                self.active_state_mut().apply(&move_event);
+                let split_id = self.split_manager.active_split();
+                let buffer_id = self.active_buffer();
+                let state = self.buffers.get_mut(&buffer_id).unwrap();
+                let cursors = &mut self.split_view_states.get_mut(&split_id).unwrap().cursors;
+                state.apply(cursors, &move_event);
             }
         }
     }
@@ -192,8 +197,8 @@ impl Editor {
     pub fn handle_popup_type_char(&mut self, c: char) {
         // First, insert the character into the buffer
         let (cursor_id, cursor_pos) = {
-            let state = self.active_state();
-            (state.cursors.primary_id(), state.cursors.primary().position)
+            let cursors = self.active_cursors();
+            (cursors.primary_id(), cursors.primary().position)
         };
 
         let insert_event = Event::Insert {
@@ -213,8 +218,8 @@ impl Editor {
     /// Deletes a character and re-filters the completion list.
     pub fn handle_popup_backspace(&mut self) {
         let (cursor_id, cursor_pos) = {
-            let state = self.active_state();
-            (state.cursors.primary_id(), state.cursors.primary().position)
+            let cursors = self.active_cursors();
+            (cursors.primary_id(), cursors.primary().position)
         };
 
         // Don't do anything if at start of buffer
@@ -266,8 +271,8 @@ impl Editor {
 
         // Get current prefix
         let (word_start, cursor_pos) = {
+            let cursor_pos = self.active_cursors().primary().position;
             let state = self.active_state();
-            let cursor_pos = state.cursors.primary().position;
             let word_start = find_completion_word_start(&state.buffer, cursor_pos);
             (word_start, cursor_pos)
         };
@@ -384,7 +389,13 @@ impl Editor {
 
         // Close old popup and show new one
         self.hide_popup();
-        self.active_state_mut()
-            .apply(&crate::model::event::Event::ShowPopup { popup: popup_data });
+        let split_id = self.split_manager.active_split();
+        let buffer_id = self.active_buffer();
+        let state = self.buffers.get_mut(&buffer_id).unwrap();
+        let cursors = &mut self.split_view_states.get_mut(&split_id).unwrap().cursors;
+        state.apply(
+            cursors,
+            &crate::model::event::Event::ShowPopup { popup: popup_data },
+        );
     }
 }

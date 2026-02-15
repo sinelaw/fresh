@@ -994,16 +994,17 @@ impl SplitRenderer {
                         });
                 let mut viewport = viewport_clone;
 
-                let saved_cursors = Self::temporary_split_state(
-                    state,
-                    split_view_states.as_deref(),
-                    split_id,
-                    is_active,
-                );
+                // Get cursors from the split's view state
+                let default_cursors = crate::model::cursor::Cursors::new();
+                let split_cursors = split_view_states
+                    .as_deref()
+                    .and_then(|vs| vs.get(&split_id))
+                    .map(|vs| &vs.cursors)
+                    .unwrap_or(&default_cursors);
                 Self::sync_viewport_to_content(
                     &mut viewport,
                     &mut state.buffer,
-                    &state.cursors,
+                    split_cursors,
                     layout.content_rect,
                 );
                 let view_prefs =
@@ -1012,6 +1013,7 @@ impl SplitRenderer {
                 let split_view_mappings = Self::render_buffer_in_split(
                     frame,
                     state,
+                    split_cursors,
                     &mut viewport,
                     event_log_opt,
                     layout.content_rect,
@@ -1090,9 +1092,6 @@ impl SplitRenderer {
                 } else {
                     (0, 0)
                 };
-
-                // Restore the original cursors after rendering content and scrollbar
-                Self::restore_split_state(state, saved_cursors);
 
                 // Write back updated viewport to SplitViewState
                 // This is crucial for cursor visibility tracking (ensure_visible_in_layout updates)
@@ -1880,41 +1879,6 @@ impl SplitRenderer {
             }
         }
         (vec![buffer_id], 0)
-    }
-
-    fn temporary_split_state(
-        state: &mut EditorState,
-        split_view_states: Option<
-            &HashMap<crate::model::event::SplitId, crate::view::split::SplitViewState>,
-        >,
-        split_id: crate::model::event::SplitId,
-        is_active: bool,
-    ) -> Option<crate::model::cursor::Cursors> {
-        if is_active {
-            return None;
-        }
-
-        if let Some(view_states) = split_view_states {
-            if let Some(view_state) = view_states.get(&split_id) {
-                // Only save/restore cursors - viewport is now owned by SplitViewState
-                let saved_cursors = Some(std::mem::replace(
-                    &mut state.cursors,
-                    view_state.cursors.clone(),
-                ));
-                return saved_cursors;
-            }
-        }
-
-        None
-    }
-
-    fn restore_split_state(
-        state: &mut EditorState,
-        saved_cursors: Option<crate::model::cursor::Cursors>,
-    ) {
-        if let Some(cursors) = saved_cursors {
-            state.cursors = cursors;
-        }
     }
 
     fn sync_viewport_to_content(
@@ -3369,9 +3333,11 @@ impl SplitRenderer {
         }
     }
 
-    fn selection_context(state: &EditorState) -> SelectionContext {
-        let ranges: Vec<Range<usize>> = state
-            .cursors
+    fn selection_context(
+        state: &EditorState,
+        cursors: &crate::model::cursor::Cursors,
+    ) -> SelectionContext {
+        let ranges: Vec<Range<usize>> = cursors
             .iter()
             .filter_map(|(_, cursor)| {
                 // Don't include normal selection for cursors in block selection mode
@@ -3384,8 +3350,7 @@ impl SplitRenderer {
             })
             .collect();
 
-        let block_rects: Vec<(usize, usize, usize, usize)> = state
-            .cursors
+        let block_rects: Vec<(usize, usize, usize, usize)> = cursors
             .iter()
             .filter_map(|(_, cursor)| {
                 if cursor.selection_mode == SelectionMode::Block {
@@ -3412,11 +3377,7 @@ impl SplitRenderer {
             .collect();
 
         let cursor_positions: Vec<usize> = if state.show_cursors {
-            state
-                .cursors
-                .iter()
-                .map(|(_, cursor)| cursor.position)
-                .collect()
+            cursors.iter().map(|(_, cursor)| cursor.position).collect()
         } else {
             Vec::new()
         };
@@ -3425,7 +3386,7 @@ impl SplitRenderer {
             ranges,
             block_rects,
             cursor_positions,
-            primary_cursor_position: state.cursors.primary().position,
+            primary_cursor_position: cursors.primary().position,
         }
     }
 
@@ -4457,6 +4418,7 @@ impl SplitRenderer {
     fn render_buffer_in_split(
         frame: &mut Frame,
         state: &mut EditorState,
+        cursors: &crate::model::cursor::Cursors,
         viewport: &mut crate::view::viewport::Viewport,
         event_log: Option<&mut EventLog>,
         area: Rect,
@@ -4519,7 +4481,7 @@ impl SplitRenderer {
 
         // Ensure cursor is visible using Layout-aware check (handles virtual lines)
         // This detects when cursor is beyond the rendered view_lines and scrolls
-        let primary = *state.cursors.primary();
+        let primary = *cursors.primary();
         let scrolled = viewport.ensure_visible_in_layout(&view_data.lines, &primary, gutter_width);
 
         // If we scrolled, rebuild view_data from new position WITH the view_transform
@@ -4549,7 +4511,7 @@ impl SplitRenderer {
             effective_editor_bg,
         );
 
-        let selection = Self::selection_context(state);
+        let selection = Self::selection_context(state, cursors);
 
         tracing::trace!(
             "Rendering buffer with {} cursors at positions: {:?}, primary at {}, is_active: {}, buffer_len: {}",
@@ -4750,7 +4712,7 @@ impl SplitRenderer {
             frame.set_cursor_position((screen_x, screen_y));
 
             if let Some(event_log) = event_log {
-                let cursor_pos = state.cursors.primary().position;
+                let cursor_pos = cursors.primary().position;
                 let buffer_len = state.buffer.len();
                 event_log.log_render_state(cursor_pos, screen_x, screen_y, buffer_len);
             }
@@ -4997,7 +4959,8 @@ mod tests {
     ) -> (LineRenderOutput, usize, bool, usize) {
         let mut state = EditorState::new(20, 6, 1024, test_fs());
         state.buffer = Buffer::from_str(content, 1024, test_fs());
-        state.cursors.primary_mut().position = cursor_pos.min(state.buffer.len());
+        let mut cursors = crate::model::cursor::Cursors::new();
+        cursors.primary_mut().position = cursor_pos.min(state.buffer.len());
         // Create a standalone viewport (no longer part of EditorState)
         let viewport = Viewport::new(20, 4);
         // Enable/disable line numbers/gutters based on parameter
@@ -5023,7 +4986,7 @@ mod tests {
         state.margins.update_width_for_buffer(estimated_lines);
         let gutter_width = state.margins.left_total_width();
 
-        let selection = SplitRenderer::selection_context(&state);
+        let selection = SplitRenderer::selection_context(&state, &cursors);
         let starting_line_num = state
             .buffer
             .populate_line_cache(viewport.top_byte, visible_count);

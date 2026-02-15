@@ -348,9 +348,9 @@ impl Editor {
                 let mut new_view_state =
                     crate::view::split::SplitViewState::with_buffer(width, height, buffer_id);
 
-                // Copy cursor position from original buffer if available
-                if let Some(state) = self.buffers.get(&buffer_id) {
-                    new_view_state.cursors = state.cursors.clone();
+                // Copy cursor position from source split's view state
+                if let Some(source_vs) = self.split_view_states.get(&source_split_id) {
+                    new_view_state.cursors = source_vs.cursors.clone();
                 }
 
                 self.split_view_states.insert(new_split_id, new_view_state);

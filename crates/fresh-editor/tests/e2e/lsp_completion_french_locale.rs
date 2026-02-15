@@ -65,42 +65,43 @@ fn setup_french_completion_popup(prefix: &str) -> anyhow::Result<EditorTestHarne
     let completion_title = FRENCH_COMPLETION_TITLE.to_string();
 
     // Show completion popup with the translated (French) title
-    let state = harness.editor_mut().active_state_mut();
-    state.apply(&Event::ShowPopup {
-        popup: PopupData {
-            kind: PopupKindHint::Completion,
-            title: Some(completion_title),
-            description: None,
-            transient: false,
-            content: PopupContentData::List {
-                items: vec![
-                    PopupListItemData {
-                        text: "test_function".to_string(),
-                        detail: Some("fn test_function()".to_string()),
-                        icon: Some("λ".to_string()),
-                        data: Some("test_function".to_string()),
-                    },
-                    PopupListItemData {
-                        text: "test_variable".to_string(),
-                        detail: Some("let test_variable".to_string()),
-                        icon: Some("v".to_string()),
-                        data: Some("test_variable".to_string()),
-                    },
-                    PopupListItemData {
-                        text: "test_struct".to_string(),
-                        detail: Some("struct TestStruct".to_string()),
-                        icon: Some("S".to_string()),
-                        data: Some("test_struct".to_string()),
-                    },
-                ],
-                selected: 0,
+    harness
+        .apply_event(Event::ShowPopup {
+            popup: PopupData {
+                kind: PopupKindHint::Completion,
+                title: Some(completion_title),
+                description: None,
+                transient: false,
+                content: PopupContentData::List {
+                    items: vec![
+                        PopupListItemData {
+                            text: "test_function".to_string(),
+                            detail: Some("fn test_function()".to_string()),
+                            icon: Some("λ".to_string()),
+                            data: Some("test_function".to_string()),
+                        },
+                        PopupListItemData {
+                            text: "test_variable".to_string(),
+                            detail: Some("let test_variable".to_string()),
+                            icon: Some("v".to_string()),
+                            data: Some("test_variable".to_string()),
+                        },
+                        PopupListItemData {
+                            text: "test_struct".to_string(),
+                            detail: Some("struct TestStruct".to_string()),
+                            icon: Some("S".to_string()),
+                            data: Some("test_struct".to_string()),
+                        },
+                    ],
+                    selected: 0,
+                },
+                position: PopupPositionData::BelowCursor,
+                width: 50,
+                max_height: 15,
+                bordered: true,
             },
-            position: PopupPositionData::BelowCursor,
-            width: 50,
-            max_height: 15,
-            bordered: true,
-        },
-    });
+        })
+        .unwrap();
 
     harness.render()?;
 

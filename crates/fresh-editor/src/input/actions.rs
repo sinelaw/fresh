@@ -3,7 +3,7 @@
 use crate::input::keybindings::Action;
 use crate::input::line_move::{move_lines, LineMoveDirection};
 use crate::model::buffer::{Buffer, LineEnding};
-use crate::model::cursor::{Position2D, SelectionMode};
+use crate::model::cursor::{Cursors, Position2D, SelectionMode};
 use crate::model::event::{CursorId, Event};
 use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
 use crate::primitives::word_navigation::{
@@ -201,6 +201,7 @@ fn add_move_cursor_event(
 /// Handle block selection movement
 fn block_select_action(
     state: &mut EditorState,
+    cursors: &mut Cursors,
     events: &mut Vec<Event>,
     direction: BlockDirection,
 ) {
@@ -214,7 +215,7 @@ fn block_select_action(
         }
     };
 
-    for (cursor_id, cursor) in state.cursors.iter() {
+    for (cursor_id, cursor) in cursors.iter() {
         let current_2d = byte_to_2d(&state.buffer, cursor.position);
 
         // If not in block mode, start block selection
@@ -291,7 +292,7 @@ fn block_select_action(
     // Note: We update the cursors here to set block_anchor BEFORE the events are applied
     // This way the events will move the cursor, but the anchor remains fixed
     let buffer_ref = &state.buffer;
-    state.cursors.map(|cursor| {
+    cursors.map(|cursor| {
         if cursor.selection_mode != SelectionMode::Block || cursor.block_anchor.is_none() {
             let current_2d = byte_to_2d(buffer_ref, cursor.position);
             cursor.start_block_selection(current_2d.line, current_2d.column);
@@ -301,8 +302,8 @@ fn block_select_action(
 
 /// Clear block selection when performing normal operations
 /// This should be called when the user performs a non-block action
-pub fn clear_block_selection_if_active(state: &mut EditorState) {
-    state.cursors.map(|cursor| {
+pub fn clear_block_selection_if_active(cursors: &mut Cursors) {
+    cursors.map(|cursor| {
         if cursor.selection_mode == SelectionMode::Block {
             cursor.clear_block_selection();
         }
@@ -313,12 +314,15 @@ pub fn clear_block_selection_if_active(state: &mut EditorState) {
 /// Each cursor will have a selection covering that line's portion of the block.
 /// This should be called before action processing so normal multi-cursor logic applies.
 /// Returns events to add the new cursors (if any).
-fn convert_block_selection_to_cursors(state: &mut EditorState) -> Vec<Event> {
+fn convert_block_selection_to_cursors(
+    state: &mut EditorState,
+    cursors: &mut Cursors,
+) -> Vec<Event> {
     let mut events = Vec::new();
 
     // Check if any cursor has a block selection
     let block_info: Option<(CursorId, Position2D, Position2D)> =
-        state.cursors.iter().find_map(|(cursor_id, cursor)| {
+        cursors.iter().find_map(|(cursor_id, cursor)| {
             if cursor.has_block_selection() {
                 let block_anchor = cursor.block_anchor?;
                 let cursor_2d = byte_to_2d(&state.buffer, cursor.position);
@@ -364,7 +368,7 @@ fn convert_block_selection_to_cursors(state: &mut EditorState) -> Vec<Event> {
 
     // Update the primary cursor to have a normal selection on the first line
     if let Some((position, anchor)) = cursor_positions.first().copied() {
-        if let Some(cursor) = state.cursors.get_mut(primary_cursor_id) {
+        if let Some(cursor) = cursors.get_mut(primary_cursor_id) {
             cursor.position = position;
             cursor.anchor = if position != anchor {
                 Some(anchor)
@@ -376,7 +380,7 @@ fn convert_block_selection_to_cursors(state: &mut EditorState) -> Vec<Event> {
     }
 
     // Add new cursors for remaining lines
-    let mut next_cursor_id = state.cursors.count();
+    let mut next_cursor_id = cursors.count();
     for (position, anchor) in cursor_positions.into_iter().skip(1) {
         let cursor_id = CursorId(next_cursor_id);
         next_cursor_id += 1;
@@ -593,9 +597,9 @@ struct InsertCursorData {
 }
 
 /// Collect cursor data needed for character insertion.
-fn collect_insert_cursor_data(state: &mut EditorState) -> Vec<InsertCursorData> {
+fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec<InsertCursorData> {
     // Collect cursors and sort by the effective insert position (reverse order)
-    let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
+    let mut cursor_vec: Vec<_> = cursors.iter().collect();
     cursor_vec.sort_by_key(|(_, c)| {
         let insert_pos = c.selection_range().map(|r| r.start).unwrap_or(c.position);
         std::cmp::Reverse(insert_pos)
@@ -664,6 +668,7 @@ fn collect_insert_cursor_data(state: &mut EditorState) -> Vec<InsertCursorData> 
 /// Handle InsertChar action - insert character at each cursor position.
 fn insert_char_events(
     state: &mut EditorState,
+    cursors: &Cursors,
     events: &mut Vec<Event>,
     ch: char,
     tab_size: usize,
@@ -671,7 +676,7 @@ fn insert_char_events(
 ) {
     let is_closing_delimiter = matches!(ch, '}' | ')' | ']');
     let auto_close_char = get_auto_close_char(ch, auto_indent, &state.language);
-    let cursor_data = collect_insert_cursor_data(state);
+    let cursor_data = collect_insert_cursor_data(state, cursors);
 
     for data in cursor_data {
         // Delete selection if present
@@ -756,12 +761,15 @@ fn max_cursor_position(buffer: &Buffer) -> usize {
 
 /// Transform selected text (or current word if no selection) using the given transform function.
 /// Processes cursors in reverse order to avoid position shifts.
-fn transform_case<F>(state: &mut EditorState, events: &mut Vec<Event>, transform: F)
-where
+fn transform_case<F>(
+    state: &mut EditorState,
+    cursors: &mut Cursors,
+    events: &mut Vec<Event>,
+    transform: F,
+) where
     F: Fn(&str) -> String,
 {
-    let mut selections: Vec<_> = state
-        .cursors
+    let mut selections: Vec<_> = cursors
         .iter()
         .map(|(cursor_id, cursor)| {
             if let Some(range) = cursor.selection_range() {
@@ -810,6 +818,7 @@ where
 /// * `None` - If the action doesn't generate events (like Quit, Save, etc.)
 pub fn action_to_events(
     state: &mut EditorState,
+    cursors: &mut Cursors,
     action: Action,
     tab_size: usize,
     auto_indent: bool,
@@ -826,9 +835,9 @@ pub fn action_to_events(
     // Convert block selection to multi-cursor before processing editing actions
     // This allows normal multi-cursor logic to handle typing, deletion, etc.
     if action.is_editing() {
-        let cursor_events = convert_block_selection_to_cursors(state);
+        let cursor_events = convert_block_selection_to_cursors(state, cursors);
         for event in &cursor_events {
-            state.apply(event);
+            state.apply(cursors, event);
         }
         events.extend(cursor_events);
     }
@@ -836,12 +845,12 @@ pub fn action_to_events(
     match action {
         // Character input - insert at each cursor
         Action::InsertChar(ch) => {
-            insert_char_events(state, &mut events, ch, tab_size, auto_indent);
+            insert_char_events(state, cursors, &mut events, ch, tab_size, auto_indent);
         }
 
         Action::InsertNewline => {
             // Sort cursors by position (reverse order) to avoid position shifts
-            let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
+            let mut cursor_vec: Vec<_> = cursors.iter().collect();
             cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
 
             // Collect deletions and positions for indentation
@@ -994,7 +1003,7 @@ pub fn action_to_events(
                 // (not the closing bracket line where it ends up after insert)
                 if let Some(cursor_line_end) = cursor_line_end_position {
                     // Get current cursor state to build the MoveCursor event
-                    if let Some(cursor) = state.cursors.get(cursor_id) {
+                    if let Some(cursor) = cursors.get(cursor_id) {
                         events.push(Event::MoveCursor {
                             cursor_id,
                             old_position: cursor_after_insert,
@@ -1016,7 +1025,7 @@ pub fn action_to_events(
             let mut all_line_deletions: BTreeMap<usize, (usize, String)> = BTreeMap::new();
             let mut cursor_info = Vec::new();
 
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let has_selection = cursor.selection_range().is_some();
 
                 let (start_pos, end_pos) = if let Some(range) = cursor.selection_range() {
@@ -1068,7 +1077,7 @@ pub fn action_to_events(
             }
 
             // Create delete events in reverse order to avoid position shifts
-            let first_cursor_id = state.cursors.iter().next().unwrap().0;
+            let first_cursor_id = cursors.iter().next().unwrap().0;
             for (&line_start, (chars_to_remove, deleted_text)) in all_line_deletions.iter().rev() {
                 events.push(Event::Delete {
                     range: line_start..line_start + chars_to_remove,
@@ -1143,8 +1152,7 @@ pub fn action_to_events(
             };
 
             // Check if any cursor has a selection
-            let has_selection = state
-                .cursors
+            let has_selection = cursors
                 .iter()
                 .any(|(_, cursor)| cursor.selection_range().is_some());
 
@@ -1155,7 +1163,7 @@ pub fn action_to_events(
                 let mut all_line_starts = BTreeSet::new();
                 let mut cursor_info = Vec::new();
 
-                for (cursor_id, cursor) in state.cursors.iter() {
+                for (cursor_id, cursor) in cursors.iter() {
                     if let Some(range) = cursor.selection_range() {
                         let (start_pos, end_pos) = (range.start, range.end);
 
@@ -1184,7 +1192,7 @@ pub fn action_to_events(
 
                 // Create insert events for all line starts in reverse order
                 // This ensures later positions aren't shifted by earlier insertions
-                let first_cursor_id = state.cursors.iter().next().unwrap().0;
+                let first_cursor_id = cursors.iter().next().unwrap().0;
                 for &line_start in all_line_starts.iter().rev() {
                     events.push(Event::Insert {
                         position: line_start,
@@ -1224,7 +1232,7 @@ pub fn action_to_events(
             } else {
                 // No selection - insert tab character at cursor position
                 // Sort cursors by position (reverse order) to avoid position shifts
-                let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
+                let mut cursor_vec: Vec<_> = cursors.iter().collect();
                 cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
 
                 // Insert tabs
@@ -1241,7 +1249,7 @@ pub fn action_to_events(
         // Basic movement - move each cursor
         // Uses grapheme cluster boundaries for proper handling of combining characters
         Action::MoveLeft => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = state.buffer.prev_grapheme_boundary(cursor.position);
                 let new_pos = adjust_position_for_crlf_left(&state.buffer, new_pos);
 
@@ -1264,7 +1272,7 @@ pub fn action_to_events(
         }
 
         Action::MoveRight => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
                 let new_pos = next_position_for_crlf(&state.buffer, cursor.position, max_pos);
 
@@ -1287,7 +1295,7 @@ pub fn action_to_events(
         }
 
         Action::MoveUp => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 // Calculate visual column first (iterator is dropped after this call)
                 let (current_visual_column, _) = calculate_visual_column(
                     &mut state.buffer,
@@ -1334,7 +1342,7 @@ pub fn action_to_events(
         }
 
         Action::MoveDown => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 // Calculate visual column first (iterator is dropped after this call)
                 let (current_visual_column, _) = calculate_visual_column(
                     &mut state.buffer,
@@ -1384,7 +1392,7 @@ pub fn action_to_events(
         }
 
         Action::MoveLineStart => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let mut iter = state
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
@@ -1409,7 +1417,7 @@ pub fn action_to_events(
         }
 
         Action::MoveLineEnd => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let mut iter = state
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
@@ -1438,7 +1446,7 @@ pub fn action_to_events(
         }
 
         Action::MoveWordLeft => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = find_word_start_left(&state.buffer, cursor.position);
                 // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
@@ -1459,7 +1467,7 @@ pub fn action_to_events(
         }
 
         Action::MoveWordRight => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = find_word_start_right(&state.buffer, cursor.position);
                 // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
@@ -1480,7 +1488,7 @@ pub fn action_to_events(
         }
 
         Action::MoveWordEnd => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = find_word_end_right(&state.buffer, cursor.position);
                 // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
@@ -1501,7 +1509,7 @@ pub fn action_to_events(
         }
 
         Action::MoveDocumentStart => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
                     None
@@ -1521,7 +1529,7 @@ pub fn action_to_events(
         }
 
         Action::MoveDocumentEnd => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
                 // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
@@ -1542,7 +1550,7 @@ pub fn action_to_events(
         }
 
         Action::MovePageUp => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 // Move up by viewport height
                 let lines_to_move = viewport_height.saturating_sub(1) as usize;
                 let mut iter = state
@@ -1588,7 +1596,7 @@ pub fn action_to_events(
         }
 
         Action::MovePageDown => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 // Move down by viewport height
                 let lines_to_move = viewport_height.saturating_sub(1) as usize;
                 let mut iter = state
@@ -1640,7 +1648,7 @@ pub fn action_to_events(
         // Selection movement - same as regular movement but keeps anchor
         // Uses grapheme cluster boundaries for proper handling of combining characters
         Action::SelectLeft => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = state.buffer.prev_grapheme_boundary(cursor.position);
                 let new_pos = adjust_position_for_crlf_left(&state.buffer, new_pos);
 
@@ -1658,7 +1666,7 @@ pub fn action_to_events(
         }
 
         Action::SelectRight => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
                 let new_pos = next_position_for_crlf(&state.buffer, cursor.position, max_pos);
 
@@ -1676,7 +1684,7 @@ pub fn action_to_events(
         }
 
         Action::SelectUp => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let mut iter = state
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
@@ -1709,7 +1717,7 @@ pub fn action_to_events(
         }
 
         Action::SelectDown => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let mut iter = state
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
@@ -1745,7 +1753,7 @@ pub fn action_to_events(
 
         Action::SelectToParagraphUp => {
             // Jump to previous empty line while extending selection
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
                 let mut iter = state
                     .buffer
@@ -1779,7 +1787,7 @@ pub fn action_to_events(
 
         Action::SelectToParagraphDown => {
             // Jump to next empty line while extending selection
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
                 let mut iter = state
                     .buffer
@@ -1815,7 +1823,7 @@ pub fn action_to_events(
         }
 
         Action::SelectLineStart => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let mut iter = state
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
@@ -1836,7 +1844,7 @@ pub fn action_to_events(
         }
 
         Action::SelectLineEnd => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let mut iter = state
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
@@ -1861,7 +1869,7 @@ pub fn action_to_events(
         }
 
         Action::SelectWordLeft => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = find_word_start_left(&state.buffer, cursor.position);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
                 events.push(Event::MoveCursor {
@@ -1877,7 +1885,7 @@ pub fn action_to_events(
         }
 
         Action::SelectWordRight => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = find_word_start_right(&state.buffer, cursor.position);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
                 events.push(Event::MoveCursor {
@@ -1893,7 +1901,7 @@ pub fn action_to_events(
         }
 
         Action::SelectWordEnd => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = find_word_end_right(&state.buffer, cursor.position);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
                 events.push(Event::MoveCursor {
@@ -1909,7 +1917,7 @@ pub fn action_to_events(
         }
 
         Action::SelectDocumentStart => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
                 events.push(Event::MoveCursor {
                     cursor_id,
@@ -1924,7 +1932,7 @@ pub fn action_to_events(
         }
 
         Action::SelectDocumentEnd => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
                 events.push(Event::MoveCursor {
@@ -1940,7 +1948,7 @@ pub fn action_to_events(
         }
 
         Action::SelectPageUp => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let lines_to_move = viewport_height.saturating_sub(1) as usize;
                 let mut iter = state
                     .buffer
@@ -1980,7 +1988,7 @@ pub fn action_to_events(
         }
 
         Action::SelectPageDown => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 let lines_to_move = viewport_height.saturating_sub(1) as usize;
                 let mut iter = state
                     .buffer
@@ -2025,8 +2033,8 @@ pub fn action_to_events(
 
         Action::SelectAll => {
             // Select entire buffer for primary cursor only
-            let primary_id = state.cursors.primary_id();
-            let primary_cursor = state.cursors.primary();
+            let primary_id = cursors.primary_id();
+            let primary_cursor = cursors.primary();
             let max_pos = max_cursor_position(&state.buffer);
             events.push(Event::MoveCursor {
                 cursor_id: primary_id,
@@ -2041,7 +2049,7 @@ pub fn action_to_events(
         }
 
         Action::SelectWord => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 // Find word boundaries at current position
                 // First find the start of the word we're in/adjacent to
                 let word_start = find_word_start(&state.buffer, cursor.position);
@@ -2065,7 +2073,7 @@ pub fn action_to_events(
 
         Action::DeleteBackward => {
             // Sort cursors by position (reverse order) to avoid position shifts
-            let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
+            let mut cursor_vec: Vec<_> = cursors.iter().collect();
             cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
 
             // Collect all deletions first, checking for auto-pair deletion
@@ -2127,7 +2135,7 @@ pub fn action_to_events(
 
         Action::DeleteForward => {
             // Sort cursors by position (reverse order) to avoid position shifts
-            let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
+            let mut cursor_vec: Vec<_> = cursors.iter().collect();
             cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
 
             let buffer_len = state.buffer.len();
@@ -2157,8 +2165,7 @@ pub fn action_to_events(
 
         Action::DeleteWordBackward => {
             // Collect ranges first to avoid borrow checker issues
-            let deletions: Vec<_> = state
-                .cursors
+            let deletions: Vec<_> = cursors
                 .iter()
                 .filter_map(|(cursor_id, cursor)| {
                     if let Some(range) = cursor.selection_range() {
@@ -2180,8 +2187,7 @@ pub fn action_to_events(
 
         Action::DeleteWordForward => {
             // Collect ranges first to avoid borrow checker issues
-            let deletions: Vec<_> = state
-                .cursors
+            let deletions: Vec<_> = cursors
                 .iter()
                 .filter_map(|(cursor_id, cursor)| {
                     if let Some(range) = cursor.selection_range() {
@@ -2203,8 +2209,7 @@ pub fn action_to_events(
 
         Action::DeleteLine => {
             // Collect line ranges first to avoid borrow checker issues
-            let deletions: Vec<_> = state
-                .cursors
+            let deletions: Vec<_> = cursors
                 .iter()
                 .filter_map(|(cursor_id, cursor)| {
                     let mut iter = state
@@ -2224,8 +2229,7 @@ pub fn action_to_events(
 
         Action::DeleteToLineEnd => {
             // Delete from cursor to end of line (like Ctrl+K in emacs/bash)
-            let deletions: Vec<_> = state
-                .cursors
+            let deletions: Vec<_> = cursors
                 .iter()
                 .filter_map(|(cursor_id, cursor)| {
                     let mut iter = state
@@ -2254,8 +2258,7 @@ pub fn action_to_events(
 
         Action::DeleteToLineStart => {
             // Delete from start of line to cursor (like Ctrl+U in bash)
-            let deletions: Vec<_> = state
-                .cursors
+            let deletions: Vec<_> = cursors
                 .iter()
                 .filter_map(|(cursor_id, cursor)| {
                     let iter = state
@@ -2276,6 +2279,7 @@ pub fn action_to_events(
         Action::MoveLineUp => {
             move_lines(
                 state,
+                cursors,
                 &mut events,
                 LineMoveDirection::Up,
                 estimated_line_length,
@@ -2285,6 +2289,7 @@ pub fn action_to_events(
         Action::MoveLineDown => {
             move_lines(
                 state,
+                cursors,
                 &mut events,
                 LineMoveDirection::Down,
                 estimated_line_length,
@@ -2294,11 +2299,7 @@ pub fn action_to_events(
         Action::TransposeChars => {
             // Transpose the character before the cursor with the one at the cursor
             // Collect cursor positions first to avoid borrow issues
-            let cursor_positions: Vec<_> = state
-                .cursors
-                .iter()
-                .map(|(id, c)| (id, c.position))
-                .collect();
+            let cursor_positions: Vec<_> = cursors.iter().map(|(id, c)| (id, c.position)).collect();
 
             for (cursor_id, pos) in cursor_positions {
                 // Need at least 2 characters: one before and one at cursor
@@ -2325,19 +2326,18 @@ pub fn action_to_events(
         }
 
         Action::ToUpperCase => {
-            transform_case(state, &mut events, |s| s.to_uppercase());
+            transform_case(state, cursors, &mut events, |s| s.to_uppercase());
         }
 
         Action::ToLowerCase => {
-            transform_case(state, &mut events, |s| s.to_lowercase());
+            transform_case(state, cursors, &mut events, |s| s.to_lowercase());
         }
 
         Action::SortLines => {
             // Sort selected lines alphabetically
             // Process cursors in reverse order to avoid position shifts
             let line_ending = state.buffer.line_ending().as_str();
-            let mut selections: Vec<_> = state
-                .cursors
+            let mut selections: Vec<_> = cursors
                 .iter()
                 .filter_map(|(cursor_id, cursor)| {
                     cursor.selection_range().map(|range| (cursor_id, range))
@@ -2379,7 +2379,7 @@ pub fn action_to_events(
             // Insert a newline at cursor position but don't move cursor
             // (like pressing Enter but staying on current line)
             let line_ending = state.buffer.line_ending().as_str();
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 events.push(Event::Insert {
                     position: cursor.position,
                     text: line_ending.to_string(),
@@ -2391,8 +2391,7 @@ pub fn action_to_events(
         Action::DuplicateLine => {
             // Duplicate the current line (or selected lines) below
             // Process cursors in reverse order to avoid position shifts
-            let mut cursor_data: Vec<_> = state
-                .cursors
+            let mut cursor_data: Vec<_> = cursors
                 .iter()
                 .filter_map(|(cursor_id, cursor)| {
                     if let Some(range) = cursor.selection_range() {
@@ -2453,7 +2452,7 @@ pub fn action_to_events(
                 } else {
                     line_end + line_ending.len()
                 };
-                let cursor = state.cursors.get(cursor_id);
+                let cursor = cursors.get(cursor_id);
                 let old_sticky = cursor.map(|c| c.sticky_column).unwrap_or(0);
                 events.push(Event::MoveCursor {
                     cursor_id,
@@ -2476,7 +2475,7 @@ pub fn action_to_events(
         Action::SetMark => {
             // Set the selection anchor at the current cursor position
             // This starts a selection that extends as the cursor moves
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 events.push(Event::SetAnchor {
                     cursor_id,
                     position: cursor.position,
@@ -2488,14 +2487,13 @@ pub fn action_to_events(
             // Generate RemoveCursor events for all cursors except the first (original) one
             // Also clear anchor and reset deselect_on_move on all cursors (cancels Emacs mark mode)
             // Find the first cursor ID (lowest ID = original cursor)
-            let first_id = state
-                .cursors
+            let first_id = cursors
                 .iter()
                 .map(|(id, _)| id)
                 .min_by_key(|id| id.0)
                 .expect("Should have at least one cursor");
 
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 if cursor_id != first_id {
                     events.push(Event::RemoveCursor {
                         cursor_id,
@@ -2730,24 +2728,24 @@ pub fn action_to_events(
 
         // Block/rectangular selection actions
         Action::BlockSelectLeft => {
-            block_select_action(state, &mut events, BlockDirection::Left);
+            block_select_action(state, cursors, &mut events, BlockDirection::Left);
         }
 
         Action::BlockSelectRight => {
-            block_select_action(state, &mut events, BlockDirection::Right);
+            block_select_action(state, cursors, &mut events, BlockDirection::Right);
         }
 
         Action::BlockSelectUp => {
-            block_select_action(state, &mut events, BlockDirection::Up);
+            block_select_action(state, cursors, &mut events, BlockDirection::Up);
         }
 
         Action::BlockSelectDown => {
-            block_select_action(state, &mut events, BlockDirection::Down);
+            block_select_action(state, cursors, &mut events, BlockDirection::Down);
         }
 
         Action::SelectLine => {
             // Select the entire line for each cursor
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 // Use iterator to get line bounds
                 let mut iter = state
                     .buffer
@@ -2771,7 +2769,7 @@ pub fn action_to_events(
 
         Action::ExpandSelection => {
             // Expand selection for each cursor
-            for (cursor_id, cursor) in state.cursors.iter() {
+            for (cursor_id, cursor) in cursors.iter() {
                 if let Some(anchor) = cursor.anchor {
                     // Already have a selection - expand by one word to the right
                     // First move to the start of the next word, then to its end
@@ -2831,6 +2829,7 @@ mod tests {
         Arc::new(StdFileSystem)
     }
     use super::*;
+    use crate::model::cursor::Cursors;
     use crate::model::event::{CursorId, Event};
     use crate::state::EditorState;
 
@@ -2842,41 +2841,56 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert "Hello\nWorld"
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "Hello\nWorld".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "Hello\nWorld".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         assert_eq!(state.buffer.to_string().unwrap(), "Hello\nWorld");
-        assert_eq!(state.cursors.primary().position, 11);
+        assert_eq!(cursors.primary().position, 11);
 
         // Move cursor to position 6 (beginning of "World")
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 0,
-            new_position: 6,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 0,
+                new_position: 6,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
-        assert_eq!(state.cursors.primary().position, 6);
+        assert_eq!(cursors.primary().position, 6);
 
         // Press Backspace - should delete the newline at position 5
-        let events =
-            action_to_events(&mut state, Action::DeleteBackward, 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::DeleteBackward,
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
         println!("Generated events: {:?}", events);
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "HelloWorld");
-        assert_eq!(state.cursors.primary().position, 5);
+        assert_eq!(cursors.primary().position, 5);
     }
 
     #[test]
@@ -2887,29 +2901,37 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert three lines
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "Line1\nLine2\nLine3".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "Line1\nLine2\nLine3".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Move cursor to start of file
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 17,
-            new_position: 0,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 17,
+                new_position: 0,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
-        assert_eq!(state.cursors.primary().position, 0);
+        assert_eq!(cursors.primary().position, 0);
 
         // Move down - should go to position 6 (start of Line2)
-        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveDown, 4, false, 80, 24).unwrap();
         assert_eq!(events.len(), 1);
 
         if let Event::MoveCursor { new_position, .. } = &events[0] {
@@ -2918,11 +2940,12 @@ mod tests {
             panic!("Expected MoveCursor event");
         }
 
-        state.apply(&events[0]);
-        assert_eq!(state.cursors.primary().position, 6);
+        state.apply(&mut cursors, &events[0]);
+        assert_eq!(cursors.primary().position, 6);
 
         // Move down again - should go to position 12 (start of Line3)
-        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveDown, 4, false, 80, 24).unwrap();
         assert_eq!(events.len(), 1);
 
         if let Event::MoveCursor { new_position, .. } = &events[0] {
@@ -2940,30 +2963,47 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "A\nB".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "A\nB".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: state.cursors.primary().position,
-            new_position: 2, // "B"
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        let pos = cursors.primary().position;
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: pos,
+                new_position: 2, // "B"
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
-        let events = action_to_events(&mut state, Action::MoveLineUp, 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::MoveLineUp,
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "B\nA");
-        assert_eq!(state.cursors.primary().position, 0);
+        assert_eq!(cursors.primary().position, 0);
     }
 
     #[test]
@@ -2974,30 +3014,47 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "A\nB".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "A\nB".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: state.cursors.primary().position,
-            new_position: 0, // "A"
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        let pos = cursors.primary().position;
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: pos,
+                new_position: 0, // "A"
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
-        let events = action_to_events(&mut state, Action::MoveLineDown, 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::MoveLineDown,
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "B\nA");
-        assert_eq!(state.cursors.primary().position, 2);
+        assert_eq!(cursors.primary().position, 2);
     }
 
     #[test]
@@ -3008,27 +3065,44 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "A\nB".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "A\nB".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: state.cursors.primary().position,
-            new_position: 0,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        let pos = cursors.primary().position;
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: pos,
+                new_position: 0,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
-        let events = action_to_events(&mut state, Action::MoveLineUp, 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::MoveLineUp,
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
         assert!(events.is_empty());
         assert_eq!(state.buffer.to_string().unwrap(), "A\nB");
-        assert_eq!(state.cursors.primary().position, 0);
+        assert_eq!(cursors.primary().position, 0);
     }
 
     #[test]
@@ -3039,27 +3113,44 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "A\nB".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "A\nB".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: state.cursors.primary().position,
-            new_position: 2, // "B"
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        let pos = cursors.primary().position;
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: pos,
+                new_position: 2, // "B"
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
-        let events = action_to_events(&mut state, Action::MoveLineDown, 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::MoveLineDown,
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
         assert!(events.is_empty());
         assert_eq!(state.buffer.to_string().unwrap(), "A\nB");
-        assert_eq!(state.cursors.primary().position, 2);
+        assert_eq!(cursors.primary().position, 2);
     }
 
     #[test]
@@ -3070,37 +3161,57 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "A\nB\nC\nD".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "A\nB\nC\nD".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: state.cursors.primary().position,
-            new_position: 2, // "B"
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        let pos = cursors.primary().position;
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: pos,
+                new_position: 2, // "B"
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
-        state.apply(&Event::AddCursor {
-            position: 6, // "D"
-            cursor_id: CursorId(1),
-            anchor: None,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::AddCursor {
+                position: 6, // "D"
+                cursor_id: CursorId(1),
+                anchor: None,
+            },
+        );
 
-        let events = action_to_events(&mut state, Action::MoveLineUp, 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::MoveLineUp,
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "B\nA\nD\nC");
-        assert_eq!(state.cursors.get(CursorId(0)).unwrap().position, 0);
-        assert_eq!(state.cursors.get(CursorId(1)).unwrap().position, 4);
+        assert_eq!(cursors.get(CursorId(0)).unwrap().position, 0);
+        assert_eq!(cursors.get(CursorId(1)).unwrap().position, 4);
     }
 
     #[test]
@@ -3123,25 +3234,39 @@ mod tests {
             TextBuffer::load_from_file(&test_file, large_file_threshold, test_fs()).unwrap();
 
         let mut state = EditorState::new(80, 24, large_file_threshold, test_fs());
+        let mut cursors = Cursors::new();
         state.buffer = buffer;
 
         let line_len = "Line 0000\n".len();
         let target_line = 120usize;
         let target_start = line_len * target_line;
 
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: state.cursors.primary().position,
-            new_position: target_start,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        let pos = cursors.primary().position;
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: pos,
+                new_position: target_start,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
-        let events = action_to_events(&mut state, Action::MoveLineUp, 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::MoveLineUp,
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         let line_119_start = line_len * (target_line - 1);
@@ -3173,6 +3298,7 @@ mod tests {
             TextBuffer::load_from_file(&test_file, large_file_threshold, test_fs()).unwrap();
 
         let mut state = EditorState::new(80, 24, large_file_threshold, test_fs());
+        let mut cursors = Cursors::new();
         state.buffer = buffer;
 
         let line_len = "Line 0000\n".len();
@@ -3181,19 +3307,32 @@ mod tests {
         let selection_start = line_len * start_line;
         let selection_end = line_len * end_line_exclusive;
 
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: state.cursors.primary().position,
-            new_position: selection_end,
-            old_anchor: None,
-            new_anchor: Some(selection_start),
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        let pos = cursors.primary().position;
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: pos,
+                new_position: selection_end,
+                old_anchor: None,
+                new_anchor: Some(selection_start),
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
-        let events = action_to_events(&mut state, Action::MoveLineDown, 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::MoveLineDown,
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         let line_50 = state.get_text_range(selection_start, selection_start + line_len);
@@ -3222,25 +3361,30 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert three lines
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "Line1\nLine2\nLine3".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "Line1\nLine2\nLine3".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Cursor is at end (position 17)
         // Text structure: "Line1\nLine2\nLine3"
         // Positions: 0-4 (Line1), 5 (\n), 6-10 (Line2), 11 (\n), 12-16 (Line3)
-        assert_eq!(state.cursors.primary().position, 17);
+        assert_eq!(cursors.primary().position, 17);
         assert_eq!(state.buffer.to_string().unwrap(), "Line1\nLine2\nLine3");
 
         // Move up - cursor is at end of Line3 (position 17, column 5)
         // Should go to end of Line2 (position 11, which is the newline, BUT we want column 5 which is position 11)
         // Wait, Line2 has content "Line2" (5 chars), so column 5 is position 6+5=11 (the newline)
         // This is technically correct but weird - we're on the newline
-        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveUp, 4, false, 80, 24).unwrap();
         assert_eq!(events.len(), 1);
 
         if let Event::MoveCursor { new_position, .. } = &events[0] {
@@ -3255,13 +3399,14 @@ mod tests {
             panic!("Expected MoveCursor event");
         }
 
-        state.apply(&events[0]);
+        state.apply(&mut cursors, &events[0]);
 
         // Move up again - from position 11 (newline after Line2)
         // Current line is Line2 (starts at 6), column is 11-6=5
         // Previous line is Line1 (starts at 0), content "Line1" has length 5
         // So we go to position 0 + min(5, 5) = 5 (the newline after Line1)
-        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveUp, 4, false, 80, 24).unwrap();
         assert_eq!(events.len(), 1);
 
         if let Event::MoveCursor { new_position, .. } = &events[0] {
@@ -3282,29 +3427,37 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert lines with different lengths
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "12345\n123\n12345".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "12345\n123\n12345".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Move cursor to position 3 (column 3 of first line)
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 15,
-            new_position: 3,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 15,
+                new_position: 3,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
-        assert_eq!(state.cursors.primary().position, 3);
+        assert_eq!(cursors.primary().position, 3);
 
         // Move down - should go to position 9 (column 3 of second line, which is end of "123")
-        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveDown, 4, false, 80, 24).unwrap();
         assert_eq!(events.len(), 1);
 
         if let Event::MoveCursor {
@@ -3325,10 +3478,11 @@ mod tests {
             panic!("Expected MoveCursor event");
         }
 
-        state.apply(&events[0]);
+        state.apply(&mut cursors, &events[0]);
 
         // Move down again - should go to position 13 (column 3 of third line)
-        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveDown, 4, false, 80, 24).unwrap();
         assert_eq!(events.len(), 1);
 
         if let Event::MoveCursor {
@@ -3352,29 +3506,37 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert lines with different lengths
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "12345\n123\n12345".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "12345\n123\n12345".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Move cursor to position 13 (column 3 of third line)
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 15,
-            new_position: 13,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 15,
+                new_position: 13,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
-        assert_eq!(state.cursors.primary().position, 13);
+        assert_eq!(cursors.primary().position, 13);
 
         // Move up - should go to position 9 (column 3 of second line, which is end of "123")
-        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveUp, 4, false, 80, 24).unwrap();
         assert_eq!(events.len(), 1);
 
         if let Event::MoveCursor {
@@ -3395,10 +3557,11 @@ mod tests {
             panic!("Expected MoveCursor event");
         }
 
-        state.apply(&events[0]);
+        state.apply(&mut cursors, &events[0]);
 
         // Move up again - should go to position 3 (column 3 of first line)
-        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveUp, 4, false, 80, 24).unwrap();
         assert_eq!(events.len(), 1);
 
         if let Event::MoveCursor {
@@ -3422,27 +3585,35 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert two lines
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "First\nSecond".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "First\nSecond".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Move cursor to start (position 0)
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 12,
-            new_position: 0,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 12,
+                new_position: 0,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         // Move down - should go to position 6 (start of second line)
-        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveDown, 4, false, 80, 24).unwrap();
         assert_eq!(events.len(), 1);
 
         if let Event::MoveCursor { new_position, .. } = &events[0] {
@@ -3460,27 +3631,35 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert two lines
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "First\nSecond".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "First\nSecond".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Move cursor to start of second line (position 6)
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 12,
-            new_position: 6,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 12,
+                new_position: 6,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         // Move up - should go to position 0 (start of first line)
-        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveUp, 4, false, 80, 24).unwrap();
         assert_eq!(events.len(), 1);
 
         if let Event::MoveCursor { new_position, .. } = &events[0] {
@@ -3501,35 +3680,44 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert lines with empty line in middle
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "Line1\n\nLine3".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "Line1\n\nLine3".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Move cursor to start
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 12,
-            new_position: 0,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 12,
+                new_position: 0,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         // Move down - should go to position 6 (empty line)
-        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveDown, 4, false, 80, 24).unwrap();
         if let Event::MoveCursor { new_position, .. } = &events[0] {
             assert_eq!(*new_position, 6, "Cursor should move to empty line");
         }
 
-        state.apply(&events[0]);
+        state.apply(&mut cursors, &events[0]);
 
         // Move down again - should go to position 7 (start of Line3)
-        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveDown, 4, false, 80, 24).unwrap();
         if let Event::MoveCursor { new_position, .. } = &events[0] {
             assert_eq!(*new_position, 7, "Cursor should move to Line3");
         }
@@ -3543,27 +3731,35 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert a single line
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "Hello".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "Hello".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Set cursor at end (position 5)
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 5,
-            new_position: 5,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 5,
+                new_position: 5,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         // Try to move up (no previous line exists)
-        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveUp, 4, false, 80, 24).unwrap();
         assert_eq!(
             events.len(),
             0,
@@ -3571,7 +3767,8 @@ mod tests {
         );
 
         // Try to move down (no next line exists)
-        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveDown, 4, false, 80, 24).unwrap();
         assert_eq!(
             events.len(),
             0,
@@ -3589,12 +3786,16 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "Line1\nLine2\nLine3".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "Line1\nLine2\nLine3".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // First, let's verify what offset_to_position returns for key positions
         // Text structure: "Line1\nLine2\nLine3"
@@ -3663,39 +3864,55 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "HelloNew Line\nWorld!".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "HelloNew Line\nWorld!".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Start at position 0
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 20,
-            new_position: 0,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 20,
+                new_position: 0,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         // Move to line end
-        let events = action_to_events(&mut state, Action::MoveLineEnd, 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::MoveLineEnd,
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
             println!("MoveLineEnd event: {:?}", event);
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         println!(
             "After MoveLineEnd: cursor at {}",
-            state.cursors.primary().position
+            cursors.primary().position
         );
         // "HelloNew Line\n" - the visible part is 13 chars (0-12)
         // MoveLineEnd should put cursor at position 13 (after the visible text, before/on the newline)
         assert_eq!(
-            state.cursors.primary().position,
+            cursors.primary().position,
             13,
             "MoveLineEnd should position at end of visible text"
         );
@@ -3710,15 +3927,19 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "HelloNew Line\nWorld!".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "HelloNew Line\nWorld!".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Cursor is at EOF (position 20)
-        assert_eq!(state.cursors.primary().position, 20);
+        assert_eq!(cursors.primary().position, 20);
         println!("Starting at EOF: position 20");
 
         // Check what line_iterator does at EOF
@@ -3729,19 +3950,28 @@ mod tests {
         );
 
         // Move to line start
-        let events = action_to_events(&mut state, Action::MoveLineStart, 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::MoveLineStart,
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
             println!("MoveLineStart event from EOF: {:?}", event);
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         println!(
             "After MoveLineStart from EOF: cursor at {}",
-            state.cursors.primary().position
+            cursors.primary().position
         );
         // Should move to position 14 (start of "World!" line)
         assert_eq!(
-            state.cursors.primary().position,
+            cursors.primary().position,
             14,
             "MoveLineStart from EOF should go to start of last line"
         );
@@ -3773,27 +4003,32 @@ mod tests {
 
         // Create editor state with the loaded buffer
         let mut state = EditorState::new(80, 24, large_file_threshold, test_fs());
+        let mut cursors = Cursors::new();
         state.buffer = buffer;
 
         // Move cursor to near the end (line 90)
         let target_line_start: usize = content.lines().take(90).map(|l| l.len() + 1).sum();
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 0,
-            new_position: target_line_start,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 0,
+                new_position: target_line_start,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         println!(
             "Cursor at line 90, position: {}",
-            state.cursors.primary().position
+            cursors.primary().position
         );
 
         // Try to move up - this should work even if chunks aren't loaded
-        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveUp, 4, false, 80, 24).unwrap();
         println!("MoveUp events: {:?}", events);
 
         assert!(
@@ -3802,15 +4037,12 @@ mod tests {
         );
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
-        println!(
-            "After MoveUp: cursor at {}",
-            state.cursors.primary().position
-        );
+        println!("After MoveUp: cursor at {}", cursors.primary().position);
         assert!(
-            state.cursors.primary().position < target_line_start,
+            cursors.primary().position < target_line_start,
             "Cursor should have moved up"
         );
 
@@ -3827,30 +4059,37 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert "HelloNew Line\nWorld!"
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "HelloNew Line\nWorld!".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "HelloNew Line\nWorld!".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Text structure: "HelloNew Line\nWorld!"
         // Positions: 0-12 (HelloNew Line), 13 (\n), 14-19 (World!)
         assert_eq!(state.buffer.to_string().unwrap(), "HelloNew Line\nWorld!");
 
         // Move cursor to position 13 (the newline after "HelloNew Line")
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 20,
-            new_position: 13,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 20,
+                new_position: 13,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
-        assert_eq!(state.cursors.primary().position, 13);
+        assert_eq!(cursors.primary().position, 13);
         println!("Starting position: 13 (on the newline)");
 
         // line_iterator(13) should position at...?
@@ -3861,7 +4100,8 @@ mod tests {
         );
 
         // Move down to second line
-        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveDown, 4, false, 80, 24).unwrap();
         println!("MoveDown events: {:?}", events);
 
         if events.is_empty() {
@@ -3869,17 +4109,17 @@ mod tests {
         }
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
         println!(
             "After MoveDown from position 13: cursor at {}",
-            state.cursors.primary().position
+            cursors.primary().position
         );
 
         // We expect to be at position 14 (start of "World!" line) or somewhere on that line
         // NOT at position 20 (EOF)
         assert!(
-            state.cursors.primary().position >= 14 && state.cursors.primary().position <= 20,
+            cursors.primary().position >= 14 && cursors.primary().position <= 20,
             "After MoveDown from newline, cursor should be on the next line, not at EOF"
         );
     }
@@ -3893,85 +4133,108 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert "HelloNew Line\nWorld!"
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "HelloNew Line\nWorld!".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "HelloNew Line\nWorld!".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Text structure: "HelloNew Line\nWorld!"
         // Positions: 0-12 (HelloNew Line), 13 (\n), 14-19 (World!)
         assert_eq!(state.buffer.to_string().unwrap(), "HelloNew Line\nWorld!");
-        assert_eq!(state.cursors.primary().position, 20); // End of text
+        assert_eq!(cursors.primary().position, 20); // End of text
 
         // Move up to first line
-        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveUp, 4, false, 80, 24).unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
-        println!(
-            "After MoveUp: cursor at {}",
-            state.cursors.primary().position
-        );
+        println!("After MoveUp: cursor at {}", cursors.primary().position);
 
         // Move to end of first line
-        let events = action_to_events(&mut state, Action::MoveLineEnd, 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::MoveLineEnd,
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
         assert_eq!(
-            state.cursors.primary().position,
+            cursors.primary().position,
             13,
             "Should be at end of first line (position 13, the newline)"
         );
 
         // Move down to second line
-        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80, 24).unwrap();
+        let events =
+            action_to_events(&mut state, &mut cursors, Action::MoveDown, 4, false, 80, 24).unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
-        println!(
-            "After MoveDown: cursor at {}",
-            state.cursors.primary().position
-        );
+        println!("After MoveDown: cursor at {}", cursors.primary().position);
 
         // Move to start of line (Home)
-        let events = action_to_events(&mut state, Action::MoveLineStart, 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::MoveLineStart,
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
-        println!("After Home: cursor at {}", state.cursors.primary().position);
+        println!("After Home: cursor at {}", cursors.primary().position);
         assert_eq!(
-            state.cursors.primary().position,
+            cursors.primary().position,
             14,
             "Should be at start of second line (position 14)"
         );
 
         // Delete backward (should delete the newline)
-        let events =
-            action_to_events(&mut state, Action::DeleteBackward, 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::DeleteBackward,
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events.iter() {
             println!("Event: {:?}", event);
-            state.apply(event);
+            state.apply(&mut cursors, event);
         }
 
         println!(
             "After backspace: buffer = {:?}",
             state.buffer.to_string().unwrap()
         );
-        println!(
-            "After backspace: cursor at {}",
-            state.cursors.primary().position
-        );
+        println!("After backspace: cursor at {}", cursors.primary().position);
         assert_eq!(
             state.buffer.to_string().unwrap(),
             "HelloNew LineWorld!",
             "Lines should be joined"
         );
         assert_eq!(
-            state.cursors.primary().position,
+            cursors.primary().position,
             13,
             "Cursor should be at join point"
         );
@@ -3985,13 +4248,22 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Cursor is at position 0 initially
-        assert_eq!(state.cursors.primary().position, 0);
+        assert_eq!(cursors.primary().position, 0);
 
         // Insert opening parenthesis with auto_indent=true
-        let events =
-            action_to_events(&mut state, Action::InsertChar('('), 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertChar('('),
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
         println!("Events: {:?}", events);
 
         // Should have Insert event for "()" and MoveCursor to position between them
@@ -3999,12 +4271,12 @@ mod tests {
 
         // Apply events
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "()");
         assert_eq!(
-            state.cursors.primary().position,
+            cursors.primary().position,
             1,
             "Cursor should be between brackets"
         );
@@ -4018,18 +4290,27 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert opening curly brace with auto_indent=true
-        let events =
-            action_to_events(&mut state, Action::InsertChar('{'), 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertChar('{'),
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "{}");
         assert_eq!(
-            state.cursors.primary().position,
+            cursors.primary().position,
             1,
             "Cursor should be between braces"
         );
@@ -4043,17 +4324,26 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert opening square bracket
-        let events =
-            action_to_events(&mut state, Action::InsertChar('['), 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertChar('['),
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "[]");
-        assert_eq!(state.cursors.primary().position, 1);
+        assert_eq!(cursors.primary().position, 1);
     }
 
     #[test]
@@ -4064,18 +4354,27 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
         state.language = "rust".to_string();
 
         // Insert double quote
-        let events =
-            action_to_events(&mut state, Action::InsertChar('"'), 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertChar('"'),
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "\"\"");
-        assert_eq!(state.cursors.primary().position, 1);
+        assert_eq!(cursors.primary().position, 1);
     }
 
     #[test]
@@ -4086,18 +4385,27 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert opening parenthesis with auto_indent=false
-        let events =
-            action_to_events(&mut state, Action::InsertChar('('), 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertChar('('),
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         // Should only insert the opening character, no auto-close
         assert_eq!(state.buffer.to_string().unwrap(), "(");
-        assert_eq!(state.cursors.primary().position, 1);
+        assert_eq!(cursors.primary().position, 1);
     }
 
     #[test]
@@ -4108,36 +4416,51 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert "abc"
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "abc".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "abc".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Move cursor to start
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 3,
-            new_position: 0,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 3,
+                new_position: 0,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         // Insert opening parenthesis before 'abc'
-        let events =
-            action_to_events(&mut state, Action::InsertChar('('), 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertChar('('),
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         // Should NOT auto-close because 'a' is alphanumeric
         assert_eq!(state.buffer.to_string().unwrap(), "(abc");
-        assert_eq!(state.cursors.primary().position, 1);
+        assert_eq!(cursors.primary().position, 1);
     }
 
     #[test]
@@ -4148,48 +4471,69 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert some text
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "foo\nbar".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "foo\nbar".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Add a second cursor
-        state.apply(&Event::AddCursor {
-            position: 0,
-            cursor_id: CursorId(1),
-            anchor: None,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::AddCursor {
+                position: 0,
+                cursor_id: CursorId(1),
+                anchor: None,
+            },
+        );
 
         // Move both cursors to end of their respective lines
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 7,
-            new_position: 7, // end of "bar"
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 7,
+                new_position: 7, // end of "bar"
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(1),
-            old_position: 0,
-            new_position: 3, // end of "foo"
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(1),
+                old_position: 0,
+                new_position: 3, // end of "foo"
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         // Insert opening parenthesis at both cursors
-        let events =
-            action_to_events(&mut state, Action::InsertChar('('), 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertChar('('),
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         // Both cursors should have auto-closed brackets
@@ -4205,51 +4549,85 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Start with two empty lines
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "\n".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "\n".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Primary cursor at position 0 (start of first line)
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 1,
-            new_position: 0,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 1,
+                new_position: 0,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         // Add a second cursor at position 1 (start of second line)
-        state.apply(&Event::AddCursor {
-            position: 1,
-            cursor_id: CursorId(1),
-            anchor: None,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::AddCursor {
+                position: 1,
+                cursor_id: CursorId(1),
+                anchor: None,
+            },
+        );
 
         // Type 'f'
-        let events =
-            action_to_events(&mut state, Action::InsertChar('f'), 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertChar('f'),
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         // Type 'o'
-        let events =
-            action_to_events(&mut state, Action::InsertChar('o'), 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertChar('o'),
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         // Type 'o'
-        let events =
-            action_to_events(&mut state, Action::InsertChar('o'), 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertChar('o'),
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         // Verify we have "foo\nfoo" before typing '('
@@ -4260,10 +4638,18 @@ mod tests {
         );
 
         // Type '(' - should auto-close to '()'
-        let events =
-            action_to_events(&mut state, Action::InsertChar('('), 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertChar('('),
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         // Verify auto-close happened: we typed '(' but got '()' on each line
@@ -4278,7 +4664,7 @@ mod tests {
         // Buffer is "foo()\nfoo()" - positions: f(0)o(1)o(2)((3))(4)\n(5)f(6)o(7)o(8)((9))(10)
         // After auto-close, cursor should be at position 4 (after '(' at 3, before ')' at 4)
         // and at position 10 (after '(' at 9, before ')' at 10)
-        let cursor_positions: Vec<_> = state.cursors.iter().map(|(_, c)| c.position).collect();
+        let cursor_positions: Vec<_> = cursors.iter().map(|(_, c)| c.position).collect();
         assert!(
             cursor_positions.contains(&4) && cursor_positions.contains(&10),
             "Cursors should be between parens at positions 4 and 10, got: {:?}",
@@ -4286,10 +4672,18 @@ mod tests {
         );
 
         // Type ')' - should skip over the existing ')', not add another
-        let events =
-            action_to_events(&mut state, Action::InsertChar(')'), 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertChar(')'),
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         // Should still be "foo()\nfoo()" - the ')' should have skipped over, not doubled
@@ -4310,45 +4704,66 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Start with three empty lines
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "\n\n".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "\n\n".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Primary cursor at position 0 (start of first line)
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 2,
-            new_position: 0,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 2,
+                new_position: 0,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         // Add a second cursor at position 1 (start of second line)
-        state.apply(&Event::AddCursor {
-            position: 1,
-            cursor_id: CursorId(1),
-            anchor: None,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::AddCursor {
+                position: 1,
+                cursor_id: CursorId(1),
+                anchor: None,
+            },
+        );
 
         // Add a third cursor at position 2 (start of third line)
-        state.apply(&Event::AddCursor {
-            position: 2,
-            cursor_id: CursorId(2),
-            anchor: None,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::AddCursor {
+                position: 2,
+                cursor_id: CursorId(2),
+                anchor: None,
+            },
+        );
 
         // Type 'foo'
         for ch in ['f', 'o', 'o'] {
-            let events =
-                action_to_events(&mut state, Action::InsertChar(ch), 4, true, 80, 24).unwrap();
+            let events = action_to_events(
+                &mut state,
+                &mut cursors,
+                Action::InsertChar(ch),
+                4,
+                true,
+                80,
+                24,
+            )
+            .unwrap();
             for event in events {
-                state.apply(&event);
+                state.apply(&mut cursors, &event);
             }
         }
 
@@ -4360,10 +4775,18 @@ mod tests {
         );
 
         // Type '(' - should auto-close to '()'
-        let events =
-            action_to_events(&mut state, Action::InsertChar('('), 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertChar('('),
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         // Verify auto-close happened
@@ -4374,7 +4797,7 @@ mod tests {
         );
 
         // Verify cursor positions - all should be between ( and )
-        let cursor_positions: Vec<_> = state.cursors.iter().map(|(_, c)| c.position).collect();
+        let cursor_positions: Vec<_> = cursors.iter().map(|(_, c)| c.position).collect();
         // Buffer is "foo()\nfoo()\nfoo()" - positions:
         // f(0)o(1)o(2)((3))(4)\n(5)f(6)o(7)o(8)((9))(10)\n(11)f(12)o(13)o(14)((15))(16)
         // Cursors should be at 4, 10, 16 (between each ( and ))
@@ -4387,10 +4810,18 @@ mod tests {
         );
 
         // Type ')' - should skip over the existing ')', not add another
-        let events =
-            action_to_events(&mut state, Action::InsertChar(')'), 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertChar(')'),
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         // Should still be "foo()\nfoo()\nfoo()" - the ')' should have skipped over
@@ -4409,37 +4840,53 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert "()"
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "()".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "()".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Move cursor between the brackets
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 2,
-            new_position: 1,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 2,
+                new_position: 1,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         assert_eq!(state.buffer.to_string().unwrap(), "()");
-        assert_eq!(state.cursors.primary().position, 1);
+        assert_eq!(cursors.primary().position, 1);
 
         // Delete backward with auto_indent=true - should delete both characters
-        let events = action_to_events(&mut state, Action::DeleteBackward, 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::DeleteBackward,
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "");
-        assert_eq!(state.cursors.primary().position, 0);
+        assert_eq!(cursors.primary().position, 0);
     }
 
     #[test]
@@ -4450,30 +4897,46 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert "{}"
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "{}".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "{}".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Move cursor between the braces
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 2,
-            new_position: 1,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 2,
+                new_position: 1,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         // Delete backward - should delete both
-        let events = action_to_events(&mut state, Action::DeleteBackward, 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::DeleteBackward,
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "");
@@ -4487,30 +4950,46 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert empty string literal
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "\"\"".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "\"\"".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Move cursor between the quotes
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 2,
-            new_position: 1,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 2,
+                new_position: 1,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         // Delete backward - should delete both quotes
-        let events = action_to_events(&mut state, Action::DeleteBackward, 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::DeleteBackward,
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "");
@@ -4524,35 +5003,50 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert "()"
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "()".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "()".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Move cursor between the brackets
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 2,
-            new_position: 1,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 2,
+                new_position: 1,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         // Delete backward with auto_indent=false - should only delete opening bracket
-        let events =
-            action_to_events(&mut state, Action::DeleteBackward, 4, false, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::DeleteBackward,
+            4,
+            false,
+            80,
+            24,
+        )
+        .unwrap();
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), ")");
-        assert_eq!(state.cursors.primary().position, 0);
+        assert_eq!(cursors.primary().position, 0);
     }
 
     #[test]
@@ -4563,34 +5057,50 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert "(]" - not a matching pair
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "(]".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "(]".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Move cursor between
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 2,
-            new_position: 1,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 2,
+                new_position: 1,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         // Delete backward - should only delete opening bracket since they don't match
-        let events = action_to_events(&mut state, Action::DeleteBackward, 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::DeleteBackward,
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "]");
-        assert_eq!(state.cursors.primary().position, 0);
+        assert_eq!(cursors.primary().position, 0);
     }
 
     #[test]
@@ -4601,30 +5111,46 @@ mod tests {
             crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
             test_fs(),
         );
+        let mut cursors = Cursors::new();
 
         // Insert "(abc)" - has content between brackets
-        state.apply(&Event::Insert {
-            position: 0,
-            text: "(abc)".to_string(),
-            cursor_id: CursorId(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "(abc)".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
 
         // Move cursor after 'a'
-        state.apply(&Event::MoveCursor {
-            cursor_id: CursorId(0),
-            old_position: 5,
-            new_position: 2,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
-        });
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 5,
+                new_position: 2,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
 
         // Delete backward - should only delete 'a', not both brackets
-        let events = action_to_events(&mut state, Action::DeleteBackward, 4, true, 80, 24).unwrap();
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::DeleteBackward,
+            4,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
 
         for event in events {
-            state.apply(&event);
+            state.apply(&mut cursors, &event);
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "(bc)");

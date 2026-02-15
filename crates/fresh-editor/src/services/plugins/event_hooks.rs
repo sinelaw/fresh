@@ -90,6 +90,7 @@ impl EventHooks for Event {
 /// Apply an event with automatic hook invocations
 pub fn apply_event_with_hooks(
     state: &mut crate::state::EditorState,
+    cursors: &mut crate::model::cursor::Cursors,
     event: &Event,
     buffer_id: BufferId,
     hook_registry: &RwLock<HookRegistry>,
@@ -113,7 +114,7 @@ pub fn apply_event_with_hooks(
     }
 
     // Apply the event
-    state.apply(event);
+    state.apply(cursors, event);
 
     // Run "after" hooks
     if let Some(mut after_args) = event.after_hook(buffer_id) {
@@ -231,7 +232,9 @@ mod tests {
         };
 
         let buffer_id = BufferId(0);
-        let was_applied = apply_event_with_hooks(&mut state, &event, buffer_id, &hook_registry);
+        let mut cursors = crate::model::cursor::Cursors::new();
+        let was_applied =
+            apply_event_with_hooks(&mut state, &mut cursors, &event, buffer_id, &hook_registry);
 
         // Event should have been cancelled
         assert!(!was_applied);
@@ -264,7 +267,9 @@ mod tests {
         };
 
         let buffer_id = BufferId(0);
-        let was_applied = apply_event_with_hooks(&mut state, &event, buffer_id, &hook_registry);
+        let mut cursors = crate::model::cursor::Cursors::new();
+        let was_applied =
+            apply_event_with_hooks(&mut state, &mut cursors, &event, buffer_id, &hook_registry);
 
         // Event should have been applied
         assert!(was_applied);

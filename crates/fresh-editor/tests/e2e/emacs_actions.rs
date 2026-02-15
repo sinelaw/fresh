@@ -224,7 +224,7 @@ fn test_set_mark_basic() {
     harness.render().unwrap();
 
     // Initially no selection
-    let anchor_before = harness.editor().active_state().cursors.primary().anchor;
+    let anchor_before = harness.editor().active_cursors().primary().anchor;
     assert!(
         anchor_before.is_none(),
         "Should have no selection anchor initially"
@@ -237,7 +237,7 @@ fn test_set_mark_basic() {
     harness.render().unwrap();
 
     // Should now have an anchor set
-    let anchor_after = harness.editor().active_state().cursors.primary().anchor;
+    let anchor_after = harness.editor().active_cursors().primary().anchor;
     assert!(
         anchor_after.is_some(),
         "Should have selection anchor after set_mark"
@@ -274,7 +274,7 @@ fn test_set_mark_then_regular_move_creates_selection() {
     harness.render().unwrap();
 
     // Check selection state - anchor should still be at 0 (mark mode)
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert_eq!(cursor.anchor, Some(0), "Anchor should still be at 0");
     assert_eq!(cursor.position, 5, "Cursor should be at position 5");
 }
@@ -303,7 +303,7 @@ fn test_set_mark_then_shift_move_creates_selection() {
     harness.render().unwrap();
 
     // Check selection state - anchor should still be at 0
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert_eq!(cursor.anchor, Some(0), "Anchor should still be at 0");
     assert_eq!(cursor.position, 5, "Cursor should be at position 5");
 
@@ -334,7 +334,7 @@ fn test_escape_cancels_mark_mode() {
     harness.render().unwrap();
 
     // Verify mark mode is active
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert_eq!(
         cursor.anchor,
         Some(0),
@@ -350,7 +350,7 @@ fn test_escape_cancels_mark_mode() {
     harness.render().unwrap();
 
     // Verify mark mode is cancelled
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert_eq!(cursor.anchor, None, "Anchor should be cleared after escape");
     assert!(
         cursor.deselect_on_move,
@@ -382,7 +382,7 @@ fn test_ctrl_g_cancels_mark_mode() {
     harness.render().unwrap();
 
     // Verify mark mode is active
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert_eq!(cursor.anchor, Some(0), "Anchor should be at 0 before C-g");
 
     // Press Ctrl+G to cancel mark mode
@@ -392,7 +392,7 @@ fn test_ctrl_g_cancels_mark_mode() {
     harness.render().unwrap();
 
     // Verify mark mode is cancelled
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert_eq!(cursor.anchor, None, "Anchor should be cleared after C-g");
     assert!(
         cursor.deselect_on_move,

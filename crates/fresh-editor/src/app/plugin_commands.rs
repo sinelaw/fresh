@@ -2,6 +2,7 @@
 //!
 //! This module groups plugin commands by domain for better maintainability.
 
+use crate::model::cursor::Cursors;
 use crate::model::event::{BufferId, CursorId, Event, OverlayFace, SplitId};
 use crate::view::overlay::{OverlayHandle, OverlayNamespace};
 use crate::view::split::SplitViewState;
@@ -52,7 +53,7 @@ impl Editor {
                 extend_to_line_end: options.extend_to_line_end,
                 url: options.url.clone(),
             };
-            state.apply(&event);
+            state.apply(&mut Cursors::default(), &event);
             // Note: Overlays are ephemeral, not added to event log for undo/redo
 
             // Request a re-render so overlays added asynchronously (e.g. after
@@ -69,7 +70,7 @@ impl Editor {
     pub(super) fn handle_remove_overlay(&mut self, buffer_id: BufferId, handle: OverlayHandle) {
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let event = Event::RemoveOverlay { handle };
-            state.apply(&event);
+            state.apply(&mut Cursors::default(), &event);
             // Note: Overlays are ephemeral, not added to event log for undo/redo
         }
     }
@@ -547,8 +548,6 @@ impl Editor {
             Ok(()) => {
                 // Clean up the view state for the closed split
                 self.split_view_states.remove(&split_id);
-                // Restore cursor and viewport state for the new active split
-                self.restore_current_split_view_state();
                 tracing::info!("Closed split {:?}", split_id);
             }
             Err(e) => {
@@ -616,11 +615,7 @@ impl Editor {
                         view_state.viewport.top_byte
                     );
 
-                    // For the active split, also update the buffer state directly
-                    if is_active {
-                        state.cursors.primary_mut().move_to(position, false);
-                        // Note: viewport is now owned by SplitViewState, no sync needed
-                    }
+                    // Note: cursors and viewport are now owned by SplitViewState, no sync needed
                 } else {
                     tracing::warn!(
                         "SetBufferCursor: split {:?} not found in split_view_states",
@@ -724,15 +719,23 @@ impl Editor {
         position: usize,
         text: String,
     ) {
+        let text_len = text.len();
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let event = Event::Insert {
                 position,
                 text,
                 cursor_id: CursorId(0),
             };
-            state.apply(&event);
+            // Apply to buffer with dummy cursors (real cursors adjusted below)
+            state.apply(&mut Cursors::default(), &event);
             if let Some(log) = self.event_logs.get_mut(&buffer_id) {
                 log.append(event);
+            }
+        }
+        // Adjust cursors in all splits that display this buffer
+        for split_id in self.split_manager.splits_for_buffer(buffer_id) {
+            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                view_state.cursors.adjust_for_edit(position, 0, text_len);
             }
         }
     }
@@ -743,6 +746,8 @@ impl Editor {
         buffer_id: BufferId,
         range: std::ops::Range<usize>,
     ) {
+        let delete_start = range.start;
+        let delete_len = range.end.saturating_sub(range.start);
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let deleted_text = state.get_text_range(range.start, range.end);
             let event = Event::Delete {
@@ -750,34 +755,47 @@ impl Editor {
                 deleted_text,
                 cursor_id: CursorId(0),
             };
-            state.apply(&event);
+            // Apply to buffer with dummy cursors (real cursors adjusted below)
+            state.apply(&mut Cursors::default(), &event);
             if let Some(log) = self.event_logs.get_mut(&buffer_id) {
                 log.append(event);
+            }
+        }
+        // Adjust cursors in all splits that display this buffer
+        for split_id in self.split_manager.splits_for_buffer(buffer_id) {
+            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                view_state
+                    .cursors
+                    .adjust_for_edit(delete_start, delete_len, 0);
             }
         }
     }
 
     /// Handle InsertAtCursor command
     pub(super) fn handle_insert_at_cursor(&mut self, text: String) {
-        // Insert text at current cursor position in active buffer
-        let state = self.active_state_mut();
-        let cursor_pos = state.cursors.primary().position;
+        // Read cursor position first to avoid borrow conflicts
+        let cursor_pos = self.active_cursors().primary().position;
         let event = Event::Insert {
             position: cursor_pos,
             text,
             cursor_id: CursorId(0),
         };
-        state.apply(&event);
+        // Borrow cursors and state simultaneously from different parts of self
+        {
+            let split_id = self.split_manager.active_split();
+            let active_buf = self.active_buffer();
+            let cursors = &mut self.split_view_states.get_mut(&split_id).unwrap().cursors;
+            let state = self.buffers.get_mut(&active_buf).unwrap();
+            state.apply(cursors, &event);
+        }
         self.active_event_log_mut().append(event);
     }
 
     /// Handle DeleteSelection command
     pub(super) fn handle_delete_selection(&mut self) {
-        // Get deletions from state (same logic as cut_selection but without copy)
+        // Get deletions from cursors (now in SplitViewState)
         let deletions: Vec<_> = {
-            let state = self.active_state();
-            state
-                .cursors
+            self.active_cursors()
                 .iter()
                 .filter_map(|(_, c)| c.selection_range())
                 .collect()
@@ -785,8 +803,8 @@ impl Editor {
 
         if !deletions.is_empty() {
             // Get deleted text and cursor id
+            let primary_id = self.active_cursors().primary_id();
             let state = self.active_state_mut();
-            let primary_id = state.cursors.primary_id();
             let events: Vec<_> = deletions
                 .iter()
                 .rev()
@@ -839,17 +857,22 @@ impl Editor {
 
         // Ensure we don't go past the buffer end
         let buffer_len = state.buffer.len();
-        state.cursors.primary_mut().position = final_position.min(buffer_len);
-        state.cursors.primary_mut().anchor = None;
+        let clamped_position = final_position.min(buffer_len);
+
+        // Update cursors (now in SplitViewState)
+        let cursors = self.active_cursors_mut();
+        cursors.primary_mut().position = clamped_position;
+        cursors.primary_mut().anchor = None;
 
         // Ensure the position is visible in the active split's viewport
         let active_split = self.split_manager.active_split();
         let active_buffer = self.active_buffer();
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            let cursor = *view_state.cursors.primary();
             let state = self.buffers.get_mut(&active_buffer).unwrap();
             view_state
                 .viewport
-                .ensure_visible(&mut state.buffer, state.cursors.primary());
+                .ensure_visible(&mut state.buffer, &cursor);
         }
     }
 
@@ -881,16 +904,12 @@ impl Editor {
         line: Option<usize>,
         column: Option<usize>,
     ) -> AnyhowResult<()> {
-        // Save current split's view state before switching
-        self.save_current_split_view_state();
-
         // Switch to the target split
         let target_split_id = SplitId(split_id);
         if !self.split_manager.set_active_split(target_split_id) {
             tracing::error!("Failed to switch to split {}", split_id);
             return Ok(());
         }
-        self.restore_current_split_view_state();
 
         // Open the file in the now-active split
         if let Err(e) = self.open_file(&path) {

@@ -78,10 +78,7 @@ impl Editor {
     /// Get the input for shell command (selection or entire buffer).
     fn get_shell_input(&mut self) -> String {
         // First get selection range
-        let selection_range = {
-            let state = self.active_state();
-            state.cursors.primary().selection_range()
-        };
+        let selection_range = { self.active_cursors().primary().selection_range() };
 
         // Check if there's a selection
         if let Some(selection) = selection_range {
@@ -100,8 +97,7 @@ impl Editor {
     pub fn handle_shell_command(&mut self, command: &str, replace: bool) {
         // Capture selection range first
         let selection_range = {
-            let state = self.active_state();
-            let primary = state.cursors.primary();
+            let primary = self.active_cursors().primary();
             primary.selection_range().map(|sel| {
                 let start = sel.start.min(sel.end);
                 let end = sel.start.max(sel.end);
@@ -139,12 +135,12 @@ impl Editor {
         has_selection: bool,
         selection_info: Option<(usize, usize, String)>,
     ) {
-        let cursor_id = self.active_state().cursors.primary_id();
+        let cursor_id = self.active_cursors().primary_id();
 
         // Capture cursor position and selection state before replacement
-        let old_cursor_pos = self.active_state().cursors.primary().position;
-        let old_anchor = self.active_state().cursors.primary().anchor;
-        let old_sticky_column = self.active_state().cursors.primary().sticky_column;
+        let old_cursor_pos = self.active_cursors().primary().position;
+        let old_anchor = self.active_cursors().primary().anchor;
+        let old_sticky_column = self.active_cursors().primary().sticky_column;
 
         if has_selection {
             // Replace selection with output
@@ -230,7 +226,7 @@ impl Editor {
         self.switch_buffer(buffer_id);
 
         // Insert the output content
-        let cursor_id = self.active_state().cursors.primary_id();
+        let cursor_id = self.active_cursors().primary_id();
         let insert_event = Event::Insert {
             position: 0,
             text: output.to_string(),

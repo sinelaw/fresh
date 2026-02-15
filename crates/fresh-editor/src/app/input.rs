@@ -1,4 +1,5 @@
 use super::*;
+use crate::model::event::CursorId;
 use crate::services::plugins::hooks::HookArgs;
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
@@ -755,7 +756,7 @@ impl Editor {
                     let active_buffer = self.active_buffer();
                     if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
                         let state = self.buffers.get_mut(&active_buffer).unwrap();
-                        let primary = *state.cursors.primary();
+                        let primary = *view_state.cursors.primary();
                         view_state
                             .viewport
                             .ensure_visible(&mut state.buffer, &primary);
@@ -1252,7 +1253,6 @@ impl Editor {
         // but that change isn't automatically synced to SplitViewState. Without this sync,
         // mouse scroll would use a stale viewport position after keyboard navigation.
         // (Bug #248: Mouse wheel stopped working properly after keyboard use)
-        self.sync_editor_state_to_split_view_state();
 
         // Check if scroll is over the file explorer
         if let Some(explorer_area) = self.cached_layout.file_explorer_area {
@@ -1370,8 +1370,6 @@ impl Editor {
         _row: u16,
         delta: i32,
     ) -> AnyhowResult<()> {
-        self.sync_editor_state_to_split_view_state();
-
         let active_split = self.split_manager.active_split();
 
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
@@ -1755,12 +1753,14 @@ impl Editor {
             }
 
             // Check if cursor is outside visible range and move it if needed
-            let cursor_pos = state.cursors.primary().position;
-            if cursor_pos < top_byte || cursor_pos > bottom_byte {
-                // Move cursor to the top of the viewport
-                let cursor = state.cursors.primary_mut();
-                cursor.position = top_byte;
-                // Keep the existing sticky_column value so vertical navigation preserves column
+            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                let cursor_pos = view_state.cursors.primary().position;
+                if cursor_pos < top_byte || cursor_pos > bottom_byte {
+                    // Move cursor to the top of the viewport
+                    let cursor = view_state.cursors.primary_mut();
+                    cursor.position = top_byte;
+                    // Keep the existing sticky_column value so vertical navigation preserves column
+                }
             }
         }
     }
@@ -2211,10 +2211,14 @@ impl Editor {
 
             // Move the primary cursor to this position
             // If shift is held, extend selection; otherwise clear it
-            let primary_cursor_id = state.cursors.primary_id();
-            let primary_cursor = state.cursors.primary();
-            let old_position = primary_cursor.position;
-            let old_anchor = primary_cursor.anchor;
+            let (primary_cursor_id, old_position, old_anchor) = self
+                .split_view_states
+                .get(&split_id)
+                .map(|vs| {
+                    let pc = vs.cursors.primary();
+                    (vs.cursors.primary_id(), pc.position, pc.anchor)
+                })
+                .unwrap_or((CursorId(0), 0, None));
 
             // For shift+click or ctrl+click: extend selection from current anchor (or position if no anchor) to click
             // Both modifiers supported since some terminals intercept shift+click
@@ -2241,7 +2245,13 @@ impl Editor {
             if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
                 event_log.append(event.clone());
             }
-            state.apply(&event);
+            if let Some(cursors) = self
+                .split_view_states
+                .get_mut(&split_id)
+                .map(|vs| &mut vs.cursors)
+            {
+                state.apply(cursors, &event);
+            }
 
             // Track position history
             if !self.in_navigation {
@@ -3041,9 +3051,9 @@ impl Editor {
                 // Save current position before switching
                 self.position_history.commit_pending_movement();
 
-                let current_state = self.active_state();
-                let position = current_state.cursors.primary().position;
-                let anchor = current_state.cursors.primary().anchor;
+                let cursors = self.active_cursors();
+                let position = cursors.primary().position;
+                let anchor = cursors.primary().anchor;
                 self.position_history
                     .record_movement(self.active_buffer(), position, anchor);
                 self.position_history.commit_pending_movement();
@@ -3141,9 +3151,9 @@ impl Editor {
             // Save current position before switching
             self.position_history.commit_pending_movement();
 
-            let current_state = self.active_state();
-            let position = current_state.cursors.primary().position;
-            let anchor = current_state.cursors.primary().anchor;
+            let cursors = self.active_cursors();
+            let position = cursors.primary().position;
+            let anchor = cursors.primary().anchor;
             self.position_history
                 .record_movement(self.active_buffer(), position, anchor);
             self.position_history.commit_pending_movement();

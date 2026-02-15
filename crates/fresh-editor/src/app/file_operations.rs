@@ -161,7 +161,7 @@ impl Editor {
             .get(&active_split)
             .map(|vs| (vs.viewport.top_byte, vs.viewport.left_column))
             .unwrap_or((0, 0));
-        let old_cursors = self.active_state().cursors.clone();
+        let old_cursors = self.active_cursors().clone();
 
         // Preserve user settings before reloading
         let old_buffer_settings = self.active_state().buffer_settings.clone();
@@ -188,8 +188,6 @@ impl Editor {
             // Clear selection since the content may have changed
             cursor.clear_selection();
         });
-        new_state.cursors = restored_cursors;
-
         // Restore user settings (tab size, indentation, etc.)
         new_state.buffer_settings = old_buffer_settings;
         // Restore line number visibility
@@ -202,8 +200,13 @@ impl Editor {
             // Note: line_wrap_enabled is now in SplitViewState.viewport
         }
 
-        // Restore scroll position in SplitViewState (clamped to valid range for new file size)
+        // Restore cursor positions in SplitViewState (clamped to valid range for new file size)
         let active_split = self.split_manager.active_split();
+        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.cursors = restored_cursors;
+        }
+
+        // Restore scroll position in SplitViewState (clamped to valid range for new file size)
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
             view_state.viewport.top_byte = old_top_byte.min(new_file_size);
             view_state.viewport.left_column = old_left_column;
@@ -646,16 +649,22 @@ impl Editor {
     ) -> anyhow::Result<()> {
         // Preserve user settings before reloading
         // TODO: Consider moving line numbers to SplitViewState (per-view setting)
-        let (old_cursors, old_buffer_settings, old_show_line_numbers) = self
+        // Get cursors from split view states for this buffer (find any split showing it)
+        let old_cursors = self
+            .split_view_states
+            .values()
+            .find_map(|vs| {
+                if vs.keyed_states.contains_key(&buffer_id) {
+                    vs.keyed_states.get(&buffer_id).map(|bs| bs.cursors.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+        let (old_buffer_settings, old_show_line_numbers) = self
             .buffers
             .get(&buffer_id)
-            .map(|s| {
-                (
-                    s.cursors.clone(),
-                    s.buffer_settings.clone(),
-                    s.margins.show_line_numbers,
-                )
-            })
+            .map(|s| (s.buffer_settings.clone(), s.margins.show_line_numbers))
             .unwrap_or_default();
 
         // Load the file content fresh from disk
@@ -678,8 +687,6 @@ impl Editor {
             cursor.position = cursor.position.min(new_file_size);
             cursor.clear_selection();
         });
-        new_state.cursors = restored_cursors;
-
         // Restore user settings (tab size, indentation, etc.)
         new_state.buffer_settings = old_buffer_settings;
         // Restore line number visibility
@@ -688,6 +695,13 @@ impl Editor {
         // Replace the buffer content
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             *state = new_state;
+        }
+
+        // Restore cursors in any split view states that have this buffer
+        for vs in self.split_view_states.values_mut() {
+            if let Some(buf_state) = vs.keyed_states.get_mut(&buffer_id) {
+                buf_state.cursors = restored_cursors.clone();
+            }
         }
 
         // Clear the undo/redo history for this buffer

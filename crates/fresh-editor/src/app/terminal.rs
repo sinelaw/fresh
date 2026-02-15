@@ -519,11 +519,17 @@ impl Editor {
             ) {
                 // Replace buffer state
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    let total_bytes = new_state.buffer.total_bytes();
                     *state = new_state;
-                    // Move cursor to end of buffer
-                    state.primary_cursor_mut().position = state.buffer.total_bytes();
                     // Terminal buffers should never be considered "modified"
                     state.buffer.set_modified(false);
+                    // Move cursor to end of buffer in SplitViewState
+                    if let Some(view_state) = self
+                        .split_view_states
+                        .get_mut(&self.split_manager.active_split())
+                    {
+                        view_state.cursors.primary_mut().position = total_bytes;
+                    }
                 }
             }
 
@@ -548,7 +554,7 @@ impl Editor {
 
                 // Scroll viewport to make cursor visible at the end of buffer
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    let cursor = *state.cursors.primary();
+                    let cursor = *view_state.cursors.primary();
                     view_state
                         .viewport
                         .ensure_visible(&mut state.buffer, &cursor);
@@ -679,9 +685,22 @@ impl Editor {
 
     /// Get cursor position for a buffer (for testing)
     pub fn get_cursor_position(&self, buffer_id: BufferId) -> Option<usize> {
-        self.buffers
-            .get(&buffer_id)
-            .map(|state| state.primary_cursor().position)
+        // Find cursor from any split view state that has this buffer
+        self.split_view_states
+            .values()
+            .find_map(|vs| {
+                if vs.keyed_states.contains_key(&buffer_id) {
+                    Some(vs.keyed_states.get(&buffer_id)?.cursors.primary().position)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                // Fallback: check active cursors
+                self.split_view_states
+                    .values()
+                    .find_map(|vs| Some(vs.cursors.primary().position))
+            })
     }
 
     /// Render terminal content for all terminal buffers in split areas

@@ -9,6 +9,7 @@ mod tests {
     use crate::input::actions::get_auto_close_char;
     use crate::input::multi_cursor::{add_cursor_at_next_match, AddCursorResult};
     use crate::model::buffer::Buffer;
+    use crate::model::cursor::Cursors;
     use crate::primitives::word_navigation::{find_word_start_left, find_word_start_right};
     use crate::state::EditorState;
 
@@ -95,46 +96,53 @@ mod tests {
     use crate::model::event::{CursorId, Event};
 
     // Helper to apply the result of add_cursor_at_next_match to the state
-    fn perform_add_cursor_at_next_match(state: &mut EditorState) -> AddCursorResult {
-        let result = add_cursor_at_next_match(state);
+    fn perform_add_cursor_at_next_match(
+        state: &mut EditorState,
+        cursors: &mut Cursors,
+    ) -> AddCursorResult {
+        let result = add_cursor_at_next_match(state, cursors);
         if let AddCursorResult::Success { cursor, .. } = &result {
             // Manually apply the change to the state since add_cursor_at_next_match is pure
             // We use a high ID to avoid conflicts in simple tests
-            let next_id = CursorId(state.cursors.iter().count());
-            state.apply(&Event::AddCursor {
-                cursor_id: next_id,
-                position: cursor.position,
-                anchor: cursor.anchor,
-            });
+            let next_id = CursorId(cursors.iter().count());
+            state.apply(
+                cursors,
+                &Event::AddCursor {
+                    cursor_id: next_id,
+                    position: cursor.position,
+                    anchor: cursor.anchor,
+                },
+            );
         }
         result
     }
 
     // Helper to create a basic editor state
-    fn create_state(content: &str) -> EditorState {
+    fn create_state(content: &str) -> (EditorState, Cursors) {
         let mut state = EditorState::new(0, 0, 1024 * 1024, test_fs()); // sizes don't matter for these tests
                                                                         // Manually replace buffer
         let buffer = Buffer::from_str(content, 0, test_fs());
         // We need to swap the buffer. EditorState fields are public?
         state.buffer = buffer;
-        state
+        let cursors = Cursors::new();
+        (state, cursors)
     }
 
     #[test]
     fn test_ctrl_d_basic() {
-        let mut state = create_state("foo foo foo");
+        let (mut state, mut cursors) = create_state("foo foo foo");
         // Select first "foo"
-        state.cursors.primary_mut().position = 3;
-        state.cursors.primary_mut().set_anchor(0);
+        cursors.primary_mut().position = 3;
+        cursors.primary_mut().set_anchor(0);
 
         // Add next match
-        match perform_add_cursor_at_next_match(&mut state) {
+        match perform_add_cursor_at_next_match(&mut state, &mut cursors) {
             AddCursorResult::Success { total_cursors, .. } => {
                 assert_eq!(total_cursors, 2);
-                let cursors: Vec<_> = state.cursors.iter().map(|(_, c)| c.position).collect();
+                let cursor_positions: Vec<_> = cursors.iter().map(|(_, c)| c.position).collect();
                 // Should have cursor at 3 and 7 (end of second foo)
-                assert!(cursors.contains(&3));
-                assert!(cursors.contains(&7));
+                assert!(cursor_positions.contains(&3));
+                assert!(cursor_positions.contains(&7));
             }
             _ => panic!("Failed to add cursor"),
         }
@@ -142,24 +150,24 @@ mod tests {
 
     #[test]
     fn test_ctrl_d_skip_overlap() {
-        let mut state = create_state("foo foo foo");
+        let (mut state, mut cursors) = create_state("foo foo foo");
 
         // Cursor 1 on first "foo"
-        state.cursors.primary_mut().position = 3;
-        state.cursors.primary_mut().set_anchor(0);
+        cursors.primary_mut().position = 3;
+        cursors.primary_mut().set_anchor(0);
 
         // Manually add cursor on SECOND "foo" (4..7)
         // We use a hack or just ensure we simulate it properly.
         // Let's add it via add_cursor_at_next_match FIRST
-        perform_add_cursor_at_next_match(&mut state); // Now we have 2 cursors
+        perform_add_cursor_at_next_match(&mut state, &mut cursors); // Now we have 2 cursors
 
         // Now try to add THIRD match. It should skip the second one (already valid) and find the third.
-        match perform_add_cursor_at_next_match(&mut state) {
+        match perform_add_cursor_at_next_match(&mut state, &mut cursors) {
             AddCursorResult::Success { total_cursors, .. } => {
                 assert_eq!(total_cursors, 3);
                 // Should have cursors at 3, 7, 11
-                let cursors: Vec<_> = state.cursors.iter().map(|(_, c)| c.position).collect();
-                assert!(cursors.contains(&11));
+                let cursor_positions: Vec<_> = cursors.iter().map(|(_, c)| c.position).collect();
+                assert!(cursor_positions.contains(&11));
             }
             _ => panic!("Failed to add 3rd cursor"),
         }
@@ -167,19 +175,19 @@ mod tests {
 
     #[test]
     fn test_ctrl_d_wrap_around() {
-        let mut state = create_state("foo bar foo");
+        let (mut state, mut cursors) = create_state("foo bar foo");
 
         // Cursor 1 on SECOND "foo" (8..11)
-        state.cursors.primary_mut().position = 11;
-        state.cursors.primary_mut().set_anchor(8);
+        cursors.primary_mut().position = 11;
+        cursors.primary_mut().set_anchor(8);
 
         // Now add next match. It should wrap around to the FIRST "foo" (0..3)
-        match perform_add_cursor_at_next_match(&mut state) {
+        match perform_add_cursor_at_next_match(&mut state, &mut cursors) {
             AddCursorResult::Success { total_cursors, .. } => {
                 assert_eq!(total_cursors, 2);
-                let cursors: Vec<_> = state.cursors.iter().map(|(_, c)| c.position).collect();
-                assert!(cursors.contains(&11));
-                assert!(cursors.contains(&3)); // Wrap around found start match
+                let cursor_positions: Vec<_> = cursors.iter().map(|(_, c)| c.position).collect();
+                assert!(cursor_positions.contains(&11));
+                assert!(cursor_positions.contains(&3)); // Wrap around found start match
             }
             _ => panic!("Failed to wrap around"),
         }
@@ -187,47 +195,49 @@ mod tests {
 
     #[test]
     fn test_ctrl_d_wrap_skip_existing() {
-        let mut state = create_state("foo foo foo");
+        let (mut state, mut cursors) = create_state("foo foo foo");
 
         // Cursor on 3rd foo
-        state.cursors.primary_mut().position = 11;
-        state.cursors.primary_mut().set_anchor(8);
+        cursors.primary_mut().position = 11;
+        cursors.primary_mut().set_anchor(8);
 
         // Existing cursor on 1st foo
 
         use crate::model::event::CursorId;
-        // Need to add cursor manually. Since state.cursors is Cursors struct (probably private fields?)
-        // EditorState has 'cursors: Cursors'.
+        // Need to add cursor manually. Since cursors is Cursors struct (probably private fields?)
         // We can't clear easily, but we can verify behavior if we assume the first cursor is the primary one we set?
         // Actually, let's just use add_cursor_at_next_match to setup.
 
         // Reset state
-        let mut state = create_state("foo foo foo");
+        let (mut state, mut cursors) = create_state("foo foo foo");
         // Select 3rd foo properly
-        state.cursors.primary_mut().position = 11;
-        state.cursors.primary_mut().set_anchor(8);
+        cursors.primary_mut().position = 11;
+        cursors.primary_mut().set_anchor(8);
 
         // Manually insert a cursor at 1st foo (0..3)
         // We might not have public API to insert duplicate cursor easily from test without using events
-        // but 'add_cursor_at_next_match' uses 'state.cursors.iter()'.
+        // but 'add_cursor_at_next_match' uses 'cursors.iter()'.
         // Let's use internal specific API if available or just Event apply.
         // state.apply(Event::AddCursor ... ) might be cleaner?
         // But `state.apply` is available? Yes.
 
-        state.apply(&Event::AddCursor {
-            cursor_id: CursorId(1),
-            position: 3,
-            anchor: Some(0),
-        });
+        state.apply(
+            &mut cursors,
+            &Event::AddCursor {
+                cursor_id: CursorId(1),
+                position: 3,
+                anchor: Some(0),
+            },
+        );
 
         // Now we have cursor on 3rd (Primary) and 1st.
         // add_cursor_at_next_match should wrap around, see 1st is taken, and find 2nd "foo" (4..7).
 
-        match perform_add_cursor_at_next_match(&mut state) {
+        match perform_add_cursor_at_next_match(&mut state, &mut cursors) {
             AddCursorResult::Success { total_cursors, .. } => {
                 assert_eq!(total_cursors, 3);
-                let cursors: Vec<_> = state.cursors.iter().map(|(_, c)| c.position).collect();
-                assert!(cursors.contains(&7));
+                let cursor_positions: Vec<_> = cursors.iter().map(|(_, c)| c.position).collect();
+                assert!(cursor_positions.contains(&7));
             }
             res => panic!(
                 "Failed to find middle cursor with wrap: {:?}",

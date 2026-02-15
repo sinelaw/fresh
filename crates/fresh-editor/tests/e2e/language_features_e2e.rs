@@ -35,7 +35,7 @@ fn test_auto_close_quotes_rust() {
     harness.assert_buffer_content("\"\"");
 
     // Cursor should be at 1 (between the quotes)
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert_eq!(cursor.position, 1);
 }
 
@@ -67,7 +67,7 @@ fn test_no_auto_close_quotes_text() {
     harness.assert_buffer_content("\"");
 
     // Cursor should be at 1 (after the quote)
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert_eq!(cursor.position, 1);
 }
 
@@ -89,7 +89,7 @@ fn test_word_movement_e2e() {
         .unwrap();
 
     // Should stop at '.' (pos 3)
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert_eq!(cursor.position, 3);
 
     // Ctrl+Right again.
@@ -98,7 +98,7 @@ fn test_word_movement_e2e() {
         .unwrap();
 
     // Should stop at 'bar' (pos 4)
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert_eq!(cursor.position, 4);
 }
 
@@ -225,7 +225,7 @@ fn test_ctrl_d_multicursor_e2e() {
         .send_key(KeyCode::Right, KeyModifiers::SHIFT)
         .unwrap();
 
-    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor = harness.editor().active_cursors().primary();
     assert_eq!(cursor.position, 3);
     assert_eq!(cursor.anchor, Some(0));
 
@@ -236,14 +236,13 @@ fn test_ctrl_d_multicursor_e2e() {
         .unwrap();
 
     // Verify 2 cursors
-    let count = harness.editor().active_state().cursors.iter().count();
+    let count = harness.editor().active_cursors().iter().count();
     assert_eq!(count, 2);
 
     // Check positions: second cursor should be at 7 (4..7)
     let cursors: Vec<_> = harness
         .editor()
-        .active_state()
-        .cursors
+        .active_cursors()
         .iter()
         .map(|(_, c)| c.position)
         .collect();

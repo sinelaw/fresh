@@ -157,15 +157,13 @@ fn test_find_next_prefills_from_selection() {
     // Clear selection so the confirmed search will run over the entire buffer
     harness
         .editor_mut()
-        .active_state_mut()
-        .cursors
+        .active_cursors_mut()
         .primary_mut()
         .clear_selection();
 
     harness
         .editor_mut()
-        .active_state_mut()
-        .cursors
+        .active_cursors_mut()
         .primary_mut()
         .position = 0;
 
@@ -1470,8 +1468,7 @@ fn test_find_selection_previous_from_word_under_cursor() {
     let last_hello_pos = "hello world\nfoo bar\nhello again\n".len();
     harness
         .editor_mut()
-        .active_state_mut()
-        .cursors
+        .active_cursors_mut()
         .primary_mut()
         .position = last_hello_pos;
     harness.render().unwrap();
@@ -1546,8 +1543,7 @@ fn test_find_selection_next_wraps_around() {
     let test_pos = "hello world\n".len();
     harness
         .editor_mut()
-        .active_state_mut()
-        .cursors
+        .active_cursors_mut()
         .primary_mut()
         .position = test_pos;
     harness.render().unwrap();

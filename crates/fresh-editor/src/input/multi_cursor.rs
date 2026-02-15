@@ -1,6 +1,6 @@
 //! Multi-cursor operations for adding cursors at various positions
 
-use crate::model::cursor::Cursor;
+use crate::model::cursor::{Cursor, Cursors};
 use crate::primitives::word_navigation::{find_word_end, find_word_start};
 use crate::state::EditorState;
 
@@ -43,10 +43,10 @@ fn cursor_position_on_line(line_start: usize, line_content: &str, target_col: us
 }
 
 /// Create a successful AddCursorResult
-fn success_result(cursor: Cursor, state: &EditorState) -> AddCursorResult {
+fn success_result(cursor: Cursor, cursors: &Cursors) -> AddCursorResult {
     AddCursorResult::Success {
         cursor,
-        total_cursors: state.cursors.iter().count() + 1,
+        total_cursors: cursors.iter().count() + 1,
     }
 }
 
@@ -65,9 +65,9 @@ fn adjust_position_for_newline(state: &mut EditorState, position: usize) -> usiz
 
 /// Add a cursor at the next occurrence of the selected text
 /// If no selection, selects the entire word at cursor position first
-pub fn add_cursor_at_next_match(state: &mut EditorState) -> AddCursorResult {
+pub fn add_cursor_at_next_match(state: &mut EditorState, cursors: &Cursors) -> AddCursorResult {
     // Get the selected text from the primary cursor
-    let primary = state.cursors.primary();
+    let primary = cursors.primary();
     let selection_range = match primary.selection_range() {
         Some(range) => range,
         None => {
@@ -148,7 +148,7 @@ pub fn add_cursor_at_next_match(state: &mut EditorState) -> AddCursorResult {
         let match_range = match_pos..(match_pos + pattern_len);
 
         // Check if any existing cursor overlaps with this match
-        let is_occupied = state.cursors.iter().any(|(_, c)| {
+        let is_occupied = cursors.iter().any(|(_, c)| {
             if let Some(r) = c.selection_range() {
                 r == match_range
             } else {
@@ -167,7 +167,7 @@ pub fn add_cursor_at_next_match(state: &mut EditorState) -> AddCursorResult {
             } else {
                 Cursor::with_selection(match_start, match_end)
             };
-            return success_result(new_cursor, state);
+            return success_result(new_cursor, cursors);
         }
 
         // If we wrapped around and came back to where we started searching (or past it), stop to avoid infinite loop
@@ -200,8 +200,8 @@ pub fn add_cursor_at_next_match(state: &mut EditorState) -> AddCursorResult {
 }
 
 /// Add a cursor above the primary cursor at the same column
-pub fn add_cursor_above(state: &mut EditorState) -> AddCursorResult {
-    let position = state.cursors.primary().position;
+pub fn add_cursor_above(state: &mut EditorState, cursors: &Cursors) -> AddCursorResult {
+    let position = cursors.primary().position;
 
     // Adjust position if cursor is at a newline character
     // This handles cases where add_cursor_above/below places cursor at same column
@@ -229,7 +229,7 @@ pub fn add_cursor_above(state: &mut EditorState) -> AddCursorResult {
     // Get the previous line
     if let Some((prev_line_start, prev_line_content)) = iter.prev() {
         let new_pos = cursor_position_on_line(prev_line_start, &prev_line_content, info.col_offset);
-        success_result(Cursor::new(new_pos), state)
+        success_result(Cursor::new(new_pos), cursors)
     } else {
         AddCursorResult::Failed {
             message: "Already at first line".to_string(),
@@ -238,8 +238,8 @@ pub fn add_cursor_above(state: &mut EditorState) -> AddCursorResult {
 }
 
 /// Add a cursor below the primary cursor at the same column
-pub fn add_cursor_below(state: &mut EditorState) -> AddCursorResult {
-    let position = state.cursors.primary().position;
+pub fn add_cursor_below(state: &mut EditorState, cursors: &Cursors) -> AddCursorResult {
+    let position = cursors.primary().position;
 
     // Get current line info
     let Some(info) = get_cursor_line_info(state, position) else {
@@ -255,7 +255,7 @@ pub fn add_cursor_below(state: &mut EditorState) -> AddCursorResult {
     // Get next line
     if let Some((next_line_start, next_line_content)) = iter.next_line() {
         let new_pos = cursor_position_on_line(next_line_start, &next_line_content, info.col_offset);
-        success_result(Cursor::new(new_pos), state)
+        success_result(Cursor::new(new_pos), cursors)
     } else {
         AddCursorResult::Failed {
             message: "Already at last line".to_string(),

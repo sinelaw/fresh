@@ -194,7 +194,7 @@ fn test_auto_indent_with_multi_cursor() {
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap(); // Move both to end
 
     // Verify we have 2 cursors
-    let cursor_count = harness.editor().active_state().cursors.iter().count();
+    let cursor_count = harness.editor().active_cursors().iter().count();
     assert_eq!(cursor_count, 2, "Should have 2 cursors");
 
     // Press Enter at both cursors

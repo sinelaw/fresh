@@ -2150,7 +2150,7 @@ fn test_add_cursor_below_with_line_wrap_enabled() {
     harness.render().unwrap();
 
     // Verify no crash and cursor count increased
-    let cursor_count = harness.editor().active_state().cursors.count();
+    let cursor_count = harness.editor().active_cursors().count();
     assert_eq!(
         cursor_count, 2,
         "Should have 2 cursors after add cursor below"

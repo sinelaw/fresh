@@ -34,7 +34,7 @@ fn test_paste_replaces_selection() {
     }
 
     // Verify selection
-    let primary = harness.editor().active_state().cursors.primary();
+    let primary = harness.editor().active_cursors().primary();
     assert_eq!(primary.position, 11, "Cursor should be at end of 'world'");
     assert_eq!(
         primary.anchor,
@@ -71,7 +71,7 @@ fn test_paste_with_multiple_cursors() {
     harness.editor_mut().add_cursor_below();
 
     // Should have 3 cursors
-    assert_eq!(harness.editor().active_state().cursors.count(), 3);
+    assert_eq!(harness.editor().active_cursors().count(), 3);
 
     // Set clipboard and paste
     harness.editor_mut().set_clipboard_for_test("X".to_string());
@@ -119,7 +119,7 @@ fn test_paste_replaces_multiple_selections() {
     harness.render().unwrap();
 
     // Should have 3 cursors, each selecting "foo"
-    assert_eq!(harness.editor().active_state().cursors.count(), 3);
+    assert_eq!(harness.editor().active_cursors().count(), 3);
 
     // Set clipboard and paste
     harness
@@ -183,7 +183,7 @@ fn test_multi_cursor_paste_undo_is_atomic() {
     harness.editor_mut().add_cursor_below();
 
     // Should have 3 cursors
-    assert_eq!(harness.editor().active_state().cursors.count(), 3);
+    assert_eq!(harness.editor().active_cursors().count(), 3);
 
     // Paste
     harness.editor_mut().set_clipboard_for_test("X".to_string());

@@ -102,22 +102,23 @@ fn long_function() {
 
     // Add LSP diagnostic markers (simulated)
     {
-        let state = harness.editor_mut().active_state_mut();
-
         // Add diagnostic overlay for "unused_var" on line 11
-        state.apply(&Event::AddOverlay {
-            namespace: Some(OverlayNamespace::from_string("lsp-diagnostic".to_string())),
-            range: 230..240,
-            face: OverlayFace::Background {
-                color: (60, 20, 20),
-            },
-            priority: 100,
-            message: Some("unused variable: `unused_var`".to_string()),
-            extend_to_line_end: false,
-            url: None,
-        });
+        harness
+            .apply_event(Event::AddOverlay {
+                namespace: Some(OverlayNamespace::from_string("lsp-diagnostic".to_string())),
+                range: 230..240,
+                face: OverlayFace::Background {
+                    color: (60, 20, 20),
+                },
+                priority: 100,
+                message: Some("unused variable: `unused_var`".to_string()),
+                extend_to_line_end: false,
+                url: None,
+            })
+            .unwrap();
 
         // Add margin indicators
+        let state = harness.editor_mut().active_state_mut();
         state
             .margins
             .set_diagnostic_indicator(10, "●".to_string(), Color::Red);
