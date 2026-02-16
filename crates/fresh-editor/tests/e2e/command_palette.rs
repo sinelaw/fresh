@@ -703,8 +703,13 @@ fn test_command_palette_shows_shortcuts() {
     // Add Cursor Below should show Ctrl+Alt+↓
     harness.assert_screen_contains("Add Cursor Below");
 
+    // Filter to "Copy" to bring it into the visible 10 items
+    harness.type_text("Copy");
+    harness.render().unwrap();
+
     // Copy should show Ctrl+C (or ⌘+C on macOS)
     harness.assert_screen_contains("Copy");
+    let screen = harness.screen_to_string();
     assert!(
         screen.contains("Ctrl+C") || screen.contains("⌘+C"),
         "Should show shortcut for Copy"
