@@ -98,6 +98,7 @@ pub mod undo_redo;
 pub mod unicode_cursor;
 pub mod unicode_prompt_bugs;
 pub mod update_notification;
+pub mod vertical_rulers;
 #[cfg(feature = "plugins")]
 pub mod vi_mode;
 pub mod virtual_lines;

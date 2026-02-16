@@ -3559,6 +3559,7 @@ impl Editor {
                     | PromptType::SetEncoding
                     | PromptType::SetLineEnding
                     | PromptType::Plugin { .. }
+                    | PromptType::RemoveRuler
             ) {
                 // Use the selected suggestion if any
                 if let Some(selected_idx) = prompt.selected_suggestion {
