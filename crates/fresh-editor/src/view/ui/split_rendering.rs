@@ -355,6 +355,7 @@ struct ViewPreferences {
     compose_width: Option<u16>,
     compose_column_guides: Option<Vec<u16>>,
     view_transform: Option<ViewTransformPayload>,
+    rulers: Vec<usize>,
 }
 
 struct LineRenderInput<'a> {
@@ -1033,6 +1034,7 @@ impl SplitRenderer {
                     relative_line_numbers,
                     use_terminal_bg,
                     session_mode,
+                    &view_prefs.rulers,
                 );
 
                 // Store view line mappings for mouse click handling
@@ -1916,6 +1918,7 @@ impl SplitRenderer {
                     compose_width: view_state.compose_width,
                     compose_column_guides: view_state.compose_column_guides.clone(),
                     view_transform: view_state.view_transform.clone(),
+                    rulers: view_state.rulers.clone(),
                 };
             }
         }
@@ -1926,6 +1929,7 @@ impl SplitRenderer {
             compose_width: None,
             compose_column_guides: None,
             view_transform: None,
+            rulers: Vec::new(),
         }
     }
 
@@ -4438,6 +4442,7 @@ impl SplitRenderer {
         relative_line_numbers: bool,
         use_terminal_bg: bool,
         session_mode: bool,
+        rulers: &[usize],
     ) -> Vec<ViewLineMapping> {
         let _span = tracing::trace_span!("render_buffer_in_split").entered();
 
@@ -4684,28 +4689,35 @@ impl SplitRenderer {
         //     cursor_screen_pos,
         // );
 
-        // Render column guides if present (for tables, etc.)
+        // Render config-based vertical rulers
+        if !rulers.is_empty() {
+            let ruler_cols: Vec<u16> = rulers.iter().map(|&r| r as u16).collect();
+            let ruler_style = Style::default().fg(theme.ruler_fg);
+            Self::render_column_guides(
+                frame,
+                &ruler_cols,
+                ruler_style,
+                render_area,
+                gutter_width,
+                render_output.content_lines_rendered,
+                viewport.left_column,
+            );
+        }
+
+        // Render compose column guides (for tables, etc.)
         if let Some(guides) = compose_column_guides {
             let guide_style = Style::default()
                 .fg(theme.line_number_fg)
                 .add_modifier(Modifier::DIM);
-            let guide_height = render_output
-                .content_lines_rendered
-                .min(render_area.height as usize);
-
-            for col in guides {
-                // Column guides are relative to content area (after gutter)
-                let guide_x = render_area.x + gutter_width as u16 + col;
-
-                // Only draw if the guide is within the visible area
-                if guide_x >= render_area.x && guide_x < render_area.x + render_area.width {
-                    for row in 0..guide_height {
-                        let cell_area = Rect::new(guide_x, render_area.y + row as u16, 1, 1);
-                        let guide_char = Paragraph::new("│").style(guide_style);
-                        frame.render_widget(guide_char, cell_area);
-                    }
-                }
-            }
+            Self::render_column_guides(
+                frame,
+                &guides,
+                guide_style,
+                render_area,
+                gutter_width,
+                render_output.content_lines_rendered,
+                0, // compose guides are already relative to content
+            );
         }
 
         if let Some((screen_x, screen_y)) = cursor_screen_pos {
@@ -4721,6 +4733,39 @@ impl SplitRenderer {
         // Extract view line mappings for mouse click handling
         // This maps screen coordinates to buffer byte positions
         render_output.view_line_mappings
+    }
+
+    /// Render vertical column guide lines in the editor content area.
+    /// Used for both config-based vertical rulers and compose-mode column guides.
+    fn render_column_guides(
+        frame: &mut Frame,
+        columns: &[u16],
+        style: Style,
+        render_area: Rect,
+        gutter_width: usize,
+        content_height: usize,
+        left_column: usize,
+    ) {
+        let guide_height = content_height.min(render_area.height as usize);
+        for &col in columns {
+            // Account for horizontal scroll
+            let Some(scrolled_col) = (col as usize).checked_sub(left_column) else {
+                continue;
+            };
+            let guide_x = render_area.x + gutter_width as u16 + scrolled_col as u16;
+            if guide_x < render_area.x + render_area.width {
+                for row in 0..guide_height {
+                    let cell = &mut frame.buffer_mut()[(guide_x, render_area.y + row as u16)];
+                    cell.set_symbol("│");
+                    if let Some(fg) = style.fg {
+                        cell.set_fg(fg);
+                    }
+                    if !style.add_modifier.is_empty() {
+                        cell.set_style(Style::default().add_modifier(style.add_modifier));
+                    }
+                }
+            }
+        }
     }
 
     /// Post-process the rendered frame to apply OSC 8 hyperlink escape sequences

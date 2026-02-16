@@ -218,6 +218,9 @@ pub struct EditorColors {
     /// Diff modified line background
     #[serde(default = "default_diff_modify_bg")]
     pub diff_modify_bg: ColorDef,
+    /// Vertical ruler line color
+    #[serde(default = "default_ruler_fg")]
+    pub ruler_fg: ColorDef,
 }
 
 // Default editor colors (for minimal themes)
@@ -253,6 +256,9 @@ fn default_diff_remove_bg() -> ColorDef {
 }
 fn default_diff_modify_bg() -> ColorDef {
     ColorDef::Rgb(40, 38, 30) // Very subtle yellow tint, close to dark bg
+}
+fn default_ruler_fg() -> ColorDef {
+    ColorDef::Rgb(50, 50, 50) // Subtle dark gray, slightly lighter than default editor bg
 }
 
 /// UI element colors (tabs, menus, status bar, etc.)
@@ -800,6 +806,9 @@ pub struct Theme {
     pub line_number_fg: Color,
     pub line_number_bg: Color,
 
+    // Vertical ruler color
+    pub ruler_fg: Color,
+
     // Diff highlighting colors
     pub diff_add_bg: Color,
     pub diff_remove_bg: Color,
@@ -935,6 +944,7 @@ impl From<ThemeFile> for Theme {
             current_line_bg: file.editor.current_line_bg.into(),
             line_number_fg: file.editor.line_number_fg.into(),
             line_number_bg: file.editor.line_number_bg.into(),
+            ruler_fg: file.editor.ruler_fg.into(),
             diff_add_bg: file.editor.diff_add_bg.clone().into(),
             diff_remove_bg: file.editor.diff_remove_bg.clone().into(),
             diff_modify_bg: file.editor.diff_modify_bg.into(),
@@ -1042,6 +1052,7 @@ impl From<Theme> for ThemeFile {
                 diff_add_bg: theme.diff_add_bg.into(),
                 diff_remove_bg: theme.diff_remove_bg.into(),
                 diff_modify_bg: theme.diff_modify_bg.into(),
+                ruler_fg: theme.ruler_fg.into(),
             },
             ui: UiColors {
                 tab_active_fg: theme.tab_active_fg.into(),
@@ -1185,6 +1196,7 @@ impl Theme {
                 "diff_add_bg" => Some(self.diff_add_bg),
                 "diff_remove_bg" => Some(self.diff_remove_bg),
                 "diff_modify_bg" => Some(self.diff_modify_bg),
+                "ruler_fg" => Some(self.ruler_fg),
                 _ => None,
             },
             "ui" => match field {

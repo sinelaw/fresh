@@ -47,6 +47,7 @@ impl Editor {
                     current_buffer_id,
                 );
                 view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+                view_state.rulers = self.config.editor.rulers.clone();
 
                 // Copy keyed states from source split for OTHER buffers (not the active one).
                 // The active buffer gets a fresh cursor in the new split.

@@ -944,6 +944,7 @@ impl Editor {
         let initial_split_id = split_manager.active_split();
         let mut initial_view_state = SplitViewState::with_buffer(width, height, buffer_id);
         initial_view_state.viewport.line_wrap_enabled = config.editor.line_wrap;
+        initial_view_state.rulers = config.editor.rulers.clone();
         split_view_states.insert(initial_split_id, initial_view_state);
 
         // Initialize filesystem manager for file explorer
@@ -5370,6 +5371,7 @@ impl Editor {
                         );
                         view_state.viewport.line_wrap_enabled =
                             line_wrap.unwrap_or(self.config.editor.line_wrap);
+                        view_state.rulers = self.config.editor.rulers.clone();
                         self.split_view_states.insert(new_split_id, view_state);
 
                         // Focus the new split (the diagnostics panel)
@@ -5860,6 +5862,7 @@ impl Editor {
                                         buffer_id,
                                     );
                                     view_state.viewport.line_wrap_enabled = false;
+                                    view_state.rulers = self.config.editor.rulers.clone();
                                     self.split_view_states.insert(new_split_id, view_state);
 
                                     if focus.unwrap_or(true) {

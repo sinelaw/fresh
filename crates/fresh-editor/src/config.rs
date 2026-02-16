@@ -510,6 +510,14 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub cursor_style: CursorStyle,
 
+    /// Vertical ruler lines at specific column positions.
+    /// Draws subtle vertical lines to help with line length conventions.
+    /// Example: [80, 120] draws rulers at columns 80 and 120.
+    /// Default: [] (no rulers)
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Display"))]
+    pub rulers: Vec<usize>,
+
     // ===== Editing =====
     /// Number of spaces per tab character
     #[serde(default = "default_tab_size")]
@@ -844,6 +852,7 @@ impl Default for EditorConfig {
             show_vertical_scrollbar: true,
             show_horizontal_scrollbar: false,
             use_terminal_bg: false,
+            rulers: Vec::new(),
         }
     }
 }

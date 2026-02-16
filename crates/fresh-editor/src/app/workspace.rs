@@ -905,6 +905,7 @@ impl Editor {
                             second_buffer_id,
                         );
                         view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+                        view_state.rulers = self.config.editor.rulers.clone();
                         self.split_view_states.insert(new_split_id, view_state);
 
                         // Map the container split ID (though we mainly care about leaves)

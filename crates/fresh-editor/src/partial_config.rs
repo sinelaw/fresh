@@ -176,6 +176,7 @@ pub struct PartialEditorConfig {
     pub show_vertical_scrollbar: Option<bool>,
     pub show_horizontal_scrollbar: Option<bool>,
     pub use_terminal_bg: Option<bool>,
+    pub rulers: Option<Vec<usize>>,
 }
 
 impl Merge for PartialEditorConfig {
@@ -247,6 +248,7 @@ impl Merge for PartialEditorConfig {
         self.show_horizontal_scrollbar
             .merge_from(&other.show_horizontal_scrollbar);
         self.use_terminal_bg.merge_from(&other.use_terminal_bg);
+        self.rulers.merge_from(&other.rulers);
     }
 }
 
@@ -463,6 +465,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             show_vertical_scrollbar: Some(cfg.show_vertical_scrollbar),
             show_horizontal_scrollbar: Some(cfg.show_horizontal_scrollbar),
             use_terminal_bg: Some(cfg.use_terminal_bg),
+            rulers: Some(cfg.rulers.clone()),
         }
     }
 }
@@ -565,6 +568,7 @@ impl PartialEditorConfig {
                 .show_horizontal_scrollbar
                 .unwrap_or(defaults.show_horizontal_scrollbar),
             use_terminal_bg: self.use_terminal_bg.unwrap_or(defaults.use_terminal_bg),
+            rulers: self.rulers.unwrap_or_else(|| defaults.rulers.clone()),
         }
     }
 }

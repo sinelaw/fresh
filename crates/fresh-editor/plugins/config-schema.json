@@ -40,6 +40,7 @@
         "show_horizontal_scrollbar": false,
         "use_terminal_bg": false,
         "cursor_style": "default",
+        "rulers": [],
         "tab_size": 4,
         "auto_indent": true,
         "scroll_offset": 3,
@@ -262,6 +263,17 @@
           "description": "Cursor style for the terminal cursor.\nOptions: blinking_block, steady_block, blinking_bar, steady_bar, blinking_underline, steady_underline\nDefault: blinking_block",
           "$ref": "#/$defs/CursorStyle",
           "default": "default",
+          "x-section": "Display"
+        },
+        "rulers": {
+          "description": "Vertical ruler lines at specific column positions.\nDraws subtle vertical lines to help with line length conventions.\nExample: [80, 120] draws rulers at columns 80 and 120.\nDefault: [] (no rulers)",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "default": [],
           "x-section": "Display"
         },
         "tab_size": {
