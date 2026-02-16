@@ -3541,7 +3541,7 @@ impl Editor {
         if let Some(prompt) = self.prompt.take() {
             let selected_index = prompt.selected_suggestion;
             // For prompts with suggestions, prefer the selected suggestion over raw input
-            let final_input = if prompt.sync_input_on_navigate {
+            let mut final_input = if prompt.sync_input_on_navigate {
                 // When sync_input_on_navigate is set, the input field is kept in sync
                 // with the selected suggestion, so always use the input value
                 prompt.input.clone()
@@ -3559,7 +3559,6 @@ impl Editor {
                     | PromptType::SetEncoding
                     | PromptType::SetLineEnding
                     | PromptType::Plugin { .. }
-                    | PromptType::RemoveRuler
             ) {
                 // Use the selected suggestion if any
                 if let Some(selected_idx) = prompt.selected_suggestion {
@@ -3606,6 +3605,21 @@ impl Editor {
                     self.set_status_message(
                         t!("error.no_lsp_match", input = final_input.clone()).to_string(),
                     );
+                    return None;
+                }
+            }
+
+            // For RemoveRuler, only accept if the user selected a valid suggestion.
+            // Raw text input is not accepted — the user must pick from the list.
+            if matches!(prompt.prompt_type, PromptType::RemoveRuler) {
+                if let Some(selected_idx) = prompt.selected_suggestion {
+                    if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
+                        // Override final_input with the suggestion's value
+                        final_input = suggestion.get_value().to_string();
+                    }
+                } else {
+                    // No suggestion selected — reject
+                    self.prompt = Some(prompt);
                     return None;
                 }
             }

@@ -4689,14 +4689,13 @@ impl SplitRenderer {
         //     cursor_screen_pos,
         // );
 
-        // Render config-based vertical rulers
+        // Render config-based vertical rulers (as background color tint)
         if !rulers.is_empty() {
             let ruler_cols: Vec<u16> = rulers.iter().map(|&r| r as u16).collect();
-            let ruler_style = Style::default().fg(theme.ruler_fg);
-            Self::render_column_guides(
+            Self::render_ruler_bg(
                 frame,
                 &ruler_cols,
-                ruler_style,
+                theme.ruler_bg,
                 render_area,
                 gutter_width,
                 render_output.content_lines_rendered,
@@ -4763,6 +4762,33 @@ impl SplitRenderer {
                     if !style.add_modifier.is_empty() {
                         cell.set_style(Style::default().add_modifier(style.add_modifier));
                     }
+                }
+            }
+        }
+    }
+
+    /// Render vertical rulers as a subtle background color tint.
+    /// Unlike `render_column_guides` which draws │ characters (for compose guides),
+    /// this preserves the existing text content and only adjusts the background color.
+    fn render_ruler_bg(
+        frame: &mut Frame,
+        columns: &[u16],
+        color: Color,
+        render_area: Rect,
+        gutter_width: usize,
+        content_height: usize,
+        left_column: usize,
+    ) {
+        let guide_height = content_height.min(render_area.height as usize);
+        for &col in columns {
+            let Some(scrolled_col) = (col as usize).checked_sub(left_column) else {
+                continue;
+            };
+            let guide_x = render_area.x + gutter_width as u16 + scrolled_col as u16;
+            if guide_x < render_area.x + render_area.width {
+                for row in 0..guide_height {
+                    let cell = &mut frame.buffer_mut()[(guide_x, render_area.y + row as u16)];
+                    cell.set_bg(color);
                 }
             }
         }

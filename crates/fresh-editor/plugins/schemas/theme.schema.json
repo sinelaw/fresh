@@ -137,8 +137,8 @@
             30
           ]
         },
-        "ruler_fg": {
-          "description": "Vertical ruler line color",
+        "ruler_bg": {
+          "description": "Vertical ruler background color",
           "$ref": "#/$defs/ColorDef",
           "default": [
             50,
