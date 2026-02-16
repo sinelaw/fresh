@@ -393,6 +393,71 @@ fn test_add_ruler_invalid_input() {
     }
 }
 
+/// Test add ruler, then remove with bad input (rejected), then remove with correct value.
+#[test]
+fn test_add_then_remove_ruler_bad_then_good_input() {
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let _fixture = harness.load_buffer_from_text(&"X".repeat(90)).unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+    let ruler_x = SMALL_BUFFER_GUTTER + 80;
+
+    // Step 1: Add a ruler at column 80 via command palette
+    assert!(
+        !has_ruler_bg(&harness, ruler_x, row),
+        "No ruler at column 80 before adding"
+    );
+
+    run_command(&mut harness, "Add Ruler");
+    harness.type_text("80").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify the ruler renders at column 80
+    assert!(
+        has_ruler_bg(&harness, ruler_x, row),
+        "Ruler should render at column 80 after adding"
+    );
+
+    // Step 2: Try to remove ruler, but type bad value "32" (not a configured ruler)
+    run_command(&mut harness, "Remove Ruler");
+    // Type "32" which doesn't match the ruler at 80
+    harness.type_text("32").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Ruler at 80 should still be there — "32" was rejected
+    // Escape the still-open prompt
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        has_ruler_bg(&harness, ruler_x, row),
+        "Ruler at 80 should still exist after rejected remove with '32'"
+    );
+
+    // Step 3: Remove the ruler with the correct value
+    run_command(&mut harness, "Remove Ruler");
+    // Type "80" which matches the configured ruler
+    harness.type_text("80").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Ruler at 80 should now be gone
+    assert!(
+        !has_ruler_bg(&harness, ruler_x, row),
+        "Ruler at 80 should be removed after correct input"
+    );
+}
+
 /// Test adding a ruler at column 0 doesn't add a ruler.
 #[test]
 fn test_add_ruler_zero_column() {

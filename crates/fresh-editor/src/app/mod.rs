@@ -3609,18 +3609,31 @@ impl Editor {
                 }
             }
 
-            // For RemoveRuler, only accept if the user selected a valid suggestion.
-            // Raw text input is not accepted — the user must pick from the list.
+            // For RemoveRuler, validate input against the suggestion list.
+            // If the user typed text, it must match a suggestion value to be accepted.
+            // If the input is empty, the pre-selected suggestion is used.
             if matches!(prompt.prompt_type, PromptType::RemoveRuler) {
-                if let Some(selected_idx) = prompt.selected_suggestion {
-                    if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
-                        // Override final_input with the suggestion's value
-                        final_input = suggestion.get_value().to_string();
+                if prompt.input.is_empty() {
+                    // No typed text — use the selected suggestion
+                    if let Some(selected_idx) = prompt.selected_suggestion {
+                        if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
+                            final_input = suggestion.get_value().to_string();
+                        }
+                    } else {
+                        self.prompt = Some(prompt);
+                        return None;
                     }
                 } else {
-                    // No suggestion selected — reject
-                    self.prompt = Some(prompt);
-                    return None;
+                    // User typed text — it must match a suggestion value
+                    let typed = prompt.input.trim().to_string();
+                    let matched = prompt.suggestions.iter().find(|s| s.get_value() == typed);
+                    if let Some(suggestion) = matched {
+                        final_input = suggestion.get_value().to_string();
+                    } else {
+                        // Typed text doesn't match any ruler — reject
+                        self.prompt = Some(prompt);
+                        return None;
+                    }
                 }
             }
 
