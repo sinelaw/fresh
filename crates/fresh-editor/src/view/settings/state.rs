@@ -1286,7 +1286,10 @@ impl SettingsState {
         if let Some(item) = self.current_item() {
             if matches!(
                 item.control,
-                SettingControl::TextList(_) | SettingControl::Text(_) | SettingControl::Map(_)
+                SettingControl::TextList(_)
+                    | SettingControl::Text(_)
+                    | SettingControl::Map(_)
+                    | SettingControl::Json(_)
             ) {
                 self.editing_text = true;
             }
@@ -1298,14 +1301,27 @@ impl SettingsState {
         self.editing_text = false;
     }
 
-    /// Check if the current item is editable (TextList, Text, or Map)
+    /// Check if the current item is editable (TextList, Text, Map, or Json)
     pub fn is_editable_control(&self) -> bool {
         self.current_item().is_some_and(|item| {
             matches!(
                 item.control,
-                SettingControl::TextList(_) | SettingControl::Text(_) | SettingControl::Map(_)
+                SettingControl::TextList(_)
+                    | SettingControl::Text(_)
+                    | SettingControl::Map(_)
+                    | SettingControl::Json(_)
             )
         })
+    }
+
+    /// Check if currently editing a JSON control
+    pub fn is_editing_json(&self) -> bool {
+        if !self.editing_text {
+            return false;
+        }
+        self.current_item()
+            .map(|item| matches!(&item.control, SettingControl::Json(_)))
+            .unwrap_or(false)
     }
 
     /// Insert a character into the current editable control
@@ -1321,6 +1337,7 @@ impl SettingsState {
                     state.new_key_text.insert(state.cursor, c);
                     state.cursor += c.len_utf8();
                 }
+                SettingControl::Json(state) => state.insert(c),
                 _ => {}
             }
         }
@@ -1351,6 +1368,7 @@ impl SettingsState {
                         state.cursor = char_start;
                     }
                 }
+                SettingControl::Json(state) => state.backspace(),
                 _ => {}
             }
         }
@@ -1379,6 +1397,7 @@ impl SettingsState {
                         state.cursor = new_pos;
                     }
                 }
+                SettingControl::Json(state) => state.move_left(),
                 _ => {}
             }
         }
@@ -1410,6 +1429,7 @@ impl SettingsState {
                         state.cursor = new_pos;
                     }
                 }
+                SettingControl::Json(state) => state.move_right(),
                 _ => {}
             }
         }
@@ -1473,6 +1493,119 @@ impl SettingsState {
         }
         // Record the change
         self.on_value_changed();
+    }
+
+    // =========== JSON editing methods ===========
+
+    /// Move cursor up in JSON editor
+    pub fn json_cursor_up(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.move_up();
+            }
+        }
+    }
+
+    /// Move cursor down in JSON editor
+    pub fn json_cursor_down(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.move_down();
+            }
+        }
+    }
+
+    /// Insert newline in JSON editor
+    pub fn json_insert_newline(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.insert('\n');
+            }
+        }
+    }
+
+    /// Delete character at cursor in JSON editor
+    pub fn json_delete(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.delete();
+            }
+        }
+    }
+
+    /// Stop JSON editing: commit if valid, revert if invalid
+    pub fn json_exit_editing(&mut self) {
+        let is_valid = self
+            .current_item()
+            .map(|item| {
+                if let SettingControl::Json(state) = &item.control {
+                    state.is_valid()
+                } else {
+                    true
+                }
+            })
+            .unwrap_or(true);
+
+        if is_valid {
+            if let Some(item) = self.current_item_mut() {
+                if let SettingControl::Json(state) = &mut item.control {
+                    state.commit();
+                }
+            }
+            self.on_value_changed();
+        } else {
+            if let Some(item) = self.current_item_mut() {
+                if let SettingControl::Json(state) = &mut item.control {
+                    state.revert();
+                }
+            }
+        }
+        self.editing_text = false;
+    }
+
+    /// Select all text in JSON editor
+    pub fn json_select_all(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.select_all();
+            }
+        }
+    }
+
+    /// Move cursor up with selection in JSON editor
+    pub fn json_cursor_up_selecting(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.editor.move_up_selecting();
+            }
+        }
+    }
+
+    /// Move cursor down with selection in JSON editor
+    pub fn json_cursor_down_selecting(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.editor.move_down_selecting();
+            }
+        }
+    }
+
+    /// Move cursor left with selection in JSON editor
+    pub fn json_cursor_left_selecting(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.editor.move_left_selecting();
+            }
+        }
+    }
+
+    /// Move cursor right with selection in JSON editor
+    pub fn json_cursor_right_selecting(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Json(state) = &mut item.control {
+                state.editor.move_right_selecting();
+            }
+        }
     }
 
     // =========== Dropdown methods ===========

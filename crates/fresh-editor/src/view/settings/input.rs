@@ -644,6 +644,12 @@ impl SettingsState {
         event: &KeyEvent,
         _ctx: &mut InputContext,
     ) -> InputResult {
+        let is_json = self.is_editing_json();
+
+        if is_json {
+            return self.handle_json_editing_input(event);
+        }
+
         match event.code {
             KeyCode::Esc => {
                 // Check if current text field requires JSON validation
@@ -687,6 +693,65 @@ impl SettingsState {
             }
             _ => InputResult::Consumed, // Consume all during text edit
         }
+    }
+
+    /// Handle input when editing a JSON control (multiline editor)
+    fn handle_json_editing_input(&mut self, event: &KeyEvent) -> InputResult {
+        match event.code {
+            KeyCode::Esc | KeyCode::Tab => {
+                // Accept if valid JSON, revert if invalid, then stop editing
+                self.json_exit_editing();
+            }
+            KeyCode::Enter => {
+                self.json_insert_newline();
+            }
+            KeyCode::Char(c) => {
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    match c {
+                        'a' | 'A' => self.json_select_all(),
+                        _ => {}
+                    }
+                } else {
+                    self.text_insert(c);
+                }
+            }
+            KeyCode::Backspace => {
+                self.text_backspace();
+            }
+            KeyCode::Delete => {
+                self.json_delete();
+            }
+            KeyCode::Left => {
+                if event.modifiers.contains(KeyModifiers::SHIFT) {
+                    self.json_cursor_left_selecting();
+                } else {
+                    self.text_move_left();
+                }
+            }
+            KeyCode::Right => {
+                if event.modifiers.contains(KeyModifiers::SHIFT) {
+                    self.json_cursor_right_selecting();
+                } else {
+                    self.text_move_right();
+                }
+            }
+            KeyCode::Up => {
+                if event.modifiers.contains(KeyModifiers::SHIFT) {
+                    self.json_cursor_up_selecting();
+                } else {
+                    self.json_cursor_up();
+                }
+            }
+            KeyCode::Down => {
+                if event.modifiers.contains(KeyModifiers::SHIFT) {
+                    self.json_cursor_down_selecting();
+                } else {
+                    self.json_cursor_down();
+                }
+            }
+            _ => {}
+        }
+        InputResult::Consumed
     }
 
     /// Handle input when editing a number input control

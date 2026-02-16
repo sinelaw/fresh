@@ -141,6 +141,13 @@ impl Editor {
             }
         }
 
+        // Propagate editor config to all buffer view states
+        for view_state in self.split_view_states.values_mut() {
+            for buf_state in view_state.keyed_states.values_mut() {
+                buf_state.rulers = self.config.editor.rulers.clone();
+            }
+        }
+
         // Save ONLY the changes to disk (preserves external edits to the config file)
         let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
 
