@@ -8,6 +8,7 @@ use super::normalize_path;
 use super::BufferId;
 use super::BufferMetadata;
 use super::Editor;
+use crate::config_io::{ConfigLayer, ConfigResolver};
 use crate::input::keybindings::Action;
 use crate::primitives::path_utils::expand_tilde;
 use crate::services::plugins::hooks::HookArgs;
@@ -402,6 +403,12 @@ impl Editor {
                     let _ = self.handle_interactive_replace_key(c);
                 }
             }
+            PromptType::AddRuler => {
+                self.handle_add_ruler(&input);
+            }
+            PromptType::RemoveRuler => {
+                self.handle_remove_ruler(&input);
+            }
             PromptType::SetTabSize => {
                 self.handle_set_tab_size(&input);
             }
@@ -572,6 +579,67 @@ impl Editor {
                     );
                 }
             }
+        }
+    }
+
+    /// Handle AddRuler prompt confirmation.
+    fn handle_add_ruler(&mut self, input: &str) {
+        let trimmed = input.trim();
+        match trimmed.parse::<usize>() {
+            Ok(col) if col > 0 => {
+                let active_split = self.split_manager.active_split();
+                if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+                    if !view_state.rulers.contains(&col) {
+                        view_state.rulers.push(col);
+                        view_state.rulers.sort();
+                    }
+                }
+                // Persist to user config
+                self.config.editor.rulers = self
+                    .split_view_states
+                    .get(&active_split)
+                    .map(|vs| vs.rulers.clone())
+                    .unwrap_or_default();
+                self.save_rulers_to_config();
+                self.set_status_message(t!("rulers.added", column = col).to_string());
+            }
+            Ok(_) => {
+                self.set_status_message(t!("rulers.must_be_positive").to_string());
+            }
+            Err(_) => {
+                self.set_status_message(t!("rulers.invalid_column", input = input).to_string());
+            }
+        }
+    }
+
+    /// Handle RemoveRuler prompt confirmation.
+    fn handle_remove_ruler(&mut self, input: &str) {
+        let trimmed = input.trim();
+        if let Ok(col) = trimmed.parse::<usize>() {
+            let active_split = self.split_manager.active_split();
+            if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+                view_state.rulers.retain(|&r| r != col);
+            }
+            // Persist to user config
+            self.config.editor.rulers = self
+                .split_view_states
+                .get(&active_split)
+                .map(|vs| vs.rulers.clone())
+                .unwrap_or_default();
+            self.save_rulers_to_config();
+            self.set_status_message(t!("rulers.removed", column = col).to_string());
+        }
+    }
+
+    /// Save the current rulers setting to the user's config file
+    fn save_rulers_to_config(&mut self) {
+        if let Err(e) = self.filesystem.create_dir_all(&self.dir_context.config_dir) {
+            tracing::warn!("Failed to create config directory: {}", e);
+            return;
+        }
+        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        if let Err(e) = resolver.save_to_layer(&self.config, ConfigLayer::User) {
+            tracing::warn!("Failed to save rulers to config: {}", e);
         }
     }
 

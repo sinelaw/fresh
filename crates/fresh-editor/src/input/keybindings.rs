@@ -535,6 +535,8 @@ pub enum Action {
     ToggleIndentationStyle,
     ToggleTabIndicators,
     ResetBufferSettings,
+    AddRuler,
+    RemoveRuler,
 
     // Config operations
     DumpConfig,
@@ -1958,6 +1960,8 @@ impl KeybindingResolver {
             Action::ToggleDebugHighlights => t!("action.toggle_debug_highlights"),
             Action::SetBackground => t!("action.set_background"),
             Action::SetBackgroundBlend => t!("action.set_background_blend"),
+            Action::AddRuler => t!("action.add_ruler"),
+            Action::RemoveRuler => t!("action.remove_ruler"),
             Action::SetTabSize => t!("action.set_tab_size"),
             Action::SetLineEnding => t!("action.set_line_ending"),
             Action::SetEncoding => t!("action.set_encoding"),

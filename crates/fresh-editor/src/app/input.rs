@@ -673,6 +673,13 @@ impl Editor {
             Action::ToggleMouseCapture => self.toggle_mouse_capture(),
             Action::ToggleMouseHover => self.toggle_mouse_hover(),
             Action::ToggleDebugHighlights => self.toggle_debug_highlights(),
+            // Rulers
+            Action::AddRuler => {
+                self.start_prompt(t!("rulers.add_prompt").to_string(), PromptType::AddRuler);
+            }
+            Action::RemoveRuler => {
+                self.start_remove_ruler_prompt();
+            }
             // Buffer settings
             Action::SetTabSize => {
                 let current = self
@@ -2904,6 +2911,39 @@ impl Editor {
                 t!("view.cursor_style_changed", style = description).to_string(),
             );
         }
+    }
+
+    /// Start the remove ruler prompt with current rulers as suggestions
+    fn start_remove_ruler_prompt(&mut self) {
+        let active_split = self.split_manager.active_split();
+        let rulers = self
+            .split_view_states
+            .get(&active_split)
+            .map(|vs| vs.rulers.clone())
+            .unwrap_or_default();
+
+        if rulers.is_empty() {
+            self.set_status_message(t!("rulers.none_configured").to_string());
+            return;
+        }
+
+        let suggestions: Vec<crate::input::commands::Suggestion> = rulers
+            .iter()
+            .map(|&col| crate::input::commands::Suggestion {
+                text: format!("Column {}", col),
+                description: None,
+                value: Some(col.to_string()),
+                disabled: false,
+                keybinding: None,
+                source: None,
+            })
+            .collect();
+
+        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+            t!("rulers.remove_prompt").to_string(),
+            PromptType::RemoveRuler,
+            suggestions,
+        ));
     }
 
     /// Save the current cursor style setting to the user's config file

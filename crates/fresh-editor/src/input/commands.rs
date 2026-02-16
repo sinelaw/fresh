@@ -553,6 +553,21 @@ static COMMAND_DEFS: &[CommandDef] = &[
         contexts: &[Normal],
         custom_contexts: &[],
     },
+    // Rulers
+    CommandDef {
+        name_key: "cmd.add_ruler",
+        desc_key: "cmd.add_ruler_desc",
+        action: || Action::AddRuler,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.remove_ruler",
+        desc_key: "cmd.remove_ruler_desc",
+        action: || Action::RemoveRuler,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
     // Buffer settings
     CommandDef {
         name_key: "cmd.set_tab_size",

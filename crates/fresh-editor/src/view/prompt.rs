@@ -65,6 +65,10 @@ pub enum PromptType {
     JumpToBookmark,
     /// Set compose width (empty clears to viewport)
     SetComposeWidth,
+    /// Add a vertical ruler at a column position
+    AddRuler,
+    /// Remove a vertical ruler (select from list)
+    RemoveRuler,
     /// Set tab size for current buffer
     SetTabSize,
     /// Set line ending format for current buffer
