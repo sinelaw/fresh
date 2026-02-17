@@ -4467,37 +4467,61 @@ impl Editor {
 
         // Same-buffer scroll sync: when two splits show the same buffer (e.g., source
         // vs compose mode), sync the inactive split's viewport to match the active
-        // split's line position. This is a simpler case than anchor-based sync since
-        // both splits reference the same buffer (identity line mapping).
+        // split's scroll position.
+        //
+        // We copy top_byte directly for the general case.  At the bottom edge the
+        // two splits may disagree because compose mode has soft-break virtual lines.
+        // Rather than computing the correct position here (where view lines aren't
+        // available), we set a flag and let `render_buffer_in_split` fix it up using
+        // the same view-line-based logic that `ensure_visible_in_layout` uses.
         let active_buffer_id = self.split_manager.buffer_for_split(active_split);
         if let Some(active_buf_id) = active_buffer_id {
             let active_top_byte = self
                 .split_view_states
                 .get(&active_split)
                 .map(|vs| vs.viewport.top_byte);
+            let active_viewport_height = self
+                .split_view_states
+                .get(&active_split)
+                .map(|vs| vs.viewport.visible_line_count())
+                .unwrap_or(0);
 
             if let Some(top_byte) = active_top_byte {
-                if let Some(buffer_state) = self.buffers.get(&active_buf_id) {
-                    let active_line = buffer_state.buffer.get_line_number(top_byte);
+                // Find other splits showing the same buffer (not in an explicit sync group)
+                let other_splits: Vec<_> = self
+                    .split_view_states
+                    .keys()
+                    .filter(|&&s| {
+                        s != active_split
+                            && self.split_manager.buffer_for_split(s) == Some(active_buf_id)
+                            && !self.scroll_sync_manager.is_split_synced(s)
+                    })
+                    .copied()
+                    .collect();
 
-                    // Find other splits showing the same buffer (not in an explicit sync group)
-                    let other_splits: Vec<_> = self
-                        .split_view_states
-                        .keys()
-                        .filter(|&&s| {
-                            s != active_split
-                                && self.split_manager.buffer_for_split(s) == Some(active_buf_id)
-                                && !self.scroll_sync_manager.is_split_synced(s)
-                        })
-                        .copied()
-                        .collect();
+                if !other_splits.is_empty() {
+                    // Detect whether the active split is at the bottom of the
+                    // buffer (remaining lines fit within the viewport).
+                    let at_bottom = if let Some(state) = self.buffers.get_mut(&active_buf_id) {
+                        let mut iter = state.buffer.line_iterator(top_byte, 80);
+                        let mut lines_remaining = 0;
+                        while iter.next_line().is_some() {
+                            lines_remaining += 1;
+                            if lines_remaining > active_viewport_height {
+                                break;
+                            }
+                        }
+                        lines_remaining <= active_viewport_height
+                    } else {
+                        false
+                    };
 
                     for other_split in other_splits {
-                        if let Some(state) = self.buffers.get_mut(&active_buf_id) {
-                            let buffer = &mut state.buffer;
-                            if let Some(view_state) = self.split_view_states.get_mut(&other_split) {
-                                view_state.viewport.scroll_to(buffer, active_line);
-                            }
+                        if let Some(view_state) = self.split_view_states.get_mut(&other_split) {
+                            view_state.viewport.top_byte = top_byte;
+                            // At the bottom edge, tell the render pass to
+                            // adjust using view lines (soft-break-aware).
+                            view_state.viewport.sync_scroll_to_end = at_bottom;
                         }
                     }
                 }

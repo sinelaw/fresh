@@ -53,6 +53,12 @@ pub struct Viewport {
     /// Maximum line length encountered so far (in display columns).
     /// Updated incrementally as visible lines are rendered, avoiding full-file scans.
     pub max_line_length_seen: usize,
+
+    /// When true, the next render pass should scroll to show the last line at
+    /// the bottom of the viewport.  Set by same-buffer scroll sync when the
+    /// active split is at the end of the document.  Consumed (cleared) during
+    /// rendering after the adjustment is applied.
+    pub sync_scroll_to_end: bool,
 }
 
 impl Viewport {
@@ -71,6 +77,7 @@ impl Viewport {
             skip_resize_sync: false,
             skip_ensure_visible: false,
             max_line_length_seen: 0,
+            sync_scroll_to_end: false,
         }
     }
 
@@ -835,6 +842,27 @@ impl Viewport {
         // If we didn't find the line, stay at the last valid position
         let target_position = iter.current_position();
         self.set_top_byte_with_limit(buffer, target_position);
+    }
+
+    /// Scroll so the last view line sits at the bottom of the viewport.
+    ///
+    /// Works in view-line space (soft-break-aware) — the same coordinate system
+    /// used by `ensure_visible_in_layout`.  Returns `true` if the viewport was
+    /// actually adjusted.
+    pub fn scroll_to_end_of_view(&mut self, view_lines: &[ViewLine]) -> bool {
+        let viewport_height = self.visible_line_count();
+        if view_lines.is_empty() || viewport_height == 0 {
+            return false;
+        }
+        let max_top = view_lines.len().saturating_sub(viewport_height);
+        if self.top_view_line_offset == max_top {
+            return false;
+        }
+        self.top_view_line_offset = max_top;
+        if let Some(new_top_byte) = self.get_source_byte_for_view_line(view_lines, max_top) {
+            self.top_byte = new_top_byte;
+        }
+        true
     }
 
     /// Mark viewport as needing synchronization with cursor positions

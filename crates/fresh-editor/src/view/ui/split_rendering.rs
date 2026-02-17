@@ -4523,18 +4523,19 @@ impl SplitRenderer {
             &view_mode,
         );
 
-        // Ensure cursor is visible using Layout-aware check (handles virtual lines)
-        // This detects when cursor is beyond the rendered view_lines and scrolls
-        let primary = *cursors.primary();
-        let scrolled = viewport.ensure_visible_in_layout(&view_data.lines, &primary, gutter_width);
+        // Same-buffer scroll sync: if the sync code flagged this viewport to
+        // scroll to the end, apply it now using the view lines we just built.
+        // This is soft-break-aware (same coordinate system as ensure_visible_in_layout).
+        let sync_scrolled = if viewport.sync_scroll_to_end {
+            viewport.sync_scroll_to_end = false;
+            viewport.scroll_to_end_of_view(&view_data.lines)
+        } else {
+            false
+        };
 
-        // If we scrolled, rebuild view_data from the new top_byte and then re-run the
-        // layout-aware check so that top_view_line_offset is correct for the rebuilt data.
-        // Without this, top_view_line_offset would be stale (relative to the old view_data),
-        // causing gutter line numbers to desync from content.
-        let view_data = if scrolled {
-            // Reset offset before rebuild — it will be set correctly by the second
-            // ensure_visible_in_layout call below.
+        // If the sync adjustment changed top_byte, rebuild view_data before
+        // ensure_visible_in_layout runs (so it sees the correct view lines).
+        let (view_data, view_transform_for_rebuild) = if sync_scrolled {
             viewport.top_view_line_offset = 0;
             let rebuilt = Self::build_view_data(
                 state,
@@ -4547,10 +4548,46 @@ impl SplitRenderer {
                 gutter_width,
                 &view_mode,
             );
-            // Re-run layout-aware cursor check on the rebuilt data so top_view_line_offset
-            // correctly indexes the new view_lines (handles both source lines and virtual lines).
-            viewport.ensure_visible_in_layout(&rebuilt.lines, &primary, gutter_width);
-            rebuilt
+            viewport.scroll_to_end_of_view(&rebuilt.lines);
+            (rebuilt, None)
+        } else {
+            (view_data, Some(view_transform_for_rebuild))
+        };
+
+        // Ensure cursor is visible using Layout-aware check (handles virtual lines)
+        // This detects when cursor is beyond the rendered view_lines and scrolls
+        let primary = *cursors.primary();
+        let scrolled = viewport.ensure_visible_in_layout(&view_data.lines, &primary, gutter_width);
+
+        // If we scrolled, rebuild view_data from the new top_byte and then re-run the
+        // layout-aware check so that top_view_line_offset is correct for the rebuilt data.
+        // Without this, top_view_line_offset would be stale (relative to the old view_data),
+        // causing gutter line numbers to desync from content.
+        let view_data = if scrolled {
+            if let Some(vt) = view_transform_for_rebuild {
+                // Reset offset before rebuild — it will be set correctly by the second
+                // ensure_visible_in_layout call below.
+                viewport.top_view_line_offset = 0;
+                let rebuilt = Self::build_view_data(
+                    state,
+                    viewport,
+                    vt,
+                    estimated_line_length,
+                    visible_count,
+                    line_wrap,
+                    render_area.width as usize,
+                    gutter_width,
+                    &view_mode,
+                );
+                // Re-run layout-aware cursor check on the rebuilt data so top_view_line_offset
+                // correctly indexes the new view_lines (handles both source lines and virtual lines).
+                viewport.ensure_visible_in_layout(&rebuilt.lines, &primary, gutter_width);
+                rebuilt
+            } else {
+                // view_transform was already consumed by the sync rebuild — the
+                // ensure_visible scroll will take effect on the next frame.
+                view_data
+            }
         } else {
             view_data
         };
