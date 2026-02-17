@@ -255,9 +255,16 @@ type BufferInfo = {
 	*/
 	is_virtual: boolean;
 	/**
-	* Current view mode: "source" or "compose"
+	* Current view mode of the active split: "source" or "compose"
 	*/
 	view_mode: string;
+	/**
+	* True if any split showing this buffer has compose mode enabled.
+	* Plugins should use this (not view_mode) to decide whether to maintain
+	* decorations, since decorations live on the buffer and are filtered
+	* per-split at render time.
+	*/
+	is_composing_in_any_split: boolean;
 	/**
 	* Compose width (if set), from the active split's view state
 	*/

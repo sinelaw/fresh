@@ -5312,6 +5312,7 @@ mod tests {
                     is_virtual: false,
                     view_mode: "source".to_string(),
                     compose_width: None,
+                    is_composing_in_any_split: false,
                 },
             );
             state.buffers.insert(
@@ -5324,6 +5325,7 @@ mod tests {
                     is_virtual: false,
                     view_mode: "source".to_string(),
                     compose_width: None,
+                    is_composing_in_any_split: false,
                 },
             );
         }

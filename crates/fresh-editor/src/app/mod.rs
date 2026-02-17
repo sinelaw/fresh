@@ -4411,24 +4411,27 @@ impl Editor {
                     .get(buffer_id)
                     .map(|m| m.is_virtual())
                     .unwrap_or(false);
-                // Find view_mode and compose_width across all splits showing this buffer.
-                // Report "compose" if ANY split has compose mode for the buffer, so that
-                // the plugin continues adding decorations even when a source-mode split
-                // is active (the renderer filters decorations per-split).
-                let mut view_mode = "source";
-                let mut compose_width = None;
-                for vs in self.split_view_states.values() {
-                    if let Some(bs) = vs.buffer_state(*buffer_id) {
-                        if matches!(bs.view_mode, crate::state::ViewMode::Compose) {
-                            view_mode = "compose";
-                            compose_width = bs.compose_width;
-                            break;
-                        }
-                        if compose_width.is_none() {
-                            compose_width = bs.compose_width;
-                        }
-                    }
-                }
+                // Report the ACTIVE split's view_mode so plugins can distinguish
+                // which mode the user is currently in. Separately, report whether
+                // ANY split has compose mode so plugins can maintain decorations
+                // for compose-mode splits even when a source-mode split is active.
+                let active_split = self.split_manager.active_split();
+                let active_vs = self.split_view_states.get(&active_split);
+                let view_mode = active_vs
+                    .and_then(|vs| vs.buffer_state(*buffer_id))
+                    .map(|bs| match bs.view_mode {
+                        crate::state::ViewMode::Source => "source",
+                        crate::state::ViewMode::Compose => "compose",
+                    })
+                    .unwrap_or("source");
+                let compose_width = active_vs
+                    .and_then(|vs| vs.buffer_state(*buffer_id))
+                    .and_then(|bs| bs.compose_width);
+                let is_composing_in_any_split = self.split_view_states.values().any(|vs| {
+                    vs.buffer_state(*buffer_id)
+                        .map(|bs| matches!(bs.view_mode, crate::state::ViewMode::Compose))
+                        .unwrap_or(false)
+                });
                 let buffer_info = BufferInfo {
                     id: *buffer_id,
                     path: state.buffer.file_path().map(|p| p.to_path_buf()),
@@ -4436,6 +4439,7 @@ impl Editor {
                     length: state.buffer.len(),
                     is_virtual,
                     view_mode: view_mode.to_string(),
+                    is_composing_in_any_split,
                     compose_width,
                 };
                 snapshot.buffers.insert(*buffer_id, buffer_info);

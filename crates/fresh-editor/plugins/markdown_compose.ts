@@ -29,11 +29,18 @@ interface TableWidthInfo {
   allocated: number[];
 }
 
-// Helper: check whether a buffer is in compose mode (source of truth is Rust-side view_mode)
+// Helper: check whether the active split has compose mode for this buffer
 function isComposing(bufferId: number): boolean {
   const info = editor.getBufferInfo(bufferId);
-  editor.debug("getBufferInfo: " + String(info && info.view_mode));
   return info != null && info.view_mode === "compose";
+}
+
+// Helper: check whether ANY split showing this buffer has compose mode.
+// Use this for decoration maintenance (conceals, soft breaks, overlays) since
+// decorations live on the buffer and are filtered per-split at render time.
+function isComposingInAnySplit(bufferId: number): boolean {
+  const info = editor.getBufferInfo(bufferId);
+  return info != null && info.is_composing_in_any_split;
 }
 
 // Helper: get cached table column widths from per-buffer-per-split view state
@@ -1362,7 +1369,7 @@ globalThis.onMarkdownLinesChanged = function(data: {
     content: string;
   }>;
 }): void {
-  if (!isComposing(data.buffer_id)) return;
+  if (!isComposingInAnySplit(data.buffer_id)) return;
   const lineNums = data.lines.map(l => `${l.line_number}(${l.byte_start}..${l.byte_end})`).join(', ');
   editor.debug(`[mc] lines_changed: ${data.lines.length} lines: [${lineNums}]`);
   const cursors = [editor.getCursorPosition()];
@@ -1397,7 +1404,7 @@ globalThis.onMarkdownAfterInsert = function(data: {
   affected_start: number;
   affected_end: number;
 }): void {
-  if (!isComposing(data.buffer_id)) return;
+  if (!isComposingInAnySplit(data.buffer_id)) return;
   editor.debug(`[mc] after_insert: pos=${data.position} text="${data.text.replace(/\n/g,'\\n')}" affected=${data.affected_start}..${data.affected_end}`);
 };
 
@@ -1410,7 +1417,7 @@ globalThis.onMarkdownAfterDelete = function(data: {
   affected_start: number;
   deleted_len: number;
 }): void {
-  if (!isComposing(data.buffer_id)) return;
+  if (!isComposingInAnySplit(data.buffer_id)) return;
   editor.debug(`[mc] after_delete: start=${data.start} end=${data.end} deleted="${data.deleted_text.replace(/\n/g,'\\n')}" affected_start=${data.affected_start} deleted_len=${data.deleted_len}`);
 };
 
@@ -1422,7 +1429,7 @@ globalThis.onMarkdownCursorMoved = function(data: {
   new_position: number;
   line: number;
 }): void {
-  if (!isComposing(data.buffer_id)) return;
+  if (!isComposingInAnySplit(data.buffer_id)) return;
 
   const prevLine = editor.getViewState(data.buffer_id, "last-cursor-line") as number | undefined;
   editor.setViewState(data.buffer_id, "last-cursor-line", data.line);
@@ -1453,7 +1460,7 @@ globalThis.onMarkdownViewportChanged = function(data: {
   width: number;
   height: number;
 }): void {
-  if (!isComposing(data.buffer_id)) return;
+  if (!isComposingInAnySplit(data.buffer_id)) return;
   if (data.width === lastViewportWidth) return;
   lastViewportWidth = data.width;
 

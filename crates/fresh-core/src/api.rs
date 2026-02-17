@@ -315,8 +315,13 @@ pub struct BufferInfo {
     pub length: usize,
     /// Whether this is a virtual buffer (not backed by a file)
     pub is_virtual: bool,
-    /// Current view mode: "source" or "compose"
+    /// Current view mode of the active split: "source" or "compose"
     pub view_mode: String,
+    /// True if any split showing this buffer has compose mode enabled.
+    /// Plugins should use this (not `view_mode`) to decide whether to maintain
+    /// decorations, since decorations live on the buffer and are filtered
+    /// per-split at render time.
+    pub is_composing_in_any_split: bool,
     /// Compose width (if set), from the active split's view state
     pub compose_width: Option<u16>,
 }
@@ -2776,6 +2781,7 @@ mod tests {
                 is_virtual: false,
                 view_mode: "source".to_string(),
                 compose_width: None,
+                is_composing_in_any_split: false,
             };
             snapshot.buffers.insert(BufferId(1), buffer_info);
         }
@@ -2818,6 +2824,7 @@ mod tests {
                     is_virtual: false,
                     view_mode: "source".to_string(),
                     compose_width: None,
+                    is_composing_in_any_split: false,
                 },
             );
             snapshot.buffers.insert(
@@ -2830,6 +2837,7 @@ mod tests {
                     is_virtual: false,
                     view_mode: "source".to_string(),
                     compose_width: None,
+                    is_composing_in_any_split: false,
                 },
             );
             snapshot.buffers.insert(
@@ -2842,6 +2850,7 @@ mod tests {
                     is_virtual: true,
                     view_mode: "source".to_string(),
                     compose_width: None,
+                    is_composing_in_any_split: false,
                 },
             );
         }
