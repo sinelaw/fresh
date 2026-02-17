@@ -77,6 +77,7 @@ pub mod sort_lines;
 pub mod split_tabs;
 pub mod split_view;
 pub mod split_view_expectations;
+pub mod split_view_markdown_compose;
 pub mod stdin_input;
 pub mod sudo_save_prompt;
 #[cfg(unix)]
