@@ -319,6 +319,7 @@ pub enum Action {
 
     // View toggles
     ToggleLineNumbers,
+    ToggleScrollSync,
     ToggleMouseCapture,
     ToggleDebugHighlights, // Debug mode: show highlight/overlay byte ranges
     SetBackground,

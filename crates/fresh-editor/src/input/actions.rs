@@ -2663,6 +2663,7 @@ pub fn action_to_events(
         | Action::ToggleInlayHints
         | Action::ToggleMouseHover
         | Action::ToggleLineNumbers
+        | Action::ToggleScrollSync
         | Action::ToggleMouseCapture
         | Action::DumpConfig
         | Action::Search

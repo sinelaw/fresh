@@ -20,6 +20,16 @@ impl Editor {
     /// Line number visibility is stored per-split in `BufferViewState` so that
     /// different splits of the same buffer can independently show/hide line numbers
     /// (e.g., source mode shows them, compose mode hides them).
+    /// Toggle scroll sync for same-buffer splits.
+    pub fn toggle_scroll_sync(&mut self) {
+        self.same_buffer_scroll_sync = !self.same_buffer_scroll_sync;
+        if self.same_buffer_scroll_sync {
+            self.set_status_message(t!("toggle.scroll_sync_enabled").to_string());
+        } else {
+            self.set_status_message(t!("toggle.scroll_sync_disabled").to_string());
+        }
+    }
+
     pub fn toggle_line_numbers(&mut self) {
         let active_split = self.split_manager.active_split();
         if let Some(vs) = self.split_view_states.get_mut(&active_split) {

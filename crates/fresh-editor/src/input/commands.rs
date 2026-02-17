@@ -547,6 +547,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_scroll_sync",
+        desc_key: "cmd.toggle_scroll_sync_desc",
+        action: || Action::ToggleScrollSync,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.debug_toggle_highlight",
         desc_key: "cmd.debug_toggle_highlight_desc",
         action: || Action::ToggleDebugHighlights,

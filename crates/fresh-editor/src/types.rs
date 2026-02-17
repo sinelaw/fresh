@@ -26,6 +26,8 @@ pub mod context_keys {
     pub const SESSION_MODE: &str = "session_mode";
     pub const VERTICAL_SCROLLBAR: &str = "vertical_scrollbar";
     pub const HORIZONTAL_SCROLLBAR: &str = "horizontal_scrollbar";
+    pub const SCROLL_SYNC: &str = "scroll_sync";
+    pub const HAS_SAME_BUFFER_SPLITS: &str = "has_same_buffer_splits";
 }
 
 /// Configuration for process resource limits

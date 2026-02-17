@@ -4467,14 +4467,18 @@ impl Editor {
 
         // Same-buffer scroll sync: when two splits show the same buffer (e.g., source
         // vs compose mode), sync the inactive split's viewport to match the active
-        // split's scroll position.
+        // split's scroll position.  Gated on the user-togglable scroll sync flag.
         //
         // We copy top_byte directly for the general case.  At the bottom edge the
         // two splits may disagree because compose mode has soft-break virtual lines.
         // Rather than computing the correct position here (where view lines aren't
         // available), we set a flag and let `render_buffer_in_split` fix it up using
         // the same view-line-based logic that `ensure_visible_in_layout` uses.
-        let active_buffer_id = self.split_manager.buffer_for_split(active_split);
+        let active_buffer_id = if self.same_buffer_scroll_sync {
+            self.split_manager.buffer_for_split(active_split)
+        } else {
+            None
+        };
         if let Some(active_buf_id) = active_buffer_id {
             let active_top_byte = self
                 .split_view_states
@@ -4582,7 +4586,9 @@ impl Editor {
 
         // Same-buffer scroll sync: also mark other splits showing the same buffer
         // to skip ensure_visible, so our sync_scroll_groups position isn't undone.
-        if let Some(active_buf_id) = self.split_manager.buffer_for_split(active_split) {
+        if !self.same_buffer_scroll_sync {
+            // Scroll sync disabled — don't interfere with other splits.
+        } else if let Some(active_buf_id) = self.split_manager.buffer_for_split(active_split) {
             let other_same_buffer_splits: Vec<_> = self
                 .split_view_states
                 .keys()

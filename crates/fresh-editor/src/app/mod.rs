@@ -350,6 +350,9 @@ pub struct Editor {
     /// Whether mouse capture is enabled
     mouse_enabled: bool,
 
+    /// Whether same-buffer splits sync their scroll positions
+    same_buffer_scroll_sync: bool,
+
     /// Mouse cursor position (for GPM software cursor rendering)
     /// When GPM is active, we need to draw our own cursor since GPM can't
     /// draw on the alternate screen buffer used by TUI applications.
@@ -1156,6 +1159,7 @@ impl Editor {
             menu_bar_auto_shown: false,
             tab_bar_visible: show_tab_bar,
             mouse_enabled: true,
+            same_buffer_scroll_sync: true,
             mouse_cursor_position: None,
             gpm_active: false,
             key_context: KeyContext::Normal,

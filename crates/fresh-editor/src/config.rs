@@ -1752,6 +1752,13 @@ impl MenuConfig {
                         checkbox: None,
                     },
                     MenuItem::Action {
+                        label: t!("menu.view.scroll_sync").to_string(),
+                        action: "toggle_scroll_sync".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_SAME_BUFFER_SPLITS.to_string()),
+                        checkbox: Some(context_keys::SCROLL_SYNC.to_string()),
+                    },
+                    MenuItem::Action {
                         label: t!("menu.view.focus_next_split").to_string(),
                         action: "next_split".to_string(),
                         args: HashMap::new(),

@@ -521,6 +521,7 @@ pub enum Action {
 
     // View toggles
     ToggleLineNumbers,
+    ToggleScrollSync,
     ToggleMouseCapture,
     ToggleDebugHighlights, // Debug mode: show highlight/overlay byte ranges
     SetBackground,
@@ -884,6 +885,7 @@ impl Action {
             "toggle_mouse_hover" => ToggleMouseHover,
 
             "toggle_line_numbers" => ToggleLineNumbers,
+            "toggle_scroll_sync" => ToggleScrollSync,
             "toggle_mouse_capture" => ToggleMouseCapture,
             "toggle_debug_highlights" => ToggleDebugHighlights,
             "set_background" => SetBackground,
@@ -1956,6 +1958,7 @@ impl KeybindingResolver {
             Action::ToggleInlayHints => t!("action.toggle_inlay_hints"),
             Action::ToggleMouseHover => t!("action.toggle_mouse_hover"),
             Action::ToggleLineNumbers => t!("action.toggle_line_numbers"),
+            Action::ToggleScrollSync => t!("action.toggle_scroll_sync"),
             Action::ToggleMouseCapture => t!("action.toggle_mouse_capture"),
             Action::ToggleDebugHighlights => t!("action.toggle_debug_highlights"),
             Action::SetBackground => t!("action.set_background"),
