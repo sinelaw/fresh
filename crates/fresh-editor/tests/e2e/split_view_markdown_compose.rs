@@ -116,6 +116,23 @@ fn enable_compose_mode(harness: &mut EditorTestHarness) {
         .unwrap();
 }
 
+/// Helper: enable scroll sync via command palette
+fn enable_scroll_sync(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Scroll Sync").unwrap();
+    harness
+        .wait_for_screen_contains("Toggle Scroll Sync")
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.render().unwrap();
+}
+
 /// Helper: switch to next split via command palette
 fn switch_to_next_split(harness: &mut EditorTestHarness) {
     harness
@@ -293,6 +310,9 @@ fn test_split_view_scroll_sync() {
 
     // Enable compose mode in right panel
     enable_compose_mode(&mut harness);
+
+    // Enable scroll sync (off by default)
+    enable_scroll_sync(&mut harness);
 
     // Switch to left (source) panel
     switch_to_next_split(&mut harness);

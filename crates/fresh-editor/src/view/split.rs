@@ -84,12 +84,10 @@ pub struct BufferViewState {
     /// Vertical ruler positions (initialized from config, mutable per-buffer)
     pub rulers: Vec<usize>,
 
-    /// Previously configured line number visibility (restored when leaving Compose)
-    pub compose_prev_line_numbers: Option<bool>,
-
     /// Per-split line number visibility.
     /// This is the single source of truth for whether line numbers are shown
     /// in this split. Initialized from config when the split is created.
+    /// Compose mode forces this to false; leaving compose restores from config.
     pub show_line_numbers: bool,
 
     /// Optional view transform payload
@@ -116,7 +114,6 @@ impl BufferViewState {
             compose_width: None,
             compose_column_guides: None,
             rulers: Vec::new(),
-            compose_prev_line_numbers: None,
             show_line_numbers: true,
             view_transform: None,
             view_transform_stale: false,

@@ -1159,7 +1159,7 @@ impl Editor {
             menu_bar_auto_shown: false,
             tab_bar_visible: show_tab_bar,
             mouse_enabled: true,
-            same_buffer_scroll_sync: true,
+            same_buffer_scroll_sync: false,
             mouse_cursor_position: None,
             gpm_active: false,
             key_context: KeyContext::Normal,

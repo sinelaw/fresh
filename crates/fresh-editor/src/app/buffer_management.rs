@@ -815,15 +815,18 @@ impl Editor {
         self.buffer_metadata
             .insert(buffer_id, crate::app::types::BufferMetadata::new());
 
-        // Initialize per-buffer view state with config defaults
+        self.set_active_buffer(buffer_id);
+
+        // Initialize per-buffer view state with config defaults.
+        // Must happen AFTER set_active_buffer, because switch_buffer creates
+        // the new BufferViewState with defaults (show_line_numbers=true).
         let active_split = self.split_manager.active_split();
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-            let buf_state = view_state.ensure_buffer_state(buffer_id);
-            buf_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
-            buf_state.rulers = self.config.editor.rulers.clone();
+            view_state.show_line_numbers = self.config.editor.line_numbers;
+            view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+            view_state.rulers = self.config.editor.rulers.clone();
         }
 
-        self.set_active_buffer(buffer_id);
         self.status_message = Some(t!("buffer.new").to_string());
 
         buffer_id

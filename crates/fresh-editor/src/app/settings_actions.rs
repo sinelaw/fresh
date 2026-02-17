@@ -141,8 +141,9 @@ impl Editor {
             }
         }
 
-        // Propagate editor config to all buffer view states
+        // Propagate editor config to all split and buffer view states
         for view_state in self.split_view_states.values_mut() {
+            view_state.show_line_numbers = self.config.editor.line_numbers;
             for buf_state in view_state.keyed_states.values_mut() {
                 buf_state.rulers = self.config.editor.rulers.clone();
             }
