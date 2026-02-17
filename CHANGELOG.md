@@ -1,5 +1,51 @@
 # Release Notes
 
+## 0.2.4
+
+### Features
+
+* **Markdown Compose Mode**: Distraction-free writing mode with concealed markup, soft breaks, table rendering, and mouse support. Split-view allows editing source and rendered markdown side-by-side with synchronized scrolling.
+
+* **Vertical Rulers**: Configurable column rulers with add/remove commands via command palette. Per-buffer state and Settings UI JSON editor support (#1028).
+
+* **Horizontal Scrollbar**: New horizontal scrollbar with drag support and toggle commands (#972).
+
+* **Smooth Scrolling**: Cursor movement now scrolls one line at a time instead of jumping/recentering the viewport (#1040).
+
+### Improvements
+
+* **Macro Keybinding**: F4 shortcut for Play Last Macro. Removed Ctrl+0-9 and Alt+Shift+0-9 macro keybindings (#700).
+
+* **Configurable Clipboard**: New `clipboard` config with `use_osc52` and `use_system_clipboard` toggles to prevent hangs in certain terminals (#964). Useful for Putty and other terminals that sometimes cause Fresh to hang on OSC 52.
+
+* **Scrollbar Visibility**: New `show_vertical_scrollbar` and `show_horizontal_scrollbar` config options (#974).
+
+* **Package Manager**: Reinstall support for local-path packages.
+
+* **File Explorer Persistence**: Show hidden and show gitignored toggles now persist to config immediately (#569).
+
+### Bug Fixes
+
+* **Cursor Navigation**: Cursor up/down now lands at end-of-line when goal column is past content (#514).
+
+* **Line Numbers**: Fixed line numbers leaking between splits due to shared margins state. Line numbers now live exclusively in per-split BufferViewState.
+
+### Plugin API
+
+* **Plugin API v2**: Versioned plugin API with `createTerminal`, `sendTerminalInput`, `closeTerminal`, `getAllCursors`, and plugin state API. Improved type declarations in `fresh.d.ts` (#1045).
+
+* **Split Labels**: Splits can be labeled to prevent files opening in managed splits. Labels persist across save/restore. New `before` option to place buffers left/top.
+
+### Internal
+
+* Refactored per-buffer view state: cursors owned by SplitViewState, ComposeState extracted from EditorState.
+* Conceal ranges, soft breaks, and overlay filtering by view_mode at render time.
+* Plugin state snapshot reports active split's view_mode and compose flag.
+* i18n updates for vertical rulers and macro shortcuts across all locales.
+* PieceTree Performance: Use binary search instead of linear scan in line lookup.
+
+---
+
 ## 0.2.3
 
 ### Bug Fixes
