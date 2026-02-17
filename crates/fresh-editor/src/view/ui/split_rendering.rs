@@ -1343,6 +1343,7 @@ impl SplitRenderer {
                         false,        // line_wrap_enabled
                         content_width,
                         gutter_width,
+                        &ViewMode::Source, // Composite view uses source mode
                     );
 
                     // Build source_line -> ViewLine index mapping
@@ -2272,6 +2273,7 @@ impl SplitRenderer {
         line_wrap_enabled: bool,
         content_width: usize,
         gutter_width: usize,
+        view_mode: &ViewMode,
     ) -> ViewData {
         // Check if buffer is binary before building tokens
         let is_binary = state.buffer.is_binary();
@@ -2290,8 +2292,10 @@ impl SplitRenderer {
         // Use plugin transform if available, otherwise use base tokens
         let mut tokens = view_transform.map(|vt| vt.tokens).unwrap_or(base_tokens);
 
-        // Apply soft breaks — marker-based line wrapping that survives edits without flicker
-        if !state.soft_breaks.is_empty() {
+        // Apply soft breaks — marker-based line wrapping that survives edits without flicker.
+        // Only apply in Compose mode; Source mode shows the raw unwrapped text.
+        let is_compose = matches!(view_mode, ViewMode::Compose);
+        if is_compose && !state.soft_breaks.is_empty() {
             let viewport_end = tokens
                 .iter()
                 .filter_map(|t| t.source_offset)
@@ -2308,8 +2312,9 @@ impl SplitRenderer {
             }
         }
 
-        // Apply conceal ranges - filter/replace tokens that fall within concealed byte ranges
-        if !state.conceals.is_empty() {
+        // Apply conceal ranges - filter/replace tokens that fall within concealed byte ranges.
+        // Only apply in Compose mode; Source mode shows the raw markdown syntax.
+        if is_compose && !state.conceals.is_empty() {
             let viewport_end = tokens
                 .iter()
                 .filter_map(|t| t.source_offset)
@@ -3401,6 +3406,7 @@ impl SplitRenderer {
         primary_cursor_position: usize,
         theme: &crate::view::theme::Theme,
         highlight_context_bytes: usize,
+        view_mode: &ViewMode,
     ) -> DecorationContext {
         // Extend highlighting range by ~1 viewport size before/after for better context.
         // This helps tree-sitter parse multi-line constructs that span viewport boundaries.
@@ -3441,6 +3447,9 @@ impl SplitRenderer {
 
         // Semantic tokens are stored as overlays so their ranges track edits.
         // Convert them into highlight spans for the render pipeline.
+        let is_compose = matches!(view_mode, ViewMode::Compose);
+        let md_emphasis_ns =
+            fresh_core::overlay::OverlayNamespace::from_string("md-emphasis".to_string());
         let mut semantic_token_spans = Vec::new();
         let mut viewport_overlays = Vec::new();
         for (overlay, range) in
@@ -3456,6 +3465,14 @@ impl SplitRenderer {
                     });
                 }
                 continue;
+            }
+
+            // Skip markdown compose overlays in Source mode — they should only
+            // render in the Compose-mode split.
+            if !is_compose {
+                if overlay.namespace.as_ref() == Some(&md_emphasis_ns) {
+                    continue;
+                }
             }
 
             viewport_overlays.push((overlay.clone(), range));
@@ -4482,6 +4499,7 @@ impl SplitRenderer {
             line_wrap,
             render_area.width as usize,
             gutter_width,
+            &view_mode,
         );
 
         // Ensure cursor is visible using Layout-aware check (handles virtual lines)
@@ -4506,6 +4524,7 @@ impl SplitRenderer {
                 line_wrap,
                 render_area.width as usize,
                 gutter_width,
+                &view_mode,
             );
             // Re-run layout-aware cursor check on the rebuilt data so top_view_line_offset
             // correctly indexes the new view_lines (handles both source lines and virtual lines).
@@ -4567,6 +4586,7 @@ impl SplitRenderer {
             selection.primary_cursor_position,
             theme,
             highlight_context_bytes,
+            &view_mode,
         );
 
         // Use top_view_line_offset to handle scrolling through virtual lines.
@@ -5059,6 +5079,7 @@ mod tests {
             false, // line wrap disabled for tests
             render_area.width as usize,
             gutter_width,
+            &ViewMode::Source, // Tests use source mode
         );
         let view_anchor = SplitRenderer::calculate_view_anchor(&view_data.lines, 0);
 
@@ -5084,7 +5105,8 @@ mod tests {
             viewport_end,
             selection.primary_cursor_position,
             &theme,
-            100_000, // default highlight context bytes
+            100_000,           // default highlight context bytes
+            &ViewMode::Source, // Tests use source mode
         );
 
         let output = SplitRenderer::render_view_lines(LineRenderInput {
