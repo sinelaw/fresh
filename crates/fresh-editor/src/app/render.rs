@@ -4464,6 +4464,45 @@ impl Editor {
                 }
             }
         }
+
+        // Same-buffer scroll sync: when two splits show the same buffer (e.g., source
+        // vs compose mode), sync the inactive split's viewport to match the active
+        // split's line position. This is a simpler case than anchor-based sync since
+        // both splits reference the same buffer (identity line mapping).
+        let active_buffer_id = self.split_manager.buffer_for_split(active_split);
+        if let Some(active_buf_id) = active_buffer_id {
+            let active_top_byte = self
+                .split_view_states
+                .get(&active_split)
+                .map(|vs| vs.viewport.top_byte);
+
+            if let Some(top_byte) = active_top_byte {
+                if let Some(buffer_state) = self.buffers.get(&active_buf_id) {
+                    let active_line = buffer_state.buffer.get_line_number(top_byte);
+
+                    // Find other splits showing the same buffer (not in an explicit sync group)
+                    let other_splits: Vec<_> = self
+                        .split_view_states
+                        .keys()
+                        .filter(|&&s| {
+                            s != active_split
+                                && self.split_manager.buffer_for_split(s) == Some(active_buf_id)
+                                && !self.scroll_sync_manager.is_split_synced(s)
+                        })
+                        .copied()
+                        .collect();
+
+                    for other_split in other_splits {
+                        if let Some(state) = self.buffers.get_mut(&active_buf_id) {
+                            let buffer = &mut state.buffer;
+                            if let Some(view_state) = self.split_view_states.get_mut(&other_split) {
+                                view_state.viewport.scroll_to(buffer, active_line);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Pre-sync ensure_visible for scroll sync groups
@@ -4481,42 +4520,61 @@ impl Editor {
             .find_group_for_split(active_split)
             .map(|g| (g.left_split, g.right_split));
 
-        let Some((left_split, right_split)) = group_info else {
-            return;
-        };
+        if let Some((left_split, right_split)) = group_info {
+            // Get the active split's buffer and update its viewport
+            if let Some(buffer_id) = self.split_manager.buffer_for_split(active_split) {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    let buffer = &mut state.buffer;
 
-        // Get the active split's buffer and update its viewport
-        if let Some(buffer_id) = self.split_manager.buffer_for_split(active_split) {
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                let buffer = &mut state.buffer;
+                    if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+                        let cursor = *view_state.cursors.primary();
+                        // Update viewport to show cursor - this is what ensure_visible does
+                        view_state.viewport.ensure_visible(buffer, &cursor);
 
-                if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-                    let cursor = *view_state.cursors.primary();
-                    // Update viewport to show cursor - this is what ensure_visible does
-                    view_state.viewport.ensure_visible(buffer, &cursor);
-
-                    tracing::debug!(
-                        "pre_sync_ensure_visible: updated active split {:?} viewport, top_byte={}",
-                        active_split,
-                        view_state.viewport.top_byte
-                    );
+                        tracing::debug!(
+                            "pre_sync_ensure_visible: updated active split {:?} viewport, top_byte={}",
+                            active_split,
+                            view_state.viewport.top_byte
+                        );
+                    }
                 }
+            }
+
+            // Mark the OTHER split to skip ensure_visible so the sync position isn't undone
+            let other_split = if active_split == left_split {
+                right_split
+            } else {
+                left_split
+            };
+
+            if let Some(view_state) = self.split_view_states.get_mut(&other_split) {
+                view_state.viewport.set_skip_ensure_visible();
+                tracing::debug!(
+                    "pre_sync_ensure_visible: marked other split {:?} to skip ensure_visible",
+                    other_split
+                );
             }
         }
 
-        // Mark the OTHER split to skip ensure_visible so the sync position isn't undone
-        let other_split = if active_split == left_split {
-            right_split
-        } else {
-            left_split
-        };
+        // Same-buffer scroll sync: also mark other splits showing the same buffer
+        // to skip ensure_visible, so our sync_scroll_groups position isn't undone.
+        if let Some(active_buf_id) = self.split_manager.buffer_for_split(active_split) {
+            let other_same_buffer_splits: Vec<_> = self
+                .split_view_states
+                .keys()
+                .filter(|&&s| {
+                    s != active_split
+                        && self.split_manager.buffer_for_split(s) == Some(active_buf_id)
+                        && !self.scroll_sync_manager.is_split_synced(s)
+                })
+                .copied()
+                .collect();
 
-        if let Some(view_state) = self.split_view_states.get_mut(&other_split) {
-            view_state.viewport.set_skip_ensure_visible();
-            tracing::debug!(
-                "pre_sync_ensure_visible: marked other split {:?} to skip ensure_visible",
-                other_split
-            );
+            for other_split in other_same_buffer_splits {
+                if let Some(view_state) = self.split_view_states.get_mut(&other_split) {
+                    view_state.viewport.set_skip_ensure_visible();
+                }
+            }
         }
     }
 }
