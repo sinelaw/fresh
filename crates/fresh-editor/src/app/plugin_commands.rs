@@ -1017,7 +1017,7 @@ impl Editor {
     pub(super) fn handle_set_line_numbers(&mut self, _buffer_id: BufferId, enabled: bool) {
         let active_split = self.split_manager.active_split();
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-            view_state.show_line_numbers = Some(enabled);
+            view_state.show_line_numbers = enabled;
         }
     }
 

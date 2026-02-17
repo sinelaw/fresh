@@ -724,7 +724,7 @@ impl EditorState {
             }
 
             Event::SetLineNumbers { enabled } => {
-                self.margins.set_line_numbers(*enabled);
+                self.margins.configure_for_line_numbers(*enabled);
             }
 
             // Split events are handled at the Editor level, not at EditorState level

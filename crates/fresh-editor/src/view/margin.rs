@@ -299,9 +299,6 @@ pub struct MarginManager {
     /// Annotations per line (right margin)
     right_annotations: BTreeMap<usize, Vec<MarginAnnotation>>,
 
-    /// Whether to show line numbers by default
-    pub show_line_numbers: bool,
-
     /// Diagnostic indicators per line (displayed between line numbers and separator)
     /// Maps line number to (symbol, color) tuple
     diagnostic_indicators: BTreeMap<usize, (String, Color)>,
@@ -324,7 +321,6 @@ impl MarginManager {
             right_config: MarginConfig::right_default(),
             left_annotations: BTreeMap::new(),
             right_annotations: BTreeMap::new(),
-            show_line_numbers: true,
             diagnostic_indicators: BTreeMap::new(),
             indicator_markers: MarkerList::new(),
             line_indicators: BTreeMap::new(),
@@ -334,7 +330,8 @@ impl MarginManager {
     /// Create a margin manager with line numbers disabled
     pub fn without_line_numbers() -> Self {
         let mut manager = Self::new();
-        manager.show_line_numbers = false;
+        manager.left_config.width = 0;
+        manager.left_config.enabled = false;
         manager
     }
 
@@ -570,13 +567,14 @@ impl MarginManager {
         annotations.get(&line).map(|v| v.as_slice())
     }
 
-    /// Get the content to render for a specific line in a margin
-    /// If show_line_numbers is true and position is Left, includes line number
+    /// Get the content to render for a specific line in a margin.
+    /// If `show_line_numbers` is true and position is Left, includes line number.
     pub fn render_line(
         &self,
         line: usize,
         position: MarginPosition,
         _buffer_total_lines: usize,
+        show_line_numbers: bool,
     ) -> MarginContent {
         let annotations = match position {
             MarginPosition::Left => &self.left_annotations,
@@ -587,7 +585,7 @@ impl MarginManager {
         let user_annotations = annotations.get(&line).cloned().unwrap_or_default();
 
         // For left margin, combine with line numbers if enabled
-        if position == MarginPosition::Left && self.show_line_numbers {
+        if position == MarginPosition::Left && show_line_numbers {
             let line_num = MarginContent::text(format!("{}", line + 1));
 
             if user_annotations.is_empty() {
@@ -605,10 +603,10 @@ impl MarginManager {
         }
     }
 
-    /// Update the left margin width based on buffer size
-    /// This should be called when the buffer grows significantly
-    pub fn update_width_for_buffer(&mut self, buffer_total_lines: usize) {
-        if self.show_line_numbers {
+    /// Update the left margin width based on buffer size.
+    /// Only adjusts width when `show_line_numbers` is true.
+    pub fn update_width_for_buffer(&mut self, buffer_total_lines: usize, show_line_numbers: bool) {
+        if show_line_numbers {
             let digits = if buffer_total_lines == 0 {
                 1
             } else {
@@ -629,10 +627,14 @@ impl MarginManager {
         self.right_config.total_width()
     }
 
-    /// Enable or disable line numbers
-    pub fn set_line_numbers(&mut self, enabled: bool) {
-        self.show_line_numbers = enabled;
-        if !enabled {
+    /// Configure left margin layout for line number visibility.
+    ///
+    /// This adjusts `left_config.enabled` and `left_config.width` so that
+    /// `left_total_width()` returns the correct gutter size for the given
+    /// `show_line_numbers` setting. Called at render time with the per-split
+    /// line number state.
+    pub fn configure_for_line_numbers(&mut self, show_line_numbers: bool) {
+        if !show_line_numbers {
             self.left_config.width = 0;
             self.left_config.enabled = false;
         } else {
@@ -736,10 +738,9 @@ mod tests {
     #[test]
     fn test_margin_manager_render_line() {
         let mut manager = MarginManager::new();
-        manager.show_line_numbers = true;
 
-        // Without annotations, should render line number
-        let content = manager.render_line(5, MarginPosition::Left, 100);
+        // Without annotations, should render line number when show_line_numbers=true
+        let content = manager.render_line(5, MarginPosition::Left, 100, true);
         let (rendered, _) = content.render(4);
         assert!(rendered.contains("6")); // Line 5 is displayed as "6" (1-indexed)
 
@@ -747,38 +748,37 @@ mod tests {
         manager.add_annotation(MarginAnnotation::breakpoint(5));
 
         // Should now render stacked content (line number + breakpoint)
-        let content = manager.render_line(5, MarginPosition::Left, 100);
+        let content = manager.render_line(5, MarginPosition::Left, 100, true);
         assert!(matches!(content, MarginContent::Stacked(_)));
     }
 
     #[test]
     fn test_margin_manager_update_width() {
         let mut manager = MarginManager::new();
-        manager.show_line_numbers = true;
 
         // Small buffer
-        manager.update_width_for_buffer(99);
+        manager.update_width_for_buffer(99, true);
         assert_eq!(manager.left_config.width, 4); // Minimum 4
 
         // Medium buffer (4 digits)
-        manager.update_width_for_buffer(1000);
+        manager.update_width_for_buffer(1000, true);
         assert_eq!(manager.left_config.width, 4);
 
         // Large buffer (5 digits)
-        manager.update_width_for_buffer(10000);
+        manager.update_width_for_buffer(10000, true);
         assert_eq!(manager.left_config.width, 5);
 
         // Very large buffer (7 digits)
-        manager.update_width_for_buffer(1000000);
+        manager.update_width_for_buffer(1000000, true);
         assert_eq!(manager.left_config.width, 7);
     }
 
     #[test]
     fn test_margin_manager_without_line_numbers() {
         let manager = MarginManager::without_line_numbers();
-        assert!(!manager.show_line_numbers);
+        assert!(!manager.left_config.enabled);
 
-        let content = manager.render_line(5, MarginPosition::Left, 100);
+        let content = manager.render_line(5, MarginPosition::Left, 100, false);
         assert!(content.is_empty());
     }
 

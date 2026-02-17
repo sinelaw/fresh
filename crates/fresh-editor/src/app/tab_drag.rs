@@ -347,6 +347,7 @@ impl Editor {
                 let (width, height) = (self.terminal_width, self.terminal_height);
                 let mut new_view_state =
                     crate::view::split::SplitViewState::with_buffer(width, height, buffer_id);
+                new_view_state.show_line_numbers = self.config.editor.line_numbers;
 
                 // Copy cursor position from source split's view state
                 if let Some(source_vs) = self.split_view_states.get(&source_split_id) {

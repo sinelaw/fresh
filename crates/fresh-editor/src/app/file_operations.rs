@@ -165,9 +165,6 @@ impl Editor {
 
         // Preserve user settings before reloading
         let old_buffer_settings = self.active_state().buffer_settings.clone();
-        // TODO: Consider moving line numbers to SplitViewState (per-view setting)
-        // For now, preserve line number visibility across revert
-        let old_show_line_numbers = self.active_state().margins.show_line_numbers;
 
         // Load the file content fresh from disk
         let mut new_state = EditorState::from_file_with_languages(
@@ -190,8 +187,7 @@ impl Editor {
         });
         // Restore user settings (tab size, indentation, etc.)
         new_state.buffer_settings = old_buffer_settings;
-        // Restore line number visibility
-        new_state.margins.set_line_numbers(old_show_line_numbers);
+        // Line number visibility is in per-split BufferViewState (survives buffer replacement)
 
         // Replace the current buffer with the new state
         let buffer_id = self.active_buffer();
@@ -661,10 +657,10 @@ impl Editor {
                 }
             })
             .unwrap_or_default();
-        let (old_buffer_settings, old_show_line_numbers) = self
+        let old_buffer_settings = self
             .buffers
             .get(&buffer_id)
-            .map(|s| (s.buffer_settings.clone(), s.margins.show_line_numbers))
+            .map(|s| s.buffer_settings.clone())
             .unwrap_or_default();
 
         // Load the file content fresh from disk
@@ -689,8 +685,7 @@ impl Editor {
         });
         // Restore user settings (tab size, indentation, etc.)
         new_state.buffer_settings = old_buffer_settings;
-        // Restore line number visibility
-        new_state.margins.set_line_numbers(old_show_line_numbers);
+        // Line number visibility is in per-split BufferViewState (survives buffer replacement)
 
         // Replace the buffer content
         if let Some(state) = self.buffers.get_mut(&buffer_id) {

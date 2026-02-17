@@ -87,10 +87,10 @@ pub struct BufferViewState {
     /// Previously configured line number visibility (restored when leaving Compose)
     pub compose_prev_line_numbers: Option<bool>,
 
-    /// Per-split line number visibility override.
-    /// When `Some(false)`, line numbers are hidden in this split (e.g., compose mode).
-    /// When `None`, falls back to the buffer's `margins.show_line_numbers`.
-    pub show_line_numbers: Option<bool>,
+    /// Per-split line number visibility.
+    /// This is the single source of truth for whether line numbers are shown
+    /// in this split. Initialized from config when the split is created.
+    pub show_line_numbers: bool,
 
     /// Optional view transform payload
     pub view_transform: Option<ViewTransformPayload>,
@@ -117,7 +117,7 @@ impl BufferViewState {
             compose_column_guides: None,
             rulers: Vec::new(),
             compose_prev_line_numbers: None,
-            show_line_numbers: None,
+            show_line_numbers: true,
             view_transform: None,
             view_transform_stale: false,
             plugin_state: std::collections::HashMap::new(),

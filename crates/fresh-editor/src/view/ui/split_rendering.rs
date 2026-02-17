@@ -356,8 +356,8 @@ struct ViewPreferences {
     compose_column_guides: Option<Vec<u16>>,
     view_transform: Option<ViewTransformPayload>,
     rulers: Vec<usize>,
-    /// Per-split line number override (None = use buffer default)
-    show_line_numbers: Option<bool>,
+    /// Per-split line number visibility (from BufferViewState)
+    show_line_numbers: bool,
 }
 
 struct LineRenderInput<'a> {
@@ -382,6 +382,8 @@ struct LineRenderInput<'a> {
     relative_line_numbers: bool,
     /// Session mode: use hardware cursor only, skip REVERSED style for software cursor
     session_mode: bool,
+    /// Whether to show line numbers in the gutter
+    show_line_numbers: bool,
 }
 
 /// Context for computing the style of a single character
@@ -421,6 +423,8 @@ struct LeftMarginContext<'a> {
     cursor_line: usize,
     /// Whether to show relative line numbers
     relative_line_numbers: bool,
+    /// Whether to show line numbers in the gutter
+    show_line_numbers: bool,
 }
 
 /// Render the left margin (indicators + line numbers + separator) to line_spans
@@ -508,6 +512,7 @@ fn render_left_margin(
             ctx.current_source_line_num,
             crate::view::margin::MarginPosition::Left,
             ctx.estimated_lines,
+            ctx.show_line_numbers,
         );
         let (rendered_text, style_opt) = margin_content.render(ctx.state.margins.left_config.width);
 
@@ -1935,7 +1940,7 @@ impl SplitRenderer {
             compose_column_guides: None,
             view_transform: None,
             rulers: Vec::new(),
-            show_line_numbers: None,
+            show_line_numbers: true,
         }
     }
 
@@ -3561,6 +3566,7 @@ impl SplitRenderer {
             left_column,
             relative_line_numbers,
             session_mode,
+            show_line_numbers,
         } = input;
 
         let selection_ranges = &selection.ranges;
@@ -3688,6 +3694,7 @@ impl SplitRenderer {
                     line_indicators,
                     cursor_line,
                     relative_line_numbers,
+                    show_line_numbers,
                 },
                 &mut line_spans,
                 &mut line_view_map,
@@ -4341,6 +4348,7 @@ impl SplitRenderer {
                         implicit_line_num,
                         crate::view::margin::MarginPosition::Left,
                         estimated_lines,
+                        show_line_numbers,
                     );
                     let (rendered_text, style_opt) =
                         margin_content.render(state.margins.left_config.width);
@@ -4465,18 +4473,14 @@ impl SplitRenderer {
         use_terminal_bg: bool,
         session_mode: bool,
         rulers: &[usize],
-        show_line_numbers_override: Option<bool>,
+        show_line_numbers: bool,
     ) -> Vec<ViewLineMapping> {
         let _span = tracing::trace_span!("render_buffer_in_split").entered();
 
-        // Apply the per-split line number setting to shared margins before rendering.
-        // Line number visibility lives in per-split BufferViewState.show_line_numbers,
-        // but margin width calculations use shared EditorState.margins. We set it
-        // here so each split renders with its own setting. When no per-split
-        // override exists, default to true (special buffers like terminals set
-        // their per-split show_line_numbers explicitly).
-        let show_line_numbers = show_line_numbers_override.unwrap_or(true);
-        state.margins.set_line_numbers(show_line_numbers);
+        // Configure shared margin layout for this split's line number setting.
+        // The per-split `show_line_numbers` is the single source of truth;
+        // we apply it to shared margins here so width calculations are correct.
+        state.margins.configure_for_line_numbers(show_line_numbers);
 
         // Compute effective editor background: terminal default or theme-defined
         let effective_editor_bg = if use_terminal_bg {
@@ -4496,7 +4500,9 @@ impl SplitRenderer {
 
         let buffer_len = state.buffer.len();
         let estimated_lines = (buffer_len / 80).max(1);
-        state.margins.update_width_for_buffer(estimated_lines);
+        state
+            .margins
+            .update_width_for_buffer(estimated_lines, show_line_numbers);
         let gutter_width = state.margins.left_total_width();
 
         let compose_layout = Self::calculate_compose_layout(area, &view_mode, compose_width);
@@ -4659,6 +4665,7 @@ impl SplitRenderer {
             left_column: viewport.left_column,
             relative_line_numbers,
             session_mode,
+            show_line_numbers,
         });
 
         let mut lines = render_output.lines;
@@ -5099,7 +5106,7 @@ mod tests {
         let view_anchor = SplitRenderer::calculate_view_anchor(&view_data.lines, 0);
 
         let estimated_lines = (state.buffer.len() / 80).max(1);
-        state.margins.update_width_for_buffer(estimated_lines);
+        state.margins.update_width_for_buffer(estimated_lines, true);
         let gutter_width = state.margins.left_total_width();
 
         let selection = SplitRenderer::selection_context(&state, &cursors);
@@ -5142,6 +5149,7 @@ mod tests {
             left_column: viewport.left_column,
             relative_line_numbers: false,
             session_mode: false,
+            show_line_numbers: true, // Tests show line numbers
         });
 
         (
@@ -5500,7 +5508,7 @@ mod tests {
         let gutter_width = {
             let mut state = EditorState::new(20, 6, 1024, test_fs());
             state.margins.left_config.enabled = true;
-            state.margins.update_width_for_buffer(1);
+            state.margins.update_width_for_buffer(1, true);
             state.margins.left_total_width()
         };
         assert!(gutter_width > 0, "Gutter width should be > 0 when enabled");

@@ -64,8 +64,8 @@ impl Editor {
         let active_split = self.split_manager.active_split();
         self.split_view_states
             .get(&active_split)
-            .and_then(|vs| vs.show_line_numbers)
-            .unwrap_or(self.config.editor.line_numbers)
+            .map(|vs| vs.show_line_numbers)
+            .unwrap_or(true)
     }
 
     /// Check if line wrap is enabled in the active split.

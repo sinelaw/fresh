@@ -22,10 +22,9 @@ impl Editor {
     /// (e.g., source mode shows them, compose mode hides them).
     pub fn toggle_line_numbers(&mut self) {
         let active_split = self.split_manager.active_split();
-        let default_line_numbers = self.config.editor.line_numbers;
         if let Some(vs) = self.split_view_states.get_mut(&active_split) {
-            let currently_shown = vs.show_line_numbers.unwrap_or(default_line_numbers);
-            vs.show_line_numbers = Some(!currently_shown);
+            let currently_shown = vs.show_line_numbers;
+            vs.show_line_numbers = !currently_shown;
             if currently_shown {
                 self.set_status_message(t!("toggle.line_numbers_hidden").to_string());
             } else {

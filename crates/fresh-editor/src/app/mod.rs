@@ -892,8 +892,10 @@ impl Editor {
             config.editor.large_file_threshold_bytes as usize,
             Arc::clone(&filesystem),
         );
-        // Apply line_numbers default from config (fixes #539)
-        state.margins.set_line_numbers(config.editor.line_numbers);
+        // Configure initial margin layout from config default
+        state
+            .margins
+            .configure_for_line_numbers(config.editor.line_numbers);
         // Note: line_wrap_enabled is now stored in SplitViewState.viewport
         tracing::info!("EditorState created for buffer {:?}", buffer_id);
         buffers.insert(buffer_id, state);
@@ -945,6 +947,7 @@ impl Editor {
         let mut initial_view_state = SplitViewState::with_buffer(width, height, buffer_id);
         initial_view_state.viewport.line_wrap_enabled = config.editor.line_wrap;
         initial_view_state.rulers = config.editor.rulers.clone();
+        initial_view_state.show_line_numbers = config.editor.line_numbers;
         split_view_states.insert(initial_split_id, initial_view_state);
 
         // Initialize filesystem manager for file explorer
@@ -4235,7 +4238,7 @@ impl Editor {
                         // Ensure buffer remains read-only with no line numbers
                         if let Some(state) = self.buffers.get_mut(&buffer_id) {
                             state.editing_disabled = true;
-                            state.margins.set_line_numbers(false);
+                            state.margins.configure_for_line_numbers(false);
                             state.buffer.set_modified(false);
                         }
 
@@ -5236,7 +5239,7 @@ impl Editor {
 
                 // Apply view options to the buffer
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    state.margins.set_line_numbers(show_line_numbers);
+                    state.margins.configure_for_line_numbers(show_line_numbers);
                     state.show_cursors = show_cursors;
                     state.editing_disabled = editing_disabled;
                     tracing::debug!(
@@ -5365,7 +5368,7 @@ impl Editor {
 
                 // Apply view options to the buffer
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    state.margins.set_line_numbers(show_line_numbers);
+                    state.margins.configure_for_line_numbers(show_line_numbers);
                     state.show_cursors = show_cursors;
                     state.editing_disabled = editing_disabled;
                     tracing::debug!(
@@ -5409,6 +5412,7 @@ impl Editor {
                         view_state.viewport.line_wrap_enabled =
                             line_wrap.unwrap_or(self.config.editor.line_wrap);
                         view_state.rulers = self.config.editor.rulers.clone();
+                        view_state.show_line_numbers = self.config.editor.line_numbers;
                         self.split_view_states.insert(new_split_id, view_state);
 
                         // Focus the new split (the diagnostics panel)
@@ -5496,7 +5500,7 @@ impl Editor {
 
                 // Apply view options to the buffer
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    state.margins.set_line_numbers(show_line_numbers);
+                    state.margins.configure_for_line_numbers(show_line_numbers);
                     state.show_cursors = show_cursors;
                     state.editing_disabled = editing_disabled;
                 }
@@ -5900,6 +5904,7 @@ impl Editor {
                                     );
                                     view_state.viewport.line_wrap_enabled = false;
                                     view_state.rulers = self.config.editor.rulers.clone();
+                                    view_state.show_line_numbers = self.config.editor.line_numbers;
                                     self.split_view_states.insert(new_split_id, view_state);
 
                                     if focus.unwrap_or(true) {

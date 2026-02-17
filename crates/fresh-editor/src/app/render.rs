@@ -4068,7 +4068,7 @@ impl Editor {
         );
         state
             .margins
-            .set_line_numbers(self.config.editor.line_numbers);
+            .configure_for_line_numbers(self.config.editor.line_numbers);
 
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
@@ -4143,7 +4143,7 @@ impl Editor {
         );
         state
             .margins
-            .set_line_numbers(self.config.editor.line_numbers);
+            .configure_for_line_numbers(self.config.editor.line_numbers);
 
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());

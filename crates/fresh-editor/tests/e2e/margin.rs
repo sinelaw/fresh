@@ -98,7 +98,7 @@ fn test_margin_large_file_line_numbers() {
     harness.assert_screen_contains("1000 │");
 }
 
-/// Test that margins can be disabled via events
+/// Test that margins can be disabled via toggle action
 #[test]
 fn test_margin_disable_line_numbers() {
     let temp_dir = TempDir::new().unwrap();
@@ -108,10 +108,22 @@ fn test_margin_disable_line_numbers() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
     harness.open_file(&file_path).unwrap();
 
-    // Disable line numbers via event
+    // Verify line numbers are shown initially
+    harness.assert_screen_contains(" │ ");
+
+    // Toggle line numbers off via command palette
     harness
-        .apply_event(fresh::model::event::Event::SetLineNumbers { enabled: false })
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Line Numbers").unwrap();
+    harness
+        .wait_for_screen_contains("Toggle Line Numbers")
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();

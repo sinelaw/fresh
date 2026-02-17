@@ -756,7 +756,7 @@ impl Editor {
                 state.buffer.set_modified(false);
                 // Start in scrollback mode (editing disabled)
                 state.editing_disabled = true;
-                state.margins.set_line_numbers(false);
+                state.margins.configure_for_line_numbers(false);
             }
         }
     }
@@ -906,6 +906,7 @@ impl Editor {
                         );
                         view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
                         view_state.rulers = self.config.editor.rulers.clone();
+                        view_state.show_line_numbers = self.config.editor.line_numbers;
                         self.split_view_states.insert(new_split_id, view_state);
 
                         // Map the container split ID (though we mainly care about leaves)

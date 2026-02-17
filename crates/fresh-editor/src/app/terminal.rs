@@ -164,7 +164,7 @@ impl Editor {
         );
         state.buffer.set_file_path(backing_file.clone());
         // Terminal buffers should never show line numbers
-        state.margins.set_line_numbers(false);
+        state.margins.configure_for_line_numbers(false);
         self.buffers.insert(buffer_id, state);
 
         // Use virtual metadata so the tab shows "*Terminal N*" and LSP stays off.
@@ -226,7 +226,7 @@ impl Editor {
             std::sync::Arc::clone(&self.filesystem),
         );
         state.buffer.set_file_path(backing_file.clone());
-        state.margins.set_line_numbers(false);
+        state.margins.configure_for_line_numbers(false);
         self.buffers.insert(buffer_id, state);
 
         let metadata = BufferMetadata::virtual_buffer(
@@ -536,7 +536,7 @@ impl Editor {
             // Mark buffer as editing-disabled while in non-terminal mode
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 state.editing_disabled = true;
-                state.margins.set_line_numbers(false);
+                state.margins.configure_for_line_numbers(false);
             }
 
             // In read-only view, keep line wrapping disabled for terminal buffers
@@ -576,7 +576,7 @@ impl Editor {
             // Re-enable editing when in terminal mode (input goes to PTY)
             if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
                 state.editing_disabled = false;
-                state.margins.set_line_numbers(false);
+                state.margins.configure_for_line_numbers(false);
             }
             if let Some(view_state) = self
                 .split_view_states
