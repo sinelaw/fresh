@@ -748,28 +748,49 @@ impl Editor {
     }
 
     pub fn file_explorer_toggle_hidden(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        let show_hidden = if let Some(explorer) = &mut self.file_explorer {
             explorer.toggle_show_hidden();
-            let msg = if explorer.ignore_patterns().show_hidden() {
-                t!("explorer.showing_hidden")
-            } else {
-                t!("explorer.hiding_hidden")
-            };
-            self.set_status_message(msg.to_string());
-        }
+            explorer.ignore_patterns().show_hidden()
+        } else {
+            return;
+        };
+
+        let msg = if show_hidden {
+            t!("explorer.showing_hidden")
+        } else {
+            t!("explorer.hiding_hidden")
+        };
+        self.set_status_message(msg.to_string());
+
+        // Persist to config so the setting survives across sessions
+        self.config.file_explorer.show_hidden = show_hidden;
+        self.persist_config_change(
+            "/file_explorer/show_hidden",
+            serde_json::Value::Bool(show_hidden),
+        );
     }
 
     pub fn file_explorer_toggle_gitignored(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        let show_gitignored = if let Some(explorer) = &mut self.file_explorer {
             explorer.toggle_show_gitignored();
-            let show = explorer.ignore_patterns().show_gitignored();
-            let msg = if show {
-                t!("explorer.showing_gitignored")
-            } else {
-                t!("explorer.hiding_gitignored")
-            };
-            self.set_status_message(msg.to_string());
-        }
+            explorer.ignore_patterns().show_gitignored()
+        } else {
+            return;
+        };
+
+        let msg = if show_gitignored {
+            t!("explorer.showing_gitignored")
+        } else {
+            t!("explorer.hiding_gitignored")
+        };
+        self.set_status_message(msg.to_string());
+
+        // Persist to config so the setting survives across sessions
+        self.config.file_explorer.show_gitignored = show_gitignored;
+        self.persist_config_change(
+            "/file_explorer/show_gitignored",
+            serde_json::Value::Bool(show_gitignored),
+        );
     }
 
     /// Clear the file explorer search

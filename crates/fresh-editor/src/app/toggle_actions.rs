@@ -325,4 +325,17 @@ impl Editor {
         // Emit event so plugins know themes changed
         self.emit_event("themes_changed", serde_json::json!({}));
     }
+
+    /// Persist a single config change to the user config file.
+    ///
+    /// Used when toggling settings via menu/command palette so that
+    /// the change is saved immediately (matching the settings UI behavior).
+    pub(super) fn persist_config_change(&self, json_pointer: &str, value: serde_json::Value) {
+        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        let changes = std::collections::HashMap::from([(json_pointer.to_string(), value)]);
+        let deletions = std::collections::HashSet::new();
+        if let Err(e) = resolver.save_changes_to_layer(&changes, &deletions, ConfigLayer::User) {
+            tracing::error!("Failed to persist config change {}: {}", json_pointer, e);
+        }
+    }
 }
