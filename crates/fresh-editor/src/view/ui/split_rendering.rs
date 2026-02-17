@@ -356,6 +356,8 @@ struct ViewPreferences {
     compose_column_guides: Option<Vec<u16>>,
     view_transform: Option<ViewTransformPayload>,
     rulers: Vec<usize>,
+    /// Per-split line number override (None = use buffer default)
+    show_line_numbers: Option<bool>,
 }
 
 struct LineRenderInput<'a> {
@@ -1035,6 +1037,7 @@ impl SplitRenderer {
                     use_terminal_bg,
                     session_mode,
                     &view_prefs.rulers,
+                    view_prefs.show_line_numbers,
                 );
 
                 // Store view line mappings for mouse click handling
@@ -1920,6 +1923,7 @@ impl SplitRenderer {
                     compose_column_guides: view_state.compose_column_guides.clone(),
                     view_transform: view_state.view_transform.clone(),
                     rulers: view_state.rulers.clone(),
+                    show_line_numbers: view_state.show_line_numbers,
                 };
             }
         }
@@ -1931,6 +1935,7 @@ impl SplitRenderer {
             compose_column_guides: None,
             view_transform: None,
             rulers: Vec::new(),
+            show_line_numbers: None,
         }
     }
 
@@ -4460,8 +4465,16 @@ impl SplitRenderer {
         use_terminal_bg: bool,
         session_mode: bool,
         rulers: &[usize],
+        show_line_numbers_override: Option<bool>,
     ) -> Vec<ViewLineMapping> {
         let _span = tracing::trace_span!("render_buffer_in_split").entered();
+
+        // Apply per-split line number override before rendering.
+        // This allows compose-mode splits to hide line numbers while
+        // source-mode splits keep them visible on the same buffer.
+        if let Some(show) = show_line_numbers_override {
+            state.margins.set_line_numbers(show);
+        }
 
         // Compute effective editor background: terminal default or theme-defined
         let effective_editor_bg = if use_terminal_bg {

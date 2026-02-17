@@ -1010,9 +1010,14 @@ impl Editor {
     }
 
     /// Handle SetLineNumbers command
-    pub(super) fn handle_set_line_numbers(&mut self, buffer_id: BufferId, enabled: bool) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
-            state.margins.set_line_numbers(enabled);
+    ///
+    /// Sets line number visibility on the active split's per-buffer view state,
+    /// so that different splits showing the same buffer can have independent
+    /// line number settings (e.g., source mode shows line numbers, compose hides them).
+    pub(super) fn handle_set_line_numbers(&mut self, _buffer_id: BufferId, enabled: bool) {
+        let active_split = self.split_manager.active_split();
+        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.show_line_numbers = Some(enabled);
         }
     }
 
