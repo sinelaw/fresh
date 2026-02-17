@@ -4469,12 +4469,13 @@ impl SplitRenderer {
     ) -> Vec<ViewLineMapping> {
         let _span = tracing::trace_span!("render_buffer_in_split").entered();
 
-        // Apply per-split line number override before rendering.
-        // This allows compose-mode splits to hide line numbers while
-        // source-mode splits keep them visible on the same buffer.
-        if let Some(show) = show_line_numbers_override {
-            state.margins.set_line_numbers(show);
-        }
+        // Apply per-split line number setting before rendering.
+        // Because margins live on shared EditorState, we must always set
+        // the value here so that a previous split's render (e.g. compose mode
+        // hiding line numbers) doesn't leak into this split's render.
+        // When no per-split override exists, default to showing line numbers.
+        let show_line_numbers = show_line_numbers_override.unwrap_or(true);
+        state.margins.set_line_numbers(show_line_numbers);
 
         // Compute effective editor background: terminal default or theme-defined
         let effective_editor_bg = if use_terminal_bg {
