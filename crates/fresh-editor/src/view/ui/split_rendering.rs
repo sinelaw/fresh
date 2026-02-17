@@ -4492,7 +4492,7 @@ impl SplitRenderer {
         // If we scrolled, rebuild view_data from new position WITH the view_transform
         // This ensures virtual lines are included in the rebuilt view
         let view_data = if scrolled {
-            Self::build_view_data(
+            let rebuilt = Self::build_view_data(
                 state,
                 viewport,
                 view_transform_for_rebuild,
@@ -4501,7 +4501,14 @@ impl SplitRenderer {
                 line_wrap,
                 render_area.width as usize,
                 gutter_width,
-            )
+            );
+            // Recalculate top_view_line_offset for the rebuilt view_data.
+            // ensure_visible_in_layout set the offset relative to the OLD view_data,
+            // but the rebuild starts from the line containing top_byte, so the offset
+            // must be recalculated to index the correct view line in the new data.
+            viewport.top_view_line_offset =
+                viewport.find_view_line_for_byte(&rebuilt.lines, viewport.top_byte);
+            rebuilt
         } else {
             view_data
         };
