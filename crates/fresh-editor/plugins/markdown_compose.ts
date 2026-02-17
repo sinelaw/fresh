@@ -1372,7 +1372,12 @@ globalThis.onMarkdownLinesChanged = function(data: {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   const lineNums = data.lines.map(l => `${l.line_number}(${l.byte_start}..${l.byte_end})`).join(', ');
   editor.debug(`[mc] lines_changed: ${data.lines.length} lines: [${lineNums}]`);
-  const cursors = [editor.getCursorPosition()];
+  // Only use cursor positions for reveal/conceal decisions when the active
+  // split is in compose mode.  When a source-mode split is active, the cursor
+  // lives in that source view — it should NOT trigger "reveal" (skip-conceal)
+  // in the compose-mode split, because conceals are buffer-level decorations
+  // shared across splits.
+  const cursors = isComposing(data.buffer_id) ? [editor.getCursorPosition()] : [];
 
   // Pre-compute table column widths for alignment.
   // If widths grew from merging with adjacent cached rows (e.g. after a
