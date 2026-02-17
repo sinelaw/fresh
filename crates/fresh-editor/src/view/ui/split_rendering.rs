@@ -4489,9 +4489,14 @@ impl SplitRenderer {
         let primary = *cursors.primary();
         let scrolled = viewport.ensure_visible_in_layout(&view_data.lines, &primary, gutter_width);
 
-        // If we scrolled, rebuild view_data from new position WITH the view_transform
-        // This ensures virtual lines are included in the rebuilt view
+        // If we scrolled, rebuild view_data from the new top_byte and then re-run the
+        // layout-aware check so that top_view_line_offset is correct for the rebuilt data.
+        // Without this, top_view_line_offset would be stale (relative to the old view_data),
+        // causing gutter line numbers to desync from content.
         let view_data = if scrolled {
+            // Reset offset before rebuild — it will be set correctly by the second
+            // ensure_visible_in_layout call below.
+            viewport.top_view_line_offset = 0;
             let rebuilt = Self::build_view_data(
                 state,
                 viewport,
@@ -4502,12 +4507,9 @@ impl SplitRenderer {
                 render_area.width as usize,
                 gutter_width,
             );
-            // Recalculate top_view_line_offset for the rebuilt view_data.
-            // ensure_visible_in_layout set the offset relative to the OLD view_data,
-            // but the rebuild starts from the line containing top_byte, so the offset
-            // must be recalculated to index the correct view line in the new data.
-            viewport.top_view_line_offset =
-                viewport.find_view_line_for_byte(&rebuilt.lines, viewport.top_byte);
+            // Re-run layout-aware cursor check on the rebuilt data so top_view_line_offset
+            // correctly indexes the new view_lines (handles both source lines and virtual lines).
+            viewport.ensure_visible_in_layout(&rebuilt.lines, &primary, gutter_width);
             rebuilt
         } else {
             view_data

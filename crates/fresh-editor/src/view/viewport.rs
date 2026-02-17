@@ -459,7 +459,7 @@ impl Viewport {
     /// Find the view line index that contains a source byte position
     /// Returns the line where the byte falls within its range, not just the first line
     /// starting at or after the byte.
-    pub fn find_view_line_for_byte(&self, view_lines: &[ViewLine], target_byte: usize) -> usize {
+    fn find_view_line_for_byte(&self, view_lines: &[ViewLine], target_byte: usize) -> usize {
         // Find the line that contains the target byte by checking if target is
         // between this line's start and the next line's start
         let mut best_match = 0;
