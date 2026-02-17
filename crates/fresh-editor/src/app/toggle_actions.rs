@@ -15,17 +15,20 @@ use crate::input::keybindings::KeybindingResolver;
 use super::Editor;
 
 impl Editor {
-    /// Toggle line numbers in the gutter for the active buffer
+    /// Toggle line numbers in the gutter for the active split.
+    ///
+    /// Line number visibility is stored per-split in `BufferViewState` so that
+    /// different splits of the same buffer can independently show/hide line numbers
+    /// (e.g., source mode shows them, compose mode hides them).
     pub fn toggle_line_numbers(&mut self) {
-        if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
-            let currently_shown = state.margins.show_line_numbers;
-            state.margins.set_line_numbers(!currently_shown);
+        let active_split = self.split_manager.active_split();
+        let default_line_numbers = self.config.editor.line_numbers;
+        if let Some(vs) = self.split_view_states.get_mut(&active_split) {
+            let currently_shown = vs.show_line_numbers.unwrap_or(default_line_numbers);
+            vs.show_line_numbers = Some(!currently_shown);
             if currently_shown {
                 self.set_status_message(t!("toggle.line_numbers_hidden").to_string());
             } else {
-                // Restore proper width based on buffer size
-                let total_lines = state.buffer.line_count().unwrap_or(1);
-                state.margins.update_width_for_buffer(total_lines);
                 self.set_status_message(t!("toggle.line_numbers_shown").to_string());
             }
         }

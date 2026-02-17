@@ -4469,11 +4469,12 @@ impl SplitRenderer {
     ) -> Vec<ViewLineMapping> {
         let _span = tracing::trace_span!("render_buffer_in_split").entered();
 
-        // Apply per-split line number setting before rendering.
-        // Because margins live on shared EditorState, we must always set
-        // the value here so that a previous split's render (e.g. compose mode
-        // hiding line numbers) doesn't leak into this split's render.
-        // When no per-split override exists, default to showing line numbers.
+        // Apply the per-split line number setting to shared margins before rendering.
+        // Line number visibility lives in per-split BufferViewState.show_line_numbers,
+        // but margin width calculations use shared EditorState.margins. We set it
+        // here so each split renders with its own setting. When no per-split
+        // override exists, default to true (special buffers like terminals set
+        // their per-split show_line_numbers explicitly).
         let show_line_numbers = show_line_numbers_override.unwrap_or(true);
         state.margins.set_line_numbers(show_line_numbers);
 

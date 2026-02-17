@@ -59,12 +59,13 @@ impl Editor {
             .set(context_keys::HORIZONTAL_SCROLLBAR, horizontal_scrollbar);
     }
 
-    /// Check if line numbers are visible in the active buffer.
+    /// Check if line numbers are visible in the active split.
     fn is_line_numbers_visible(&self) -> bool {
-        self.buffers
-            .get(&self.active_buffer())
-            .map(|state| state.margins.show_line_numbers)
-            .unwrap_or(true)
+        let active_split = self.split_manager.active_split();
+        self.split_view_states
+            .get(&active_split)
+            .and_then(|vs| vs.show_line_numbers)
+            .unwrap_or(self.config.editor.line_numbers)
     }
 
     /// Check if line wrap is enabled in the active split.
