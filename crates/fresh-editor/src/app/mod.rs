@@ -4411,21 +4411,24 @@ impl Editor {
                     .get(buffer_id)
                     .map(|m| m.is_virtual())
                     .unwrap_or(false);
-                // Find view_mode and compose_width from any split that has this buffer
-                let split_state = self
-                    .split_view_states
-                    .values()
-                    .find(|vs| vs.open_buffers.contains(buffer_id));
-                let view_mode = split_state
-                    .and_then(|vs| vs.buffer_state(*buffer_id))
-                    .map(|bs| match bs.view_mode {
-                        crate::state::ViewMode::Source => "source",
-                        crate::state::ViewMode::Compose => "compose",
-                    })
-                    .unwrap_or("source");
-                let compose_width = split_state
-                    .and_then(|vs| vs.buffer_state(*buffer_id))
-                    .and_then(|bs| bs.compose_width);
+                // Find view_mode and compose_width across all splits showing this buffer.
+                // Report "compose" if ANY split has compose mode for the buffer, so that
+                // the plugin continues adding decorations even when a source-mode split
+                // is active (the renderer filters decorations per-split).
+                let mut view_mode = "source";
+                let mut compose_width = None;
+                for vs in self.split_view_states.values() {
+                    if let Some(bs) = vs.buffer_state(*buffer_id) {
+                        if matches!(bs.view_mode, crate::state::ViewMode::Compose) {
+                            view_mode = "compose";
+                            compose_width = bs.compose_width;
+                            break;
+                        }
+                        if compose_width.is_none() {
+                            compose_width = bs.compose_width;
+                        }
+                    }
+                }
                 let buffer_info = BufferInfo {
                     id: *buffer_id,
                     path: state.buffer.file_path().map(|p| p.to_path_buf()),
@@ -4456,9 +4459,11 @@ impl Editor {
                 };
                 snapshot.buffer_saved_diffs.insert(*buffer_id, diff);
 
-                // Store cursor position for this buffer (from SplitViewState)
-                let cursor_pos = split_state
-                    .and_then(|vs| vs.buffer_state(*buffer_id))
+                // Store cursor position for this buffer (from any split that has it)
+                let cursor_pos = self
+                    .split_view_states
+                    .values()
+                    .find_map(|vs| vs.buffer_state(*buffer_id))
                     .map(|bs| bs.cursors.primary().position)
                     .unwrap_or(0);
                 snapshot
