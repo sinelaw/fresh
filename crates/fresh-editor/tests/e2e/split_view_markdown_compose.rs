@@ -85,13 +85,33 @@ fn enable_compose_mode(harness: &mut EditorTestHarness) {
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
-    // Wait for compose mode to fully activate (conceals applied)
+    // Wait for compose mode to fully activate (conceals applied).
+    // Only check the RIGHT half of the screen (the compose panel) for concealed
+    // markers. The left panel stays in source mode and will always show ** markers.
     harness
         .wait_until_stable(|h| {
             let s = h.screen_to_string();
-            // Compose mode should conceal ** markers on most lines
-            let bold_marker_lines = s.lines().filter(|l| l.contains("**")).count();
-            bold_marker_lines <= 2 // At most cursor line may show markers
+            // Find the separator column (│)
+            let sep_col = s
+                .lines()
+                .nth(2)
+                .and_then(|l| l.char_indices().find(|(_, c)| *c == '│').map(|(i, _)| i));
+            let Some(sep) = sep_col else {
+                return false;
+            };
+            // Count ** markers only in the right half (compose panel)
+            let right_bold_lines = s
+                .lines()
+                .skip(2)
+                .filter(|l| {
+                    if l.len() > sep + 1 {
+                        l[sep + 1..].contains("**")
+                    } else {
+                        false
+                    }
+                })
+                .count();
+            right_bold_lines <= 2 // At most cursor line may show markers
         })
         .unwrap();
 }
