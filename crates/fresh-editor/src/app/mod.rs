@@ -5026,6 +5026,8 @@ impl Editor {
                     let spawner = self.process_spawner.clone();
 
                     runtime.spawn(async move {
+                        // Receiver may be dropped if editor is shutting down
+                        #[allow(clippy::let_underscore_must_use)]
                         match spawner.spawn(command, args, effective_cwd).await {
                             Ok(result) => {
                                 let _ = sender.send(AsyncMessage::PluginProcessOutput {
@@ -5120,6 +5122,8 @@ impl Editor {
                     let sender_stderr = sender.clone();
                     let callback_id_u64 = callback_id.as_u64();
 
+                    // Receiver may be dropped if editor is shutting down
+                    #[allow(clippy::let_underscore_must_use)]
                     let handle = runtime.spawn(async move {
                         let mut child = match TokioCommand::new(&command)
                             .args(&args)

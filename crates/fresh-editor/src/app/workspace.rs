@@ -669,6 +669,8 @@ impl Editor {
             terminals_root.join(&terminal.backing_path)
         };
 
+        // Best-effort directory creation for terminal backing files
+        #[allow(clippy::let_underscore_must_use)]
         let _ = self.filesystem.create_dir_all(
             log_path
                 .parent()

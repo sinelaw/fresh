@@ -1,3 +1,5 @@
+#![deny(clippy::let_underscore_must_use)]
+
 // Editor library - exposes all core modules for testing
 
 pub mod i18n;
