@@ -1386,11 +1386,15 @@ impl Editor {
             // Clean up backing/rendering file
             let backing_file = self.terminal_backing_files.remove(&terminal_id);
             if let Some(ref path) = backing_file {
+                // Best-effort cleanup of temporary terminal files.
+                #[allow(clippy::let_underscore_must_use)]
                 let _ = self.filesystem.remove_file(path);
             }
             // Clean up raw log file
             if let Some(log_file) = self.terminal_log_files.remove(&terminal_id) {
                 if backing_file.as_ref() != Some(&log_file) {
+                    // Best-effort cleanup of temporary terminal files.
+                    #[allow(clippy::let_underscore_must_use)]
                     let _ = self.filesystem.remove_file(&log_file);
                 }
             }
@@ -1458,9 +1462,12 @@ impl Editor {
         // Update all splits that are showing this buffer to show the replacement
         let splits_to_update = self.split_manager.splits_for_buffer(id);
         for split_id in splits_to_update {
-            let _ = self
+            if let Err(e) = self
                 .split_manager
-                .set_split_buffer(split_id, replacement_buffer);
+                .set_split_buffer(split_id, replacement_buffer)
+            {
+                tracing::warn!("Failed to update split buffer: {}", e);
+            }
         }
 
         self.buffers.remove(&id);
@@ -1566,7 +1573,9 @@ impl Editor {
                     return;
                 }
                 // Close the buffer first, then the split
-                let _ = self.close_buffer(buffer_id);
+                if let Err(e) = self.close_buffer(buffer_id) {
+                    tracing::warn!("Failed to close buffer: {}", e);
+                }
                 self.close_active_split();
                 return;
             }
@@ -1627,9 +1636,12 @@ impl Editor {
             }
 
             // Update the split to show the replacement buffer
-            let _ = self
+            if let Err(e) = self
                 .split_manager
-                .set_split_buffer(active_split, replacement_buffer);
+                .set_split_buffer(active_split, replacement_buffer)
+            {
+                tracing::warn!("Failed to update split buffer: {}", e);
+            }
 
             self.set_status_message(t!("buffer.tab_closed").to_string());
         }
@@ -1711,9 +1723,12 @@ impl Editor {
             }
 
             // Update the split to show the replacement buffer
-            let _ = self
+            if let Err(e) = self
                 .split_manager
-                .set_split_buffer(split_id, replacement_buffer);
+                .set_split_buffer(split_id, replacement_buffer)
+            {
+                tracing::warn!("Failed to update split buffer: {}", e);
+            }
 
             self.set_status_message(t!("buffer.tab_closed").to_string());
         }
@@ -1747,9 +1762,12 @@ impl Editor {
         }
 
         // Make sure the kept buffer is active
-        let _ = self
+        if let Err(e) = self
             .split_manager
-            .set_split_buffer(split_id, keep_buffer_id);
+            .set_split_buffer(split_id, keep_buffer_id)
+        {
+            tracing::warn!("Failed to update split buffer: {}", e);
+        }
 
         self.set_batch_close_status_message(closed, skipped_modified);
     }
@@ -1884,7 +1902,9 @@ impl Editor {
                     return false;
                 }
             }
-            let _ = self.close_buffer(buffer_id);
+            if let Err(e) = self.close_buffer(buffer_id) {
+                tracing::warn!("Failed to close buffer: {}", e);
+            }
             true
         } else {
             // There are other viewports of this buffer - just remove from this split's tabs
@@ -1909,7 +1929,9 @@ impl Editor {
 
             // Update the split to show the replacement buffer
             if let Some(replacement) = replacement_buffer {
-                let _ = self.split_manager.set_split_buffer(split_id, replacement);
+                if let Err(e) = self.split_manager.set_split_buffer(split_id, replacement) {
+                    tracing::warn!("Failed to update split buffer: {}", e);
+                }
             }
             true
         }

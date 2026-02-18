@@ -256,7 +256,8 @@ impl Editor {
                             info.uid,
                             info.gid,
                         )?;
-                        // Clean up temp file on success
+                        // Best-effort cleanup of temp file.
+                        #[allow(clippy::let_underscore_must_use)]
                         let _ = self.filesystem.remove_file(&info.temp_path);
                         Ok(())
                     })();
@@ -286,13 +287,15 @@ impl Editor {
                             self.set_status_message(
                                 t!("prompt.sudo_save_failed", error = e.to_string()).to_string(),
                             );
-                            // Clean up temp file on failure
+                            // Best-effort cleanup of temp file.
+                            #[allow(clippy::let_underscore_must_use)]
                             let _ = self.filesystem.remove_file(&info.temp_path);
                         }
                     }
                 } else {
                     self.set_status_message(t!("buffer.save_cancelled").to_string());
-                    // Clean up temp file
+                    // Best-effort cleanup of temp file.
+                    #[allow(clippy::let_underscore_must_use)]
                     let _ = self.filesystem.remove_file(&info.temp_path);
                 }
             }
@@ -400,7 +403,9 @@ impl Editor {
                 // This is handled by InsertChar, not PromptConfirm
                 // But if somehow Enter is pressed, treat it as skip (n)
                 if let Some(c) = input.chars().next() {
-                    let _ = self.handle_interactive_replace_key(c);
+                    if let Err(e) = self.handle_interactive_replace_key(c) {
+                        tracing::warn!("Interactive replace failed: {}", e);
+                    }
                 }
             }
             PromptType::AddRuler => {

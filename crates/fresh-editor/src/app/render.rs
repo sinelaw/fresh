@@ -4063,7 +4063,9 @@ impl Editor {
             let width = self.cached_layout.last_frame_width;
             let height = self.cached_layout.last_frame_height;
             for action in actions {
-                let _ = self.handle_action(action);
+                if let Err(e) = self.handle_action(action) {
+                    tracing::warn!("Macro action failed: {}", e);
+                }
                 self.recompute_layout(width, height);
             }
             self.macro_playing = false;

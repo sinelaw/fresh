@@ -1102,7 +1102,9 @@ impl Editor {
                         // LSP should already be running since we just restarted it
                         if let Some(handle) = lsp.get_handle_mut(&lang_id) {
                             let handle_id = handle.id();
-                            let _ = handle.did_open(uri, content, lang_id);
+                            if let Err(e) = handle.did_open(uri, content, lang_id) {
+                                tracing::warn!("LSP did_open failed after restart: {}", e);
+                            }
 
                             // Mark buffer as opened with this handle so that
                             // send_lsp_changes_for_buffer doesn't re-send didOpen

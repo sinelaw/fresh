@@ -41,7 +41,9 @@ impl Editor {
 
         // Prepare persistent storage paths under the user's data directory
         let terminal_root = self.dir_context.terminal_dir_for(&self.working_dir);
-        let _ = self.filesystem.create_dir_all(&terminal_root);
+        if let Err(e) = self.filesystem.create_dir_all(&terminal_root) {
+            tracing::warn!("Failed to create terminal directory: {}", e);
+        }
         // Precompute paths using the next terminal ID so we capture from the first byte
         let predicted_terminal_id = self.terminal_manager.next_terminal_id();
         let log_path =
@@ -139,7 +141,9 @@ impl Editor {
             .cloned()
             .unwrap_or_else(|| {
                 let root = self.dir_context.terminal_dir_for(&self.working_dir);
-                let _ = self.filesystem.create_dir_all(&root);
+                if let Err(e) = self.filesystem.create_dir_all(&root) {
+                    tracing::warn!("Failed to create terminal directory: {}", e);
+                }
                 root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
             });
 
@@ -207,7 +211,9 @@ impl Editor {
             .cloned()
             .unwrap_or_else(|| {
                 let root = self.dir_context.terminal_dir_for(&self.working_dir);
-                let _ = self.filesystem.create_dir_all(&root);
+                if let Err(e) = self.filesystem.create_dir_all(&root) {
+                    tracing::warn!("Failed to create terminal directory: {}", e);
+                }
                 root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
             });
 
@@ -254,11 +260,15 @@ impl Editor {
             // Clean up backing/rendering file
             let backing_file = self.terminal_backing_files.remove(&terminal_id);
             if let Some(ref path) = backing_file {
+                // Best-effort cleanup of temporary terminal files.
+                #[allow(clippy::let_underscore_must_use)]
                 let _ = self.filesystem.remove_file(path);
             }
             // Clean up raw log file
             if let Some(log_file) = self.terminal_log_files.remove(&terminal_id) {
                 if backing_file.as_ref() != Some(&log_file) {
+                    // Best-effort cleanup of temporary terminal files.
+                    #[allow(clippy::let_underscore_must_use)]
                     let _ = self.filesystem.remove_file(&log_file);
                 }
             }
@@ -268,7 +278,9 @@ impl Editor {
             self.key_context = crate::input::keybindings::KeyContext::Normal;
 
             // Close the buffer
-            let _ = self.close_buffer(buffer_id);
+            if let Err(e) = self.close_buffer(buffer_id) {
+                tracing::warn!("Failed to close terminal buffer: {}", e);
+            }
 
             self.set_status_message(t!("terminal.closed", id = terminal_id.0).to_string());
         } else {

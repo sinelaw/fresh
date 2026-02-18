@@ -150,9 +150,13 @@ impl Editor {
         self.mouse_enabled = !self.mouse_enabled;
 
         if self.mouse_enabled {
+            // Best-effort terminal mouse capture toggle.
+            #[allow(clippy::let_underscore_must_use)]
             let _ = crossterm::execute!(stdout(), crossterm::event::EnableMouseCapture);
             self.set_status_message(t!("toggle.mouse_capture_enabled").to_string());
         } else {
+            // Best-effort terminal mouse capture toggle.
+            #[allow(clippy::let_underscore_must_use)]
             let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
             self.set_status_message(t!("toggle.mouse_capture_disabled").to_string());
         }

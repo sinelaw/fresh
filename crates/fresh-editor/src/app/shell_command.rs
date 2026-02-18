@@ -252,8 +252,10 @@ impl Editor {
         use crossterm::ExecutableCommand;
         use std::io::stdout;
 
-        // Suspend TUI
+        // Suspend TUI — best-effort, nothing useful to do on failure.
+        #[allow(clippy::let_underscore_must_use)]
         let _ = disable_raw_mode();
+        #[allow(clippy::let_underscore_must_use)]
         let _ = stdout().execute(LeaveAlternateScreen);
 
         let shell = detect_shell();
@@ -266,8 +268,10 @@ impl Editor {
             .wait()
             .map_err(|e| anyhow::anyhow!("Failed to wait for command: {}", e))?;
 
-        // Resume TUI
+        // Resume TUI — best-effort, nothing useful to do on failure.
+        #[allow(clippy::let_underscore_must_use)]
         let _ = stdout().execute(EnterAlternateScreen);
+        #[allow(clippy::let_underscore_must_use)]
         let _ = enable_raw_mode();
 
         // Request a full hard redraw to clear any ghost text from the external command

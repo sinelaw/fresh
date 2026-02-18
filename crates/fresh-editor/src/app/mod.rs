@@ -3363,6 +3363,8 @@ impl Editor {
             runtime.spawn(async move {
                 let result = fs_manager.list_dir_with_metadata(path).await;
                 if let Some(sender) = sender {
+                    // Receiver may have been dropped if the dialog was closed.
+                    #[allow(clippy::let_underscore_must_use)]
                     let _ = sender.send(AsyncMessage::FileOpenDirectoryLoaded(result));
                 }
             });
@@ -3421,6 +3423,8 @@ impl Editor {
                 .unwrap_or_default();
 
                 if let Some(sender) = sender {
+                    // Receiver may have been dropped if the dialog was closed.
+                    #[allow(clippy::let_underscore_must_use)]
                     let _ = sender.send(AsyncMessage::FileOpenShortcutsLoaded(shortcuts));
                 }
             });
@@ -4234,11 +4238,15 @@ impl Editor {
                                 self.filesystem.open_file_for_append(&backing_path)
                             {
                                 use std::io::Write;
-                                let _ = file.write_all(exit_msg.as_bytes());
+                                if let Err(e) = file.write_all(exit_msg.as_bytes()) {
+                                    tracing::warn!("Failed to write terminal exit message: {}", e);
+                                }
                             }
 
                             // Force reload buffer from file to pick up the exit message
-                            let _ = self.revert_buffer_by_id(buffer_id, &backing_path);
+                            if let Err(e) = self.revert_buffer_by_id(buffer_id, &backing_path) {
+                                tracing::warn!("Failed to revert terminal buffer: {}", e);
+                            }
                         }
 
                         // Ensure buffer remains read-only with no line numbers
@@ -5073,6 +5081,8 @@ impl Editor {
                     let callback_id_u64 = callback_id.as_u64();
                     runtime.spawn(async move {
                         tokio::time::sleep(tokio::time::Duration::from_millis(duration_ms)).await;
+                        // Receiver may have been dropped during shutdown.
+                        #[allow(clippy::let_underscore_must_use)]
                         let _ = sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
                             fresh_core::api::PluginAsyncMessage::DelayComplete {
                                 callback_id: callback_id_u64,
@@ -5850,7 +5860,9 @@ impl Editor {
 
                 // Prepare persistent storage paths
                 let terminal_root = self.dir_context.terminal_dir_for(&working_dir);
-                let _ = self.filesystem.create_dir_all(&terminal_root);
+                if let Err(e) = self.filesystem.create_dir_all(&terminal_root) {
+                    tracing::warn!("Failed to create terminal directory: {}", e);
+                }
                 let predicted_terminal_id = self.terminal_manager.next_terminal_id();
                 let log_path =
                     terminal_root.join(format!("fresh-terminal-{}.log", predicted_terminal_id.0));
@@ -5992,7 +6004,9 @@ impl Editor {
                     .map(|(&bid, _)| bid);
 
                 if let Some(buffer_id) = buffer_to_close {
-                    let _ = self.close_buffer(buffer_id);
+                    if let Err(e) = self.close_buffer(buffer_id) {
+                        tracing::warn!("Failed to close terminal buffer: {}", e);
+                    }
                     tracing::info!("Plugin closed terminal {:?}", terminal_id);
                 } else {
                     // Terminal exists but no buffer — just close the terminal directly
@@ -6013,7 +6027,9 @@ impl Editor {
                     // Update the buffer's file path so future saves go to the same file
                     state.buffer.set_file_path(path.clone());
                     // Run on-save actions (formatting, etc.)
-                    let _ = self.finalize_save(Some(path));
+                    if let Err(e) = self.finalize_save(Some(path)) {
+                        tracing::warn!("Failed to finalize save: {}", e);
+                    }
                     tracing::debug!("Saved buffer {:?} to path", buffer_id);
                 }
                 Err(e) => {

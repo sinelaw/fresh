@@ -121,7 +121,9 @@ impl Editor {
                         original_path.display()
                     );
                     // Delete the recovery file since it's no longer valid
-                    let _ = self.recovery_service.discard_recovery(&entry);
+                    if let Err(e) = self.recovery_service.discard_recovery(&entry) {
+                        tracing::warn!("Failed to discard stale recovery file: {}", e);
+                    }
                 }
                 Ok(RecoveryResult::Corrupted { id, reason }) => {
                     tracing::warn!("Recovery file {} corrupted: {}", id, reason);

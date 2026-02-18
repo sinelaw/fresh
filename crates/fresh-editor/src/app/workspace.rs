@@ -801,7 +801,12 @@ impl Editor {
                 let current_split_id = if is_first_leaf {
                     // First leaf reuses the existing split
                     let split_id_val = self.split_manager.active_split();
-                    let _ = self.split_manager.set_split_buffer(split_id_val, buffer_id);
+                    if let Err(e) = self.split_manager.set_split_buffer(split_id_val, buffer_id) {
+                        tracing::warn!(
+                            "Failed to set split buffer during workspace restore: {}",
+                            e
+                        );
+                    }
                     split_id_val
                 } else {
                     // Non-first leaves use the active split (created by split_active)
@@ -838,7 +843,12 @@ impl Editor {
 
                 let current_split_id = if is_first_leaf {
                     let split_id_val = self.split_manager.active_split();
-                    let _ = self.split_manager.set_split_buffer(split_id_val, buffer_id);
+                    if let Err(e) = self.split_manager.set_split_buffer(split_id_val, buffer_id) {
+                        tracing::warn!(
+                            "Failed to set split buffer during workspace restore: {}",
+                            e
+                        );
+                    }
                     split_id_val
                 } else {
                     self.split_manager.active_split()
@@ -852,9 +862,12 @@ impl Editor {
                         .set_label(current_split_id, label.clone());
                 }
 
-                let _ = self
+                if let Err(e) = self
                     .split_manager
-                    .set_split_buffer(current_split_id, buffer_id);
+                    .set_split_buffer(current_split_id, buffer_id)
+                {
+                    tracing::warn!("Failed to set split buffer during workspace restore: {}", e);
+                }
 
                 self.restore_split_view_state(
                     current_split_id,
@@ -1074,9 +1087,12 @@ impl Editor {
             // Cursors now live in SplitViewState, no need to sync to EditorState
 
             // Set this buffer as active in the split (fires buffer_activated hook)
-            let _ = self
+            if let Err(e) = self
                 .split_manager
-                .set_split_buffer(current_split_id, active_id);
+                .set_split_buffer(current_split_id, active_id)
+            {
+                tracing::warn!("Failed to set split buffer during workspace restore: {}", e);
+            }
         }
         view_state.tab_scroll_offset = split_state.tab_scroll_offset;
     }

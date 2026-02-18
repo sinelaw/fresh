@@ -259,9 +259,12 @@ impl Editor {
             // If the source split was showing this buffer, switch to another
             if self.split_manager.get_buffer_id(source_split_id) == Some(buffer_id) {
                 if let Some(&next_buffer) = source_view_state.open_buffers.first() {
-                    let _ = self
+                    if let Err(e) = self
                         .split_manager
-                        .set_split_buffer(source_split_id, next_buffer);
+                        .set_split_buffer(source_split_id, next_buffer)
+                    {
+                        tracing::warn!("Failed to update split buffer: {}", e);
+                    }
                 }
             }
         }
@@ -277,16 +280,21 @@ impl Editor {
         }
 
         // Focus the target split and switch to the dropped buffer
-        let _ = self
+        if let Err(e) = self
             .split_manager
-            .set_split_buffer(target_split_id, buffer_id);
+            .set_split_buffer(target_split_id, buffer_id)
+        {
+            tracing::warn!("Failed to update split buffer: {}", e);
+        }
         self.split_manager.set_active_split(target_split_id);
         self.set_active_buffer(buffer_id);
 
         // If source split is now empty, close it
         if source_becomes_empty {
             self.split_view_states.remove(&source_split_id);
-            let _ = self.split_manager.close_split(source_split_id);
+            if let Err(e) = self.split_manager.close_split(source_split_id) {
+                tracing::warn!("Failed to close empty split: {}", e);
+            }
             self.set_status_message(t!("status.moved_tab_split_closed").to_string());
         } else {
             self.set_status_message(t!("status.moved_tab").to_string());
@@ -318,9 +326,12 @@ impl Editor {
                 // If the source split was showing this buffer, switch to another
                 if self.split_manager.get_buffer_id(source_split_id) == Some(buffer_id) {
                     if let Some(&next_buffer) = source_view_state.open_buffers.first() {
-                        let _ = self
+                        if let Err(e) = self
                             .split_manager
-                            .set_split_buffer(source_split_id, next_buffer);
+                            .set_split_buffer(source_split_id, next_buffer)
+                        {
+                            tracing::warn!("Failed to update split buffer: {}", e);
+                        }
                     }
                 }
                 had
@@ -364,7 +375,9 @@ impl Editor {
                 // If source split is now empty, close it
                 if source_becomes_empty {
                     self.split_view_states.remove(&source_split_id);
-                    let _ = self.split_manager.close_split(source_split_id);
+                    if let Err(e) = self.split_manager.close_split(source_split_id) {
+                        tracing::warn!("Failed to close empty split: {}", e);
+                    }
                 }
 
                 // Focus the new split

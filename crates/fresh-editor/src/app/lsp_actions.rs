@@ -82,7 +82,9 @@ impl Editor {
                 if lsp.try_spawn(&lang_id) == LspSpawnResult::Spawned {
                     if let Some(handle) = lsp.get_handle_mut(&lang_id) {
                         let handle_id = handle.id();
-                        let _ = handle.did_open(uri, content, lang_id);
+                        if let Err(e) = handle.did_open(uri, content, lang_id) {
+                            tracing::warn!("LSP did_open failed: {}", e);
+                        }
 
                         // Mark buffer as opened with this handle so that
                         // send_lsp_changes_for_buffer doesn't re-send didOpen
@@ -293,7 +295,9 @@ impl Editor {
         let request_id = self.next_lsp_request_id;
         self.next_lsp_request_id += 1;
         let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
-        let _ = handle.document_diagnostic(request_id, uri.clone(), previous_result_id);
+        if let Err(e) = handle.document_diagnostic(request_id, uri.clone(), previous_result_id) {
+            tracing::warn!("LSP document_diagnostic request failed: {}", e);
+        }
 
         // Request inlay hints if enabled
         if self.config.editor.enable_inlay_hints {
@@ -308,7 +312,9 @@ impl Editor {
 
             let request_id = self.next_lsp_request_id;
             self.next_lsp_request_id += 1;
-            let _ = handle.inlay_hints(request_id, uri, 0, 0, last_line, last_char);
+            if let Err(e) = handle.inlay_hints(request_id, uri, 0, 0, last_line, last_char) {
+                tracing::warn!("LSP inlay_hints request failed: {}", e);
+            }
         }
     }
 }

@@ -104,6 +104,8 @@ impl Editor {
 
                             runtime.spawn(async move {
                                 let _success = view.expand_and_select_file(&target_path).await;
+                                // Receiver may have been dropped during shutdown.
+                                #[allow(clippy::let_underscore_must_use)]
                                 let _ = sender.send(AsyncMessage::FileExplorerExpandedToPath(view));
                             });
                         } else {
@@ -164,6 +166,8 @@ impl Editor {
                         }
 
                         let view = FileTreeView::new(tree);
+                        // Receiver may have been dropped during shutdown.
+                        #[allow(clippy::let_underscore_must_use)]
                         let _ = sender.send(AsyncMessage::FileExplorerInitialized(view));
                     }
                     Err(e) => {
@@ -435,13 +439,17 @@ impl Editor {
                                 let parent_id =
                                     get_parent_node_id(explorer.tree(), selected_id, node.is_dir());
                                 let tree = explorer.tree_mut();
-                                let _ = runtime.block_on(tree.refresh_node(parent_id));
+                                if let Err(e) = runtime.block_on(tree.refresh_node(parent_id)) {
+                                    tracing::warn!("Failed to refresh file tree: {}", e);
+                                }
                                 self.set_status_message(
                                     t!("explorer.created_file", name = &filename).to_string(),
                                 );
 
                                 // Open the file in the buffer
-                                let _ = self.open_file(&path_clone);
+                                if let Err(e) = self.open_file(&path_clone) {
+                                    tracing::warn!("Failed to open new file: {}", e);
+                                }
 
                                 // Enter rename mode for the new file with empty prompt
                                 // so user can type the desired filename from scratch
@@ -487,7 +495,9 @@ impl Editor {
                                 let parent_id =
                                     get_parent_node_id(explorer.tree(), selected_id, node.is_dir());
                                 let tree = explorer.tree_mut();
-                                let _ = runtime.block_on(tree.refresh_node(parent_id));
+                                if let Err(e) = runtime.block_on(tree.refresh_node(parent_id)) {
+                                    tracing::warn!("Failed to refresh file tree: {}", e);
+                                }
                                 self.set_status_message(
                                     t!("explorer.created_dir", name = &dirname_clone).to_string(),
                                 );
@@ -572,7 +582,11 @@ impl Editor {
                             // Remember the index of the deleted node in the visible list
                             let deleted_index = explorer.get_selected_index();
 
-                            let _ = runtime.block_on(explorer.tree_mut().refresh_node(parent_id));
+                            if let Err(e) =
+                                runtime.block_on(explorer.tree_mut().refresh_node(parent_id))
+                            {
+                                tracing::warn!("Failed to refresh file tree after delete: {}", e);
+                            }
 
                             // After refresh, select the next best node:
                             // Try to stay at the same index, or select the last visible item
@@ -688,7 +702,9 @@ impl Editor {
                         if let Some(selected_id) = explorer.get_selected() {
                             let parent_id = get_parent_node_id(explorer.tree(), selected_id, false);
                             let tree = explorer.tree_mut();
-                            let _ = runtime.block_on(tree.refresh_node(parent_id));
+                            if let Err(e) = runtime.block_on(tree.refresh_node(parent_id)) {
+                                tracing::warn!("Failed to refresh file tree after rename: {}", e);
+                            }
                         }
                         // Navigate to the renamed file to restore selection
                         explorer.navigate_to_path(&new_path);

@@ -105,7 +105,9 @@ impl Editor {
         self.notify_lsp_save_buffer(buffer_id);
 
         // Delete recovery file (buffer is now saved)
-        let _ = self.delete_buffer_recovery(buffer_id);
+        if let Err(e) = self.delete_buffer_recovery(buffer_id) {
+            tracing::warn!("Failed to delete recovery file: {}", e);
+        }
 
         // Emit control event
         if let Some(ref p) = path {

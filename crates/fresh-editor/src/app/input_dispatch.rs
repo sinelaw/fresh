@@ -117,7 +117,9 @@ impl Editor {
                             return Some(InputResult::Consumed);
                         }
                         // For other prompt actions, use handle_action
-                        let _ = self.handle_action(action);
+                        if let Err(e) = self.handle_action(action) {
+                            tracing::warn!("Prompt action failed: {}", e);
+                        }
                         return Some(InputResult::Consumed);
                     }
                 }

@@ -2166,7 +2166,9 @@ impl Editor {
             let new_ratio = (start_ratio + ratio_delta).clamp(0.1, 0.9);
 
             // Update the split ratio
-            let _ = self.split_manager.set_ratio(split_id, new_ratio);
+            if let Err(e) = self.split_manager.set_ratio(split_id, new_ratio) {
+                tracing::warn!("Failed to set split ratio: {}", e);
+            }
         }
 
         Ok(())

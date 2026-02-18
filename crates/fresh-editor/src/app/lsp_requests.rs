@@ -486,7 +486,9 @@ impl Editor {
             );
             // Cancel any pending scheduled trigger
             self.scheduled_completion_trigger = None;
-            let _ = self.request_completion();
+            if let Err(e) = self.request_completion() {
+                tracing::warn!("Failed to request completion: {}", e);
+            }
             return;
         }
 

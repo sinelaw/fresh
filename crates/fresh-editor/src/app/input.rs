@@ -2894,6 +2894,8 @@ impl Editor {
             } else {
                 // In normal mode, write directly to stdout
                 use std::io::stdout;
+                // Best-effort cursor style change to stdout.
+                #[allow(clippy::let_underscore_must_use)]
                 let _ = crossterm::execute!(stdout(), style.to_crossterm_style());
             }
 
@@ -3262,7 +3264,9 @@ impl Editor {
 
         // Auto-trigger signature help on '(' and ','
         if c == '(' || c == ',' {
-            let _ = self.request_signature_help();
+            if let Err(e) = self.request_signature_help() {
+                tracing::warn!("Failed to request signature help: {}", e);
+            }
         }
 
         // Auto-trigger completion on trigger characters

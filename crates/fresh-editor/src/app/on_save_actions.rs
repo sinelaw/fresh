@@ -257,6 +257,8 @@ impl Editor {
                 }
                 Ok(None) => {
                     if start.elapsed() > timeout {
+                        // Best-effort kill of timed-out process.
+                        #[allow(clippy::let_underscore_must_use)]
                         let _ = child.kill();
                         return ActionResult::Error(format!(
                             "Formatter '{}' timed out after {}ms",
@@ -385,6 +387,8 @@ impl Editor {
                 }
                 Ok(None) => {
                     if start.elapsed() > timeout {
+                        // Best-effort kill of timed-out process.
+                        #[allow(clippy::let_underscore_must_use)]
                         let _ = child.kill();
                         return ActionResult::Error(format!(
                             "On-save action '{}' timed out after {}ms",
