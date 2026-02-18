@@ -753,6 +753,9 @@ fn test_large_file_auto_save_creates_small_recovery_file() {
     // Make a small edit
     harness.type_text("SMALL_EDIT").unwrap();
 
+    // Advance past auto-recovery-save interval
+    harness.advance_time(std::time::Duration::from_millis(2100));
+
     // Trigger auto-save
     let saved = harness.editor_mut().auto_recovery_save_dirty_buffers().unwrap();
     assert!(saved > 0, "Should have saved at least one buffer");
@@ -890,6 +893,9 @@ fn test_recovery_after_save_with_size_change() {
     // Make another small edit (this will trigger recovery for dirty buffer)
     harness.type_text("Z").unwrap();
 
+    // Advance past auto-recovery-save interval
+    harness.advance_time(std::time::Duration::from_millis(2100));
+
     // Trigger auto-save
     let saved = harness.editor_mut().auto_recovery_save_dirty_buffers().unwrap();
     assert!(saved > 0, "Should have saved recovery for dirty buffer");
@@ -984,12 +990,18 @@ fn test_unnamed_buffer_created_via_new_buffer_has_stable_recovery() {
     // Type content
     harness.type_text("First content").unwrap();
 
+    // Advance past auto-recovery-save interval
+    harness.advance_time(std::time::Duration::from_millis(2100));
+
     // Trigger first auto-save
     let saved1 = harness.editor_mut().auto_recovery_save_dirty_buffers().unwrap();
     assert_eq!(saved1, 1, "Should save recovery for the new buffer");
 
     // Type more content
     harness.type_text(" more").unwrap();
+
+    // Advance past auto-recovery-save interval again
+    harness.advance_time(std::time::Duration::from_millis(2100));
 
     // Trigger second auto-save
     let saved2 = harness.editor_mut().auto_recovery_save_dirty_buffers().unwrap();
@@ -1074,6 +1086,9 @@ fn test_recovery_insert_at_end_of_large_file() {
     // So the next insert's doc_offset will be file_size + 5 = 100005
     // But original file is only 100000 bytes!
     harness.type_text("SECOND").unwrap();
+
+    // Advance past auto-recovery-save interval
+    harness.advance_time(std::time::Duration::from_millis(2100));
 
     // Trigger auto-save to create recovery chunks
     let saved = harness.editor_mut().auto_recovery_save_dirty_buffers().unwrap();

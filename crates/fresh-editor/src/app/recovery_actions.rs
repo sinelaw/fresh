@@ -157,6 +157,13 @@ impl Editor {
             return Ok(0);
         }
 
+        // Check if enough time has passed since last auto-recovery-save
+        let interval =
+            std::time::Duration::from_millis(self.config.editor.auto_recovery_save_interval_ms);
+        if self.time_source.elapsed_since(self.last_auto_recovery_save) < interval {
+            return Ok(0);
+        }
+
         // Collect buffer IDs that need recovery first (immutable pass)
         // Skip composite buffers and hidden buffers (they should not be saved for recovery)
         let buffers_needing_recovery: Vec<_> = self

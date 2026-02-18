@@ -150,7 +150,9 @@ pub struct PartialEditorConfig {
     pub enable_inlay_hints: Option<bool>,
     pub enable_semantic_tokens_full: Option<bool>,
     pub recovery_enabled: Option<bool>,
+    pub auto_recovery_save_interval_ms: Option<u64>,
     pub auto_save_enabled: Option<bool>,
+    pub auto_save_interval_ms: Option<u64>,
     pub highlight_context_bytes: Option<usize>,
     pub mouse_hover_enabled: Option<bool>,
     pub mouse_hover_delay_ms: Option<u64>,
@@ -202,7 +204,11 @@ impl Merge for PartialEditorConfig {
         self.enable_semantic_tokens_full
             .merge_from(&other.enable_semantic_tokens_full);
         self.recovery_enabled.merge_from(&other.recovery_enabled);
+        self.auto_recovery_save_interval_ms
+            .merge_from(&other.auto_recovery_save_interval_ms);
         self.auto_save_enabled.merge_from(&other.auto_save_enabled);
+        self.auto_save_interval_ms
+            .merge_from(&other.auto_save_interval_ms);
         self.highlight_context_bytes
             .merge_from(&other.highlight_context_bytes);
         self.mouse_hover_enabled
@@ -436,7 +442,9 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             enable_inlay_hints: Some(cfg.enable_inlay_hints),
             enable_semantic_tokens_full: Some(cfg.enable_semantic_tokens_full),
             recovery_enabled: Some(cfg.recovery_enabled),
+            auto_recovery_save_interval_ms: Some(cfg.auto_recovery_save_interval_ms),
             auto_save_enabled: Some(cfg.auto_save_enabled),
+            auto_save_interval_ms: Some(cfg.auto_save_interval_ms),
             highlight_context_bytes: Some(cfg.highlight_context_bytes),
             mouse_hover_enabled: Some(cfg.mouse_hover_enabled),
             mouse_hover_delay_ms: Some(cfg.mouse_hover_delay_ms),
@@ -501,7 +509,13 @@ impl PartialEditorConfig {
                 .enable_semantic_tokens_full
                 .unwrap_or(defaults.enable_semantic_tokens_full),
             recovery_enabled: self.recovery_enabled.unwrap_or(defaults.recovery_enabled),
+            auto_recovery_save_interval_ms: self
+                .auto_recovery_save_interval_ms
+                .unwrap_or(defaults.auto_recovery_save_interval_ms),
             auto_save_enabled: self.auto_save_enabled.unwrap_or(defaults.auto_save_enabled),
+            auto_save_interval_ms: self
+                .auto_save_interval_ms
+                .unwrap_or(defaults.auto_save_interval_ms),
             highlight_context_bytes: self
                 .highlight_context_bytes
                 .unwrap_or(defaults.highlight_context_bytes),
