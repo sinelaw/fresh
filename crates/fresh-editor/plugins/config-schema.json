@@ -58,8 +58,8 @@
         "mouse_hover_enabled": true,
         "mouse_hover_delay_ms": 500,
         "double_click_time_ms": 500,
+        "auto_save_enabled": false,
         "recovery_enabled": true,
-        "auto_save_interval_secs": 2,
         "auto_revert_poll_interval_ms": 2000,
         "keyboard_disambiguate_escape_codes": true,
         "keyboard_report_event_types": false,
@@ -388,18 +388,16 @@
           "default": 500,
           "x-section": "Mouse"
         },
+        "auto_save_enabled": {
+          "description": "Whether to enable persistent auto-save (save to original file on disk).\nWhen enabled, modified buffers are saved to their original file path\nat a fixed 2-second interval.\nDefault: false",
+          "type": "boolean",
+          "x-section": "Recovery",
+          "default": false
+        },
         "recovery_enabled": {
           "description": "Whether to enable file recovery (Emacs-style auto-save)\nWhen enabled, buffers are periodically saved to recovery files\nso they can be recovered if the editor crashes.",
           "type": "boolean",
           "default": true,
-          "x-section": "Recovery"
-        },
-        "auto_save_interval_secs": {
-          "description": "Auto-save interval in seconds for file recovery\nModified buffers are saved to recovery files at this interval.\nDefault: 2 seconds for fast recovery with minimal data loss.\nSet to 0 to disable periodic auto-save (manual recovery only).",
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0,
-          "default": 2,
           "x-section": "Recovery"
         },
         "auto_revert_poll_interval_ms": {

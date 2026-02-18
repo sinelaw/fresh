@@ -614,8 +614,11 @@ pub struct Editor {
     /// Time source for testable time operations
     time_source: SharedTimeSource,
 
-    /// Last auto-save time for rate limiting
+    /// Last auto-save time for rate limiting (recovery)
     last_auto_save: std::time::Instant,
+
+    /// Last persistent auto-save time for rate limiting (disk)
+    last_persistent_auto_save: std::time::Instant,
 
     /// Active custom contexts for command visibility
     /// Plugin-defined contexts like "config-editor" that control command availability
@@ -1082,7 +1085,6 @@ impl Editor {
         // Extract config values before moving config into the struct
         let file_explorer_width = config.file_explorer.width;
         let recovery_enabled = config.editor.recovery_enabled;
-        let auto_save_interval_secs = config.editor.auto_save_interval_secs;
         let check_for_updates = config.check_for_updates;
         let show_menu_bar = config.editor.show_menu_bar;
         let show_tab_bar = config.editor.show_tab_bar;
@@ -1258,7 +1260,6 @@ impl Editor {
             recovery_service: {
                 let recovery_config = RecoveryConfig {
                     enabled: recovery_enabled,
-                    auto_save_interval_secs,
                     ..RecoveryConfig::default()
                 };
                 RecoveryService::with_config_and_dir(recovery_config, dir_context.recovery_dir())
@@ -1266,6 +1267,7 @@ impl Editor {
             full_redraw_requested: false,
             time_source: time_source.clone(),
             last_auto_save: time_source.now(),
+            last_persistent_auto_save: time_source.now(),
             active_custom_contexts: HashSet::new(),
             editor_mode: None,
             warning_log: None,

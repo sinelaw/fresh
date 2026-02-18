@@ -62,15 +62,13 @@ pub use types::{
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Configuration for the recovery service
 #[derive(Debug, Clone)]
 pub struct RecoveryConfig {
     /// Whether recovery is enabled
     pub enabled: bool,
-    /// Auto-save interval in seconds
-    pub auto_save_interval_secs: u32,
     /// Maximum age of recovery files before cleanup (in seconds)
     pub max_recovery_age_secs: u64,
 }
@@ -79,7 +77,6 @@ impl Default for RecoveryConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            auto_save_interval_secs: 2,
             max_recovery_age_secs: 7 * 24 * 60 * 60, // 7 days
         }
     }
@@ -216,24 +213,15 @@ impl RecoveryService {
 
     /// Check if a buffer needs auto-save
     ///
-    /// Returns true if recovery_pending is true AND enough time has passed since
-    /// the last recovery save. The recovery_pending flag is now tracked on the
-    /// buffer itself (TextBuffer.recovery_pending) rather than in this service.
-    pub fn needs_auto_save(&self, buffer_id: &str, recovery_pending: bool) -> bool {
+    /// Returns true if recovery_pending is true. The recovery_pending flag is now
+    /// tracked on the buffer itself (TextBuffer.recovery_pending) rather than in this service.
+    pub fn needs_auto_save(&self, _buffer_id: &str, recovery_pending: bool) -> bool {
         if !self.config.enabled {
             return false;
         }
 
         // Must have pending recovery changes to need auto-save
-        if !recovery_pending {
-            return false;
-        }
-
-        let interval = Duration::from_secs(self.config.auto_save_interval_secs as u64);
-        match self.last_save_times.get(buffer_id) {
-            Some(last_time) => last_time.elapsed() >= interval,
-            None => true, // Never saved, needs save
-        }
+        recovery_pending
     }
 
     /// Get buffer ID for a path
@@ -533,22 +521,15 @@ mod tests {
     #[test]
     fn test_needs_auto_save() {
         let (service, _temp) = create_test_service();
-        // Use a very short interval for testing
-        let mut service = service;
-        service.config.auto_save_interval_secs = 0;
-
         let id = "test-buffer";
 
         // Not recovery_pending - doesn't need save
         assert!(!service.needs_auto_save(id, false));
 
-        // recovery_pending=true - needs save
+        // recovery_pending=true - needs save (instant)
         assert!(service.needs_auto_save(id, true));
 
-        // After save, recovery_pending would be false on buffer
-        service
-            .last_save_times
-            .insert(id.to_string(), Instant::now());
+        // After save, if recovery_pending becomes false, it doesn't need save
         assert!(!service.needs_auto_save(id, false));
     }
 

@@ -637,6 +637,14 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Mouse"))]
     pub double_click_time_ms: u64,
 
+    /// Whether to enable persistent auto-save (save to original file on disk).
+    /// When enabled, modified buffers are saved to their original file path
+    /// immediately when modified.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Recovery"))]
+    pub auto_save_enabled: bool,
+
     // ===== Recovery =====
     /// Whether to enable file recovery (Emacs-style auto-save)
     /// When enabled, buffers are periodically saved to recovery files
@@ -644,14 +652,6 @@ pub struct EditorConfig {
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Recovery"))]
     pub recovery_enabled: bool,
-
-    /// Auto-save interval in seconds for file recovery
-    /// Modified buffers are saved to recovery files at this interval.
-    /// Default: 2 seconds for fast recovery with minimal data loss.
-    /// Set to 0 to disable periodic auto-save (manual recovery only).
-    #[serde(default = "default_auto_save_interval")]
-    #[schemars(extend("x-section" = "Recovery"))]
-    pub auto_save_interval_secs: u32,
 
     /// Poll interval in milliseconds for auto-reverting open buffers.
     /// When auto-revert is enabled, file modification times are checked at this interval.
@@ -785,10 +785,6 @@ fn default_estimated_line_length() -> usize {
     80
 }
 
-fn default_auto_save_interval() -> u32 {
-    2 // Auto-save every 2 seconds for fast recovery
-}
-
 fn default_highlight_context_bytes() -> usize {
     10_000 // 10KB context for accurate syntax highlighting
 }
@@ -825,8 +821,8 @@ impl Default for EditorConfig {
             estimated_line_length: default_estimated_line_length(),
             enable_inlay_hints: true,
             enable_semantic_tokens_full: false,
+            auto_save_enabled: false,
             recovery_enabled: true,
-            auto_save_interval_secs: default_auto_save_interval(),
             highlight_context_bytes: default_highlight_context_bytes(),
             mouse_hover_enabled: true,
             mouse_hover_delay_ms: default_mouse_hover_delay(),

@@ -1589,28 +1589,25 @@ fn test_number_input_backspace() {
 /// the Settings UI should show the saved value. Instead, it shows the
 /// default value from when the editor was first started.
 ///
-/// Expected: After saving auto_save_interval_secs = 5 and reopening, show 5
-/// Actual: Shows 2 (the default)
+/// Expected: After saving tab_size = 5 and reopening, show 5
+/// Actual: Shows 4 (the default)
 #[test]
 fn test_settings_loads_saved_values_on_reopen() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
     harness.render().unwrap();
 
-    // Verify initial auto_save_interval_secs is 2 (default)
-    let initial_value = harness.config().editor.auto_save_interval_secs;
-    assert_eq!(
-        initial_value, 2,
-        "Initial auto_save_interval_secs should be 2"
-    );
+    // Verify initial tab_size is 4 (default)
+    let initial_value = harness.config().editor.tab_size;
+    assert_eq!(initial_value, 4, "Initial tab_size should be 4");
 
     // Open settings
     harness.open_settings().unwrap();
 
-    // Search for "auto save" to find the setting
+    // Search for "tab size" to find the setting
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
         .unwrap();
-    for c in "auto save interval".chars() {
+    for c in "tab size".chars() {
         harness
             .send_key(KeyCode::Char(c), KeyModifiers::NONE)
             .unwrap();
@@ -1623,15 +1620,13 @@ fn test_settings_loads_saved_values_on_reopen() {
         .unwrap();
     harness.render().unwrap();
 
-    // Should show the default value of 2
-    harness.assert_screen_contains("2");
+    // Should show the default value of 4
+    harness.assert_screen_contains("4");
 
-    // Increment the value 3 times (2 -> 3 -> 4 -> 5)
-    for _ in 0..3 {
-        harness
-            .send_key(KeyCode::Right, KeyModifiers::NONE)
-            .unwrap();
-    }
+    // Increment the value 1 time (4 -> 5)
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Should now show 5
@@ -1654,11 +1649,8 @@ fn test_settings_loads_saved_values_on_reopen() {
     );
 
     // Verify the config was updated
-    let saved_value = harness.config().editor.auto_save_interval_secs;
-    assert_eq!(
-        saved_value, 5,
-        "auto_save_interval_secs should be 5 after saving"
-    );
+    let saved_value = harness.config().editor.tab_size;
+    assert_eq!(saved_value, 5, "tab_size should be 5 after saving");
 
     // CRITICAL TEST: Reopen settings and verify the saved value is displayed
     harness.open_settings().unwrap();
@@ -1667,7 +1659,7 @@ fn test_settings_loads_saved_values_on_reopen() {
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
         .unwrap();
-    for c in "auto save interval".chars() {
+    for c in "tab size".chars() {
         harness
             .send_key(KeyCode::Char(c), KeyModifiers::NONE)
             .unwrap();

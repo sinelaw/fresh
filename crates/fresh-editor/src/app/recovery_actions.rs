@@ -149,19 +149,11 @@ impl Editor {
     ///
     /// This function is designed to be called frequently (every frame) and will:
     /// - Return immediately if recovery is disabled
-    /// - Return immediately if the auto-save interval hasn't passed
     /// - Return immediately if no buffers are modified
     /// - Only save buffers that are marked as needing a save
     pub fn auto_save_dirty_buffers(&mut self) -> AnyhowResult<usize> {
         // Early exit if disabled
         if !self.recovery_service.is_enabled() {
-            return Ok(0);
-        }
-
-        // Check if enough time has passed since last auto-save
-        let interval =
-            std::time::Duration::from_secs(self.config.editor.auto_save_interval_secs as u64);
-        if self.time_source.elapsed_since(self.last_auto_save) < interval {
             return Ok(0);
         }
 

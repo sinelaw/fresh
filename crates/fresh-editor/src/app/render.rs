@@ -1914,20 +1914,29 @@ impl Editor {
 
     /// Notify LSP of a file save
     pub(super) fn notify_lsp_save(&mut self) {
+        let buffer_id = self.active_buffer();
+        self.notify_lsp_save_buffer(buffer_id);
+    }
+
+    /// Notify LSP of a file save for a specific buffer
+    pub(super) fn notify_lsp_save_buffer(&mut self, buffer_id: BufferId) {
         // Check if LSP is enabled for this buffer
-        let metadata = match self.buffer_metadata.get(&self.active_buffer()) {
+        let metadata = match self.buffer_metadata.get(&buffer_id) {
             Some(m) => m,
             None => {
                 tracing::debug!(
-                    "notify_lsp_save: no metadata for buffer {:?}",
-                    self.active_buffer()
+                    "notify_lsp_save_buffer: no metadata for buffer {:?}",
+                    buffer_id
                 );
                 return;
             }
         };
 
         if !metadata.lsp_enabled {
-            tracing::debug!("notify_lsp_save: LSP disabled for this buffer");
+            tracing::debug!(
+                "notify_lsp_save_buffer: LSP disabled for buffer {:?}",
+                buffer_id
+            );
             return;
         }
 
@@ -1935,7 +1944,7 @@ impl Editor {
         let uri = match metadata.file_uri() {
             Some(u) => u.clone(),
             None => {
-                tracing::debug!("notify_lsp_save: no URI for buffer");
+                tracing::debug!("notify_lsp_save_buffer: no URI for buffer {:?}", buffer_id);
                 return;
             }
         };

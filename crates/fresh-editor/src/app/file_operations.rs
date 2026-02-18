@@ -49,9 +49,19 @@ impl Editor {
 
     /// Internal helper to finalize save state (mark as saved, notify LSP, etc.)
     pub(crate) fn finalize_save(&mut self, path: Option<PathBuf>) -> anyhow::Result<()> {
+        let buffer_id = self.active_buffer();
+        self.finalize_save_buffer(buffer_id, path, false)
+    }
+
+    /// Internal helper to finalize save state for a specific buffer
+    pub(crate) fn finalize_save_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        path: Option<PathBuf>,
+        silent: bool,
+    ) -> anyhow::Result<()> {
         // Auto-detect language if it's currently "text" and we have a path
         if let Some(ref p) = path {
-            let buffer_id = self.active_buffer();
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 if state.language == "text" {
                     // Use path directly for syntax detection
@@ -73,10 +83,14 @@ impl Editor {
             }
         }
 
-        self.status_message = Some(t!("status.file_saved").to_string());
+        if !silent {
+            self.status_message = Some(t!("status.file_saved").to_string());
+        }
 
         // Mark the event log position as saved (for undo modified tracking)
-        self.active_event_log_mut().mark_saved();
+        if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+            event_log.mark_saved();
+        }
 
         // Update file modification time after save
         if let Some(ref p) = path {
@@ -88,10 +102,10 @@ impl Editor {
         }
 
         // Notify LSP of save
-        self.notify_lsp_save();
+        self.notify_lsp_save_buffer(buffer_id);
 
         // Delete recovery file (buffer is now saved)
-        let _ = self.delete_buffer_recovery(self.active_buffer());
+        let _ = self.delete_buffer_recovery(buffer_id);
 
         // Emit control event
         if let Some(ref p) = path {
@@ -105,7 +119,6 @@ impl Editor {
 
         // Fire AfterFileSave hook for plugins
         if let Some(ref p) = path {
-            let buffer_id = self.active_buffer();
             self.plugin_manager.run_hook(
                 "after_file_save",
                 crate::services::plugins::hooks::HookArgs::AfterFileSave {
@@ -116,25 +129,77 @@ impl Editor {
         }
 
         // Run on-save actions (formatters, linters, etc.)
-        match self.run_on_save_actions() {
-            Ok(true) => {
-                // Actions ran successfully - if status_message was set by run_on_save_actions
-                // (e.g., for missing optional formatters), keep it. Otherwise update status.
-                if self.status_message.as_deref() == Some(&t!("status.file_saved")) {
-                    self.status_message = Some(t!("status.file_saved_with_actions").to_string());
+        // Note: run_on_save_actions also assumes active_buffer internally.
+        // We might need to refactor it too if we want auto-save to trigger formatters.
+        // For now, let's just do it for active buffer or skip for silent auto-saves.
+
+        if !silent {
+            match self.run_on_save_actions() {
+                Ok(true) => {
+                    // Actions ran successfully - if status_message was set by run_on_save_actions
+                    // (e.g., for missing optional formatters), keep it. Otherwise update status.
+                    if self.status_message.as_deref() == Some(&t!("status.file_saved")) {
+                        self.status_message =
+                            Some(t!("status.file_saved_with_actions").to_string());
+                    }
+                    // else: keep the message set by run_on_save_actions (e.g., missing formatter)
                 }
-                // else: keep the message set by run_on_save_actions (e.g., missing formatter)
-            }
-            Ok(false) => {
-                // No actions configured, keep original status
-            }
-            Err(e) => {
-                // Action failed, show error but don't fail the save
-                self.status_message = Some(e);
+                Ok(false) => {
+                    // No actions configured, keep original status
+                }
+                Err(e) => {
+                    // Action failed, show error but don't fail the save
+                    self.status_message = Some(e);
+                }
             }
         }
 
         Ok(())
+    }
+
+    /// Auto-save all modified buffers to their original files on disk
+    /// Returns the number of buffers saved
+    pub fn auto_save_persistent_buffers(&mut self) -> anyhow::Result<usize> {
+        if !self.config.editor.auto_save_enabled {
+            return Ok(0);
+        }
+
+        self.last_persistent_auto_save = self.time_source.now();
+
+        // Collect info for modified buffers that have a file path
+        let mut to_save = Vec::new();
+        for (id, state) in &self.buffers {
+            if state.buffer.is_modified() {
+                if let Some(path) = state.buffer.file_path() {
+                    to_save.push((*id, path.to_path_buf()));
+                }
+            }
+        }
+
+        let mut count = 0;
+        for (id, path) in to_save {
+            if let Some(state) = self.buffers.get_mut(&id) {
+                match state.buffer.save() {
+                    Ok(()) => {
+                        self.finalize_save_buffer(id, Some(path), true)?;
+                        count += 1;
+                    }
+                    Err(e) => {
+                        // Skip if sudo is required (auto-save can't handle prompts)
+                        if e.downcast_ref::<SudoSaveRequired>().is_some() {
+                            tracing::debug!(
+                                "Auto-save skipped for {:?} (sudo required)",
+                                path.display()
+                            );
+                        } else {
+                            tracing::warn!("Auto-save failed for {:?}: {}", path.display(), e);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(count)
     }
 
     /// Revert the active buffer to the last saved version on disk

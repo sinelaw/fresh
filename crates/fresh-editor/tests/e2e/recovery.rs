@@ -738,7 +738,6 @@ fn test_large_file_auto_save_creates_small_recovery_file() {
     // Create editor with custom recovery dir
     let mut config = fresh::config::Config::default();
     config.editor.large_file_threshold_bytes = 1000; // Force large file mode
-    config.editor.auto_save_interval_secs = 0; // Immediate saves
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 
@@ -843,7 +842,6 @@ fn test_recovery_after_save_with_size_change() {
     // Create editor with low threshold to force large file mode
     let mut config = fresh::config::Config::default();
     config.editor.large_file_threshold_bytes = 1000; // Force large file mode
-    config.editor.auto_save_interval_secs = 0;
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(80, 24, config.clone(), project_root)
@@ -977,7 +975,6 @@ fn test_unnamed_buffer_created_via_new_buffer_has_stable_recovery() {
     use fresh::services::recovery::RecoveryStorage;
 
     let mut config = fresh::config::Config::default();
-    config.editor.auto_save_interval_secs = 0;
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 
@@ -1056,7 +1053,6 @@ fn test_recovery_insert_at_end_of_large_file() {
     // Create editor with low threshold to force large file mode
     let mut config = fresh::config::Config::default();
     config.editor.large_file_threshold_bytes = 1000;
-    config.editor.auto_save_interval_secs = 0;
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 
