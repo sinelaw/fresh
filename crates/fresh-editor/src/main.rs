@@ -1181,6 +1181,8 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 
     // Set cursor style from config
     use crossterm::ExecutableCommand;
+    // Best-effort cursor style set
+    #[allow(clippy::let_underscore_must_use)]
     let _ = stdout().execute(config.editor.cursor_style.to_crossterm_style());
     tracing::info!("Set cursor style to {:?}", config.editor.cursor_style);
 
@@ -1313,6 +1315,8 @@ fn init_package_command(package_type: Option<String>) -> AnyhowResult<()> {
     // Helper to prompt for input
     let mut prompt = |msg: &str| -> String {
         print!("{}", msg);
+        // Best-effort flush for interactive prompt
+        #[allow(clippy::let_underscore_must_use)]
         let _ = stdout.flush();
         let mut input = String::new();
         stdin.lock().read_line(&mut input).unwrap_or_default();
@@ -2010,9 +2014,13 @@ fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> 
     // Clean up stale socket files if they still exist
     std::thread::sleep(std::time::Duration::from_millis(100));
     if socket_paths.data.exists() {
+        // Best-effort cleanup of stale socket files
+        #[allow(clippy::let_underscore_must_use)]
         let _ = std::fs::remove_file(&socket_paths.data);
     }
     if socket_paths.control.exists() {
+        // Best-effort cleanup of stale socket files
+        #[allow(clippy::let_underscore_must_use)]
         let _ = std::fs::remove_file(&socket_paths.control);
     }
 
@@ -2232,6 +2240,8 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
     let log_file = std::fs::File::create("fresh-client.log").ok();
     if let Some(file) = log_file {
         let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
+        // Best-effort: tracing subscriber may already be set
+        #[allow(clippy::let_underscore_must_use)]
         let _ = fmt()
             .with_env_filter(filter)
             .with_writer(std::sync::Mutex::new(file))
@@ -2345,7 +2355,8 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
     // Run the client relay loop (handshake already done)
     let result = client::run_client_relay(conn);
 
-    // Disable raw mode before printing any messages
+    // Best-effort: disable raw mode before printing any messages
+    #[allow(clippy::let_underscore_must_use)]
     let _ = disable_raw_mode();
 
     // Handle result

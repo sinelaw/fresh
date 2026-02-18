@@ -41,6 +41,8 @@ pub fn socket_name_for_path(path: &Path) -> io::Result<interprocess::local_socke
 pub fn try_read_nonblocking(stream: &mut LocalStream, buf: &mut [u8]) -> io::Result<usize> {
     stream.set_nonblocking(true)?;
     let result = stream.read(buf);
+    // Best-effort restore of blocking mode
+    #[allow(clippy::let_underscore_must_use)]
     let _ = stream.set_nonblocking(false);
     result
 }

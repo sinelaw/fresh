@@ -1122,6 +1122,8 @@ impl TextBuffer {
         // Using the recovery directory allows crash recovery if the operation fails.
         let (temp_path, mut temp_file) = self.create_recovery_temp_file(dest_path)?;
         if let Err(e) = self.write_recipe_to_file(&mut temp_file, recipe) {
+            // Best-effort cleanup of temp file on write failure
+            #[allow(clippy::let_underscore_must_use)]
             let _ = self.fs.remove_file(&temp_path);
             return Err(e.into());
         }
@@ -1132,6 +1134,7 @@ impl TextBuffer {
         // If we crash during step 2, this metadata + temp file allows recovery
         let recovery_meta_path = self.inplace_recovery_meta_path(dest_path);
         // Best effort - don't fail the save if we can't write recovery metadata
+        #[allow(clippy::let_underscore_must_use)]
         let _ = self.write_inplace_recovery_meta(
             &recovery_meta_path,
             dest_path,
@@ -1148,14 +1151,17 @@ impl TextBuffer {
                     return Err(e.into());
                 }
                 out_file.sync_all()?;
-                // Success! Clean up temp file and recovery metadata
+                // Success! Clean up temp file and recovery metadata (best-effort)
+                #[allow(clippy::let_underscore_must_use)]
                 let _ = self.fs.remove_file(&temp_path);
+                #[allow(clippy::let_underscore_must_use)]
                 let _ = self.fs.remove_file(&recovery_meta_path);
                 Ok(())
             }
             Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
                 // Can't write to destination - trigger sudo fallback
-                // Keep temp file for sudo to use, clean up recovery metadata
+                // Keep temp file for sudo to use, clean up recovery metadata (best-effort)
+                #[allow(clippy::let_underscore_must_use)]
                 let _ = self.fs.remove_file(&recovery_meta_path);
                 Err(self.make_sudo_error(temp_path, dest_path, original_metadata))
             }

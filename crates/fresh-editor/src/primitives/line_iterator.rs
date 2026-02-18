@@ -103,6 +103,8 @@ impl<'a> LineIterator<'a> {
             };
 
             if pos_to_load < buffer_len {
+                // Trigger lazy-load of chunk; result unused
+                #[allow(clippy::let_underscore_must_use)]
                 let _ = buffer.get_text_range_mut(pos_to_load, 1);
             }
 

@@ -273,6 +273,8 @@ impl Theme {
         use std::io::Write;
         if let Some((r, g, b)) = color_to_rgb(self.cursor) {
             // OSC 12 sets cursor color: \x1b]12;#RRGGBB\x07
+            // Best-effort terminal escape writes
+            #[allow(clippy::let_underscore_must_use)]
             let _ = write!(
                 std::io::stdout(),
                 "\x1b]12;#{:02x}{:02x}{:02x}\x07",
@@ -280,6 +282,7 @@ impl Theme {
                 g,
                 b
             );
+            #[allow(clippy::let_underscore_must_use)]
             let _ = std::io::stdout().flush();
         }
     }
@@ -288,7 +291,10 @@ impl Theme {
     pub fn reset_terminal_cursor_color() {
         use std::io::Write;
         // OSC 112 resets cursor color to default
+        // Best-effort terminal escape writes
+        #[allow(clippy::let_underscore_must_use)]
         let _ = write!(std::io::stdout(), "\x1b]112\x07");
+        #[allow(clippy::let_underscore_must_use)]
         let _ = std::io::stdout().flush();
     }
 }

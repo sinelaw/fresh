@@ -114,6 +114,8 @@ impl SocketPaths {
     /// Returns true if files were cleaned up
     pub fn cleanup_if_stale(&self) -> bool {
         if self.exists() && !self.is_server_alive() {
+            // Best-effort cleanup of stale socket files
+            #[allow(clippy::let_underscore_must_use)]
             let _ = self.cleanup();
             true
         } else {
@@ -240,6 +242,7 @@ impl ServerListener {
         #[cfg(not(windows))]
         {
             // Set data stream to nonblocking for polling (Unix only)
+            #[allow(clippy::let_underscore_must_use)]
             let _ = data_stream.set_nonblocking(true);
             control_stream.set_nonblocking(true)?;
         }
@@ -258,7 +261,8 @@ impl ServerListener {
 
 impl Drop for ServerListener {
     fn drop(&mut self) {
-        // Clean up socket files on shutdown
+        // Best-effort cleanup of socket files on shutdown
+        #[allow(clippy::let_underscore_must_use)]
         let _ = self.paths.cleanup();
     }
 }

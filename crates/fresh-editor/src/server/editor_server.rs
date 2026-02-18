@@ -273,11 +273,15 @@ impl EditorServer {
                         tracing::info!("Client {} requested detach", self.clients[idx].id);
                         let client = self.clients.remove(idx);
                         let teardown = terminal_teardown_sequences();
+                        // Best-effort: client may already be disconnected
+                        #[allow(clippy::let_underscore_must_use)]
                         let _ = client.data_writer.try_write(&teardown);
                         let quit_msg = serde_json::to_string(&ServerControl::Quit {
                             reason: "Detached".to_string(),
                         })
                         .unwrap_or_default();
+                        // Best-effort: client may already be disconnected
+                        #[allow(clippy::let_underscore_must_use)]
                         let _ = client.conn.write_control(&quit_msg);
                     }
                 } else {
@@ -529,7 +533,9 @@ impl EditorServer {
 
             // Check control socket
             // On Windows, don't toggle nonblocking mode - it fails on named pipes
+            // Best-effort: nonblocking mode for control socket polling
             #[cfg(not(windows))]
+            #[allow(clippy::let_underscore_must_use)]
             let _ = client.conn.control.set_nonblocking(true);
 
             // On Windows, use try_read pattern instead of blocking read_line
@@ -622,6 +628,8 @@ impl EditorServer {
                 ClientControl::Ping => {
                     if let Some(client) = self.clients.get_mut(idx) {
                         let pong = serde_json::to_string(&ServerControl::Pong).unwrap_or_default();
+                        // Best-effort pong reply
+                        #[allow(clippy::let_underscore_must_use)]
                         let _ = client.conn.write_control(&pong);
                     }
                 }
@@ -741,6 +749,8 @@ impl EditorServer {
             );
             // Force full redraw by invalidating terminal state
             terminal.backend_mut().reset_style_state();
+            // Best-effort terminal clear for full redraw
+            #[allow(clippy::let_underscore_must_use)]
             let _ = terminal.clear();
         }
 
@@ -787,11 +797,15 @@ impl EditorServer {
     fn disconnect_all_clients(&mut self, reason: &str) -> io::Result<()> {
         let teardown = terminal_teardown_sequences();
         for client in &mut self.clients {
+            // Best-effort: client may already be disconnected
+            #[allow(clippy::let_underscore_must_use)]
             let _ = client.data_writer.try_write(&teardown);
             let quit_msg = serde_json::to_string(&ServerControl::Quit {
                 reason: reason.to_string(),
             })
             .unwrap_or_default();
+            // Best-effort: client may already be disconnected
+            #[allow(clippy::let_underscore_must_use)]
             let _ = client.conn.write_control(&quit_msg);
         }
         self.clients.clear();

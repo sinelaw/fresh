@@ -684,6 +684,8 @@ impl FileSystem for StdFileSystem {
         }
         if let Some(ref meta) = original_metadata {
             if let Some(ref perms) = meta.permissions {
+                // Best-effort permission restore; rename will proceed regardless
+                #[allow(clippy::let_underscore_must_use)]
                 let _ = self.set_permissions(&temp_path, perms);
             }
         }

@@ -214,8 +214,14 @@ impl SshConnection {
 
 impl Drop for SshConnection {
     fn drop(&mut self) {
-        // Try to kill the SSH process gracefully
-        let _ = self.process.start_kill();
+        // Best-effort kill of the SSH process during cleanup.
+        // If it fails (process already exited, permission error, etc.)
+        // there's nothing we can do in a Drop impl — the OS will clean
+        // up the zombie when our process exits.
+        match self.process.start_kill() {
+            Ok(()) => {}
+            Err(_) => {}
+        }
     }
 }
 

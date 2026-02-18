@@ -364,6 +364,8 @@ impl Editor {
                 // Open config file for the selected layer
                 if let Some(ref state) = self.settings_state {
                     let layer = state.target_layer;
+                    // Best-effort: open may fail if file doesn't exist yet
+                    #[allow(clippy::let_underscore_must_use)]
                     let _ = self.open_config_file(layer);
                 }
             }

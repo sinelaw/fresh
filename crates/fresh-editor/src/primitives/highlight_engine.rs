@@ -389,6 +389,8 @@ impl TextMateEngine {
                 }
                 syntect_offset = clamped_op_offset;
 
+                // Scope stack errors are non-fatal for highlighting
+                #[allow(clippy::let_underscore_must_use)]
                 let _ = current_scopes.apply(&op);
             }
 
@@ -824,6 +826,8 @@ pub fn highlight_string(
                 }
             }
             syntect_offset = clamped_op_offset;
+            // Scope stack errors are non-fatal for highlighting
+            #[allow(clippy::let_underscore_must_use)]
             let _ = current_scopes.apply(&op);
         }
 
