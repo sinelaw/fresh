@@ -445,6 +445,7 @@ impl LspManager {
     /// Handle a server crash by scheduling a restart with exponential backoff
     ///
     /// Returns a message describing the action taken (for UI notification)
+    #[allow(clippy::let_underscore_must_use)] // shutdown() is best-effort cleanup of a crashed server
     pub fn handle_server_crash(&mut self, language: &str) -> String {
         // Remove the crashed handle
         if let Some(handle) = self.handles.remove(language) {
@@ -583,6 +584,7 @@ impl LspManager {
     /// that has auto_start=false in its configuration.
     ///
     /// Returns (success, message) tuple
+    #[allow(clippy::let_underscore_must_use)] // shutdown() is best-effort cleanup before restart
     pub fn manual_restart(&mut self, language: &str) -> (bool, String) {
         // Clear any existing state
         self.clear_cooldown(language);
@@ -644,6 +646,7 @@ impl LspManager {
     /// explicitly restarts it using the restart command.
     ///
     /// Returns true if the server was found and shutdown, false otherwise
+    #[allow(clippy::let_underscore_must_use)] // shutdown() is best-effort; server is being removed regardless
     pub fn shutdown_server(&mut self, language: &str) -> bool {
         if let Some(handle) = self.handles.remove(language) {
             tracing::info!(
@@ -668,6 +671,7 @@ impl LspManager {
     }
 
     /// Shutdown all language servers
+    #[allow(clippy::let_underscore_must_use)] // shutdown() is best-effort; handles are cleared regardless
     pub fn shutdown_all(&mut self) {
         for (language, handle) in self.handles.iter() {
             tracing::info!("Shutting down LSP server for {}", language);

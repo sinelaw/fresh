@@ -497,6 +497,12 @@ struct LspState {
     active_requests: HashMap<u64, i64>,
 }
 
+// Channel sends (`async_tx.send()`) throughout LspState are best-effort: if the receiver
+// (main editor loop) has been dropped, the editor is shutting down and there is nothing
+// to do with the error. Handler method results (`handle_*`) are similarly safe to discard
+// since errors are already logged within those methods. State transitions in error-handling
+// paths are secondary to the actual error being handled.
+#[allow(clippy::let_underscore_must_use)]
 impl LspState {
     /// Replay pending commands that were queued before initialization
     #[allow(clippy::type_complexity)]
@@ -2063,6 +2069,7 @@ impl LspTask {
     /// Spawn the stdout reader task that continuously reads and dispatches LSP messages
     #[allow(clippy::type_complexity)]
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::let_underscore_must_use)] // async_tx.send() is best-effort; receiver drop means editor shutdown
     fn spawn_stdout_reader(
         mut stdout: BufReader<ChildStdout>,
         pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
@@ -2121,6 +2128,9 @@ impl LspTask {
     }
 
     /// Run the task (processes commands and reads from stdout)
+    // Channel sends and handler results are best-effort: errors are already logged
+    // within handler methods, and channel send failures mean the editor is shutting down.
+    #[allow(clippy::let_underscore_must_use)]
     async fn run(self, mut command_rx: mpsc::Receiver<LspCommand>) {
         tracing::info!("LspTask::run() started for language: {}", self.language);
 
@@ -2657,6 +2667,7 @@ async fn read_message_from_stdout(
 
 /// Standalone function to handle and dispatch messages (for reader task)
 #[allow(clippy::type_complexity)]
+#[allow(clippy::let_underscore_must_use)] // oneshot/mpsc send results are best-effort; receiver drop is not actionable
 async fn handle_message_dispatch(
     message: JsonRpcMessage,
     pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
@@ -2806,6 +2817,7 @@ async fn handle_message_dispatch(
 }
 
 /// Standalone function to handle notifications (for reader task)
+#[allow(clippy::let_underscore_must_use)] // async_tx.send() is best-effort; receiver drop means editor shutdown
 async fn handle_notification_dispatch(
     notification: JsonRpcNotification,
     async_tx: &std_mpsc::Sender<AsyncMessage>,
@@ -3046,6 +3058,10 @@ pub struct LspHandle {
     runtime: tokio::runtime::Handle,
 }
 
+// Channel sends and state transitions in LspHandle are best-effort: async_tx.send()
+// failures mean the editor is shutting down, state transition errors in error-handling
+// paths are secondary, and try_send in Drop is inherently best-effort cleanup.
+#[allow(clippy::let_underscore_must_use)]
 impl LspHandle {
     /// Spawn a new LSP server in an async task
     pub fn spawn(
@@ -3553,6 +3569,7 @@ impl LspHandle {
     }
 }
 
+#[allow(clippy::let_underscore_must_use)] // Best-effort cleanup in Drop; failures are not actionable
 impl Drop for LspHandle {
     fn drop(&mut self) {
         // Best-effort shutdown on drop
@@ -4020,7 +4037,8 @@ mod tests {
             "Expected status update messages from LSP initialization"
         );
 
-        // Cleanup
+        // Cleanup - best-effort, test is ending
+        #[allow(clippy::let_underscore_must_use)]
         let _ = handle.shutdown();
     }
 }
