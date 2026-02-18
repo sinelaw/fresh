@@ -92,7 +92,7 @@ pub struct RecoveryService {
     storage: RecoveryStorage,
     /// Configuration
     config: RecoveryConfig,
-    /// Last auto-save time per buffer
+    /// Last auto-recovery-save time per buffer
     last_save_times: HashMap<String, Instant>,
     /// Session started flag
     session_started: bool,
@@ -211,11 +211,11 @@ impl RecoveryService {
     // Buffer tracking
     // ========================================================================
 
-    /// Check if a buffer needs auto-save
+    /// Check if a buffer needs auto-recovery-save
     ///
     /// Returns true if recovery_pending is true. The recovery_pending flag is now
     /// tracked on the buffer itself (TextBuffer.recovery_pending) rather than in this service.
-    pub fn needs_auto_save(&self, _buffer_id: &str, recovery_pending: bool) -> bool {
+    pub fn needs_auto_recovery_save(&self, _buffer_id: &str, recovery_pending: bool) -> bool {
         if !self.config.enabled {
             return false;
         }
@@ -519,18 +519,18 @@ mod tests {
     }
 
     #[test]
-    fn test_needs_auto_save() {
+    fn test_needs_auto_recovery_save() {
         let (service, _temp) = create_test_service();
         let id = "test-buffer";
 
         // Not recovery_pending - doesn't need save
-        assert!(!service.needs_auto_save(id, false));
+        assert!(!service.needs_auto_recovery_save(id, false));
 
         // recovery_pending=true - needs save (instant)
-        assert!(service.needs_auto_save(id, true));
+        assert!(service.needs_auto_recovery_save(id, true));
 
         // After save, if recovery_pending becomes false, it doesn't need save
-        assert!(!service.needs_auto_save(id, false));
+        assert!(!service.needs_auto_recovery_save(id, false));
     }
 
     #[test]
@@ -538,8 +538,8 @@ mod tests {
         let (mut service, _temp) = create_test_service();
         service.config.enabled = false;
 
-        // needs_auto_save returns false when disabled
-        assert!(!service.needs_auto_save("test", true));
+        // needs_auto_recovery_save returns false when disabled
+        assert!(!service.needs_auto_recovery_save("test", true));
 
         // save_buffer doesn't error when disabled
         let chunks = vec![RecoveryChunk::new(0, 0, b"content".to_vec())];

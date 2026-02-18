@@ -719,7 +719,7 @@ fn test_huge_file_recovery_is_small() {
 
 /// Regression test: recovery files for large files should be small
 ///
-/// This tests the ACTUAL auto_save_dirty_buffers flow end-to-end.
+/// This tests the ACTUAL auto_recovery_save_dirty_buffers flow end-to-end.
 /// Before the fix, this test would fail because recovery saved the entire file.
 #[test]
 fn test_large_file_auto_save_creates_small_recovery_file() {
@@ -754,7 +754,7 @@ fn test_large_file_auto_save_creates_small_recovery_file() {
     harness.type_text("SMALL_EDIT").unwrap();
 
     // Trigger auto-save
-    let saved = harness.editor_mut().auto_save_dirty_buffers().unwrap();
+    let saved = harness.editor_mut().auto_recovery_save_dirty_buffers().unwrap();
     assert!(saved > 0, "Should have saved at least one buffer");
 
     // Check the recovery file size using the harness's recovery directory
@@ -891,7 +891,7 @@ fn test_recovery_after_save_with_size_change() {
     harness.type_text("Z").unwrap();
 
     // Trigger auto-save
-    let saved = harness.editor_mut().auto_save_dirty_buffers().unwrap();
+    let saved = harness.editor_mut().auto_recovery_save_dirty_buffers().unwrap();
     assert!(saved > 0, "Should have saved recovery for dirty buffer");
 
     // Get recovery directory and take temp dir before dropping harness
@@ -985,14 +985,14 @@ fn test_unnamed_buffer_created_via_new_buffer_has_stable_recovery() {
     harness.type_text("First content").unwrap();
 
     // Trigger first auto-save
-    let saved1 = harness.editor_mut().auto_save_dirty_buffers().unwrap();
+    let saved1 = harness.editor_mut().auto_recovery_save_dirty_buffers().unwrap();
     assert_eq!(saved1, 1, "Should save recovery for the new buffer");
 
     // Type more content
     harness.type_text(" more").unwrap();
 
     // Trigger second auto-save
-    let saved2 = harness.editor_mut().auto_save_dirty_buffers().unwrap();
+    let saved2 = harness.editor_mut().auto_recovery_save_dirty_buffers().unwrap();
     assert_eq!(saved2, 1, "Should save recovery again");
 
     // Check recovery directory
@@ -1076,7 +1076,7 @@ fn test_recovery_insert_at_end_of_large_file() {
     harness.type_text("SECOND").unwrap();
 
     // Trigger auto-save to create recovery chunks
-    let saved = harness.editor_mut().auto_save_dirty_buffers().unwrap();
+    let saved = harness.editor_mut().auto_recovery_save_dirty_buffers().unwrap();
     assert!(saved > 0, "Should have saved recovery");
 
     // Get recovery directory and take temp dir before dropping harness

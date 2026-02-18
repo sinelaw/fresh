@@ -2759,8 +2759,8 @@ where
             needs_render = true;
         }
 
-        if let Err(e) = editor.auto_save_dirty_buffers() {
-            tracing::debug!("Auto-save (recovery) error: {}", e);
+        if let Err(e) = editor.auto_recovery_save_dirty_buffers() {
+            tracing::debug!("Auto-recovery-save error: {}", e);
         }
 
         if let Err(e) = editor.auto_save_persistent_buffers() {

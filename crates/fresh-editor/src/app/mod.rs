@@ -605,7 +605,7 @@ pub struct Editor {
     /// Cached layout for file browser (for mouse hit testing)
     file_browser_layout: Option<crate::view::ui::FileBrowserLayout>,
 
-    /// Recovery service for auto-save and crash recovery
+    /// Recovery service for auto-recovery-save and crash recovery
     recovery_service: RecoveryService,
 
     /// Request a full terminal clear and redraw on the next frame
@@ -614,8 +614,8 @@ pub struct Editor {
     /// Time source for testable time operations
     time_source: SharedTimeSource,
 
-    /// Last auto-save time for rate limiting (recovery)
-    last_auto_save: std::time::Instant,
+    /// Last auto-recovery-save time for rate limiting
+    last_auto_recovery_save: std::time::Instant,
 
     /// Last persistent auto-save time for rate limiting (disk)
     last_persistent_auto_save: std::time::Instant,
@@ -1266,7 +1266,7 @@ impl Editor {
             },
             full_redraw_requested: false,
             time_source: time_source.clone(),
-            last_auto_save: time_source.now(),
+            last_auto_recovery_save: time_source.now(),
             last_persistent_auto_save: time_source.now(),
             active_custom_contexts: HashSet::new(),
             editor_mode: None,
