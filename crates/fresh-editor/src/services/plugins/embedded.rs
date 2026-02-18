@@ -77,6 +77,8 @@ fn extract_plugins() -> Result<PathBuf, std::io::Error> {
         for entry in std::fs::read_dir(&cache_base)? {
             let entry = entry?;
             if entry.file_name() != content_hash {
+                // Best-effort cleanup of old cache versions; failure is non-fatal.
+                #[allow(clippy::let_underscore_must_use)]
                 let _ = trash::delete(entry.path());
             }
         }

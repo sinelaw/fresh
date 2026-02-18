@@ -60,6 +60,8 @@ pub struct TerminalHandle {
 impl TerminalHandle {
     /// Write data to the terminal (sends to PTY)
     pub fn write(&self, data: &[u8]) {
+        // Receiver may be dropped if terminal exited; nothing to do in that case.
+        #[allow(clippy::let_underscore_must_use)]
         let _ = self.command_tx.send(TerminalCommand::Write(data.to_vec()));
     }
 
@@ -68,6 +70,8 @@ impl TerminalHandle {
         if cols != self.cols || rows != self.rows {
             self.cols = cols;
             self.rows = rows;
+            // Receiver may be dropped if terminal exited; nothing to do in that case.
+            #[allow(clippy::let_underscore_must_use)]
             let _ = self.command_tx.send(TerminalCommand::Resize { cols, rows });
             // Also resize the terminal state
             if let Ok(mut state) = self.state.lock() {
@@ -83,6 +87,8 @@ impl TerminalHandle {
 
     /// Shutdown the terminal
     pub fn shutdown(&self) {
+        // Receiver may be dropped if terminal already exited; nothing to do in that case.
+        #[allow(clippy::let_underscore_must_use)]
         let _ = self.command_tx.send(TerminalCommand::Shutdown);
     }
 
@@ -328,6 +334,8 @@ impl TerminalManager {
                                         terminal_id,
                                         response
                                     );
+                                    // Receiver may be dropped if writer thread exited.
+                                    #[allow(clippy::let_underscore_must_use)]
                                     let _ = pty_response_tx
                                         .send(TerminalCommand::Write(response.into_bytes()));
                                 }
@@ -341,6 +349,8 @@ impl TerminalManager {
                                                 if let Ok(pos) = writer.get_ref().metadata() {
                                                     state.set_backing_file_history_end(pos.len());
                                                 }
+                                                // Best-effort flush; backing file errors handled below.
+                                                #[allow(clippy::let_underscore_must_use)]
                                                 let _ = writer.flush();
                                             }
                                         }
@@ -366,8 +376,9 @@ impl TerminalManager {
                                 }
                             }
 
-                            // Notify main loop to redraw
+                            // Notify main loop to redraw (receiver may be dropped during shutdown).
                             if let Some(ref bridge) = async_bridge {
+                                #[allow(clippy::let_underscore_must_use)]
                                 let _ = bridge.sender().send(
                                     crate::services::async_bridge::AsyncMessage::TerminalOutput {
                                         terminal_id,
@@ -382,14 +393,18 @@ impl TerminalManager {
                     }
                 }
                 alive_clone.store(false, std::sync::atomic::Ordering::Relaxed);
+                // Best-effort flush of log/backing files during teardown.
                 if let Some(mut w) = log_writer {
+                    #[allow(clippy::let_underscore_must_use)]
                     let _ = w.flush();
                 }
                 if let Some(mut w) = backing_writer {
+                    #[allow(clippy::let_underscore_must_use)]
                     let _ = w.flush();
                 }
-                // Notify that terminal exited
+                // Notify that terminal exited (receiver may be dropped during shutdown).
                 if let Some(ref bridge) = async_bridge {
+                    #[allow(clippy::let_underscore_must_use)]
                     let _ = bridge.sender().send(
                         crate::services::async_bridge::AsyncMessage::TerminalExited { terminal_id },
                     );
@@ -406,6 +421,8 @@ impl TerminalManager {
                                 tracing::error!("Terminal write error: {}", e);
                                 break;
                             }
+                            // Best-effort flush — PTY write errors are handled above.
+                            #[allow(clippy::let_underscore_must_use)]
                             let _ = master.flush();
                         }
                         Ok(TerminalCommand::Resize { cols, rows }) => {
@@ -423,8 +440,10 @@ impl TerminalManager {
                         }
                     }
                 }
-                // Clean up child process
+                // Best-effort child process cleanup during teardown.
+                #[allow(clippy::let_underscore_must_use)]
                 let _ = child.kill();
+                #[allow(clippy::let_underscore_must_use)]
                 let _ = child.wait();
             });
 

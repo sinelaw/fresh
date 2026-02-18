@@ -170,7 +170,9 @@ impl RecoveryStorage {
     /// Delete all chunk files for a given ID
     fn delete_chunk_files(&self, id: &str) -> io::Result<()> {
         for path in self.list_chunk_paths(id)? {
-            let _ = fs::remove_file(path);
+            if let Err(e) = fs::remove_file(&path) {
+                tracing::warn!("Failed to remove chunk file {}: {}", path.display(), e);
+            }
         }
         Ok(())
     }
@@ -538,8 +540,16 @@ impl RecoveryStorage {
                 let is_valid = meta_path.exists() && !chunk_paths.is_empty();
 
                 if !is_valid {
-                    let _ = fs::remove_file(&meta_path);
-                    let _ = self.delete_chunk_files(&id);
+                    if let Err(e) = fs::remove_file(&meta_path) {
+                        tracing::warn!(
+                            "Failed to remove orphan metadata {}: {}",
+                            meta_path.display(),
+                            e
+                        );
+                    }
+                    if let Err(e) = self.delete_chunk_files(&id) {
+                        tracing::warn!("Failed to remove orphan chunk files for {}: {}", id, e);
+                    }
                     cleaned += 1;
                 }
             }
@@ -611,7 +621,9 @@ impl RecoveryStorage {
                                 entries.push(recovery);
                             } else if !recovery.temp_path.exists() {
                                 // Clean up orphaned metadata (temp file was deleted)
-                                let _ = fs::remove_file(&path);
+                                if let Err(e) = fs::remove_file(&path) {
+                                    tracing::warn!("Failed to remove orphaned inplace recovery metadata {}: {}", path.display(), e);
+                                }
                             }
                         }
                     }

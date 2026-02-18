@@ -181,7 +181,9 @@ impl TerminalModes {
     ///
     /// This is safe to call multiple times - it tracks what was enabled
     /// and only disables those modes.
+    #[allow(clippy::let_underscore_must_use)]
     pub fn undo(&mut self) {
+        // Best-effort terminal teardown — if stdout is broken, we can't recover.
         // Disable mouse capture
         if self.mouse_capture {
             let _ = stdout().execute(DisableMouseCapture);
@@ -264,7 +266,9 @@ impl Drop for TerminalModes {
 /// This is intended for use in panic hooks where we don't have access
 /// to the TerminalModes instance. It attempts to disable all modes
 /// regardless of whether they were actually enabled.
+#[allow(clippy::let_underscore_must_use)]
 pub fn emergency_cleanup() {
+    // Best-effort emergency terminal restore — if stdout is broken, we can't recover.
     // Disable mouse capture
     let _ = stdout().execute(DisableMouseCapture);
 

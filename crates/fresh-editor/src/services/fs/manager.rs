@@ -80,7 +80,9 @@ impl FsManager {
             let mut pending = self.pending_dir_requests.lock().await;
             if let Some(senders) = pending.remove(&path) {
                 for sender in senders {
-                    // Clone the result for each waiter
+                    // Clone the result for each waiter.
+                    // Receiver may have been dropped if the requester timed out or was cancelled.
+                    #[allow(clippy::let_underscore_must_use)]
                     let _ = sender.send(
                         result
                             .as_ref()

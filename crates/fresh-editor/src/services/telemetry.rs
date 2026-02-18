@@ -147,11 +147,14 @@ fn send(event: Event) {
         return;
     };
 
-    thread::spawn(move || {
+    // Best-effort fire-and-forget telemetry -- if the request fails, we silently ignore it.
+    #[allow(clippy::let_underscore_must_use)]
+    let _ = thread::spawn(move || {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(5)))
             .build()
             .new_agent();
+        #[allow(clippy::let_underscore_must_use)]
         let _ = agent
             .post(TELEMETRY_URL)
             .header("Content-Type", "application/json")

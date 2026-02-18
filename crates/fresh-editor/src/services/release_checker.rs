@@ -179,6 +179,8 @@ pub fn start_periodic_update_check(
         {
             super::telemetry::track_open(&unique_id);
             let result = check_for_update(&url);
+            // Receiver may be dropped if checker is dropped before result arrives.
+            #[allow(clippy::let_underscore_must_use)]
             let _ = tx.send(result);
         }
     });
@@ -222,6 +224,8 @@ pub fn start_update_check(
         {
             super::telemetry::track_open(&unique_id);
             let result = check_for_update(&url);
+            // Receiver may be dropped if handle is dropped before result arrives.
+            #[allow(clippy::let_underscore_must_use)]
             let _ = tx.send(result);
         }
     });

@@ -143,6 +143,9 @@ mod linux {
         let action = SigAction::new(handler, SaFlags::empty(), SigSet::empty());
 
         unsafe {
+            // Best-effort signal handler install -- if it fails, backtrace capture won't work
+            // but the editor can still function.
+            #[allow(clippy::let_underscore_must_use)]
             let _ = sigaction(Signal::SIGUSR1, &action);
         }
     }

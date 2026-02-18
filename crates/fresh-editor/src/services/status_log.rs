@@ -62,7 +62,8 @@ where
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
         let line = format!("{} {}\n", timestamp, visitor.0);
 
-        // Write to file
+        // Write to file -- best-effort logging, nothing useful to do on failure.
+        #[allow(clippy::let_underscore_must_use)]
         if let Ok(mut file) = self.file.lock() {
             let _ = file.write_all(line.as_bytes());
             let _ = file.flush();

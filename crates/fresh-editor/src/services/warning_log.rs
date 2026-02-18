@@ -154,13 +154,15 @@ where
             format!("{} {} {}: {}\n", timestamp, level, target, visitor.0)
         };
 
-        // Write to file
+        // Write to file -- best-effort logging, nothing useful to do on failure.
+        #[allow(clippy::let_underscore_must_use)]
         if let Ok(mut file) = self.file.lock() {
             let _ = file.write_all(line.as_bytes());
             let _ = file.flush();
         }
 
-        // Notify that a warning was logged (non-blocking)
+        // Notify that a warning was logged (receiver may be dropped during shutdown).
+        #[allow(clippy::let_underscore_must_use)]
         let _ = self.sender.send(());
     }
 }

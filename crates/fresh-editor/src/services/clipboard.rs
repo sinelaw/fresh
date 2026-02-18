@@ -113,7 +113,8 @@ impl Clipboard {
             if let Err(e) = &osc52_result {
                 tracing::debug!("Crossterm OSC 52 clipboard copy failed: {}", e);
             }
-            // Ensure the escape sequence is flushed to the terminal
+            // Best-effort flush — if stdout is broken, we can't recover.
+            #[allow(clippy::let_underscore_must_use)]
             let _ = stdout().flush();
         }
 
@@ -144,6 +145,8 @@ impl Clipboard {
                             if let Ok(new_clipboard) = arboard::Clipboard::new() {
                                 *guard = Some(new_clipboard);
                                 if let Some(cb) = guard.as_mut() {
+                                    // Best-effort retry; first attempt already failed.
+                                    #[allow(clippy::let_underscore_must_use)]
                                     let _ = cb.set_text(&text);
                                 }
                             }

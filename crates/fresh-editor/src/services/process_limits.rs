@@ -110,7 +110,8 @@ impl ProcessLimits {
                     );
                     return Ok(());
                 } else {
-                    // Clean up unused cgroup
+                    // Best-effort cleanup of unused cgroup directory.
+                    #[allow(clippy::let_underscore_must_use)]
                     let _ = fs::remove_dir(&cgroup_full);
                 }
             }
