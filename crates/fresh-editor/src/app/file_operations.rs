@@ -165,9 +165,12 @@ impl Editor {
         }
 
         // Check if enough time has passed since last auto-save
-        let interval =
-            std::time::Duration::from_millis(self.config.editor.auto_save_interval_ms);
-        if self.time_source.elapsed_since(self.last_persistent_auto_save) < interval {
+        let interval = std::time::Duration::from_millis(self.config.editor.auto_save_interval_ms);
+        if self
+            .time_source
+            .elapsed_since(self.last_persistent_auto_save)
+            < interval
+        {
             return Ok(0);
         }
 

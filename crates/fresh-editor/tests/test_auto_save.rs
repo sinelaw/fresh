@@ -64,7 +64,10 @@ fn test_persistent_auto_save_throttled_before_interval() -> anyhow::Result<()> {
 
     // File on disk should be unchanged
     let content = fs::read_to_string(&file_path)?;
-    assert_eq!(content, "Original", "File should not have been modified yet");
+    assert_eq!(
+        content, "Original",
+        "File should not have been modified yet"
+    );
     assert!(
         harness.editor().active_state().buffer.is_modified(),
         "Buffer should still be modified"
