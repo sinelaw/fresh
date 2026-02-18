@@ -645,13 +645,13 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Recovery"))]
     pub auto_save_enabled: bool,
 
-    /// Interval in milliseconds for persistent auto-save.
+    /// Interval in seconds for persistent auto-save.
     /// Modified buffers are saved to their original file at this interval.
     /// Only effective when auto_save_enabled is true.
-    /// Default: 30000ms (30 seconds)
+    /// Default: 30 seconds
     #[serde(default = "default_auto_save_interval")]
     #[schemars(extend("x-section" = "Recovery"))]
-    pub auto_save_interval_ms: u64,
+    pub auto_save_interval_secs: u32,
 
     // ===== Recovery =====
     /// Whether to enable file recovery (Emacs-style auto-save)
@@ -661,13 +661,13 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Recovery"))]
     pub recovery_enabled: bool,
 
-    /// Interval in milliseconds for auto-recovery-save.
+    /// Interval in seconds for auto-recovery-save.
     /// Modified buffers are saved to recovery files at this interval.
     /// Only effective when recovery_enabled is true.
-    /// Default: 2000ms (2 seconds)
+    /// Default: 2 seconds
     #[serde(default = "default_auto_recovery_save_interval")]
     #[schemars(extend("x-section" = "Recovery"))]
-    pub auto_recovery_save_interval_ms: u64,
+    pub auto_recovery_save_interval_secs: u32,
 
     /// Poll interval in milliseconds for auto-reverting open buffers.
     /// When auto-revert is enabled, file modification times are checked at this interval.
@@ -801,12 +801,12 @@ fn default_estimated_line_length() -> usize {
     80
 }
 
-fn default_auto_save_interval() -> u64 {
-    30000 // 30 seconds between persistent auto-saves
+fn default_auto_save_interval() -> u32 {
+    30 // 30 seconds between persistent auto-saves
 }
 
-fn default_auto_recovery_save_interval() -> u64 {
-    2000 // 2 seconds between recovery saves
+fn default_auto_recovery_save_interval() -> u32 {
+    2 // 2 seconds between recovery saves
 }
 
 fn default_highlight_context_bytes() -> usize {
@@ -846,9 +846,9 @@ impl Default for EditorConfig {
             enable_inlay_hints: true,
             enable_semantic_tokens_full: false,
             auto_save_enabled: false,
-            auto_save_interval_ms: default_auto_save_interval(),
+            auto_save_interval_secs: default_auto_save_interval(),
             recovery_enabled: true,
-            auto_recovery_save_interval_ms: default_auto_recovery_save_interval(),
+            auto_recovery_save_interval_secs: default_auto_recovery_save_interval(),
             highlight_context_bytes: default_highlight_context_bytes(),
             mouse_hover_enabled: true,
             mouse_hover_delay_ms: default_mouse_hover_delay(),

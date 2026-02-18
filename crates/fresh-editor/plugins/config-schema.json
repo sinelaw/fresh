@@ -59,9 +59,9 @@
         "mouse_hover_delay_ms": 500,
         "double_click_time_ms": 500,
         "auto_save_enabled": false,
-        "auto_save_interval_ms": 30000,
+        "auto_save_interval_secs": 30,
         "recovery_enabled": true,
-        "auto_recovery_save_interval_ms": 2000,
+        "auto_recovery_save_interval_secs": 2,
         "auto_revert_poll_interval_ms": 2000,
         "keyboard_disambiguate_escape_codes": true,
         "keyboard_report_event_types": false,
@@ -396,12 +396,12 @@
           "default": false,
           "x-section": "Recovery"
         },
-        "auto_save_interval_ms": {
-          "description": "Interval in milliseconds for persistent auto-save.\nModified buffers are saved to their original file at this interval.\nOnly effective when auto_save_enabled is true.\nDefault: 30000ms (30 seconds)",
+        "auto_save_interval_secs": {
+          "description": "Interval in seconds for persistent auto-save.\nModified buffers are saved to their original file at this interval.\nOnly effective when auto_save_enabled is true.\nDefault: 30 seconds",
           "type": "integer",
-          "format": "uint64",
+          "format": "uint32",
           "minimum": 0,
-          "default": 30000,
+          "default": 30,
           "x-section": "Recovery"
         },
         "recovery_enabled": {
@@ -410,12 +410,12 @@
           "default": true,
           "x-section": "Recovery"
         },
-        "auto_recovery_save_interval_ms": {
-          "description": "Interval in milliseconds for auto-recovery-save.\nModified buffers are saved to recovery files at this interval.\nOnly effective when recovery_enabled is true.\nDefault: 2000ms (2 seconds)",
+        "auto_recovery_save_interval_secs": {
+          "description": "Interval in seconds for auto-recovery-save.\nModified buffers are saved to recovery files at this interval.\nOnly effective when recovery_enabled is true.\nDefault: 2 seconds",
           "type": "integer",
-          "format": "uint64",
+          "format": "uint32",
           "minimum": 0,
-          "default": 2000,
+          "default": 2,
           "x-section": "Recovery"
         },
         "auto_revert_poll_interval_ms": {

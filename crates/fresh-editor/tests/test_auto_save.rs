@@ -6,16 +6,16 @@ use std::fs;
 use std::time::Duration;
 
 /// Helper to create an auto-save-enabled config with a short interval for testing
-fn auto_save_config(interval_ms: u64) -> Config {
+fn auto_save_config(interval_secs: u32) -> Config {
     let mut config = Config::default();
     config.editor.auto_save_enabled = true;
-    config.editor.auto_save_interval_ms = interval_ms;
+    config.editor.auto_save_interval_secs = interval_secs;
     config
 }
 
 #[test]
 fn test_persistent_auto_save_basic() -> anyhow::Result<()> {
-    let config = auto_save_config(2000);
+    let config = auto_save_config(2);
 
     let mut harness = EditorTestHarness::with_temp_project_and_config(80, 24, config)?;
     let temp_dir = harness.project_dir().unwrap();
@@ -45,7 +45,7 @@ fn test_persistent_auto_save_basic() -> anyhow::Result<()> {
 
 #[test]
 fn test_persistent_auto_save_throttled_before_interval() -> anyhow::Result<()> {
-    let config = auto_save_config(5000);
+    let config = auto_save_config(5);
 
     let mut harness = EditorTestHarness::with_temp_project_and_config(80, 24, config)?;
     let temp_dir = harness.project_dir().unwrap();
@@ -78,7 +78,7 @@ fn test_persistent_auto_save_throttled_before_interval() -> anyhow::Result<()> {
 
 #[test]
 fn test_persistent_auto_save_fires_after_interval() -> anyhow::Result<()> {
-    let config = auto_save_config(5000);
+    let config = auto_save_config(5);
 
     let mut harness = EditorTestHarness::with_temp_project_and_config(80, 24, config)?;
     let temp_dir = harness.project_dir().unwrap();
@@ -107,7 +107,7 @@ fn test_persistent_auto_save_fires_after_interval() -> anyhow::Result<()> {
 #[test]
 fn test_auto_recovery_save_throttled_before_interval() -> anyhow::Result<()> {
     let mut config = Config::default();
-    config.editor.auto_recovery_save_interval_ms = 5000;
+    config.editor.auto_recovery_save_interval_secs = 5;
 
     let mut harness = EditorTestHarness::with_temp_project_and_config(80, 24, config)?;
     let temp_dir = harness.project_dir().unwrap();
