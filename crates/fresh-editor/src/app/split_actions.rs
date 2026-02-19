@@ -9,7 +9,7 @@
 
 use rust_i18n::t;
 
-use crate::model::event::{BufferId, Event, SplitDirection, SplitId};
+use crate::model::event::{BufferId, ContainerId, Event, LeafId, SplitDirection, SplitId};
 use crate::view::split::SplitViewState;
 
 use super::Editor;
@@ -136,7 +136,11 @@ impl Editor {
 
         // Ensure the active tab is visible in the newly active split
         let split_id = self.split_manager.active_split();
-        self.ensure_active_tab_visible(split_id, self.active_buffer(), self.effective_tabs_width());
+        self.ensure_active_tab_visible(
+            split_id.into(),
+            self.active_buffer(),
+            self.effective_tabs_width(),
+        );
 
         let buffer_id = self.active_buffer();
 
@@ -241,9 +245,9 @@ impl Editor {
     /// Adjust the size of the active split
     pub fn adjust_split_size(&mut self, delta: f32) {
         let active_split = self.split_manager.active_split();
-        if let Err(e) = self.split_manager.adjust_ratio(active_split, delta) {
-            self.set_status_message(t!("split.cannot_adjust", error = e).to_string());
-        } else {
+        if let Some(container) = self.split_manager.parent_container_of(active_split) {
+            self.split_manager.adjust_ratio(container, delta);
+
             let percent = (delta * 100.0) as i32;
             self.set_status_message(t!("split.size_adjusted", percent = percent).to_string());
             // Resize visible terminals to match new split dimensions
@@ -269,14 +273,14 @@ impl Editor {
 
     /// Get cached separator areas for testing
     /// Returns (split_id, direction, x, y, length) tuples
-    pub fn get_separator_areas(&self) -> &[(SplitId, SplitDirection, u16, u16, u16)] {
+    pub fn get_separator_areas(&self) -> &[(ContainerId, SplitDirection, u16, u16, u16)] {
         &self.cached_layout.separator_areas
     }
 
     /// Get cached tab layouts for testing
     pub fn get_tab_layouts(
         &self,
-    ) -> &std::collections::HashMap<SplitId, crate::view::ui::tabs::TabLayout> {
+    ) -> &std::collections::HashMap<LeafId, crate::view::ui::tabs::TabLayout> {
         &self.cached_layout.tab_layouts
     }
 
@@ -285,7 +289,7 @@ impl Editor {
     pub fn get_split_areas(
         &self,
     ) -> &[(
-        SplitId,
+        LeafId,
         BufferId,
         ratatui::layout::Rect,
         ratatui::layout::Rect,
@@ -301,7 +305,7 @@ impl Editor {
     }
 
     /// Get the active split ID (for testing)
-    pub fn get_active_split(&self) -> SplitId {
+    pub fn get_active_split(&self) -> LeafId {
         self.split_manager.active_split()
     }
 
@@ -311,7 +315,7 @@ impl Editor {
     }
 
     /// Get the open buffers (tabs) in a split (for testing)
-    pub fn get_split_tabs(&self, split_id: SplitId) -> Vec<BufferId> {
+    pub fn get_split_tabs(&self, split_id: LeafId) -> Vec<BufferId> {
         self.split_view_states
             .get(&split_id)
             .map(|vs| vs.open_buffers.clone())
@@ -328,7 +332,7 @@ impl Editor {
         &self,
         col: u16,
         row: u16,
-        source_split_id: SplitId,
+        source_split_id: LeafId,
     ) -> Option<super::types::TabDropZone> {
         self.compute_tab_drop_zone(col, row, source_split_id)
     }

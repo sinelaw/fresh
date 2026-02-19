@@ -24,7 +24,7 @@
 ///  (horizontal split)          (mixed splits)
 /// ```
 use crate::model::cursor::Cursors;
-use crate::model::event::{BufferId, SplitDirection, SplitId};
+use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection, SplitId};
 use crate::view::ui::view_pipeline::Layout;
 use crate::view::viewport::Viewport;
 use crate::{services::plugins::api::ViewTransformPayload, state::ViewMode};
@@ -40,7 +40,7 @@ pub enum SplitNode {
         /// Which buffer to display
         buffer_id: BufferId,
         /// Unique ID for this split pane
-        split_id: SplitId,
+        split_id: LeafId,
     },
     /// Internal node: contains two child splits
     Split {
@@ -54,7 +54,7 @@ pub enum SplitNode {
         /// 0.5 = equal split, 0.3 = first gets 30%, etc.
         ratio: f32,
         /// Unique ID for this split container
-        split_id: SplitId,
+        split_id: ContainerId,
     },
 }
 
@@ -356,7 +356,7 @@ impl SplitNode {
     pub fn leaf(buffer_id: BufferId, split_id: SplitId) -> Self {
         Self::Leaf {
             buffer_id,
-            split_id,
+            split_id: LeafId(split_id),
         }
     }
 
@@ -373,14 +373,15 @@ impl SplitNode {
             first: Box::new(first),
             second: Box::new(second),
             ratio: ratio.clamp(0.1, 0.9), // Prevent extreme ratios
-            split_id,
+            split_id: ContainerId(split_id),
         }
     }
 
     /// Get the split ID for this node
     pub fn id(&self) -> SplitId {
         match self {
-            Self::Leaf { split_id, .. } | Self::Split { split_id, .. } => *split_id,
+            Self::Leaf { split_id, .. } => split_id.0,
+            Self::Split { split_id, .. } => split_id.0,
         }
     }
 
@@ -420,8 +421,29 @@ impl SplitNode {
         }
     }
 
+    /// Find the parent container of a given split node
+    pub fn parent_container_of(&self, target_id: SplitId) -> Option<ContainerId> {
+        match self {
+            Self::Leaf { .. } => None,
+            Self::Split {
+                split_id,
+                first,
+                second,
+                ..
+            } => {
+                if first.id() == target_id || second.id() == target_id {
+                    Some(*split_id)
+                } else {
+                    first
+                        .parent_container_of(target_id)
+                        .or_else(|| second.parent_container_of(target_id))
+                }
+            }
+        }
+    }
+
     /// Get all leaf nodes (buffer views) with their rectangles
-    pub fn get_leaves_with_rects(&self, rect: Rect) -> Vec<(SplitId, BufferId, Rect)> {
+    pub fn get_leaves_with_rects(&self, rect: Rect) -> Vec<(LeafId, BufferId, Rect)> {
         match self {
             Self::Leaf {
                 buffer_id,
@@ -458,7 +480,7 @@ impl SplitNode {
     pub fn get_separators_with_ids(
         &self,
         rect: Rect,
-    ) -> Vec<(SplitId, SplitDirection, u16, u16, u16)> {
+    ) -> Vec<(ContainerId, SplitDirection, u16, u16, u16)> {
         match self {
             Self::Leaf { .. } => vec![],
             Self::Split {
@@ -519,7 +541,7 @@ impl SplitNode {
     }
 
     /// Collect only leaf split IDs (visible buffer splits, not container nodes)
-    pub fn leaf_split_ids(&self) -> Vec<SplitId> {
+    pub fn leaf_split_ids(&self) -> Vec<LeafId> {
         match self {
             Self::Leaf { split_id, .. } => vec![*split_id],
             Self::Split { first, second, .. } => {
@@ -596,8 +618,8 @@ pub struct SplitManager {
     /// Root of the split tree
     root: SplitNode,
 
-    /// Currently active split (receives input)
-    active_split: SplitId,
+    /// Currently active split (receives input) — always a leaf
+    active_split: LeafId,
 
     /// Next split ID to assign
     next_split_id: usize,
@@ -615,7 +637,7 @@ impl SplitManager {
         let split_id = SplitId(0);
         Self {
             root: SplitNode::leaf(buffer_id, split_id),
-            active_split: split_id,
+            active_split: LeafId(split_id),
             next_split_id: 1,
             maximized_split: None,
             labels: HashMap::new(),
@@ -628,14 +650,14 @@ impl SplitManager {
     }
 
     /// Get the currently active split ID
-    pub fn active_split(&self) -> SplitId {
+    pub fn active_split(&self) -> LeafId {
         self.active_split
     }
 
-    /// Set the active split
-    pub fn set_active_split(&mut self, split_id: SplitId) -> bool {
+    /// Set the active split (must be a leaf)
+    pub fn set_active_split(&mut self, split_id: LeafId) -> bool {
         // Verify the split exists
-        if self.root.find(split_id).is_some() {
+        if self.root.find(split_id.into()).is_some() {
             self.active_split = split_id;
             true
         } else {
@@ -646,7 +668,7 @@ impl SplitManager {
     /// Get the buffer ID of the active split (if it's a leaf)
     pub fn active_buffer_id(&self) -> Option<BufferId> {
         self.root
-            .find(self.active_split)
+            .find(self.active_split.into())
             .and_then(|node| node.buffer_id())
     }
 
@@ -656,30 +678,29 @@ impl SplitManager {
     }
 
     /// Update the buffer ID of the active split
-    /// Returns true if successful (active split is a leaf), false otherwise
     pub fn set_active_buffer_id(&mut self, new_buffer_id: BufferId) -> bool {
-        if let Some(SplitNode::Leaf { buffer_id, .. }) = self.root.find_mut(self.active_split) {
+        if let Some(SplitNode::Leaf { buffer_id, .. }) =
+            self.root.find_mut(self.active_split.into())
+        {
             *buffer_id = new_buffer_id;
             return true;
         }
         false
     }
 
-    /// Update the buffer ID of a specific split
-    /// Returns Ok(()) if successful, Err with message if split not found or not a leaf
-    pub fn set_split_buffer(
-        &mut self,
-        split_id: SplitId,
-        new_buffer_id: BufferId,
-    ) -> Result<(), String> {
-        if let Some(node) = self.root.find_mut(split_id) {
-            if let SplitNode::Leaf { buffer_id, .. } = node {
+    /// Update the buffer ID of a specific leaf split
+    pub fn set_split_buffer(&mut self, leaf_id: LeafId, new_buffer_id: BufferId) {
+        match self.root.find_mut(leaf_id.into()) {
+            Some(SplitNode::Leaf { buffer_id, .. }) => {
                 *buffer_id = new_buffer_id;
-                return Ok(());
             }
-            return Err(format!("Split {:?} is not a leaf", split_id));
+            Some(SplitNode::Split { .. }) => {
+                unreachable!("LeafId {:?} points to a container", leaf_id)
+            }
+            None => {
+                unreachable!("LeafId {:?} not found in split tree", leaf_id)
+            }
         }
-        Err(format!("Split {:?} not found", split_id))
     }
 
     /// Allocate a new split ID
@@ -695,7 +716,7 @@ impl SplitManager {
         direction: SplitDirection,
         new_buffer_id: BufferId,
         ratio: f32,
-    ) -> Result<SplitId, String> {
+    ) -> Result<LeafId, String> {
         self.split_active_positioned(direction, new_buffer_id, ratio, false)
     }
 
@@ -706,7 +727,7 @@ impl SplitManager {
         direction: SplitDirection,
         new_buffer_id: BufferId,
         ratio: f32,
-    ) -> Result<SplitId, String> {
+    ) -> Result<LeafId, String> {
         self.split_active_positioned(direction, new_buffer_id, ratio, true)
     }
 
@@ -716,20 +737,18 @@ impl SplitManager {
         new_buffer_id: BufferId,
         ratio: f32,
         before: bool,
-    ) -> Result<SplitId, String> {
-        let active_id = self.active_split;
+    ) -> Result<LeafId, String> {
+        let active_id: SplitId = self.active_split.into();
 
         // Find the parent of the active split
         let result =
             self.replace_split_with_split(active_id, direction, new_buffer_id, ratio, before);
 
-        if let Ok(new_split_id) = result {
+        if let Ok(new_split_id) = &result {
             // Set the new split as active
-            self.active_split = new_split_id;
-            Ok(new_split_id)
-        } else {
-            result
+            self.active_split = *new_split_id;
         }
+        result
     }
 
     /// Replace a split with a new split container.
@@ -741,7 +760,7 @@ impl SplitManager {
         new_buffer_id: BufferId,
         ratio: f32,
         before: bool,
-    ) -> Result<SplitId, String> {
+    ) -> Result<LeafId, String> {
         // Pre-allocate all IDs before any borrowing
         let temp_id = self.allocate_split_id();
         let new_split_id = self.allocate_split_id();
@@ -761,7 +780,7 @@ impl SplitManager {
 
             self.root = SplitNode::split(direction, first, second, ratio, new_split_id);
 
-            return Ok(new_leaf_id);
+            return Ok(LeafId(new_leaf_id));
         }
 
         // Find and replace the target node
@@ -777,39 +796,39 @@ impl SplitManager {
 
             *node = SplitNode::split(direction, first, second, ratio, new_split_id);
 
-            Ok(new_leaf_id)
+            Ok(LeafId(new_leaf_id))
         } else {
             Err(format!("Split {:?} not found", target_id))
         }
     }
 
     /// Close a split pane (if not the last one)
-    pub fn close_split(&mut self, split_id: SplitId) -> Result<(), String> {
+    pub fn close_split(&mut self, split_id: LeafId) -> Result<(), String> {
         // Can't close if it's the only split
         if self.root.count_leaves() <= 1 {
             return Err("Cannot close the last split".to_string());
         }
 
         // Can't close if it's the root and root is a leaf
-        if self.root.id() == split_id && self.root.buffer_id().is_some() {
+        if self.root.id() == split_id.into() && self.root.buffer_id().is_some() {
             return Err("Cannot close the only split".to_string());
         }
 
         // If the split being closed is maximized, unmaximize first
-        if self.maximized_split == Some(split_id) {
+        if self.maximized_split == Some(split_id.into()) {
             self.maximized_split = None;
         }
 
         // Collect all split IDs that will be removed (the target and its children)
         let removed_ids: Vec<SplitId> = self
             .root
-            .find(split_id)
+            .find(split_id.into())
             .map(|node| node.all_split_ids())
             .unwrap_or_default();
 
         // Find the parent of the split to close
         // This requires a parent-tracking traversal
-        let result = self.remove_split_node(split_id);
+        let result = self.remove_split_node(split_id.into());
 
         if result.is_ok() {
             // Clean up labels for all removed splits
@@ -869,26 +888,36 @@ impl SplitManager {
     }
 
     /// Adjust the split ratio of a container
-    pub fn adjust_ratio(&mut self, split_id: SplitId, delta: f32) -> Result<(), String> {
-        if let Some(node) = self.root.find_mut(split_id) {
-            if let SplitNode::Split { ratio, .. } = node {
+    pub fn adjust_ratio(&mut self, container_id: ContainerId, delta: f32) {
+        match self.root.find_mut(container_id.into()) {
+            Some(SplitNode::Split { ratio, .. }) => {
                 *ratio = (*ratio + delta).clamp(0.1, 0.9);
-                Ok(())
-            } else {
-                Err("Target is not a split container".to_string())
             }
-        } else {
-            Err("Split not found".to_string())
+            Some(SplitNode::Leaf { .. }) => {
+                unreachable!("ContainerId {:?} points to a leaf", container_id)
+            }
+            None => {
+                unreachable!("ContainerId {:?} not found in split tree", container_id)
+            }
         }
     }
 
+    /// Find the parent container of a leaf
+    pub fn parent_container_of(&self, leaf_id: LeafId) -> Option<ContainerId> {
+        self.root.parent_container_of(leaf_id.into())
+    }
+
     /// Get all visible buffer views with their rectangles
-    pub fn get_visible_buffers(&self, viewport_rect: Rect) -> Vec<(SplitId, BufferId, Rect)> {
+    pub fn get_visible_buffers(&self, viewport_rect: Rect) -> Vec<(LeafId, BufferId, Rect)> {
         // If a split is maximized, only show that split taking up the full viewport
         if let Some(maximized_id) = self.maximized_split {
             if let Some(node) = self.root.find(maximized_id) {
-                if let Some(buffer_id) = node.buffer_id() {
-                    return vec![(maximized_id, buffer_id, viewport_rect)];
+                if let SplitNode::Leaf {
+                    buffer_id,
+                    split_id,
+                } = node
+                {
+                    return vec![(*split_id, *buffer_id, viewport_rect)];
                 }
             }
             // Maximized split no longer exists, clear it and fall through
@@ -907,11 +936,11 @@ impl SplitManager {
     }
 
     /// Get all split separator positions with their split IDs (for mouse hit testing)
-    /// Returns (split_id, direction, x, y, length) tuples
+    /// Returns (container_id, direction, x, y, length) tuples
     pub fn get_separators_with_ids(
         &self,
         viewport_rect: Rect,
-    ) -> Vec<(SplitId, SplitDirection, u16, u16, u16)> {
+    ) -> Vec<(ContainerId, SplitDirection, u16, u16, u16)> {
         // No separators when a split is maximized
         if self.maximized_split.is_some() {
             return vec![];
@@ -929,16 +958,17 @@ impl SplitManager {
     }
 
     /// Set the exact ratio of a split container
-    pub fn set_ratio(&mut self, split_id: SplitId, new_ratio: f32) -> Result<(), String> {
-        if let Some(node) = self.root.find_mut(split_id) {
-            if let SplitNode::Split { ratio, .. } = node {
+    pub fn set_ratio(&mut self, container_id: ContainerId, new_ratio: f32) {
+        match self.root.find_mut(container_id.into()) {
+            Some(SplitNode::Split { ratio, .. }) => {
                 *ratio = new_ratio.clamp(0.1, 0.9);
-                Ok(())
-            } else {
-                Err("Target is not a split container".to_string())
             }
-        } else {
-            Err("Split not found".to_string())
+            Some(SplitNode::Leaf { .. }) => {
+                unreachable!("ContainerId {:?} points to a leaf", container_id)
+            }
+            None => {
+                unreachable!("ContainerId {:?} not found in split tree", container_id)
+            }
         }
     }
 
@@ -991,7 +1021,7 @@ impl SplitManager {
     }
 
     /// Get all split IDs that display a specific buffer
-    pub fn splits_for_buffer(&self, target_buffer_id: BufferId) -> Vec<SplitId> {
+    pub fn splits_for_buffer(&self, target_buffer_id: BufferId) -> Vec<LeafId> {
         self.root
             .get_leaves_with_rects(Rect {
                 x: 0,
@@ -1005,8 +1035,8 @@ impl SplitManager {
             .collect()
     }
 
-    /// Get the buffer ID for a specific split
-    pub fn buffer_for_split(&self, target_split_id: SplitId) -> Option<BufferId> {
+    /// Get the buffer ID for a specific leaf split
+    pub fn buffer_for_split(&self, target_split_id: LeafId) -> Option<BufferId> {
         self.root
             .get_leaves_with_rects(Rect {
                 x: 0,
@@ -1033,7 +1063,7 @@ impl SplitManager {
         }
 
         // Maximize the active split
-        self.maximized_split = Some(self.active_split);
+        self.maximized_split = Some(self.active_split.into());
         Ok(())
     }
 
@@ -1075,8 +1105,8 @@ impl SplitManager {
     pub fn get_splits_in_group(
         &self,
         group_id: u32,
-        view_states: &std::collections::HashMap<SplitId, SplitViewState>,
-    ) -> Vec<SplitId> {
+        view_states: &std::collections::HashMap<LeafId, SplitViewState>,
+    ) -> Vec<LeafId> {
         self.root
             .leaf_split_ids()
             .into_iter()
@@ -1092,8 +1122,8 @@ impl SplitManager {
     // === Split labels ===
 
     /// Set a label on a leaf split (e.g., "sidebar")
-    pub fn set_label(&mut self, split_id: SplitId, label: String) {
-        self.labels.insert(split_id, label);
+    pub fn set_label(&mut self, split_id: LeafId, label: String) {
+        self.labels.insert(split_id.into(), label);
     }
 
     /// Remove a label from a split
@@ -1112,19 +1142,19 @@ impl SplitManager {
     }
 
     /// Find the first leaf split with the given label
-    pub fn find_split_by_label(&self, label: &str) -> Option<SplitId> {
+    pub fn find_split_by_label(&self, label: &str) -> Option<LeafId> {
         self.root
             .leaf_split_ids()
             .into_iter()
-            .find(|id| self.labels.get(id).is_some_and(|l| l == label))
+            .find(|id| self.labels.get(&(*id).into()).is_some_and(|l| l == label))
     }
 
     /// Find the first leaf split without a label
-    pub fn find_unlabeled_leaf(&self) -> Option<SplitId> {
+    pub fn find_unlabeled_leaf(&self) -> Option<LeafId> {
         self.root
             .leaf_split_ids()
             .into_iter()
-            .find(|id| !self.labels.contains_key(id))
+            .find(|id| !self.labels.contains_key(&(*id).into()))
     }
 }
 
@@ -1260,10 +1290,10 @@ mod tests {
         let mut manager = SplitManager::new(BufferId(0));
         let split = manager.active_split();
 
-        assert_eq!(manager.get_label(split), None);
+        assert_eq!(manager.get_label(split.into()), None);
 
         manager.set_label(split, "sidebar".to_string());
-        assert_eq!(manager.get_label(split), Some("sidebar"));
+        assert_eq!(manager.get_label(split.into()), Some("sidebar"));
     }
 
     #[test]
@@ -1272,10 +1302,10 @@ mod tests {
         let split = manager.active_split();
 
         manager.set_label(split, "sidebar".to_string());
-        assert!(manager.get_label(split).is_some());
+        assert!(manager.get_label(split.into()).is_some());
 
-        manager.clear_label(split);
-        assert_eq!(manager.get_label(split), None);
+        manager.clear_label(split.into());
+        assert_eq!(manager.get_label(split.into()), None);
     }
 
     #[test]
@@ -1333,7 +1363,7 @@ mod tests {
 
         // Label should be cleaned up
         assert_eq!(manager.find_split_by_label("sidebar"), None);
-        assert_eq!(manager.get_label(second_split), None);
+        assert_eq!(manager.get_label(second_split.into()), None);
     }
 
     #[test]
@@ -1342,10 +1372,10 @@ mod tests {
         let split = manager.active_split();
 
         manager.set_label(split, "sidebar".to_string());
-        assert_eq!(manager.get_label(split), Some("sidebar"));
+        assert_eq!(manager.get_label(split.into()), Some("sidebar"));
 
         manager.set_label(split, "terminal".to_string());
-        assert_eq!(manager.get_label(split), Some("terminal"));
+        assert_eq!(manager.get_label(split.into()), Some("terminal"));
         assert_eq!(manager.find_split_by_label("sidebar"), None);
         assert_eq!(manager.find_split_by_label("terminal"), Some(split));
     }

@@ -8,7 +8,7 @@
 
 use super::types::TabDropZone;
 use super::Editor;
-use crate::model::event::{BufferId, SplitDirection, SplitId};
+use crate::model::event::{BufferId, LeafId, SplitDirection};
 use crate::view::ui::tabs::TabHit;
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
@@ -47,7 +47,7 @@ impl Editor {
         &self,
         col: u16,
         row: u16,
-        source_split_id: SplitId,
+        source_split_id: LeafId,
     ) -> Option<TabDropZone> {
         // First check if we're over a tab bar (for reordering/moving to another split)
         for (split_id, tab_layout) in &self.cached_layout.tab_layouts {
@@ -120,7 +120,7 @@ impl Editor {
     }
 
     /// Find the index where a tab should be inserted based on mouse x position
-    fn find_tab_insert_index(&self, split_id: SplitId, col: u16) -> Option<usize> {
+    fn find_tab_insert_index(&self, split_id: LeafId, col: u16) -> Option<usize> {
         // Get the tab layout for this split
         let tab_layout = self.cached_layout.tab_layouts.get(&split_id)?;
 
@@ -150,7 +150,7 @@ impl Editor {
     pub(super) fn execute_tab_drop(
         &mut self,
         buffer_id: BufferId,
-        source_split_id: SplitId,
+        source_split_id: LeafId,
         drop_zone: TabDropZone,
     ) {
         match drop_zone {
@@ -210,7 +210,7 @@ impl Editor {
     fn reorder_tab_in_split(
         &mut self,
         buffer_id: BufferId,
-        split_id: SplitId,
+        split_id: LeafId,
         insert_idx: Option<usize>,
     ) {
         if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
@@ -241,8 +241,8 @@ impl Editor {
     fn move_tab_to_split(
         &mut self,
         buffer_id: BufferId,
-        source_split_id: SplitId,
-        target_split_id: SplitId,
+        source_split_id: LeafId,
+        target_split_id: LeafId,
         insert_idx: Option<usize>,
     ) {
         // Check if source split will be empty after removing this buffer
@@ -257,14 +257,10 @@ impl Editor {
             source_view_state.open_buffers.retain(|&id| id != buffer_id);
 
             // If the source split was showing this buffer, switch to another
-            if self.split_manager.get_buffer_id(source_split_id) == Some(buffer_id) {
+            if self.split_manager.get_buffer_id(source_split_id.into()) == Some(buffer_id) {
                 if let Some(&next_buffer) = source_view_state.open_buffers.first() {
-                    if let Err(e) = self
-                        .split_manager
-                        .set_split_buffer(source_split_id, next_buffer)
-                    {
-                        tracing::warn!("Failed to update split buffer: {}", e);
-                    }
+                    self.split_manager
+                        .set_split_buffer(source_split_id, next_buffer);
                 }
             }
         }
@@ -280,12 +276,8 @@ impl Editor {
         }
 
         // Focus the target split and switch to the dropped buffer
-        if let Err(e) = self
-            .split_manager
-            .set_split_buffer(target_split_id, buffer_id)
-        {
-            tracing::warn!("Failed to update split buffer: {}", e);
-        }
+        self.split_manager
+            .set_split_buffer(target_split_id, buffer_id);
         self.split_manager.set_active_split(target_split_id);
         self.set_active_buffer(buffer_id);
 
@@ -305,8 +297,8 @@ impl Editor {
     fn create_split_from_tab(
         &mut self,
         buffer_id: BufferId,
-        source_split_id: SplitId,
-        target_split_id: SplitId,
+        source_split_id: LeafId,
+        target_split_id: LeafId,
         direction: SplitDirection,
         _new_split_first: bool, // If true, new split is placed first (left/top) - TODO: implement
     ) {
@@ -324,14 +316,10 @@ impl Editor {
                 source_view_state.open_buffers.retain(|&id| id != buffer_id);
 
                 // If the source split was showing this buffer, switch to another
-                if self.split_manager.get_buffer_id(source_split_id) == Some(buffer_id) {
+                if self.split_manager.get_buffer_id(source_split_id.into()) == Some(buffer_id) {
                     if let Some(&next_buffer) = source_view_state.open_buffers.first() {
-                        if let Err(e) = self
-                            .split_manager
-                            .set_split_buffer(source_split_id, next_buffer)
-                        {
-                            tracing::warn!("Failed to update split buffer: {}", e);
-                        }
+                        self.split_manager
+                            .set_split_buffer(source_split_id, next_buffer);
                     }
                 }
                 had

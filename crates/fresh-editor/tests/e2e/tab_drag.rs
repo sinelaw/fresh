@@ -6,12 +6,12 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::app::types::TabDropZone;
-use fresh::model::event::{BufferId, SplitId};
+use fresh::model::event::{BufferId, LeafId};
 use tempfile::TempDir;
 
 /// Tab info extracted from TabLayout for easier test assertions
 struct TabInfo {
-    split_id: SplitId,
+    split_id: LeafId,
     buffer_id: BufferId,
     tab_row: u16,
     start_col: u16,
@@ -118,7 +118,7 @@ fn test_drag_tab_to_right_creates_vertical_split() {
 
     // Verify the buffer is now in the new split
     let new_active_split = harness.editor().get_active_split();
-    let new_split_buffer = harness.editor().get_split_buffer(new_active_split);
+    let new_split_buffer = harness.editor().get_split_buffer(new_active_split.into());
     assert_eq!(
         new_split_buffer,
         Some(buffer_id),
@@ -171,7 +171,7 @@ fn test_drag_tab_to_left_creates_vertical_split() {
     assert_eq!(harness.editor().get_split_count(), 2);
     let new_active_split = harness.editor().get_active_split();
     assert_eq!(
-        harness.editor().get_split_buffer(new_active_split),
+        harness.editor().get_split_buffer(new_active_split.into()),
         Some(buffer_id)
     );
 }
@@ -221,7 +221,7 @@ fn test_drag_tab_to_top_creates_horizontal_split() {
     assert_eq!(harness.editor().get_split_count(), 2);
     let new_active_split = harness.editor().get_active_split();
     assert_eq!(
-        harness.editor().get_split_buffer(new_active_split),
+        harness.editor().get_split_buffer(new_active_split.into()),
         Some(buffer_id)
     );
 }
@@ -271,7 +271,7 @@ fn test_drag_tab_to_bottom_creates_horizontal_split() {
     assert_eq!(harness.editor().get_split_count(), 2);
     let new_active_split = harness.editor().get_active_split();
     assert_eq!(
-        harness.editor().get_split_buffer(new_active_split),
+        harness.editor().get_split_buffer(new_active_split.into()),
         Some(buffer_id)
     );
 }
@@ -446,7 +446,10 @@ fn test_drag_last_tab_closes_split() {
     if let Some((_target_split_id, _, target_content_rect, _, _, _)) = other_split {
         // Get the tab for the current buffer
         let tabs = get_all_tabs(&harness);
-        let current_buffer = harness.editor().get_split_buffer(active_split).unwrap();
+        let current_buffer = harness
+            .editor()
+            .get_split_buffer(active_split.into())
+            .unwrap();
 
         let current_tab = tabs
             .iter()
@@ -565,7 +568,7 @@ fn test_drop_zone_matches_result_comprehensive() {
 
         // Verify the buffer is in the new active split
         let new_active_split = harness.editor().get_active_split();
-        let active_buffer = harness.editor().get_split_buffer(new_active_split);
+        let active_buffer = harness.editor().get_split_buffer(new_active_split.into());
         assert_eq!(
             active_buffer,
             Some(buffer_id),

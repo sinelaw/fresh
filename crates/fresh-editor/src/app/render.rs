@@ -31,7 +31,7 @@ impl Editor {
         let mut semantic_ranges: std::collections::HashMap<BufferId, (usize, usize)> =
             std::collections::HashMap::new();
         for (split_id, view_state) in &self.split_view_states {
-            if let Some(buffer_id) = self.split_manager.get_buffer_id(*split_id) {
+            if let Some(buffer_id) = self.split_manager.get_buffer_id((*split_id).into()) {
                 if let Some(state) = self.buffers.get(&buffer_id) {
                     let start_line = state.buffer.get_line_number(view_state.viewport.top_byte);
                     let visible_lines = view_state.viewport.visible_line_count().saturating_sub(1);
@@ -52,7 +52,7 @@ impl Editor {
         }
 
         for (split_id, view_state) in &self.split_view_states {
-            if let Some(buffer_id) = self.split_manager.get_buffer_id(*split_id) {
+            if let Some(buffer_id) = self.split_manager.get_buffer_id((*split_id).into()) {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     let top_byte = view_state.viewport.top_byte;
                     let height = view_state.viewport.height;
@@ -256,7 +256,7 @@ impl Editor {
                         "view_transform_request",
                         crate::services::plugins::hooks::HookArgs::ViewTransformRequest {
                             buffer_id,
-                            split_id,
+                            split_id: split_id.into(),
                             viewport_start,
                             viewport_end,
                             tokens: base_tokens,
@@ -455,7 +455,7 @@ impl Editor {
                     changed
                 );
                 if changed {
-                    if let Some(buffer_id) = self.split_manager.get_buffer_id(*split_id) {
+                    if let Some(buffer_id) = self.split_manager.get_buffer_id((*split_id).into()) {
                         tracing::debug!(
                             "Firing viewport_changed hook: split={:?} buffer={:?} top_byte={}",
                             split_id,
@@ -465,7 +465,7 @@ impl Editor {
                         self.plugin_manager.run_hook(
                             "viewport_changed",
                             crate::services::plugins::hooks::HookArgs::ViewportChanged {
-                                split_id: *split_id,
+                                split_id: (*split_id).into(),
                                 buffer_id,
                                 top_byte: view_state.viewport.top_byte,
                                 width: view_state.viewport.width,
@@ -2049,7 +2049,7 @@ impl Editor {
     fn handle_visual_line_movement(
         &mut self,
         action: &Action,
-        split_id: SplitId,
+        split_id: LeafId,
         _estimated_line_length: usize,
     ) -> Option<Vec<Event>> {
         // Classify the action
@@ -4385,7 +4385,7 @@ impl Editor {
     /// and the available width, and updates the SplitViewState.
     pub(super) fn ensure_active_tab_visible(
         &mut self,
-        split_id: SplitId,
+        split_id: LeafId,
         active_buffer: BufferId,
         available_width: u16,
     ) {
@@ -4491,7 +4491,7 @@ impl Editor {
                     group.right_split
                 );
 
-                if !group.contains_split(active_split) {
+                if !group.contains_split(active_split.into()) {
                     tracing::debug!(
                         "sync_scroll_groups: active split {:?} not in group",
                         active_split
@@ -4522,7 +4522,7 @@ impl Editor {
                 );
 
                 // Determine the other split and compute its target line
-                let (other_split, other_line) = if group.is_left_split(active_split) {
+                let (other_split, other_line) = if group.is_left_split(active_split.into()) {
                     // Active is left, sync right
                     (group.right_split, group.left_to_right_line(active_line))
                 } else {
@@ -4542,10 +4542,11 @@ impl Editor {
 
         // Apply sync to other splits
         for (other_split, target_line) in sync_info {
-            if let Some(buffer_id) = self.split_manager.buffer_for_split(other_split) {
+            let other_leaf = LeafId(other_split);
+            if let Some(buffer_id) = self.split_manager.buffer_for_split(other_leaf) {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     let buffer = &mut state.buffer;
-                    if let Some(view_state) = self.split_view_states.get_mut(&other_split) {
+                    if let Some(view_state) = self.split_view_states.get_mut(&other_leaf) {
                         view_state.viewport.scroll_to(buffer, target_line);
                     }
                 }
@@ -4585,7 +4586,7 @@ impl Editor {
                     .filter(|&&s| {
                         s != active_split
                             && self.split_manager.buffer_for_split(s) == Some(active_buf_id)
-                            && !self.scroll_sync_manager.is_split_synced(s)
+                            && !self.scroll_sync_manager.is_split_synced(s.into())
                     })
                     .copied()
                     .collect();
@@ -4628,11 +4629,11 @@ impl Editor {
     ///
     /// After updating the active split's viewport, we mark the OTHER splits in the group
     /// to skip ensure_visible so the sync position isn't undone during rendering.
-    fn pre_sync_ensure_visible(&mut self, active_split: SplitId) {
+    fn pre_sync_ensure_visible(&mut self, active_split: LeafId) {
         // Check if active split is in any scroll sync group
         let group_info = self
             .scroll_sync_manager
-            .find_group_for_split(active_split)
+            .find_group_for_split(active_split.into())
             .map(|g| (g.left_split, g.right_split));
 
         if let Some((left_split, right_split)) = group_info {
@@ -4656,13 +4657,14 @@ impl Editor {
             }
 
             // Mark the OTHER split to skip ensure_visible so the sync position isn't undone
-            let other_split = if active_split == left_split {
+            let active_sid: SplitId = active_split.into();
+            let other_split: SplitId = if active_sid == left_split {
                 right_split
             } else {
                 left_split
             };
 
-            if let Some(view_state) = self.split_view_states.get_mut(&other_split) {
+            if let Some(view_state) = self.split_view_states.get_mut(&LeafId(other_split)) {
                 view_state.viewport.set_skip_ensure_visible();
                 tracing::debug!(
                     "pre_sync_ensure_visible: marked other split {:?} to skip ensure_visible",
@@ -4682,7 +4684,7 @@ impl Editor {
                 .filter(|&&s| {
                     s != active_split
                         && self.split_manager.buffer_for_split(s) == Some(active_buf_id)
-                        && !self.scroll_sync_manager.is_split_synced(s)
+                        && !self.scroll_sync_manager.is_split_synced(s.into())
                 })
                 .copied()
                 .collect();

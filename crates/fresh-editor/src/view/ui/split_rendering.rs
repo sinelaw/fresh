@@ -6,7 +6,7 @@ use crate::app::types::ViewLineMapping;
 use crate::app::BufferMetadata;
 use crate::model::buffer::Buffer;
 use crate::model::cursor::SelectionMode;
-use crate::model::event::{BufferId, EventLog, SplitDirection};
+use crate::model::event::{BufferId, EventLog, LeafId, SplitDirection};
 use crate::primitives::ansi::AnsiParser;
 use crate::primitives::ansi_background::AnsiBackground;
 use crate::primitives::display_width::char_width;
@@ -754,7 +754,7 @@ impl SplitRenderer {
         event_logs: &mut HashMap<BufferId, EventLog>,
         composite_buffers: &HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
         composite_view_states: &mut HashMap<
-            (crate::model::event::SplitId, BufferId),
+            (LeafId, BufferId),
             crate::view::composite_view::CompositeViewState,
         >,
         theme: &crate::view::theme::Theme,
@@ -765,13 +765,11 @@ impl SplitRenderer {
         _line_wrap: bool,
         estimated_line_length: usize,
         highlight_context_bytes: usize,
-        mut split_view_states: Option<
-            &mut HashMap<crate::model::event::SplitId, crate::view::split::SplitViewState>,
-        >,
+        mut split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
         hide_cursor: bool,
-        hovered_tab: Option<(BufferId, crate::model::event::SplitId, bool)>, // (buffer_id, split_id, is_close_button)
-        hovered_close_split: Option<crate::model::event::SplitId>,
-        hovered_maximize_split: Option<crate::model::event::SplitId>,
+        hovered_tab: Option<(BufferId, LeafId, bool)>, // (buffer_id, split_id, is_close_button)
+        hovered_close_split: Option<LeafId>,
+        hovered_maximize_split: Option<LeafId>,
         is_maximized: bool,
         relative_line_numbers: bool,
         tab_bar_visible: bool,
@@ -780,26 +778,12 @@ impl SplitRenderer {
         show_vertical_scrollbar: bool,
         show_horizontal_scrollbar: bool,
     ) -> (
-        Vec<(
-            crate::model::event::SplitId,
-            BufferId,
-            Rect,
-            Rect,
-            usize,
-            usize,
-        )>,
-        HashMap<crate::model::event::SplitId, crate::view::ui::tabs::TabLayout>, // tab layouts per split
-        Vec<(crate::model::event::SplitId, u16, u16, u16)>, // close split button areas
-        Vec<(crate::model::event::SplitId, u16, u16, u16)>, // maximize split button areas
-        HashMap<crate::model::event::SplitId, Vec<ViewLineMapping>>, // view line mappings for mouse clicks
-        Vec<(
-            crate::model::event::SplitId,
-            BufferId,
-            Rect,
-            usize,
-            usize,
-            usize,
-        )>, // horizontal scrollbar areas (rect + max_content_width + thumb_start + thumb_end)
+        Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
+        HashMap<LeafId, crate::view::ui::tabs::TabLayout>, // tab layouts per split
+        Vec<(LeafId, u16, u16, u16)>,                      // close split button areas
+        Vec<(LeafId, u16, u16, u16)>,                      // maximize split button areas
+        HashMap<LeafId, Vec<ViewLineMapping>>,             // view line mappings for mouse clicks
+        Vec<(LeafId, BufferId, Rect, usize, usize, usize)>, // horizontal scrollbar areas (rect + max_content_width + thumb_start + thumb_end)
     ) {
         let _span = tracing::trace_span!("render_content").entered();
 
@@ -810,22 +794,12 @@ impl SplitRenderer {
 
         // Collect areas for mouse handling
         let mut split_areas = Vec::new();
-        let mut horizontal_scrollbar_areas: Vec<(
-            crate::model::event::SplitId,
-            BufferId,
-            Rect,
-            usize,
-            usize,
-            usize,
-        )> = Vec::new();
-        let mut tab_layouts: HashMap<
-            crate::model::event::SplitId,
-            crate::view::ui::tabs::TabLayout,
-        > = HashMap::new();
+        let mut horizontal_scrollbar_areas: Vec<(LeafId, BufferId, Rect, usize, usize, usize)> =
+            Vec::new();
+        let mut tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout> = HashMap::new();
         let mut close_split_areas = Vec::new();
         let mut maximize_split_areas = Vec::new();
-        let mut view_line_mappings: HashMap<crate::model::event::SplitId, Vec<ViewLineMapping>> =
-            HashMap::new();
+        let mut view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>> = HashMap::new();
 
         // Render each split
         for (split_id, buffer_id, split_area) in visible_buffers {
@@ -1179,10 +1153,7 @@ impl SplitRenderer {
         area: Rect,
         split_manager: &SplitManager,
         buffers: &mut HashMap<BufferId, EditorState>,
-        split_view_states: &mut HashMap<
-            crate::model::event::SplitId,
-            crate::view::split::SplitViewState,
-        >,
+        split_view_states: &mut HashMap<LeafId, crate::view::split::SplitViewState>,
         theme: &crate::view::theme::Theme,
         lsp_waiting: bool,
         estimated_line_length: usize,
@@ -1193,11 +1164,10 @@ impl SplitRenderer {
         tab_bar_visible: bool,
         show_vertical_scrollbar: bool,
         show_horizontal_scrollbar: bool,
-    ) -> HashMap<crate::model::event::SplitId, Vec<ViewLineMapping>> {
+    ) -> HashMap<LeafId, Vec<ViewLineMapping>> {
         let visible_buffers = split_manager.get_visible_buffers(area);
         let active_split_id = split_manager.active_split();
-        let mut view_line_mappings: HashMap<crate::model::event::SplitId, Vec<ViewLineMapping>> =
-            HashMap::new();
+        let mut view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>> = HashMap::new();
 
         for (split_id, buffer_id, split_area) in visible_buffers {
             let is_active = split_id == active_split_id;
@@ -1996,10 +1966,8 @@ impl SplitRenderer {
     }
 
     fn split_buffers_for_tabs(
-        split_view_states: Option<
-            &HashMap<crate::model::event::SplitId, crate::view::split::SplitViewState>,
-        >,
-        split_id: crate::model::event::SplitId,
+        split_view_states: Option<&HashMap<LeafId, crate::view::split::SplitViewState>>,
+        split_id: LeafId,
         buffer_id: BufferId,
     ) -> (Vec<BufferId>, usize) {
         if let Some(view_states) = split_view_states {
@@ -2036,10 +2004,8 @@ impl SplitRenderer {
 
     fn resolve_view_preferences(
         _state: &EditorState,
-        split_view_states: Option<
-            &HashMap<crate::model::event::SplitId, crate::view::split::SplitViewState>,
-        >,
-        split_id: crate::model::event::SplitId,
+        split_view_states: Option<&HashMap<LeafId, crate::view::split::SplitViewState>>,
+        split_id: LeafId,
     ) -> ViewPreferences {
         if let Some(view_states) = split_view_states {
             if let Some(view_state) = view_states.get(&split_id) {

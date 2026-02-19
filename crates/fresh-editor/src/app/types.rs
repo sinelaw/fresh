@@ -1,6 +1,6 @@
 use crate::app::file_open::SortMode;
 use crate::input::keybindings::Action;
-use crate::model::event::{BufferId, SplitDirection, SplitId};
+use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection};
 use crate::services::async_bridge::LspMessageType;
 use ratatui::layout::Rect;
 use rust_i18n::t;
@@ -390,12 +390,12 @@ pub(super) struct LspMessageEntry {
 /// Types of UI elements that can be hovered over
 #[derive(Debug, Clone, PartialEq)]
 pub enum HoverTarget {
-    /// Hovering over a split separator (split_id, direction)
-    SplitSeparator(SplitId, SplitDirection),
+    /// Hovering over a split separator (container_id, direction)
+    SplitSeparator(ContainerId, SplitDirection),
     /// Hovering over a scrollbar thumb (split_id)
-    ScrollbarThumb(SplitId),
+    ScrollbarThumb(LeafId),
     /// Hovering over a scrollbar track (split_id)
-    ScrollbarTrack(SplitId),
+    ScrollbarTrack(LeafId),
     /// Hovering over a menu bar item (menu_index)
     MenuBarItem(usize),
     /// Hovering over a menu dropdown item (menu_index, item_index)
@@ -421,13 +421,13 @@ pub enum HoverTarget {
     /// Hovering over the file browser "Detect Encoding" checkbox
     FileBrowserDetectEncodingCheckbox,
     /// Hovering over a tab name (buffer_id, split_id) - for non-active tabs
-    TabName(BufferId, SplitId),
+    TabName(BufferId, LeafId),
     /// Hovering over a tab close button (buffer_id, split_id)
-    TabCloseButton(BufferId, SplitId),
+    TabCloseButton(BufferId, LeafId),
     /// Hovering over a close split button (split_id)
-    CloseSplitButton(SplitId),
+    CloseSplitButton(LeafId),
     /// Hovering over a maximize/unmaximize split button (split_id)
-    MaximizeSplitButton(SplitId),
+    MaximizeSplitButton(LeafId),
     /// Hovering over the file explorer close button
     FileExplorerCloseButton,
     /// Hovering over a file explorer item's status indicator (path)
@@ -499,7 +499,7 @@ pub struct TabContextMenu {
     /// The buffer ID this context menu is for
     pub buffer_id: BufferId,
     /// The split ID where the tab is located
-    pub split_id: SplitId,
+    pub split_id: LeafId,
     /// Screen position where the menu should appear (x, y)
     pub position: (u16, u16),
     /// Currently highlighted menu item index
@@ -508,7 +508,7 @@ pub struct TabContextMenu {
 
 impl TabContextMenu {
     /// Create a new tab context menu
-    pub fn new(buffer_id: BufferId, split_id: SplitId, x: u16, y: u16) -> Self {
+    pub fn new(buffer_id: BufferId, split_id: LeafId, x: u16, y: u16) -> Self {
         Self {
             buffer_id,
             split_id,
@@ -545,22 +545,22 @@ impl TabContextMenu {
 pub enum TabDropZone {
     /// Drop into an existing split's tab bar (before tab at index, or at end if None)
     /// (target_split_id, insert_index)
-    TabBar(SplitId, Option<usize>),
+    TabBar(LeafId, Option<usize>),
     /// Create a new split on the left edge of the target split
-    SplitLeft(SplitId),
+    SplitLeft(LeafId),
     /// Create a new split on the right edge of the target split
-    SplitRight(SplitId),
+    SplitRight(LeafId),
     /// Create a new split on the top edge of the target split
-    SplitTop(SplitId),
+    SplitTop(LeafId),
     /// Create a new split on the bottom edge of the target split
-    SplitBottom(SplitId),
+    SplitBottom(LeafId),
     /// Drop into the center of a split (switch to that split's tab bar)
-    SplitCenter(SplitId),
+    SplitCenter(LeafId),
 }
 
 impl TabDropZone {
     /// Get the split ID this drop zone is associated with
-    pub fn split_id(&self) -> SplitId {
+    pub fn split_id(&self) -> LeafId {
         match self {
             Self::TabBar(id, _)
             | Self::SplitLeft(id)
@@ -578,7 +578,7 @@ pub struct TabDragState {
     /// The buffer being dragged
     pub buffer_id: BufferId,
     /// The split the tab was dragged from
-    pub source_split_id: SplitId,
+    pub source_split_id: LeafId,
     /// Starting mouse position when drag began
     pub start_position: (u16, u16),
     /// Current mouse position
@@ -589,7 +589,7 @@ pub struct TabDragState {
 
 impl TabDragState {
     /// Create a new tab drag state
-    pub fn new(buffer_id: BufferId, source_split_id: SplitId, start_position: (u16, u16)) -> Self {
+    pub fn new(buffer_id: BufferId, source_split_id: LeafId, start_position: (u16, u16)) -> Self {
         Self {
             buffer_id,
             source_split_id,
@@ -611,9 +611,9 @@ impl TabDragState {
 #[derive(Debug, Clone, Default)]
 pub(super) struct MouseState {
     /// Whether we're currently dragging a vertical scrollbar
-    pub dragging_scrollbar: Option<SplitId>,
+    pub dragging_scrollbar: Option<LeafId>,
     /// Whether we're currently dragging a horizontal scrollbar
-    pub dragging_horizontal_scrollbar: Option<SplitId>,
+    pub dragging_horizontal_scrollbar: Option<LeafId>,
     /// Initial mouse column when starting horizontal scrollbar drag
     pub drag_start_hcol: Option<u16>,
     /// Initial left_column when starting horizontal scrollbar drag
@@ -635,7 +635,7 @@ pub(super) struct MouseState {
     pub drag_start_view_line_offset: Option<usize>,
     /// Whether we're currently dragging a split separator
     /// Stores (split_id, direction) for the separator being dragged
-    pub dragging_separator: Option<(SplitId, SplitDirection)>,
+    pub dragging_separator: Option<(ContainerId, SplitDirection)>,
     /// Initial mouse position when starting to drag a separator
     pub drag_start_position: Option<(u16, u16)>,
     /// Initial split ratio when starting to drag a separator
@@ -649,7 +649,7 @@ pub(super) struct MouseState {
     /// Whether we're currently doing a text selection drag
     pub dragging_text_selection: bool,
     /// The split where text selection started
-    pub drag_selection_split: Option<SplitId>,
+    pub drag_selection_split: Option<LeafId>,
     /// The buffer byte position where the selection anchor is
     pub drag_selection_anchor: Option<usize>,
     /// Tab drag state (for drag-to-split functionality)
@@ -739,13 +739,13 @@ pub(crate) struct CachedLayout {
     pub editor_content_area: Option<Rect>,
     /// Individual split areas with their scrollbar areas and thumb positions
     /// (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end)
-    pub split_areas: Vec<(SplitId, BufferId, Rect, Rect, usize, usize)>,
+    pub split_areas: Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
     /// Horizontal scrollbar areas per split
     /// (split_id, buffer_id, horizontal_scrollbar_rect, max_content_width, thumb_start_col, thumb_end_col)
-    pub horizontal_scrollbar_areas: Vec<(SplitId, BufferId, Rect, usize, usize, usize)>,
+    pub horizontal_scrollbar_areas: Vec<(LeafId, BufferId, Rect, usize, usize, usize)>,
     /// Split separator positions for drag resize
-    /// (split_id, direction, x, y, length)
-    pub separator_areas: Vec<(SplitId, SplitDirection, u16, u16, u16)>,
+    /// (container_id, direction, x, y, length)
+    pub separator_areas: Vec<(ContainerId, SplitDirection, u16, u16, u16)>,
     /// Popup areas for mouse hit testing
     /// scrollbar_rect is Some if popup has a scrollbar
     pub popup_areas: Vec<PopupAreaLayout>,
@@ -753,17 +753,17 @@ pub(crate) struct CachedLayout {
     /// (inner_rect, scroll_start_idx, visible_count, total_count)
     pub suggestions_area: Option<(Rect, usize, usize, usize)>,
     /// Tab layouts per split for mouse interaction
-    pub tab_layouts: HashMap<SplitId, crate::view::ui::tabs::TabLayout>,
+    pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
     /// Close split button hit areas
     /// (split_id, row, start_col, end_col)
-    pub close_split_areas: Vec<(SplitId, u16, u16, u16)>,
+    pub close_split_areas: Vec<(LeafId, u16, u16, u16)>,
     /// Maximize split button hit areas
     /// (split_id, row, start_col, end_col)
-    pub maximize_split_areas: Vec<(SplitId, u16, u16, u16)>,
+    pub maximize_split_areas: Vec<(LeafId, u16, u16, u16)>,
     /// View line mappings for accurate mouse click positioning per split
     /// Maps visual row index to character position mappings
     /// Used to translate screen coordinates to buffer byte positions
-    pub view_line_mappings: HashMap<SplitId, Vec<ViewLineMapping>>,
+    pub view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>>,
     /// Settings modal layout for hit testing
     pub settings_layout: Option<crate::view::settings::SettingsLayout>,
     /// Status bar area (row, x, width)
@@ -791,13 +791,13 @@ pub(crate) struct CachedLayout {
 
 impl CachedLayout {
     /// Find which visual row contains the given byte position for a split
-    pub fn find_visual_row(&self, split_id: SplitId, byte_pos: usize) -> Option<usize> {
+    pub fn find_visual_row(&self, split_id: LeafId, byte_pos: usize) -> Option<usize> {
         let mappings = self.view_line_mappings.get(&split_id)?;
         mappings.iter().position(|m| m.contains_byte(byte_pos))
     }
 
     /// Get the visual column of a byte position within its visual row
-    pub fn byte_to_visual_column(&self, split_id: SplitId, byte_pos: usize) -> Option<usize> {
+    pub fn byte_to_visual_column(&self, split_id: LeafId, byte_pos: usize) -> Option<usize> {
         let mappings = self.view_line_mappings.get(&split_id)?;
         let row_idx = self.find_visual_row(split_id, byte_pos)?;
         let row = mappings.get(row_idx)?;
@@ -823,7 +823,7 @@ impl CachedLayout {
     /// Returns (new_position, new_visual_column) or None if at boundary
     pub fn move_visual_line(
         &self,
-        split_id: SplitId,
+        split_id: LeafId,
         current_pos: usize,
         goal_visual_col: usize,
         direction: i8, // -1 = up, 1 = down
@@ -868,7 +868,7 @@ impl CachedLayout {
     /// moves to the previous visual row's start.
     pub fn visual_line_start(
         &self,
-        split_id: SplitId,
+        split_id: LeafId,
         byte_pos: usize,
         allow_advance: bool,
     ) -> Option<usize> {
@@ -893,7 +893,7 @@ impl CachedLayout {
     /// advances to the next visual row's end.
     pub fn visual_line_end(
         &self,
-        split_id: SplitId,
+        split_id: LeafId,
         byte_pos: usize,
         allow_advance: bool,
     ) -> Option<usize> {

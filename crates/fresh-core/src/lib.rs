@@ -13,10 +13,30 @@ impl CursorId {
     pub const UNDO_SENTINEL: CursorId = CursorId(usize::MAX);
 }
 
-/// Unique identifier for a split pane
+/// Unique identifier for a split pane (leaf or container)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SplitId(pub usize);
+
+/// A split pane that displays a buffer (leaf node in the split tree)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LeafId(pub SplitId);
+
+impl From<LeafId> for SplitId {
+    fn from(id: LeafId) -> Self {
+        id.0
+    }
+}
+
+/// A split container that holds two children (internal node in the split tree)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ContainerId(pub SplitId);
+
+impl From<ContainerId> for SplitId {
+    fn from(id: ContainerId) -> Self {
+        id.0
+    }
+}
 
 /// Unique identifier for a buffer
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

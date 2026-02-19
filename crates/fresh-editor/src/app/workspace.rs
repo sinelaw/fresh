@@ -28,7 +28,7 @@ use std::time::Instant;
 
 use crate::state::EditorState;
 
-use crate::model::event::{BufferId, SplitDirection, SplitId};
+use crate::model::event::{BufferId, LeafId, SplitDirection, SplitId};
 use crate::services::terminal::TerminalId;
 use crate::state::ViewMode;
 use crate::view::split::{SplitNode, SplitViewState};
@@ -155,19 +155,19 @@ impl Editor {
             self.split_manager.labels(),
         );
 
-        // Build a map of split_id -> active_buffer_id from the split tree
+        // Build a map of leaf_id -> active_buffer_id from the split tree
         // This tells us which buffer's cursor/scroll to save for each split
-        let active_buffers: HashMap<SplitId, BufferId> = self
+        let active_buffers: HashMap<LeafId, BufferId> = self
             .split_manager
             .root()
             .get_leaves_with_rects(ratatui::layout::Rect::default())
             .into_iter()
-            .map(|(split_id, buffer_id, _)| (split_id, buffer_id))
+            .map(|(leaf_id, buffer_id, _)| (leaf_id, buffer_id))
             .collect();
 
         let mut split_states = HashMap::new();
-        for (split_id, view_state) in &self.split_view_states {
-            let active_buffer = active_buffers.get(split_id).copied();
+        for (leaf_id, view_state) in &self.split_view_states {
+            let active_buffer = active_buffers.get(leaf_id).copied();
             let serialized = serialize_split_view_state(
                 view_state,
                 &self.buffer_metadata,
@@ -178,17 +178,17 @@ impl Editor {
             );
             tracing::trace!(
                 "Split {:?}: {} open tabs, active_buffer={:?}",
-                split_id,
+                leaf_id,
                 serialized.open_tabs.len(),
                 active_buffer
             );
-            split_states.insert(split_id.0, serialized);
+            split_states.insert(leaf_id.0 .0, serialized);
         }
 
         tracing::debug!(
             "Captured {} split states, active_split={}",
             split_states.len(),
-            self.split_manager.active_split().0
+            SplitId::from(self.split_manager.active_split()).0
         );
 
         // Capture file explorer state
@@ -280,7 +280,7 @@ impl Editor {
             version: WORKSPACE_VERSION,
             working_dir: self.working_dir.clone(),
             split_layout,
-            active_split_id: self.split_manager.active_split().0,
+            active_split_id: SplitId::from(self.split_manager.active_split()).0,
             split_states,
             config_overrides,
             file_explorer,
@@ -315,14 +315,14 @@ impl Editor {
     /// Save global file states for all open file buffers
     fn save_all_global_file_states(&self) {
         // Collect all file states from all splits
-        for (split_id, view_state) in &self.split_view_states {
+        for (leaf_id, view_state) in &self.split_view_states {
             // Get the active buffer for this split
             let active_buffer = self
                 .split_manager
                 .root()
                 .get_leaves_with_rects(ratatui::layout::Rect::default())
                 .into_iter()
-                .find(|(sid, _, _)| *sid == *split_id)
+                .find(|(sid, _, _)| *sid == *leaf_id)
                 .map(|(_, buffer_id, _)| buffer_id);
 
             if let Some(buffer_id) = active_buffer {
@@ -597,7 +597,8 @@ impl Editor {
         // NOTE: active_buffer is now derived from split_manager, which was already
         // correctly set up by restore_split_view_state() via set_split_buffer()
         if let Some(&new_active_split) = split_id_map.get(&workspace.active_split_id) {
-            self.split_manager.set_active_split(new_active_split);
+            self.split_manager
+                .set_active_split(LeafId(new_active_split));
         }
 
         // 7. Restore bookmarks
@@ -800,33 +801,28 @@ impl Editor {
                     .and_then(|p| path_to_buffer.get(p).copied())
                     .unwrap_or(self.active_buffer());
 
-                let current_split_id = if is_first_leaf {
+                let current_leaf_id = if is_first_leaf {
                     // First leaf reuses the existing split
-                    let split_id_val = self.split_manager.active_split();
-                    if let Err(e) = self.split_manager.set_split_buffer(split_id_val, buffer_id) {
-                        tracing::warn!(
-                            "Failed to set split buffer during workspace restore: {}",
-                            e
-                        );
-                    }
-                    split_id_val
+                    let leaf_id = self.split_manager.active_split();
+                    self.split_manager.set_split_buffer(leaf_id, buffer_id);
+                    leaf_id
                 } else {
                     // Non-first leaves use the active split (created by split_active)
                     self.split_manager.active_split()
                 };
 
                 // Map old split ID to new one
-                split_id_map.insert(*split_id, current_split_id);
+                split_id_map.insert(*split_id, current_leaf_id.into());
 
                 // Restore label if present
                 if let Some(label) = label {
                     self.split_manager
-                        .set_label(current_split_id, label.clone());
+                        .set_label(current_leaf_id.into(), label.clone());
                 }
 
                 // Restore the view state for this split
                 self.restore_split_view_state(
-                    current_split_id,
+                    current_leaf_id,
                     *split_id,
                     split_states,
                     path_to_buffer,
@@ -843,36 +839,27 @@ impl Editor {
                     .copied()
                     .unwrap_or(self.active_buffer());
 
-                let current_split_id = if is_first_leaf {
-                    let split_id_val = self.split_manager.active_split();
-                    if let Err(e) = self.split_manager.set_split_buffer(split_id_val, buffer_id) {
-                        tracing::warn!(
-                            "Failed to set split buffer during workspace restore: {}",
-                            e
-                        );
-                    }
-                    split_id_val
+                let current_leaf_id = if is_first_leaf {
+                    let leaf_id = self.split_manager.active_split();
+                    self.split_manager.set_split_buffer(leaf_id, buffer_id);
+                    leaf_id
                 } else {
                     self.split_manager.active_split()
                 };
 
-                split_id_map.insert(*split_id, current_split_id);
+                split_id_map.insert(*split_id, current_leaf_id.into());
 
                 // Restore label if present
                 if let Some(label) = label {
                     self.split_manager
-                        .set_label(current_split_id, label.clone());
+                        .set_label(current_leaf_id.into(), label.clone());
                 }
 
-                if let Err(e) = self
-                    .split_manager
-                    .set_split_buffer(current_split_id, buffer_id)
-                {
-                    tracing::warn!("Failed to set split buffer during workspace restore: {}", e);
-                }
+                self.split_manager
+                    .set_split_buffer(current_leaf_id, buffer_id);
 
                 self.restore_split_view_state(
-                    current_split_id,
+                    current_leaf_id,
                     *split_id,
                     split_states,
                     path_to_buffer,
@@ -912,7 +899,7 @@ impl Editor {
                     .split_manager
                     .split_active(split_direction, second_buffer_id, *ratio)
                 {
-                    Ok(new_split_id) => {
+                    Ok(new_leaf_id) => {
                         // Create view state for the new split
                         let mut view_state = SplitViewState::with_buffer(
                             self.terminal_width,
@@ -922,10 +909,10 @@ impl Editor {
                         view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
                         view_state.rulers = self.config.editor.rulers.clone();
                         view_state.show_line_numbers = self.config.editor.line_numbers;
-                        self.split_view_states.insert(new_split_id, view_state);
+                        self.split_view_states.insert(new_leaf_id, view_state);
 
                         // Map the container split ID (though we mainly care about leaves)
-                        split_id_map.insert(*split_id, new_split_id);
+                        split_id_map.insert(*split_id, new_leaf_id.into());
 
                         // Recursively restore the second child (it's now in the new split)
                         self.restore_split_node(
@@ -948,7 +935,7 @@ impl Editor {
     /// Restore view state for a specific split
     fn restore_split_view_state(
         &mut self,
-        current_split_id: SplitId,
+        current_split_id: LeafId,
         saved_split_id: usize,
         split_states: &HashMap<usize, SerializedSplitViewState>,
         path_to_buffer: &HashMap<PathBuf, BufferId>,
@@ -1089,12 +1076,8 @@ impl Editor {
             // Cursors now live in SplitViewState, no need to sync to EditorState
 
             // Set this buffer as active in the split (fires buffer_activated hook)
-            if let Err(e) = self
-                .split_manager
-                .set_split_buffer(current_split_id, active_id)
-            {
-                tracing::warn!("Failed to set split buffer during workspace restore: {}", e);
-            }
+            self.split_manager
+                .set_split_buffer(current_split_id, active_id);
         }
         view_state.tab_scroll_offset = split_state.tab_scroll_offset;
     }
@@ -1136,13 +1119,14 @@ fn serialize_split_node(
             buffer_id,
             split_id,
         } => {
-            let label = split_labels.get(split_id).cloned();
+            let raw_split_id: SplitId = (*split_id).into();
+            let label = split_labels.get(&raw_split_id).cloned();
 
             if let Some(terminal_id) = terminal_buffers.get(buffer_id) {
                 if let Some(index) = terminal_indices.get(terminal_id) {
                     return SerializedSplitNode::Terminal {
                         terminal_index: *index,
-                        split_id: split_id.0,
+                        split_id: raw_split_id.0,
                         label,
                     };
                 }
@@ -1160,7 +1144,7 @@ fn serialize_split_node(
 
             SerializedSplitNode::Leaf {
                 file_path,
-                split_id: split_id.0,
+                split_id: raw_split_id.0,
                 label,
             }
         }
@@ -1170,30 +1154,33 @@ fn serialize_split_node(
             second,
             ratio,
             split_id,
-        } => SerializedSplitNode::Split {
-            direction: match direction {
-                SplitDirection::Horizontal => SerializedSplitDirection::Horizontal,
-                SplitDirection::Vertical => SerializedSplitDirection::Vertical,
-            },
-            first: Box::new(serialize_split_node(
-                first,
-                buffer_metadata,
-                working_dir,
-                terminal_buffers,
-                terminal_indices,
-                split_labels,
-            )),
-            second: Box::new(serialize_split_node(
-                second,
-                buffer_metadata,
-                working_dir,
-                terminal_buffers,
-                terminal_indices,
-                split_labels,
-            )),
-            ratio: *ratio,
-            split_id: split_id.0,
-        },
+        } => {
+            let raw_split_id: SplitId = (*split_id).into();
+            SerializedSplitNode::Split {
+                direction: match direction {
+                    SplitDirection::Horizontal => SerializedSplitDirection::Horizontal,
+                    SplitDirection::Vertical => SerializedSplitDirection::Vertical,
+                },
+                first: Box::new(serialize_split_node(
+                    first,
+                    buffer_metadata,
+                    working_dir,
+                    terminal_buffers,
+                    terminal_indices,
+                    split_labels,
+                )),
+                second: Box::new(serialize_split_node(
+                    second,
+                    buffer_metadata,
+                    working_dir,
+                    terminal_buffers,
+                    terminal_indices,
+                    split_labels,
+                )),
+                ratio: *ratio,
+                split_id: raw_split_id.0,
+            }
+        }
     }
 }
 

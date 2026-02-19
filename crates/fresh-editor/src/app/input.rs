@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::event::CursorId;
+use crate::model::event::{CursorId, LeafId};
 use crate::services::plugins::hooks::HookArgs;
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
@@ -1312,7 +1312,7 @@ impl Editor {
                 .unwrap_or(0);
             if let Some(view_state) = self
                 .composite_view_states
-                .get_mut(&(active_split, buffer_id))
+                .get_mut(&(active_split.into(), buffer_id))
             {
                 view_state.scroll(delta as isize, max_row);
                 tracing::trace!(
@@ -1417,7 +1417,7 @@ impl Editor {
     pub(super) fn handle_scrollbar_drag_relative(
         &mut self,
         row: u16,
-        split_id: SplitId,
+        split_id: LeafId,
         buffer_id: BufferId,
         scrollbar_rect: ratatui::layout::Rect,
     ) -> AnyhowResult<()> {
@@ -1590,7 +1590,7 @@ impl Editor {
         &mut self,
         _col: u16,
         row: u16,
-        split_id: SplitId,
+        split_id: LeafId,
         buffer_id: BufferId,
         scrollbar_rect: ratatui::layout::Rect,
     ) -> AnyhowResult<()> {
@@ -1728,7 +1728,7 @@ impl Editor {
 
     /// Move the cursor to a visible position within the current viewport
     /// This is called after scrollbar operations to ensure the cursor is in view
-    pub(super) fn move_cursor_to_visible_area(&mut self, split_id: SplitId, buffer_id: BufferId) {
+    pub(super) fn move_cursor_to_visible_area(&mut self, split_id: LeafId, buffer_id: BufferId) {
         // Get viewport info from SplitViewState
         let (top_byte, viewport_height) =
             if let Some(view_state) = self.split_view_states.get(&split_id) {
@@ -2109,14 +2109,13 @@ impl Editor {
         &mut self,
         col: u16,
         row: u16,
-        split_id: crate::model::event::SplitId,
+        split_id: crate::model::event::LeafId,
         buffer_id: BufferId,
         content_rect: ratatui::layout::Rect,
         modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
         use crate::model::event::Event;
         use crossterm::event::KeyModifiers;
-
         // Build modifiers string for plugins
         let modifiers_str = if modifiers.contains(KeyModifiers::SHIFT) {
             "shift".to_string()

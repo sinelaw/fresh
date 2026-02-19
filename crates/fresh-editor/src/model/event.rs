@@ -1,7 +1,7 @@
 use crate::model::buffer::BufferSnapshot;
 pub use fresh_core::api::{OverlayColorSpec, OverlayOptions};
 pub use fresh_core::overlay::{OverlayHandle, OverlayNamespace};
-pub use fresh_core::{BufferId, CursorId, SplitDirection, SplitId};
+pub use fresh_core::{BufferId, ContainerId, CursorId, LeafId, SplitDirection, SplitId};
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 use std::sync::Arc;

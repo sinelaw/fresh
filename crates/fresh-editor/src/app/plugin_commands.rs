@@ -3,7 +3,7 @@
 //! This module groups plugin commands by domain for better maintainability.
 
 use crate::model::cursor::Cursors;
-use crate::model::event::{BufferId, CursorId, Event, OverlayFace, SplitId};
+use crate::model::event::{BufferId, ContainerId, CursorId, Event, LeafId, OverlayFace, SplitId};
 use crate::view::overlay::{OverlayHandle, OverlayNamespace};
 use crate::view::split::SplitViewState;
 use anyhow::Result as AnyhowResult;
@@ -504,9 +504,11 @@ impl Editor {
 
     /// Handle FocusSplit command
     pub(super) fn handle_focus_split(&mut self, split_id: SplitId) {
+        // Plugin sends arbitrary SplitId — convert to LeafId at the boundary
+        let leaf_id = LeafId(split_id);
         // Get the buffer for this split
-        if let Some(buffer_id) = self.split_manager.buffer_for_split(split_id) {
-            self.focus_split(split_id, buffer_id);
+        if let Some(buffer_id) = self.split_manager.buffer_for_split(leaf_id) {
+            self.focus_split(leaf_id, buffer_id);
             tracing::info!("Focused split {:?}", split_id);
         } else {
             tracing::warn!("Split {:?} not found", split_id);
@@ -521,33 +523,31 @@ impl Editor {
             return;
         }
 
-        match self.split_manager.set_split_buffer(split_id, buffer_id) {
-            Ok(()) => {
-                tracing::info!("Set split {:?} to buffer {:?}", split_id, buffer_id);
+        // Plugin sends arbitrary SplitId — convert to LeafId at the boundary
+        let leaf_id = LeafId(split_id);
+        self.split_manager.set_split_buffer(leaf_id, buffer_id);
+        tracing::info!("Set split {:?} to buffer {:?}", split_id, buffer_id);
 
-                // Switch per-buffer view state — the new buffer's own view_transform
-                // and compose_width will be restored (or defaults if first time)
-                if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
-                    view_state.switch_buffer(buffer_id);
-                }
+        // Switch per-buffer view state — the new buffer's own view_transform
+        // and compose_width will be restored (or defaults if first time)
+        if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
+            view_state.switch_buffer(buffer_id);
+        }
 
-                // If this is the active split, update active buffer with all side effects
-                if self.split_manager.active_split() == split_id {
-                    self.set_active_buffer(buffer_id);
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to set split buffer: {}", e);
-            }
+        // If this is the active split, update active buffer with all side effects
+        if self.split_manager.active_split() == leaf_id {
+            self.set_active_buffer(buffer_id);
         }
     }
 
     /// Handle CloseSplit command
     pub(super) fn handle_close_split(&mut self, split_id: SplitId) {
-        match self.split_manager.close_split(split_id) {
+        // Plugin sends arbitrary SplitId — convert to LeafId at the boundary
+        let leaf_id = LeafId(split_id);
+        match self.split_manager.close_split(leaf_id) {
             Ok(()) => {
                 // Clean up the view state for the closed split
-                self.split_view_states.remove(&split_id);
+                self.split_view_states.remove(&leaf_id);
                 tracing::info!("Closed split {:?}", split_id);
             }
             Err(e) => {
@@ -558,14 +558,10 @@ impl Editor {
 
     /// Handle SetSplitRatio command
     pub(super) fn handle_set_split_ratio(&mut self, split_id: SplitId, ratio: f32) {
-        match self.split_manager.set_ratio(split_id, ratio) {
-            Ok(()) => {
-                tracing::debug!("Set split {:?} ratio to {}", split_id, ratio);
-            }
-            Err(e) => {
-                tracing::warn!("Failed to set split ratio {:?}: {}", split_id, e);
-            }
-        }
+        // Plugin sends arbitrary SplitId — convert to ContainerId at the boundary
+        let container_id = ContainerId(split_id);
+        self.split_manager.set_ratio(container_id, ratio);
+        tracing::debug!("Set split {:?} ratio to {}", split_id, ratio);
     }
 
     /// Handle DistributeSplitsEvenly command
@@ -597,10 +593,10 @@ impl Editor {
 
         // Get the buffer for ensure_visible
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
-            for split_id in &splits {
-                let is_active = *split_id == active_split;
+            for leaf_id in &splits {
+                let is_active = *leaf_id == active_split;
 
-                if let Some(view_state) = self.split_view_states.get_mut(split_id) {
+                if let Some(view_state) = self.split_view_states.get_mut(leaf_id) {
                     // Set cursor position in the split's view state
                     view_state.cursors.primary_mut().move_to(position, false);
                     // Ensure the cursor is visible by scrolling the split's viewport
@@ -610,7 +606,7 @@ impl Editor {
                         .ensure_visible(&mut state.buffer, &cursor);
                     tracing::debug!(
                         "SetBufferCursor: updated split {:?} (active={}) viewport top_byte={}",
-                        split_id,
+                        leaf_id,
                         is_active,
                         view_state.viewport.top_byte
                     );
@@ -619,7 +615,7 @@ impl Editor {
                 } else {
                     tracing::warn!(
                         "SetBufferCursor: split {:?} not found in split_view_states",
-                        split_id
+                        leaf_id
                     );
                 }
             }
@@ -630,9 +626,11 @@ impl Editor {
 
     /// Handle SetSplitScroll command
     pub(super) fn handle_set_split_scroll(&mut self, split_id: SplitId, top_byte: usize) {
-        if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+        // Plugin sends arbitrary SplitId — convert to LeafId at the boundary
+        let leaf_id = LeafId(split_id);
+        if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
             // Get the buffer associated with this split to check bounds
-            let buffer_id = if let Some(id) = self.split_manager.buffer_for_split(split_id) {
+            let buffer_id = if let Some(id) = self.split_manager.buffer_for_split(leaf_id) {
                 id
             } else {
                 tracing::warn!("SetSplitScroll: buffer for split {:?} not found", split_id);
@@ -733,8 +731,8 @@ impl Editor {
             }
         }
         // Adjust cursors in all splits that display this buffer
-        for split_id in self.split_manager.splits_for_buffer(buffer_id) {
-            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+        for leaf_id in self.split_manager.splits_for_buffer(buffer_id) {
+            if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
                 view_state.cursors.adjust_for_edit(position, 0, text_len);
             }
         }
@@ -762,8 +760,8 @@ impl Editor {
             }
         }
         // Adjust cursors in all splits that display this buffer
-        for split_id in self.split_manager.splits_for_buffer(buffer_id) {
-            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+        for leaf_id in self.split_manager.splits_for_buffer(buffer_id) {
+            if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
                 view_state
                     .cursors
                     .adjust_for_edit(delete_start, delete_len, 0);
@@ -905,7 +903,7 @@ impl Editor {
         column: Option<usize>,
     ) -> AnyhowResult<()> {
         // Switch to the target split
-        let target_split_id = SplitId(split_id);
+        let target_split_id = LeafId(SplitId(split_id));
         if !self.split_manager.set_active_split(target_split_id) {
             tracing::error!("Failed to switch to split {}", split_id);
             return Ok(());
@@ -963,7 +961,9 @@ impl Editor {
         split_id: Option<SplitId>,
         hints: LayoutHints,
     ) {
-        let target_split = split_id.unwrap_or(self.split_manager.active_split());
+        let target_split = split_id
+            .map(LeafId)
+            .unwrap_or(self.split_manager.active_split());
         let view_state = self
             .split_view_states
             .entry(target_split)
@@ -1028,7 +1028,9 @@ impl Editor {
         split_id: Option<SplitId>,
         enabled: bool,
     ) {
-        let target_split = split_id.unwrap_or(self.split_manager.active_split());
+        let target_split = split_id
+            .map(LeafId)
+            .unwrap_or(self.split_manager.active_split());
         if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
             view_state.viewport.line_wrap_enabled = enabled;
         }
@@ -1041,7 +1043,9 @@ impl Editor {
         split_id: Option<SplitId>,
         payload: ViewTransformPayload,
     ) {
-        let target_split = split_id.unwrap_or(self.split_manager.active_split());
+        let target_split = split_id
+            .map(LeafId)
+            .unwrap_or(self.split_manager.active_split());
         let view_state = self
             .split_view_states
             .entry(target_split)
@@ -1064,7 +1068,9 @@ impl Editor {
 
     /// Handle ClearViewTransform command
     pub(super) fn handle_clear_view_transform(&mut self, split_id: Option<SplitId>) {
-        let target_split = split_id.unwrap_or(self.split_manager.active_split());
+        let target_split = split_id
+            .map(LeafId)
+            .unwrap_or(self.split_manager.active_split());
         if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
             view_state.view_transform = None;
             view_state.compose_width = None;

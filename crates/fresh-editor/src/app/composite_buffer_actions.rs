@@ -20,7 +20,7 @@
 use crate::app::types::BufferMetadata;
 use crate::app::Editor;
 use crate::model::composite_buffer::{CompositeBuffer, CompositeLayout, LineAlignment, SourcePane};
-use crate::model::event::{BufferId, SplitId};
+use crate::model::event::{BufferId, LeafId};
 use crate::view::composite_view::CompositeViewState;
 use anyhow::Result as AnyhowResult;
 use unicode_segmentation::UnicodeSegmentation;
@@ -146,7 +146,7 @@ impl Editor {
     /// Get or create composite view state for a split
     pub fn get_composite_view_state(
         &mut self,
-        split_id: SplitId,
+        split_id: LeafId,
         buffer_id: BufferId,
     ) -> Option<&mut CompositeViewState> {
         if !self.composite_buffers.contains_key(&buffer_id) {
@@ -240,7 +240,7 @@ impl Editor {
     }
 
     /// Switch focus to the next pane in a composite buffer
-    pub fn composite_focus_next(&mut self, split_id: SplitId, buffer_id: BufferId) {
+    pub fn composite_focus_next(&mut self, split_id: LeafId, buffer_id: BufferId) {
         if let Some(composite) = self.composite_buffers.get_mut(&buffer_id) {
             composite.focus_next();
         }
@@ -251,7 +251,7 @@ impl Editor {
     }
 
     /// Switch focus to the previous pane in a composite buffer
-    pub fn composite_focus_prev(&mut self, split_id: SplitId, buffer_id: BufferId) {
+    pub fn composite_focus_prev(&mut self, split_id: LeafId, buffer_id: BufferId) {
         if let Some(composite) = self.composite_buffers.get_mut(&buffer_id) {
             composite.focus_prev();
         }
@@ -262,7 +262,7 @@ impl Editor {
     }
 
     /// Navigate to the next hunk in a composite buffer's diff view
-    pub fn composite_next_hunk(&mut self, split_id: SplitId, buffer_id: BufferId) -> bool {
+    pub fn composite_next_hunk(&mut self, split_id: LeafId, buffer_id: BufferId) -> bool {
         if let (Some(composite), Some(view_state)) = (
             self.composite_buffers.get(&buffer_id),
             self.composite_view_states.get_mut(&(split_id, buffer_id)),
@@ -276,7 +276,7 @@ impl Editor {
     }
 
     /// Navigate to the previous hunk in a composite buffer's diff view
-    pub fn composite_prev_hunk(&mut self, split_id: SplitId, buffer_id: BufferId) -> bool {
+    pub fn composite_prev_hunk(&mut self, split_id: LeafId, buffer_id: BufferId) -> bool {
         if let (Some(composite), Some(view_state)) = (
             self.composite_buffers.get(&buffer_id),
             self.composite_view_states.get_mut(&(split_id, buffer_id)),
@@ -290,7 +290,7 @@ impl Editor {
     }
 
     /// Scroll a composite buffer view
-    pub fn composite_scroll(&mut self, split_id: SplitId, buffer_id: BufferId, delta: isize) {
+    pub fn composite_scroll(&mut self, split_id: LeafId, buffer_id: BufferId, delta: isize) {
         if let (Some(composite), Some(view_state)) = (
             self.composite_buffers.get(&buffer_id),
             self.composite_view_states.get_mut(&(split_id, buffer_id)),
@@ -301,7 +301,7 @@ impl Editor {
     }
 
     /// Scroll composite buffer to a specific row
-    pub fn composite_scroll_to(&mut self, split_id: SplitId, buffer_id: BufferId, row: usize) {
+    pub fn composite_scroll_to(&mut self, split_id: LeafId, buffer_id: BufferId, row: usize) {
         if let (Some(composite), Some(view_state)) = (
             self.composite_buffers.get(&buffer_id),
             self.composite_view_states.get_mut(&(split_id, buffer_id)),
@@ -317,7 +317,7 @@ impl Editor {
 
     /// Get the effective viewport height for composite buffer scrolling.
     /// This accounts for the composite header row showing pane labels (e.g., "OLD (HEAD)" / "NEW (Working)")
-    fn get_composite_viewport_height(&self, split_id: SplitId) -> usize {
+    fn get_composite_viewport_height(&self, split_id: LeafId) -> usize {
         const COMPOSITE_HEADER_HEIGHT: u16 = 1;
         const DEFAULT_VIEWPORT_HEIGHT: usize = 24;
 
@@ -328,7 +328,7 @@ impl Editor {
     }
 
     /// Get information about the line at the cursor position
-    fn get_cursor_line_info(&self, split_id: SplitId, buffer_id: BufferId) -> CursorLineInfo {
+    fn get_cursor_line_info(&self, split_id: LeafId, buffer_id: BufferId) -> CursorLineInfo {
         let composite = self.composite_buffers.get(&buffer_id);
         let view_state = self.composite_view_states.get(&(split_id, buffer_id));
 
@@ -385,7 +385,7 @@ impl Editor {
     /// Apply a cursor movement to a composite view state
     fn apply_cursor_movement(
         &mut self,
-        split_id: SplitId,
+        split_id: LeafId,
         buffer_id: BufferId,
         movement: CursorMovement,
         line_info: &CursorLineInfo,
@@ -685,7 +685,7 @@ impl Editor {
     }
 
     /// Sync the EditorState cursor with CompositeViewState (for status bar display)
-    fn sync_editor_cursor_from_composite(&mut self, split_id: SplitId, buffer_id: BufferId) {
+    fn sync_editor_cursor_from_composite(&mut self, split_id: LeafId, buffer_id: BufferId) {
         let (cursor_row, cursor_column, focused_pane) = self
             .composite_view_states
             .get(&(split_id, buffer_id))
@@ -717,7 +717,7 @@ impl Editor {
     /// Handle cursor movement actions (both Move and Select variants)
     fn handle_cursor_movement_action(
         &mut self,
-        split_id: SplitId,
+        split_id: LeafId,
         buffer_id: BufferId,
         movement: CursorMovement,
         extend_selection: bool,
@@ -925,7 +925,7 @@ impl Editor {
     }
 
     /// Handle copy action for composite buffer
-    fn handle_composite_copy(&mut self, split_id: SplitId, buffer_id: BufferId) {
+    fn handle_composite_copy(&mut self, split_id: LeafId, buffer_id: BufferId) {
         let text = {
             let composite = match self.composite_buffers.get(&buffer_id) {
                 Some(c) => c,
@@ -1115,7 +1115,7 @@ impl Editor {
         &mut self,
         col: u16,
         row: u16,
-        split_id: SplitId,
+        split_id: LeafId,
         buffer_id: BufferId,
         content_rect: ratatui::layout::Rect,
     ) -> AnyhowResult<()> {

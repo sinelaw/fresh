@@ -94,7 +94,7 @@ use crate::input::quick_open::{
     FileProvider, GotoLineProvider, QuickOpenContext, QuickOpenProvider, QuickOpenRegistry,
 };
 use crate::model::cursor::Cursors;
-use crate::model::event::{Event, EventLog, SplitDirection, SplitId};
+use crate::model::event::{Event, EventLog, LeafId, SplitDirection, SplitId};
 use crate::model::filesystem::FileSystem;
 use crate::services::async_bridge::{AsyncBridge, AsyncMessage};
 use crate::services::fs::FsManager;
@@ -287,12 +287,12 @@ pub struct Editor {
     /// Per-split view state (cursors and viewport for each split)
     /// This allows multiple splits showing the same buffer to have independent
     /// cursor positions and scroll positions
-    split_view_states: HashMap<SplitId, SplitViewState>,
+    split_view_states: HashMap<LeafId, SplitViewState>,
 
     /// Previous viewport states for viewport_changed hook detection
     /// Stores (top_byte, width, height) from the end of the last render frame
     /// Used to detect viewport changes that occur between renders (e.g., scroll events)
-    previous_viewports: HashMap<SplitId, (usize, u16, u16)>,
+    previous_viewports: HashMap<LeafId, (usize, u16, u16)>,
 
     /// Scroll sync manager for anchor-based synchronized scrolling
     /// Used for side-by-side diff views where two panes need to scroll together
@@ -708,7 +708,7 @@ pub struct Editor {
     /// View state for composite buffers (per split)
     /// Maps (split_id, buffer_id) to composite view state
     composite_view_states:
-        HashMap<(SplitId, BufferId), crate::view::composite_view::CompositeViewState>,
+        HashMap<(LeafId, BufferId), crate::view::composite_view::CompositeViewState>,
 
     /// Pending file opens from CLI arguments (processed after TUI starts)
     /// This allows CLI files to go through the same code path as interactive file opens,
@@ -1928,11 +1928,7 @@ impl Editor {
     /// - Syncing file explorer
     ///
     /// Use this instead of calling set_active_split directly when switching focus.
-    pub(super) fn focus_split(
-        &mut self,
-        split_id: crate::model::event::SplitId,
-        buffer_id: BufferId,
-    ) {
+    pub(super) fn focus_split(&mut self, split_id: LeafId, buffer_id: BufferId) {
         let previous_split = self.split_manager.active_split();
         let previous_buffer = self.active_buffer(); // Get BEFORE changing split
         let split_changed = previous_split != split_id;
@@ -2555,13 +2551,16 @@ impl Editor {
         // Check if this split is in a scroll sync group (anchor-based sync for diffs)
         // Mark both splits to skip ensure_visible so cursor doesn't override scroll
         // The sync_scroll_groups() at render time will sync the other split
-        if let Some(group) = self.scroll_sync_manager.find_group_for_split(active_split) {
+        if let Some(group) = self
+            .scroll_sync_manager
+            .find_group_for_split(active_split.into())
+        {
             let left = group.left_split;
             let right = group.right_split;
-            if let Some(vs) = self.split_view_states.get_mut(&left) {
+            if let Some(vs) = self.split_view_states.get_mut(&LeafId(left)) {
                 vs.viewport.set_skip_ensure_visible();
             }
-            if let Some(vs) = self.split_view_states.get_mut(&right) {
+            if let Some(vs) = self.split_view_states.get_mut(&LeafId(right)) {
                 vs.viewport.set_skip_ensure_visible();
             }
             // Continue to scroll the active split normally below
@@ -2630,13 +2629,16 @@ impl Editor {
 
         // Check if this split is in a scroll sync group (anchor-based sync for diffs)
         // If so, set the group's scroll_line and let render sync the viewports
-        if self.scroll_sync_manager.is_split_synced(active_split) {
+        if self
+            .scroll_sync_manager
+            .is_split_synced(active_split.into())
+        {
             if let Some(group) = self
                 .scroll_sync_manager
-                .find_group_for_split_mut(active_split)
+                .find_group_for_split_mut(active_split.into())
             {
                 // Convert line to left buffer space if coming from right split
-                let scroll_line = if group.is_left_split(active_split) {
+                let scroll_line = if group.is_left_split(active_split.into()) {
                     top_line
                 } else {
                     group.right_to_left_line(top_line)
@@ -2645,13 +2647,16 @@ impl Editor {
             }
 
             // Mark both splits to skip ensure_visible
-            if let Some(group) = self.scroll_sync_manager.find_group_for_split(active_split) {
+            if let Some(group) = self
+                .scroll_sync_manager
+                .find_group_for_split(active_split.into())
+            {
                 let left = group.left_split;
                 let right = group.right_split;
-                if let Some(vs) = self.split_view_states.get_mut(&left) {
+                if let Some(vs) = self.split_view_states.get_mut(&LeafId(left)) {
                     vs.viewport.set_skip_ensure_visible();
                 }
-                if let Some(vs) = self.split_view_states.get_mut(&right) {
+                if let Some(vs) = self.split_view_states.get_mut(&LeafId(right)) {
                     vs.viewport.set_skip_ensure_visible();
                 }
             }
@@ -4411,7 +4416,7 @@ impl Editor {
             snapshot.active_buffer_id = self.active_buffer();
 
             // Update active split ID
-            snapshot.active_split_id = self.split_manager.active_split().0;
+            snapshot.active_split_id = self.split_manager.active_split().0 .0;
 
             // Clear and update buffer info
             snapshot.buffers.clear();
@@ -4566,7 +4571,7 @@ impl Editor {
             // If the active split changed, fully repopulate. Otherwise, merge using
             // or_insert to preserve JS-side write-through entries that haven't
             // round-tripped through the command channel yet.
-            let active_split_id = self.split_manager.active_split().0;
+            let active_split_id = self.split_manager.active_split().0 .0;
             let split_changed = snapshot.plugin_view_states_split != active_split_id;
             if split_changed {
                 snapshot.plugin_view_states.clear();
@@ -4797,7 +4802,7 @@ impl Editor {
                 self.handle_set_split_ratio(split_id, ratio);
             }
             PluginCommand::SetSplitLabel { split_id, label } => {
-                self.split_manager.set_label(split_id, label);
+                self.split_manager.set_label(LeafId(split_id), label);
             }
             PluginCommand::ClearSplitLabel { split_id } => {
                 self.split_manager.clear_label(split_id);
@@ -4805,7 +4810,7 @@ impl Editor {
             PluginCommand::GetSplitByLabel { label, request_id } => {
                 let split_id = self.split_manager.find_split_by_label(&label);
                 let callback_id = fresh_core::api::JsCallbackId::from(request_id);
-                let json = serde_json::to_string(&split_id.map(|s| s.0))
+                let json = serde_json::to_string(&split_id.map(|s| s.0 .0))
                     .unwrap_or_else(|_| "null".to_string());
                 self.plugin_manager.resolve_callback(callback_id, json);
             }
@@ -5353,7 +5358,7 @@ impl Editor {
                             if let Some(req_id) = request_id {
                                 let result = fresh_core::api::VirtualBufferResult {
                                     buffer_id: existing_buffer_id.0 as u64,
-                                    split_id: splits.first().map(|s| s.0 as u64),
+                                    split_id: splits.first().map(|s| s.0 .0 as u64),
                                 };
                                 self.plugin_manager.resolve_callback(
                                     fresh_core::api::JsCallbackId::from(req_id),
@@ -5457,7 +5462,7 @@ impl Editor {
                     tracing::trace!("CreateVirtualBufferInSplit: resolving callback for request_id={}, buffer_id={:?}, split_id={:?}", req_id, buffer_id, created_split_id);
                     let result = fresh_core::api::VirtualBufferResult {
                         buffer_id: buffer_id.0 as u64,
-                        split_id: created_split_id.map(|s| s.0 as u64),
+                        split_id: created_split_id.map(|s| s.0 .0 as u64),
                     };
                     self.plugin_manager.resolve_callback(
                         fresh_core::api::JsCallbackId::from(req_id),
@@ -5529,32 +5534,29 @@ impl Editor {
                 }
 
                 // Show the buffer in the target split
-                if let Err(e) = self.split_manager.set_split_buffer(split_id, buffer_id) {
-                    tracing::error!("Failed to set buffer in split {:?}: {}", split_id, e);
-                    // Fall back to just switching to the buffer
-                    self.set_active_buffer(buffer_id);
-                } else {
-                    // Focus the target split and set its buffer
-                    self.split_manager.set_active_split(split_id);
-                    self.split_manager.set_active_buffer_id(buffer_id);
+                let leaf_id = LeafId(split_id);
+                self.split_manager.set_split_buffer(leaf_id, buffer_id);
 
-                    // Switch per-buffer view state in the target split
-                    if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
-                        view_state.switch_buffer(buffer_id);
-                        view_state.add_buffer(buffer_id);
+                // Focus the target split and set its buffer
+                self.split_manager.set_active_split(leaf_id);
+                self.split_manager.set_active_buffer_id(buffer_id);
 
-                        // Apply line_wrap setting if provided
-                        if let Some(wrap) = line_wrap {
-                            view_state.active_state_mut().viewport.line_wrap_enabled = wrap;
-                        }
+                // Switch per-buffer view state in the target split
+                if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
+                    view_state.switch_buffer(buffer_id);
+                    view_state.add_buffer(buffer_id);
+
+                    // Apply line_wrap setting if provided
+                    if let Some(wrap) = line_wrap {
+                        view_state.active_state_mut().viewport.line_wrap_enabled = wrap;
                     }
-
-                    tracing::info!(
-                        "Displayed virtual buffer {:?} in split {:?}",
-                        buffer_id,
-                        split_id
-                    );
                 }
+
+                tracing::info!(
+                    "Displayed virtual buffer {:?} in split {:?}",
+                    buffer_id,
+                    split_id
+                );
 
                 // Send response with buffer ID and split ID via callback resolution
                 if let Some(req_id) = request_id {
@@ -5957,7 +5959,7 @@ impl Editor {
                         let result = fresh_core::api::TerminalResult {
                             buffer_id: buffer_id.0 as u64,
                             terminal_id: terminal_id.0 as u64,
-                            split_id: created_split_id.map(|s| s.0 as u64),
+                            split_id: created_split_id.map(|s| s.0 .0 as u64),
                         };
                         self.plugin_manager.resolve_callback(
                             fresh_core::api::JsCallbackId::from(request_id),
@@ -6340,7 +6342,7 @@ impl Editor {
         let actual_split_id = if split_id.0 == 0 {
             self.split_manager.active_split()
         } else {
-            split_id
+            LeafId(split_id)
         };
 
         // Use active buffer if buffer_id is 0

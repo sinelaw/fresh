@@ -126,7 +126,7 @@ impl Editor {
     pub(crate) fn create_terminal_buffer_attached(
         &mut self,
         terminal_id: TerminalId,
-        split_id: crate::model::event::SplitId,
+        split_id: crate::model::event::LeafId,
     ) -> BufferId {
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
@@ -724,7 +724,7 @@ impl Editor {
         &self,
         frame: &mut ratatui::Frame,
         split_areas: &[(
-            crate::model::event::SplitId,
+            crate::model::event::LeafId,
             BufferId,
             ratatui::layout::Rect,
             ratatui::layout::Rect,

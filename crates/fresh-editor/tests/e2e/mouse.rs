@@ -817,7 +817,7 @@ fn test_horizontal_split_separator_drag_resize() {
     );
 
     // Get initial ratio
-    let initial_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    let initial_ratio = harness.editor().get_split_ratio(split_id.into()).unwrap();
     assert!(
         (initial_ratio - 0.5).abs() < 0.1,
         "Initial ratio should be close to 0.5, got {initial_ratio}"
@@ -834,7 +834,7 @@ fn test_horizontal_split_separator_drag_resize() {
         .unwrap();
 
     // Check that the ratio increased (top split got bigger)
-    let new_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    let new_ratio = harness.editor().get_split_ratio(split_id.into()).unwrap();
     assert!(
         new_ratio > initial_ratio,
         "Ratio should increase after dragging separator down. Was {initial_ratio}, now {new_ratio}"
@@ -856,7 +856,7 @@ fn test_horizontal_split_separator_drag_resize() {
         .unwrap();
 
     // Check that the ratio decreased (top split got smaller)
-    let final_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    let final_ratio = harness.editor().get_split_ratio(split_id.into()).unwrap();
     assert!(
         final_ratio < new_ratio,
         "Ratio should decrease after dragging separator up. Was {new_ratio}, now {final_ratio}"
@@ -899,7 +899,7 @@ fn test_vertical_split_separator_drag_resize() {
     );
 
     // Get initial ratio
-    let initial_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    let initial_ratio = harness.editor().get_split_ratio(split_id.into()).unwrap();
     assert!(
         (initial_ratio - 0.5).abs() < 0.1,
         "Initial ratio should be close to 0.5, got {initial_ratio}"
@@ -915,7 +915,7 @@ fn test_vertical_split_separator_drag_resize() {
         .unwrap();
 
     // Check that the ratio increased (left split got bigger)
-    let new_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    let new_ratio = harness.editor().get_split_ratio(split_id.into()).unwrap();
     assert!(
         new_ratio > initial_ratio,
         "Ratio should increase after dragging separator right. Was {initial_ratio}, now {new_ratio}"
@@ -937,7 +937,7 @@ fn test_vertical_split_separator_drag_resize() {
         .unwrap();
 
     // Check that the ratio decreased (left split got smaller)
-    let final_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    let final_ratio = harness.editor().get_split_ratio(split_id.into()).unwrap();
     assert!(
         final_ratio < new_ratio,
         "Ratio should decrease after dragging separator left. Was {new_ratio}, now {final_ratio}"
@@ -975,7 +975,7 @@ fn test_split_separator_drag_respects_limits() {
         .mouse_drag(start_col, sep_y, start_col, sep_y + 100)
         .unwrap();
 
-    let max_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    let max_ratio = harness.editor().get_split_ratio(split_id.into()).unwrap();
     assert!(
         max_ratio <= 0.9,
         "Ratio should not exceed 0.9, got {max_ratio}"
@@ -996,7 +996,7 @@ fn test_split_separator_drag_respects_limits() {
         .mouse_drag(start_col, sep_y_after, start_col, 0)
         .unwrap();
 
-    let min_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    let min_ratio = harness.editor().get_split_ratio(split_id.into()).unwrap();
     assert!(
         min_ratio >= 0.1,
         "Ratio should not be less than 0.1, got {min_ratio}"

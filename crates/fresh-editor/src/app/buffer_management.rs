@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::app::warning_domains::WarningDomain;
-use crate::model::event::{BufferId, Event, SplitId};
+use crate::model::event::{BufferId, Event, LeafId};
 use crate::state::EditorState;
 use crate::view::prompt::PromptType;
 use crate::view::split::SplitViewState;
@@ -26,9 +26,9 @@ impl Editor {
     /// Get the preferred split for opening a file.
     /// If the active split has no label, use it (normal case).
     /// Otherwise find an unlabeled leaf so files don't open in labeled splits (e.g., sidebars).
-    fn preferred_split_for_file(&self) -> SplitId {
+    fn preferred_split_for_file(&self) -> LeafId {
         let active = self.split_manager.active_split();
-        if self.split_manager.get_label(active).is_none() {
+        if self.split_manager.get_label(active.into()).is_none() {
             return active;
         }
         self.split_manager.find_unlabeled_leaf().unwrap_or(active)
@@ -617,7 +617,7 @@ impl Editor {
     ///
     /// This looks up the file's saved state from the global file states store
     /// and applies it to both the EditorState (cursor) and SplitViewState (viewport).
-    fn restore_global_file_state(&mut self, buffer_id: BufferId, path: &Path, split_id: SplitId) {
+    fn restore_global_file_state(&mut self, buffer_id: BufferId, path: &Path, split_id: LeafId) {
         use crate::workspace::PersistedFileWorkspace;
 
         // Load the per-file state for this path (lazy load from disk)
@@ -1462,12 +1462,8 @@ impl Editor {
         // Update all splits that are showing this buffer to show the replacement
         let splits_to_update = self.split_manager.splits_for_buffer(id);
         for split_id in splits_to_update {
-            if let Err(e) = self
-                .split_manager
-                .set_split_buffer(split_id, replacement_buffer)
-            {
-                tracing::warn!("Failed to update split buffer: {}", e);
-            }
+            self.split_manager
+                .set_split_buffer(split_id, replacement_buffer);
         }
 
         self.buffers.remove(&id);
@@ -1636,12 +1632,8 @@ impl Editor {
             }
 
             // Update the split to show the replacement buffer
-            if let Err(e) = self
-                .split_manager
-                .set_split_buffer(active_split, replacement_buffer)
-            {
-                tracing::warn!("Failed to update split buffer: {}", e);
-            }
+            self.split_manager
+                .set_split_buffer(active_split, replacement_buffer);
 
             self.set_status_message(t!("buffer.tab_closed").to_string());
         }
@@ -1650,7 +1642,7 @@ impl Editor {
     /// Close a specific tab (buffer) in a specific split.
     /// Used by mouse click handler on tab close button.
     /// Returns true if the tab was closed without needing a prompt.
-    pub fn close_tab_in_split(&mut self, buffer_id: BufferId, split_id: SplitId) -> bool {
+    pub fn close_tab_in_split(&mut self, buffer_id: BufferId, split_id: LeafId) -> bool {
         // If closing a terminal buffer while in terminal mode, exit terminal mode
         if self.terminal_mode && self.is_terminal_buffer(buffer_id) {
             self.terminal_mode = false;
@@ -1705,7 +1697,7 @@ impl Editor {
             // There are other viewports of this buffer - just remove from this split's tabs
             if split_tabs.len() <= 1 {
                 // This is the only tab in this split - close the split
-                self.handle_close_split(split_id);
+                self.handle_close_split(split_id.into());
                 return true;
             }
 
@@ -1723,12 +1715,8 @@ impl Editor {
             }
 
             // Update the split to show the replacement buffer
-            if let Err(e) = self
-                .split_manager
-                .set_split_buffer(split_id, replacement_buffer)
-            {
-                tracing::warn!("Failed to update split buffer: {}", e);
-            }
+            self.split_manager
+                .set_split_buffer(split_id, replacement_buffer);
 
             self.set_status_message(t!("buffer.tab_closed").to_string());
         }
@@ -1736,7 +1724,7 @@ impl Editor {
     }
 
     /// Close all other tabs in a split, keeping only the specified buffer
-    pub fn close_other_tabs_in_split(&mut self, keep_buffer_id: BufferId, split_id: SplitId) {
+    pub fn close_other_tabs_in_split(&mut self, keep_buffer_id: BufferId, split_id: LeafId) {
         // Get the split's open buffers
         let split_tabs = self
             .split_view_states
@@ -1762,18 +1750,14 @@ impl Editor {
         }
 
         // Make sure the kept buffer is active
-        if let Err(e) = self
-            .split_manager
-            .set_split_buffer(split_id, keep_buffer_id)
-        {
-            tracing::warn!("Failed to update split buffer: {}", e);
-        }
+        self.split_manager
+            .set_split_buffer(split_id, keep_buffer_id);
 
         self.set_batch_close_status_message(closed, skipped_modified);
     }
 
     /// Close tabs to the right of the specified buffer in a split
-    pub fn close_tabs_to_right_in_split(&mut self, buffer_id: BufferId, split_id: SplitId) {
+    pub fn close_tabs_to_right_in_split(&mut self, buffer_id: BufferId, split_id: LeafId) {
         // Get the split's open buffers
         let split_tabs = self
             .split_view_states
@@ -1803,7 +1787,7 @@ impl Editor {
     }
 
     /// Close tabs to the left of the specified buffer in a split
-    pub fn close_tabs_to_left_in_split(&mut self, buffer_id: BufferId, split_id: SplitId) {
+    pub fn close_tabs_to_left_in_split(&mut self, buffer_id: BufferId, split_id: LeafId) {
         // Get the split's open buffers
         let split_tabs = self
             .split_view_states
@@ -1833,7 +1817,7 @@ impl Editor {
     }
 
     /// Close all tabs in a split
-    pub fn close_all_tabs_in_split(&mut self, split_id: SplitId) {
+    pub fn close_all_tabs_in_split(&mut self, split_id: LeafId) {
         // Get the split's open buffers
         let split_tabs = self
             .split_view_states
@@ -1870,7 +1854,7 @@ impl Editor {
     /// Close a tab silently (without setting status message)
     /// Used internally by batch close operations
     /// Returns true if the tab was closed, false if it was skipped (e.g., modified buffer)
-    fn close_tab_in_split_silent(&mut self, buffer_id: BufferId, split_id: SplitId) -> bool {
+    fn close_tab_in_split_silent(&mut self, buffer_id: BufferId, split_id: LeafId) -> bool {
         // If closing a terminal buffer while in terminal mode, exit terminal mode
         if self.terminal_mode && self.is_terminal_buffer(buffer_id) {
             self.terminal_mode = false;
@@ -1910,7 +1894,7 @@ impl Editor {
             // There are other viewports of this buffer - just remove from this split's tabs
             if split_tabs.len() <= 1 {
                 // This is the only tab in this split - close the split
-                self.handle_close_split(split_id);
+                self.handle_close_split(split_id.into());
                 return true;
             }
 
@@ -1929,9 +1913,7 @@ impl Editor {
 
             // Update the split to show the replacement buffer
             if let Some(replacement) = replacement_buffer {
-                if let Err(e) = self.split_manager.set_split_buffer(split_id, replacement) {
-                    tracing::warn!("Failed to update split buffer: {}", e);
-                }
+                self.split_manager.set_split_buffer(split_id, replacement);
             }
             true
         }
