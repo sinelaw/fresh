@@ -3720,7 +3720,7 @@ impl SplitRenderer {
             let line_char_styles = &current_view_line.char_styles;
             let line_visual_to_char = &current_view_line.visual_to_char;
             let line_tab_starts = &current_view_line.tab_starts;
-            let _line_start_type = current_view_line.line_start; // Available for future use
+            let _line_start_type = current_view_line.line_start;
 
             // Helper to get source byte at a visual column using the new O(1) lookup
             let _source_byte_at_col = |vis_col: usize| -> Option<usize> {
@@ -4339,6 +4339,11 @@ impl SplitRenderer {
                     } else {
                         last_byte_start
                     }
+                } else if matches!(current_view_line.line_start, LineStart::AfterSourceNewline) {
+                    // Trailing empty line after a source newline (e.g. empty
+                    // final line after a file's trailing '\n').  The cursor
+                    // on this line lives at buffer_len.
+                    state.buffer.len()
                 } else {
                     // Virtual row with no source bytes (e.g. table border from conceals).
                     // Inherit line_end_byte from the previous row so cursor movement
@@ -4475,6 +4480,27 @@ impl SplitRenderer {
                     cursor_screen_x = gutter_width as u16;
                     cursor_screen_y = implicit_y;
                     have_cursor = true;
+                }
+            }
+        }
+
+        // Even when there was no screen room to render the implicit trailing
+        // empty line, we must still add a ViewLineMapping for it.  Without
+        // the mapping, move_visual_line (Down key) thinks the last rendered
+        // row is the boundary and returns None — preventing the cursor from
+        // reaching the trailing empty line (which would trigger a viewport
+        // scroll on the next render).
+        if let Some(ref end) = last_line_end {
+            if end.terminated_with_newline {
+                let already_mapped = view_line_mappings.last().map_or(false, |m| {
+                    m.char_source_bytes.is_empty() && m.line_end_byte == state.buffer.len()
+                });
+                if !already_mapped {
+                    view_line_mappings.push(ViewLineMapping {
+                        char_source_bytes: Vec::new(),
+                        visual_to_char: Vec::new(),
+                        line_end_byte: state.buffer.len(),
+                    });
                 }
             }
         }
