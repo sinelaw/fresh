@@ -2,7 +2,7 @@ use crate::model::buffer::Buffer;
 use crate::model::cursor::Cursor;
 use crate::primitives::display_width::{char_width, str_width};
 use crate::primitives::line_wrapping::{char_position_to_segment, wrap_line, WrapConfig};
-use crate::view::ui::view_pipeline::ViewLine;
+use crate::view::ui::view_pipeline::{LineStart, ViewLine};
 /// The viewport - what portion of the buffer is visible
 #[derive(Debug, Clone)]
 pub struct Viewport {
@@ -479,6 +479,27 @@ impl Viewport {
                 } else {
                     // This line starts after target, so previous line contains it
                     break;
+                }
+            }
+        }
+
+        // If the cursor is past the last source-mapped byte, check whether there
+        // is a trailing empty view line (after a source newline) that the cursor
+        // belongs on — e.g. the empty line after a file's trailing '\n'.
+        if let Some(last) = view_lines.last() {
+            let last_idx = view_lines.len() - 1;
+            if last_idx > best_match
+                && last.char_source_bytes.is_empty()
+                && matches!(last.line_start, LineStart::AfterSourceNewline)
+            {
+                let best_max = view_lines[best_match]
+                    .char_source_bytes
+                    .iter()
+                    .filter_map(|b| *b)
+                    .max()
+                    .unwrap_or(0);
+                if target_byte > best_max {
+                    return last_idx;
                 }
             }
         }
@@ -1096,14 +1117,13 @@ impl Viewport {
                     visual_rows_counted += 1;
                 }
 
-                // Now move backwards counting visual rows until we reach target
+                // Now move backwards counting visual rows until we reach target.
+                // Use the content returned by prev() directly instead of calling
+                // next_line() (which can be confused by the pending_trailing_empty_line
+                // flag when the cursor is at EOF after a trailing newline).
                 iter = buffer.line_iterator(cursor_line_start, 80);
                 while visual_rows_counted < target_visual_rows {
-                    if iter.prev().is_none() {
-                        break; // Hit beginning of buffer
-                    }
-
-                    if let Some((_line_start, line_content)) = iter.next_line() {
+                    if let Some((_line_start, line_content)) = iter.prev() {
                         let line_text = if line_content.ends_with('\n') {
                             &line_content[..line_content.len() - 1]
                         } else {
@@ -1111,9 +1131,8 @@ impl Viewport {
                         };
                         let segments = wrap_line(line_text, &wrap_config);
                         visual_rows_counted += segments.len();
-
-                        // Move back to where prev() left us
-                        iter.prev();
+                    } else {
+                        break; // Hit beginning of buffer
                     }
                 }
 

@@ -194,6 +194,24 @@ impl<'a> Iterator for ViewLineIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.token_idx >= self.tokens.len() {
+            // All tokens consumed.  If the previous line ended with a source
+            // newline there is one more real (empty) document line to emit —
+            // e.g. the empty line after a file's trailing '\n'.  Produce it
+            // exactly once, then stop.
+            if matches!(self.next_line_start, LineStart::AfterSourceNewline) {
+                // Flip to Beginning so the *next* call returns None.
+                self.next_line_start = LineStart::Beginning;
+                return Some(ViewLine {
+                    text: String::new(),
+                    char_source_bytes: vec![],
+                    char_styles: vec![],
+                    char_visual_cols: vec![],
+                    visual_to_char: vec![],
+                    tab_starts: HashSet::new(),
+                    line_start: LineStart::AfterSourceNewline,
+                    ends_with_newline: false,
+                });
+            }
             return None;
         }
 
@@ -401,8 +419,14 @@ impl<'a> Iterator for ViewLineIterator<'a> {
         // col's final value is intentionally unused (only needed during iteration)
         let _ = col;
 
-        // Don't return empty lines at the end
-        if text.is_empty() && self.token_idx >= self.tokens.len() {
+        // Don't return empty injected/virtual lines at the end of the token
+        // stream.  However, DO return a trailing empty line that follows a source
+        // newline — it represents a real document line (e.g. after a file's
+        // trailing '\n') and the cursor may sit on it.
+        if text.is_empty()
+            && self.token_idx >= self.tokens.len()
+            && !matches!(line_start, LineStart::AfterSourceNewline)
+        {
             return None;
         }
 
