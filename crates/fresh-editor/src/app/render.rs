@@ -3416,9 +3416,32 @@ impl Editor {
         let estimated_line_length = self.config.editor.estimated_line_length;
         let cursor = *self.active_cursors().primary();
         let cursor_id = self.active_cursors().primary_id();
+
+        // When line wrap is on, use the visual (soft-wrapped) line boundaries
+        if self.config.editor.line_wrap {
+            let split_id = self.split_manager.active_split();
+            if let Some(new_pos) =
+                self.smart_home_visual_line(split_id, cursor.position, estimated_line_length)
+            {
+                let event = Event::MoveCursor {
+                    cursor_id,
+                    old_position: cursor.position,
+                    new_position: new_pos,
+                    old_anchor: cursor.anchor,
+                    new_anchor: None,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0,
+                };
+                self.active_event_log_mut().append(event.clone());
+                self.apply_event_to_active_buffer(&event);
+                return;
+            }
+            // Fall through to physical line logic if visual lookup fails
+        }
+
         let state = self.active_state_mut();
 
-        // Get line information
+        // Get physical line information
         let mut iter = state
             .buffer
             .line_iterator(cursor.position, estimated_line_length);
@@ -3450,6 +3473,66 @@ impl Editor {
 
             self.active_event_log_mut().append(event.clone());
             self.apply_event_to_active_buffer(&event);
+        }
+    }
+
+    /// Compute the smart-home target for a visual (soft-wrapped) line.
+    ///
+    /// On the **first** visual row of a physical line the cursor toggles between
+    /// the first non-whitespace character and position 0 (standard smart-home).
+    ///
+    /// On a **continuation** (wrapped) row the cursor moves to the visual row
+    /// start; if already there it advances to the previous visual row's start
+    /// so that repeated Home presses walk all the way back to position 0.
+    fn smart_home_visual_line(
+        &mut self,
+        split_id: LeafId,
+        cursor_pos: usize,
+        estimated_line_length: usize,
+    ) -> Option<usize> {
+        let visual_start = self
+            .cached_layout
+            .visual_line_start(split_id, cursor_pos, false)?;
+
+        // Determine the physical line start to tell first-row from continuation.
+        let buffer_id = self.split_manager.active_buffer_id()?;
+        let state = self.buffers.get_mut(&buffer_id)?;
+        let mut iter = state
+            .buffer
+            .line_iterator(visual_start, estimated_line_length);
+        let (phys_line_start, content) = iter.next_line()?;
+
+        let is_first_visual_row = visual_start == phys_line_start;
+
+        if is_first_visual_row {
+            // First visual row: toggle first-non-ws ↔ physical line start
+            let visual_end = self
+                .cached_layout
+                .visual_line_end(split_id, cursor_pos, false)
+                .unwrap_or(visual_start);
+            let visual_len = visual_end.saturating_sub(visual_start);
+            let first_non_ws = content
+                .chars()
+                .take(visual_len)
+                .take_while(|c| *c != '\n')
+                .position(|c| !c.is_whitespace())
+                .map(|offset| visual_start + offset)
+                .unwrap_or(visual_start);
+
+            if cursor_pos == first_non_ws {
+                Some(visual_start)
+            } else {
+                Some(first_non_ws)
+            }
+        } else {
+            // Continuation row: go to visual line start, or advance backward
+            if cursor_pos == visual_start {
+                // Already at start – advance to previous visual row's start
+                self.cached_layout
+                    .visual_line_start(split_id, cursor_pos, true)
+            } else {
+                Some(visual_start)
+            }
         }
     }
 
