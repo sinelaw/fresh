@@ -1426,6 +1426,17 @@ impl Editor {
             None => return Ok(()), // No drag start, shouldn't happen
         };
 
+        // Handle composite buffers - use row-based scrolling
+        if self.is_composite_buffer(buffer_id) {
+            return self.handle_composite_scrollbar_drag_relative(
+                row,
+                drag_start_row,
+                split_id,
+                buffer_id,
+                scrollbar_rect,
+            );
+        }
+
         let drag_start_top_byte = match self.mouse_state.drag_start_top_byte {
             Some(b) => b,
             None => return Ok(()), // No drag start, shouldn't happen
@@ -1609,6 +1620,16 @@ impl Editor {
             0.0
         };
 
+        // Handle composite buffers - use row-based scrolling
+        if self.is_composite_buffer(buffer_id) {
+            return self.handle_composite_scrollbar_jump(
+                ratio,
+                split_id,
+                buffer_id,
+                scrollbar_rect,
+            );
+        }
+
         // Get viewport height from SplitViewState
         let viewport_height = self
             .split_view_states
@@ -1723,6 +1744,103 @@ impl Editor {
         // Move cursor to be visible in the new viewport (after releasing the state borrow)
         self.move_cursor_to_visible_area(split_id, buffer_id);
 
+        Ok(())
+    }
+
+    /// Handle scrollbar jump (click on track) for composite buffers.
+    /// Maps the click ratio to a row-based scroll position.
+    fn handle_composite_scrollbar_jump(
+        &mut self,
+        ratio: f64,
+        split_id: LeafId,
+        buffer_id: BufferId,
+        scrollbar_rect: ratatui::layout::Rect,
+    ) -> AnyhowResult<()> {
+        let total_rows = self
+            .composite_buffers
+            .get(&buffer_id)
+            .map(|c| c.row_count())
+            .unwrap_or(0);
+        let content_height = scrollbar_rect.height.saturating_sub(1) as usize;
+        let max_scroll_row = total_rows.saturating_sub(content_height);
+        let target_row = (ratio * max_scroll_row as f64).round() as usize;
+        let target_row = target_row.min(max_scroll_row);
+
+        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+            view_state.set_scroll_row(target_row, max_scroll_row);
+        }
+        Ok(())
+    }
+
+    /// Handle scrollbar thumb drag for composite buffers.
+    /// Uses relative movement from the drag start position.
+    fn handle_composite_scrollbar_drag_relative(
+        &mut self,
+        row: u16,
+        drag_start_row: u16,
+        split_id: LeafId,
+        buffer_id: BufferId,
+        scrollbar_rect: ratatui::layout::Rect,
+    ) -> AnyhowResult<()> {
+        let drag_start_scroll_row = match self.mouse_state.drag_start_composite_scroll_row {
+            Some(r) => r,
+            None => return Ok(()),
+        };
+
+        let total_rows = self
+            .composite_buffers
+            .get(&buffer_id)
+            .map(|c| c.row_count())
+            .unwrap_or(0);
+        let content_height = scrollbar_rect.height.saturating_sub(1) as usize;
+        let max_scroll_row = total_rows.saturating_sub(content_height);
+
+        if max_scroll_row == 0 {
+            return Ok(());
+        }
+
+        let scrollbar_height = scrollbar_rect.height as usize;
+        if scrollbar_height <= 1 {
+            return Ok(());
+        }
+
+        // Calculate thumb size (same formula as render_composite_scrollbar)
+        let thumb_size_raw =
+            (content_height as f64 / total_rows as f64 * scrollbar_height as f64).ceil() as usize;
+        let max_thumb_size = (scrollbar_height as f64 * 0.8).floor() as usize;
+        let thumb_size = thumb_size_raw
+            .max(1)
+            .min(max_thumb_size)
+            .min(scrollbar_height);
+        let max_thumb_start = scrollbar_height.saturating_sub(thumb_size);
+
+        if max_thumb_start == 0 {
+            return Ok(());
+        }
+
+        // Calculate where the thumb was at drag start
+        let start_scroll_ratio =
+            drag_start_scroll_row.min(max_scroll_row) as f64 / max_scroll_row as f64;
+        let thumb_row_at_start =
+            scrollbar_rect.y as f64 + start_scroll_ratio * max_thumb_start as f64;
+
+        // Calculate click offset (where on thumb we clicked)
+        let click_offset = drag_start_row as f64 - thumb_row_at_start;
+
+        // Target thumb position based on current mouse position
+        let target_thumb_row = row as f64 - click_offset;
+
+        // Map target thumb position to scroll ratio
+        let target_scroll_ratio =
+            ((target_thumb_row - scrollbar_rect.y as f64) / max_thumb_start as f64).clamp(0.0, 1.0);
+
+        // Map scroll ratio to target row
+        let target_row = (target_scroll_ratio * max_scroll_row as f64).round() as usize;
+        let target_row = target_row.min(max_scroll_row);
+
+        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+            view_state.set_scroll_row(target_row, max_scroll_row);
+        }
         Ok(())
     }
 

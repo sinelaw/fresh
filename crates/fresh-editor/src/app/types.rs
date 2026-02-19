@@ -660,6 +660,9 @@ pub(super) struct MouseState {
     pub drag_start_popup_scroll: Option<usize>,
     /// Whether we're currently selecting text in a popup (popup index)
     pub selecting_in_popup: Option<usize>,
+    /// Initial composite scroll_row when starting to drag the scrollbar thumb
+    /// Used for composite buffer scrollbar drag
+    pub drag_start_composite_scroll_row: Option<usize>,
 }
 
 /// Mapping from visual row to buffer positions for mouse click handling

@@ -1456,8 +1456,15 @@ impl Editor {
                 // Click on thumb - start drag from current position (don't jump)
                 self.mouse_state.dragging_scrollbar = Some(split_id);
                 self.mouse_state.drag_start_row = Some(row);
-                // Record the current viewport position from SplitViewState
-                if let Some(view_state) = self.split_view_states.get(&split_id) {
+                // Record the current viewport position
+                if self.is_composite_buffer(buffer_id) {
+                    // For composite buffers, store scroll_row
+                    if let Some(view_state) = self.composite_view_states.get(&(split_id, buffer_id))
+                    {
+                        self.mouse_state.drag_start_composite_scroll_row =
+                            Some(view_state.scroll_row);
+                    }
+                } else if let Some(view_state) = self.split_view_states.get(&split_id) {
                     self.mouse_state.drag_start_top_byte = Some(view_state.viewport.top_byte);
                     self.mouse_state.drag_start_view_line_offset =
                         Some(view_state.viewport.top_view_line_offset);
