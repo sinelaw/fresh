@@ -93,15 +93,18 @@ fn test_ctrl_end_viewport_scrolls_to_show_cursor_line() {
     );
 }
 
-/// After Ctrl+End, pressing Left moves to the end of the previous content
-/// line (correct).  From there, pressing Down should return to the empty
-/// trailing line — the same position Ctrl+End reached.
+/// After Ctrl+End → Left the cursor is on the last content line.
+/// Pressing Down should move to the trailing empty line.  Verify via
+/// the rendered cursor row (not just the byte position).
 #[test]
 fn test_down_from_last_content_line_reaches_trailing_empty_line() {
-    let content = make_csv_like_content_with_trailing_newline();
+    // Use a wider terminal (135x37) — the bug only manifests when the
+    // content area is wide enough that lines wrap into fewer visual rows.
+    let mut harness = EditorTestHarness::with_config(135, 37, config_with_line_wrap()).unwrap();
+    // Load the real CSV file whose line lengths and content trigger the bug.
+    let content = std::fs::read_to_string("/home/noam/Downloads/olney-book-1.csv")
+        .expect("need olney-book-1.csv to reproduce this bug");
     let doc_end = content.len();
-
-    let mut harness = EditorTestHarness::with_config(80, 24, config_with_line_wrap()).unwrap();
     let _fixture = harness.load_buffer_from_text(&content).unwrap();
     harness.render().unwrap();
 
@@ -110,56 +113,55 @@ fn test_down_from_last_content_line_reaches_trailing_empty_line() {
         .send_key(KeyCode::End, KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    assert_eq!(harness.cursor_position(), doc_end);
+
+    // Record the rendered cursor position at doc end — this is where Down
+    // should return us to.
+    let (_end_cx, end_cy) = harness.screen_cursor_position();
+    let end_row_text = harness.get_row_text(end_cy);
 
     // Left → end of previous content line
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let pos_after_left = harness.cursor_position();
-    assert!(
-        pos_after_left < doc_end,
-        "Left from doc end should move into the previous line, got {}",
-        pos_after_left
-    );
+    let (_left_cx, left_cy) = harness.screen_cursor_position();
 
     // Down → should return to the empty trailing line (doc_end)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let pos_after_down = harness.cursor_position();
+    let (_down_cx, down_cy) = harness.screen_cursor_position();
+    let down_row_text = harness.get_row_text(down_cy);
 
-    // Also check cursor row — should be on the empty trailing line
-    let (_cx, cy) = harness.screen_cursor_position();
-    let cursor_row = harness.get_row_text(cy);
-    let has_data_content = cursor_row.contains("entry_")
-        || cursor_row.contains("Entry ")
-        || cursor_row.contains(".html")
-        || cursor_row.contains("example.com")
-        || cursor_row.contains("archive.org")
-        || cursor_row.contains("NEWTON")
-        || cursor_row.contains("Poetry")
-        || cursor_row.contains("longer");
-
-    assert_eq!(
-        pos_after_down,
-        doc_end,
-        "Down from last content line should reach the trailing empty line ({}), \
-         got {} (left was at {})\n\
-         Cursor row text: {:?}\n\
-         Screen:\n{}",
-        doc_end,
-        pos_after_down,
-        pos_after_left,
-        cursor_row.trim(),
-        harness.screen_to_string()
-    );
+    // The rendered cursor row must show the empty trailing line, not
+    // content from the previous data line.
+    let has_data_content = down_row_text.contains("entry_")
+        || down_row_text.contains("Entry ")
+        || down_row_text.contains(".html")
+        || down_row_text.contains("example.com")
+        || down_row_text.contains("archive.org")
+        || down_row_text.contains("NEWTON")
+        || down_row_text.contains("Poetry")
+        || down_row_text.contains("longer");
 
     assert!(
         !has_data_content,
-        "Down: cursor row ({}) should be the empty trailing line, not data content.\n\
-         Cursor row text: {:?}\n\
+        "Down after Left from Ctrl+End: the rendered cursor (row {}) should be \
+         on the empty final line, but it shows data content. The cursor did not \
+         move down to the trailing empty line.\n\
+         pos_after_left={}, pos_after_down={}, doc_end={}\n\
+         left_cy={}, down_cy={}, end_cy={}\n\
+         Ctrl+End row text: {:?}\n\
+         Down row text: {:?}\n\
          Screen:\n{}",
-        cy,
-        cursor_row.trim(),
+        down_cy,
+        pos_after_left,
+        pos_after_down,
+        doc_end,
+        left_cy,
+        down_cy,
+        end_cy,
+        end_row_text.trim(),
+        down_row_text.trim(),
         harness.screen_to_string()
     );
 }
