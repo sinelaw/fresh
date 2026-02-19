@@ -416,7 +416,7 @@ impl Editor {
     }
 
     /// Request LSP completion at current cursor position
-    pub(crate) fn request_completion(&mut self) -> AnyhowResult<()> {
+    pub(crate) fn request_completion(&mut self) {
         // Get the current buffer and cursor position
         let cursor_pos = self.active_cursors().primary().position;
         let state = self.active_state();
@@ -448,8 +448,6 @@ impl Editor {
             self.pending_completion_request = Some(request_id);
             self.lsp_status = "LSP: completion...".to_string();
         }
-
-        Ok(())
     }
 
     /// Check if the inserted character should trigger completion
@@ -486,9 +484,7 @@ impl Editor {
             );
             // Cancel any pending scheduled trigger
             self.scheduled_completion_trigger = None;
-            if let Err(e) = self.request_completion() {
-                tracing::warn!("Failed to request completion: {}", e);
-            }
+            self.request_completion();
             return;
         }
 
@@ -949,7 +945,7 @@ impl Editor {
     }
 
     /// Request LSP signature help at current cursor position
-    pub(crate) fn request_signature_help(&mut self) -> AnyhowResult<()> {
+    pub(crate) fn request_signature_help(&mut self) {
         // Get the current buffer and cursor position
         let cursor_pos = self.active_cursors().primary().position;
         let state = self.active_state();
@@ -982,8 +978,6 @@ impl Editor {
             self.pending_signature_help_request = Some(request_id);
             self.lsp_status = "LSP: signature help...".to_string();
         }
-
-        Ok(())
     }
 
     /// Handle signature help response from LSP

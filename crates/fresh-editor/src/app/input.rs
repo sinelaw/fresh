@@ -527,7 +527,7 @@ impl Editor {
                 );
             }
             Action::LspCompletion => {
-                self.request_completion()?;
+                self.request_completion();
             }
             Action::LspGotoDefinition => {
                 self.request_goto_definition()?;
@@ -542,7 +542,7 @@ impl Editor {
                 self.request_references()?;
             }
             Action::LspSignatureHelp => {
-                self.request_signature_help()?;
+                self.request_signature_help();
             }
             Action::LspCodeActions => {
                 self.request_code_actions()?;
@@ -3264,9 +3264,7 @@ impl Editor {
 
         // Auto-trigger signature help on '(' and ','
         if c == '(' || c == ',' {
-            if let Err(e) = self.request_signature_help() {
-                tracing::warn!("Failed to request signature help: {}", e);
-            }
+            self.request_signature_help();
         }
 
         // Auto-trigger completion on trigger characters

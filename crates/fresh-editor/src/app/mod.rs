@@ -1798,10 +1798,7 @@ impl Editor {
         }
 
         // Trigger the completion request
-        if let Err(e) = self.request_completion() {
-            tracing::debug!("Failed to trigger debounced completion: {}", e);
-            return false;
-        }
+        self.request_completion();
 
         true
     }
