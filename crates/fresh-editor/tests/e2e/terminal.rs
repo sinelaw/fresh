@@ -2954,3 +2954,58 @@ fn test_windows_terminal_shows_prompt_and_executes_command() {
         screen
     );
 }
+
+/// Test that bracket paste (external paste / CrosstermEvent::Paste) sends text
+/// to the terminal PTY when in terminal mode.
+///
+/// When the editor is in terminal mode with an open terminal, a bracketed paste
+/// event should route the pasted text to the PTY (just like typing it), not
+/// insert it into the terminal's backing buffer as editor text.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell commands (cat)
+fn test_bracket_paste_in_terminal_mode() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    // Should be in terminal mode
+    assert!(harness.editor().is_terminal_mode());
+
+    // Wait for shell prompt to be ready by sending a simple command first
+    harness
+        .editor_mut()
+        .send_terminal_input(b"echo SHELL_READY\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("SHELL_READY"))
+        .unwrap();
+
+    // Now start `cat` which echoes stdin back to stdout
+    harness.editor_mut().send_terminal_input(b"cat\n");
+
+    // Wait for cat to start (it consumes the echo of the command)
+    harness
+        .wait_until(|h| h.screen_to_string().contains("cat"))
+        .unwrap();
+
+    // Simulate a bracket paste event (CrosstermEvent::Paste) by calling paste_text
+    // directly, which is what the event loop does for bracketed paste
+    harness
+        .editor_mut()
+        .paste_text("BRACKET_PASTE_MARKER\n".to_string());
+
+    // Wait for the pasted text to appear in terminal output (cat echoes it)
+    harness
+        .wait_until(|h| h.screen_to_string().contains("BRACKET_PASTE_MARKER"))
+        .unwrap();
+
+    // Verify the text is visible on screen (came through the PTY, not buffer insertion)
+    harness.assert_screen_contains("BRACKET_PASTE_MARKER");
+
+    // Should still be in terminal mode
+    assert!(harness.editor().is_terminal_mode());
+
+    // Clean up: send Ctrl+D to exit cat
+    harness.editor_mut().send_terminal_input(b"\x04");
+}

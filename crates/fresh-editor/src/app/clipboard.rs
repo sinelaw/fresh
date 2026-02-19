@@ -537,6 +537,12 @@ impl Editor {
             return;
         }
 
+        // If in terminal mode, send paste to the terminal PTY
+        if self.terminal_mode {
+            self.send_terminal_input(normalized.as_bytes());
+            return;
+        }
+
         // Convert to buffer's line ending format
         let buffer_line_ending = self.active_state().buffer.line_ending();
         let paste_text = match buffer_line_ending {
