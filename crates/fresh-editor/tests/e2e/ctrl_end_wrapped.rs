@@ -165,3 +165,57 @@ fn test_down_from_last_content_line_reaches_trailing_empty_line() {
         harness.screen_to_string()
     );
 }
+
+/// After Ctrl+End with line wrapping on, disabling line wrap via the
+/// command palette should keep the cursor on the trailing empty line —
+/// not on a tilde row below it.
+#[test]
+fn test_ctrl_end_then_disable_line_wrap_cursor_row() {
+    let mut harness = EditorTestHarness::with_config(135, 37, config_with_line_wrap()).unwrap();
+    let content = std::fs::read_to_string("/home/noam/Downloads/olney-book-1.csv")
+        .expect("need olney-book-1.csv to reproduce this bug");
+    let doc_end = content.len();
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
+    harness.render().unwrap();
+
+    // Ctrl+End → cursor on trailing empty line
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.cursor_position(), doc_end);
+
+    // Toggle line wrap off via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Toggle Line Wrap").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Cursor byte position should still be at doc end
+    assert_eq!(
+        harness.cursor_position(),
+        doc_end,
+        "Cursor byte should remain at doc end after toggling line wrap off"
+    );
+
+    // The rendered cursor row must be the empty trailing line, not a tilde
+    let (_cx, cy) = harness.screen_cursor_position();
+    let cursor_row = harness.get_row_text(cy);
+
+    assert!(
+        !cursor_row.contains('~'),
+        "After Ctrl+End then disabling line wrap, the cursor (row {}) landed on \
+         a tilde row instead of the empty trailing line.\n\
+         Cursor row text: {:?}\n\
+         Screen:\n{}",
+        cy,
+        cursor_row.trim(),
+        harness.screen_to_string()
+    );
+}

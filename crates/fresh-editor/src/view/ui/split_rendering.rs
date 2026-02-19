@@ -4549,9 +4549,17 @@ impl SplitRenderer {
 
         if buffer_ends_with_newline {
             if let Some(end) = last_line_end {
-                // Cursor should appear on the implicit empty line after the newline
-                // Include gutter width in x coordinate
-                return Some((gutter_width as u16, end.pos.1.saturating_add(1)));
+                // When the last rendered line was the newline-terminated content
+                // line, the cursor belongs on the implicit empty line one row
+                // below.  But when the trailing empty line was already emitted
+                // by the ViewLineIterator (terminated_with_newline == false),
+                // the cursor belongs on that rendered row itself.
+                let y = if end.terminated_with_newline {
+                    end.pos.1.saturating_add(1)
+                } else {
+                    end.pos.1
+                };
+                return Some((gutter_width as u16, y));
             }
             return Some((gutter_width as u16, lines_rendered as u16));
         }
