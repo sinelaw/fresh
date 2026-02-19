@@ -27,7 +27,10 @@ fn test_cursor_sync_with_non_ascii_box_drawing_chars() {
         expected_buffer_pos, buffer_pos
     );
 
-    // Move cursor to the beginning of the line
+    // Move cursor to the beginning of the line.
+    // Press Home twice: first goes to first non-whitespace (smart home),
+    // second goes to column 0.
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     // Cursor should now be at position 0
@@ -62,7 +65,8 @@ fn test_cursor_sync_with_non_ascii_box_drawing_chars() {
     }
 
     // Now test: type a character and verify it appears at the visual cursor position
-    // Move to somewhere in the middle of the line
+    // Move to somewhere in the middle of the line (Home twice to ensure column 0)
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     // Move right 20 characters

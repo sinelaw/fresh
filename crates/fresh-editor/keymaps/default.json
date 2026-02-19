@@ -128,7 +128,7 @@
     {
       "key": "Home",
       "modifiers": [],
-      "action": "move_line_start",
+      "action": "smart_home",
       "args": {},
       "when": "normal"
     },

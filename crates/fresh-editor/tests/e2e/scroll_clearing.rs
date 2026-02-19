@@ -914,6 +914,9 @@ fn test_cursor_before_first_tab() {
     // Move to line 3 (which starts with tabs)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    // Press Home twice: first goes to first non-whitespace (smart home),
+    // second goes to column 0 (before tabs).
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 

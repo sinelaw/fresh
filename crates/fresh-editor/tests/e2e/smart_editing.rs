@@ -188,7 +188,10 @@ fn test_auto_close_before_whitespace() {
     let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
-    // Position cursor at beginning (before space)
+    // Position cursor at beginning (before space).
+    // Press Home twice: first goes to first non-whitespace (smart home),
+    // second goes to column 0 (before the leading space).
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     // Type opening paren - should auto-close before whitespace

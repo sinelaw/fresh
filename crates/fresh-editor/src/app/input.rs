@@ -825,6 +825,15 @@ impl Editor {
             }
 
             Action::SmartHome => {
+                // In composite (diff) views, use LineStart movement
+                let buffer_id = self.active_buffer();
+                if self.is_composite_buffer(buffer_id) {
+                    if let Some(_handled) =
+                        self.handle_composite_action(buffer_id, &Action::SmartHome)
+                    {
+                        return Ok(());
+                    }
+                }
                 self.smart_home();
             }
             Action::ToggleComment => {

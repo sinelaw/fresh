@@ -1580,12 +1580,24 @@ impl EditorTestHarness {
                 }
             }
             KeyCode::Home => {
-                // Find start of current line
+                // Smart home: toggle between first non-whitespace and line start
                 let line_start = self.shadow_string[..self.shadow_cursor]
                     .rfind('\n')
                     .map(|pos| pos + 1)
                     .unwrap_or(0);
-                self.shadow_cursor = line_start;
+                let line_end = self.shadow_string[line_start..]
+                    .find('\n')
+                    .map(|pos| line_start + pos)
+                    .unwrap_or(self.shadow_string.len());
+                let first_non_ws = self.shadow_string[line_start..line_end]
+                    .find(|c: char| c != ' ' && c != '\t')
+                    .map(|offset| line_start + offset)
+                    .unwrap_or(line_start);
+                if self.shadow_cursor == first_non_ws {
+                    self.shadow_cursor = line_start;
+                } else {
+                    self.shadow_cursor = first_non_ws;
+                }
             }
             KeyCode::End => {
                 // Find end of current line

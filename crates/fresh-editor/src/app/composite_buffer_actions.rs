@@ -795,7 +795,7 @@ impl Editor {
                 CursorMovement::Right,
                 false,
             ),
-            Action::MoveLineStart => self.handle_cursor_movement_action(
+            Action::MoveLineStart | Action::SmartHome => self.handle_cursor_movement_action(
                 split_id,
                 buffer_id,
                 CursorMovement::LineStart,
