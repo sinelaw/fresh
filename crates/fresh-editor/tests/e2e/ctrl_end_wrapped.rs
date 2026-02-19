@@ -92,3 +92,74 @@ fn test_ctrl_end_viewport_scrolls_to_show_cursor_line() {
         harness.screen_to_string()
     );
 }
+
+/// After Ctrl+End, pressing Left moves to the end of the previous content
+/// line (correct).  From there, pressing Down should return to the empty
+/// trailing line — the same position Ctrl+End reached.
+#[test]
+fn test_down_from_last_content_line_reaches_trailing_empty_line() {
+    let content = make_csv_like_content_with_trailing_newline();
+    let doc_end = content.len();
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config_with_line_wrap()).unwrap();
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
+    harness.render().unwrap();
+
+    // Ctrl+End → empty trailing line
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.cursor_position(), doc_end);
+
+    // Left → end of previous content line
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let pos_after_left = harness.cursor_position();
+    assert!(
+        pos_after_left < doc_end,
+        "Left from doc end should move into the previous line, got {}",
+        pos_after_left
+    );
+
+    // Down → should return to the empty trailing line (doc_end)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let pos_after_down = harness.cursor_position();
+
+    // Also check cursor row — should be on the empty trailing line
+    let (_cx, cy) = harness.screen_cursor_position();
+    let cursor_row = harness.get_row_text(cy);
+    let has_data_content = cursor_row.contains("entry_")
+        || cursor_row.contains("Entry ")
+        || cursor_row.contains(".html")
+        || cursor_row.contains("example.com")
+        || cursor_row.contains("archive.org")
+        || cursor_row.contains("NEWTON")
+        || cursor_row.contains("Poetry")
+        || cursor_row.contains("longer");
+
+    assert_eq!(
+        pos_after_down,
+        doc_end,
+        "Down from last content line should reach the trailing empty line ({}), \
+         got {} (left was at {})\n\
+         Cursor row text: {:?}\n\
+         Screen:\n{}",
+        doc_end,
+        pos_after_down,
+        pos_after_left,
+        cursor_row.trim(),
+        harness.screen_to_string()
+    );
+
+    assert!(
+        !has_data_content,
+        "Down: cursor row ({}) should be the empty trailing line, not data content.\n\
+         Cursor row text: {:?}\n\
+         Screen:\n{}",
+        cy,
+        cursor_row.trim(),
+        harness.screen_to_string()
+    );
+}
