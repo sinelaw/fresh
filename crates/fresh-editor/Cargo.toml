@@ -76,6 +76,13 @@ runtime = [
     "dep:open",
 
 ]
+# GUI mode - native window with GPU-accelerated rendering via wgpu
+gui = [
+    "runtime",
+    "dep:winit",
+    "dep:wgpu",
+    "dep:ratatui-wgpu",
+]
 # Schema-only feature for minimal builds (just schema generation)
 schema-only = []
 # WASM browser build - shared editor core without native dependencies
@@ -174,6 +181,11 @@ include_dir = { version = "0.7", optional = true }
 tempfile = { version = "3.24", optional = true }
 trash = { version = "5.2.5", optional = true }
 open = { version = "5.3", optional = true }
+
+# GUI mode dependencies (optional, enabled by "gui" feature)
+winit = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true }
+ratatui-wgpu = { git = "https://github.com/Jesterhearts/ratatui-wgpu", rev = "cdcf5c6", optional = true }
 
 [dev-dependencies]
 proptest = "1.9"

@@ -130,6 +130,11 @@ struct Cli {
     /// [deprecated: use `fresh init`]
     #[arg(long, hide = true, value_name = "TYPE")]
     init: Option<Option<String>>,
+
+    /// Launch in GUI mode (native window with GPU rendering)
+    #[cfg(feature = "gui")]
+    #[arg(long)]
+    gui: bool,
 }
 
 // Internal Args struct - maps from new Cli to format used by rest of codebase
@@ -157,6 +162,9 @@ struct Args {
     kill: Option<Option<String>>,
     /// Open files in a session without attaching (session_name, files)
     open_files_in_session: Option<(Option<String>, Vec<String>)>,
+    /// Launch in GUI mode
+    #[cfg(feature = "gui")]
+    gui: bool,
 }
 
 impl From<Cli> for Args {
@@ -368,6 +376,8 @@ impl From<Cli> for Args {
             session_name,
             kill,
             open_files_in_session,
+            #[cfg(feature = "gui")]
+            gui: cli.gui,
         }
     }
 }
@@ -2514,6 +2524,18 @@ fn real_main() -> AnyhowResult<()> {
         return run_attach_command(&args);
     }
 
+    // Handle --gui: launch in native window mode (no terminal setup needed)
+    #[cfg(feature = "gui")]
+    if args.gui {
+        return fresh::gui::run_gui(
+            &args.files,
+            args.no_plugins,
+            args.config.as_ref(),
+            args.locale.as_deref(),
+            args.no_session,
+        );
+    }
+
     let SetupState {
         config,
         mut tracing_handles,
@@ -2733,54 +2755,11 @@ where
     let mut pending_event: Option<CrosstermEvent> = None;
 
     loop {
-        // Process async messages and poll for file changes (auto-revert, file tree)
-        if editor.process_async_messages() {
-            needs_render = true;
-        }
-
-        // Process pending file opens from CLI arguments
-        // This runs after the first render, ensuring files go through the same
-        // code path as interactive file opens (with proper UI prompts for errors)
-        if editor.process_pending_file_opens() {
-            needs_render = true;
-        }
-
-        // Check mouse hover timer for LSP hover requests
-        if editor.check_mouse_hover_timer() {
-            needs_render = true;
-        }
-
-        // Check semantic highlight debounce timer
-        if editor.check_semantic_highlight_timer() {
-            needs_render = true;
-        }
-
-        // Check completion trigger timer (debounced quick suggestions)
-        if editor.check_completion_trigger_timer() {
-            needs_render = true;
-        }
-
-        // Check for warnings and open warning log if any occurred
-        if editor.check_warning_log() {
-            needs_render = true;
-        }
-
-        // Poll stdin streaming progress (if active)
-        if editor.poll_stdin_streaming() {
-            needs_render = true;
-        }
-
-        if let Err(e) = editor.auto_recovery_save_dirty_buffers() {
-            tracing::debug!("Auto-recovery-save error: {}", e);
-        }
-
-        if let Err(e) = editor.auto_save_persistent_buffers() {
-            tracing::debug!("Auto-save (disk) error: {}", e);
-        }
-
-        // Handle hard redraw requests (e.g. after returning from sudo)
-        if editor.take_full_redraw_request() {
+        // Run shared per-tick housekeeping (async messages, timers, auto-save, etc.)
+        if fresh::app::editor_tick(editor, || {
             terminal.clear()?;
+            Ok(())
+        })? {
             needs_render = true;
         }
 

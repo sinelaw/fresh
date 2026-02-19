@@ -48,6 +48,8 @@ oxc_diagnostics = "0.112.0"
 tree-sitter = "0.26.5"
 tree-sitter-highlight = "0.26.3"
 crossterm = "0.29"
+winit = "0.30"
+wgpu = "28.0"
 lsp-types = "0.97"
 ts-rs = { version = "11.1", features = ["serde_json"] }
 # Add more as needed during refactor

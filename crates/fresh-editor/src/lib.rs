@@ -49,6 +49,10 @@ pub mod server;
 #[cfg(any(feature = "runtime", feature = "wasm", feature = "dev-bins"))]
 pub mod view;
 
+// GUI mode - native window with wgpu rendering
+#[cfg(feature = "gui")]
+pub mod gui;
+
 // WASM-specific modules
 #[cfg(feature = "wasm")]
 pub mod wasm;

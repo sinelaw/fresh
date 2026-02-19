@@ -45,6 +45,53 @@ use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 use std::path::Component;
 
+/// Shared per-tick housekeeping: process async messages, check timers, auto-save, etc.
+/// Returns true if a render is needed. The `clear_terminal` callback handles full-redraw
+/// requests (terminal clears the screen; GUI can ignore or handle differently).
+/// Used by both the terminal event loop and the GUI event loop.
+pub fn editor_tick(
+    editor: &mut Editor,
+    mut clear_terminal: impl FnMut() -> AnyhowResult<()>,
+) -> AnyhowResult<bool> {
+    let mut needs_render = false;
+
+    if editor.process_async_messages() {
+        needs_render = true;
+    }
+    if editor.process_pending_file_opens() {
+        needs_render = true;
+    }
+    if editor.check_mouse_hover_timer() {
+        needs_render = true;
+    }
+    if editor.check_semantic_highlight_timer() {
+        needs_render = true;
+    }
+    if editor.check_completion_trigger_timer() {
+        needs_render = true;
+    }
+    if editor.check_warning_log() {
+        needs_render = true;
+    }
+    if editor.poll_stdin_streaming() {
+        needs_render = true;
+    }
+
+    if let Err(e) = editor.auto_recovery_save_dirty_buffers() {
+        tracing::debug!("Auto-recovery-save error: {}", e);
+    }
+    if let Err(e) = editor.auto_save_persistent_buffers() {
+        tracing::debug!("Auto-save (disk) error: {}", e);
+    }
+
+    if editor.take_full_redraw_request() {
+        clear_terminal()?;
+        needs_render = true;
+    }
+
+    Ok(needs_render)
+}
+
 /// Normalize a path by resolving `.` and `..` components without requiring the path to exist.
 /// This is similar to canonicalize but works on paths that don't exist yet.
 pub(crate) fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
