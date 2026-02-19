@@ -1351,7 +1351,7 @@ impl Editor {
                 use crate::view::ui::view_pipeline::ViewLineIterator;
                 let tab_size = self.config.editor.tab_size;
                 let view_lines: Vec<_> =
-                    ViewLineIterator::new(&tokens, false, false, tab_size).collect();
+                    ViewLineIterator::new(&tokens, false, false, tab_size, false).collect();
                 view_state
                     .viewport
                     .scroll_view_lines(&view_lines, delta as isize);

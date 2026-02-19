@@ -127,6 +127,10 @@ pub struct ViewLineIterator<'a> {
     ansi_aware: bool,
     /// Tab width for rendering (number of spaces per tab)
     tab_size: usize,
+    /// Whether the token stream covers the end of the buffer.
+    /// When true, a trailing empty line is emitted after a final source newline
+    /// (representing the empty line after a file's trailing '\n').
+    at_buffer_end: bool,
 }
 
 impl<'a> ViewLineIterator<'a> {
@@ -136,6 +140,8 @@ impl<'a> ViewLineIterator<'a> {
     /// - `binary_mode`: Whether to render unprintable chars as code points
     /// - `ansi_aware`: Whether to parse ANSI escape sequences (giving them zero visual width)
     /// - `tab_size`: Tab width for rendering (number of spaces per tab, should be > 0)
+    /// - `at_buffer_end`: Whether the token stream covers the end of the buffer.
+    ///   When true, a trailing empty line is emitted after a final source newline.
     ///
     /// Note: If tab_size is 0, it will be treated as 4 (the default) to prevent division by zero.
     /// This is a defensive measure to handle invalid configuration gracefully.
@@ -144,6 +150,7 @@ impl<'a> ViewLineIterator<'a> {
         binary_mode: bool,
         ansi_aware: bool,
         tab_size: usize,
+        at_buffer_end: bool,
     ) -> Self {
         // Defensive: treat 0 as 4 (default) to prevent division by zero in tab_expansion_width
         // This can happen if invalid config (tab_size: 0) is loaded
@@ -155,6 +162,7 @@ impl<'a> ViewLineIterator<'a> {
             binary_mode,
             ansi_aware,
             tab_size,
+            at_buffer_end,
         }
     }
 
@@ -197,8 +205,9 @@ impl<'a> Iterator for ViewLineIterator<'a> {
             // All tokens consumed.  If the previous line ended with a source
             // newline there is one more real (empty) document line to emit —
             // e.g. the empty line after a file's trailing '\n'.  Produce it
-            // exactly once, then stop.
-            if matches!(self.next_line_start, LineStart::AfterSourceNewline) {
+            // exactly once, then stop.  Only do this when the tokens cover
+            // the actual end of the buffer (not a viewport slice).
+            if self.at_buffer_end && matches!(self.next_line_start, LineStart::AfterSourceNewline) {
                 // Flip to Beginning so the *next* call returns None.
                 self.next_line_start = LineStart::Beginning;
                 return Some(ViewLine {
@@ -419,13 +428,24 @@ impl<'a> Iterator for ViewLineIterator<'a> {
         // col's final value is intentionally unused (only needed during iteration)
         let _ = col;
 
+        // If we consumed all remaining tokens without hitting a Newline or Break,
+        // the content didn't end with a line terminator.  Reset next_line_start
+        // so the trailing-empty-line logic (at the top of next()) doesn't
+        // incorrectly fire on the subsequent call.  The `ends_with_newline` flag
+        // tells us whether the loop exited via a Newline/Break (true) or by
+        // exhausting all tokens (false).
+        if !ends_with_newline && self.token_idx >= self.tokens.len() {
+            self.next_line_start = LineStart::Beginning;
+        }
+
         // Don't return empty injected/virtual lines at the end of the token
         // stream.  However, DO return a trailing empty line that follows a source
         // newline — it represents a real document line (e.g. after a file's
-        // trailing '\n') and the cursor may sit on it.
+        // trailing '\n') and the cursor may sit on it — but only when
+        // at_buffer_end is set (otherwise this is just a viewport slice).
         if text.is_empty()
             && self.token_idx >= self.tokens.len()
-            && !matches!(line_start, LineStart::AfterSourceNewline)
+            && !(self.at_buffer_end && matches!(line_start, LineStart::AfterSourceNewline))
         {
             return None;
         }
@@ -548,7 +568,8 @@ impl Layout {
         source_range: Range<usize>,
         tab_size: usize,
     ) -> Self {
-        let lines: Vec<ViewLine> = ViewLineIterator::new(tokens, false, false, tab_size).collect();
+        let lines: Vec<ViewLine> =
+            ViewLineIterator::new(tokens, false, false, tab_size, false).collect();
         Self::new(lines, source_range)
     }
 
@@ -657,7 +678,7 @@ mod tests {
             make_newline_token(Some(13)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4, false).collect();
 
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].text, "Line 1\n");
@@ -678,7 +699,7 @@ mod tests {
             make_newline_token(Some(21)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4, false).collect();
 
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].line_start, LineStart::Beginning);
@@ -703,7 +724,7 @@ mod tests {
             make_newline_token(Some(6)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4, false).collect();
 
         assert_eq!(lines.len(), 2);
 
@@ -751,7 +772,7 @@ mod tests {
             make_newline_token(Some(33)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4, false).collect();
 
         assert_eq!(lines.len(), 5);
 
@@ -832,12 +853,12 @@ mod tests {
         ];
 
         // Without binary mode - control chars would be rendered raw or as replacement
-        let lines_normal: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+        let lines_normal: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4, false).collect();
         assert_eq!(lines_normal.len(), 1);
         // In normal mode, we don't format control chars specially
 
         // With binary mode - control chars should be formatted as <XX>
-        let lines_binary: Vec<_> = ViewLineIterator::new(&tokens, true, false, 4).collect();
+        let lines_binary: Vec<_> = ViewLineIterator::new(&tokens, true, false, 4, false).collect();
         assert_eq!(lines_binary.len(), 1);
         assert!(
             lines_binary[0].text.contains("<00>"),
@@ -862,7 +883,7 @@ mod tests {
             style: None,
         }];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens, true, false, 4).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, true, false, 4, false).collect();
 
         // Should have rendered the 0x1A as <1A>
         let combined: String = lines.iter().map(|l| l.text.as_str()).collect();
@@ -884,7 +905,7 @@ mod tests {
             make_newline_token(Some(15)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens, true, false, 4).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, true, false, 4, false).collect();
         assert_eq!(lines.len(), 1);
         assert!(
             lines[0].text.contains("Normal text 123"),
@@ -902,7 +923,7 @@ mod tests {
             make_newline_token(Some(6)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4, false).collect();
         assert_eq!(lines.len(), 1);
 
         // visual_to_char should have one entry per visual column
@@ -965,7 +986,7 @@ mod tests {
             make_newline_token(Some(5)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4, false).collect();
         assert_eq!(lines.len(), 1);
 
         // a=1 col, 你=2 cols, b=1 col, \n=1 col = 5 total visual width
@@ -1027,7 +1048,7 @@ mod tests {
             make_newline_token(Some(3)), // \r position in CRLF
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4, false).collect();
         assert_eq!(lines.len(), 1);
 
         // The ViewLine should have: 'a', 'b', 'c', '\n'
@@ -1081,7 +1102,7 @@ mod tests {
             make_newline_token(Some(13)), // \r at byte 13
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4, false).collect();
         assert_eq!(lines.len(), 3);
 
         // Line 1 verification
@@ -1124,7 +1145,7 @@ mod tests {
             make_newline_token(Some(6)),
         ];
 
-        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4, false).collect();
 
         // Line 1: visual columns 0,1 should map to bytes 0,1
         assert_eq!(

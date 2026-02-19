@@ -2387,6 +2387,7 @@ impl SplitRenderer {
         );
 
         // Use plugin transform if available, otherwise use base tokens
+        let has_view_transform = view_transform.is_some();
         let mut tokens = view_transform.map(|vt| vt.tokens).unwrap_or(base_tokens);
 
         // Apply soft breaks — marker-based line wrapping that survives edits without flicker.
@@ -2444,11 +2445,24 @@ impl SplitRenderer {
         // Enable ANSI awareness for non-binary content to handle escape sequences correctly
         let is_binary = state.buffer.is_binary();
         let ansi_aware = !is_binary; // ANSI parsing for normal text files
+        let at_buffer_end = if has_view_transform {
+            // View transforms supply their own token streams; the trailing
+            // empty line logic doesn't apply to them.
+            false
+        } else {
+            let max_source_offset = tokens
+                .iter()
+                .filter_map(|t| t.source_offset)
+                .max()
+                .unwrap_or(0);
+            max_source_offset + 2 >= state.buffer.len()
+        };
         let source_lines: Vec<ViewLine> = ViewLineIterator::new(
             &tokens,
             is_binary,
             ansi_aware,
             state.buffer_settings.tab_size,
+            at_buffer_end,
         )
         .collect();
 
@@ -2502,14 +2516,17 @@ impl SplitRenderer {
     fn inject_virtual_lines(source_lines: Vec<ViewLine>, state: &EditorState) -> Vec<ViewLine> {
         use crate::view::virtual_text::VirtualTextPosition;
 
-        // Get viewport byte range from source lines
+        // Get viewport byte range from source lines.
+        // Use the last line that has source bytes (not a trailing empty line
+        // which the iterator may emit at the buffer end).
         let viewport_start = source_lines
             .first()
             .and_then(|l| l.char_source_bytes.iter().find_map(|m| *m))
             .unwrap_or(0);
         let viewport_end = source_lines
-            .last()
-            .and_then(|l| l.char_source_bytes.iter().rev().find_map(|m| *m))
+            .iter()
+            .rev()
+            .find_map(|l| l.char_source_bytes.iter().rev().find_map(|m| *m))
             .map(|b| b + 1)
             .unwrap_or(viewport_start);
 
@@ -3679,6 +3696,7 @@ impl SplitRenderer {
         let mut cursor_screen_y = 0u16;
         let mut have_cursor = false;
         let mut last_line_end: Option<LastLineEnd> = None;
+        let mut trailing_empty_line_rendered = false;
 
         let is_empty_buffer = state.buffer.is_empty();
 
@@ -4144,8 +4162,12 @@ impl SplitRenderer {
                     // A cursor ON the last character should render on that character (handled in main loop).
                     let matches_after = after_last_char_buf_pos.is_some_and(|bp| pos == bp);
                     // Fallback: when there's no mapping after last char (EOF), check if cursor is after last char
-                    // The fallback should match the position that would be "after" if there was a mapping
-                    let expected_after_pos = last_char_buf_pos.map(|p| p + 1).unwrap_or(0);
+                    // The fallback should match the position that would be "after" if there was a mapping.
+                    // For empty lines with no source mappings (e.g. trailing empty line after final '\n'),
+                    // the expected position is buffer.len() (EOF), not 0.
+                    let expected_after_pos = last_char_buf_pos
+                        .map(|p| p + 1)
+                        .unwrap_or(state.buffer.len());
                     let matches_fallback =
                         after_last_char_buf_pos.is_none() && pos == expected_after_pos;
 
@@ -4339,10 +4361,11 @@ impl SplitRenderer {
                     } else {
                         last_byte_start
                     }
-                } else if matches!(current_view_line.line_start, LineStart::AfterSourceNewline) {
-                    // Trailing empty line after a source newline (e.g. empty
-                    // final line after a file's trailing '\n').  The cursor
-                    // on this line lives at buffer_len.
+                } else if matches!(current_view_line.line_start, LineStart::AfterSourceNewline)
+                    && prev_line_end_byte + 2 >= state.buffer.len()
+                {
+                    // Trailing empty line after the final source newline.
+                    // The cursor on this line lives at buffer_len.
                     state.buffer.len()
                 } else {
                     // Virtual row with no source bytes (e.g. table border from conceals).
@@ -4369,6 +4392,18 @@ impl SplitRenderer {
             let line_was_empty = line_spans.is_empty();
             lines.push(Line::from(line_spans));
 
+            // Detect the trailing empty ViewLine produced by ViewLineIterator
+            // when at_buffer_end is true: empty content, no newline,
+            // line_start == AfterSourceNewline.  This is a visual display aid,
+            // not an actual content line — don't update last_line_end for it
+            // (same policy as the implicit empty line rendered below).
+            let is_iterator_trailing_empty = line_content.is_empty()
+                && !line_has_newline
+                && _line_start_type == LineStart::AfterSourceNewline;
+            if is_iterator_trailing_empty {
+                trailing_empty_line_rendered = true;
+            }
+
             // Update last_line_end and check for cursor on newline BEFORE the break check
             // This ensures the last visible line's metadata is captured
             if let Some(y) = last_seg_y {
@@ -4382,10 +4417,14 @@ impl SplitRenderer {
                 };
                 let line_len_chars = line_content.chars().count();
 
-                last_line_end = Some(LastLineEnd {
-                    pos: (end_x, y),
-                    terminated_with_newline: line_has_newline,
-                });
+                // Don't update last_line_end for the iterator's trailing empty
+                // line — it's a display aid, not actual content.
+                if !is_iterator_trailing_empty {
+                    last_line_end = Some(LastLineEnd {
+                        pos: (end_x, y),
+                        terminated_with_newline: line_has_newline,
+                    });
+                }
 
                 if line_has_newline && line_len_chars > 0 {
                     let newline_idx = line_len_chars.saturating_sub(1);
@@ -4417,8 +4456,12 @@ impl SplitRenderer {
 
         // If the last line ended with a newline, render an implicit empty line after it.
         // This shows the line number for the cursor position after the final newline.
+        // Skip this if the ViewLineIterator already produced the trailing empty line.
         if let Some(ref end) = last_line_end {
-            if end.terminated_with_newline && lines_rendered < visible_line_count {
+            if end.terminated_with_newline
+                && lines_rendered < visible_line_count
+                && !trailing_empty_line_rendered
+            {
                 // Render the implicit line after the newline
                 let mut implicit_line_spans = Vec::new();
                 let implicit_line_num = current_source_line_num + 1;
@@ -4492,10 +4535,15 @@ impl SplitRenderer {
         // scroll on the next render).
         if let Some(ref end) = last_line_end {
             if end.terminated_with_newline {
+                let last_mapped_byte = view_line_mappings
+                    .last()
+                    .map(|m| m.line_end_byte)
+                    .unwrap_or(0);
+                let near_buffer_end = last_mapped_byte + 2 >= state.buffer.len();
                 let already_mapped = view_line_mappings.last().map_or(false, |m| {
                     m.char_source_bytes.is_empty() && m.line_end_byte == state.buffer.len()
                 });
-                if !already_mapped {
+                if near_buffer_end && !already_mapped {
                     view_line_mappings.push(ViewLineMapping {
                         char_source_bytes: Vec::new(),
                         visual_to_char: Vec::new(),
@@ -6255,7 +6303,7 @@ mod tests {
         eprintln!("Tokens: {:?}", offsets);
 
         // Step 2: Convert tokens to ViewLines
-        let view_lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4).collect();
+        let view_lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4, false).collect();
         assert_eq!(view_lines.len(), 2, "Should have 2 view lines");
 
         // Step 3: Verify char_source_bytes mapping for each line
@@ -6489,7 +6537,7 @@ mod tests {
         let wrapped = SplitRenderer::apply_wrapping_transform(tokens, MAX_SAFE_LINE_WIDTH, 0);
 
         // Convert to ViewLines
-        let view_lines: Vec<_> = ViewLineIterator::new(&wrapped, false, false, 4).collect();
+        let view_lines: Vec<_> = ViewLineIterator::new(&wrapped, false, false, 4, false).collect();
 
         // Reconstruct content from ViewLines
         let mut reconstructed = String::new();

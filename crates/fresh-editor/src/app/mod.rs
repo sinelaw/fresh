@@ -2600,7 +2600,7 @@ impl Editor {
                     if let Some(tokens) = view_transform_tokens {
                         // Use view-aware scrolling with the transform's tokens
                         let view_lines: Vec<_> =
-                            ViewLineIterator::new(&tokens, false, false, tab_size).collect();
+                            ViewLineIterator::new(&tokens, false, false, tab_size, false).collect();
                         view_state
                             .viewport
                             .scroll_view_lines(&view_lines, line_offset);

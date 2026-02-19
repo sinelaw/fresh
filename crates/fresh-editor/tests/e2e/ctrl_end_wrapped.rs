@@ -101,9 +101,9 @@ fn test_down_from_last_content_line_reaches_trailing_empty_line() {
     // Use a wider terminal (135x37) — the bug only manifests when the
     // content area is wide enough that lines wrap into fewer visual rows.
     let mut harness = EditorTestHarness::with_config(135, 37, config_with_line_wrap()).unwrap();
-    // Load the real CSV file whose line lengths and content trigger the bug.
-    let content = std::fs::read_to_string("/home/noam/Downloads/olney-book-1.csv")
-        .expect("need olney-book-1.csv to reproduce this bug");
+    // Use the generated CSV-like content (same characteristics as the
+    // original olney-book-1.csv that first exposed the bug).
+    let content = make_csv_like_content_with_trailing_newline();
     let doc_end = content.len();
     let _fixture = harness.load_buffer_from_text(&content).unwrap();
     harness.render().unwrap();
@@ -172,8 +172,9 @@ fn test_down_from_last_content_line_reaches_trailing_empty_line() {
 #[test]
 fn test_ctrl_end_then_disable_line_wrap_cursor_row() {
     let mut harness = EditorTestHarness::with_config(135, 37, config_with_line_wrap()).unwrap();
-    let content = std::fs::read_to_string("/home/noam/Downloads/olney-book-1.csv")
-        .expect("need olney-book-1.csv to reproduce this bug");
+    // Use the generated CSV-like content (same characteristics as the
+    // original olney-book-1.csv that first exposed the bug).
+    let content = make_csv_like_content_with_trailing_newline();
     let doc_end = content.len();
     let _fixture = harness.load_buffer_from_text(&content).unwrap();
     harness.render().unwrap();
