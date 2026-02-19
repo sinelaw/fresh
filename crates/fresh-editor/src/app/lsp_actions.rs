@@ -84,12 +84,12 @@ impl Editor {
                         let handle_id = handle.id();
                         if let Err(e) = handle.did_open(uri, content, lang_id) {
                             tracing::warn!("LSP did_open failed: {}", e);
-                        }
-
-                        // Mark buffer as opened with this handle so that
-                        // send_lsp_changes_for_buffer doesn't re-send didOpen
-                        if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                            metadata.lsp_opened_with.insert(handle_id);
+                        } else {
+                            // Mark buffer as opened with this handle so that
+                            // send_lsp_changes_for_buffer doesn't re-send didOpen
+                            if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+                                metadata.lsp_opened_with.insert(handle_id);
+                            }
                         }
                     }
                 }
