@@ -71,6 +71,7 @@ pub mod settings;
 pub mod settings_config_issue_806;
 pub mod settings_paste;
 pub mod shell_command;
+pub mod side_by_side_diff_scroll;
 pub mod slow_filesystem;
 pub mod smart_editing;
 pub mod sort_lines;
