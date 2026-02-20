@@ -40,6 +40,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Run clippy action
         uses: clechasseur/rs-clippy-check@v5
+        with:
+          args: --all-features --all-targets
   doc:
     # run docs generation on nightly rather than stable. This enables features like
     # https://doc.rust-lang.org/beta/unstable-book/language-features/doc-cfg.html which allows an
