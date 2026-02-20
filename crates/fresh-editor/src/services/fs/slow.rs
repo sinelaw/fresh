@@ -323,7 +323,7 @@ mod tests {
         let slow = SlowFileSystem::new(inner, slow_config);
 
         let start = Instant::now();
-        let _ = slow.read_dir(temp_path);
+        drop(slow.read_dir(temp_path));
         let elapsed = start.elapsed();
 
         // Should take at least 100ms due to artificial delay
@@ -346,9 +346,9 @@ mod tests {
         let slow = SlowFileSystem::new(inner, SlowFsConfig::none());
 
         // Perform various operations
-        let _ = slow.read_dir(temp_path);
-        let _ = slow.metadata(temp_path);
-        let _ = slow.is_dir(temp_path);
+        drop(slow.read_dir(temp_path));
+        drop(slow.metadata(temp_path));
+        drop(slow.is_dir(temp_path));
 
         assert_eq!(slow.metrics().read_dir_calls.load(Ordering::SeqCst), 1);
         assert_eq!(slow.metrics().metadata_calls.load(Ordering::SeqCst), 1);
@@ -365,8 +365,8 @@ mod tests {
         let slow = SlowFileSystem::new(inner, SlowFsConfig::none());
 
         // Perform some operations
-        let _ = slow.read_dir(temp_path);
-        let _ = slow.metadata(temp_path);
+        drop(slow.read_dir(temp_path));
+        drop(slow.metadata(temp_path));
 
         // Verify metrics are non-zero
         assert!(slow.metrics().total_calls() > 0);

@@ -6,8 +6,6 @@
 //! `winit::event::KeyEvent` live in the unit-test module inside
 //! `gui/mod.rs` (where the private `platform_specific` field is accessible).
 
-#![cfg(feature = "gui")]
-
 use crate::common::harness::EditorTestHarness;
 use std::path::PathBuf;
 use tempfile::TempDir;

@@ -518,7 +518,7 @@ mod tests {
                             )
                             .unwrap(),
                         );
-                        let _ = request.respond(response);
+                        drop(request.respond(response));
                     }
                     Ok(None) => {
                         // Timeout, continue loop
@@ -555,7 +555,7 @@ mod tests {
         assert!(checker.is_update_available());
         assert_eq!(checker.latest_version(), Some("99.0.0"));
 
-        let _ = stop_tx.send(());
+        stop_tx.send(()).ok();
     }
 
     #[test]
@@ -580,7 +580,7 @@ mod tests {
         assert!(checker.latest_version().is_none());
         assert!(checker.get_cached_result().is_some());
 
-        let _ = stop_tx.send(());
+        stop_tx.send(()).ok();
     }
 
     #[test]
@@ -596,6 +596,6 @@ mod tests {
         assert!(checker.latest_version().is_none());
         assert!(checker.get_cached_result().is_none());
 
-        let _ = stop_tx.send(());
+        stop_tx.send(()).ok();
     }
 }

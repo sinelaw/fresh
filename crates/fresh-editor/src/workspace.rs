@@ -1042,7 +1042,7 @@ mod tests {
 
         // Create a temporary directory for testing
         let temp_dir = std::env::temp_dir().join("fresh_workspace_test");
-        let _ = fs::remove_dir_all(&temp_dir); // Clean up from previous runs
+        drop(fs::remove_dir_all(&temp_dir)); // Clean up from previous runs
         fs::create_dir_all(&temp_dir).unwrap();
 
         let workspace_path = temp_dir.join("test_workspace.json");
@@ -1076,7 +1076,7 @@ mod tests {
         assert_eq!(loaded.bookmarks.get(&'x').unwrap().position, 42);
 
         // Cleanup
-        let _ = fs::remove_dir_all(&temp_dir);
+        drop(fs::remove_dir_all(&temp_dir));
     }
 
     #[test]

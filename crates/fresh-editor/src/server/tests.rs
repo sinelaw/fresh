@@ -66,7 +66,7 @@ mod integration_tests {
         assert!(paths.control.exists());
 
         shutdown.store(true, Ordering::SeqCst);
-        let _ = server.run();
+        drop(server.run());
 
         std::fs::remove_dir_all(&temp_dir).ok();
     }
@@ -111,9 +111,9 @@ mod integration_tests {
         }
 
         thread::sleep(Duration::from_millis(100));
-        let _ = conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap());
+        drop(conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap()));
 
-        let _ = server_handle.join();
+        drop(server_handle.join());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
@@ -155,7 +155,7 @@ mod integration_tests {
         assert!(matches!(server_msg, ServerControl::VersionMismatch(_)));
 
         shutdown.store(true, Ordering::SeqCst);
-        let _ = server_handle.join();
+        drop(server_handle.join());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
@@ -222,8 +222,8 @@ mod integration_tests {
         // Due to non-blocking reads, we need to handle the response carefully
         // The server processes ping and sends pong
 
-        let _ = conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap());
-        let _ = server_handle.join();
+        drop(conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap()));
+        drop(server_handle.join());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
@@ -344,9 +344,9 @@ mod integration_tests {
         thread::sleep(Duration::from_millis(50));
 
         // Clean shutdown
-        let _ = conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap());
+        drop(conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap()));
 
-        let _ = server_handle.join();
+        drop(server_handle.join());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
@@ -367,7 +367,7 @@ mod integration_tests {
 
         // Get socket paths for this session
         let socket_paths = SocketPaths::for_session_name(&session_name).unwrap();
-        let _ = socket_paths.cleanup(); // Clean any existing
+        drop(socket_paths.cleanup()); // Clean any existing
 
         // Channel to signal when server is ready
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
@@ -472,8 +472,8 @@ mod integration_tests {
 
         // Signal server to finish and cleanup
         done_tx.send(()).unwrap();
-        let _ = server_handle.join();
-        let _ = socket_paths.cleanup();
+        drop(server_handle.join());
+        drop(socket_paths.cleanup());
     }
 
     /// E2E test: Client waits for PID file before connecting (no sleep-based timing)
@@ -491,7 +491,7 @@ mod integration_tests {
         let socket_paths = SocketPaths::for_session_name(&session_name).unwrap();
 
         // Clean up any existing files
-        let _ = socket_paths.cleanup();
+        drop(socket_paths.cleanup());
 
         // Verify no PID file exists initially
         assert!(
@@ -552,8 +552,8 @@ mod integration_tests {
         conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap())
             .unwrap();
 
-        let _ = server_handle.join();
-        let _ = paths_for_cleanup.cleanup();
+        drop(server_handle.join());
+        drop(paths_for_cleanup.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
@@ -722,7 +722,7 @@ mod integration_tests {
         eprintln!("[e2e] Server thread joined: {:?}", result);
         assert!(result.is_ok(), "Server should exit cleanly: {:?}", result);
 
-        let _ = socket_paths.cleanup();
+        drop(socket_paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
         eprintln!("[e2e] === END test_full_editor_server_e2e ===");
     }
@@ -883,9 +883,9 @@ mod integration_tests {
         eprintln!("[multi] Setting shutdown flag...");
         shutdown_handle.store(true, Ordering::SeqCst);
         eprintln!("[multi] Joining server thread...");
-        let _ = server_handle.join();
+        drop(server_handle.join());
         eprintln!("[multi] Server thread joined.");
-        let _ = socket_paths.cleanup();
+        drop(socket_paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
         eprintln!("[multi] === END test_second_client_gets_full_screen ===");
     }

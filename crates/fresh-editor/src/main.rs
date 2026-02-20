@@ -1914,10 +1914,7 @@ fn list_sessions_command() -> AnyhowResult<()> {
         let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
 
         // Look for control sockets (*.ctrl.sock)
-        if filename.ends_with(".ctrl.sock") {
-            // Extract session name by removing ".ctrl.sock" suffix
-            let name = &filename[..filename.len() - ".ctrl.sock".len()];
-
+        if let Some(name) = filename.strip_suffix(".ctrl.sock") {
             // Get socket paths for this session to check if server is alive
             let socket_paths = SocketPaths::for_session_name(name)?;
 

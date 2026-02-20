@@ -511,7 +511,7 @@ mod tests {
                 }
 
                 // Clean up
-                let _ = fs::remove_dir(&test_cgroup);
+                drop(fs::remove_dir(&test_cgroup));
             }
         } else {
             println!("⊘ No user cgroup available for testing");

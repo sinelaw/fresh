@@ -4876,7 +4876,7 @@ mod tests {
                         assert_eq!(sudo_err.dest_path, file_path);
                         assert!(sudo_err.temp_path.exists());
                         // Cleanup temp file
-                        let _ = std::fs::remove_file(&sudo_err.temp_path);
+                        drop(std::fs::remove_file(&sudo_err.temp_path));
                     } else {
                         panic!("Expected SudoSaveRequired error, got: {:?}", e);
                     }
@@ -4914,7 +4914,7 @@ mod tests {
                         // It should be in /tmp because the directory was not writable
                         assert!(sudo_err.temp_path.starts_with(std::env::temp_dir()));
                         // Cleanup
-                        let _ = std::fs::remove_file(&sudo_err.temp_path);
+                        drop(std::fs::remove_file(&sudo_err.temp_path));
                     } else {
                         panic!("Expected SudoSaveRequired error, got: {:?}", e);
                     }

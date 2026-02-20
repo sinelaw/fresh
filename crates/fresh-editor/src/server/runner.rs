@@ -377,13 +377,13 @@ impl Server {
         let teardown = terminal_teardown_sequences();
         for client in &mut self.clients {
             // Send terminal teardown sequences to restore client's terminal
-            let _ = client.conn.write_data(&teardown);
+            drop(client.conn.write_data(&teardown));
             // Send quit control message
             let quit_msg = serde_json::to_string(&ServerControl::Quit {
                 reason: reason.to_string(),
             })
             .unwrap_or_default();
-            let _ = client.conn.write_control(&quit_msg);
+            drop(client.conn.write_control(&quit_msg));
         }
         self.clients.clear();
         Ok(())
