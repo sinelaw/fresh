@@ -392,8 +392,7 @@ impl<A: GuiApplication> WgpuRunner<A> {
                 Builder::from_font(font)
                     .with_width_and_height(Dimensions {
                         width: NonZeroU32::new(size.width).unwrap_or(NonZeroU32::new(1).unwrap()),
-                        height: NonZeroU32::new(size.height)
-                            .unwrap_or(NonZeroU32::new(1).unwrap()),
+                        height: NonZeroU32::new(size.height).unwrap_or(NonZeroU32::new(1).unwrap()),
                     })
                     .build_with_target(window.clone()),
             )

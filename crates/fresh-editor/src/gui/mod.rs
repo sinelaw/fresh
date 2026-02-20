@@ -10,8 +10,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result as AnyhowResult};
 use crossterm::event::{
-    KeyEvent as CtKeyEvent, KeyEventKind, KeyEventState,
-    MouseEvent as CtMouseEvent,
+    KeyEvent as CtKeyEvent, KeyEventKind, KeyEventState, MouseEvent as CtMouseEvent,
 };
 
 use crate::app::Editor;
@@ -67,56 +66,53 @@ pub fn run_gui(
     let no_session_flag = no_session;
 
     // Move all captured state into the closure that creates the editor app.
-    fresh_gui::run(
-        GuiConfig::default(),
-        move |cols, rows| {
-            // For GUI, we always have true color.
-            let color_capability = crate::view::color_support::ColorCapability::TrueColor;
-            let filesystem: Arc<dyn FileSystem + Send + Sync> = Arc::new(StdFileSystem);
+    fresh_gui::run(GuiConfig::default(), move |cols, rows| {
+        // For GUI, we always have true color.
+        let color_capability = crate::view::color_support::ColorCapability::TrueColor;
+        let filesystem: Arc<dyn FileSystem + Send + Sync> = Arc::new(StdFileSystem);
 
-            let mut editor = Editor::with_working_dir(
-                loaded_config,
-                cols,
-                rows,
-                Some(working_dir),
-                dir_context,
-                !no_plugins,
-                color_capability,
-                filesystem,
-            )
-            .context("Failed to create editor instance")?;
+        let mut editor = Editor::with_working_dir(
+            loaded_config,
+            cols,
+            rows,
+            Some(working_dir),
+            dir_context,
+            !no_plugins,
+            color_capability,
+            filesystem,
+        )
+        .context("Failed to create editor instance")?;
 
-            // ratatui-wgpu does not render a hardware cursor.
-            editor.set_software_cursor_only(true);
+        // ratatui-wgpu does not render a hardware cursor.
+        editor.set_software_cursor_only(true);
 
-            let workspace_enabled = !no_session_flag && file_locations.is_empty();
+        let workspace_enabled = !no_session_flag && file_locations.is_empty();
 
-            if !file_locations.is_empty() {
-                for (path, line, col) in &file_locations {
-                    editor.queue_file_open(path.clone(), *line, *col);
-                }
-            } else if show_file_explorer {
-                editor.show_file_explorer();
+        if !file_locations.is_empty() {
+            for (path, line, col) in &file_locations {
+                editor.queue_file_open(path.clone(), *line, *col);
             }
+        } else if show_file_explorer {
+            editor.show_file_explorer();
+        }
 
-            if workspace_enabled {
-                match editor.try_restore_workspace() {
-                    Ok(true) => tracing::info!("Workspace restored"),
-                    Ok(false) => tracing::debug!("No previous workspace"),
-                    Err(e) => tracing::warn!("Failed to restore workspace: {}", e),
-                }
+        if workspace_enabled {
+            match editor.try_restore_workspace() {
+                Ok(true) => tracing::info!("Workspace restored"),
+                Ok(false) => tracing::debug!("No previous workspace"),
+                Err(e) => tracing::warn!("Failed to restore workspace: {}", e),
             }
+        }
 
-            if let Err(e) = editor.start_recovery_session() {
-                tracing::warn!("Failed to start recovery session: {}", e);
-            }
+        if let Err(e) = editor.start_recovery_session() {
+            tracing::warn!("Failed to start recovery session: {}", e);
+        }
 
-            Ok(EditorApp {
-                editor,
-                workspace_enabled,
-            })
-        },
-    )
+        Ok(EditorApp {
+            editor,
+            workspace_enabled,
+        })
+    })
 }
 
 // ---------------------------------------------------------------------------
