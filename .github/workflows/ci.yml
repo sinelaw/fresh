@@ -102,7 +102,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 xvfb
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 xvfb libxkbcommon-x11-0
       # enable this ci template to run regardless of whether the lockfile is checked in or not
       - name: cargo generate-lockfile
         if: hashFiles('Cargo.lock') == ''
