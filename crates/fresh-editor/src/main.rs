@@ -2533,6 +2533,7 @@ fn real_main() -> AnyhowResult<()> {
             args.config.as_ref(),
             args.locale.as_deref(),
             args.no_session,
+            args.log_file.as_ref(),
         );
     }
 

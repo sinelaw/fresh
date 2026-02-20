@@ -50,12 +50,20 @@ pub fn run_gui(
     config_path: Option<&PathBuf>,
     locale: Option<&str>,
     no_session: bool,
+    log_file: Option<&PathBuf>,
 ) -> AnyhowResult<()> {
     // Load configuration (same layered logic as terminal path, but without
     // terminal-specific setup like raw mode / alternate screen).
     if let Some(loc) = locale {
         rust_i18n::set_locale(loc);
     }
+
+    // Set up tracing subscriber (same as terminal path)
+    let log_path = log_file
+        .cloned()
+        .unwrap_or_else(crate::services::log_dirs::main_log_path);
+    let _tracing_handles = crate::services::tracing_setup::init_global(&log_path);
+    tracing::info!("GUI mode starting");
 
     let dir_context = DirectoryContext::from_system()?;
     let working_dir = std::env::current_dir().unwrap_or_default();
@@ -171,7 +179,7 @@ impl ApplicationHandler for WgpuApp {
                 self.state = Some(state);
             }
             Err(e) => {
-                tracing::error!("Failed to initialize GUI: {}", e);
+                eprintln!("Failed to initialize GUI: {:#}", e);
                 event_loop.exit();
             }
         }
@@ -706,4 +714,263 @@ fn cell_dimensions_to_grid(width: f64, height: f64, cell_size: (f64, f64)) -> (u
     let cols = (width / cell_size.0.max(1.0)) as u16;
     let rows = (height / cell_size.1.max(1.0)) as u16;
     (cols.max(1), rows.max(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use winit::keyboard::KeyLocation;
+
+    // -----------------------------------------------------------------------
+    // translate_named_key (tests the core key mapping logic directly)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_named_key_navigation() {
+        let loc = KeyLocation::Standard;
+        let mods = KeyModifiers::NONE;
+        assert_eq!(translate_named_key(&NamedKey::ArrowUp, &loc, mods), Some(KeyCode::Up));
+        assert_eq!(translate_named_key(&NamedKey::ArrowDown, &loc, mods), Some(KeyCode::Down));
+        assert_eq!(translate_named_key(&NamedKey::ArrowLeft, &loc, mods), Some(KeyCode::Left));
+        assert_eq!(translate_named_key(&NamedKey::ArrowRight, &loc, mods), Some(KeyCode::Right));
+        assert_eq!(translate_named_key(&NamedKey::Home, &loc, mods), Some(KeyCode::Home));
+        assert_eq!(translate_named_key(&NamedKey::End, &loc, mods), Some(KeyCode::End));
+        assert_eq!(translate_named_key(&NamedKey::PageUp, &loc, mods), Some(KeyCode::PageUp));
+        assert_eq!(translate_named_key(&NamedKey::PageDown, &loc, mods), Some(KeyCode::PageDown));
+    }
+
+    #[test]
+    fn test_named_key_editing() {
+        let loc = KeyLocation::Standard;
+        let mods = KeyModifiers::NONE;
+        assert_eq!(translate_named_key(&NamedKey::Backspace, &loc, mods), Some(KeyCode::Backspace));
+        assert_eq!(translate_named_key(&NamedKey::Delete, &loc, mods), Some(KeyCode::Delete));
+        assert_eq!(translate_named_key(&NamedKey::Insert, &loc, mods), Some(KeyCode::Insert));
+        assert_eq!(translate_named_key(&NamedKey::Enter, &loc, mods), Some(KeyCode::Enter));
+        assert_eq!(translate_named_key(&NamedKey::Escape, &loc, mods), Some(KeyCode::Esc));
+        assert_eq!(translate_named_key(&NamedKey::Space, &loc, mods), Some(KeyCode::Char(' ')));
+    }
+
+    #[test]
+    fn test_tab_and_backtab() {
+        let loc = KeyLocation::Standard;
+        assert_eq!(
+            translate_named_key(&NamedKey::Tab, &loc, KeyModifiers::NONE),
+            Some(KeyCode::Tab)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Tab, &loc, KeyModifiers::SHIFT),
+            Some(KeyCode::BackTab)
+        );
+    }
+
+    #[test]
+    fn test_function_keys() {
+        let loc = KeyLocation::Standard;
+        let mods = KeyModifiers::NONE;
+        assert_eq!(translate_named_key(&NamedKey::F1, &loc, mods), Some(KeyCode::F(1)));
+        assert_eq!(translate_named_key(&NamedKey::F5, &loc, mods), Some(KeyCode::F(5)));
+        assert_eq!(translate_named_key(&NamedKey::F12, &loc, mods), Some(KeyCode::F(12)));
+        assert_eq!(translate_named_key(&NamedKey::F24, &loc, mods), Some(KeyCode::F(24)));
+        assert_eq!(translate_named_key(&NamedKey::F35, &loc, mods), Some(KeyCode::F(35)));
+    }
+
+    #[test]
+    fn test_lock_and_misc_keys() {
+        let loc = KeyLocation::Standard;
+        let mods = KeyModifiers::NONE;
+        assert_eq!(translate_named_key(&NamedKey::CapsLock, &loc, mods), Some(KeyCode::CapsLock));
+        assert_eq!(translate_named_key(&NamedKey::NumLock, &loc, mods), Some(KeyCode::NumLock));
+        assert_eq!(translate_named_key(&NamedKey::ScrollLock, &loc, mods), Some(KeyCode::ScrollLock));
+        assert_eq!(translate_named_key(&NamedKey::PrintScreen, &loc, mods), Some(KeyCode::PrintScreen));
+        assert_eq!(translate_named_key(&NamedKey::Pause, &loc, mods), Some(KeyCode::Pause));
+        assert_eq!(translate_named_key(&NamedKey::ContextMenu, &loc, mods), Some(KeyCode::Menu));
+    }
+
+    #[test]
+    fn test_modifier_keys_left_right() {
+        let mods = KeyModifiers::NONE;
+
+        // Left side
+        assert_eq!(
+            translate_named_key(&NamedKey::Shift, &KeyLocation::Left, mods),
+            Some(KeyCode::Modifier(ModifierKeyCode::LeftShift))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Control, &KeyLocation::Left, mods),
+            Some(KeyCode::Modifier(ModifierKeyCode::LeftControl))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Alt, &KeyLocation::Left, mods),
+            Some(KeyCode::Modifier(ModifierKeyCode::LeftAlt))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Super, &KeyLocation::Left, mods),
+            Some(KeyCode::Modifier(ModifierKeyCode::LeftSuper))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Hyper, &KeyLocation::Left, mods),
+            Some(KeyCode::Modifier(ModifierKeyCode::LeftHyper))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Meta, &KeyLocation::Left, mods),
+            Some(KeyCode::Modifier(ModifierKeyCode::LeftMeta))
+        );
+
+        // Right side
+        assert_eq!(
+            translate_named_key(&NamedKey::Shift, &KeyLocation::Right, mods),
+            Some(KeyCode::Modifier(ModifierKeyCode::RightShift))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Control, &KeyLocation::Right, mods),
+            Some(KeyCode::Modifier(ModifierKeyCode::RightControl))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Super, &KeyLocation::Right, mods),
+            Some(KeyCode::Modifier(ModifierKeyCode::RightSuper))
+        );
+    }
+
+    #[test]
+    fn test_media_keys() {
+        let loc = KeyLocation::Standard;
+        let mods = KeyModifiers::NONE;
+        assert_eq!(
+            translate_named_key(&NamedKey::MediaPlay, &loc, mods),
+            Some(KeyCode::Media(MediaKeyCode::Play))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::MediaPause, &loc, mods),
+            Some(KeyCode::Media(MediaKeyCode::Pause))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::MediaPlayPause, &loc, mods),
+            Some(KeyCode::Media(MediaKeyCode::PlayPause))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::MediaStop, &loc, mods),
+            Some(KeyCode::Media(MediaKeyCode::Stop))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::AudioVolumeUp, &loc, mods),
+            Some(KeyCode::Media(MediaKeyCode::RaiseVolume))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::AudioVolumeDown, &loc, mods),
+            Some(KeyCode::Media(MediaKeyCode::LowerVolume))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::AudioVolumeMute, &loc, mods),
+            Some(KeyCode::Media(MediaKeyCode::MuteVolume))
+        );
+    }
+
+    #[test]
+    fn test_unknown_named_key_returns_none() {
+        let loc = KeyLocation::Standard;
+        let mods = KeyModifiers::NONE;
+        assert_eq!(translate_named_key(&NamedKey::BrowserBack, &loc, mods), None);
+        assert_eq!(translate_named_key(&NamedKey::LaunchMail, &loc, mods), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // translate_modifiers
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_translate_modifiers_none() {
+        let mods = winit::keyboard::ModifiersState::empty();
+        assert_eq!(translate_modifiers(&mods), KeyModifiers::NONE);
+    }
+
+    #[test]
+    fn test_translate_modifiers_all() {
+        let mods = winit::keyboard::ModifiersState::SHIFT
+            | winit::keyboard::ModifiersState::CONTROL
+            | winit::keyboard::ModifiersState::ALT
+            | winit::keyboard::ModifiersState::SUPER;
+        let result = translate_modifiers(&mods);
+        assert!(result.contains(KeyModifiers::SHIFT));
+        assert!(result.contains(KeyModifiers::CONTROL));
+        assert!(result.contains(KeyModifiers::ALT));
+        assert!(result.contains(KeyModifiers::SUPER));
+    }
+
+    #[test]
+    fn test_translate_modifiers_single() {
+        assert_eq!(
+            translate_modifiers(&winit::keyboard::ModifiersState::CONTROL),
+            KeyModifiers::CONTROL
+        );
+        assert_eq!(
+            translate_modifiers(&winit::keyboard::ModifiersState::ALT),
+            KeyModifiers::ALT
+        );
+        assert_eq!(
+            translate_modifiers(&winit::keyboard::ModifiersState::SUPER),
+            KeyModifiers::SUPER
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // translate_mouse_button
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_translate_mouse_buttons() {
+        assert_eq!(translate_mouse_button(MouseButton::Left), Some(CtMouseButton::Left));
+        assert_eq!(translate_mouse_button(MouseButton::Right), Some(CtMouseButton::Right));
+        assert_eq!(translate_mouse_button(MouseButton::Middle), Some(CtMouseButton::Middle));
+        assert_eq!(translate_mouse_button(MouseButton::Back), None);
+        assert_eq!(translate_mouse_button(MouseButton::Forward), None);
+        assert_eq!(translate_mouse_button(MouseButton::Other(42)), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // pixel_to_cell
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_pixel_to_cell_basic() {
+        let cell_size = (10.0, 20.0);
+        assert_eq!(pixel_to_cell((0.0, 0.0), cell_size), (0, 0));
+        assert_eq!(pixel_to_cell((10.0, 20.0), cell_size), (1, 1));
+        assert_eq!(pixel_to_cell((25.0, 45.0), cell_size), (2, 2));
+        assert_eq!(pixel_to_cell((99.0, 199.0), cell_size), (9, 9));
+    }
+
+    #[test]
+    fn test_pixel_to_cell_zero_cell_size() {
+        // Should not panic — cell_size.max(1.0) protects against division by zero
+        let result = pixel_to_cell((100.0, 100.0), (0.0, 0.0));
+        assert_eq!(result, (100, 100));
+    }
+
+    // -----------------------------------------------------------------------
+    // cell_dimensions_to_grid
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_cell_dimensions_to_grid() {
+        let cell_size = (14.4, 28.8); // 24px font * 0.6, 24px * 1.2
+        let (cols, rows) = cell_dimensions_to_grid(1280.0, 800.0, cell_size);
+        assert_eq!(cols, 88); // 1280 / 14.4 = 88.88 → 88
+        assert_eq!(rows, 27); // 800 / 28.8 = 27.77 → 27
+    }
+
+    #[test]
+    fn test_cell_dimensions_to_grid_minimum() {
+        // Very small window should still return at least 1x1
+        let (cols, rows) = cell_dimensions_to_grid(1.0, 1.0, (14.4, 28.8));
+        assert_eq!(cols, 1);
+        assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn test_cell_dimensions_to_grid_zero_size() {
+        let (cols, rows) = cell_dimensions_to_grid(0.0, 0.0, (14.4, 28.8));
+        assert_eq!(cols, 1); // max(1) ensures minimum
+        assert_eq!(rows, 1);
+    }
 }
