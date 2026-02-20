@@ -1772,7 +1772,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror 2.0.18",
- "windows 0.56.0",
+ "windows 0.62.2",
 ]
 
 [[package]]
