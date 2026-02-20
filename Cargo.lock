@@ -1486,6 +1486,7 @@ dependencies = [
  "dirs",
  "encoding_rs",
  "fresh-core",
+ "fresh-gui",
  "fresh-languages",
  "fresh-parser-js",
  "fresh-plugin-api-macros",
@@ -1506,7 +1507,6 @@ dependencies = [
  "proptest",
  "pulldown-cmark",
  "ratatui",
- "ratatui-wgpu",
  "regex",
  "rust-i18n",
  "schemars",
@@ -1527,8 +1527,20 @@ dependencies = [
  "ureq",
  "url",
  "vt100",
- "wgpu",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "fresh-gui"
+version = "0.2.5"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "ratatui",
+ "ratatui-wgpu",
+ "tokio",
+ "tracing",
+ "wgpu",
  "winit",
 ]
 

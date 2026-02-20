@@ -77,11 +77,10 @@ runtime = [
 
 ]
 # GUI mode - native window with GPU-accelerated rendering via wgpu
+# All windowing/GPU dependencies live in the fresh-gui crate.
 gui = [
     "runtime",
-    "dep:winit",
-    "dep:wgpu",
-    "dep:ratatui-wgpu",
+    "dep:fresh-gui",
 ]
 # Schema-only feature for minimal builds (just schema generation)
 schema-only = []
@@ -182,10 +181,8 @@ tempfile = { version = "3.24", optional = true }
 trash = { version = "5.2.5", optional = true }
 open = { version = "5.3", optional = true }
 
-# GUI mode dependencies (optional, enabled by "gui" feature)
-winit = { workspace = true, optional = true }
-wgpu = { workspace = true, optional = true }
-ratatui-wgpu = { git = "https://github.com/Jesterhearts/ratatui-wgpu", rev = "cdcf5c6", optional = true }
+# GUI mode — all windowing/GPU deps are encapsulated in fresh-gui
+fresh-gui = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = "1.9"

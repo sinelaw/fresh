@@ -1,0 +1,26 @@
+[package]
+name = "fresh-gui"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "GUI backend for Fresh editor: windowed ratatui via winit + wgpu"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Window management
+winit = { workspace = true }
+# GPU-accelerated rendering
+wgpu = { workspace = true }
+# ratatui backend for wgpu
+ratatui-wgpu = { git = "https://github.com/Jesterhearts/ratatui-wgpu", rev = "cdcf5c6" }
+# TUI framework (core types: Terminal, Frame, Backend)
+ratatui = { version = "0.30.0", default-features = false, features = ["std", "underline-color"] }
+# Event types (KeyEvent, MouseEvent, KeyModifiers, etc.)
+crossterm = { version = "0.29.0", features = ["osc52"] }
+# Error handling
+anyhow = { workspace = true }
+# Logging
+tracing = { workspace = true }
+# Async runtime for wgpu init (needs rt-multi-thread for Runtime::new())
+tokio = { version = "1.49", features = ["rt", "rt-multi-thread"] }
