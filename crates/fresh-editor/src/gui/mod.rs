@@ -75,34 +75,8 @@ pub fn run_gui(
         config::Config::load_with_layers(&dir_context, &working_dir)
     };
 
-    // Parse file locations (simple path extraction — line:col parsing is basic)
-    let file_locations: Vec<(PathBuf, Option<usize>, Option<usize>)> = files
-        .iter()
-        .map(|f| {
-            // Support file:line:col syntax
-            let parts: Vec<&str> = f.rsplitn(3, ':').collect();
-            match parts.as_slice() {
-                [col, line, path] => {
-                    let l = line.parse().ok();
-                    let c = col.parse().ok();
-                    if l.is_some() {
-                        (PathBuf::from(path), l, c)
-                    } else {
-                        (PathBuf::from(f), None, None)
-                    }
-                }
-                [line, path] => {
-                    let l = line.parse().ok();
-                    if l.is_some() {
-                        (PathBuf::from(path), l, None)
-                    } else {
-                        (PathBuf::from(f), None, None)
-                    }
-                }
-                _ => (PathBuf::from(f), None, None),
-            }
-        })
-        .collect();
+    let file_locations: Vec<(PathBuf, Option<usize>, Option<usize>)> =
+        files.iter().map(|f| parse_file_location(f)).collect();
 
     let show_file_explorer = file_locations.is_empty();
 
@@ -179,7 +153,7 @@ impl ApplicationHandler for WgpuApp {
                 self.state = Some(state);
             }
             Err(e) => {
-                eprintln!("Failed to initialize GUI: {:#}", e);
+                tracing::error!("Failed to initialize GUI: {:#}", e);
                 event_loop.exit();
             }
         }
@@ -488,8 +462,33 @@ impl WgpuApp {
 }
 
 // ---------------------------------------------------------------------------
-// Input translation helpers
+// Input translation helpers (pub(crate) for e2e testing)
 // ---------------------------------------------------------------------------
+
+/// Parse a CLI file argument in `file:line:col` format.
+pub fn parse_file_location(f: &str) -> (PathBuf, Option<usize>, Option<usize>) {
+    let parts: Vec<&str> = f.rsplitn(3, ':').collect();
+    match parts.as_slice() {
+        [col, line, path] => {
+            let l = line.parse().ok();
+            let c = col.parse().ok();
+            if l.is_some() {
+                (PathBuf::from(path), l, c)
+            } else {
+                (PathBuf::from(f), None, None)
+            }
+        }
+        [line, path] => {
+            let l = line.parse().ok();
+            if l.is_some() {
+                (PathBuf::from(path), l, None)
+            } else {
+                (PathBuf::from(f), None, None)
+            }
+        }
+        _ => (PathBuf::from(f), None, None),
+    }
+}
 
 /// Handle a translated key event (mirrors main.rs handle_key_event).
 fn handle_key(editor: &mut Editor, key_event: CtKeyEvent) -> AnyhowResult<()> {
@@ -503,7 +502,7 @@ fn handle_key(editor: &mut Editor, key_event: CtKeyEvent) -> AnyhowResult<()> {
 }
 
 /// Convert winit modifier state to crossterm KeyModifiers.
-fn translate_modifiers(mods: &winit::keyboard::ModifiersState) -> KeyModifiers {
+pub fn translate_modifiers(mods: &winit::keyboard::ModifiersState) -> KeyModifiers {
     let mut result = KeyModifiers::NONE;
     if mods.shift_key() {
         result |= KeyModifiers::SHIFT;
@@ -521,7 +520,7 @@ fn translate_modifiers(mods: &winit::keyboard::ModifiersState) -> KeyModifiers {
 }
 
 /// Translate a winit key event to a crossterm KeyEvent.
-fn translate_key_event(
+pub fn translate_key_event(
     event: &winit::event::KeyEvent,
     modifiers: KeyModifiers,
 ) -> Option<CtKeyEvent> {
@@ -548,7 +547,7 @@ fn translate_key_event(
 }
 
 /// Translate a winit NamedKey to a crossterm KeyCode.
-fn translate_named_key(
+pub fn translate_named_key(
     key: &NamedKey,
     location: &winit::keyboard::KeyLocation,
     modifiers: KeyModifiers,
@@ -692,7 +691,7 @@ fn translate_named_key(
 }
 
 /// Translate a winit mouse button to a crossterm mouse button.
-fn translate_mouse_button(button: MouseButton) -> Option<CtMouseButton> {
+pub fn translate_mouse_button(button: MouseButton) -> Option<CtMouseButton> {
     match button {
         MouseButton::Left => Some(CtMouseButton::Left),
         MouseButton::Right => Some(CtMouseButton::Right),
@@ -703,14 +702,14 @@ fn translate_mouse_button(button: MouseButton) -> Option<CtMouseButton> {
 }
 
 /// Convert pixel coordinates to terminal cell coordinates.
-fn pixel_to_cell(pixel: (f64, f64), cell_size: (f64, f64)) -> (u16, u16) {
+pub fn pixel_to_cell(pixel: (f64, f64), cell_size: (f64, f64)) -> (u16, u16) {
     let col = (pixel.0 / cell_size.0.max(1.0)) as u16;
     let row = (pixel.1 / cell_size.1.max(1.0)) as u16;
     (col, row)
 }
 
 /// Convert window pixel dimensions to terminal grid dimensions (cols, rows).
-fn cell_dimensions_to_grid(width: f64, height: f64, cell_size: (f64, f64)) -> (u16, u16) {
+pub fn cell_dimensions_to_grid(width: f64, height: f64, cell_size: (f64, f64)) -> (u16, u16) {
     let cols = (width / cell_size.0.max(1.0)) as u16;
     let rows = (height / cell_size.1.max(1.0)) as u16;
     (cols.max(1), rows.max(1))
@@ -972,5 +971,41 @@ mod tests {
         let (cols, rows) = cell_dimensions_to_grid(0.0, 0.0, (14.4, 28.8));
         assert_eq!(cols, 1); // max(1) ensures minimum
         assert_eq!(rows, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_file_location
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_file_location_plain() {
+        let (path, line, col) = parse_file_location("src/main.rs");
+        assert_eq!(path, PathBuf::from("src/main.rs"));
+        assert_eq!(line, None);
+        assert_eq!(col, None);
+    }
+
+    #[test]
+    fn test_parse_file_location_line_col() {
+        let (path, line, col) = parse_file_location("src/main.rs:42:10");
+        assert_eq!(path, PathBuf::from("src/main.rs"));
+        assert_eq!(line, Some(42));
+        assert_eq!(col, Some(10));
+    }
+
+    #[test]
+    fn test_parse_file_location_line_only() {
+        let (path, line, col) = parse_file_location("src/main.rs:42");
+        assert_eq!(path, PathBuf::from("src/main.rs"));
+        assert_eq!(line, Some(42));
+        assert_eq!(col, None);
+    }
+
+    #[test]
+    fn test_parse_file_location_non_numeric() {
+        let (path, line, col) = parse_file_location("foo:bar");
+        assert_eq!(path, PathBuf::from("foo:bar"));
+        assert_eq!(line, None);
+        assert_eq!(col, None);
     }
 }

@@ -97,9 +97,22 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
+      # Install Vulkan + Xvfb for headless GPU testing (Linux only)
+      - name: Install Vulkan and Xvfb
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 xvfb
       # enable this ci template to run regardless of whether the lockfile is checked in or not
       - name: cargo generate-lockfile
         if: hashFiles('Cargo.lock') == ''
         run: cargo generate-lockfile
+      - name: Run tests (Linux — headless with Xvfb + lavapipe)
+        if: runner.os == 'Linux'
+        run: xvfb-run cargo nextest run -j=4 --no-fail-fast --locked --all-features --all-targets
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          WGPU_BACKEND: "vulkan"
       - name: Run tests
+        if: runner.os != 'Linux'
         run: cargo nextest run -j=4 --no-fail-fast --locked --all-features --all-targets
