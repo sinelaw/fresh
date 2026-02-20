@@ -2,11 +2,27 @@
 
 Thanks for contributing!
 
+## Workspace Structure
+
+| Crate | Purpose |
+|-------|---------|
+| `fresh-editor` | Editor library + `fresh` binary (terminal UI, LSP, plugins, …) |
+| `fresh-gui` | Standalone windowed backend (winit + wgpu). Defines the `GuiApplication` trait; no dependency on `fresh-editor`. |
+| `fresh-core` | Shared core types and plugin API |
+| `fresh-languages` | Tree-sitter language grammars |
+| `fresh-plugin-runtime` | QuickJS-based plugin runtime |
+| `fresh-plugin-api-macros` | Proc-macros for the plugin API |
+| `fresh-parser-js` | JavaScript/TypeScript parser |
+
+The `gui` feature on `fresh-editor` pulls in `fresh-gui` as an optional dependency.
+When it is disabled (the default), no windowing or GPU crates are compiled.
+
 ## Commit Hygiene
 
 - Commit messages must describe the **motivation / goal** of each commit, not just what changed
 - Separate bug fixes from new functionality into distinct commits
 - Individual commits should pass `cargo check --all-targets` and `cargo fmt`
+- If your change touches GUI code, also verify: `cargo check --all-targets --features gui`
 
 ## Testing
 
