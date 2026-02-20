@@ -4210,8 +4210,11 @@ impl SplitRenderer {
                     // When software_cursor_only, always add the indicator space because
                     // the backend does not render a hardware cursor.  In terminal mode,
                     // the primary cursor at end-of-line relies on the hardware cursor.
-                    let should_add_indicator =
-                        if is_active { software_cursor_only || !is_primary_at_end } else { true };
+                    let should_add_indicator = if is_active {
+                        software_cursor_only || !is_primary_at_end
+                    } else {
+                        true
+                    };
                     if should_add_indicator {
                         let cursor_style = if is_active {
                             Style::default()
@@ -5150,6 +5153,7 @@ impl SplitRenderer {
     /// Uses view_line_mappings to translate overlay byte ranges into screen
     /// positions, then wraps the corresponding cells with OSC 8 sequences so
     /// they become clickable in terminals that support the protocol.
+    #[allow(dead_code)]
     fn apply_hyperlink_overlays(
         frame: &mut Frame,
         viewport_overlays: &[(crate::view::overlay::Overlay, Range<usize>)],
@@ -5215,6 +5219,7 @@ impl SplitRenderer {
     /// When the cursor falls on the second character of a 2-char chunk, the
     /// chunk is split into two 1-char chunks so the terminal cursor remains
     /// visible on the correct cell.
+    #[allow(dead_code)]
     fn apply_osc8_to_cells(
         buf: &mut ratatui::buffer::Buffer,
         start_x: u16,
@@ -6791,7 +6796,7 @@ mod tests {
         );
 
         // Simulate backend: starts empty, apply diff from frame1
-        let mut prev = Buffer::empty(area);
+        let prev = Buffer::empty(area);
         let mut backend = Buffer::empty(area);
         let diff1 = prev.diff(&frame1);
         for (x, y, cell) in &diff1 {

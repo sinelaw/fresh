@@ -7721,7 +7721,7 @@ log("STOPPED")
     }
 
     // === Step 3: Verify diagnostics are GONE from rendered output ===
-    let screen_after = harness.screen_to_string();
+    let _screen_after = harness.screen_to_string();
     let status_bar_after = harness.get_status_bar();
     let log_content = std::fs::read_to_string(&log_path).unwrap_or_default();
 

@@ -484,7 +484,7 @@ fn test_scrollbar_click_with_multiline_file_one_long_line() {
     let content_changed = screen_before != screen_after;
 
     // Should see the long line content (CONTENT_) somewhere, possibly scrolled
-    let sees_content_line = screen_after.contains("CONTENT_");
+    let _sees_content_line = screen_after.contains("CONTENT_");
 
     assert!(
         content_changed,

@@ -35,6 +35,7 @@ const UTF16_BE_BOM: &[u8] = &[0xFE, 0xFF];
 // ============================================================================
 
 /// Represents different text encodings for testing
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TestEncoding {
     Utf8,
@@ -185,6 +186,7 @@ impl TestEncoding {
     }
 
     /// Check if this encoding can represent the given text losslessly
+    #[allow(dead_code)]
     fn can_encode_losslessly(&self, text: &str) -> bool {
         match self {
             TestEncoding::Utf8
@@ -261,6 +263,7 @@ impl TestEncoding {
     }
 
     /// Get the display name for this encoding
+    #[allow(dead_code)]
     fn display_name(&self) -> &'static str {
         match self {
             TestEncoding::Utf8 => "UTF-8",
@@ -344,6 +347,7 @@ fn chinese_text_strategy() -> impl Strategy<Value = String> {
 }
 
 /// Strategy for generating mixed text (ASCII + Chinese)
+#[allow(dead_code)]
 fn mixed_text_strategy() -> impl Strategy<Value = String> {
     (ascii_text_strategy(), chinese_text_strategy()).prop_map(|(a, b)| format!("{} {}", a, b))
 }

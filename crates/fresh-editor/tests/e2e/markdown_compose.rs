@@ -20,7 +20,6 @@ fn test_compose_mode_typing_no_flicker() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crate::common::tracing::init_tracing_from_env;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use std::time::Duration;
 
     init_tracing_from_env();
 
@@ -594,7 +593,6 @@ fn test_compose_mode_visual_cursor_and_auto_expose() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crate::common::tracing::init_tracing_from_env;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use std::time::Duration;
 
     init_tracing_from_env();
 
@@ -780,7 +778,6 @@ fn test_compose_mode_no_whitespace_line_wrapping() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crate::common::tracing::init_tracing_from_env;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use std::time::Duration;
 
     init_tracing_from_env();
 
@@ -861,7 +858,6 @@ fn test_compose_mode_mouse_scroll_to_bottom() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crate::common::tracing::init_tracing_from_env;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use std::time::Duration;
 
     init_tracing_from_env();
 
@@ -1233,7 +1229,6 @@ fn test_compose_mode_table_cursor_navigation() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crate::common::tracing::init_tracing_from_env;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use std::time::Duration;
 
     init_tracing_from_env();
 
@@ -1604,7 +1599,6 @@ fn test_compose_mode_cursor_visibility_through_emphasis_link() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crate::common::tracing::init_tracing_from_env;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use std::time::Duration;
 
     init_tracing_from_env();
 
@@ -1732,7 +1726,6 @@ fn test_compose_mode_emphasis_auto_expose() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crate::common::tracing::init_tracing_from_env;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use std::time::Duration;
 
     init_tracing_from_env();
 
@@ -1902,7 +1895,6 @@ fn test_compose_mode_link_auto_expose() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crate::common::tracing::init_tracing_from_env;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use std::time::Duration;
 
     init_tracing_from_env();
 
@@ -2029,7 +2021,6 @@ fn test_compose_mode_table_cell_wrapping() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crate::common::tracing::init_tracing_from_env;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use std::time::Duration;
 
     init_tracing_from_env();
 
@@ -2422,7 +2413,6 @@ End.
 fn test_compose_mode_cursor_column_sticky_on_list() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crossterm::event::{KeyCode, KeyModifiers};
-    use std::time::Duration;
 
     let md_content = "\
 # List Test
@@ -2535,7 +2525,6 @@ fn test_compose_mode_cursor_column_sticky_on_list() {
 fn test_compose_mode_cursor_column_zero_sticky_through_wrapped_list() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crossterm::event::{KeyCode, KeyModifiers};
-    use std::time::Duration;
 
     // Numbered list with items long enough to wrap at 50 columns
     let md_content = "\

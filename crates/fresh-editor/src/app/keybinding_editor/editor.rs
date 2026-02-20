@@ -185,7 +185,7 @@ impl KeybindingEditor {
     fn keybinding_to_resolved(
         kb: &Keybinding,
         source: BindingSource,
-        resolver: &KeybindingResolver,
+        _resolver: &KeybindingResolver,
     ) -> Option<ResolvedBinding> {
         let context = kb.when.as_deref().unwrap_or("normal").to_string();
 

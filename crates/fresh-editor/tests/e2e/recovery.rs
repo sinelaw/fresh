@@ -986,7 +986,7 @@ fn test_recovery_after_save_with_size_change() {
 fn test_unnamed_buffer_created_via_new_buffer_has_stable_recovery() {
     use fresh::services::recovery::RecoveryStorage;
 
-    let mut config = fresh::config::Config::default();
+    let config = fresh::config::Config::default();
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 

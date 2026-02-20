@@ -704,7 +704,7 @@ fn test_command_palette_shows_shortcuts() {
     harness.assert_screen_contains("Add Cursor Below");
 
     // Filter to "Copy" to bring it into the visible 10 items
-    harness.type_text("Copy");
+    let _ = harness.type_text("Copy");
     harness.render().unwrap();
 
     // Copy should show Ctrl+C (or ⌘+C on macOS)

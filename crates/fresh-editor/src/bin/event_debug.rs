@@ -7,9 +7,9 @@ use crossterm::{
     cursor::MoveToColumn,
     event::{
         poll as event_poll, read as event_read, Event, KeyCode, KeyEventKind, KeyModifiers,
-        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags,
     },
-    terminal::{disable_raw_mode, enable_raw_mode},
+    terminal::disable_raw_mode,
     ExecutableCommand,
 };
 use std::{

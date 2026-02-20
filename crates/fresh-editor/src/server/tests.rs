@@ -91,7 +91,7 @@ mod integration_tests {
 
         thread::sleep(Duration::from_millis(50));
 
-        let mut conn = ClientConnection::connect(&socket_paths).unwrap();
+        let conn = ClientConnection::connect(&socket_paths).unwrap();
 
         // Send hello
         let hello = ClientHello::new(TermSize::new(80, 24));
@@ -137,7 +137,7 @@ mod integration_tests {
 
         thread::sleep(Duration::from_millis(50));
 
-        let mut conn = ClientConnection::connect(&socket_paths).unwrap();
+        let conn = ClientConnection::connect(&socket_paths).unwrap();
 
         // Send hello with incompatible version
         let hello_json = serde_json::json!({
@@ -202,7 +202,7 @@ mod integration_tests {
 
         thread::sleep(Duration::from_millis(50));
 
-        let mut conn = ClientConnection::connect(&socket_paths).unwrap();
+        let conn = ClientConnection::connect(&socket_paths).unwrap();
 
         // Handshake
         let hello = ClientHello::new(TermSize::new(80, 24));
@@ -249,7 +249,7 @@ mod integration_tests {
         let server_handle = thread::spawn(move || server.run());
         thread::sleep(Duration::from_millis(50));
 
-        let mut conn = ClientConnection::connect(&socket_paths).unwrap();
+        let conn = ClientConnection::connect(&socket_paths).unwrap();
 
         // Handshake
         let hello = ClientHello::new(TermSize::new(80, 24));

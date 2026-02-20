@@ -49,6 +49,7 @@ pub struct ConnectedClient {
     /// Client's terminal size
     term_size: TermSize,
     /// Client's environment
+    #[allow(dead_code)]
     env: std::collections::HashMap<String, Option<String>>,
     /// Client ID for logging
     id: u64,
@@ -148,7 +149,7 @@ impl Server {
     /// Handle a new client connection (perform handshake)
     fn handle_new_connection(
         &self,
-        mut conn: ServerConnection,
+        conn: ServerConnection,
         client_id: u64,
     ) -> io::Result<ConnectedClient> {
         // Read client hello
@@ -410,6 +411,7 @@ impl Server {
     }
 }
 
+#[allow(dead_code)]
 impl ConnectedClient {
     /// Get the client's terminal size
     pub fn term_size(&self) -> TermSize {

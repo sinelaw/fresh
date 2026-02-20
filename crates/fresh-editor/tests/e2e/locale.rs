@@ -12,7 +12,7 @@ static LOCALE_LOCK: Mutex<()> = Mutex::new(());
 
 /// Acquire the locale lock and reset to English on drop.
 fn lock_locale() -> impl Drop {
-    struct Guard(std::sync::MutexGuard<'static, ()>);
+    struct Guard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
     impl Drop for Guard {
         fn drop(&mut self) {
             fresh::i18n::set_locale("en");

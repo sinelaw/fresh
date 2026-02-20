@@ -65,7 +65,7 @@ pub fn run_client(config: ClientConfig) -> io::Result<ClientExitReason> {
 /// (e.g., after retrying connection attempts). Performs handshake then relay.
 pub fn run_client_with_connection(
     config: ClientConfig,
-    mut conn: ClientConnection,
+    conn: ClientConnection,
 ) -> io::Result<ClientExitReason> {
     // Perform handshake
     let hello = ClientHello::new(config.term_size);

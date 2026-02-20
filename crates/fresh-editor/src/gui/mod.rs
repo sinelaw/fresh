@@ -12,9 +12,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result as AnyhowResult};
 use crossterm::event::{
-    KeyCode, KeyEvent as CtKeyEvent, KeyEventKind, KeyEventState, KeyModifiers,
-    MediaKeyCode, ModifierKeyCode,
-    MouseButton as CtMouseButton, MouseEvent as CtMouseEvent, MouseEventKind,
+    KeyCode, KeyEvent as CtKeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MediaKeyCode,
+    ModifierKeyCode, MouseButton as CtMouseButton, MouseEvent as CtMouseEvent, MouseEventKind,
 };
 use ratatui::backend::Backend;
 use ratatui::Terminal;
@@ -22,8 +21,8 @@ use ratatui_wgpu::{Builder, Dimensions, Font, WgpuBackend};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::keyboard::{Key, NamedKey};
 use winit::keyboard::KeyLocation;
+use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::app::Editor;
@@ -187,10 +186,7 @@ impl ApplicationHandler for WgpuApp {
 
             WindowEvent::Resized(size) => {
                 if size.width > 0 && size.height > 0 {
-                    state.terminal.backend_mut().resize(
-                        size.width,
-                        size.height,
-                    );
+                    state.terminal.backend_mut().resize(size.width, size.height);
                     // Re-derive cell size from the backend after resize
                     if let Ok(ws) = state.terminal.backend_mut().window_size() {
                         let cols = ws.columns_rows.width;
@@ -229,10 +225,7 @@ impl ApplicationHandler for WgpuApp {
                 if let Some(key_event) =
                     translate_key_event(&event, state.modifiers, state.alt_location)
                 {
-                    if let Err(e) = crate::gui::handle_key(
-                        &mut state.editor,
-                        key_event,
-                    ) {
+                    if let Err(e) = crate::gui::handle_key(&mut state.editor, key_event) {
                         tracing::error!("Key handling error: {}", e);
                     }
                     state.needs_render = true;
@@ -407,15 +400,16 @@ impl WgpuApp {
         let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
         let font = Font::new(FONT_DATA).context("Failed to load embedded font")?;
 
-        let backend = rt.block_on(
-            Builder::from_font(font)
-                .with_width_and_height(Dimensions {
-                    width: NonZeroU32::new(size.width).unwrap_or(NonZeroU32::new(1).unwrap()),
-                    height: NonZeroU32::new(size.height).unwrap_or(NonZeroU32::new(1).unwrap()),
-                })
-                .build_with_target(window.clone()),
-        )
-        .context("Failed to create wgpu backend")?;
+        let backend = rt
+            .block_on(
+                Builder::from_font(font)
+                    .with_width_and_height(Dimensions {
+                        width: NonZeroU32::new(size.width).unwrap_or(NonZeroU32::new(1).unwrap()),
+                        height: NonZeroU32::new(size.height).unwrap_or(NonZeroU32::new(1).unwrap()),
+                    })
+                    .build_with_target(window.clone()),
+            )
+            .context("Failed to create wgpu backend")?;
 
         let mut terminal = Terminal::new(backend).context("Failed to create ratatui terminal")?;
 
@@ -579,36 +573,33 @@ pub fn translate_key_event(
 ) -> Option<CtKeyEvent> {
     // On macOS, Left Option is used for international character input while
     // Right Option acts as an Alt modifier for keyboard shortcuts.
-    let (effective_modifiers, alt_override_char) = if cfg!(target_os = "macos")
-        && modifiers.contains(KeyModifiers::ALT)
-    {
-        match alt_location {
-            Some(KeyLocation::Left) => {
-                // Left Alt: strip ALT so the composed character (å, ñ, …)
-                // is treated as plain text input rather than a shortcut.
-                (modifiers & !KeyModifiers::ALT, None)
+    let (effective_modifiers, alt_override_char) =
+        if cfg!(target_os = "macos") && modifiers.contains(KeyModifiers::ALT) {
+            match alt_location {
+                Some(KeyLocation::Left) => {
+                    // Left Alt: strip ALT so the composed character (å, ñ, …)
+                    // is treated as plain text input rather than a shortcut.
+                    (modifiers & !KeyModifiers::ALT, None)
+                }
+                Some(KeyLocation::Right) => {
+                    // Right Alt: keep ALT for shortcuts, but undo the macOS
+                    // Option-composition by deriving the base character from
+                    // the physical key.  This way Right-Option+F produces
+                    // Alt+f instead of Alt+ƒ.
+                    let base = physical_key_to_base_char(
+                        &event.physical_key,
+                        modifiers.contains(KeyModifiers::SHIFT),
+                    );
+                    (modifiers, base)
+                }
+                _ => (modifiers, None),
             }
-            Some(KeyLocation::Right) => {
-                // Right Alt: keep ALT for shortcuts, but undo the macOS
-                // Option-composition by deriving the base character from
-                // the physical key.  This way Right-Option+F produces
-                // Alt+f instead of Alt+ƒ.
-                let base = physical_key_to_base_char(
-                    &event.physical_key,
-                    modifiers.contains(KeyModifiers::SHIFT),
-                );
-                (modifiers, base)
-            }
-            _ => (modifiers, None),
-        }
-    } else {
-        (modifiers, None)
-    };
+        } else {
+            (modifiers, None)
+        };
 
     let code = match &event.logical_key {
-        Key::Named(named) => {
-            translate_named_key(named, &event.location, effective_modifiers)?
-        }
+        Key::Named(named) => translate_named_key(named, &event.location, effective_modifiers)?,
         Key::Character(ch) => {
             let c = alt_override_char.unwrap_or_else(|| ch.chars().next().unwrap_or('\0'));
             if c == '\0' {
@@ -637,10 +628,7 @@ pub fn translate_key_event(
 /// Used on macOS to undo the Option-key composition for Right Alt shortcuts.
 /// Returns `None` for keys that don't have a simple character mapping (those
 /// are handled as named keys and don't need this override).
-fn physical_key_to_base_char(
-    key: &winit::keyboard::PhysicalKey,
-    shift: bool,
-) -> Option<char> {
+fn physical_key_to_base_char(key: &winit::keyboard::PhysicalKey, shift: bool) -> Option<char> {
     use winit::keyboard::KeyCode as WK;
     use winit::keyboard::PhysicalKey;
 
@@ -888,26 +876,68 @@ mod tests {
     fn test_named_key_navigation() {
         let loc = KeyLocation::Standard;
         let mods = KeyModifiers::NONE;
-        assert_eq!(translate_named_key(&NamedKey::ArrowUp, &loc, mods), Some(KeyCode::Up));
-        assert_eq!(translate_named_key(&NamedKey::ArrowDown, &loc, mods), Some(KeyCode::Down));
-        assert_eq!(translate_named_key(&NamedKey::ArrowLeft, &loc, mods), Some(KeyCode::Left));
-        assert_eq!(translate_named_key(&NamedKey::ArrowRight, &loc, mods), Some(KeyCode::Right));
-        assert_eq!(translate_named_key(&NamedKey::Home, &loc, mods), Some(KeyCode::Home));
-        assert_eq!(translate_named_key(&NamedKey::End, &loc, mods), Some(KeyCode::End));
-        assert_eq!(translate_named_key(&NamedKey::PageUp, &loc, mods), Some(KeyCode::PageUp));
-        assert_eq!(translate_named_key(&NamedKey::PageDown, &loc, mods), Some(KeyCode::PageDown));
+        assert_eq!(
+            translate_named_key(&NamedKey::ArrowUp, &loc, mods),
+            Some(KeyCode::Up)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::ArrowDown, &loc, mods),
+            Some(KeyCode::Down)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::ArrowLeft, &loc, mods),
+            Some(KeyCode::Left)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::ArrowRight, &loc, mods),
+            Some(KeyCode::Right)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Home, &loc, mods),
+            Some(KeyCode::Home)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::End, &loc, mods),
+            Some(KeyCode::End)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::PageUp, &loc, mods),
+            Some(KeyCode::PageUp)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::PageDown, &loc, mods),
+            Some(KeyCode::PageDown)
+        );
     }
 
     #[test]
     fn test_named_key_editing() {
         let loc = KeyLocation::Standard;
         let mods = KeyModifiers::NONE;
-        assert_eq!(translate_named_key(&NamedKey::Backspace, &loc, mods), Some(KeyCode::Backspace));
-        assert_eq!(translate_named_key(&NamedKey::Delete, &loc, mods), Some(KeyCode::Delete));
-        assert_eq!(translate_named_key(&NamedKey::Insert, &loc, mods), Some(KeyCode::Insert));
-        assert_eq!(translate_named_key(&NamedKey::Enter, &loc, mods), Some(KeyCode::Enter));
-        assert_eq!(translate_named_key(&NamedKey::Escape, &loc, mods), Some(KeyCode::Esc));
-        assert_eq!(translate_named_key(&NamedKey::Space, &loc, mods), Some(KeyCode::Char(' ')));
+        assert_eq!(
+            translate_named_key(&NamedKey::Backspace, &loc, mods),
+            Some(KeyCode::Backspace)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Delete, &loc, mods),
+            Some(KeyCode::Delete)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Insert, &loc, mods),
+            Some(KeyCode::Insert)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Enter, &loc, mods),
+            Some(KeyCode::Enter)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Escape, &loc, mods),
+            Some(KeyCode::Esc)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Space, &loc, mods),
+            Some(KeyCode::Char(' '))
+        );
     }
 
     #[test]
@@ -927,23 +957,56 @@ mod tests {
     fn test_function_keys() {
         let loc = KeyLocation::Standard;
         let mods = KeyModifiers::NONE;
-        assert_eq!(translate_named_key(&NamedKey::F1, &loc, mods), Some(KeyCode::F(1)));
-        assert_eq!(translate_named_key(&NamedKey::F5, &loc, mods), Some(KeyCode::F(5)));
-        assert_eq!(translate_named_key(&NamedKey::F12, &loc, mods), Some(KeyCode::F(12)));
-        assert_eq!(translate_named_key(&NamedKey::F24, &loc, mods), Some(KeyCode::F(24)));
-        assert_eq!(translate_named_key(&NamedKey::F35, &loc, mods), Some(KeyCode::F(35)));
+        assert_eq!(
+            translate_named_key(&NamedKey::F1, &loc, mods),
+            Some(KeyCode::F(1))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::F5, &loc, mods),
+            Some(KeyCode::F(5))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::F12, &loc, mods),
+            Some(KeyCode::F(12))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::F24, &loc, mods),
+            Some(KeyCode::F(24))
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::F35, &loc, mods),
+            Some(KeyCode::F(35))
+        );
     }
 
     #[test]
     fn test_lock_and_misc_keys() {
         let loc = KeyLocation::Standard;
         let mods = KeyModifiers::NONE;
-        assert_eq!(translate_named_key(&NamedKey::CapsLock, &loc, mods), Some(KeyCode::CapsLock));
-        assert_eq!(translate_named_key(&NamedKey::NumLock, &loc, mods), Some(KeyCode::NumLock));
-        assert_eq!(translate_named_key(&NamedKey::ScrollLock, &loc, mods), Some(KeyCode::ScrollLock));
-        assert_eq!(translate_named_key(&NamedKey::PrintScreen, &loc, mods), Some(KeyCode::PrintScreen));
-        assert_eq!(translate_named_key(&NamedKey::Pause, &loc, mods), Some(KeyCode::Pause));
-        assert_eq!(translate_named_key(&NamedKey::ContextMenu, &loc, mods), Some(KeyCode::Menu));
+        assert_eq!(
+            translate_named_key(&NamedKey::CapsLock, &loc, mods),
+            Some(KeyCode::CapsLock)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::NumLock, &loc, mods),
+            Some(KeyCode::NumLock)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::ScrollLock, &loc, mods),
+            Some(KeyCode::ScrollLock)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::PrintScreen, &loc, mods),
+            Some(KeyCode::PrintScreen)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::Pause, &loc, mods),
+            Some(KeyCode::Pause)
+        );
+        assert_eq!(
+            translate_named_key(&NamedKey::ContextMenu, &loc, mods),
+            Some(KeyCode::Menu)
+        );
     }
 
     #[test]
@@ -1029,7 +1092,10 @@ mod tests {
     fn test_unknown_named_key_returns_none() {
         let loc = KeyLocation::Standard;
         let mods = KeyModifiers::NONE;
-        assert_eq!(translate_named_key(&NamedKey::BrowserBack, &loc, mods), None);
+        assert_eq!(
+            translate_named_key(&NamedKey::BrowserBack, &loc, mods),
+            None
+        );
         assert_eq!(translate_named_key(&NamedKey::LaunchMail, &loc, mods), None);
     }
 
@@ -1078,9 +1144,18 @@ mod tests {
 
     #[test]
     fn test_translate_mouse_buttons() {
-        assert_eq!(translate_mouse_button(MouseButton::Left), Some(CtMouseButton::Left));
-        assert_eq!(translate_mouse_button(MouseButton::Right), Some(CtMouseButton::Right));
-        assert_eq!(translate_mouse_button(MouseButton::Middle), Some(CtMouseButton::Middle));
+        assert_eq!(
+            translate_mouse_button(MouseButton::Left),
+            Some(CtMouseButton::Left)
+        );
+        assert_eq!(
+            translate_mouse_button(MouseButton::Right),
+            Some(CtMouseButton::Right)
+        );
+        assert_eq!(
+            translate_mouse_button(MouseButton::Middle),
+            Some(CtMouseButton::Middle)
+        );
         assert_eq!(translate_mouse_button(MouseButton::Back), None);
         assert_eq!(translate_mouse_button(MouseButton::Forward), None);
         assert_eq!(translate_mouse_button(MouseButton::Other(42)), None);

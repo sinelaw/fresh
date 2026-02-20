@@ -336,6 +336,7 @@ impl TextBufferSUT {
         }
     }
 
+    #[allow(dead_code)]
     fn load_from_file(
         path: &std::path::Path,
         fs: Arc<ConfigurableFileSystem>,
@@ -454,6 +455,7 @@ impl TestContext {
         Self::with_full_config(content, true, 0)
     }
 
+    #[allow(dead_code)]
     fn with_config(content: Vec<u8>, simulate_owner: bool) -> Self {
         Self::with_full_config(content, simulate_owner, 0)
     }

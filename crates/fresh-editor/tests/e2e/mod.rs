@@ -19,10 +19,10 @@ pub mod emacs_actions;
 pub mod encoding;
 pub mod explorer_menu;
 pub mod file_browser;
-#[cfg(feature = "gui")]
-pub mod gui;
 pub mod file_explorer;
 pub mod file_permissions;
+#[cfg(feature = "gui")]
+pub mod gui;
 pub mod horizontal_scrollbar;
 pub mod indent_dedent;
 pub mod keybinding_editor;

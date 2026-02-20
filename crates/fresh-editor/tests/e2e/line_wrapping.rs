@@ -520,7 +520,7 @@ fn test_wrapped_line_cursor_positioning() {
     harness.render().unwrap();
 
     let end_pos_after_end = harness.cursor_position();
-    let (_end_x, end_y) = harness.screen_cursor_position();
+    let (_end_x, _end_y) = harness.screen_cursor_position();
 
     // End key now goes to visual line end, not physical line end
     // Keep pressing End until we reach physical line end

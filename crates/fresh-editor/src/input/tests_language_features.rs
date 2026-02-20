@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn test_ctrl_d_wrap_skip_existing() {
-        let (mut state, mut cursors) = create_state("foo foo foo");
+        let (_state, mut cursors) = create_state("foo foo foo");
 
         // Cursor on 3rd foo
         cursors.primary_mut().position = 11;
