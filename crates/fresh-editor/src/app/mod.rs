@@ -285,8 +285,8 @@ pub struct Editor {
     /// Running in session/server mode (use hardware cursor only, no REVERSED style)
     session_mode: bool,
 
-    /// GUI mode: backend does not render a hardware cursor, so always use software indicators.
-    gui_mode: bool,
+    /// Backend does not render a hardware cursor — always use software cursor indicators.
+    software_cursor_only: bool,
 
     /// Session name for display in status bar (session mode only)
     session_name: Option<String>,
@@ -1176,7 +1176,7 @@ impl Editor {
             should_quit: false,
             should_detach: false,
             session_mode: false,
-            gui_mode: false,
+            software_cursor_only: false,
             session_name: None,
             pending_escape_sequences: Vec::new(),
             restart_with_dir: None,
@@ -2876,9 +2876,10 @@ impl Editor {
         self.session_mode
     }
 
-    /// Enable GUI mode (no hardware cursor rendering by the backend).
-    pub fn set_gui_mode(&mut self, gui_mode: bool) {
-        self.gui_mode = gui_mode;
+    /// Mark that the backend does not render a hardware cursor.
+    /// When set, the renderer always draws a software cursor indicator.
+    pub fn set_software_cursor_only(&mut self, enabled: bool) {
+        self.software_cursor_only = enabled;
     }
 
     /// Set the session name for display in status bar

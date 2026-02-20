@@ -397,8 +397,8 @@ struct LineRenderInput<'a> {
     relative_line_numbers: bool,
     /// Session mode: use hardware cursor only, skip REVERSED style for software cursor
     session_mode: bool,
-    /// GUI mode: backend has no hardware cursor, always use software indicator
-    gui_mode: bool,
+    /// No hardware cursor: always render software cursor indicators
+    software_cursor_only: bool,
     /// Whether to show line numbers in the gutter
     show_line_numbers: bool,
 }
@@ -777,7 +777,7 @@ impl SplitRenderer {
         tab_bar_visible: bool,
         use_terminal_bg: bool,
         session_mode: bool,
-        gui_mode: bool,
+        software_cursor_only: bool,
         show_vertical_scrollbar: bool,
         show_horizontal_scrollbar: bool,
     ) -> (
@@ -1033,7 +1033,7 @@ impl SplitRenderer {
                     relative_line_numbers,
                     use_terminal_bg,
                     session_mode,
-                    gui_mode,
+                    software_cursor_only,
                     &view_prefs.rulers,
                     view_prefs.show_line_numbers,
                 );
@@ -1165,7 +1165,7 @@ impl SplitRenderer {
         relative_line_numbers: bool,
         use_terminal_bg: bool,
         session_mode: bool,
-        gui_mode: bool,
+        software_cursor_only: bool,
         tab_bar_visible: bool,
         show_vertical_scrollbar: bool,
         show_horizontal_scrollbar: bool,
@@ -1238,7 +1238,7 @@ impl SplitRenderer {
                 relative_line_numbers,
                 use_terminal_bg,
                 session_mode,
-                gui_mode,
+                software_cursor_only,
                 view_prefs.show_line_numbers,
             );
 
@@ -3676,7 +3676,7 @@ impl SplitRenderer {
             left_column,
             relative_line_numbers,
             session_mode,
-            gui_mode,
+            software_cursor_only,
             show_line_numbers,
         } = input;
 
@@ -4207,11 +4207,11 @@ impl SplitRenderer {
                         }
                     }
 
-                    // In GUI mode, always add the indicator space because the backend
-                    // does not render a hardware cursor.  In terminal mode, the
-                    // primary cursor at end-of-line relies on the hardware cursor.
+                    // When software_cursor_only, always add the indicator space because
+                    // the backend does not render a hardware cursor.  In terminal mode,
+                    // the primary cursor at end-of-line relies on the hardware cursor.
                     let should_add_indicator =
-                        if is_active { gui_mode || !is_primary_at_end } else { true };
+                        if is_active { software_cursor_only || !is_primary_at_end } else { true };
                     if should_add_indicator {
                         let cursor_style = if is_active {
                             Style::default()
@@ -4646,7 +4646,7 @@ impl SplitRenderer {
         relative_line_numbers: bool,
         use_terminal_bg: bool,
         session_mode: bool,
-        gui_mode: bool,
+        software_cursor_only: bool,
         show_line_numbers: bool,
     ) -> BufferLayoutOutput {
         let _span = tracing::trace_span!("compute_buffer_layout").entered();
@@ -4846,7 +4846,7 @@ impl SplitRenderer {
             left_column: viewport.left_column,
             relative_line_numbers,
             session_mode,
-            gui_mode,
+            software_cursor_only,
             show_line_numbers,
         });
 
@@ -4887,6 +4887,7 @@ impl SplitRenderer {
         ansi_background: Option<&AnsiBackground>,
         background_fade: f32,
         hide_cursor: bool,
+        software_cursor_only: bool,
         rulers: &[usize],
         compose_column_guides: Option<Vec<u16>>,
     ) {
@@ -4980,6 +4981,28 @@ impl SplitRenderer {
         if let Some((screen_x, screen_y)) = cursor_screen_pos {
             frame.set_cursor_position((screen_x, screen_y));
 
+            // When software_cursor_only the backend has no hardware cursor, so
+            // ensure the cell at the cursor position always has REVERSED style.
+            // This covers all edge cases (end-of-line, empty buffer, newline
+            // positions) where the per-character REVERSED styling from
+            // compute_char_style may not have been applied.
+            if software_cursor_only {
+                let buf = frame.buffer_mut();
+                let area = buf.area;
+                if screen_x < area.x + area.width && screen_y < area.y + area.height {
+                    let cell = &mut buf[(screen_x, screen_y)];
+                    // Only override empty / default-background cells to avoid
+                    // double-reversing cells that already got software cursor
+                    // styling in render_view_lines.
+                    if !cell.modifier.contains(Modifier::REVERSED) {
+                        cell.set_char(' ');
+                        cell.fg = theme.editor_fg;
+                        cell.bg = theme.editor_bg;
+                        cell.modifier.insert(Modifier::REVERSED);
+                    }
+                }
+            }
+
             if let Some(event_log) = event_log {
                 let cursor_pos = cursors.primary().position;
                 let buffer_len = state.buffer.len();
@@ -5015,7 +5038,7 @@ impl SplitRenderer {
         relative_line_numbers: bool,
         use_terminal_bg: bool,
         session_mode: bool,
-        gui_mode: bool,
+        software_cursor_only: bool,
         rulers: &[usize],
         show_line_numbers: bool,
     ) -> Vec<ViewLineMapping> {
@@ -5035,7 +5058,7 @@ impl SplitRenderer {
             relative_line_numbers,
             use_terminal_bg,
             session_mode,
-            gui_mode,
+            software_cursor_only,
             show_line_numbers,
         );
 
@@ -5053,6 +5076,7 @@ impl SplitRenderer {
             ansi_background,
             background_fade,
             hide_cursor,
+            software_cursor_only,
             rulers,
             compose_column_guides,
         );
@@ -5424,7 +5448,7 @@ mod tests {
             left_column: viewport.left_column,
             relative_line_numbers: false,
             session_mode: false,
-            gui_mode: false,
+            software_cursor_only: false,
             show_line_numbers: true, // Tests show line numbers
         });
 

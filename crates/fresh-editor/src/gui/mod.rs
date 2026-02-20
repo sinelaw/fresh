@@ -451,9 +451,9 @@ impl WgpuApp {
         )
         .context("Failed to create editor instance")?;
 
-        // ratatui-wgpu does not render a hardware cursor, so enable GUI mode
-        // to ensure software cursor indicators are always visible.
-        editor.set_gui_mode(true);
+        // ratatui-wgpu does not render a hardware cursor, so always use
+        // software cursor indicators.
+        editor.set_software_cursor_only(true);
 
         let workspace_enabled = !self.no_session && self.file_locations.is_empty();
 

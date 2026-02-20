@@ -425,7 +425,7 @@ impl Editor {
             self.tab_bar_visible,
             self.config.editor.use_terminal_bg,
             self.session_mode,
-            self.gui_mode,
+            self.software_cursor_only,
             self.config.editor.show_vertical_scrollbar,
             self.config.editor.show_horizontal_scrollbar,
         );
@@ -4116,7 +4116,7 @@ impl Editor {
             self.config.editor.relative_line_numbers,
             self.config.editor.use_terminal_bg,
             self.session_mode,
-            self.gui_mode,
+            self.software_cursor_only,
             self.tab_bar_visible,
             self.config.editor.show_vertical_scrollbar,
             self.config.editor.show_horizontal_scrollbar,
