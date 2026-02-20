@@ -557,6 +557,8 @@
   "cmd.shell_command_desc": "Shell-Befehl auf Buffer/Auswahl ausführen, Ausgabe in neuem Buffer",
   "cmd.shell_command_replace": "Shell-Befehl (Ersetzen)",
   "cmd.shell_command_replace_desc": "Shell-Befehl auf Buffer/Auswahl ausführen, Inhalt ersetzen",
+  "cmd.event_debug": "Debug Keyboard Events",
+  "cmd.event_debug_desc": "Open dialog that shows raw keyboard events for debugging",
   "cmd.show_completions": "Vervollständigungen anzeigen",
   "cmd.show_completions_desc": "Autovervollständigungsvorschläge am Cursor auslösen",
   "cmd.show_hover_info": "Hover-Info anzeigen",

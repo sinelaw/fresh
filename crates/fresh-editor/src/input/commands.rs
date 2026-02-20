@@ -1197,6 +1197,14 @@ static COMMAND_DEFS: &[CommandDef] = &[
         contexts: &[Normal],
         custom_contexts: &[],
     },
+    // Debugging
+    CommandDef {
+        name_key: "cmd.event_debug",
+        desc_key: "cmd.event_debug_desc",
+        action: || Action::EventDebug,
+        contexts: &[],
+        custom_contexts: &[],
+    },
 ];
 
 /// Get all available commands for the command palette

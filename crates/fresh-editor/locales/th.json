@@ -557,6 +557,8 @@
   "cmd.shell_command_desc": "รันคำสั่งเชลล์บนบัฟเฟอร์/ส่วนที่เลือก และแสดงผลในบัฟเฟอร์ใหม่",
   "cmd.shell_command_replace": "คำสั่งเชลล์ (แทนที่)",
   "cmd.shell_command_replace_desc": "รันคำสั่งเชลล์บนบัฟเฟอร์/ส่วนที่เลือก และแทนที่เนื้อหา",
+  "cmd.event_debug": "Debug Keyboard Events",
+  "cmd.event_debug_desc": "Open dialog that shows raw keyboard events for debugging",
   "cmd.show_completions": "แสดงการเติมคำ",
   "cmd.show_completions_desc": "เรียกข้อเสนอการเติมคำอัตโนมัติที่เคอร์เซอร์",
   "cmd.show_hover_info": "แสดงข้อมูลโฮเวอร์",

@@ -397,6 +397,8 @@ struct LineRenderInput<'a> {
     relative_line_numbers: bool,
     /// Session mode: use hardware cursor only, skip REVERSED style for software cursor
     session_mode: bool,
+    /// GUI mode: backend has no hardware cursor, always use software indicator
+    gui_mode: bool,
     /// Whether to show line numbers in the gutter
     show_line_numbers: bool,
 }
@@ -775,6 +777,7 @@ impl SplitRenderer {
         tab_bar_visible: bool,
         use_terminal_bg: bool,
         session_mode: bool,
+        gui_mode: bool,
         show_vertical_scrollbar: bool,
         show_horizontal_scrollbar: bool,
     ) -> (
@@ -1030,6 +1033,7 @@ impl SplitRenderer {
                     relative_line_numbers,
                     use_terminal_bg,
                     session_mode,
+                    gui_mode,
                     &view_prefs.rulers,
                     view_prefs.show_line_numbers,
                 );
@@ -1161,6 +1165,7 @@ impl SplitRenderer {
         relative_line_numbers: bool,
         use_terminal_bg: bool,
         session_mode: bool,
+        gui_mode: bool,
         tab_bar_visible: bool,
         show_vertical_scrollbar: bool,
         show_horizontal_scrollbar: bool,
@@ -1233,6 +1238,7 @@ impl SplitRenderer {
                 relative_line_numbers,
                 use_terminal_bg,
                 session_mode,
+                gui_mode,
                 view_prefs.show_line_numbers,
             );
 
@@ -3670,6 +3676,7 @@ impl SplitRenderer {
             left_column,
             relative_line_numbers,
             session_mode,
+            gui_mode,
             show_line_numbers,
         } = input;
 
@@ -4200,7 +4207,11 @@ impl SplitRenderer {
                         }
                     }
 
-                    let should_add_indicator = if is_active { !is_primary_at_end } else { true };
+                    // In GUI mode, always add the indicator space because the backend
+                    // does not render a hardware cursor.  In terminal mode, the
+                    // primary cursor at end-of-line relies on the hardware cursor.
+                    let should_add_indicator =
+                        if is_active { gui_mode || !is_primary_at_end } else { true };
                     if should_add_indicator {
                         let cursor_style = if is_active {
                             Style::default()
@@ -4635,6 +4646,7 @@ impl SplitRenderer {
         relative_line_numbers: bool,
         use_terminal_bg: bool,
         session_mode: bool,
+        gui_mode: bool,
         show_line_numbers: bool,
     ) -> BufferLayoutOutput {
         let _span = tracing::trace_span!("compute_buffer_layout").entered();
@@ -4834,6 +4846,7 @@ impl SplitRenderer {
             left_column: viewport.left_column,
             relative_line_numbers,
             session_mode,
+            gui_mode,
             show_line_numbers,
         });
 
@@ -5002,6 +5015,7 @@ impl SplitRenderer {
         relative_line_numbers: bool,
         use_terminal_bg: bool,
         session_mode: bool,
+        gui_mode: bool,
         rulers: &[usize],
         show_line_numbers: bool,
     ) -> Vec<ViewLineMapping> {
@@ -5021,6 +5035,7 @@ impl SplitRenderer {
             relative_line_numbers,
             use_terminal_bg,
             session_mode,
+            gui_mode,
             show_line_numbers,
         );
 
@@ -5409,6 +5424,7 @@ mod tests {
             left_column: viewport.left_column,
             relative_line_numbers: false,
             session_mode: false,
+            gui_mode: false,
             show_line_numbers: true, // Tests show line numbers
         });
 

@@ -557,6 +557,8 @@
   "cmd.shell_command_desc": "バッファ/選択範囲でシェルコマンドを実行し、新しいバッファに出力します",
   "cmd.shell_command_replace": "シェルコマンド（置換）",
   "cmd.shell_command_replace_desc": "バッファ/選択範囲でシェルコマンドを実行し、コンテンツを置換します",
+  "cmd.event_debug": "Debug Keyboard Events",
+  "cmd.event_debug_desc": "Open dialog that shows raw keyboard events for debugging",
   "cmd.show_completions": "補完を表示",
   "cmd.show_completions_desc": "カーソル位置でオートコンプリートの候補をトリガーします",
   "cmd.show_hover_info": "ホバー情報を表示",

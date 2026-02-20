@@ -557,6 +557,8 @@
   "cmd.shell_command_desc": "Выполнить команду оболочки над буфером/выделением, вывод в новый буфер",
   "cmd.shell_command_replace": "Команда оболочки (замена)",
   "cmd.shell_command_replace_desc": "Выполнить команду оболочки над буфером/выделением, заменить содержимое",
+  "cmd.event_debug": "Debug Keyboard Events",
+  "cmd.event_debug_desc": "Open dialog that shows raw keyboard events for debugging",
   "cmd.show_completions": "Показать автодополнение",
   "cmd.show_completions_desc": "Вызвать предложения автодополнения на позиции курсора",
   "cmd.show_hover_info": "Показать информацию при наведении",

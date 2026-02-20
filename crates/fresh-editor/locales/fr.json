@@ -557,6 +557,8 @@
   "cmd.shell_command_desc": "Exécuter une commande shell sur le tampon/la sélection, sortie vers un nouveau tampon",
   "cmd.shell_command_replace": "Commande Shell (Remplacer)",
   "cmd.shell_command_replace_desc": "Exécuter une commande shell sur le tampon/la sélection, remplacer le contenu",
+  "cmd.event_debug": "Debug Keyboard Events",
+  "cmd.event_debug_desc": "Open dialog that shows raw keyboard events for debugging",
   "cmd.show_completions": "Afficher les complétions",
   "cmd.show_completions_desc": "Déclencher les suggestions d'autocomplétion au niveau du curseur",
   "cmd.show_hover_info": "Afficher les informations de survol",

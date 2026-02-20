@@ -16,6 +16,7 @@ use crossterm::event::{
     MediaKeyCode, ModifierKeyCode,
     MouseButton as CtMouseButton, MouseEvent as CtMouseEvent, MouseEventKind,
 };
+use ratatui::backend::Backend;
 use ratatui::Terminal;
 use ratatui_wgpu::{Builder, Dimensions, Font, WgpuBackend};
 use winit::application::ApplicationHandler;
@@ -185,12 +186,16 @@ impl ApplicationHandler for WgpuApp {
                         size.width,
                         size.height,
                     );
-                    let (cols, rows) = cell_dimensions_to_grid(
-                        size.width as f64,
-                        size.height as f64,
-                        state.cell_size,
-                    );
-                    state.editor.resize(cols, rows);
+                    // Re-derive cell size from the backend after resize
+                    if let Ok(ws) = state.terminal.backend_mut().window_size() {
+                        let cols = ws.columns_rows.width;
+                        let rows = ws.columns_rows.height;
+                        state.cell_size = (
+                            ws.pixels.width as f64 / cols.max(1) as f64,
+                            ws.pixels.height as f64 / rows.max(1) as f64,
+                        );
+                        state.editor.resize(cols, rows);
+                    }
                     state.needs_render = true;
                 }
             }
@@ -382,14 +387,6 @@ impl WgpuApp {
         let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
         let font = Font::new(FONT_DATA).context("Failed to load embedded font")?;
 
-        // Query font metrics to determine cell size.
-        // ratatui-wgpu's default font size is 24px. We use that to estimate cell size.
-        let font_size_px: u32 = 24;
-        // Monospace fonts: cell width ≈ 0.6 * font_size, cell height ≈ font_size * 1.2
-        let cell_width = font_size_px as f64 * 0.6;
-        let cell_height = font_size_px as f64 * 1.2;
-        let cell_size = (cell_width, cell_height);
-
         let backend = rt.block_on(
             Builder::from_font(font)
                 .with_width_and_height(Dimensions {
@@ -400,10 +397,22 @@ impl WgpuApp {
         )
         .context("Failed to create wgpu backend")?;
 
-        let terminal = Terminal::new(backend).context("Failed to create ratatui terminal")?;
+        let mut terminal = Terminal::new(backend).context("Failed to create ratatui terminal")?;
 
-        let (cols, rows) =
-            cell_dimensions_to_grid(size.width as f64, size.height as f64, cell_size);
+        // Query actual cell dimensions from the backend's font metrics rather
+        // than guessing with hardcoded ratios.  window_size() returns both the
+        // grid size (cols × rows) and the pixel size, so dividing gives the
+        // exact cell size used for text layout.
+        let win_size = terminal
+            .backend_mut()
+            .window_size()
+            .context("Failed to query window size from backend")?;
+        let cols = win_size.columns_rows.width;
+        let rows = win_size.columns_rows.height;
+        let cell_size = (
+            win_size.pixels.width as f64 / cols.max(1) as f64,
+            win_size.pixels.height as f64 / rows.max(1) as f64,
+        );
 
         // For GUI, we always have true color.
         let color_capability = crate::view::color_support::ColorCapability::TrueColor;
@@ -421,6 +430,10 @@ impl WgpuApp {
             filesystem,
         )
         .context("Failed to create editor instance")?;
+
+        // ratatui-wgpu does not render a hardware cursor, so enable GUI mode
+        // to ensure software cursor indicators are always visible.
+        editor.set_gui_mode(true);
 
         let workspace_enabled = !self.no_session && self.file_locations.is_empty();
 
@@ -497,6 +510,20 @@ fn handle_key(editor: &mut Editor, key_event: CtKeyEvent) -> AnyhowResult<()> {
         key_event.code,
         key_event.modifiers
     );
+
+    // Event debug dialog intercepts ALL key events before normal processing,
+    // mirroring the same priority logic in the terminal event loop (main.rs).
+    if editor.is_event_debug_active() {
+        let raw_event = crossterm::event::KeyEvent {
+            code: key_event.code,
+            modifiers: key_event.modifiers,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        editor.handle_event_debug_input(&raw_event);
+        return Ok(());
+    }
+
     editor.handle_key(key_event.code, key_event.modifiers)?;
     Ok(())
 }

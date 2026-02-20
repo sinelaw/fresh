@@ -557,6 +557,8 @@
   "cmd.shell_command_desc": "Spustit příkaz shellu na bufferu/výběru, výstup do nového bufferu",
   "cmd.shell_command_replace": "Příkaz shellu (Nahradit)",
   "cmd.shell_command_replace_desc": "Spustit příkaz shellu na bufferu/výběru, nahradit obsah",
+  "cmd.event_debug": "Debug Keyboard Events",
+  "cmd.event_debug_desc": "Open dialog that shows raw keyboard events for debugging",
   "cmd.show_completions": "Zobrazit dokončení",
   "cmd.show_completions_desc": "Spustit návrhy automatického dokončování na kurzoru",
   "cmd.show_hover_info": "Zobrazit informace při najetí",

@@ -568,6 +568,8 @@
   "cmd.shell_command_desc": "Chạy lệnh shell trên buffer/vùng chọn, xuất ra buffer mới",
   "cmd.shell_command_replace": "Lệnh Shell (Thay thế)",
   "cmd.shell_command_replace_desc": "Chạy lệnh shell trên buffer/vùng chọn, thay thế nội dung",
+  "cmd.event_debug": "Debug Keyboard Events",
+  "cmd.event_debug_desc": "Open dialog that shows raw keyboard events for debugging",
   "cmd.show_completions": "Hiển thị gợi ý",
   "cmd.show_completions_desc": "Kích hoạt gợi ý tự động hoàn thành tại con trỏ",
   "cmd.show_hover_info": "Hiển thị thông tin Hover",

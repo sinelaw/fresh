@@ -557,6 +557,8 @@
   "cmd.shell_command_desc": "对缓冲区/选区运行 Shell 命令，输出到新缓冲区",
   "cmd.shell_command_replace": "Shell 命令（替换）",
   "cmd.shell_command_replace_desc": "对缓冲区/选区运行 Shell 命令，替换内容",
+  "cmd.event_debug": "Debug Keyboard Events",
+  "cmd.event_debug_desc": "Open dialog that shows raw keyboard events for debugging",
   "cmd.show_completions": "显示补全",
   "cmd.show_completions_desc": "在光标处触发自动补全建议",
   "cmd.show_hover_info": "显示悬停信息",

@@ -569,6 +569,8 @@
   "cmd.shell_command_desc": "Run shell command on buffer/selection, output to new buffer",
   "cmd.shell_command_replace": "Shell Command (Replace)",
   "cmd.shell_command_replace_desc": "Run shell command on buffer/selection, replace content",
+  "cmd.event_debug": "Debug Keyboard Events",
+  "cmd.event_debug_desc": "Open dialog that shows raw keyboard events for debugging",
   "cmd.show_completions": "Show Completions",
   "cmd.show_completions_desc": "Trigger autocomplete suggestions at cursor",
   "cmd.show_hover_info": "Show Hover Info",

@@ -557,6 +557,8 @@
   "cmd.shell_command_desc": "버퍼/선택 영역에 셸 명령 실행, 새 버퍼에 출력",
   "cmd.shell_command_replace": "셸 명령 (바꾸기)",
   "cmd.shell_command_replace_desc": "버퍼/선택 영역에 셸 명령 실행, 내용 바꾸기",
+  "cmd.event_debug": "Debug Keyboard Events",
+  "cmd.event_debug_desc": "Open dialog that shows raw keyboard events for debugging",
   "cmd.show_completions": "자동 완성 표시",
   "cmd.show_completions_desc": "커서에서 자동 완성 제안 트리거",
   "cmd.show_hover_info": "호버 정보 표시",
