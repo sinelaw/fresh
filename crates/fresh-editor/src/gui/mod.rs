@@ -23,6 +23,7 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::KeyLocation;
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::app::Editor;
@@ -136,6 +137,10 @@ struct GuiState {
     pressed_button: Option<CtMouseButton>,
     /// Cell dimensions in pixels (width, height) for pixel→cell conversion.
     cell_size: (f64, f64),
+    /// Which Alt/Option key is currently held (for macOS Left/Right distinction).
+    /// On macOS, Left Alt produces composed international characters while
+    /// Right Alt is used as an Alt modifier for keyboard shortcuts.
+    alt_location: Option<KeyLocation>,
 }
 
 // ---------------------------------------------------------------------------
@@ -205,10 +210,25 @@ impl ApplicationHandler for WgpuApp {
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
+                // Track Alt key location (before early return for Released)
+                // so we know whether Left or Right Alt is held for macOS.
+                if let Key::Named(NamedKey::Alt) = &event.logical_key {
+                    match event.state {
+                        ElementState::Pressed => {
+                            state.alt_location = Some(event.location);
+                        }
+                        ElementState::Released => {
+                            state.alt_location = None;
+                        }
+                    }
+                }
+
                 if event.state == ElementState::Released {
                     return;
                 }
-                if let Some(key_event) = translate_key_event(&event, state.modifiers) {
+                if let Some(key_event) =
+                    translate_key_event(&event, state.modifiers, state.alt_location)
+                {
                     if let Err(e) = crate::gui::handle_key(
                         &mut state.editor,
                         key_event,
@@ -470,6 +490,7 @@ impl WgpuApp {
             modifiers: KeyModifiers::NONE,
             pressed_button: None,
             cell_size,
+            alt_location: None,
         })
     }
 }
@@ -547,16 +568,54 @@ pub fn translate_modifiers(mods: &winit::keyboard::ModifiersState) -> KeyModifie
 }
 
 /// Translate a winit key event to a crossterm KeyEvent.
+///
+/// `alt_location` tracks which Alt/Option key is held, used on macOS to
+/// distinguish Left Alt (international character composition) from Right Alt
+/// (keyboard shortcut modifier).
 pub fn translate_key_event(
     event: &winit::event::KeyEvent,
     modifiers: KeyModifiers,
+    alt_location: Option<KeyLocation>,
 ) -> Option<CtKeyEvent> {
+    // On macOS, Left Option is used for international character input while
+    // Right Option acts as an Alt modifier for keyboard shortcuts.
+    let (effective_modifiers, alt_override_char) = if cfg!(target_os = "macos")
+        && modifiers.contains(KeyModifiers::ALT)
+    {
+        match alt_location {
+            Some(KeyLocation::Left) => {
+                // Left Alt: strip ALT so the composed character (å, ñ, …)
+                // is treated as plain text input rather than a shortcut.
+                (modifiers & !KeyModifiers::ALT, None)
+            }
+            Some(KeyLocation::Right) => {
+                // Right Alt: keep ALT for shortcuts, but undo the macOS
+                // Option-composition by deriving the base character from
+                // the physical key.  This way Right-Option+F produces
+                // Alt+f instead of Alt+ƒ.
+                let base = physical_key_to_base_char(
+                    &event.physical_key,
+                    modifiers.contains(KeyModifiers::SHIFT),
+                );
+                (modifiers, base)
+            }
+            _ => (modifiers, None),
+        }
+    } else {
+        (modifiers, None)
+    };
+
     let code = match &event.logical_key {
-        Key::Named(named) => translate_named_key(named, &event.location, modifiers)?,
+        Key::Named(named) => {
+            translate_named_key(named, &event.location, effective_modifiers)?
+        }
         Key::Character(ch) => {
-            let c = ch.chars().next()?;
+            let c = alt_override_char.unwrap_or_else(|| ch.chars().next().unwrap_or('\0'));
+            if c == '\0' {
+                return None;
+            }
             // Detect Shift+Tab → BackTab
-            if c == '\t' && modifiers.contains(KeyModifiers::SHIFT) {
+            if c == '\t' && effective_modifiers.contains(KeyModifiers::SHIFT) {
                 KeyCode::BackTab
             } else {
                 KeyCode::Char(c)
@@ -567,10 +626,84 @@ pub fn translate_key_event(
 
     Some(CtKeyEvent {
         code,
-        modifiers,
+        modifiers: effective_modifiers,
         kind: KeyEventKind::Press,
         state: KeyEventState::NONE,
     })
+}
+
+/// Map a winit physical key to its base US-layout character.
+///
+/// Used on macOS to undo the Option-key composition for Right Alt shortcuts.
+/// Returns `None` for keys that don't have a simple character mapping (those
+/// are handled as named keys and don't need this override).
+fn physical_key_to_base_char(
+    key: &winit::keyboard::PhysicalKey,
+    shift: bool,
+) -> Option<char> {
+    use winit::keyboard::KeyCode as WK;
+    use winit::keyboard::PhysicalKey;
+
+    let PhysicalKey::Code(code) = key else {
+        return None;
+    };
+
+    let base = match code {
+        WK::KeyA => 'a',
+        WK::KeyB => 'b',
+        WK::KeyC => 'c',
+        WK::KeyD => 'd',
+        WK::KeyE => 'e',
+        WK::KeyF => 'f',
+        WK::KeyG => 'g',
+        WK::KeyH => 'h',
+        WK::KeyI => 'i',
+        WK::KeyJ => 'j',
+        WK::KeyK => 'k',
+        WK::KeyL => 'l',
+        WK::KeyM => 'm',
+        WK::KeyN => 'n',
+        WK::KeyO => 'o',
+        WK::KeyP => 'p',
+        WK::KeyQ => 'q',
+        WK::KeyR => 'r',
+        WK::KeyS => 's',
+        WK::KeyT => 't',
+        WK::KeyU => 'u',
+        WK::KeyV => 'v',
+        WK::KeyW => 'w',
+        WK::KeyX => 'x',
+        WK::KeyY => 'y',
+        WK::KeyZ => 'z',
+        WK::Digit0 => '0',
+        WK::Digit1 => '1',
+        WK::Digit2 => '2',
+        WK::Digit3 => '3',
+        WK::Digit4 => '4',
+        WK::Digit5 => '5',
+        WK::Digit6 => '6',
+        WK::Digit7 => '7',
+        WK::Digit8 => '8',
+        WK::Digit9 => '9',
+        WK::Minus => '-',
+        WK::Equal => '=',
+        WK::BracketLeft => '[',
+        WK::BracketRight => ']',
+        WK::Backslash => '\\',
+        WK::Semicolon => ';',
+        WK::Quote => '\'',
+        WK::Comma => ',',
+        WK::Period => '.',
+        WK::Slash => '/',
+        WK::Backquote => '`',
+        _ => return None,
+    };
+
+    if shift && base.is_ascii_alphabetic() {
+        Some(base.to_ascii_uppercase())
+    } else {
+        Some(base)
+    }
 }
 
 /// Translate a winit NamedKey to a crossterm KeyCode.
@@ -1034,5 +1167,78 @@ mod tests {
         assert_eq!(path, PathBuf::from("foo:bar"));
         assert_eq!(line, None);
         assert_eq!(col, None);
+    }
+
+    // -----------------------------------------------------------------------
+    // physical_key_to_base_char
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_physical_key_to_base_char_letters() {
+        use winit::keyboard::{KeyCode as WK, PhysicalKey};
+
+        assert_eq!(
+            physical_key_to_base_char(&PhysicalKey::Code(WK::KeyA), false),
+            Some('a')
+        );
+        assert_eq!(
+            physical_key_to_base_char(&PhysicalKey::Code(WK::KeyZ), false),
+            Some('z')
+        );
+        assert_eq!(
+            physical_key_to_base_char(&PhysicalKey::Code(WK::KeyF), true),
+            Some('F')
+        );
+    }
+
+    #[test]
+    fn test_physical_key_to_base_char_digits() {
+        use winit::keyboard::{KeyCode as WK, PhysicalKey};
+
+        assert_eq!(
+            physical_key_to_base_char(&PhysicalKey::Code(WK::Digit0), false),
+            Some('0')
+        );
+        assert_eq!(
+            physical_key_to_base_char(&PhysicalKey::Code(WK::Digit9), false),
+            Some('9')
+        );
+        // Shift doesn't change digits
+        assert_eq!(
+            physical_key_to_base_char(&PhysicalKey::Code(WK::Digit5), true),
+            Some('5')
+        );
+    }
+
+    #[test]
+    fn test_physical_key_to_base_char_punctuation() {
+        use winit::keyboard::{KeyCode as WK, PhysicalKey};
+
+        assert_eq!(
+            physical_key_to_base_char(&PhysicalKey::Code(WK::Comma), false),
+            Some(',')
+        );
+        assert_eq!(
+            physical_key_to_base_char(&PhysicalKey::Code(WK::Slash), false),
+            Some('/')
+        );
+        assert_eq!(
+            physical_key_to_base_char(&PhysicalKey::Code(WK::Backquote), false),
+            Some('`')
+        );
+    }
+
+    #[test]
+    fn test_physical_key_to_base_char_unknown_returns_none() {
+        use winit::keyboard::{KeyCode as WK, PhysicalKey};
+
+        assert_eq!(
+            physical_key_to_base_char(&PhysicalKey::Code(WK::Enter), false),
+            None
+        );
+        assert_eq!(
+            physical_key_to_base_char(&PhysicalKey::Code(WK::Space), false),
+            None
+        );
     }
 }
