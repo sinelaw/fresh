@@ -91,6 +91,32 @@ Record and replay sequences of keystrokes:
 
 Use the command palette (`Ctrl+P`) to access **Record Macro**, **Play Macro**, **Play Last Macro**, and **List Macros** commands.
 
+To bind a custom key to play a macro, follow the example below to add a `keybindings` section to your local `config.json`. 
+
+This example binds `alt+shift+!` to play macro 1 and `alt+shift+@` to play macro 2.
+
+```json
+{
+  "theme": "dracula",
+  "keybindings": [
+    {
+      "key": "!",
+      "modifiers": ["alt"],
+      "action": "play_macro",
+      "args": {"char": "1"},
+      "when": "normal"
+    },
+    {
+      "key": "@",
+      "modifiers": ["alt"],
+      "action": "play_macro",
+      "args": {"char": "2"},
+      "when": "normal"
+    }
+  ]
+}
+```
+
 ## Bookmarks
 
 Jump quickly between locations in your code:
