@@ -14,7 +14,14 @@
     "diff_modify_bg": [60, 55, 0],
     "diff_add_highlight_bg": [0, 110, 0],
     "diff_remove_highlight_bg": [140, 0, 0],
-    "whitespace_indicator_fg": [80, 80, 80]
+    "whitespace_indicator_fg": [80, 80, 80],
+    "bracket_match_fg": "White",
+    "bracket_rainbow_1": "Cyan",
+    "bracket_rainbow_2": "Green",
+    "bracket_rainbow_3": "Yellow",
+    "bracket_rainbow_4": "Magenta",
+    "bracket_rainbow_5": "White",
+    "bracket_rainbow_6": "LightBlue"
   },
   "ui": {
     "tab_active_fg": [0, 0, 0],

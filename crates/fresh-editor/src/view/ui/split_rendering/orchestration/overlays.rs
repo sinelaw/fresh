@@ -133,7 +133,10 @@ pub(crate) fn decoration_context(
         &state.buffer,
         &mut state.overlays,
         &mut state.marker_list,
+        theme,
         primary_cursor_position,
+        viewport_start,
+        viewport_end,
     );
 
     // Semantic tokens are stored as overlays so their ranges track edits.

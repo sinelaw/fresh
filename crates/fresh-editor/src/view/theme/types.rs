@@ -537,6 +537,27 @@ pub struct EditorColors {
     /// Whitespace indicator foreground color (for tab arrows and space dots)
     #[serde(default = "default_whitespace_indicator_fg")]
     pub whitespace_indicator_fg: ColorDef,
+    /// Bracket match highlight color (used when rainbow is disabled)
+    #[serde(default = "default_bracket_match_fg")]
+    pub bracket_match_fg: ColorDef,
+    /// Rainbow bracket color (nesting level 1)
+    #[serde(default = "default_bracket_rainbow_1")]
+    pub bracket_rainbow_1: ColorDef,
+    /// Rainbow bracket color (nesting level 2)
+    #[serde(default = "default_bracket_rainbow_2")]
+    pub bracket_rainbow_2: ColorDef,
+    /// Rainbow bracket color (nesting level 3)
+    #[serde(default = "default_bracket_rainbow_3")]
+    pub bracket_rainbow_3: ColorDef,
+    /// Rainbow bracket color (nesting level 4)
+    #[serde(default = "default_bracket_rainbow_4")]
+    pub bracket_rainbow_4: ColorDef,
+    /// Rainbow bracket color (nesting level 5)
+    #[serde(default = "default_bracket_rainbow_5")]
+    pub bracket_rainbow_5: ColorDef,
+    /// Rainbow bracket color (nesting level 6)
+    #[serde(default = "default_bracket_rainbow_6")]
+    pub bracket_rainbow_6: ColorDef,
     /// Background color for lines after end-of-file (optional override).
     /// When not set, computed as a slightly contrasting shade of `bg`
     /// (lighter for dark themes, darker for light themes) to give post-EOF
@@ -584,6 +605,27 @@ fn default_ruler_bg() -> ColorDef {
 }
 fn default_whitespace_indicator_fg() -> ColorDef {
     ColorDef::Rgb(70, 70, 70) // Subdued dark gray, subtle but visible
+}
+fn default_bracket_match_fg() -> ColorDef {
+    ColorDef::Rgb(255, 215, 0) // Gold
+}
+fn default_bracket_rainbow_1() -> ColorDef {
+    ColorDef::Rgb(255, 215, 0) // Gold
+}
+fn default_bracket_rainbow_2() -> ColorDef {
+    ColorDef::Rgb(218, 112, 214) // Orchid
+}
+fn default_bracket_rainbow_3() -> ColorDef {
+    ColorDef::Rgb(50, 205, 50) // Lime Green
+}
+fn default_bracket_rainbow_4() -> ColorDef {
+    ColorDef::Rgb(30, 144, 255) // Dodger Blue
+}
+fn default_bracket_rainbow_5() -> ColorDef {
+    ColorDef::Rgb(255, 127, 80) // Coral
+}
+fn default_bracket_rainbow_6() -> ColorDef {
+    ColorDef::Rgb(147, 112, 219) // Medium Purple
 }
 
 /// UI element colors (tabs, menus, status bar, etc.)
@@ -1262,6 +1304,15 @@ pub struct Theme {
     // Whitespace indicator color (tab arrows, space dots)
     pub whitespace_indicator_fg: Color,
 
+    // Bracket matching colors
+    pub bracket_match_fg: Color,
+    pub bracket_rainbow_1: Color,
+    pub bracket_rainbow_2: Color,
+    pub bracket_rainbow_3: Color,
+    pub bracket_rainbow_4: Color,
+    pub bracket_rainbow_5: Color,
+    pub bracket_rainbow_6: Color,
+
     // Diff highlighting colors
     pub diff_add_bg: Color,
     pub diff_remove_bg: Color,
@@ -1451,6 +1502,13 @@ impl From<ThemeFile> for Theme {
                 .unwrap_or_else(|| shade_toward_contrast(file.editor.bg.clone().into(), 10)),
             ruler_bg: file.editor.ruler_bg.into(),
             whitespace_indicator_fg: file.editor.whitespace_indicator_fg.into(),
+            bracket_match_fg: file.editor.bracket_match_fg.into(),
+            bracket_rainbow_1: file.editor.bracket_rainbow_1.into(),
+            bracket_rainbow_2: file.editor.bracket_rainbow_2.into(),
+            bracket_rainbow_3: file.editor.bracket_rainbow_3.into(),
+            bracket_rainbow_4: file.editor.bracket_rainbow_4.into(),
+            bracket_rainbow_5: file.editor.bracket_rainbow_5.into(),
+            bracket_rainbow_6: file.editor.bracket_rainbow_6.into(),
             diff_add_bg: file.editor.diff_add_bg.clone().into(),
             diff_remove_bg: file.editor.diff_remove_bg.clone().into(),
             diff_modify_bg: file.editor.diff_modify_bg.into(),
@@ -1675,6 +1733,13 @@ impl From<Theme> for ThemeFile {
                 diff_modify_collision_fg: theme.diff_modify_collision_fg.map(|c| c.into()),
                 ruler_bg: theme.ruler_bg.into(),
                 whitespace_indicator_fg: theme.whitespace_indicator_fg.into(),
+                bracket_match_fg: theme.bracket_match_fg.into(),
+                bracket_rainbow_1: theme.bracket_rainbow_1.into(),
+                bracket_rainbow_2: theme.bracket_rainbow_2.into(),
+                bracket_rainbow_3: theme.bracket_rainbow_3.into(),
+                bracket_rainbow_4: theme.bracket_rainbow_4.into(),
+                bracket_rainbow_5: theme.bracket_rainbow_5.into(),
+                bracket_rainbow_6: theme.bracket_rainbow_6.into(),
                 after_eof_bg: Some(theme.after_eof_bg.into()),
             },
             ui: UiColors {
@@ -1975,6 +2040,13 @@ impl Theme {
                 "ruler_bg" => Some(self.ruler_bg),
                 "selection_bg" => Some(self.selection_bg),
                 "whitespace_indicator_fg" => Some(self.whitespace_indicator_fg),
+                "bracket_match_fg" => Some(self.bracket_match_fg),
+                "bracket_rainbow_1" => Some(self.bracket_rainbow_1),
+                "bracket_rainbow_2" => Some(self.bracket_rainbow_2),
+                "bracket_rainbow_3" => Some(self.bracket_rainbow_3),
+                "bracket_rainbow_4" => Some(self.bracket_rainbow_4),
+                "bracket_rainbow_5" => Some(self.bracket_rainbow_5),
+                "bracket_rainbow_6" => Some(self.bracket_rainbow_6),
                 _ => None,
             },
             "ui" => match field {

@@ -12,7 +12,14 @@
     "diff_add_bg": [0, 100, 0],
     "diff_remove_bg": [170, 0, 0],
     "diff_modify_bg": [20, 20, 140],
-    "whitespace_indicator_fg": [0, 0, 100]
+    "whitespace_indicator_fg": [0, 0, 100],
+    "bracket_match_fg": [170, 170, 170],
+    "bracket_rainbow_1": [255, 255, 255],
+    "bracket_rainbow_2": [0, 255, 255],
+    "bracket_rainbow_3": [255, 255, 0],
+    "bracket_rainbow_4": [0, 255, 0],
+    "bracket_rainbow_5": [255, 255, 85],
+    "bracket_rainbow_6": [255, 0, 255]
   },
   "ui": {
     "tab_active_fg": [0, 0, 0],

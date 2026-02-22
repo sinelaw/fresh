@@ -7,6 +7,7 @@
 use crate::model::buffer::Buffer;
 use crate::model::marker::MarkerList;
 use crate::view::overlay::{Overlay, OverlayFace, OverlayManager, OverlayNamespace};
+use crate::view::theme::Theme;
 use ratatui::style::Color;
 
 /// Default rainbow bracket colors (cycle through these based on nesting depth)
@@ -24,6 +25,11 @@ pub fn bracket_highlight_namespace() -> OverlayNamespace {
     OverlayNamespace::from_string("bracket-highlight".to_string())
 }
 
+/// Namespace for rainbow bracket colorization overlays
+pub fn bracket_colorization_namespace() -> OverlayNamespace {
+    OverlayNamespace::from_string("bracket-colorization".to_string())
+}
+
 /// Bracket types we match
 const BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
 
@@ -35,15 +41,20 @@ pub(crate) const MAX_BRACKET_SEARCH_BYTES: usize = 1_000_000;
 const BRACKET_SCAN_CHUNK: usize = 16 * 1024;
 
 /// Check if a character is an opening bracket
-#[cfg(test)]
 fn is_opening_bracket(ch: char) -> bool {
     BRACKET_PAIRS.iter().any(|(open, _)| *open == ch)
 }
 
 /// Check if a character is a closing bracket
-#[cfg(test)]
 fn is_closing_bracket(ch: char) -> bool {
     BRACKET_PAIRS.iter().any(|(_, close)| *close == ch)
+}
+
+/// Get the opening bracket for a closing bracket
+fn opening_for_closing(ch: char) -> Option<char> {
+    BRACKET_PAIRS
+        .iter()
+        .find_map(|(open, close)| if *close == ch { Some(*open) } else { None })
 }
 
 /// Get the matching bracket pair for a character
@@ -66,7 +77,7 @@ pub struct BracketHighlightOverlay {
     /// Whether to use rainbow colors based on nesting depth
     pub rainbow_enabled: bool,
     /// Colors to use for rainbow brackets (cycles through)
-    pub rainbow_colors: Vec<Color>,
+    pub rainbow_colors: [Color; 6],
     /// Default bracket match highlight color (when rainbow is disabled)
     pub match_color: Color,
     /// Last cursor position where we computed brackets
@@ -79,7 +90,7 @@ impl BracketHighlightOverlay {
         Self {
             enabled: true,
             rainbow_enabled: true,
-            rainbow_colors: DEFAULT_BRACKET_COLORS.to_vec(),
+            rainbow_colors: DEFAULT_BRACKET_COLORS,
             match_color: Color::Rgb(255, 215, 0), // Gold
             last_cursor_pos: None,
         }
@@ -93,17 +104,56 @@ impl BracketHighlightOverlay {
         buffer: &Buffer,
         overlays: &mut OverlayManager,
         marker_list: &mut MarkerList,
+        theme: &Theme,
         cursor_position: usize,
+        viewport_start: usize,
+        viewport_end: usize,
     ) -> bool {
-        if !self.enabled {
+        if !self.enabled && !self.rainbow_enabled {
             return false;
         }
 
+        let new_match_color = theme.bracket_match_fg;
+        let new_rainbow_colors = [
+            theme.bracket_rainbow_1,
+            theme.bracket_rainbow_2,
+            theme.bracket_rainbow_3,
+            theme.bracket_rainbow_4,
+            theme.bracket_rainbow_5,
+            theme.bracket_rainbow_6,
+        ];
+        let colors_changed =
+            self.match_color != new_match_color || self.rainbow_colors != new_rainbow_colors;
+        if colors_changed {
+            self.match_color = new_match_color;
+            self.rainbow_colors = new_rainbow_colors;
+        }
+
+        let mut updated = false;
+
+        // Update full rainbow bracket colorization
+        if self.rainbow_enabled {
+            updated |= self.update_colorization(
+                buffer,
+                overlays,
+                marker_list,
+                viewport_start,
+                viewport_end,
+            );
+        } else {
+            updated |= self.clear_colorization(overlays, marker_list);
+        }
+
         // Check if cursor position changed
-        if self.last_cursor_pos == Some(cursor_position) {
-            return false;
+        if !self.enabled {
+            return updated;
+        }
+
+        if self.last_cursor_pos == Some(cursor_position) && !colors_changed {
+            return updated;
         }
         self.last_cursor_pos = Some(cursor_position);
+        updated = true;
 
         // Clear existing bracket overlays
         let ns = bracket_highlight_namespace();
@@ -130,7 +180,7 @@ impl BracketHighlightOverlay {
 
         // Calculate nesting depth at cursor position for rainbow colors
         let depth = if self.rainbow_enabled {
-            self.calculate_nesting_depth(buffer, cursor_position, opening, closing, forward)
+            self.calculate_nesting_depth(buffer, cursor_position, forward)
         } else {
             0
         };
@@ -140,7 +190,7 @@ impl BracketHighlightOverlay {
             self.find_matching_bracket(buffer, cursor_position, opening, closing, forward);
 
         // Determine color based on depth
-        let color = if self.rainbow_enabled && !self.rainbow_colors.is_empty() {
+        let color = if self.rainbow_enabled {
             self.rainbow_colors[depth % self.rainbow_colors.len()]
         } else {
             self.match_color
@@ -170,42 +220,41 @@ impl BracketHighlightOverlay {
             overlays.add(match_overlay);
         }
 
-        true
+        updated
     }
 
     /// Calculate the nesting depth of a bracket at a position
-    fn calculate_nesting_depth(
-        &self,
-        buffer: &Buffer,
-        position: usize,
-        opening: char,
-        closing: char,
-        is_opening: bool,
-    ) -> usize {
-        // Only scan up to MAX_BRACKET_SEARCH_BYTES backwards to avoid O(n) on huge files.
+    fn calculate_nesting_depth(&self, buffer: &Buffer, position: usize, is_opening: bool) -> usize {
+        // Track nesting depth across all bracket types so rainbow colors follow
+        // overall nesting level. Bound the scan to avoid O(n) work on huge files.
         let scan_start = position.saturating_sub(MAX_BRACKET_SEARCH_BYTES);
-        let open = opening as u8;
-        let close = closing as u8;
-        let mut depth: usize = 0;
+        let mut stack: Vec<char> = Vec::new();
         let mut pos = scan_start;
 
         while pos < position {
             let chunk_end = (pos + BRACKET_SCAN_CHUNK).min(position);
             let chunk = buffer.slice_bytes(pos..chunk_end);
             for &b in &chunk {
-                if b == open {
-                    depth += 1;
-                } else if b == close {
-                    depth = depth.saturating_sub(1);
+                let c = b as char;
+                if is_opening_bracket(c) {
+                    stack.push(c);
+                } else if is_closing_bracket(c) {
+                    if let Some(expected_open) = opening_for_closing(c) {
+                        if stack.last() == Some(&expected_open) {
+                            stack.pop();
+                        }
+                    }
                 }
             }
             pos = chunk_end;
         }
 
+        // For opening brackets, depth is the current stack size.
+        // For closing brackets, depth is the stack size minus one (matching opening).
         if is_opening {
-            depth
+            stack.len()
         } else {
-            depth.saturating_sub(1)
+            stack.len().saturating_sub(1)
         }
     }
 
@@ -266,14 +315,94 @@ impl BracketHighlightOverlay {
 
     /// Force clear all highlights (e.g., when switching buffers)
     pub fn clear(&mut self, overlays: &mut OverlayManager, marker_list: &mut MarkerList) {
-        let ns = bracket_highlight_namespace();
-        overlays.clear_namespace(&ns, marker_list);
+        let highlight_ns = bracket_highlight_namespace();
+        overlays.clear_namespace(&highlight_ns, marker_list);
+        let color_ns = bracket_colorization_namespace();
+        overlays.clear_namespace(&color_ns, marker_list);
         self.last_cursor_pos = None;
     }
 
     /// Force recalculation on next update
     pub fn invalidate(&mut self) {
         self.last_cursor_pos = None;
+    }
+
+    fn clear_colorization(
+        &mut self,
+        overlays: &mut OverlayManager,
+        marker_list: &mut MarkerList,
+    ) -> bool {
+        let ns = bracket_colorization_namespace();
+        overlays.clear_namespace(&ns, marker_list);
+        true
+    }
+
+    fn update_colorization(
+        &mut self,
+        buffer: &Buffer,
+        overlays: &mut OverlayManager,
+        marker_list: &mut MarkerList,
+        viewport_start: usize,
+        viewport_end: usize,
+    ) -> bool {
+        if viewport_start >= viewport_end || buffer.len() == 0 {
+            return self.clear_colorization(overlays, marker_list);
+        }
+
+        let viewport_size = viewport_end.saturating_sub(viewport_start);
+        let scan_start = viewport_start.saturating_sub(viewport_size);
+        let scan_end = viewport_end.min(buffer.len());
+        if scan_start >= scan_end {
+            return self.clear_colorization(overlays, marker_list);
+        }
+
+        let bytes = buffer.slice_bytes(scan_start..scan_end);
+        if bytes.is_empty() {
+            return self.clear_colorization(overlays, marker_list);
+        }
+
+        let ns = bracket_colorization_namespace();
+        let mut stack: Vec<char> = Vec::new();
+        let mut new_overlays = Vec::new();
+
+        for (idx, byte) in bytes.iter().enumerate() {
+            let pos = scan_start + idx;
+            let c = *byte as char;
+
+            if is_opening_bracket(c) {
+                let depth = stack.len();
+                stack.push(c);
+                if pos >= viewport_start {
+                    let color = self.rainbow_colors[depth % self.rainbow_colors.len()];
+                    let face = OverlayFace::Foreground { color };
+                    let overlay =
+                        Overlay::with_namespace(marker_list, pos..pos + 1, face, ns.clone())
+                            .with_priority_value(6);
+                    new_overlays.push(overlay);
+                }
+                continue;
+            }
+
+            if is_closing_bracket(c) {
+                let depth = stack.len().saturating_sub(1);
+                if let Some(expected_open) = opening_for_closing(c) {
+                    if stack.last() == Some(&expected_open) {
+                        stack.pop();
+                    }
+                }
+                if pos >= viewport_start {
+                    let color = self.rainbow_colors[depth % self.rainbow_colors.len()];
+                    let face = OverlayFace::Foreground { color };
+                    let overlay =
+                        Overlay::with_namespace(marker_list, pos..pos + 1, face, ns.clone())
+                            .with_priority_value(6);
+                    new_overlays.push(overlay);
+                }
+            }
+        }
+
+        overlays.replace_range_in_namespace(&ns, &(0..buffer.len()), new_overlays, marker_list);
+        true
     }
 }
 
@@ -350,21 +479,25 @@ mod tests {
         let overlay = BracketHighlightOverlay::new();
 
         // Outermost opening bracket: depth 0
-        assert_eq!(
-            overlay.calculate_nesting_depth(&buffer, 0, '(', ')', true),
-            0
-        );
+        assert_eq!(overlay.calculate_nesting_depth(&buffer, 0, true), 0);
 
         // Second level opening bracket: depth 1
-        assert_eq!(
-            overlay.calculate_nesting_depth(&buffer, 1, '(', ')', true),
-            1
-        );
+        assert_eq!(overlay.calculate_nesting_depth(&buffer, 1, true), 1);
 
         // Third level opening bracket: depth 2
-        assert_eq!(
-            overlay.calculate_nesting_depth(&buffer, 2, '(', ')', true),
-            2
-        );
+        assert_eq!(overlay.calculate_nesting_depth(&buffer, 2, true), 2);
+    }
+
+    #[test]
+    fn test_nesting_depth_mixed_types() {
+        let buffer = Buffer::from_str_test("({[]})");
+        let overlay = BracketHighlightOverlay::new();
+
+        assert_eq!(overlay.calculate_nesting_depth(&buffer, 0, true), 0);
+        assert_eq!(overlay.calculate_nesting_depth(&buffer, 1, true), 1);
+        assert_eq!(overlay.calculate_nesting_depth(&buffer, 2, true), 2);
+        assert_eq!(overlay.calculate_nesting_depth(&buffer, 3, false), 2);
+        assert_eq!(overlay.calculate_nesting_depth(&buffer, 4, false), 1);
+        assert_eq!(overlay.calculate_nesting_depth(&buffer, 5, false), 0);
     }
 }
