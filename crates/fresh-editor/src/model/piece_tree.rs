@@ -33,6 +33,10 @@ pub struct StringBuffer {
     pub id: usize,
     /// The buffer data - either loaded or unloaded
     pub data: BufferData,
+    /// For buffers created by loading a chunk from a stored (on-disk) buffer:
+    /// the original file offset. This allows `rebuild_with_pristine_saved_root`
+    /// to recognize loaded chunks as saved content rather than user edits.
+    pub stored_file_offset: Option<usize>,
 }
 
 impl StringBuffer {
@@ -46,6 +50,7 @@ impl StringBuffer {
                 data,
                 line_starts: Some(line_starts),
             },
+            stored_file_offset: None,
         }
     }
 
@@ -59,6 +64,7 @@ impl StringBuffer {
         StringBuffer {
             id,
             data: BufferData::Loaded { data, line_starts },
+            stored_file_offset: None,
         }
     }
 
@@ -71,6 +77,7 @@ impl StringBuffer {
                 file_offset,
                 bytes,
             },
+            stored_file_offset: None,
         }
     }
 
@@ -188,12 +195,15 @@ impl StringBuffer {
                     return None;
                 }
 
-                Some(StringBuffer::new_unloaded(
+                let absolute_file_offset = file_offset + chunk_offset;
+                let mut buf = StringBuffer::new_unloaded(
                     new_id,
                     file_path.clone(),
-                    file_offset + chunk_offset,
+                    absolute_file_offset,
                     chunk_bytes,
-                ))
+                );
+                buf.stored_file_offset = Some(absolute_file_offset);
+                Some(buf)
             }
             BufferData::Loaded { .. } => None, // Can't create chunk from loaded buffer
         }
@@ -1153,7 +1163,7 @@ impl PieceTree {
     }
 
     /// Rebuild the tree to be balanced
-    fn rebalance(&mut self) {
+    pub(crate) fn rebalance(&mut self) {
         let mut leaves = Vec::new();
         self.root.collect_leaves(&mut leaves);
         self.root = Self::build_balanced(&leaves);

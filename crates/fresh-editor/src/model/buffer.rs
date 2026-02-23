@@ -763,6 +763,7 @@ impl TextBuffer {
                 file_offset: 0,
                 bytes: file_size,
             },
+            stored_file_offset: None,
         };
 
         // Create piece tree with a single piece covering the whole file
@@ -1360,6 +1361,7 @@ impl TextBuffer {
                 file_offset: 0,
                 bytes: file_size,
             },
+            stored_file_offset: None,
         };
 
         self.piece_tree = if file_size > 0 {
@@ -1654,13 +1656,25 @@ impl TextBuffer {
                 if len == 0 {
                     return Some(0);
                 }
-                let buf = self.buffers.get(leaf.location.buffer_id())?;
-                let data = buf.get_data()?;
-                let start = leaf.offset + start;
-                let end = start + len;
-                let slice = data.get(start..end)?;
-                let line_feeds = slice.iter().filter(|&&b| b == b'\n').count();
-                Some(line_feeds)
+                // Try counting from raw byte data first
+                if let Some(buf) = self.buffers.get(leaf.location.buffer_id()) {
+                    if let Some(data) = buf.get_data() {
+                        let start = leaf.offset + start;
+                        let end = start + len;
+                        if let Some(slice) = data.get(start..end) {
+                            let line_feeds = slice.iter().filter(|&&b| b == b'\n').count();
+                            return Some(line_feeds);
+                        }
+                    }
+                }
+                // Fallback: use the leaf's cached line_feed_cnt when we're
+                // querying the entire leaf. This handles unloaded segments in
+                // large file mode after line scanning has populated the metadata.
+                if start == 0 && len == leaf.bytes {
+                    leaf.line_feed_cnt.map(|c| c as usize)
+                } else {
+                    None
+                }
             },
         )
     }
@@ -2491,14 +2505,26 @@ impl TextBuffer {
                     orig_cursor = piece.buffer_offset + piece.bytes;
                     stored_bytes_in_doc += piece.bytes;
                 }
-                BufferLocation::Added(_) => {
-                    insertions.push((
-                        stored_bytes_in_doc,
-                        piece.location,
-                        piece.buffer_offset,
-                        piece.bytes,
-                        piece.line_feed_cnt,
-                    ));
+                BufferLocation::Added(id) => {
+                    // Check if this Added buffer was created by loading a chunk
+                    // from the stored file (via get_text_range_mut chunk loading).
+                    // If so, treat it as stored content, not a user edit.
+                    if let Some(file_off) = self.buffers.get(id).and_then(|b| b.stored_file_offset)
+                    {
+                        if file_off > orig_cursor {
+                            deletions.push((orig_cursor, file_off - orig_cursor));
+                        }
+                        orig_cursor = file_off + piece.bytes;
+                        stored_bytes_in_doc += piece.bytes;
+                    } else {
+                        insertions.push((
+                            stored_bytes_in_doc,
+                            piece.location,
+                            piece.buffer_offset,
+                            piece.bytes,
+                            piece.line_feed_cnt,
+                        ));
+                    }
                 }
             }
         }
@@ -5525,6 +5551,56 @@ mod tests {
             let diff = buf.diff_since_saved();
             assert!(!diff.equal);
             assert!(!diff.byte_ranges.is_empty());
+        }
+
+        /// After rebuild + insert near EOF, diff line_ranges must be
+        /// document-absolute.  The bug: `with_doc_offsets` assigned consecutive
+        /// offsets from 0 to the collected leaves, missing skipped (shared)
+        /// subtrees' bytes.
+        #[test]
+        fn test_diff_line_ranges_are_document_absolute_after_eof_insert() {
+            let content = make_content(4 * 1024 * 1024); // 4MB → 4 chunks at 1MB each
+            let total_lf = content.iter().filter(|&&b| b == b'\n').count();
+            let mut buf = large_file_buffer(&content);
+            let updates = scan_line_feeds(&mut buf);
+            buf.rebuild_with_pristine_saved_root(&updates);
+
+            // Insert 5 bytes near EOF (last 100 bytes of the file).
+            let insert_offset = content.len() - 100;
+            buf.insert_bytes(insert_offset, b"HELLO".to_vec());
+
+            let diff = buf.diff_since_saved();
+            assert!(!diff.equal, "diff should detect the insertion");
+            assert!(
+                !diff.byte_ranges.is_empty(),
+                "byte_ranges should not be empty"
+            );
+
+            // byte_ranges must be near the end of the document, not near 0.
+            let first_range = &diff.byte_ranges[0];
+            assert!(
+                first_range.start >= content.len() - 200,
+                "byte_ranges should be document-absolute (near EOF): got {:?}, expected near {}",
+                first_range,
+                insert_offset,
+            );
+
+            // line_ranges must also be document-absolute.
+            let line_ranges = diff
+                .line_ranges
+                .as_ref()
+                .expect("line_ranges should be Some");
+            assert!(!line_ranges.is_empty(), "line_ranges should not be empty");
+            let first_lr = &line_ranges[0];
+            // The insert is near EOF, so the line number should be near total_lf.
+            let expected_min_line = total_lf.saturating_sub(10);
+            assert!(
+                first_lr.start >= expected_min_line,
+                "line_ranges should be document-absolute: got {:?}, expected start >= {} (total lines ~{})",
+                first_lr,
+                expected_min_line,
+                total_lf,
+            );
         }
 
         #[test]

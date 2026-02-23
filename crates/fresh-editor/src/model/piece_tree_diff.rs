@@ -41,23 +41,30 @@ pub fn diff_piece_trees(
         };
     }
 
-    // Collect leaves only from differing subtrees using structural walk
-    let mut before_leaves = Vec::new();
-    let mut after_leaves = Vec::new();
+    // Collect leaves only from differing subtrees using structural walk.
+    // Spans include document-absolute byte offsets.
+    let mut before_spans = Vec::new();
+    let mut after_spans = Vec::new();
     let mut nodes_visited: usize = 0;
+    let mut before_doc_offset: usize = 0;
+    let mut after_doc_offset: usize = 0;
+    let mut after_doc_lf: Option<usize> = Some(0);
     diff_collect_leaves(
         before,
         after,
-        &mut before_leaves,
-        &mut after_leaves,
+        &mut before_spans,
+        &mut after_spans,
         &mut nodes_visited,
+        &mut before_doc_offset,
+        &mut after_doc_offset,
+        &mut after_doc_lf,
     );
 
-    let before_leaves = normalize_leaves(before_leaves);
-    let after_leaves = normalize_leaves(after_leaves);
+    let before_spans = normalize_spans(before_spans);
+    let after_spans = normalize_spans(after_spans);
 
     // Fast-path: identical leaf sequences (same content, different tree structure).
-    if leaf_slices_equal(&before_leaves, &after_leaves) {
+    if span_slices_equal(&before_spans, &after_spans) {
         return PieceTreeDiff {
             equal: true,
             byte_ranges: Vec::new(),
@@ -65,9 +72,6 @@ pub fn diff_piece_trees(
             nodes_visited,
         };
     }
-
-    let before_spans = with_doc_offsets(&before_leaves);
-    let after_spans = with_doc_offsets(&after_leaves);
 
     // Longest common prefix at byte granularity.
     let prefix = common_prefix_bytes(&before_spans, &after_spans);
@@ -87,19 +91,53 @@ pub fn diff_piece_trees(
     }
 }
 
+/// Total bytes stored under a node (without calling private methods).
+fn node_bytes(node: &PieceTreeNode) -> usize {
+    match node {
+        PieceTreeNode::Internal {
+            left_bytes, right, ..
+        } => left_bytes + node_bytes(right),
+        PieceTreeNode::Leaf { bytes, .. } => *bytes,
+    }
+}
+
+/// Total line feeds under a node. Returns None if any leaf has unknown count.
+fn node_line_feeds(node: &PieceTreeNode) -> Option<usize> {
+    match node {
+        PieceTreeNode::Internal { lf_left, right, .. } => {
+            let left_lf = (*lf_left)?;
+            let right_lf = node_line_feeds(right)?;
+            Some(left_lf + right_lf)
+        }
+        PieceTreeNode::Leaf { line_feed_cnt, .. } => *line_feed_cnt,
+    }
+}
+
 /// Parallel tree walk that uses Arc::ptr_eq to skip identical subtrees.
 /// Only collects leaves from subtrees that differ between before and after.
+/// Tracks running document byte offsets so collected spans have absolute positions.
+/// Also tracks line feeds in all subtrees to populate doc_lf_offset.
 fn diff_collect_leaves(
     before: &Arc<PieceTreeNode>,
     after: &Arc<PieceTreeNode>,
-    before_out: &mut Vec<LeafData>,
-    after_out: &mut Vec<LeafData>,
+    before_out: &mut Vec<Span>,
+    after_out: &mut Vec<Span>,
     nodes_visited: &mut usize,
+    before_doc_offset: &mut usize,
+    after_doc_offset: &mut usize,
+    after_doc_lf: &mut Option<usize>,
 ) {
     *nodes_visited += 2; // counting both before and after nodes
 
-    // Identical subtree - skip entirely
+    // Identical subtree - skip entirely, advancing document offsets
     if Arc::ptr_eq(before, after) {
+        let bytes = node_bytes(before);
+        *before_doc_offset += bytes;
+        *after_doc_offset += bytes;
+        *after_doc_lf = match (*after_doc_lf, node_line_feeds(after)) {
+            (Some(a), Some(b)) => Some(a + b),
+            _ => None,
+        };
         return;
     }
 
@@ -117,86 +155,127 @@ fn diff_collect_leaves(
                 ..
             },
         ) => {
-            diff_collect_leaves(b_left, a_left, before_out, after_out, nodes_visited);
-            diff_collect_leaves(b_right, a_right, before_out, after_out, nodes_visited);
+            diff_collect_leaves(
+                b_left,
+                a_left,
+                before_out,
+                after_out,
+                nodes_visited,
+                before_doc_offset,
+                after_doc_offset,
+                after_doc_lf,
+            );
+            diff_collect_leaves(
+                b_right,
+                a_right,
+                before_out,
+                after_out,
+                nodes_visited,
+                before_doc_offset,
+                after_doc_offset,
+                after_doc_lf,
+            );
         }
         // Structure mismatch - fall back to full leaf collection for both subtrees
         _ => {
-            collect_leaves(before, before_out, nodes_visited);
-            collect_leaves(after, after_out, nodes_visited);
+            let mut before_lf_dummy = Some(0); // Not needed for 'before' ranges
+            collect_leaves_with_offsets(
+                before,
+                before_out,
+                nodes_visited,
+                before_doc_offset,
+                &mut before_lf_dummy,
+            );
+            collect_leaves_with_offsets(
+                after,
+                after_out,
+                nodes_visited,
+                after_doc_offset,
+                after_doc_lf,
+            );
         }
     }
 }
 
-fn collect_leaves(node: &Arc<PieceTreeNode>, out: &mut Vec<LeafData>, nodes_visited: &mut usize) {
+fn collect_leaves_with_offsets(
+    node: &Arc<PieceTreeNode>,
+    out: &mut Vec<Span>,
+    nodes_visited: &mut usize,
+    doc_offset: &mut usize,
+    doc_lf: &mut Option<usize>,
+) {
     *nodes_visited += 1;
     match node.as_ref() {
         PieceTreeNode::Internal { left, right, .. } => {
-            collect_leaves(left, out, nodes_visited);
-            collect_leaves(right, out, nodes_visited);
+            collect_leaves_with_offsets(left, out, nodes_visited, doc_offset, doc_lf);
+            collect_leaves_with_offsets(right, out, nodes_visited, doc_offset, doc_lf);
         }
         PieceTreeNode::Leaf {
             location,
             offset,
             bytes,
             line_feed_cnt,
-        } => out.push(LeafData::new(*location, *offset, *bytes, *line_feed_cnt)),
-    }
-}
-
-fn leaves_equal(a: &LeafData, b: &LeafData) -> bool {
-    a.location == b.location && a.offset == b.offset && a.bytes == b.bytes
-}
-
-fn leaf_slices_equal(a: &[LeafData], b: &[LeafData]) -> bool {
-    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| leaves_equal(x, y))
-}
-
-fn normalize_leaves(mut leaves: Vec<LeafData>) -> Vec<LeafData> {
-    if leaves.is_empty() {
-        return leaves;
-    }
-
-    let mut normalized = Vec::with_capacity(leaves.len());
-    let mut current = leaves.remove(0);
-
-    for leaf in leaves.into_iter() {
-        let contiguous =
-            current.location == leaf.location && current.offset + current.bytes == leaf.offset;
-        if contiguous {
-            // Merge by extending bytes and line feeds if known
-            current.bytes += leaf.bytes;
-            current.line_feed_cnt = match (current.line_feed_cnt, leaf.line_feed_cnt) {
+        } => {
+            let leaf = LeafData::new(*location, *offset, *bytes, *line_feed_cnt);
+            out.push(Span {
+                leaf,
+                doc_offset: *doc_offset,
+                doc_lf_offset: doc_lf.unwrap_or(0),
+            });
+            *doc_offset += bytes;
+            *doc_lf = match (*doc_lf, line_feed_cnt) {
                 (Some(a), Some(b)) => Some(a + b),
                 _ => None,
             };
-        } else {
-            normalized.push(current);
-            current = leaf;
         }
     }
-
-    normalized.push(current);
-    normalized
 }
 
 #[derive(Clone)]
 struct Span {
     leaf: LeafData,
     doc_offset: usize,
+    doc_lf_offset: usize,
 }
 
-fn with_doc_offsets(leaves: &[LeafData]) -> Vec<Span> {
-    let mut spans = Vec::with_capacity(leaves.len());
-    let mut offset = 0;
-    for leaf in leaves {
-        spans.push(Span {
-            leaf: *leaf,
-            doc_offset: offset,
-        });
-        offset += leaf.bytes;
+fn spans_equal(a: &Span, b: &Span) -> bool {
+    a.leaf.location == b.leaf.location
+        && a.leaf.offset == b.leaf.offset
+        && a.leaf.bytes == b.leaf.bytes
+}
+
+fn span_slices_equal(a: &[Span], b: &[Span]) -> bool {
+    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| spans_equal(x, y))
+}
+
+fn normalize_spans(spans: Vec<Span>) -> Vec<Span> {
+    if spans.is_empty() {
+        return spans;
     }
-    spans
+
+    let mut it = spans.into_iter();
+    let mut current = it.next().unwrap();
+    let mut normalized = Vec::new();
+
+    for span in it {
+        let contiguous = current.leaf.location == span.leaf.location
+            && current.leaf.offset + current.leaf.bytes == span.leaf.offset
+            && current.doc_offset + current.leaf.bytes == span.doc_offset;
+        if contiguous {
+            current.leaf.bytes += span.leaf.bytes;
+            current.leaf.line_feed_cnt = match (current.leaf.line_feed_cnt, span.leaf.line_feed_cnt)
+            {
+                (Some(a), Some(b)) => Some(a + b),
+                _ => None,
+            };
+        } else {
+            normalized.push(current);
+            current = span;
+        }
+    }
+
+    normalized.push(current);
+    normalized
 }
 
 fn common_prefix_bytes(before: &[Span], after: &[Span]) -> usize {
@@ -207,13 +286,20 @@ fn common_prefix_bytes(before: &[Span], after: &[Span]) -> usize {
     let mut consumed = 0;
 
     while b_idx < before.len() && a_idx < after.len() {
-        let b = &before[b_idx].leaf;
-        let a = &after[a_idx].leaf;
+        let b_span = &before[b_idx];
+        let a_span = &after[a_idx];
+        let b = &b_span.leaf;
+        let a = &a_span.leaf;
 
         let b_pos = b.offset + b_off;
         let a_pos = a.offset + a_off;
 
-        if b.location == a.location && b_pos == a_pos {
+        // Must also ensure they are at the same document relative position
+        // if they were separated by gaps.
+        if b.location == a.location
+            && b_pos == a_pos
+            && (b_span.doc_offset + b_off) == (a_span.doc_offset + a_off)
+        {
             let b_rem = b.bytes - b_off;
             let a_rem = a.bytes - a_off;
             let take = b_rem.min(a_rem);
@@ -239,8 +325,14 @@ fn common_prefix_bytes(before: &[Span], after: &[Span]) -> usize {
 }
 
 fn common_suffix_bytes(before: &[Span], after: &[Span], prefix_bytes: usize) -> usize {
-    let total_before = before.iter().map(|s| s.leaf.bytes).sum::<usize>();
-    let total_after = after.iter().map(|s| s.leaf.bytes).sum::<usize>();
+    let total_before = before
+        .last()
+        .map(|s| s.doc_offset + s.leaf.bytes)
+        .unwrap_or(0);
+    let total_after = after
+        .last()
+        .map(|s| s.doc_offset + s.leaf.bytes)
+        .unwrap_or(0);
 
     let mut b_idx: isize = before.len() as isize - 1;
     let mut a_idx: isize = after.len() as isize - 1;
@@ -253,12 +345,17 @@ fn common_suffix_bytes(before: &[Span], after: &[Span], prefix_bytes: usize) -> 
         && (total_before - consumed) > prefix_bytes
         && (total_after - consumed) > prefix_bytes
     {
-        let b_leaf = &before[b_idx as usize].leaf;
-        let a_leaf = &after[a_idx as usize].leaf;
+        let b_span = &before[b_idx as usize];
+        let a_span = &after[a_idx as usize];
+        let b_leaf = &b_span.leaf;
+        let a_leaf = &a_span.leaf;
 
         let b_pos = b_leaf.offset + b_leaf.bytes - b_off;
         let a_pos = a_leaf.offset + a_leaf.bytes - a_off;
 
+        // Compare by buffer identity only (location + offset). Suffix bytes are
+        // at different doc_offsets in before vs after when insertions/deletions
+        // change the total size, but they still contain the same data.
         if b_leaf.location == a_leaf.location && b_pos == a_pos {
             let b_rem = b_leaf.bytes - b_off;
             let a_rem = a_leaf.bytes - a_off;
@@ -317,8 +414,15 @@ fn collect_diff_ranges(
         }
     }
 
-    let total_after = after.iter().map(|s| s.leaf.bytes).sum::<usize>();
-    let compare_limit = total_after.saturating_sub(suffix);
+    // compare_limit in document-absolute space: end of collected spans minus suffix
+    let doc_end = after
+        .last()
+        .map(|s| s.doc_offset + s.leaf.bytes)
+        .unwrap_or(0);
+    let compare_limit = doc_end.saturating_sub(suffix);
+
+    // prefix_start in document-absolute space
+    let doc_start = after.first().map(|s| s.doc_offset).unwrap_or(0);
 
     let mut current_start: Option<usize> = None;
     let mut current_end: usize = 0;
@@ -330,10 +434,22 @@ fn collect_diff_ranges(
             break;
         }
 
+        // If we have a current range but there's a gap in document offset,
+        // it means there was an identical subtree that was skipped.
+        // We must break the range here.
+        if let Some(start) = current_start {
+            if pos > current_end {
+                ranges.push(start..current_end);
+                current_start = None;
+            }
+        }
+
         let matches = if b_idx < before.len() {
             let b = &before[b_idx].leaf;
             let b_pos = b.offset + b_off;
             let a_pos = a.leaf.offset + a_off;
+            // Compare by buffer identity only. Insertions/deletions shift
+            // doc_offsets, but matching buffer location + offset means same data.
             b.location == a.leaf.location && b_pos == a_pos
         } else {
             false
@@ -363,10 +479,9 @@ fn collect_diff_ranges(
         } else {
             if current_start.is_none() {
                 current_start = Some(pos);
-                current_end = pos;
             }
             let take = (a.leaf.bytes - a_off).min(compare_limit.saturating_sub(pos));
-            current_end += take;
+            current_end = pos + take;
             a_off += take;
             if a_off == a.leaf.bytes {
                 a_idx += 1;
@@ -392,9 +507,9 @@ fn collect_diff_ranges(
     }
 
     if ranges.is_empty() {
-        let total_after = after.iter().map(|s| s.leaf.bytes).sum::<usize>();
-        let compare_limit = total_after.saturating_sub(suffix);
-        ranges.push(prefix..compare_limit);
+        // Anchor range: either there's content between prefix and suffix, or
+        // the trees differ only in size (deletion) — report the anchor point.
+        ranges.push((doc_start + prefix)..compare_limit);
     }
 
     ranges
@@ -403,35 +518,32 @@ fn collect_diff_ranges(
 fn count_lines_in_range(
     spans: &[Span],
     start: usize,
-    len: usize,
+    end: usize,
     line_counter: &dyn Fn(&LeafData, usize, usize) -> Option<usize>,
 ) -> Option<usize> {
-    if len == 0 {
+    if start >= end {
         return Some(0);
     }
 
-    let mut remaining = len;
-    let mut offset = start;
     let mut line_feeds = 0usize;
-
     for span in spans {
-        if remaining == 0 {
-            break;
-        }
         let span_start = span.doc_offset;
         let span_end = span_start + span.leaf.bytes;
-        if offset >= span_end {
+
+        if end <= span_start {
+            break;
+        }
+        if start >= span_end {
             continue;
         }
-        let local_start = offset.saturating_sub(span_start);
-        let available = span.leaf.bytes - local_start;
-        let take = available.min(remaining);
 
-        let chunk_lines = line_counter(&span.leaf, local_start, take)?;
+        let overlap_start = start.max(span_start);
+        let overlap_end = end.min(span_end);
+        let local_start = overlap_start - span_start;
+        let len = overlap_end - overlap_start;
+
+        let chunk_lines = line_counter(&span.leaf, local_start, len)?;
         line_feeds += chunk_lines;
-
-        offset += take;
-        remaining -= take;
     }
 
     Some(line_feeds)
@@ -444,18 +556,23 @@ fn line_ranges(
 ) -> Option<Vec<Range<usize>>> {
     let mut accum = Vec::with_capacity(byte_ranges.len());
     for range in byte_ranges {
-        let lf_before = count_lines_in_range(after_spans, 0, range.start, line_counter)?;
-        let lf_in_range = count_lines_in_range(
-            after_spans,
-            range.start,
-            range.end.saturating_sub(range.start),
-            line_counter,
-        )?;
-        let start_line = lf_before;
+        // Find the span containing the start of the range to get its doc_lf_offset.
+        // Use <= for the upper bound so deletion anchors at span boundaries are found.
+        let span = after_spans
+            .iter()
+            .find(|s| range.start >= s.doc_offset && range.start <= s.doc_offset + s.leaf.bytes)?;
+
+        let offset_into_span = (range.start - span.doc_offset).min(span.leaf.bytes);
+        let lf_at_span_start = span.doc_lf_offset;
+        let lf_to_range_start = line_counter(&span.leaf, 0, offset_into_span)?;
+        let start_line = lf_at_span_start + lf_to_range_start;
+
+        let lf_in_range = count_lines_in_range(after_spans, range.start, range.end, line_counter)?;
+
         let end_line = if range.start == range.end {
-            lf_before + 1
+            start_line + 1
         } else {
-            lf_before + lf_in_range + 1
+            start_line + lf_in_range + 1
         };
         accum.push(start_line..end_line);
     }
@@ -571,6 +688,111 @@ mod tests {
         assert_eq!(diff.line_ranges, Some(vec![1..2])); // anchor after deleted span
     }
 
+    /// Uses real PieceTree::insert (path-copy) near EOF.
+    /// The diff must produce document-absolute offsets.
+    #[test]
+    fn diff_after_path_copy_insert_at_eof() {
+        use crate::model::piece_tree::{PieceTree, StringBuffer};
+
+        // 10 KB file, split into 1 KB chunks → 10 leaves.
+        let chunk_size = 1000;
+        let total = 10_000;
+        // Build content: 10 LFs per 1000-byte chunk (one every 100 bytes).
+        let content: Vec<u8> = (0..total)
+            .map(|i| if i % 100 == 99 { b'\n' } else { b'A' })
+            .collect();
+        let buf = StringBuffer::new_loaded(0, content, false);
+
+        let mut saved_tree = PieceTree::new(BufferLocation::Stored(0), 0, total, None);
+        saved_tree.split_leaves_to_chunk_size(chunk_size);
+        // Set line feeds for each leaf.
+        let lf_updates: Vec<(usize, usize)> = (0..10).map(|i| (i, 10)).collect();
+        saved_tree.update_leaf_line_feeds(&lf_updates);
+        let saved_root = saved_tree.root();
+
+        // Insert 5 bytes near EOF via real path-copy.
+        let mut after_tree = saved_tree;
+        let insert_offset = total - 100; // 9900
+        let insert_buf = StringBuffer::new_loaded(1, b"HELLO".to_vec(), false);
+        after_tree.insert(
+            insert_offset,
+            BufferLocation::Added(1),
+            0,
+            5,
+            Some(0),
+            &[buf, insert_buf],
+        );
+        let after_root = after_tree.root();
+
+        let diff = diff_piece_trees(&saved_root, &after_root, &count_line_feeds);
+        assert!(!diff.equal);
+
+        assert!(
+            diff.byte_ranges[0].start >= total - 200,
+            "byte_ranges should be document-absolute (near EOF): got {:?}, expected near {}",
+            diff.byte_ranges,
+            insert_offset,
+        );
+
+        if let Some(ref lr) = diff.line_ranges {
+            assert!(
+                lr[0].start >= 90,
+                "line_ranges should be document-absolute (>= 90), got {:?}",
+                lr
+            );
+        }
+    }
+
+    /// After rebalance, Arc sharing is destroyed. The diff must still produce
+    /// the same byte_ranges and line_ranges as the path-copy version.
+    #[test]
+    fn diff_after_rebalance_matches_path_copy_diff() {
+        use crate::model::piece_tree::{PieceTree, StringBuffer};
+
+        let chunk_size = 1000;
+        let total = 10_000;
+        let content: Vec<u8> = (0..total)
+            .map(|i| if i % 100 == 99 { b'\n' } else { b'A' })
+            .collect();
+        let buf = StringBuffer::new_loaded(0, content, false);
+
+        let mut saved_tree = PieceTree::new(BufferLocation::Stored(0), 0, total, None);
+        saved_tree.split_leaves_to_chunk_size(chunk_size);
+        let lf_updates: Vec<(usize, usize)> = (0..10).map(|i| (i, 10)).collect();
+        saved_tree.update_leaf_line_feeds(&lf_updates);
+        let saved_root = saved_tree.root();
+
+        // Insert near EOF via path-copy.
+        let mut after_tree = saved_tree;
+        let insert_buf = StringBuffer::new_loaded(1, b"HELLO".to_vec(), false);
+        after_tree.insert(
+            total - 100,
+            BufferLocation::Added(1),
+            0,
+            5,
+            Some(0),
+            &[buf.clone(), insert_buf.clone()],
+        );
+
+        // Diff with Arc sharing (path-copy).
+        let diff_shared = diff_piece_trees(&saved_root, &after_tree.root(), &count_line_feeds);
+
+        // Rebalance → destroys all Arc sharing.
+        after_tree.rebalance();
+        let diff_rebalanced = diff_piece_trees(&saved_root, &after_tree.root(), &count_line_feeds);
+
+        assert!(!diff_shared.equal);
+        assert!(!diff_rebalanced.equal);
+        assert_eq!(
+            diff_shared.byte_ranges, diff_rebalanced.byte_ranges,
+            "byte_ranges should be identical whether or not Arc sharing exists"
+        );
+        assert_eq!(
+            diff_shared.line_ranges, diff_rebalanced.line_ranges,
+            "line_ranges should be identical whether or not Arc sharing exists"
+        );
+    }
+
     #[test]
     fn tolerates_split_leaves_with_same_content_prefix() {
         let before = build(&[leaf(BufferLocation::Stored(0), 0, 100, Some(1))]);
@@ -584,5 +806,78 @@ mod tests {
         assert!(!diff.equal);
         // Only the inserted span should be marked.
         assert_eq!(diff.byte_ranges, vec![50..60]);
+    }
+
+    #[test]
+    fn diff_with_disjoint_changes_reports_correct_line_numbers() {
+        let leaf1_before = leaf(BufferLocation::Stored(0), 0, 10, Some(0));
+        let leaf2 = leaf(BufferLocation::Stored(0), 10, 10, Some(1)); // Has 1 LF
+        let leaf3_before = leaf(BufferLocation::Stored(0), 20, 10, Some(0));
+
+        let leaf1_after = leaf(BufferLocation::Added(1), 0, 10, Some(0));
+        let leaf3_after = leaf(BufferLocation::Added(1), 10, 10, Some(0));
+
+        // Manually build trees to ensure structural sharing of leaf2
+        let leaf2_arc = Arc::new(PieceTreeNode::Leaf {
+            location: leaf2.location,
+            offset: leaf2.offset,
+            bytes: leaf2.bytes,
+            line_feed_cnt: leaf2.line_feed_cnt,
+        });
+
+        let before = Arc::new(PieceTreeNode::Internal {
+            left_bytes: 10,
+            lf_left: Some(0),
+            left: Arc::new(PieceTreeNode::Leaf {
+                location: leaf1_before.location,
+                offset: leaf1_before.offset,
+                bytes: leaf1_before.bytes,
+                line_feed_cnt: leaf1_before.line_feed_cnt,
+            }),
+            right: Arc::new(PieceTreeNode::Internal {
+                left_bytes: 10,
+                lf_left: Some(1),
+                left: Arc::clone(&leaf2_arc),
+                right: Arc::new(PieceTreeNode::Leaf {
+                    location: leaf3_before.location,
+                    offset: leaf3_before.offset,
+                    bytes: leaf3_before.bytes,
+                    line_feed_cnt: leaf3_before.line_feed_cnt,
+                }),
+            }),
+        });
+
+        let after = Arc::new(PieceTreeNode::Internal {
+            left_bytes: 10,
+            lf_left: Some(0),
+            left: Arc::new(PieceTreeNode::Leaf {
+                location: leaf1_after.location,
+                offset: leaf1_after.offset,
+                bytes: leaf1_after.bytes,
+                line_feed_cnt: leaf1_after.line_feed_cnt,
+            }),
+            right: Arc::new(PieceTreeNode::Internal {
+                left_bytes: 10,
+                lf_left: Some(1),
+                left: Arc::clone(&leaf2_arc), // Shared!
+                right: Arc::new(PieceTreeNode::Leaf {
+                    location: leaf3_after.location,
+                    offset: leaf3_after.offset,
+                    bytes: leaf3_after.bytes,
+                    line_feed_cnt: leaf3_after.line_feed_cnt,
+                }),
+            }),
+        });
+
+        let diff = diff_piece_trees(&before, &after, &count_line_feeds);
+
+        assert_eq!(diff.byte_ranges, vec![0..10, 20..30]);
+        // Change 1 is at line 0.
+        // leaf2 has 1 LF, so Change 2 (leaf3) starts at line 1.
+        assert_eq!(
+            diff.line_ranges,
+            Some(vec![0..1, 1..2]),
+            "Change after a skipped subtree with line feeds should have correct line number"
+        );
     }
 }

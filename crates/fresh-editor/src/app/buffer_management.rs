@@ -495,7 +495,7 @@ impl Editor {
         }
 
         // Reload the buffer with the new encoding
-        let mut new_buffer = crate::model::buffer::Buffer::load_from_file_with_encoding(
+        let new_buffer = crate::model::buffer::Buffer::load_from_file_with_encoding(
             &path,
             encoding,
             Arc::clone(&self.filesystem),
