@@ -464,11 +464,20 @@ impl Editor {
                 );
                 if changed {
                     if let Some(buffer_id) = self.split_manager.get_buffer_id((*split_id).into()) {
+                        // Compute top_line if line info is available
+                        let top_line = self.buffers.get(&buffer_id).and_then(|state| {
+                            if state.buffer.line_count().is_some() {
+                                Some(state.buffer.get_line_number(view_state.viewport.top_byte))
+                            } else {
+                                None
+                            }
+                        });
                         tracing::debug!(
-                            "Firing viewport_changed hook: split={:?} buffer={:?} top_byte={}",
+                            "Firing viewport_changed hook: split={:?} buffer={:?} top_byte={} top_line={:?}",
                             split_id,
                             buffer_id,
-                            view_state.viewport.top_byte
+                            view_state.viewport.top_byte,
+                            top_line
                         );
                         self.plugin_manager.run_hook(
                             "viewport_changed",
@@ -476,6 +485,7 @@ impl Editor {
                                 split_id: (*split_id).into(),
                                 buffer_id,
                                 top_byte: view_state.viewport.top_byte,
+                                top_line,
                                 width: view_state.viewport.width,
                                 height: view_state.viewport.height,
                             },

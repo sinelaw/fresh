@@ -1120,6 +1120,31 @@ impl Editor {
         }
     }
 
+    /// Handle SetLineIndicators batch command
+    pub(super) fn handle_set_line_indicators(
+        &mut self,
+        buffer_id: BufferId,
+        lines: Vec<usize>,
+        namespace: String,
+        symbol: String,
+        color: (u8, u8, u8),
+        priority: i32,
+    ) {
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            let indicator = crate::view::margin::LineIndicator::new(
+                symbol,
+                ratatui::style::Color::Rgb(color.0, color.1, color.2),
+                priority,
+            );
+            for line in lines {
+                let byte_offset = state.buffer.line_start_offset(line).unwrap_or(0);
+                state
+                    .margins
+                    .set_line_indicator(byte_offset, namespace.clone(), indicator.clone());
+            }
+        }
+    }
+
     /// Handle ClearLineIndicators command
     pub(super) fn handle_clear_line_indicators(&mut self, buffer_id: BufferId, namespace: String) {
         if let Some(state) = self.buffers.get_mut(&buffer_id) {

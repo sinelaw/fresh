@@ -219,6 +219,7 @@ pub enum HookArgs {
         split_id: SplitId,
         buffer_id: BufferId,
         top_byte: usize,
+        top_line: Option<usize>,
         width: u16,
         height: u16,
     },
@@ -639,6 +640,7 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
             split_id,
             buffer_id,
             top_byte,
+            top_line,
             width,
             height,
         } => {
@@ -646,6 +648,7 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
                 "split_id": split_id.0,
                 "buffer_id": buffer_id.0,
                 "top_byte": top_byte,
+                "top_line": top_line,
                 "width": width,
                 "height": height,
             })

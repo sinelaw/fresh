@@ -389,6 +389,8 @@ pub struct BufferSavedDiff {
 pub struct ViewportInfo {
     /// Byte position of the first visible line
     pub top_byte: usize,
+    /// Line number of the first visible line (None when line index unavailable, e.g. large file before scan)
+    pub top_line: Option<usize>,
     /// Left column offset (horizontal scroll)
     pub left_column: usize,
     /// Viewport width
@@ -1081,6 +1083,22 @@ pub enum PluginCommand {
         buffer_id: BufferId,
         /// Line number (0-indexed)
         line: usize,
+        /// Namespace for grouping (e.g., "git-gutter", "breakpoints")
+        namespace: String,
+        /// Symbol to display (e.g., "│", "●", "★")
+        symbol: String,
+        /// Color as RGB tuple
+        color: (u8, u8, u8),
+        /// Priority for display when multiple indicators exist (higher wins)
+        priority: i32,
+    },
+
+    /// Batch set line indicators in the gutter's indicator column
+    /// Optimized for setting many lines with the same namespace/symbol/color/priority
+    SetLineIndicators {
+        buffer_id: BufferId,
+        /// Line numbers (0-indexed)
+        lines: Vec<usize>,
         /// Namespace for grouping (e.g., "git-gutter", "breakpoints")
         namespace: String,
         /// Symbol to display (e.g., "│", "●", "★")
@@ -2929,6 +2947,7 @@ mod tests {
             let mut snapshot = state_snapshot.write().unwrap();
             snapshot.viewport = Some(ViewportInfo {
                 top_byte: 100,
+                top_line: Some(5),
                 left_column: 5,
                 width: 80,
                 height: 24,

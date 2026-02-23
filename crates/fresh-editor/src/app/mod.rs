@@ -4642,8 +4642,16 @@ impl Editor {
                 }
 
                 // Viewport - get from SplitViewState (the authoritative source)
+                let top_line = self.buffers.get(&self.active_buffer()).and_then(|state| {
+                    if state.buffer.line_count().is_some() {
+                        Some(state.buffer.get_line_number(active_vs.viewport.top_byte))
+                    } else {
+                        None
+                    }
+                });
                 snapshot.viewport = Some(ViewportInfo {
                     top_byte: active_vs.viewport.top_byte,
+                    top_line,
                     left_column: active_vs.viewport.left_column,
                     width: active_vs.viewport.width,
                     height: active_vs.viewport.height,
@@ -4994,6 +5002,18 @@ impl Editor {
                 priority,
             } => {
                 self.handle_set_line_indicator(buffer_id, line, namespace, symbol, color, priority);
+            }
+            PluginCommand::SetLineIndicators {
+                buffer_id,
+                lines,
+                namespace,
+                symbol,
+                color,
+                priority,
+            } => {
+                self.handle_set_line_indicators(
+                    buffer_id, lines, namespace, symbol, color, priority,
+                );
             }
             PluginCommand::ClearLineIndicators {
                 buffer_id,

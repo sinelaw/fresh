@@ -2311,6 +2311,31 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Batch set line indicators in the gutter
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_line_indicators(
+        &self,
+        buffer_id: u32,
+        lines: Vec<u32>,
+        namespace: String,
+        symbol: String,
+        r: u8,
+        g: u8,
+        b: u8,
+        priority: i32,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetLineIndicators {
+                buffer_id: BufferId(buffer_id as usize),
+                lines: lines.into_iter().map(|l| l as usize).collect(),
+                namespace,
+                symbol,
+                color: (r, g, b),
+                priority,
+            })
+            .is_ok()
+    }
+
     /// Clear line indicators in a namespace
     pub fn clear_line_indicators(&self, buffer_id: u32, namespace: String) -> bool {
         self.command_sender

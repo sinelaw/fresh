@@ -138,6 +138,10 @@ type ViewportInfo = {
 	*/
 	topByte: number;
 	/**
+	* Line number of the first visible line (null when line index unavailable, e.g. large file before scan)
+	*/
+	topLine: number | null;
+	/**
 	* Left column offset (horizontal scroll)
 	*/
 	leftColumn: number;
@@ -1158,6 +1162,10 @@ interface EditorAPI {
 	* Set a line indicator in the gutter
 	*/
 	setLineIndicator(bufferId: number, line: number, namespace: string, symbol: string, r: number, g: number, b: number, priority: number): boolean;
+	/**
+	* Batch set line indicators in the gutter (all lines share the same namespace/symbol/color/priority)
+	*/
+	setLineIndicators(bufferId: number, lines: number[], namespace: string, symbol: string, r: number, g: number, b: number, priority: number): boolean;
 	/**
 	* Clear line indicators in a namespace
 	*/

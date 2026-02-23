@@ -14,6 +14,12 @@ const editor = getEditor();
  *
  * Indicator symbols:
  * - │ (blue): Line has been modified since last save
+ *
+ * Performance: For large files, indicators are viewport-filtered via the batch API.
+ * The after_insert/after_delete hooks refresh diff-based indicators (viewport-filtered,
+ * using the last-rendered viewport snapshot) then add the immediate edit range.
+ * The viewport_changed hook corrects indicators with fresh viewport bounds from
+ * the render loop, handling scroll/jump cases where the snapshot was stale.
  */
 
 // =============================================================================
@@ -70,62 +76,71 @@ function clearModifiedState(bufferId: number): void {
 }
 
 /**
- * Mark a range of lines as modified and set indicators
- *
- * Note: The indicator markers automatically track their byte positions,
- * so we don't need to manually track which lines are modified - we just
- * set indicators and they'll stay on the correct lines as edits happen.
+ * Mark a range of lines as modified and set indicators.
+ * Called from after_insert/after_delete with the immediate edit range (always small).
+ * No viewport filtering — the edit range is at most a few lines.
  */
 function markLinesModified(bufferId: number, startLine: number, endLine: number): void {
   const state = bufferStates.get(bufferId);
   if (!state || !state.tracking) return;
 
-  // Add indicator for each affected line
-  // Note: If an indicator already exists at this position, it will be updated
+  // The edit range is always small (the lines just inserted/deleted),
+  // so we can safely set indicators without viewport filtering.
+  const lines: number[] = [];
   for (let line = startLine; line <= endLine; line++) {
-    editor.setLineIndicator(
-      bufferId,
-      line,
-      NAMESPACE,
-      SYMBOL,
-      COLOR[0],
-      COLOR[1],
-      COLOR[2],
-      PRIORITY
-    );
+    lines.push(line);
+  }
+  if (lines.length > 0) {
+    editor.setLineIndicators(bufferId, lines, NAMESPACE, SYMBOL, COLOR[0], COLOR[1], COLOR[2], PRIORITY);
   }
 }
 
-function reapplyIndicatorsFromDiff(bufferId: number): void {
+/**
+ * Reapply indicators from the saved diff, filtered to a viewport range.
+ * Called from viewport_changed with fresh viewport bounds from the render loop.
+ *
+ * @param bufferId - The buffer to refresh indicators for
+ * @param vpStart - First visible line number (from hook args)
+ * @param vpHeight - Viewport height in rows (from hook args)
+ */
+function reapplyIndicatorsFromDiff(bufferId: number, vpStart: number, vpHeight: number, caller: string): boolean {
   const diff = editor.getBufferSavedDiff(bufferId);
-  if (!diff) return;
+  if (!diff) {
+    editor.debug(`[buf-mod] reapply(${caller}) buf=${bufferId} vp=${vpStart}..${vpStart + vpHeight}: no diff`);
+    return false;
+  }
 
-  // If buffer matches saved snapshot, clear everything.
   if (diff.equal) {
+    editor.debug(`[buf-mod] reapply(${caller}) buf=${bufferId} vp=${vpStart}..${vpStart + vpHeight}: diff.equal=true, clearing`);
     editor.clearLineIndicators(bufferId, NAMESPACE);
-    return;
+    return true;
   }
 
   const ranges = diff.line_ranges;
-  // If line info is unavailable, leave existing indicators (best effort).
-  if (!ranges) return;
+  if (!ranges) {
+    editor.debug(`[buf-mod] reapply(${caller}) buf=${bufferId} vp=${vpStart}..${vpStart + vpHeight}: line_ranges=null (no line info)`);
+    return;
+  }
 
-  // Reset namespace to drop stale indicators outside the changed ranges.
+  editor.debug(`[buf-mod] reapply(${caller}) buf=${bufferId} vp=${vpStart}..${vpStart + vpHeight}: ${ranges.length} diff ranges: ${JSON.stringify(ranges)}`);
+
   editor.clearLineIndicators(bufferId, NAMESPACE);
+
+  const vpEnd = vpStart + vpHeight;
+  const lines: number[] = [];
   for (const [start, end] of ranges) {
-    for (let line = start; line < end; line++) {
-      editor.setLineIndicator(
-        bufferId,
-        line,
-        NAMESPACE,
-        SYMBOL,
-        COLOR[0],
-        COLOR[1],
-        COLOR[2],
-        PRIORITY
-      );
+    const lo = Math.max(start, vpStart);
+    const hi = Math.min(end, vpEnd);
+    for (let line = lo; line < hi; line++) {
+      lines.push(line);
     }
   }
+
+  editor.debug(`[buf-mod] reapply(${caller}): setting ${lines.length} indicators: [${lines.join(",")}]`);
+  if (lines.length > 0) {
+    editor.setLineIndicators(bufferId, lines, NAMESPACE, SYMBOL, COLOR[0], COLOR[1], COLOR[2], PRIORITY);
+  }
+  return false;
 }
 
 // =============================================================================
@@ -188,11 +203,15 @@ globalThis.onBufferModifiedAfterSave = function (args: {
 };
 
 /**
- * Handle after insert - mark affected lines as modified
+ * Handle after insert - refresh diff indicators then mark affected lines.
  *
- * Note: Line indicators automatically track position changes via byte-position markers.
- * We only need to add new indicators for the modified lines; existing indicators
- * will automatically shift to stay on the correct lines.
+ * Calls reapplyIndicatorsFromDiff first (viewport-filtered via the last-rendered
+ * snapshot from getViewport()), then markLinesModified for the immediate edit range.
+ * Order matters: reapplyIndicatorsFromDiff clears the namespace, so markLinesModified
+ * must run after to ensure the current edit line is always indicated.
+ *
+ * If the viewport snapshot is stale (e.g. after a jump), viewport_changed will
+ * correct indicators with fresh bounds on the next render.
  */
 globalThis.onBufferModifiedAfterInsert = function (args: {
   buffer_id: number;
@@ -210,20 +229,25 @@ globalThis.onBufferModifiedAfterInsert = function (args: {
     return true;
   }
 
-  // Mark all affected lines (from start_line to end_line inclusive)
-  // The indicator markers will automatically track their positions
-  markLinesModified(bufferId, args.start_line, args.end_line);
-  reapplyIndicatorsFromDiff(bufferId);
+  const vp = editor.getViewport();
+  editor.debug(`[buf-mod] after_insert: buf=${bufferId} lines=${args.start_line}..${args.end_line} vp.topLine=${vp?.topLine} vp.height=${vp?.height}`);
+
+  let diffEqual = false;
+  if (vp && vp.topLine != null) {
+    diffEqual = reapplyIndicatorsFromDiff(bufferId, vp.topLine, vp.height, "after_insert");
+  }
+
+  if (!diffEqual) {
+    markLinesModified(bufferId, args.start_line, args.end_line);
+  }
 
   return true;
 };
 
 /**
- * Handle after delete - mark affected line as modified
+ * Handle after delete - refresh diff indicators then mark deletion line.
  *
- * Note: Line indicators automatically track position changes via byte-position markers.
- * Markers within deleted ranges are automatically removed. We only need to mark the
- * line where the deletion occurred.
+ * Same strategy as after_insert: diff refresh first, then immediate edit marker.
  */
 globalThis.onBufferModifiedAfterDelete = function (args: {
   buffer_id: number;
@@ -241,11 +265,36 @@ globalThis.onBufferModifiedAfterDelete = function (args: {
     return true;
   }
 
-  // Mark the line where deletion occurred
-  // Markers for deleted lines are automatically cleaned up
-  markLinesModified(bufferId, args.start_line, args.start_line);
-  reapplyIndicatorsFromDiff(bufferId);
+  const vp = editor.getViewport();
+  editor.debug(`[buf-mod] after_delete: buf=${bufferId} line=${args.start_line} vp.topLine=${vp?.topLine} vp.height=${vp?.height}`);
 
+  let diffEqual = false;
+  if (vp && vp.topLine != null) {
+    diffEqual = reapplyIndicatorsFromDiff(bufferId, vp.topLine, vp.height, "after_delete");
+  }
+
+  if (!diffEqual) {
+    markLinesModified(bufferId, args.start_line, args.start_line);
+  }
+
+  return true;
+};
+
+/**
+ * Handle viewport changed - reapply indicators for new visible range.
+ * The hook args provide fresh viewport bounds directly from the render loop,
+ * so we use those instead of the potentially stale editor.getViewport() snapshot.
+ */
+globalThis.onBufferModifiedViewportChanged = function (args: {
+  buffer_id: number;
+  top_byte: number;
+  top_line: number | null;
+  width: number;
+  height: number;
+}): boolean {
+  editor.debug(`[buf-mod] viewport_changed: buf=${args.buffer_id} top_line=${args.top_line} height=${args.height} top_byte=${args.top_byte}`);
+  if (args.top_line == null) return true; // no line info yet (large file, pre-scan)
+  reapplyIndicatorsFromDiff(args.buffer_id, args.top_line, args.height, "viewport_changed");
   return true;
 };
 
@@ -269,6 +318,7 @@ editor.on("buffer_activated", "onBufferModifiedBufferActivated");
 editor.on("after_file_save", "onBufferModifiedAfterSave");
 editor.on("after_insert", "onBufferModifiedAfterInsert");
 editor.on("after_delete", "onBufferModifiedAfterDelete");
+editor.on("viewport_changed", "onBufferModifiedViewportChanged");
 editor.on("buffer_closed", "onBufferModifiedBufferClosed");
 
 // Initialize for the current buffer
