@@ -3,17 +3,30 @@
 //! Parses raw bytes from the client into crossterm events.
 //! This allows the server to handle all input parsing, keeping the client ultra-light.
 
+use std::time::Instant;
+
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 
+/// How long to wait for more bytes after receiving ESC before treating it as standalone Escape.
+const ESC_TIMEOUT_MS: u128 = 50;
+
 /// Parser state for incremental input parsing
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct InputParser {
     /// Buffer for incomplete escape sequences
     buffer: Vec<u8>,
     /// Maximum buffer size before we give up on an escape sequence
     max_buffer_size: usize,
+    /// When the buffer last received a byte (for ESC timeout)
+    last_byte_time: Option<Instant>,
+}
+
+impl Default for InputParser {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl InputParser {
@@ -21,6 +34,7 @@ impl InputParser {
         Self {
             buffer: Vec::with_capacity(32),
             max_buffer_size: 256,
+            last_byte_time: None,
         }
     }
 
@@ -30,12 +44,14 @@ impl InputParser {
 
         for &byte in bytes {
             self.buffer.push(byte);
+            self.last_byte_time = Some(Instant::now());
 
             // Try to parse the buffer
             match self.try_parse() {
                 ParseResult::Complete(event) => {
                     events.push(event);
                     self.buffer.clear();
+                    self.last_byte_time = None;
                 }
                 ParseResult::Incomplete => {
                     // Need more bytes
@@ -47,6 +63,7 @@ impl InputParser {
                             }
                         }
                         self.buffer.clear();
+                        self.last_byte_time = None;
                     }
                 }
                 ParseResult::Invalid => {
@@ -58,6 +75,7 @@ impl InputParser {
                         }
                         let rest: Vec<u8> = self.buffer[1..].to_vec();
                         self.buffer.clear();
+                        self.last_byte_time = None;
                         // Re-parse the rest
                         events.extend(self.parse(&rest));
                     }
@@ -65,6 +83,37 @@ impl InputParser {
             }
         }
 
+        events
+    }
+
+    /// Flush any pending escape sequence that has timed out.
+    ///
+    /// Call this periodically (e.g., every server tick) to ensure standalone
+    /// ESC keystrokes are emitted promptly instead of waiting indefinitely
+    /// for a follow-up byte that may never arrive.
+    pub fn flush_timeout(&mut self) -> Vec<Event> {
+        if self.buffer.is_empty() {
+            return Vec::new();
+        }
+
+        let timed_out = self
+            .last_byte_time
+            .map(|t| t.elapsed().as_millis() >= ESC_TIMEOUT_MS)
+            .unwrap_or(false);
+
+        if !timed_out {
+            return Vec::new();
+        }
+
+        // Buffer has been sitting too long - flush as individual bytes
+        let mut events = Vec::new();
+        let buf = std::mem::take(&mut self.buffer);
+        for &b in &buf {
+            if let Some(event) = self.byte_to_event(b) {
+                events.push(event);
+            }
+        }
+        self.last_byte_time = None;
         events
     }
 
@@ -102,6 +151,10 @@ impl InputParser {
             b'[' => self.parse_csi_sequence(),
             // SS3 sequences: ESC O (function keys on some terminals)
             b'O' => self.parse_ss3_sequence(),
+            // ESC followed by another ESC: the first is standalone Escape,
+            // the second starts a new escape sequence. Return Invalid so the
+            // first byte is emitted as Escape and the second \x1b is re-parsed.
+            0x1b => ParseResult::Invalid,
             // Alt + key: ESC + key
             _ => {
                 let key = bytes[1];
@@ -182,6 +235,12 @@ impl InputParser {
                     self.parse_x10_mouse()
                 }
             }
+
+            // Shift+Tab (Back Tab): CSI Z
+            b'Z' => ParseResult::Complete(Event::Key(KeyEvent::new(
+                KeyCode::BackTab,
+                KeyModifiers::SHIFT,
+            ))),
 
             // Focus events
             b'I' => ParseResult::Complete(Event::FocusGained),
@@ -623,6 +682,165 @@ mod tests {
                 assert_eq!(me.row, 4); // 5 - 1 (0-indexed)
             }
             _ => panic!("Expected mouse motion event"),
+        }
+    }
+
+    // ---- Regression tests for issue #1089 ----
+
+    #[test]
+    fn test_shift_tab_csi_z() {
+        let mut parser = InputParser::new();
+        // Shift+Tab sends CSI Z = ESC [ Z
+        let events = parser.parse(b"\x1b[Z");
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Key(ke) => {
+                assert_eq!(ke.code, KeyCode::BackTab);
+                assert!(ke.modifiers.contains(KeyModifiers::SHIFT));
+            }
+            _ => panic!("Expected BackTab key event, got {:?}", events[0]),
+        }
+    }
+
+    #[test]
+    fn test_esc_then_mouse_event_same_chunk() {
+        let mut parser = InputParser::new();
+        // User presses Escape, then moves mouse. Both arrive in one chunk:
+        // ESC (0x1b) followed by mouse event ESC [ < 35 ; 67 ; 18 M
+        let events = parser.parse(b"\x1b\x1b[<35;67;18M");
+        assert_eq!(events.len(), 2, "Expected Escape + mouse event, got: {:?}", events);
+
+        // First event: standalone Escape
+        match &events[0] {
+            Event::Key(ke) => {
+                assert_eq!(ke.code, KeyCode::Esc);
+                assert!(ke.modifiers.is_empty());
+            }
+            _ => panic!("Expected Esc key event, got {:?}", events[0]),
+        }
+
+        // Second event: mouse motion
+        match &events[1] {
+            Event::Mouse(me) => {
+                assert!(matches!(me.kind, MouseEventKind::Moved));
+                assert_eq!(me.column, 66); // 67 - 1
+                assert_eq!(me.row, 17); // 18 - 1
+            }
+            _ => panic!("Expected mouse motion event, got {:?}", events[1]),
+        }
+    }
+
+    #[test]
+    fn test_esc_then_mouse_event_separate_chunks() {
+        let mut parser = InputParser::new();
+
+        // First chunk: standalone ESC (buffered, waiting for more bytes)
+        let events = parser.parse(&[0x1b]);
+        assert!(events.is_empty(), "ESC should be buffered");
+
+        // Second chunk: mouse event arrives later
+        let events = parser.parse(b"\x1b[<35;67;18M");
+        assert_eq!(events.len(), 2, "Expected Escape + mouse event, got: {:?}", events);
+
+        // First event: standalone Escape (disambiguated by seeing another ESC)
+        match &events[0] {
+            Event::Key(ke) => {
+                assert_eq!(ke.code, KeyCode::Esc);
+                assert!(ke.modifiers.is_empty());
+            }
+            _ => panic!("Expected Esc key event, got {:?}", events[0]),
+        }
+
+        // Second event: mouse motion
+        match &events[1] {
+            Event::Mouse(me) => {
+                assert!(matches!(me.kind, MouseEventKind::Moved));
+            }
+            _ => panic!("Expected mouse motion event, got {:?}", events[1]),
+        }
+    }
+
+    #[test]
+    fn test_esc_then_csi_arrow_separate_chunks() {
+        let mut parser = InputParser::new();
+
+        // ESC buffered
+        let events = parser.parse(&[0x1b]);
+        assert!(events.is_empty());
+
+        // Arrow key sequence arrives (starts with another ESC)
+        let events = parser.parse(b"\x1b[A");
+        assert_eq!(events.len(), 2, "Expected Escape + Up, got: {:?}", events);
+
+        match &events[0] {
+            Event::Key(ke) => assert_eq!(ke.code, KeyCode::Esc),
+            _ => panic!("Expected Esc"),
+        }
+        match &events[1] {
+            Event::Key(ke) => assert_eq!(ke.code, KeyCode::Up),
+            _ => panic!("Expected Up"),
+        }
+    }
+
+    #[test]
+    fn test_standalone_esc_flush_timeout() {
+        let mut parser = InputParser::new();
+
+        // ESC buffered
+        let events = parser.parse(&[0x1b]);
+        assert!(events.is_empty());
+
+        // Simulate time passing (replace last_byte_time with a past timestamp)
+        parser.last_byte_time =
+            Some(Instant::now() - std::time::Duration::from_millis(ESC_TIMEOUT_MS as u64 + 10));
+
+        // Flush should emit the standalone Escape
+        let events = parser.flush_timeout();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Key(ke) => {
+                assert_eq!(ke.code, KeyCode::Esc);
+                assert!(ke.modifiers.is_empty());
+            }
+            _ => panic!("Expected Esc key event"),
+        }
+
+        // Buffer should be empty now
+        assert!(parser.buffer.is_empty());
+    }
+
+    #[test]
+    fn test_flush_timeout_does_nothing_when_recent() {
+        let mut parser = InputParser::new();
+
+        // ESC buffered just now
+        let events = parser.parse(&[0x1b]);
+        assert!(events.is_empty());
+
+        // Flush should NOT emit anything (too recent)
+        let events = parser.flush_timeout();
+        assert!(events.is_empty());
+
+        // Buffer still has the ESC
+        assert_eq!(parser.buffer.len(), 1);
+    }
+
+    #[test]
+    fn test_esc_then_mouse_click() {
+        let mut parser = InputParser::new();
+        // ESC followed by mouse button press: ESC [ < 0 ; 10 ; 5 M
+        let events = parser.parse(b"\x1b\x1b[<0;10;5M");
+        assert_eq!(events.len(), 2, "Expected Escape + mouse click, got: {:?}", events);
+
+        match &events[0] {
+            Event::Key(ke) => assert_eq!(ke.code, KeyCode::Esc),
+            _ => panic!("Expected Esc"),
+        }
+        match &events[1] {
+            Event::Mouse(me) => {
+                assert!(matches!(me.kind, MouseEventKind::Down(MouseButton::Left)));
+            }
+            _ => panic!("Expected mouse down event, got {:?}", events[1]),
         }
     }
 }

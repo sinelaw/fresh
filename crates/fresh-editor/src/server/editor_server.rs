@@ -521,7 +521,15 @@ impl EditorServer {
                     }
                     input_events.extend(events);
                 }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    // No data available - check if we have a pending escape sequence
+                    // that should be flushed due to timeout
+                    let timeout_events = client.input_parser.flush_timeout();
+                    if !timeout_events.is_empty() {
+                        input_source_client = Some(idx);
+                        input_events.extend(timeout_events);
+                    }
+                }
                 Err(e) => {
                     tracing::warn!("[server] Client {} data read error: {}", client.id, e);
                     disconnected.push(idx);
