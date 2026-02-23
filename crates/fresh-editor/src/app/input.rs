@@ -1296,8 +1296,8 @@ impl Editor {
             {
                 // Scroll the file explorer
                 if let Some(explorer) = &mut self.file_explorer {
-                    let visible = explorer.tree().get_visible_nodes();
-                    if visible.is_empty() {
+                    let count = explorer.visible_count();
+                    if count == 0 {
                         return Ok(());
                     }
 
@@ -1310,7 +1310,7 @@ impl Editor {
                         current_index.saturating_sub(delta.unsigned_abs() as usize)
                     } else {
                         // Scroll down (positive delta)
-                        (current_index + delta as usize).min(visible.len() - 1)
+                        (current_index + delta as usize).min(count - 1)
                     };
 
                     // Set the new selection

@@ -590,14 +590,16 @@ impl Editor {
 
                             // After refresh, select the next best node:
                             // Try to stay at the same index, or select the last visible item
-                            let visible = explorer.tree().get_visible_nodes();
-                            if !visible.is_empty() {
+                            let count = explorer.visible_count();
+                            if count > 0 {
                                 let new_index = if let Some(idx) = deleted_index {
-                                    idx.min(visible.len().saturating_sub(1))
+                                    idx.min(count.saturating_sub(1))
                                 } else {
                                     0
                                 };
-                                explorer.set_selected(Some(visible[new_index]));
+                                if let Some(node_id) = explorer.get_node_at_index(new_index) {
+                                    explorer.set_selected(Some(node_id));
+                                }
                             } else {
                                 // No visible nodes, select parent
                                 explorer.set_selected(Some(parent_id));
