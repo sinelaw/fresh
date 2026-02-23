@@ -52,6 +52,20 @@ impl FileTreeView {
         }
     }
 
+    /// Get visible nodes filtered by ignore patterns (hidden files, gitignored, etc.)
+    ///
+    /// This wraps `tree.get_visible_nodes()` and removes nodes that should be
+    /// hidden according to the current ignore settings. The root node is never
+    /// filtered out.
+    fn filtered_visible_nodes(&self) -> Vec<NodeId> {
+        let root_id = self.tree.root_id();
+        self.tree
+            .get_visible_nodes()
+            .into_iter()
+            .filter(|&id| id == root_id || self.is_node_visible(id))
+            .collect()
+    }
+
     /// Set the viewport height (should be called during rendering)
     pub fn set_viewport_height(&mut self, height: usize) {
         self.viewport_height = height;
@@ -71,7 +85,7 @@ impl FileTreeView {
     ///
     /// Returns a list of (NodeId, indent_level) tuples for rendering.
     pub fn get_display_nodes(&self) -> Vec<(NodeId, usize)> {
-        let visible = self.tree.get_visible_nodes();
+        let visible = self.filtered_visible_nodes();
         visible
             .into_iter()
             .map(|id| {
@@ -93,7 +107,7 @@ impl FileTreeView {
 
     /// Select the next visible node
     pub fn select_next(&mut self) {
-        let visible = self.tree.get_visible_nodes();
+        let visible = self.filtered_visible_nodes();
         if visible.is_empty() {
             return;
         }
@@ -111,7 +125,7 @@ impl FileTreeView {
 
     /// Select the previous visible node
     pub fn select_prev(&mut self) {
-        let visible = self.tree.get_visible_nodes();
+        let visible = self.filtered_visible_nodes();
         if visible.is_empty() {
             return;
         }
@@ -133,7 +147,7 @@ impl FileTreeView {
             return;
         }
 
-        let visible = self.tree.get_visible_nodes();
+        let visible = self.filtered_visible_nodes();
         if visible.is_empty() {
             return;
         }
@@ -154,7 +168,7 @@ impl FileTreeView {
             return;
         }
 
-        let visible = self.tree.get_visible_nodes();
+        let visible = self.filtered_visible_nodes();
         if visible.is_empty() {
             return;
         }
@@ -182,7 +196,7 @@ impl FileTreeView {
         }
 
         if let Some(selected) = self.selected_node {
-            let visible = self.tree.get_visible_nodes();
+            let visible = self.filtered_visible_nodes();
             if let Some(pos) = visible.iter().position(|&id| id == selected) {
                 // Only scroll if cursor goes PAST the viewport edges
                 // This implements symmetric scrolling behavior
@@ -202,7 +216,7 @@ impl FileTreeView {
 
     /// Select the first visible node
     pub fn select_first(&mut self) {
-        let visible = self.tree.get_visible_nodes();
+        let visible = self.filtered_visible_nodes();
         if !visible.is_empty() {
             self.selected_node = Some(visible[0]);
         }
@@ -210,7 +224,7 @@ impl FileTreeView {
 
     /// Select the last visible node
     pub fn select_last(&mut self) {
-        let visible = self.tree.get_visible_nodes();
+        let visible = self.filtered_visible_nodes();
         if !visible.is_empty() {
             self.selected_node = Some(*visible.last().unwrap());
         }
@@ -250,7 +264,7 @@ impl FileTreeView {
         }
 
         if let Some(selected) = self.selected_node {
-            let visible = self.tree.get_visible_nodes();
+            let visible = self.filtered_visible_nodes();
             if let Some(pos) = visible.iter().position(|&id| id == selected) {
                 // If selection is above viewport, scroll up
                 if pos < self.scroll_offset {
@@ -292,7 +306,7 @@ impl FileTreeView {
     /// Get the index of the selected node in the visible list
     pub fn get_selected_index(&self) -> Option<usize> {
         if let Some(selected) = self.selected_node {
-            let visible = self.tree.get_visible_nodes();
+            let visible = self.filtered_visible_nodes();
             visible.iter().position(|&id| id == selected)
         } else {
             None
@@ -301,13 +315,13 @@ impl FileTreeView {
 
     /// Get visible node at index (accounting for scroll offset)
     pub fn get_node_at_index(&self, index: usize) -> Option<NodeId> {
-        let visible = self.tree.get_visible_nodes();
+        let visible = self.filtered_visible_nodes();
         visible.get(index).copied()
     }
 
     /// Get the number of visible nodes
     pub fn visible_count(&self) -> usize {
-        self.tree.get_visible_nodes().len()
+        self.filtered_visible_nodes().len()
     }
 
     /// Get reference to ignore patterns
@@ -382,7 +396,7 @@ impl FileTreeView {
     pub fn collect_symlink_mappings(&self) -> HashMap<PathBuf, PathBuf> {
         let mut mappings = HashMap::new();
 
-        for node_id in self.tree.get_visible_nodes() {
+        for node_id in self.filtered_visible_nodes() {
             if let Some(node) = self.tree.get_node(node_id) {
                 // Only process expanded symlink directories
                 if node.entry.is_symlink() && node.is_dir() && node.is_expanded() {
@@ -433,11 +447,10 @@ impl FileTreeView {
     /// Get nodes that match the current search query
     fn get_matching_nodes(&self) -> Vec<NodeId> {
         if !self.search.is_active() {
-            return self.tree.get_visible_nodes();
+            return self.filtered_visible_nodes();
         }
 
-        self.tree
-            .get_visible_nodes()
+        self.filtered_visible_nodes()
             .into_iter()
             .filter(|&id| {
                 if let Some(node) = self.tree.get_node(id) {
