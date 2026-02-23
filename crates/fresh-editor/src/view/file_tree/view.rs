@@ -54,16 +54,30 @@ impl FileTreeView {
 
     /// Get visible nodes filtered by ignore patterns (hidden files, gitignored, etc.)
     ///
-    /// This wraps `tree.get_visible_nodes()` and removes nodes that should be
-    /// hidden according to the current ignore settings. The root node is never
-    /// filtered out.
+    /// Walks the expanded tree and skips ignored nodes along with their entire
+    /// subtree. The root node is never filtered out.
     fn filtered_visible_nodes(&self) -> Vec<NodeId> {
-        let root_id = self.tree.root_id();
-        self.tree
-            .get_visible_nodes()
-            .into_iter()
-            .filter(|&id| id == root_id || self.is_node_visible(id))
-            .collect()
+        let mut result = Vec::new();
+        self.collect_filtered_visible(self.tree.root_id(), &mut result);
+        result
+    }
+
+    /// Recursively collect visible nodes, skipping ignored subtrees.
+    fn collect_filtered_visible(&self, id: NodeId, result: &mut Vec<NodeId>) {
+        let is_root = id == self.tree.root_id();
+        if !is_root && !self.is_node_visible(id) {
+            return;
+        }
+
+        result.push(id);
+
+        if let Some(node) = self.tree.get_node(id) {
+            if node.is_expanded() {
+                for &child_id in &node.children {
+                    self.collect_filtered_visible(child_id, result);
+                }
+            }
+        }
     }
 
     /// Set the viewport height (should be called during rendering)

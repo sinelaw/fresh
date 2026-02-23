@@ -2748,11 +2748,42 @@ fn test_dotfiles_hidden_by_default_and_toggle_controls_visibility() {
         screen
     );
 
+    // Expand .hidden_dir so its children are loaded, then navigate to it
+    // First find and select .hidden_dir by navigating down
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    // Keep going down until we find .hidden_dir (it's sorted among the entries)
+    for _ in 0..10 {
+        let entry = harness
+            .editor()
+            .file_explorer()
+            .and_then(|e| e.get_selected_entry())
+            .map(|e| e.name.clone());
+        if entry.as_deref() == Some(".hidden_dir") {
+            break;
+        }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    // Expand it with Right arrow
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.sleep(std::time::Duration::from_millis(200));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // inner.txt should now be visible (hidden dir is expanded, show_hidden is on)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("inner.txt"),
+        "inner.txt should be visible when .hidden_dir is expanded and show_hidden is on.\nScreen:\n{}",
+        screen
+    );
+
     // Toggle "Show hidden files" off again
     harness.editor_mut().file_explorer_toggle_hidden();
     harness.render().unwrap();
 
-    // Dotfiles should be hidden again
+    // Dotfiles AND their children should be hidden
     let screen = harness.screen_to_string();
     assert!(
         !screen.contains(".hidden_file"),
@@ -2762,6 +2793,11 @@ fn test_dotfiles_hidden_by_default_and_toggle_controls_visibility() {
     assert!(
         !screen.contains(".hidden_dir"),
         "Dotfolder '.hidden_dir' should NOT be visible after toggling 'Show hidden files' off.\nScreen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("inner.txt"),
+        "Children of hidden dirs should NOT be visible when 'Show hidden files' is off.\nScreen:\n{}",
         screen
     );
 }
