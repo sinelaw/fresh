@@ -7,7 +7,9 @@
 
 #[cfg(target_os = "macos")]
 pub mod macos;
+mod native_menu;
 
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -17,6 +19,7 @@ use crossterm::event::{
     KeyCode, KeyEvent as CtKeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MediaKeyCode,
     ModifierKeyCode, MouseButton as CtMouseButton, MouseEvent as CtMouseEvent, MouseEventKind,
 };
+use fresh_core::menu::Menu;
 use ratatui::backend::Backend;
 use ratatui::Terminal;
 use ratatui_wgpu::{Builder, Dimensions, Font, WgpuBackend};
@@ -26,6 +29,8 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::KeyLocation;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
+
+use native_menu::NativeMenuBar;
 
 /// Embedded JetBrains Mono Regular font (SIL Open Font License 1.1).
 const FONT_DATA: &[u8] = include_bytes!("../fonts/JetBrainsMono-Regular.ttf");
@@ -44,6 +49,12 @@ const FRAME_DURATION: Duration = Duration::from_millis(16);
 ///
 /// All input events are delivered as crossterm types so the application can
 /// share input-handling logic with a terminal frontend.
+///
+/// The trait also defines the application's menu structure via
+/// [`menu_definitions`](Self::menu_definitions) and
+/// [`take_menu_update`](Self::take_menu_update).  The GUI layer uses these to
+/// build and maintain platform-native menus (e.g. the macOS menu bar) without
+/// the application needing to know which platform it is running on.
 pub trait GuiApplication {
     /// Handle a translated key event.
     fn on_key(&mut self, key: CtKeyEvent) -> AnyhowResult<()>;
@@ -67,13 +78,39 @@ pub trait GuiApplication {
     /// Called when the window is about to close (e.g. save state).
     fn on_close(&mut self);
 
-    /// Handle a native menu action (e.g. from macOS native menu bar).
-    /// `action` is the editor action name, `args` are optional arguments.
+    /// Return the application's initial menu bar definition.
+    ///
+    /// Called once during initialization to build platform-native menus.
+    /// The returned [`Menu`] items are the same model used by the editor's
+    /// built-in TUI menu bar — single source of truth.
+    ///
+    /// Default: empty (no native menus).
+    fn menu_definitions(&self) -> Vec<Menu> {
+        Vec::new()
+    }
+
+    /// Return an updated menu bar definition if the menus have changed since
+    /// the last call.
+    ///
+    /// The GUI event loop calls this every frame. Return `Some(menus)` to
+    /// trigger a native menu rebuild, or `None` if nothing changed.
+    ///
+    /// Default: always returns `None`.
+    fn take_menu_update(&mut self) -> Option<Vec<Menu>> {
+        None
+    }
+
+    /// Handle a menu action triggered by the native platform menu bar.
+    ///
+    /// `action` and `args` come directly from the
+    /// [`MenuItem::Action`](fresh_core::menu::MenuItem::Action) that the user
+    /// clicked in the native menu.
+    ///
     /// Default implementation does nothing.
     fn on_menu_action(
         &mut self,
         _action: &str,
-        _args: &std::collections::HashMap<String, serde_json::Value>,
+        _args: &HashMap<String, serde_json::Value>,
     ) {
     }
 }
@@ -160,9 +197,8 @@ struct RunnerState<A: GuiApplication> {
     cell_size: (f64, f64),
     /// Which Alt/Option key is currently held (for macOS Left/Right distinction).
     alt_location: Option<KeyLocation>,
-    /// Native macOS menu bar (only present on macOS).
-    #[cfg(target_os = "macos")]
-    _native_menu: Option<muda::Menu>,
+    /// Platform-native menu bar (macOS: real AppKit menus; other: no-op stub).
+    native_menu: NativeMenuBar,
 }
 
 impl<A: GuiApplication + 'static> ApplicationHandler for WgpuRunner<A> {
@@ -367,22 +403,21 @@ impl<A: GuiApplication + 'static> ApplicationHandler for WgpuRunner<A> {
             return;
         };
 
-        // Poll native menu events (macOS) and dispatch as editor actions.
-        #[cfg(target_os = "macos")]
-        {
-            if let Ok(event) = muda::MenuEvent::receiver().try_recv() {
-                if let Some(action) = macos::menu::resolve_menu_event(&event) {
-                    // Dispatch menu action as a synthetic key event via on_menu_action
-                    state.app.on_menu_action(&action.action, &action.args);
-                    state.needs_render = true;
-                }
-            }
+        // Poll native menu bar for user clicks and dispatch to the app.
+        if let Some(action) = state.native_menu.poll_action() {
+            state.app.on_menu_action(&action.action, &action.args);
+            state.needs_render = true;
         }
 
         match state.app.tick() {
             Ok(true) => state.needs_render = true,
             Ok(false) => {}
             Err(e) => tracing::error!("Tick error: {}", e),
+        }
+
+        // If the app signalled a menu model change, rebuild native menus.
+        if let Some(updated_menus) = state.app.take_menu_update() {
+            state.native_menu.update(&updated_menus, &self.config.title);
         }
 
         if state.app.should_quit() {
@@ -453,14 +488,9 @@ impl<A: GuiApplication> WgpuRunner<A> {
             .context("create_app already consumed")?;
         let app = create_app(cols, rows)?;
 
-        // Initialize native macOS menu bar
-        #[cfg(target_os = "macos")]
-        let native_menu = {
-            let (menu, _rx) = macos::menu::build_native_menu_bar();
-            // Attach the menu to the macOS application (NSApp)
-            menu.init_for_nsapp();
-            Some(menu)
-        };
+        // Build platform-native menu bar from the app's menu model.
+        let menus = app.menu_definitions();
+        let native_menu = NativeMenuBar::build(&menus, &self.config.title);
 
         Ok(RunnerState {
             app,
@@ -473,8 +503,7 @@ impl<A: GuiApplication> WgpuRunner<A> {
             pressed_button: None,
             cell_size,
             alt_location: None,
-            #[cfg(target_os = "macos")]
-            _native_menu: native_menu,
+            native_menu,
         })
     }
 }

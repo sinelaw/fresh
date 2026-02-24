@@ -192,6 +192,10 @@ impl GuiApplication for EditorApp {
         }
     }
 
+    fn menu_definitions(&self) -> Vec<fresh_core::menu::Menu> {
+        config::MenuConfig::translated_menus()
+    }
+
     fn on_menu_action(
         &mut self,
         action: &str,

@@ -1613,6 +1613,7 @@ version = "0.2.9"
 dependencies = [
  "anyhow",
  "crossterm",
+ "fresh-core",
  "muda",
  "ratatui",
  "ratatui-wgpu",

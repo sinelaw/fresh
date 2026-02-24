@@ -9,6 +9,8 @@ repository.workspace = true
 publish = false  # depends on git-only ratatui-wgpu, not publishable to crates.io
 
 [dependencies]
+# Shared types (Menu, MenuItem) — the menu model lives here
+fresh-core = { workspace = true }
 # Window management
 winit = { workspace = true }
 # GPU-accelerated rendering

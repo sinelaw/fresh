@@ -1457,8 +1457,12 @@ impl MenuConfig {
         }
     }
 
-    /// Create default menu bar configuration with translated labels
-    fn translated_menus() -> Vec<Menu> {
+    /// Create default menu bar configuration with translated labels.
+    ///
+    /// This is the single source of truth for the editor's menu structure.
+    /// Both the built-in TUI menu bar and the native GUI menu bar (e.g. macOS)
+    /// are built from this definition.
+    pub fn translated_menus() -> Vec<Menu> {
         vec![
             // File menu
             Menu {
