@@ -2023,7 +2023,6 @@ impl Editor {
     /// Convert an action into a list of events to apply to the active buffer
     /// Returns None for actions that don't generate events (like Quit)
     pub fn action_to_events(&mut self, action: Action) -> Option<Vec<Event>> {
-        let tab_size = self.config.editor.tab_size;
         let auto_indent = self.config.editor.auto_indent;
         let estimated_line_length = self.config.editor.estimated_line_length;
 
@@ -2046,6 +2045,10 @@ impl Editor {
 
         let buffer_id = self.active_buffer();
         let state = self.buffers.get_mut(&buffer_id).unwrap();
+
+        // Use per-buffer tab_size which respects language overrides and user changes
+        let tab_size = state.buffer_settings.tab_size;
+
         let cursors = &mut self
             .split_view_states
             .get_mut(&active_split)
