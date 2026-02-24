@@ -1592,11 +1592,12 @@ impl Editor {
                     use crate::primitives::grammar::GrammarRegistry;
                     match GrammarRegistry::with_additional_grammars(&base_registry, &additional) {
                         Some(new_registry) => {
-                            let _ = sender.send(
+                            // Ok to ignore: receiver may be gone if app is shutting down.
+                            drop(sender.send(
                                 crate::services::async_bridge::AsyncMessage::GrammarRegistryBuilt {
                                     registry: std::sync::Arc::new(new_registry),
                                 },
-                            );
+                            ));
                         }
                         None => {
                             tracing::error!("Failed to rebuild grammar registry in background");

@@ -1289,11 +1289,12 @@ impl Editor {
                 .spawn(move || {
                     let registry =
                         crate::primitives::grammar::GrammarRegistry::for_editor(grammar_config_dir);
-                    let _ = grammar_sender.send(
+                    // Ok to ignore: receiver may be gone if app is shutting down.
+                    drop(grammar_sender.send(
                         crate::services::async_bridge::AsyncMessage::GrammarRegistryBuilt {
                             registry,
                         },
-                    );
+                    ));
                 })
                 .ok();
         }
