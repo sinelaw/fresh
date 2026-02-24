@@ -912,7 +912,15 @@ impl Editor {
 
             let buffer_id = self.active_buffer();
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                state.language = trimmed.to_string();
+                // Use the canonical lowercase ID when a tree-sitter language is
+                // available so that state.language matches the value produced by
+                // file-detection (Language::to_string() delegates to id()).
+                // This keeps LSP config lookups consistent.
+                state.language = if let Some(lang) = ts_language {
+                    lang.to_string()
+                } else {
+                    trimmed.to_string()
+                };
                 state.highlighter =
                     HighlightEngine::for_syntax_name(trimmed, &self.grammar_registry, ts_language);
                 // Update reference highlighter if tree-sitter language is available
