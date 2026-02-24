@@ -12,7 +12,7 @@ use oxc_allocator::Allocator;
 use oxc_codegen::Codegen;
 use oxc_parser::Parser;
 use oxc_span::SourceType;
-use ts_rs::TS;
+use ts_rs::{Config as TsConfig, TS};
 
 use fresh_core::api::{
     ActionPopupAction, ActionPopupOptions, ActionSpec, BackgroundProcessResult, BufferInfo,
@@ -32,70 +32,75 @@ use fresh_core::file_explorer::FileExplorerDecoration;
 /// Returns None if the type is not known (not registered in this mapping).
 /// Add new types here when they're added to api.rs with `#[derive(TS)]`.
 fn get_type_decl(type_name: &str) -> Option<String> {
+    let cfg = TsConfig::default();
     // Map TypeScript type names to their ts-rs declarations
     // The type name should match either the Rust struct name or the ts(rename = "...") value
     match type_name {
         // Core types
-        "BufferInfo" => Some(BufferInfo::decl()),
-        "CursorInfo" => Some(CursorInfo::decl()),
-        "ViewportInfo" => Some(ViewportInfo::decl()),
-        "ActionSpec" => Some(ActionSpec::decl()),
-        "BufferSavedDiff" => Some(BufferSavedDiff::decl()),
-        "LayoutHints" => Some(LayoutHints::decl()),
+        "BufferInfo" => Some(BufferInfo::decl(&cfg)),
+        "CursorInfo" => Some(CursorInfo::decl(&cfg)),
+        "ViewportInfo" => Some(ViewportInfo::decl(&cfg)),
+        "ActionSpec" => Some(ActionSpec::decl(&cfg)),
+        "BufferSavedDiff" => Some(BufferSavedDiff::decl(&cfg)),
+        "LayoutHints" => Some(LayoutHints::decl(&cfg)),
 
         // Process types
-        "SpawnResult" => Some(SpawnResult::decl()),
-        "BackgroundProcessResult" => Some(BackgroundProcessResult::decl()),
+        "SpawnResult" => Some(SpawnResult::decl(&cfg)),
+        "BackgroundProcessResult" => Some(BackgroundProcessResult::decl(&cfg)),
 
         // Terminal types
-        "TerminalResult" => Some(TerminalResult::decl()),
-        "CreateTerminalOptions" => Some(CreateTerminalOptions::decl()),
+        "TerminalResult" => Some(TerminalResult::decl(&cfg)),
+        "CreateTerminalOptions" => Some(CreateTerminalOptions::decl(&cfg)),
 
         // Composite buffer types (ts-rs renames these with Ts prefix)
-        "TsCompositeLayoutConfig" | "CompositeLayoutConfig" => Some(CompositeLayoutConfig::decl()),
-        "TsCompositeSourceConfig" | "CompositeSourceConfig" => Some(CompositeSourceConfig::decl()),
-        "TsCompositePaneStyle" | "CompositePaneStyle" => Some(CompositePaneStyle::decl()),
-        "TsCompositeHunk" | "CompositeHunk" => Some(CompositeHunk::decl()),
+        "TsCompositeLayoutConfig" | "CompositeLayoutConfig" => {
+            Some(CompositeLayoutConfig::decl(&cfg))
+        }
+        "TsCompositeSourceConfig" | "CompositeSourceConfig" => {
+            Some(CompositeSourceConfig::decl(&cfg))
+        }
+        "TsCompositePaneStyle" | "CompositePaneStyle" => Some(CompositePaneStyle::decl(&cfg)),
+        "TsCompositeHunk" | "CompositeHunk" => Some(CompositeHunk::decl(&cfg)),
         "TsCreateCompositeBufferOptions" | "CreateCompositeBufferOptions" => {
-            Some(CreateCompositeBufferOptions::decl())
+            Some(CreateCompositeBufferOptions::decl(&cfg))
         }
 
         // View transform types
-        "ViewTokenWireKind" => Some(ViewTokenWireKind::decl()),
-        "ViewTokenStyle" => Some(ViewTokenStyle::decl()),
-        "ViewTokenWire" => Some(ViewTokenWire::decl()),
+        "ViewTokenWireKind" => Some(ViewTokenWireKind::decl(&cfg)),
+        "ViewTokenStyle" => Some(ViewTokenStyle::decl(&cfg)),
+        "ViewTokenWire" => Some(ViewTokenWire::decl(&cfg)),
 
         // UI types (ts-rs renames these with Ts prefix)
-        "TsActionPopupAction" | "ActionPopupAction" => Some(ActionPopupAction::decl()),
-        "ActionPopupOptions" => Some(ActionPopupOptions::decl()),
-        "TsHighlightSpan" => Some(TsHighlightSpan::decl()),
-        "FileExplorerDecoration" => Some(FileExplorerDecoration::decl()),
+        "TsActionPopupAction" | "ActionPopupAction" => Some(ActionPopupAction::decl(&cfg)),
+        "ActionPopupOptions" => Some(ActionPopupOptions::decl(&cfg)),
+        "TsHighlightSpan" => Some(TsHighlightSpan::decl(&cfg)),
+        "FileExplorerDecoration" => Some(FileExplorerDecoration::decl(&cfg)),
 
         // Virtual buffer option types
-        "TextPropertyEntry" | "JsTextPropertyEntry" => Some(JsTextPropertyEntry::decl()),
-        "CreateVirtualBufferOptions" => Some(CreateVirtualBufferOptions::decl()),
-        "CreateVirtualBufferInSplitOptions" => Some(CreateVirtualBufferInSplitOptions::decl()),
+        "TextPropertyEntry" | "JsTextPropertyEntry" => Some(JsTextPropertyEntry::decl(&cfg)),
+        "CreateVirtualBufferOptions" => Some(CreateVirtualBufferOptions::decl(&cfg)),
+        "CreateVirtualBufferInSplitOptions" => Some(CreateVirtualBufferInSplitOptions::decl(&cfg)),
         "CreateVirtualBufferInExistingSplitOptions" => {
-            Some(CreateVirtualBufferInExistingSplitOptions::decl())
+            Some(CreateVirtualBufferInExistingSplitOptions::decl(&cfg))
         }
 
         // Return types
-        "TextPropertiesAtCursor" => Some(TextPropertiesAtCursor::decl()),
-        "VirtualBufferResult" => Some(VirtualBufferResult::decl()),
+        "TextPropertiesAtCursor" => Some(TextPropertiesAtCursor::decl(&cfg)),
+        "VirtualBufferResult" => Some(VirtualBufferResult::decl(&cfg)),
 
         // Prompt and directory types
-        "PromptSuggestion" | "Suggestion" => Some(Suggestion::decl()),
-        "DirEntry" => Some(DirEntry::decl()),
+        "PromptSuggestion" | "Suggestion" => Some(Suggestion::decl(&cfg)),
+        "DirEntry" => Some(DirEntry::decl(&cfg)),
 
         // Diagnostic types
-        "JsDiagnostic" => Some(JsDiagnostic::decl()),
-        "JsRange" => Some(JsRange::decl()),
-        "JsPosition" => Some(JsPosition::decl()),
+        "JsDiagnostic" => Some(JsDiagnostic::decl(&cfg)),
+        "JsRange" => Some(JsRange::decl(&cfg)),
+        "JsPosition" => Some(JsPosition::decl(&cfg)),
 
         // Language pack types
-        "LanguagePackConfig" => Some(LanguagePackConfig::decl()),
-        "LspServerPackConfig" => Some(LspServerPackConfig::decl()),
-        "FormatterPackConfig" => Some(FormatterPackConfig::decl()),
+        "LanguagePackConfig" => Some(LanguagePackConfig::decl(&cfg)),
+        "LspServerPackConfig" => Some(LspServerPackConfig::decl(&cfg)),
+        "FormatterPackConfig" => Some(FormatterPackConfig::decl(&cfg)),
 
         _ => None,
     }

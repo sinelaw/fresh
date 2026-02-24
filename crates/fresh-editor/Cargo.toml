@@ -140,7 +140,7 @@ nix = { version = "0.31", features = ["signal", "pthread", "resource", "poll", "
 # Plugin API proc macros for type-safe bindings
 fresh-plugin-api-macros = { workspace = true, optional = true }
 # TypeScript type generation from Rust structs
-ts-rs = { version = "11.1", optional = true }
+ts-rs = { version = "12.0", optional = true }
 
 # anyhow is always needed for model error handling
 anyhow = { workspace = true }
@@ -177,7 +177,7 @@ interprocess = { version = "2.2", features = ["tokio"] }
 
 # Embedded plugins support (optional)
 include_dir = { version = "0.7", optional = true }
-tempfile = { version = "3.24", optional = true }
+tempfile = { version = "3.25", optional = true }
 trash = { version = "5.2.5", optional = true }
 open = { version = "5.3", optional = true }
 
@@ -186,7 +186,7 @@ fresh-gui = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = "1.9"
-tempfile = "3.24.0"
+tempfile = "3.25"
 insta = { version = "1.46", features = ["yaml"] }
 vt100 = "0.16"  # Virtual terminal emulator for testing real ANSI output
 ctor = "0.6.3"
