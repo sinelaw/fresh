@@ -1593,9 +1593,8 @@ impl Editor {
 
                 for (buf_id, path) in buffers_to_update {
                     if let Some(state) = self.buffers.get_mut(&buf_id) {
-                        // Re-create the highlight engine with the new grammar registry
-                        let new_engine =
-                            crate::primitives::highlight_engine::HighlightEngine::for_file_with_languages(
+                        let detected =
+                            crate::primitives::detected_language::DetectedLanguage::from_path(
                                 &path,
                                 &self.grammar_registry,
                                 &self.config.languages,
@@ -1603,8 +1602,10 @@ impl Editor {
 
                         // Only update if the new engine has highlighting capability
                         // or if the current one doesn't (don't downgrade)
-                        if new_engine.has_highlighting() || !state.highlighter.has_highlighting() {
-                            state.highlighter = new_engine;
+                        if detected.highlighter.has_highlighting()
+                            || !state.highlighter.has_highlighting()
+                        {
+                            state.apply_language(detected);
                             tracing::debug!(
                                 "Updated syntax highlighting for {:?}",
                                 path.file_name()

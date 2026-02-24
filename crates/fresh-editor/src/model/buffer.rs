@@ -356,6 +356,18 @@ impl TextBuffer {
         }
     }
 
+    /// Create an empty buffer associated with a file path.
+    /// Used for files that don't exist yet — the path is set so saving will create the file.
+    pub fn new_with_path(
+        large_file_threshold: usize,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+        path: PathBuf,
+    ) -> Self {
+        let mut buffer = Self::new(large_file_threshold, fs);
+        buffer.file_path = Some(path);
+        buffer
+    }
+
     /// Current buffer version (monotonic, wraps on overflow)
     pub fn version(&self) -> u64 {
         self.version
@@ -2272,8 +2284,8 @@ impl TextBuffer {
         self.file_path.as_deref()
     }
 
-    /// Set the file path for this buffer
-    pub fn set_file_path(&mut self, path: PathBuf) {
+    /// Update the file path after a rename operation on disk.
+    pub fn rename_file_path(&mut self, path: PathBuf) {
         self.file_path = Some(path);
     }
 

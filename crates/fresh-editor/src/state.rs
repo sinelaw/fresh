@@ -9,9 +9,9 @@ use crate::model::event::{
 };
 use crate::model::filesystem::FileSystem;
 use crate::model::marker::MarkerList;
+use crate::primitives::detected_language::DetectedLanguage;
 use crate::primitives::grammar::GrammarRegistry;
 use crate::primitives::highlight_engine::HighlightEngine;
-use crate::primitives::highlighter::Language;
 use crate::primitives::indent::IndentCalculator;
 use crate::primitives::reference_highlighter::ReferenceHighlighter;
 use crate::primitives::text_property::TextPropertyManager;
@@ -167,24 +167,36 @@ impl EditorState {
     ///
     /// Note: width/height parameters are kept for backward compatibility but
     /// are no longer used - viewport is now owned by SplitViewState.
-    pub fn new(
-        _width: u16,
-        _height: u16,
-        large_file_threshold: usize,
-        fs: Arc<dyn FileSystem + Send + Sync>,
-    ) -> Self {
+    /// Apply a detected language to this state. This is the single mutation point
+    /// for changing the language of a buffer after creation.
+    pub fn apply_language(&mut self, detected: DetectedLanguage) {
+        self.language = detected.name;
+        self.highlighter = detected.highlighter;
+        if let Some(lang) = &detected.ts_language {
+            self.reference_highlighter.set_language(lang);
+        }
+    }
+
+    /// Create a new state with a buffer and default (plain text) language.
+    /// All other fields are initialized to their defaults.
+    fn new_from_buffer(buffer: Buffer) -> Self {
+        let mut marker_list = MarkerList::new();
+        if !buffer.is_empty() {
+            marker_list.adjust_for_insert(0, buffer.len());
+        }
+
         Self {
-            buffer: Buffer::new(large_file_threshold, fs),
-            highlighter: HighlightEngine::None, // No file path, so no syntax highlighting
+            buffer,
+            highlighter: HighlightEngine::None,
             indent_calculator: RefCell::new(IndentCalculator::new()),
             overlays: OverlayManager::new(),
-            marker_list: MarkerList::new(),
+            marker_list,
             virtual_texts: VirtualTextManager::new(),
             conceals: ConcealManager::new(),
             soft_breaks: SoftBreakManager::new(),
             popups: PopupManager::new(),
             margins: MarginManager::new(),
-            primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
+            primary_cursor_line_number: LineNumber::Absolute(0),
             mode: "insert".to_string(),
             text_properties: TextPropertyManager::new(),
             show_cursors: true,
@@ -197,39 +209,41 @@ impl EditorState {
             bracket_highlight_overlay: BracketHighlightOverlay::new(),
             semantic_tokens: None,
             folding_ranges: Vec::new(),
-            language: "text".to_string(), // Default to plain text
+            language: "text".to_string(),
         }
     }
 
-    /// Set the syntax highlighting language based on a filename or extension
-    /// This allows virtual buffers to get highlighting even without a real file path
-    pub fn set_language_from_name(&mut self, name: &str, registry: &GrammarRegistry) {
-        // Handle virtual buffer names like "*OLD:test.ts*" or "*OURS*.c"
-        // 1. Strip surrounding * characters
-        // 2. Extract filename after any prefix like "OLD:" or "NEW:"
-        let cleaned_name = name.trim_matches('*');
-        let filename = if let Some(pos) = cleaned_name.rfind(':') {
-            // Extract part after the last colon (e.g., "OLD:test.ts" -> "test.ts")
-            &cleaned_name[pos + 1..]
-        } else {
-            cleaned_name
-        };
+    pub fn new(
+        _width: u16,
+        _height: u16,
+        large_file_threshold: usize,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+    ) -> Self {
+        Self::new_from_buffer(Buffer::new(large_file_threshold, fs))
+    }
 
-        let path = std::path::Path::new(filename);
-        self.highlighter = HighlightEngine::for_file(path, registry);
-        if let Some(language) = Language::from_path(path) {
-            self.reference_highlighter.set_language(&language);
-            self.language = language.to_string();
-        } else {
-            self.language = "text".to_string();
-        }
+    /// Create a new editor state with an empty buffer associated with a file path.
+    /// Used for files that don't exist yet — the path is set so saving will create the file.
+    pub fn new_with_path(
+        large_file_threshold: usize,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+        path: std::path::PathBuf,
+    ) -> Self {
+        Self::new_from_buffer(Buffer::new_with_path(large_file_threshold, fs, path))
+    }
+
+    /// Set the syntax highlighting language based on a virtual buffer name.
+    /// Handles names like `*OLD:test.ts*` or `*OURS*.c` by stripping markers
+    /// and detecting language from the cleaned filename.
+    pub fn set_language_from_name(&mut self, name: &str, registry: &GrammarRegistry) {
+        let detected = DetectedLanguage::from_virtual_name(name, registry);
         tracing::debug!(
-            "Set highlighter for virtual buffer based on name: {} -> {} (backend: {}, language: {})",
+            "Set highlighter for virtual buffer based on name: {} (backend: {}, language: {})",
             name,
-            filename,
-            self.highlighter.backend_name(),
-            self.language
+            detected.highlighter.backend_name(),
+            detected.name
         );
+        self.apply_language(detected);
     }
 
     /// Create an editor state from a file
@@ -245,48 +259,10 @@ impl EditorState {
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> anyhow::Result<Self> {
         let buffer = Buffer::load_from_file(path, large_file_threshold, fs)?;
-
-        let highlighter = HighlightEngine::for_file(path, registry);
-        let language = Language::from_path(path);
-        let mut reference_highlighter = ReferenceHighlighter::new();
-        let language_name = if let Some(lang) = &language {
-            reference_highlighter.set_language(lang);
-            lang.to_string()
-        } else {
-            "text".to_string()
-        };
-
-        let mut marker_list = MarkerList::new();
-        if !buffer.is_empty() {
-            marker_list.adjust_for_insert(0, buffer.len());
-        }
-
-        Ok(Self {
-            buffer,
-            highlighter,
-            indent_calculator: RefCell::new(IndentCalculator::new()),
-            overlays: OverlayManager::new(),
-            marker_list,
-            virtual_texts: VirtualTextManager::new(),
-            conceals: ConcealManager::new(),
-            soft_breaks: SoftBreakManager::new(),
-            popups: PopupManager::new(),
-            margins: MarginManager::new(),
-            primary_cursor_line_number: LineNumber::Absolute(0),
-            mode: "insert".to_string(),
-            text_properties: TextPropertyManager::new(),
-            show_cursors: true,
-            editing_disabled: false,
-            buffer_settings: BufferSettings::default(),
-            reference_highlighter,
-            is_composite_buffer: false,
-            debug_highlight_mode: false,
-            reference_highlight_overlay: ReferenceHighlightOverlay::new(),
-            bracket_highlight_overlay: BracketHighlightOverlay::new(),
-            semantic_tokens: None,
-            folding_ranges: Vec::new(),
-            language: language_name,
-        })
+        let detected = DetectedLanguage::from_path_builtin(path, registry);
+        let mut state = Self::new_from_buffer(buffer);
+        state.apply_language(detected);
+        Ok(state)
     }
 
     /// Create an editor state from a file with language configuration.
@@ -306,98 +282,20 @@ impl EditorState {
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> anyhow::Result<Self> {
         let buffer = Buffer::load_from_file(path, large_file_threshold, fs)?;
-
-        let highlighter = HighlightEngine::for_file_with_languages(path, registry, languages);
-
-        let language = Language::from_path(path);
-        let mut reference_highlighter = ReferenceHighlighter::new();
-        let language_name = if let Some(lang) = &language {
-            reference_highlighter.set_language(lang);
-            lang.to_string()
-        } else {
-            crate::services::lsp::manager::detect_language(path, languages)
-                .unwrap_or_else(|| "text".to_string())
-        };
-
-        let mut marker_list = MarkerList::new();
-        if !buffer.is_empty() {
-            marker_list.adjust_for_insert(0, buffer.len());
-        }
-
-        Ok(Self {
-            buffer,
-            highlighter,
-            indent_calculator: RefCell::new(IndentCalculator::new()),
-            overlays: OverlayManager::new(),
-            marker_list,
-            virtual_texts: VirtualTextManager::new(),
-            conceals: ConcealManager::new(),
-            soft_breaks: SoftBreakManager::new(),
-            popups: PopupManager::new(),
-            margins: MarginManager::new(),
-            primary_cursor_line_number: LineNumber::Absolute(0),
-            mode: "insert".to_string(),
-            text_properties: TextPropertyManager::new(),
-            show_cursors: true,
-            editing_disabled: false,
-            buffer_settings: BufferSettings::default(),
-            reference_highlighter,
-            is_composite_buffer: false,
-            debug_highlight_mode: false,
-            reference_highlight_overlay: ReferenceHighlightOverlay::new(),
-            bracket_highlight_overlay: BracketHighlightOverlay::new(),
-            semantic_tokens: None,
-            folding_ranges: Vec::new(),
-            language: language_name,
-        })
+        let detected = DetectedLanguage::from_path(path, registry, languages);
+        let mut state = Self::new_from_buffer(buffer);
+        state.apply_language(detected);
+        Ok(state)
     }
 
-    /// Create an editor state from a buffer and highlighter
+    /// Create an editor state from a buffer and a pre-built `DetectedLanguage`.
     ///
     /// This is useful when you have already loaded a buffer with a specific encoding
     /// and want to create an EditorState from it.
-    pub fn from_buffer_with_highlighter(
-        buffer: Buffer,
-        highlighter: HighlightEngine,
-        language_name: String,
-        language: Option<Language>,
-    ) -> Self {
-        let mut reference_highlighter = ReferenceHighlighter::new();
-        if let Some(lang) = &language {
-            reference_highlighter.set_language(lang);
-        }
-
-        let mut marker_list = MarkerList::new();
-        if !buffer.is_empty() {
-            marker_list.adjust_for_insert(0, buffer.len());
-        }
-
-        Self {
-            buffer,
-            highlighter,
-            indent_calculator: RefCell::new(IndentCalculator::new()),
-            overlays: OverlayManager::new(),
-            marker_list,
-            virtual_texts: VirtualTextManager::new(),
-            conceals: ConcealManager::new(),
-            soft_breaks: SoftBreakManager::new(),
-            popups: PopupManager::new(),
-            margins: MarginManager::new(),
-            primary_cursor_line_number: LineNumber::Absolute(0),
-            mode: "insert".to_string(),
-            text_properties: TextPropertyManager::new(),
-            show_cursors: true,
-            editing_disabled: false,
-            buffer_settings: BufferSettings::default(),
-            reference_highlighter,
-            is_composite_buffer: false,
-            debug_highlight_mode: false,
-            reference_highlight_overlay: ReferenceHighlightOverlay::new(),
-            bracket_highlight_overlay: BracketHighlightOverlay::new(),
-            semantic_tokens: None,
-            folding_ranges: Vec::new(),
-            language: language_name,
-        }
+    pub fn from_buffer_with_language(buffer: Buffer, detected: DetectedLanguage) -> Self {
+        let mut state = Self::new_from_buffer(buffer);
+        state.apply_language(detected);
+        state
     }
 
     /// Handle an Insert event - adjusts markers, buffer, highlighter, cursors, and line numbers

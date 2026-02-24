@@ -539,9 +539,13 @@ impl Editor {
                 // This ensures syntax highlighting works immediately after "Save As"
                 if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
                     if state.language == "text" {
-                        if let Some(filename) = full_path.file_name().and_then(|n| n.to_str()) {
-                            state.set_language_from_name(filename, &self.grammar_registry);
-                        }
+                        let detected =
+                            crate::primitives::detected_language::DetectedLanguage::from_path(
+                                &full_path,
+                                &self.grammar_registry,
+                                &self.config.languages,
+                            );
+                        state.apply_language(detected);
                     }
                 }
 
@@ -886,30 +890,19 @@ impl Editor {
 
     /// Resolve a syntect syntax name to the canonical config language ID.
     ///
-    /// The config `[languages]` section is the single authoritative registry of
-    /// language IDs.  Each entry has a `grammar` field that is resolved to a
-    /// syntect syntax via `GrammarRegistry::find_syntax_by_name`.  This helper
-    /// performs the reverse lookup: for each config entry, resolve its grammar
-    /// through the registry and check whether the resulting syntax has the same
-    /// name as the one we're looking up.
+    /// Resolve a syntect syntax display name to its canonical config language ID.
+    /// Delegates to the free function in `detected_language`.
     pub(crate) fn resolve_language_id(&self, syntax_name: &str) -> Option<String> {
-        for (lang_id, lang_config) in &self.config.languages {
-            if let Some(syntax) = self
-                .grammar_registry
-                .find_syntax_by_name(&lang_config.grammar)
-            {
-                if syntax.name == syntax_name {
-                    return Some(lang_id.clone());
-                }
-            }
-        }
-        None
+        crate::primitives::detected_language::resolve_language_id(
+            syntax_name,
+            &self.grammar_registry,
+            &self.config.languages,
+        )
     }
 
     /// Handle SetLanguage prompt confirmation.
     fn handle_set_language(&mut self, input: &str) {
-        use crate::primitives::highlight_engine::HighlightEngine;
-        use crate::primitives::highlighter::Language;
+        use crate::primitives::detected_language::DetectedLanguage;
 
         let trimmed = input.trim();
 
@@ -917,37 +910,21 @@ impl Editor {
         if trimmed == "Plain Text" || trimmed.to_lowercase() == "text" {
             let buffer_id = self.active_buffer();
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                state.language = "text".to_string();
-                state.highlighter = HighlightEngine::None;
+                state.apply_language(DetectedLanguage::plain_text());
                 self.set_status_message("Language set to Plain Text".to_string());
             }
             return;
         }
 
-        // Try to find the syntax by name in the grammar registry
-        // This supports all syntect syntaxes (100+) plus user-configured grammars
-        if self.grammar_registry.find_syntax_by_name(trimmed).is_some() {
-            // Try to detect a tree-sitter language for non-highlighting features
-            // (indentation, semantic highlighting). This is best-effort since
-            // tree-sitter only supports ~18 languages while syntect supports 100+.
-            let ts_language = Language::from_name(trimmed);
-
-            // Resolve the canonical language ID from config.  The config
-            // `[languages]` section is the single source of truth for language
-            // IDs used by LSP, formatters, and all other subsystems.
-            let language_id = self
-                .resolve_language_id(trimmed)
-                .unwrap_or_else(|| trimmed.to_string());
-
+        // Try to find the syntax by name and resolve canonical language ID from config
+        if let Some(detected) = DetectedLanguage::from_syntax_name(
+            trimmed,
+            &self.grammar_registry,
+            &self.config.languages,
+        ) {
             let buffer_id = self.active_buffer();
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                state.language = language_id;
-                state.highlighter =
-                    HighlightEngine::for_syntax_name(trimmed, &self.grammar_registry, ts_language);
-                // Update reference highlighter if tree-sitter language is available
-                if let Some(lang) = ts_language {
-                    state.reference_highlighter.set_language(&lang);
-                }
+                state.apply_language(detected);
                 self.set_status_message(format!("Language set to {}", trimmed));
             }
         } else {

@@ -720,9 +720,9 @@ impl Editor {
                         .map(|(id, _)| *id);
 
                     if let Some(buffer_id) = buffer_to_update {
-                        // Update the buffer's file path
+                        // Update the buffer's file path after rename
                         if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                            state.buffer.set_file_path(new_path.clone());
+                            state.buffer.rename_file_path(new_path.clone());
                         }
 
                         // Update the buffer metadata

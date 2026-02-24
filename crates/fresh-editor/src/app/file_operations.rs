@@ -64,21 +64,13 @@ impl Editor {
         if let Some(ref p) = path {
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 if state.language == "text" {
-                    // Use path directly for syntax detection
-                    // Don't use set_language_from_name as it's designed for virtual buffers
-                    // and strips colons (breaking Windows paths like C:\...)
-                    state.highlighter =
-                        crate::primitives::highlight_engine::HighlightEngine::for_file(
+                    let detected =
+                        crate::primitives::detected_language::DetectedLanguage::from_path(
                             p,
                             &self.grammar_registry,
+                            &self.config.languages,
                         );
-
-                    if let Some(language) = crate::primitives::highlighter::Language::from_path(p) {
-                        state.reference_highlighter.set_language(&language);
-                        state.language = language.to_string();
-                    } else {
-                        state.language = "text".to_string();
-                    }
+                    state.apply_language(detected);
                 }
             }
         }

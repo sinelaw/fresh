@@ -193,33 +193,26 @@ impl Editor {
             self.grammar_registry.user_extensions_debug()
         );
         let mut state = if file_exists {
-            // Use the user-visible (display) path for language detection so that
-            // glob patterns match against what the user sees, not the canonical path.
-            // The canonical path is set on the buffer afterwards for dedup consistency.
-            let mut s = EditorState::from_file_with_languages(
-                &display_path,
-                self.terminal_width,
-                self.terminal_height,
+            // Load from canonical path (for I/O and dedup), detect language from
+            // display path (for glob pattern matching against user-visible names).
+            let buffer = crate::model::buffer::Buffer::load_from_file(
+                &canonical_path,
                 self.config.editor.large_file_threshold_bytes as usize,
-                &self.grammar_registry,
-                &self.config.languages,
                 Arc::clone(&self.filesystem),
             )?;
-            // Override the buffer's file_path with the canonical path so that
-            // dedup checks (buffer already open?) work consistently.
-            s.buffer.set_file_path(canonical_path.clone());
-            s
+            let detected = crate::primitives::detected_language::DetectedLanguage::from_path(
+                &display_path,
+                &self.grammar_registry,
+                &self.config.languages,
+            );
+            EditorState::from_buffer_with_language(buffer, detected)
         } else {
             // File doesn't exist - create empty buffer with the file path set
-            let mut new_state = EditorState::new(
-                self.terminal_width,
-                self.terminal_height,
+            EditorState::new_with_path(
                 self.config.editor.large_file_threshold_bytes as usize,
                 Arc::clone(&self.filesystem),
-            );
-            // Set the file path so saving will create the file
-            new_state.buffer.set_file_path(path.to_path_buf());
-            new_state
+                path.to_path_buf(),
+            )
         };
         // Note: line_wrap_enabled is set on SplitViewState.viewport when the split is created
 
@@ -349,19 +342,19 @@ impl Editor {
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
 
-        // Create editor state using LOCAL filesystem
-        // Use display_path for language detection (glob patterns match user-visible paths)
-        let mut state = EditorState::from_file_with_languages(
-            &display_path,
-            self.terminal_width,
-            self.terminal_height,
+        // Load from canonical path (for I/O and dedup), detect language from
+        // display path (for glob pattern matching against user-visible names).
+        let buffer = crate::model::buffer::Buffer::load_from_file(
+            &canonical_path,
             self.config.editor.large_file_threshold_bytes as usize,
-            &self.grammar_registry,
-            &self.config.languages,
             Arc::clone(&self.local_filesystem),
         )?;
-        // Override file_path with canonical for consistent dedup
-        state.buffer.set_file_path(canonical_path.clone());
+        let detected = crate::primitives::detected_language::DetectedLanguage::from_path(
+            &display_path,
+            &self.grammar_registry,
+            &self.config.languages,
+        );
+        let state = EditorState::from_buffer_with_language(buffer, detected);
 
         self.buffers.insert(buffer_id, state);
         self.event_logs
@@ -438,7 +431,7 @@ impl Editor {
         self.next_buffer_id += 1;
 
         // Load buffer with the specified encoding (use canonical path for I/O)
-        let mut buffer = crate::model::buffer::Buffer::load_from_file_with_encoding(
+        let buffer = crate::model::buffer::Buffer::load_from_file_with_encoding(
             path,
             encoding,
             Arc::clone(&self.filesystem),
@@ -446,28 +439,15 @@ impl Editor {
                 estimated_line_length: self.config.editor.estimated_line_length,
             },
         )?;
-        // Ensure buffer has canonical path for dedup
-        buffer.set_file_path(canonical_path.clone());
-
         // Create editor state with the buffer
         // Use display_path for language detection (glob patterns match user-visible paths)
-        let highlighter =
-            crate::primitives::highlight_engine::HighlightEngine::for_file_with_languages(
-                &display_path,
-                &self.grammar_registry,
-                &self.config.languages,
-            );
+        let detected = crate::primitives::detected_language::DetectedLanguage::from_path(
+            &display_path,
+            &self.grammar_registry,
+            &self.config.languages,
+        );
 
-        let language = crate::primitives::highlighter::Language::from_path(&display_path);
-        let language_name = if let Some(lang) = &language {
-            lang.to_string()
-        } else {
-            crate::services::lsp::manager::detect_language(&display_path, &self.config.languages)
-                .unwrap_or_else(|| "text".to_string())
-        };
-
-        let mut state =
-            EditorState::from_buffer_with_highlighter(buffer, highlighter, language_name, language);
+        let mut state = EditorState::from_buffer_with_language(buffer, detected);
 
         state
             .margins
@@ -587,32 +567,19 @@ impl Editor {
         self.next_buffer_id += 1;
 
         // Load buffer with forced full loading (bypasses the large file encoding check)
-        let mut buffer = crate::model::buffer::Buffer::load_large_file_confirmed(
+        let buffer = crate::model::buffer::Buffer::load_large_file_confirmed(
             path,
             Arc::clone(&self.filesystem),
         )?;
-        // Ensure buffer has canonical path for dedup
-        buffer.set_file_path(canonical_path.clone());
-
         // Create editor state with the buffer
         // Use display_path for language detection (glob patterns match user-visible paths)
-        let highlighter =
-            crate::primitives::highlight_engine::HighlightEngine::for_file_with_languages(
-                &display_path,
-                &self.grammar_registry,
-                &self.config.languages,
-            );
+        let detected = crate::primitives::detected_language::DetectedLanguage::from_path(
+            &display_path,
+            &self.grammar_registry,
+            &self.config.languages,
+        );
 
-        let language = crate::primitives::highlighter::Language::from_path(&display_path);
-        let language_name = if let Some(lang) = &language {
-            lang.to_string()
-        } else {
-            crate::services::lsp::manager::detect_language(&display_path, &self.config.languages)
-                .unwrap_or_else(|| "text".to_string())
-        };
-
-        let mut state =
-            EditorState::from_buffer_with_highlighter(buffer, highlighter, language_name, language);
+        let mut state = EditorState::from_buffer_with_language(buffer, detected);
 
         state
             .margins

@@ -58,6 +58,8 @@ pub mod textmate_engine;
 // Runtime-only modules (depend on tree-sitter)
 // These provide enhanced features using AST analysis
 #[cfg(feature = "runtime")]
+pub mod detected_language;
+#[cfg(feature = "runtime")]
 pub mod highlight_engine;
 #[cfg(feature = "runtime")]
 pub mod highlighter;

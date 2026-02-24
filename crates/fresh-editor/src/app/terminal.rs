@@ -160,13 +160,11 @@ impl Editor {
             .insert(terminal_id, backing_file.clone());
 
         // Create editor state with the backing file
-        let mut state = EditorState::new(
-            self.terminal_width,
-            self.terminal_height,
+        let mut state = EditorState::new_with_path(
             large_file_threshold,
             std::sync::Arc::clone(&self.filesystem),
+            backing_file.clone(),
         );
-        state.buffer.set_file_path(backing_file.clone());
         // Terminal buffers should never show line numbers
         state.margins.configure_for_line_numbers(false);
         self.buffers.insert(buffer_id, state);
@@ -225,13 +223,11 @@ impl Editor {
         }
 
         // Create editor state with the backing file
-        let mut state = EditorState::new(
-            self.terminal_width,
-            self.terminal_height,
+        let mut state = EditorState::new_with_path(
             large_file_threshold,
             std::sync::Arc::clone(&self.filesystem),
+            backing_file.clone(),
         );
-        state.buffer.set_file_path(backing_file.clone());
         state.margins.configure_for_line_numbers(false);
         self.buffers.insert(buffer_id, state);
 
