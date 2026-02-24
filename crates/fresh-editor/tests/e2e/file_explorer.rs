@@ -2703,11 +2703,7 @@ fn test_dotfiles_hidden_by_default_and_toggle_controls_visibility() {
     fs::write(project_root.join("visible_file.txt"), "visible").unwrap();
     fs::write(project_root.join(".hidden_file"), "hidden").unwrap();
     fs::create_dir(project_root.join(".hidden_dir")).unwrap();
-    fs::write(
-        project_root.join(".hidden_dir/inner.txt"),
-        "inner hidden",
-    )
-    .unwrap();
+    fs::write(project_root.join(".hidden_dir/inner.txt"), "inner hidden").unwrap();
 
     // Open and focus file explorer
     harness.editor_mut().focus_file_explorer();
