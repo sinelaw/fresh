@@ -9,6 +9,29 @@ use super::Editor;
 use crate::view::ui::context_keys;
 
 impl Editor {
+    /// Return a clone of the current menu context (boolean state flags).
+    ///
+    /// This is used by the GUI layer to sync native menu item states
+    /// (enabled/disabled, checkmarks) without knowing about the editor's
+    /// internal state.
+    pub fn menu_context(&self) -> crate::view::ui::MenuContext {
+        self.menu_state.context.clone()
+    }
+
+    /// Return the fully-expanded menu definitions (with `DynamicSubmenu`
+    /// items resolved to `Submenu`).  Used by the GUI layer to build
+    /// platform-native menus.
+    pub fn expanded_menu_definitions(&self) -> Vec<fresh_core::menu::Menu> {
+        use crate::config::{MenuConfig, MenuExt};
+
+        let mut menus = MenuConfig::translated_menus();
+        let themes_dir = self.menu_state.themes_dir.clone();
+        for menu in &mut menus {
+            menu.expand_dynamic_items(&themes_dir);
+        }
+        menus
+    }
+
     /// Update all menu context values based on current editor state.
     /// This should be called before rendering the menu bar.
     pub fn update_menu_context(&mut self) {

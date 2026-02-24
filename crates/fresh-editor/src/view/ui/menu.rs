@@ -110,37 +110,8 @@ impl MenuLayout {
     }
 }
 
-/// Menu state context - provides named boolean states for menu item conditions
-/// Both `when` conditions and `checkbox` states look up values here
-#[derive(Debug, Clone, Default)]
-pub struct MenuContext {
-    states: std::collections::HashMap<String, bool>,
-}
-
-impl MenuContext {
-    pub fn new() -> Self {
-        Self {
-            states: std::collections::HashMap::new(),
-        }
-    }
-
-    /// Set a named boolean state
-    pub fn set(&mut self, name: impl Into<String>, value: bool) -> &mut Self {
-        self.states.insert(name.into(), value);
-        self
-    }
-
-    /// Get a named boolean state (defaults to false if not set)
-    pub fn get(&self, name: &str) -> bool {
-        self.states.get(name).copied().unwrap_or(false)
-    }
-
-    /// Builder-style setter
-    pub fn with(mut self, name: impl Into<String>, value: bool) -> Self {
-        self.set(name, value);
-        self
-    }
-}
+// Re-export MenuContext from fresh-core so existing editor code keeps compiling.
+pub use fresh_core::menu::MenuContext;
 
 fn is_menu_item_enabled(item: &MenuItem, context: &MenuContext) -> bool {
     match item {

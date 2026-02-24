@@ -19,7 +19,7 @@ use crossterm::event::{
     KeyCode, KeyEvent as CtKeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MediaKeyCode,
     ModifierKeyCode, MouseButton as CtMouseButton, MouseEvent as CtMouseEvent, MouseEventKind,
 };
-use fresh_core::menu::Menu;
+use fresh_core::menu::{Menu, MenuContext};
 use ratatui::backend::Backend;
 use ratatui::Terminal;
 use ratatui_wgpu::{Builder, Dimensions, Font, WgpuBackend};
@@ -84,6 +84,10 @@ pub trait GuiApplication {
     /// The returned [`Menu`] items are the same model used by the editor's
     /// built-in TUI menu bar — single source of truth.
     ///
+    /// **Important:** `DynamicSubmenu` items should be expanded (resolved to
+    /// `Submenu`) before returning so that the native menu layer can render
+    /// them.
+    ///
     /// Default: empty (no native menus).
     fn menu_definitions(&self) -> Vec<Menu> {
         Vec::new()
@@ -98,6 +102,17 @@ pub trait GuiApplication {
     /// Default: always returns `None`.
     fn take_menu_update(&mut self) -> Option<Vec<Menu>> {
         None
+    }
+
+    /// Return the current menu context (boolean state flags).
+    ///
+    /// The GUI layer uses these values to update enabled/disabled state and
+    /// checkmark display on native menu items each frame.  The context is
+    /// the same `MenuContext` the editor uses for its TUI menu bar.
+    ///
+    /// Default: empty context (all flags false).
+    fn menu_context(&self) -> MenuContext {
+        MenuContext::default()
     }
 
     /// Handle a menu action triggered by the native platform menu bar.
@@ -417,8 +432,14 @@ impl<A: GuiApplication + 'static> ApplicationHandler for WgpuRunner<A> {
 
         // If the app signalled a menu model change, rebuild native menus.
         if let Some(updated_menus) = state.app.take_menu_update() {
-            state.native_menu.update(&updated_menus, &self.config.title);
+            let ctx = state.app.menu_context();
+            state.native_menu.update(&updated_menus, &self.config.title, &ctx);
         }
+
+        // Sync native menu item states (enabled/disabled, checkmarks) from
+        // the application's current MenuContext — cheap incremental update.
+        let ctx = state.app.menu_context();
+        state.native_menu.sync_state(&ctx);
 
         if state.app.should_quit() {
             state.app.on_close();
@@ -490,7 +511,8 @@ impl<A: GuiApplication> WgpuRunner<A> {
 
         // Build platform-native menu bar from the app's menu model.
         let menus = app.menu_definitions();
-        let native_menu = NativeMenuBar::build(&menus, &self.config.title);
+        let ctx = app.menu_context();
+        let native_menu = NativeMenuBar::build(&menus, &self.config.title, &ctx);
 
         Ok(RunnerState {
             app,

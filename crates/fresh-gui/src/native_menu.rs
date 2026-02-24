@@ -8,7 +8,7 @@
 //! * On **other platforms** it is a no-op stub so the rest of the GUI code
 //!   compiles without `#[cfg]` sprinkled everywhere.
 
-use fresh_core::menu::Menu;
+use fresh_core::menu::{Menu, MenuContext};
 use std::collections::HashMap;
 
 /// An action triggered by a native menu item click.
@@ -28,24 +28,42 @@ pub struct MenuAction {
 pub struct NativeMenuBar {
     /// Keep the muda `Menu` alive — dropping it removes it from the menu bar.
     _menu: muda::Menu,
+    /// Last known context — used to avoid redundant state syncs.
+    last_context: MenuContext,
 }
 
 #[cfg(target_os = "macos")]
 impl NativeMenuBar {
     /// Build a native menu bar from the editor's menu model and attach it
     /// to the running NSApplication.
-    pub fn build(menus: &[Menu], app_name: &str) -> Self {
-        let muda_menu = super::macos::menu::build_from_model(menus, app_name);
+    pub fn build(menus: &[Menu], app_name: &str, context: &MenuContext) -> Self {
+        let muda_menu = super::macos::menu::build_from_model(menus, app_name, context);
         muda_menu.init_for_nsapp();
-        Self { _menu: muda_menu }
+        Self {
+            _menu: muda_menu,
+            last_context: context.clone(),
+        }
     }
 
     /// Rebuild the native menu bar from an updated model.
-    pub fn update(&mut self, menus: &[Menu], app_name: &str) {
+    pub fn update(&mut self, menus: &[Menu], app_name: &str, context: &MenuContext) {
         // Remove old menu from NSApp, build a fresh one.
         self._menu.remove_for_nsapp();
-        self._menu = super::macos::menu::build_from_model(menus, app_name);
+        self._menu = super::macos::menu::build_from_model(menus, app_name, context);
         self._menu.init_for_nsapp();
+        self.last_context = context.clone();
+    }
+
+    /// Incrementally sync enabled/disabled and checkbox states from the
+    /// application's current [`MenuContext`].  This is cheap — it only
+    /// iterates tracked items and calls `set_enabled` / `set_checked`
+    /// when values differ from the last sync.
+    pub fn sync_state(&mut self, context: &MenuContext) {
+        if *context == self.last_context {
+            return; // Nothing changed.
+        }
+        super::macos::menu::sync_tracked_items(context);
+        self.last_context = context.clone();
     }
 
     /// Poll for a pending menu action.  Returns `None` if the user has not
@@ -67,11 +85,13 @@ pub struct NativeMenuBar;
 
 #[cfg(not(target_os = "macos"))]
 impl NativeMenuBar {
-    pub fn build(_menus: &[Menu], _app_name: &str) -> Self {
+    pub fn build(_menus: &[Menu], _app_name: &str, _context: &MenuContext) -> Self {
         Self
     }
 
-    pub fn update(&mut self, _menus: &[Menu], _app_name: &str) {}
+    pub fn update(&mut self, _menus: &[Menu], _app_name: &str, _context: &MenuContext) {}
+
+    pub fn sync_state(&mut self, _context: &MenuContext) {}
 
     pub fn poll_action(&self) -> Option<MenuAction> {
         None

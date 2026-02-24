@@ -3,6 +3,43 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use ts_rs::TS;
 
+/// Menu state context — provides named boolean states for menu item conditions.
+///
+/// Both `when` conditions (controlling enabled/disabled state) and `checkbox`
+/// states (controlling checkmark display) look up values here.  The editor
+/// computes these values each frame from its internal state and exposes the
+/// context to the GUI layer via the `GuiApplication` trait so that
+/// platform-native menus can reflect the same state as the TUI menu bar.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MenuContext {
+    states: HashMap<String, bool>,
+}
+
+impl MenuContext {
+    pub fn new() -> Self {
+        Self {
+            states: HashMap::new(),
+        }
+    }
+
+    /// Set a named boolean state.
+    pub fn set(&mut self, name: impl Into<String>, value: bool) -> &mut Self {
+        self.states.insert(name.into(), value);
+        self
+    }
+
+    /// Get a named boolean state (defaults to `false` if not set).
+    pub fn get(&self, name: &str) -> bool {
+        self.states.get(name).copied().unwrap_or(false)
+    }
+
+    /// Builder-style setter.
+    pub fn with(mut self, name: impl Into<String>, value: bool) -> Self {
+        self.set(name, value);
+        self
+    }
+}
+
 /// A menu item (action, separator, or submenu)
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, TS)]
 #[ts(export)]

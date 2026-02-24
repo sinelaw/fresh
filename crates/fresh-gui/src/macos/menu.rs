@@ -7,34 +7,84 @@
 //!
 //! Menu item clicks are resolved back to editor actions via
 //! [`resolve_menu_event`].
+//!
+//! ## Dynamic features
+//!
+//! * **`when` conditions** — Action items with a `when` field are
+//!   enabled/disabled based on the [`MenuContext`].  The initial state is
+//!   set at build time; subsequent updates are applied incrementally by
+//!   [`sync_tracked_items`].
+//!
+//! * **`checkbox` items** — Action items with a `checkbox` field are
+//!   rendered as `muda::CheckMenuItem`.  The checked state comes from
+//!   [`MenuContext`].
+//!
+//! * **`DynamicSubmenu`** — Should be expanded to `Submenu` by the
+//!   application *before* passing to [`build_from_model`].  Any unresolved
+//!   `DynamicSubmenu` is rendered as an empty placeholder.
 
-use fresh_core::menu::{Menu, MenuItem};
+use fresh_core::menu::{Menu, MenuContext, MenuItem};
 use muda::{
-    AboutMetadata, Menu as MudaMenu, MenuEvent, MenuItem as MudaMenuItem, PredefinedMenuItem,
-    Submenu,
+    AboutMetadata, CheckMenuItem, Menu as MudaMenu, MenuEvent, MenuItem as MudaMenuItem,
+    PredefinedMenuItem, Submenu,
 };
 use std::collections::HashMap;
 
 use crate::native_menu::MenuAction;
 
 // ---------------------------------------------------------------------------
-// Thread-local action map
+// Thread-local tracking state
 // ---------------------------------------------------------------------------
+
+/// A tracked native menu item that may need state updates.
+enum TrackedItem {
+    /// A regular action item that may be enabled/disabled via a `when` condition.
+    Regular {
+        item: MudaMenuItem,
+        when_condition: Option<String>,
+    },
+    /// A checkbox action item whose checked and enabled states depend on context.
+    Check {
+        item: CheckMenuItem,
+        when_condition: Option<String>,
+        checkbox_condition: String,
+    },
+}
+
+/// A tracked submenu (top-level menu) with a visibility condition.
+struct TrackedSubmenu {
+    submenu: Submenu,
+    when_condition: Option<String>,
+}
 
 thread_local! {
     /// Maps muda menu-item IDs → editor actions so we can resolve clicks.
     static ACTION_MAP: std::cell::RefCell<HashMap<muda::MenuId, MenuAction>> =
         std::cell::RefCell::new(HashMap::new());
+
+    /// Items whose state (enabled / checked) depends on `MenuContext`.
+    static TRACKED_ITEMS: std::cell::RefCell<Vec<TrackedItem>> =
+        std::cell::RefCell::new(Vec::new());
+
+    /// Top-level submenus with `when` conditions (for visibility toggling).
+    static TRACKED_SUBMENUS: std::cell::RefCell<Vec<TrackedSubmenu>> =
+        std::cell::RefCell::new(Vec::new());
 }
 
-/// Clear the action map (called before a full rebuild so stale entries don't
-/// accumulate).
-fn clear_action_map() {
+/// Clear all thread-local tracking state (called before a full rebuild).
+fn clear_tracking() {
     ACTION_MAP.with(|map| map.borrow_mut().clear());
+    TRACKED_ITEMS.with(|items| items.borrow_mut().clear());
+    TRACKED_SUBMENUS.with(|subs| subs.borrow_mut().clear());
 }
 
-/// Register a `MudaMenuItem` → `MenuAction` mapping.
-fn register(item: &MudaMenuItem, action: &str, args: &HashMap<String, serde_json::Value>) {
+/// Register a regular `MudaMenuItem` → `MenuAction` mapping.
+fn register_regular(
+    item: &MudaMenuItem,
+    action: &str,
+    args: &HashMap<String, serde_json::Value>,
+    when_condition: Option<String>,
+) {
     ACTION_MAP.with(|map| {
         map.borrow_mut().insert(
             item.id().clone(),
@@ -43,6 +93,38 @@ fn register(item: &MudaMenuItem, action: &str, args: &HashMap<String, serde_json
                 args: args.clone(),
             },
         );
+    });
+    TRACKED_ITEMS.with(|items| {
+        items.borrow_mut().push(TrackedItem::Regular {
+            item: item.clone(),
+            when_condition,
+        });
+    });
+}
+
+/// Register a `CheckMenuItem` → `MenuAction` mapping.
+fn register_check(
+    item: &CheckMenuItem,
+    action: &str,
+    args: &HashMap<String, serde_json::Value>,
+    when_condition: Option<String>,
+    checkbox_condition: String,
+) {
+    ACTION_MAP.with(|map| {
+        map.borrow_mut().insert(
+            item.id().clone(),
+            MenuAction {
+                action: action.to_string(),
+                args: args.clone(),
+            },
+        );
+    });
+    TRACKED_ITEMS.with(|items| {
+        items.borrow_mut().push(TrackedItem::Check {
+            item: item.clone(),
+            when_condition,
+            checkbox_condition,
+        });
     });
 }
 
@@ -56,8 +138,8 @@ fn register(item: &MudaMenuItem, action: &str, args: &HashMap<String, serde_json
 /// 1. A standard macOS **app menu** (About, Settings, Services, Hide, Quit)
 /// 2. All menus from `menus` converted recursively
 /// 3. A standard **Window** menu (Minimize, Maximize, Fullscreen)
-pub fn build_from_model(menus: &[Menu], app_name: &str) -> MudaMenu {
-    clear_action_map();
+pub fn build_from_model(menus: &[Menu], app_name: &str, context: &MenuContext) -> MudaMenu {
+    clear_tracking();
     let muda_menu = MudaMenu::new();
 
     // -- App menu (macOS-only: application name menu) -------------------------
@@ -75,7 +157,7 @@ pub fn build_from_model(menus: &[Menu], app_name: &str) -> MudaMenu {
 
     // "Settings…" wired to the editor action
     let settings = MudaMenuItem::new("Settings\u{2026}", true, None);
-    register(&settings, "open_settings", &HashMap::new());
+    register_regular(&settings, "open_settings", &HashMap::new(), None);
     let _ = app_submenu.append(&settings);
 
     let _ = app_submenu.append(&PredefinedMenuItem::separator());
@@ -87,13 +169,27 @@ pub fn build_from_model(menus: &[Menu], app_name: &str) -> MudaMenu {
     let _ = app_submenu.append(&PredefinedMenuItem::separator());
 
     let quit = MudaMenuItem::new(&format!("Quit {app_name}"), true, None);
-    register(&quit, "quit", &HashMap::new());
+    register_regular(&quit, "quit", &HashMap::new(), None);
     let _ = app_submenu.append(&quit);
     let _ = muda_menu.append(&app_submenu);
 
     // -- Editor-defined menus -------------------------------------------------
     for menu in menus {
-        let sub = convert_menu(menu);
+        let visible = match &menu.when {
+            Some(condition) => context.get(condition),
+            None => true,
+        };
+        let sub = convert_menu(menu, context);
+        TRACKED_SUBMENUS.with(|subs| {
+            subs.borrow_mut().push(TrackedSubmenu {
+                submenu: sub.clone(),
+                when_condition: menu.when.clone(),
+            });
+        });
+        if !visible {
+            // Build it but hide it — sync_tracked_items can show it later.
+            let _ = sub.set_enabled(false);
+        }
         let _ = muda_menu.append(&sub);
     }
 
@@ -115,21 +211,67 @@ pub fn resolve_menu_event(event: &MenuEvent) -> Option<MenuAction> {
     ACTION_MAP.with(|map| map.borrow().get(event.id()).cloned())
 }
 
+/// Incrementally update tracked menu item states from the current context.
+///
+/// This is called each frame (when the context actually changed) and avoids
+/// the cost of a full menu rebuild.  It iterates all tracked items and:
+/// - Sets enabled/disabled based on `when` conditions
+/// - Sets checked/unchecked based on `checkbox` conditions
+/// - Shows/hides top-level submenus based on their `when` conditions
+pub fn sync_tracked_items(context: &MenuContext) {
+    TRACKED_ITEMS.with(|items| {
+        for tracked in items.borrow().iter() {
+            match tracked {
+                TrackedItem::Regular {
+                    item,
+                    when_condition,
+                } => {
+                    let enabled = match when_condition.as_deref() {
+                        Some(cond) => context.get(cond),
+                        None => true,
+                    };
+                    let _ = item.set_enabled(enabled);
+                }
+                TrackedItem::Check {
+                    item,
+                    when_condition,
+                    checkbox_condition,
+                } => {
+                    let enabled = match when_condition.as_deref() {
+                        Some(cond) => context.get(cond),
+                        None => true,
+                    };
+                    let _ = item.set_enabled(enabled);
+                    let _ = item.set_checked(context.get(checkbox_condition));
+                }
+            }
+        }
+    });
+
+    TRACKED_SUBMENUS.with(|subs| {
+        for tracked in subs.borrow().iter() {
+            if let Some(ref cond) = tracked.when_condition {
+                let _ = tracked.submenu.set_enabled(context.get(cond));
+            }
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Recursive model → muda conversion
 // ---------------------------------------------------------------------------
 
 /// Convert a top-level `Menu` to a `muda::Submenu`.
-fn convert_menu(menu: &Menu) -> Submenu {
+fn convert_menu(menu: &Menu, context: &MenuContext) -> Submenu {
     let sub = Submenu::new(&menu.label, true);
     for item in &menu.items {
-        append_item(&sub, item);
+        append_item(&sub, item, context);
     }
     sub
 }
 
 /// Append a single `MenuItem` (recursively for submenus) to a `muda::Submenu`.
-fn append_item(parent: &Submenu, item: &MenuItem) {
+fn append_item(parent: &Submenu, item: &MenuItem, context: &MenuContext) {
     match item {
         MenuItem::Separator { .. } => {
             let _ = parent.append(&PredefinedMenuItem::separator());
@@ -139,17 +281,38 @@ fn append_item(parent: &Submenu, item: &MenuItem) {
             label,
             action,
             args,
-            ..
+            when,
+            checkbox,
         } => {
-            let muda_item = MudaMenuItem::new(label, true, None);
-            register(&muda_item, action, args);
-            let _ = parent.append(&muda_item);
+            let enabled = match when.as_deref() {
+                Some(cond) => context.get(cond),
+                None => true,
+            };
+
+            if let Some(checkbox_cond) = checkbox {
+                // Checkbox item — use CheckMenuItem.
+                let checked = context.get(checkbox_cond);
+                let check_item = CheckMenuItem::new(label, enabled, checked, None);
+                register_check(
+                    &check_item,
+                    action,
+                    args,
+                    when.clone(),
+                    checkbox_cond.clone(),
+                );
+                let _ = parent.append(&check_item);
+            } else {
+                // Regular action item.
+                let muda_item = MudaMenuItem::new(label, enabled, None);
+                register_regular(&muda_item, action, args, when.clone());
+                let _ = parent.append(&muda_item);
+            }
         }
 
         MenuItem::Submenu { label, items } => {
             let child = Submenu::new(label, true);
             for sub_item in items {
-                append_item(&child, sub_item);
+                append_item(&child, sub_item, context);
             }
             let _ = parent.append(&child);
         }
@@ -158,6 +321,7 @@ fn append_item(parent: &Submenu, item: &MenuItem) {
             // Dynamic submenus should be resolved at the editor layer before
             // being passed here. If one slips through unresolved, show a
             // placeholder.
+            tracing::warn!("Unresolved DynamicSubmenu '{}' passed to native menu", label);
             let child = Submenu::new(label, true);
             let _ = parent.append(&child);
         }
