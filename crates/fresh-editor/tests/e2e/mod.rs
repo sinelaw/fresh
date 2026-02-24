@@ -22,6 +22,7 @@ pub mod file_browser;
 pub mod file_explorer;
 pub mod file_permissions;
 pub mod folding;
+pub mod glob_language_detection;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod horizontal_scrollbar;
