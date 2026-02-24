@@ -37,17 +37,24 @@ use crate::native_menu::MenuAction;
 // ---------------------------------------------------------------------------
 
 /// A tracked native menu item that may need state updates.
+///
+/// Each variant caches the last-known values to avoid unnecessary
+/// `set_enabled` / `set_checked` calls into muda, which trigger
+/// `NSMenu.itemChanged:` and can disrupt menu tracking on macOS.
 enum TrackedItem {
     /// A regular action item that may be enabled/disabled via a `when` condition.
     Regular {
         item: MudaMenuItem,
         when_condition: Option<String>,
+        last_enabled: std::cell::Cell<bool>,
     },
     /// A checkbox action item whose checked and enabled states depend on context.
     Check {
         item: CheckMenuItem,
         when_condition: Option<String>,
         checkbox_condition: String,
+        last_enabled: std::cell::Cell<bool>,
+        last_checked: std::cell::Cell<bool>,
     },
 }
 
@@ -55,6 +62,7 @@ enum TrackedItem {
 struct TrackedSubmenu {
     submenu: Submenu,
     when_condition: Option<String>,
+    last_enabled: std::cell::Cell<bool>,
 }
 
 thread_local! {
@@ -97,6 +105,7 @@ fn register_regular(
     TRACKED_ITEMS.with(|items| {
         items.borrow_mut().push(TrackedItem::Regular {
             item: item.clone(),
+            last_enabled: std::cell::Cell::new(item.is_enabled()),
             when_condition,
         });
     });
@@ -122,6 +131,8 @@ fn register_check(
     TRACKED_ITEMS.with(|items| {
         items.borrow_mut().push(TrackedItem::Check {
             item: item.clone(),
+            last_enabled: std::cell::Cell::new(item.is_enabled()),
+            last_checked: std::cell::Cell::new(item.is_checked()),
             when_condition,
             checkbox_condition,
         });
@@ -182,6 +193,7 @@ pub fn build_from_model(menus: &[Menu], app_name: &str, context: &MenuContext) -
         let sub = convert_menu(menu, context);
         TRACKED_SUBMENUS.with(|subs| {
             subs.borrow_mut().push(TrackedSubmenu {
+                last_enabled: std::cell::Cell::new(sub.is_enabled()),
                 submenu: sub.clone(),
                 when_condition: menu.when.clone(),
             });
@@ -225,24 +237,37 @@ pub fn sync_tracked_items(context: &MenuContext) {
                 TrackedItem::Regular {
                     item,
                     when_condition,
+                    last_enabled,
                 } => {
                     let enabled = match when_condition.as_deref() {
                         Some(cond) => context.get(cond),
                         None => true,
                     };
-                    let _ = item.set_enabled(enabled);
+                    if enabled != last_enabled.get() {
+                        let _ = item.set_enabled(enabled);
+                        last_enabled.set(enabled);
+                    }
                 }
                 TrackedItem::Check {
                     item,
                     when_condition,
                     checkbox_condition,
+                    last_enabled,
+                    last_checked,
                 } => {
                     let enabled = match when_condition.as_deref() {
                         Some(cond) => context.get(cond),
                         None => true,
                     };
-                    let _ = item.set_enabled(enabled);
-                    let _ = item.set_checked(context.get(checkbox_condition));
+                    if enabled != last_enabled.get() {
+                        let _ = item.set_enabled(enabled);
+                        last_enabled.set(enabled);
+                    }
+                    let checked = context.get(checkbox_condition);
+                    if checked != last_checked.get() {
+                        let _ = item.set_checked(checked);
+                        last_checked.set(checked);
+                    }
                 }
             }
         }
@@ -251,7 +276,11 @@ pub fn sync_tracked_items(context: &MenuContext) {
     TRACKED_SUBMENUS.with(|subs| {
         for tracked in subs.borrow().iter() {
             if let Some(ref cond) = tracked.when_condition {
-                let _ = tracked.submenu.set_enabled(context.get(cond));
+                let enabled = context.get(cond);
+                if enabled != tracked.last_enabled.get() {
+                    let _ = tracked.submenu.set_enabled(enabled);
+                    tracked.last_enabled.set(enabled);
+                }
             }
         }
     });
