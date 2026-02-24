@@ -889,4 +889,285 @@ mod integration_tests {
         std::fs::remove_dir_all(&temp_dir).ok();
         eprintln!("[multi] === END test_second_client_gets_full_screen ===");
     }
+
+    // ===========================================================================
+    // E2E regression tests for issue #1089:
+    //   "Mouse codes after pressing Escape"
+    //
+    // These tests start a real EditorServer, connect via IPC, send raw terminal
+    // byte sequences, and verify the editor renders correctly — ensuring escape
+    // codes don't leak into the document as literal text.
+    // ===========================================================================
+
+    /// Helper: start an EditorServer, connect a client, wait for initial render.
+    /// Returns (client_conn, accumulated_output, shutdown_handle, server_thread, socket_paths, temp_dir).
+    fn setup_editor_server_e2e(
+        test_name: &str,
+    ) -> (
+        ClientConnection,
+        Vec<u8>,
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+        thread::JoinHandle<std::io::Result<()>>,
+        SocketPaths,
+        std::path::PathBuf,
+    ) {
+        use crate::config::Config;
+        use crate::config_io::DirectoryContext;
+        use crate::server::editor_server::{EditorServer, EditorServerConfig};
+        use std::sync::mpsc;
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("fresh-e2e-{}-{}", test_name, std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let session_name = unique_session_name(test_name);
+        let config = Config::default();
+        let dir_context = DirectoryContext::for_testing(&temp_dir);
+
+        let server_config = EditorServerConfig {
+            working_dir: temp_dir.clone(),
+            session_name: Some(session_name),
+            idle_timeout: Some(Duration::from_secs(30)),
+            editor_config: config,
+            dir_context,
+            plugins_enabled: false,
+        };
+
+        let (paths_tx, paths_rx) = mpsc::channel();
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+        let server_handle = thread::spawn(move || {
+            let mut server = EditorServer::new(server_config).unwrap();
+            let socket_paths = server.socket_paths().clone();
+            let shutdown_handle = server.shutdown_handle();
+            paths_tx.send(socket_paths).unwrap();
+            shutdown_tx.send(shutdown_handle).unwrap();
+            server.run()
+        });
+
+        let socket_paths = paths_rx.recv().unwrap();
+        let shutdown_handle = shutdown_rx.recv().unwrap();
+
+        // Wait for PID file
+        while !socket_paths.pid.exists() || socket_paths.read_pid().ok().flatten().is_none() {
+            thread::yield_now();
+        }
+
+        // Connect
+        let conn = ClientConnection::connect(&socket_paths).expect("Failed to connect");
+        let hello = ClientHello::new(TermSize::new(80, 24));
+        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+            .unwrap();
+        let response = conn.read_control().unwrap().unwrap();
+        assert!(matches!(
+            serde_json::from_str::<ServerControl>(&response).unwrap(),
+            ServerControl::Hello(_)
+        ));
+
+        // Wait for initial render
+        let mut output = Vec::new();
+        read_until_contains(&conn, &mut output, "\x1b[");
+
+        (
+            conn,
+            output,
+            shutdown_handle,
+            server_handle,
+            socket_paths,
+            temp_dir,
+        )
+    }
+
+    /// Helper: shut down the server cleanly
+    fn teardown_editor_server_e2e(
+        conn: ClientConnection,
+        shutdown_handle: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        server_handle: thread::JoinHandle<std::io::Result<()>>,
+        socket_paths: SocketPaths,
+        temp_dir: std::path::PathBuf,
+    ) {
+        drop(conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap()));
+        shutdown_handle.store(true, Ordering::SeqCst);
+        drop(server_handle.join());
+        drop(socket_paths.cleanup());
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    /// Parse accumulated ANSI output through a VT100 terminal emulator
+    /// and return the visible screen text (all rows joined by newlines).
+    fn vt100_screen_text(output: &[u8]) -> String {
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(output);
+        let screen = parser.screen();
+        let mut result = String::new();
+        for row in 0..24 {
+            for col in 0..80 {
+                let cell = screen.cell(row, col);
+                if let Some(cell) = cell {
+                    result.push_str(&cell.contents());
+                } else {
+                    result.push(' ');
+                }
+            }
+            if row < 23 {
+                result.push('\n');
+            }
+        }
+        result
+    }
+
+    /// E2E regression test for issue #1089:
+    /// ESC followed by mouse event should NOT insert mouse codes as text.
+    ///
+    /// Reproduces: user presses Escape, then moves mouse →
+    /// raw codes like `[<35;67;18M` appear in the document.
+    #[test]
+    fn test_esc_then_mouse_does_not_insert_codes() {
+        let (conn, mut output, shutdown_handle, server_handle, socket_paths, temp_dir) =
+            setup_editor_server_e2e("esc-mouse");
+
+        // Send ESC (0x1b) followed by mouse motion event (SGR format)
+        // This is the exact sequence: user presses Escape, then moves mouse.
+        // The mouse event is: CSI < 35 ; 10 ; 5 M  (motion, no button, at col 10 row 5)
+        conn.write_data(b"\x1b\x1b[<35;10;5M").unwrap();
+
+        // Now type a known marker so we can wait for the server to have processed everything
+        conn.write_data(b"MARKER_OK").unwrap();
+
+        // Wait for the marker to appear in the render
+        read_until_contains(&conn, &mut output, "MARKER_OK");
+
+        // Parse all output through VT100 to get the visible screen text
+        let screen = vt100_screen_text(&output);
+
+        // The screen should contain our marker text
+        assert!(
+            screen.contains("MARKER_OK"),
+            "Screen should contain marker text"
+        );
+
+        // The screen should NOT contain literal mouse code fragments
+        assert!(
+            !screen.contains("<35;10;5M"),
+            "Mouse code '<35;10;5M' should NOT appear as literal text on screen.\nScreen:\n{}",
+            screen
+        );
+        // Also check for partial fragments that would appear if ESC was consumed separately
+        assert!(
+            !screen.contains("[<35"),
+            "Partial mouse code '[<35' should NOT appear as literal text.\nScreen:\n{}",
+            screen
+        );
+
+        teardown_editor_server_e2e(conn, shutdown_handle, server_handle, socket_paths, temp_dir);
+    }
+
+    /// E2E regression test for issue #1089:
+    /// Shift+Tab (CSI Z) should NOT insert `[Z` as literal text.
+    #[test]
+    fn test_shift_tab_does_not_insert_bracket_z() {
+        let (conn, mut output, shutdown_handle, server_handle, socket_paths, temp_dir) =
+            setup_editor_server_e2e("shift-tab");
+
+        // Type some text first so we can verify the buffer state
+        conn.write_data(b"hello").unwrap();
+        read_until_contains(&conn, &mut output, "hello");
+
+        // Send Shift+Tab: CSI Z = ESC [ Z
+        conn.write_data(b"\x1b[Z").unwrap();
+
+        // Send marker
+        conn.write_data(b"WORLD").unwrap();
+        read_until_contains(&conn, &mut output, "WORLD");
+
+        let screen = vt100_screen_text(&output);
+
+        // Should have the typed text
+        assert!(
+            screen.contains("WORLD"),
+            "Screen should contain 'WORLD'"
+        );
+
+        // Should NOT have literal [Z from a mis-parsed Shift+Tab
+        // If the bug exists, after "hello" we'd see "[Z" inserted before "WORLD"
+        assert!(
+            !screen.contains("[Z"),
+            "Shift+Tab should NOT insert literal '[Z' on screen.\nScreen:\n{}",
+            screen
+        );
+
+        teardown_editor_server_e2e(conn, shutdown_handle, server_handle, socket_paths, temp_dir);
+    }
+
+    /// E2E regression test for issue #1089:
+    /// Standalone ESC should be processed within timeout, not hang indefinitely.
+    ///
+    /// When ESC is pressed alone (without follow-up bytes), the server should
+    /// emit it as an Escape key event after the timeout (50ms), rather than
+    /// buffering it forever.
+    #[test]
+    fn test_standalone_esc_is_processed_via_timeout() {
+        let (conn, mut output, shutdown_handle, server_handle, socket_paths, temp_dir) =
+            setup_editor_server_e2e("esc-timeout");
+
+        // Type some text
+        conn.write_data(b"hello").unwrap();
+        read_until_contains(&conn, &mut output, "hello");
+
+        // Send standalone ESC
+        conn.write_data(&[0x1b]).unwrap();
+
+        // Wait longer than the ESC timeout (50ms) for the server to flush it
+        thread::sleep(Duration::from_millis(100));
+
+        // Now type more text. If ESC was properly flushed, the next input should
+        // work normally. If ESC is still stuck in the buffer, it might combine
+        // with the next bytes and produce garbage.
+        conn.write_data(b"world").unwrap();
+        read_until_contains(&conn, &mut output, "world");
+
+        let screen = vt100_screen_text(&output);
+
+        // The screen should contain "world" as normal text
+        assert!(
+            screen.contains("world"),
+            "Screen should contain 'world' after standalone ESC + timeout.\nScreen:\n{}",
+            screen
+        );
+
+        teardown_editor_server_e2e(conn, shutdown_handle, server_handle, socket_paths, temp_dir);
+    }
+
+    /// E2E regression test for issue #1089:
+    /// ESC buffered, then CSI arrow key arrives — should produce Escape + arrow,
+    /// not Alt+Escape + literal characters.
+    #[test]
+    fn test_esc_then_arrow_key_does_not_insert_codes() {
+        let (conn, mut output, shutdown_handle, server_handle, socket_paths, temp_dir) =
+            setup_editor_server_e2e("esc-arrow");
+
+        // Type text first
+        conn.write_data(b"hello").unwrap();
+        read_until_contains(&conn, &mut output, "hello");
+
+        // Send ESC then Down arrow (CSI B = ESC [ B)
+        // If the bug exists, ESC+ESC would be consumed as Alt+Esc,
+        // and then [B would be inserted as literal text
+        conn.write_data(b"\x1b\x1b[B").unwrap();
+
+        // Send marker
+        conn.write_data(b"AFTER").unwrap();
+        read_until_contains(&conn, &mut output, "AFTER");
+
+        let screen = vt100_screen_text(&output);
+
+        // Should NOT have literal [B from the mis-parsed arrow key
+        assert!(
+            !screen.contains("[B"),
+            "Arrow key escape code '[B' should NOT appear as literal text.\nScreen:\n{}",
+            screen
+        );
+
+        teardown_editor_server_e2e(conn, shutdown_handle, server_handle, socket_paths, temp_dir);
+    }
 }
