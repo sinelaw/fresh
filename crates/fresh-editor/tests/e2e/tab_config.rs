@@ -670,6 +670,102 @@ fn test_issue_384_indent_respects_tab_size_in_calculation() {
     );
 }
 
+/// Issue #384 - Auto-indent should maintain indentation on Enter after a normal
+/// statement line in Go (using tabs).
+///
+/// When pressing Enter after `fmt.Println("Hello")` inside a Go function,
+/// the new line should be auto-indented to the same level using tab characters.
+/// This tests the "maintain current indent" path, not the "increase indent after {" path.
+///
+/// The bug: pressing Enter after a normal statement produces zero indentation
+/// instead of maintaining the current indent level with tabs.
+#[test]
+fn test_issue_384_auto_indent_maintains_indent_with_tabs_in_go() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.go");
+
+    // Create a Go file with a function containing a statement
+    std::fs::write(&file_path, "package main\n\nfunc main() {\n\tfmt.Println(\"Hello\")\n}\n")
+        .unwrap();
+
+    let mut config = Config::default();
+    config.editor.auto_indent = true;
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to end of the fmt.Println line (line 4, after the `)`):
+    // "package main\n\nfunc main() {\n\tfmt.Println(\"Hello\")\n}\n"
+    //  ^0                            ^28                   ^49
+    // Line 4 is: \tfmt.Println("Hello")
+    // Move to end of line 4
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap(); // Now on line 4 (0-indexed line 3)
+    harness
+        .send_key(KeyCode::End, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Press Enter - auto-indent should maintain the tab indentation
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    println!(
+        "Buffer after Enter on normal Go line: {:?}",
+        content
+    );
+
+    // The new line should have a tab character for indentation (same level as fmt.Println)
+    let lines: Vec<&str> = content.lines().collect();
+    // Lines should be:
+    // 0: "package main"
+    // 1: ""
+    // 2: "func main() {"
+    // 3: "\tfmt.Println(\"Hello\")"
+    // 4: "\t"  <-- the new line with auto-indent (should have a tab)
+    // 5: "}"
+    assert!(
+        lines.len() >= 6,
+        "Should have at least 6 lines after Enter, got {}: {:?}",
+        lines.len(),
+        lines
+    );
+
+    let new_line = lines[4];
+    println!("New line after Enter: {:?}", new_line);
+
+    // The new line should start with a tab (maintaining indent from the previous line)
+    assert!(
+        new_line.starts_with('\t'),
+        "Auto-indent should maintain tab indentation on new line in Go, got: {:?}",
+        new_line
+    );
+
+    // The indentation should NOT use spaces
+    let leading_spaces = new_line.chars().take_while(|c| *c == ' ').count();
+    assert_eq!(
+        leading_spaces, 0,
+        "Auto-indent in Go should not use spaces, got {} leading spaces in: {:?}",
+        leading_spaces, new_line
+    );
+}
+
 // =============================================================================
 // GitHub Issue #1068: Go auto-dedent should use tabs, not spaces
 // https://github.com/sinelaw/fresh/issues/1068
