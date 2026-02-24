@@ -790,11 +790,10 @@ fn test_indent_after_empty_line_in_function_body() {
 
     // Now we're on an empty line with 4 spaces indent
     // Delete all the spaces to simulate an empty line with NO indent
-    for _ in 0..4 {
-        harness
-            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
-            .unwrap();
-    }
+    // Smart backspace removes one indent unit (4 spaces) per press
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
 
     // Now we're on an empty line with NO spaces (inside function body)
     // Press Enter - should recognize we're inside function body and indent to 4 spaces
@@ -1905,5 +1904,146 @@ fn test_python_nested_indent_class_def_while() {
         indent, 12,
         "Level 3: expected 12-space indent after 'while True:', got {} spaces. Content:\n{}",
         indent, content
+    );
+}
+
+/// Test that Go auto-indent uses tab characters, not spaces.
+/// When pressing Enter after `{` in a Go file, the new line should be
+/// indented with `\t`, never with spaces.
+#[test]
+fn test_go_auto_indent_uses_tabs_not_spaces() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.go");
+    std::fs::write(&file_path, "func main() {").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to end and press Enter
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert!(lines.len() >= 2, "Expected at least 2 lines");
+
+    let indented_line = lines[1];
+    let leading_whitespace: String = indented_line
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .collect();
+
+    // Must contain at least one tab
+    assert!(
+        leading_whitespace.contains('\t'),
+        "Go auto-indent should use tab characters, got whitespace: {:?}",
+        leading_whitespace
+    );
+    // Must NOT contain any spaces
+    assert!(
+        !leading_whitespace.contains(' '),
+        "Go auto-indent should not contain spaces, got whitespace: {:?}",
+        leading_whitespace
+    );
+}
+
+/// Test that Python auto-indent uses spaces, not tabs.
+/// When pressing Enter after `:` in a Python file, the new line should be
+/// indented with spaces, never with tabs.
+#[test]
+fn test_python_auto_indent_uses_spaces_not_tabs() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.py");
+    std::fs::write(&file_path, "def foo():").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to end and press Enter
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert!(lines.len() >= 2, "Expected at least 2 lines");
+
+    let indented_line = lines[1];
+    let leading_whitespace: String = indented_line
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .collect();
+
+    // Must contain spaces
+    assert!(
+        !leading_whitespace.is_empty(),
+        "Python auto-indent should produce indentation"
+    );
+    // Must NOT contain any tabs
+    assert!(
+        !leading_whitespace.contains('\t'),
+        "Python auto-indent should use spaces, not tabs, got whitespace: {:?}",
+        leading_whitespace
+    );
+    // Should be 4 spaces
+    assert_eq!(
+        leading_whitespace, "    ",
+        "Python auto-indent should be 4 spaces"
+    );
+}
+
+/// Test that Go nested auto-indent uses only tabs, never spaces.
+/// Pressing Enter after nested `{` in Go should produce multiple tabs.
+#[test]
+fn test_go_nested_auto_indent_uses_only_tabs() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.go");
+    std::fs::write(&file_path, "func main() {\n\tif true {").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to end and press Enter
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert!(lines.len() >= 3, "Expected at least 3 lines");
+
+    let indented_line = lines[2];
+    let leading_whitespace: String = indented_line
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .collect();
+
+    // Must be only tabs, no spaces
+    assert!(
+        !leading_whitespace.is_empty(),
+        "Nested Go indent should produce indentation"
+    );
+    assert!(
+        !leading_whitespace.contains(' '),
+        "Nested Go indent must use only tabs, got whitespace: {:?} in content: {:?}",
+        leading_whitespace,
+        content
+    );
+    assert_eq!(
+        leading_whitespace, "\t\t",
+        "Nested Go indent should be two tabs"
     );
 }

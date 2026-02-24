@@ -797,3 +797,151 @@ fn test_multicursor_indent_with_selections() {
         );
     }
 }
+
+// =============================================================================
+// Smart Backspace Tests
+// =============================================================================
+
+/// Test that Backspace on a line with only spaces dedents by one tab_size unit
+#[test]
+fn test_smart_backspace_dedent_spaces() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "fn main() {\n        \n}").unwrap();
+
+    let mut harness = harness_with_spaces();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to end of the indented empty line (line 2, 8 spaces)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Press Backspace - should remove 4 spaces (one tab unit), not just 1
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(
+        lines[1], "    ",
+        "Smart backspace should dedent from 8 to 4 spaces"
+    );
+
+    // Press Backspace again - should remove the remaining 4 spaces
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert!(
+        lines.len() >= 3,
+        "Should still have 3 lines after dedenting to 0, got: {:?}",
+        lines
+    );
+    assert_eq!(
+        lines[1], "",
+        "Smart backspace should dedent from 4 to 0 spaces"
+    );
+}
+
+/// Test that Backspace on a line with only tabs dedents by one tab
+#[test]
+fn test_smart_backspace_dedent_tabs() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.go");
+    std::fs::write(&file_path, "func main() {\n\t\t\n}").unwrap();
+
+    let mut harness = harness_with_tabs();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to end of the indented empty line (line 2, 2 tabs)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Press Backspace - should remove 1 tab
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(
+        lines[1], "\t",
+        "Smart backspace should dedent from 2 tabs to 1 tab"
+    );
+
+    // Press Backspace again - should remove the remaining tab
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(
+        lines[1], "",
+        "Smart backspace should dedent from 1 tab to 0"
+    );
+}
+
+/// Test that Backspace after non-whitespace text does normal single-char delete
+#[test]
+fn test_smart_backspace_normal_after_text() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "    hello").unwrap();
+
+    let mut harness = harness_with_spaces();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to end of line (after 'o')
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Press Backspace - should delete just 'o' (normal behavior)
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content, "    hell",
+        "Normal backspace should delete one character after text"
+    );
+}
+
+/// Test that Backspace with fewer than tab_size spaces removes only those spaces
+#[test]
+fn test_smart_backspace_partial_indent() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    // 2 spaces is less than tab_size of 4
+    std::fs::write(&file_path, "  \n").unwrap();
+
+    let mut harness = harness_with_spaces();
+    harness.open_file(&file_path).unwrap();
+
+    // Cursor is at start, move to end of first line
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Press Backspace - should remove the 2 spaces
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content, "\n",
+        "Smart backspace should remove partial indent (2 spaces)"
+    );
+}
