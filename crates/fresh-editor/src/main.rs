@@ -2939,6 +2939,95 @@ where
             break;
         }
 
+        // Drain all pending input events before rendering.
+        // Under CPU pressure (cgroups, etc.), terminal.draw() takes long wall-clock
+        // time during which input buffers in the kernel. Draining first ensures all
+        // buffered keystrokes are applied to a single frame rather than triggering
+        // multiple expensive draws.
+        //
+        // After each event, recompute_layout() updates the cached visual layout
+        // (view_line_mappings, viewport sync, scroll groups) so that subsequent
+        // events see correct layout state — same as macro replay does.
+        // The actual terminal draw is deferred until after the drain.
+        //
+        // The drain is capped at 500ms to guarantee periodic renders even under
+        // sustained input (e.g., held key repeat). This is deliberately longer
+        // than FRAME_DURATION — under CPU pressure, a shorter cap would defeat
+        // the purpose of batching.
+        let drain_deadline = Instant::now() + Duration::from_millis(500);
+        loop {
+            let event = if let Some(e) = pending_event.take() {
+                Some(e)
+            } else {
+                poll_event(Duration::ZERO)?
+            };
+
+            let Some(event) = event else { break };
+
+            let (event, next) = coalesce_mouse_moves(event)?;
+            pending_event = next;
+
+            // Event debug dialog receives ALL RAW events (before any translation or processing)
+            // This is essential for diagnosing terminal keybinding issues
+            if editor.is_event_debug_active() {
+                if let CrosstermEvent::Key(key_event) = event {
+                    if key_event.kind == KeyEventKind::Press {
+                        editor.handle_event_debug_input(&key_event);
+                        needs_render = true;
+                    }
+                }
+                // Consume all events while event debug is active
+                continue;
+            }
+
+            match event {
+                CrosstermEvent::Key(key_event) => {
+                    if key_event.kind == KeyEventKind::Press {
+                        let _span = tracing::trace_span!(
+                            "handle_key",
+                            code = ?key_event.code,
+                            modifiers = ?key_event.modifiers,
+                        )
+                        .entered();
+                        // Apply key translation (for input calibration)
+                        // Use editor's translator so calibration changes take effect immediately
+                        let translated_event = editor.key_translator().translate(key_event);
+                        handle_key_event(editor, translated_event)?;
+                        needs_render = true;
+                    }
+                }
+                CrosstermEvent::Mouse(mouse_event) => {
+                    if handle_mouse_event(editor, mouse_event)? {
+                        needs_render = true;
+                    }
+                }
+                CrosstermEvent::Resize(w, h) => {
+                    editor.resize(w, h);
+                    needs_render = true;
+                    // Resize needs a real render to establish new frame
+                    // dimensions. Stop draining and fall through to draw.
+                    break;
+                }
+                CrosstermEvent::Paste(text) => {
+                    // External paste from terminal (bracketed paste mode)
+                    editor.paste_text(text);
+                    needs_render = true;
+                }
+                _ => {}
+            }
+
+            // Update layout caches after each event so subsequent events in
+            // this drain batch see correct visual layout (wrapped lines,
+            // viewport positions, scroll sync). Drawing is deferred.
+            if needs_render {
+                editor.recompute_layout_cached();
+            }
+
+            if Instant::now() >= drain_deadline {
+                break;
+            }
+        }
+
         if needs_render && last_render.elapsed() >= FRAME_DURATION {
             {
                 let _span = tracing::info_span!("terminal_draw").entered();
@@ -2946,69 +3035,20 @@ where
             }
             last_render = Instant::now();
             needs_render = false;
-        }
-
-        let event = if let Some(e) = pending_event.take() {
-            Some(e)
-        } else {
-            let timeout = if needs_render {
-                FRAME_DURATION.saturating_sub(last_render.elapsed())
-            } else {
-                Duration::from_millis(50)
-            };
-
-            poll_event(timeout)?
-        };
-
-        let Some(event) = event else { continue };
-
-        let (event, next) = coalesce_mouse_moves(event)?;
-        pending_event = next;
-
-        // Event debug dialog receives ALL RAW events (before any translation or processing)
-        // This is essential for diagnosing terminal keybinding issues
-        if editor.is_event_debug_active() {
-            if let CrosstermEvent::Key(key_event) = event {
-                if key_event.kind == KeyEventKind::Press {
-                    editor.handle_event_debug_input(&key_event);
-                    needs_render = true;
-                }
-            }
-            // Consume all events while event debug is active
+            // Loop back immediately to drain any events that arrived during
+            // the render before considering another frame.
             continue;
         }
 
-        match event {
-            CrosstermEvent::Key(key_event) => {
-                if key_event.kind == KeyEventKind::Press {
-                    let _span = tracing::trace_span!(
-                        "handle_key",
-                        code = ?key_event.code,
-                        modifiers = ?key_event.modifiers,
-                    )
-                    .entered();
-                    // Apply key translation (for input calibration)
-                    // Use editor's translator so calibration changes take effect immediately
-                    let translated_event = editor.key_translator().translate(key_event);
-                    handle_key_event(editor, translated_event)?;
-                    needs_render = true;
-                }
-            }
-            CrosstermEvent::Mouse(mouse_event) => {
-                if handle_mouse_event(editor, mouse_event)? {
-                    needs_render = true;
-                }
-            }
-            CrosstermEvent::Resize(w, h) => {
-                editor.resize(w, h);
-                needs_render = true;
-            }
-            CrosstermEvent::Paste(text) => {
-                // External paste from terminal (bracketed paste mode)
-                editor.paste_text(text);
-                needs_render = true;
-            }
-            _ => {}
+        // Block until next event or timeout
+        let timeout = if needs_render {
+            FRAME_DURATION.saturating_sub(last_render.elapsed())
+        } else {
+            Duration::from_millis(50)
+        };
+
+        if let Some(event) = poll_event(timeout)? {
+            pending_event = Some(event);
         }
     }
 

@@ -4325,6 +4325,15 @@ impl Editor {
         format!("{} → Play Macro", palette_key)
     }
 
+    /// Recompute layout using the last rendered frame dimensions.
+    /// Used by the event loop to keep layout caches fresh between events
+    /// when drawing is deferred (e.g., draining buffered input).
+    pub fn recompute_layout_cached(&mut self) {
+        let w = self.cached_layout.last_frame_width;
+        let h = self.cached_layout.last_frame_height;
+        self.recompute_layout(w, h);
+    }
+
     /// Recompute the view_line_mappings layout without drawing.
     /// Used during macro replay so that visual-line movements (MoveLineEnd,
     /// MoveUp, MoveDown on wrapped lines) see correct, up-to-date layout
