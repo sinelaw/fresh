@@ -234,8 +234,9 @@ impl Editor {
         self.handle_action(action)
     }
 
-    /// Handle an action (for normal mode and command execution)
-    pub(super) fn handle_action(&mut self, action: Action) -> AnyhowResult<()> {
+    /// Handle an action (for normal mode and command execution).
+    /// Used by the app module internally and by the GUI module for native menu dispatch.
+    pub(crate) fn handle_action(&mut self, action: Action) -> AnyhowResult<()> {
         use crate::input::keybindings::Action;
 
         // Record action to macro if recording

@@ -52,12 +52,27 @@ pub fn run_gui(
     let dir_context = DirectoryContext::from_system()?;
     let working_dir = std::env::current_dir().unwrap_or_default();
 
-    let loaded_config = if let Some(path) = config_path {
+    #[allow(unused_mut)]
+    let mut loaded_config = if let Some(path) = config_path {
         config::Config::load_from_file(path)
             .with_context(|| format!("Failed to load config from {}", path.display()))?
     } else {
         config::Config::load_with_layers(&dir_context, &working_dir)
     };
+
+    // On macOS GUI, auto-select the macos-gui keybinding map (Cmd-key shortcuts)
+    // unless the user has explicitly set a different keymap.
+    #[cfg(target_os = "macos")]
+    {
+        let default_macos_map = config::KeybindingMapName("macos".to_string());
+        let default_map = config::KeybindingMapName("default".to_string());
+        if loaded_config.active_keybinding_map == default_macos_map
+            || loaded_config.active_keybinding_map == default_map
+        {
+            loaded_config.active_keybinding_map =
+                config::KeybindingMapName("macos-gui".to_string());
+        }
+    }
 
     let file_locations: Vec<(PathBuf, Option<usize>, Option<usize>)> =
         files.iter().map(|f| parse_file_location(f)).collect();
@@ -174,6 +189,21 @@ impl GuiApplication for EditorApp {
             if let Err(e) = self.editor.save_workspace() {
                 tracing::warn!("Failed to save workspace: {}", e);
             }
+        }
+    }
+
+    fn on_menu_action(
+        &mut self,
+        action: &str,
+        args: &std::collections::HashMap<String, serde_json::Value>,
+    ) {
+        use crate::input::keybindings::Action;
+        if let Some(editor_action) = Action::from_str(action, args) {
+            if let Err(e) = self.editor.handle_action(editor_action) {
+                tracing::error!("Menu action '{}' error: {}", action, e);
+            }
+        } else {
+            tracing::warn!("Unknown menu action: {}", action);
         }
     }
 }

@@ -232,7 +232,8 @@ pub struct KeybindingMapName(pub String);
 
 impl KeybindingMapName {
     /// Built-in keybinding map options shown in the settings dropdown
-    pub const BUILTIN_OPTIONS: &'static [&'static str] = &["default", "emacs", "vscode", "macos"];
+    pub const BUILTIN_OPTIONS: &'static [&'static str] =
+        &["default", "emacs", "vscode", "macos", "macos-gui"];
 }
 
 impl Deref for KeybindingMapName {
@@ -1879,6 +1880,17 @@ impl MenuConfig {
                                 when: None,
                                 checkbox: None,
                             },
+                            MenuItem::Action {
+                                label: "macOS GUI (⌘)".to_string(),
+                                action: "switch_keybinding_map".to_string(),
+                                args: {
+                                    let mut map = HashMap::new();
+                                    map.insert("map".to_string(), serde_json::json!("macos-gui"));
+                                    map
+                                },
+                                when: None,
+                                checkbox: None,
+                            },
                         ],
                     },
                 ],
@@ -2233,6 +2245,7 @@ impl Config {
             "emacs" => include_str!("../keymaps/emacs.json"),
             "vscode" => include_str!("../keymaps/vscode.json"),
             "macos" => include_str!("../keymaps/macos.json"),
+            "macos-gui" => include_str!("../keymaps/macos-gui.json"),
             _ => return None,
         };
 

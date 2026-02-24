@@ -56,15 +56,21 @@ fn is_text_input_modifier(modifiers: KeyModifiers) -> bool {
 pub fn format_keybinding(keycode: &KeyCode, modifiers: &KeyModifiers) -> String {
     let mut result = String::new();
 
-    // On macOS, use native symbols: ⌃ (Control), ⌥ (Option/Alt), ⇧ (Shift)
-    let (ctrl_label, alt_label, shift_label) = if use_macos_symbols() {
-        ("⌃", "⌥", "⇧")
+    // On macOS, use native symbols: ⌃ (Control), ⌥ (Option/Alt), ⇧ (Shift), ⌘ (Command)
+    let (ctrl_label, alt_label, shift_label, super_label) = if use_macos_symbols() {
+        ("⌃", "⌥", "⇧", "⌘")
     } else {
-        ("Ctrl", "Alt", "Shift")
+        ("Ctrl", "Alt", "Shift", "Super")
     };
 
     let use_plus = !use_macos_symbols();
 
+    if modifiers.contains(KeyModifiers::SUPER) {
+        result.push_str(super_label);
+        if use_plus {
+            result.push('+');
+        }
+    }
     if modifiers.contains(KeyModifiers::CONTROL) {
         result.push_str(ctrl_label);
         if use_plus {
@@ -1687,6 +1693,7 @@ impl KeybindingResolver {
                 "ctrl" | "control" => result |= KeyModifiers::CONTROL,
                 "shift" => result |= KeyModifiers::SHIFT,
                 "alt" => result |= KeyModifiers::ALT,
+                "super" | "cmd" | "command" | "meta" => result |= KeyModifiers::SUPER,
                 _ => {}
             }
         }

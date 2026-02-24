@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Fresh Editor - Green Leaf Logo (Placeholder) -->
+  <!-- Replace this with the final logo design -->
+
+  <!-- Background circle -->
+  <circle cx="512" cy="512" r="480" fill="#1a1a2e" />
+
+  <!-- Leaf shape -->
+  <g transform="translate(512, 512) rotate(-30)">
+    <!-- Main leaf body -->
+    <path d="M0,-320 C180,-320 320,-180 320,0 C320,180 180,320 0,320 C-60,320 -120,200 -120,0 C-120,-200 -60,-320 0,-320 Z"
+          fill="#2ecc71" opacity="0.95"/>
+
+    <!-- Leaf vein (center) -->
+    <line x1="0" y1="-280" x2="0" y2="280" stroke="#27ae60" stroke-width="8" stroke-linecap="round"/>
+
+    <!-- Left veins -->
+    <line x1="0" y1="-160" x2="-80" y2="-80" stroke="#27ae60" stroke-width="5" stroke-linecap="round"/>
+    <line x1="0" y1="-40" x2="-90" y2="30" stroke="#27ae60" stroke-width="5" stroke-linecap="round"/>
+    <line x1="0" y1="80" x2="-80" y2="140" stroke="#27ae60" stroke-width="5" stroke-linecap="round"/>
+
+    <!-- Right veins -->
+    <line x1="0" y1="-160" x2="140" y2="-40" stroke="#27ae60" stroke-width="5" stroke-linecap="round"/>
+    <line x1="0" y1="-40" x2="180" y2="80" stroke="#27ae60" stroke-width="5" stroke-linecap="round"/>
+    <line x1="0" y1="80" x2="160" y2="180" stroke="#27ae60" stroke-width="5" stroke-linecap="round"/>
+
+    <!-- Light highlight on leaf -->
+    <path d="M-40,-280 C60,-280 160,-180 200,-40 C100,-120 40,-200 -40,-280 Z"
+          fill="white" opacity="0.15"/>
+  </g>
+
+  <!-- "F" letter overlay -->
+  <text x="512" y="560" text-anchor="middle" font-family="Helvetica,Arial,sans-serif"
+        font-weight="bold" font-size="280" fill="white" opacity="0.9">F</text>
+</svg>

@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Bundle identification -->
+    <key>CFBundleIdentifier</key>
+    <string>dev.getfresh.Fresh</string>
+
+    <key>CFBundleName</key>
+    <string>Fresh</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>Fresh</string>
+
+    <key>CFBundleExecutable</key>
+    <string>fresh</string>
+
+    <!-- Version info (update these when releasing) -->
+    <key>CFBundleShortVersionString</key>
+    <string>0.2.5</string>
+
+    <key>CFBundleVersion</key>
+    <string>0.2.5</string>
+
+    <!-- Bundle type: Application -->
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+
+    <!-- Icon file (should be an .icns file in Resources/) -->
+    <key>CFBundleIconFile</key>
+    <string>Fresh.icns</string>
+
+    <!-- macOS minimum version -->
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+
+    <!-- App category -->
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+
+    <!-- High-resolution capable -->
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <!-- Support Retina displays -->
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+
+    <!-- Document types the app can open -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Text Document</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.plain-text</string>
+                <string>public.source-code</string>
+                <string>public.script</string>
+                <string>public.shell-script</string>
+                <string>public.python-script</string>
+                <string>public.ruby-script</string>
+                <string>public.xml</string>
+                <string>public.json</string>
+                <string>public.yaml</string>
+                <string>com.netscape.javascript-source</string>
+                <string>public.c-source</string>
+                <string>public.c-header</string>
+                <string>public.c-plus-plus-source</string>
+                <string>public.c-plus-plus-header</string>
+                <string>public.swift-source</string>
+                <string>public.assembly-source</string>
+                <string>com.apple.dt.playground</string>
+            </array>
+        </dict>
+    </array>
+
+    <!-- Privacy: file access (required for sandboxed apps) -->
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Fresh needs access to open and edit files on your Desktop.</string>
+
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Fresh needs access to open and edit files in your Documents folder.</string>
+
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Fresh needs access to open and edit files in your Downloads folder.</string>
+
+    <!-- Allow opening files via drag-and-drop and Finder -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Fresh uses Apple Events to integrate with other applications.</string>
+
+    <!-- GPU usage description (for wgpu) -->
+    <key>NSSupportsAutomaticTermination</key>
+    <true/>
+
+    <key>NSSupportsSuddenTermination</key>
+    <false/>
+</dict>
+</plist>

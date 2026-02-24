@@ -1,0 +1,420 @@
+{
+  "inherits": "macos",
+  "comment": "macOS GUI keymap - maps Cmd (Super) key to standard macOS shortcuts. Inherits from the terminal macOS keymap and adds/overrides bindings that use Super (Cmd) instead of Ctrl.",
+  "bindings": [
+    {
+      "comment": "Cmd+S -> Save",
+      "key": "s",
+      "modifiers": ["super"],
+      "action": "save",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Shift+S -> Save As",
+      "key": "s",
+      "modifiers": ["super", "shift"],
+      "action": "save_as",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+O -> Open",
+      "key": "o",
+      "modifiers": ["super"],
+      "action": "open",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+N -> New file",
+      "key": "n",
+      "modifiers": ["super"],
+      "action": "new",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+W -> Close tab/buffer",
+      "key": "w",
+      "modifiers": ["super"],
+      "action": "close_tab",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Q -> Quit",
+      "key": "q",
+      "modifiers": ["super"],
+      "action": "quit",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Z -> Undo",
+      "key": "z",
+      "modifiers": ["super"],
+      "action": "undo",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Shift+Z -> Redo",
+      "key": "z",
+      "modifiers": ["super", "shift"],
+      "action": "redo",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+C -> Copy",
+      "key": "c",
+      "modifiers": ["super"],
+      "action": "copy",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+X -> Cut",
+      "key": "x",
+      "modifiers": ["super"],
+      "action": "cut",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+V -> Paste",
+      "key": "v",
+      "modifiers": ["super"],
+      "action": "paste",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+A -> Select all",
+      "key": "a",
+      "modifiers": ["super"],
+      "action": "select_all",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+F -> Find/Search",
+      "key": "f",
+      "modifiers": ["super"],
+      "action": "search",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+G -> Find next",
+      "key": "g",
+      "modifiers": ["super"],
+      "action": "find_next",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Shift+G -> Find previous",
+      "key": "g",
+      "modifiers": ["super", "shift"],
+      "action": "find_previous",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+H -> Replace (macOS standard)",
+      "key": "h",
+      "modifiers": ["super"],
+      "action": "query_replace",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+P -> Quick Open",
+      "key": "p",
+      "modifiers": ["super"],
+      "action": "quick_open",
+      "args": {},
+      "when": "global"
+    },
+    {
+      "comment": "Cmd+Shift+P -> Command palette",
+      "key": "p",
+      "modifiers": ["super", "shift"],
+      "action": "command_palette",
+      "args": {},
+      "when": "global"
+    },
+    {
+      "comment": "Cmd+D -> Add selection to next find match",
+      "key": "d",
+      "modifiers": ["super"],
+      "action": "add_cursor_next_match",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+L -> Go to line",
+      "key": "l",
+      "modifiers": ["super"],
+      "action": "goto_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+/ -> Toggle comment",
+      "key": "/",
+      "modifiers": ["super"],
+      "action": "toggle_comment",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+B -> Toggle sidebar/file explorer",
+      "key": "b",
+      "modifiers": ["super"],
+      "action": "toggle_file_explorer",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "b",
+      "modifiers": ["super"],
+      "action": "focus_editor",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "comment": "Cmd+, -> Open settings (macOS standard)",
+      "key": ",",
+      "modifiers": ["super"],
+      "action": "open_settings",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Backspace -> Delete to line start",
+      "key": "Backspace",
+      "modifiers": ["super"],
+      "action": "delete_to_line_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Delete -> Delete to line end",
+      "key": "Delete",
+      "modifiers": ["super"],
+      "action": "delete_to_line_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Left -> Move to line start",
+      "key": "Left",
+      "modifiers": ["super"],
+      "action": "move_line_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Right -> Move to line end",
+      "key": "Right",
+      "modifiers": ["super"],
+      "action": "move_line_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Up -> Move to document start",
+      "key": "Up",
+      "modifiers": ["super"],
+      "action": "move_document_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Down -> Move to document end",
+      "key": "Down",
+      "modifiers": ["super"],
+      "action": "move_document_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Shift+Left -> Select to line start",
+      "key": "Left",
+      "modifiers": ["super", "shift"],
+      "action": "select_line_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Shift+Right -> Select to line end",
+      "key": "Right",
+      "modifiers": ["super", "shift"],
+      "action": "select_line_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Shift+Up -> Select to document start",
+      "key": "Up",
+      "modifiers": ["super", "shift"],
+      "action": "select_document_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Shift+Down -> Select to document end",
+      "key": "Down",
+      "modifiers": ["super", "shift"],
+      "action": "select_document_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Option+Up -> Add cursor above",
+      "key": "Up",
+      "modifiers": ["super", "alt"],
+      "action": "add_cursor_above",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Option+Down -> Add cursor below",
+      "key": "Down",
+      "modifiers": ["super", "alt"],
+      "action": "add_cursor_below",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+] -> Indent selection",
+      "key": "]",
+      "modifiers": ["super"],
+      "action": "insert_tab",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+[ -> Dedent selection",
+      "key": "[",
+      "modifiers": ["super"],
+      "action": "dedent_selection",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Shift+K -> Delete line (VS Code / macOS standard)",
+      "key": "k",
+      "modifiers": ["super", "shift"],
+      "action": "delete_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+E -> Focus file explorer",
+      "key": "e",
+      "modifiers": ["super"],
+      "action": "focus_file_explorer",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "e",
+      "modifiers": ["super"],
+      "action": "focus_editor",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "comment": "F12 -> Go to definition (same as default)",
+      "key": "F12",
+      "modifiers": [],
+      "action": "lsp_goto_definition",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Shift+F12 -> Find references",
+      "key": "F12",
+      "modifiers": ["super", "shift"],
+      "action": "lsp_references",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+. -> Code actions (macOS standard)",
+      "key": ".",
+      "modifiers": ["super"],
+      "action": "lsp_code_actions",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Shift+O -> Go to symbol",
+      "key": "o",
+      "modifiers": ["super", "shift"],
+      "action": "command_palette",
+      "args": {"filter": "@"},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+[ -> Navigate back",
+      "key": "-",
+      "modifiers": ["super"],
+      "action": "navigate_back",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Cmd+Shift+- -> Navigate forward",
+      "key": "=",
+      "modifiers": ["super"],
+      "action": "navigate_forward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Prompt: Cmd+C -> Copy",
+      "key": "c",
+      "modifiers": ["super"],
+      "action": "prompt_copy",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Prompt: Cmd+X -> Cut",
+      "key": "x",
+      "modifiers": ["super"],
+      "action": "prompt_cut",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Prompt: Cmd+V -> Paste",
+      "key": "v",
+      "modifiers": ["super"],
+      "action": "prompt_paste",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Prompt: Cmd+A -> Select all",
+      "key": "a",
+      "modifiers": ["super"],
+      "action": "prompt_select_all",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Terminal: Cmd+V -> Paste",
+      "key": "v",
+      "modifiers": ["super"],
+      "action": "terminal_paste",
+      "args": {},
+      "when": "terminal"
+    }
+  ]
+}
