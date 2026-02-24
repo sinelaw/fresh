@@ -205,6 +205,9 @@ windows-sys = { version = "0.61", features = [
 [build-dependencies]
 serde_json.workspace = true
 
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [package.metadata.dist]
 # Point dist at the changelog so GitHub Releases get populated
 changelog = "../../CHANGELOG.md"
@@ -224,6 +227,16 @@ assets = [
     ["plugins/lib/*", "usr/share/fresh-editor/plugins/lib/", "644"],
     ["plugins/examples/*", "usr/share/fresh-editor/plugins/examples/", "644"],
     ["themes/*", "usr/share/fresh-editor/themes/", "644"],
+    # Freedesktop hicolor icons
+    ["../../docs/icons/linux/hicolor/16x16/apps/fresh.png", "usr/share/icons/hicolor/16x16/apps/", "644"],
+    ["../../docs/icons/linux/hicolor/22x22/apps/fresh.png", "usr/share/icons/hicolor/22x22/apps/", "644"],
+    ["../../docs/icons/linux/hicolor/24x24/apps/fresh.png", "usr/share/icons/hicolor/24x24/apps/", "644"],
+    ["../../docs/icons/linux/hicolor/32x32/apps/fresh.png", "usr/share/icons/hicolor/32x32/apps/", "644"],
+    ["../../docs/icons/linux/hicolor/48x48/apps/fresh.png", "usr/share/icons/hicolor/48x48/apps/", "644"],
+    ["../../docs/icons/linux/hicolor/64x64/apps/fresh.png", "usr/share/icons/hicolor/64x64/apps/", "644"],
+    ["../../docs/icons/linux/hicolor/128x128/apps/fresh.png", "usr/share/icons/hicolor/128x128/apps/", "644"],
+    ["../../docs/icons/linux/hicolor/256x256/apps/fresh.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+    ["../../docs/icons/linux/hicolor/512x512/apps/fresh.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
 ]
 # Maintainer scripts to create/remove symlink at /usr/bin/fresh
 maintainer-scripts = "debian/"
@@ -246,6 +259,16 @@ assets = [
     { source = "plugins/lib/*", dest = "/usr/share/fresh-editor/plugins/lib/", mode = "644" },
     { source = "plugins/examples/*", dest = "/usr/share/fresh-editor/plugins/examples/", mode = "644" },
     { source = "themes/*.json", dest = "/usr/share/fresh-editor/themes/", mode = "644" },
+    # Freedesktop hicolor icons
+    { source = "../../docs/icons/linux/hicolor/16x16/apps/fresh.png", dest = "/usr/share/icons/hicolor/16x16/apps/fresh.png", mode = "644" },
+    { source = "../../docs/icons/linux/hicolor/22x22/apps/fresh.png", dest = "/usr/share/icons/hicolor/22x22/apps/fresh.png", mode = "644" },
+    { source = "../../docs/icons/linux/hicolor/24x24/apps/fresh.png", dest = "/usr/share/icons/hicolor/24x24/apps/fresh.png", mode = "644" },
+    { source = "../../docs/icons/linux/hicolor/32x32/apps/fresh.png", dest = "/usr/share/icons/hicolor/32x32/apps/fresh.png", mode = "644" },
+    { source = "../../docs/icons/linux/hicolor/48x48/apps/fresh.png", dest = "/usr/share/icons/hicolor/48x48/apps/fresh.png", mode = "644" },
+    { source = "../../docs/icons/linux/hicolor/64x64/apps/fresh.png", dest = "/usr/share/icons/hicolor/64x64/apps/fresh.png", mode = "644" },
+    { source = "../../docs/icons/linux/hicolor/128x128/apps/fresh.png", dest = "/usr/share/icons/hicolor/128x128/apps/fresh.png", mode = "644" },
+    { source = "../../docs/icons/linux/hicolor/256x256/apps/fresh.png", dest = "/usr/share/icons/hicolor/256x256/apps/fresh.png", mode = "644" },
+    { source = "../../docs/icons/linux/hicolor/512x512/apps/fresh.png", dest = "/usr/share/icons/hicolor/512x512/apps/fresh.png", mode = "644" },
 ]
 # posttrans runs after ALL transaction operations complete - needed because older versions
 # (<=0.1.56) had a preuninstall script that removes /usr/bin/fresh, which deletes our wrapper

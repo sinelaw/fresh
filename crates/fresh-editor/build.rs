@@ -13,6 +13,19 @@ fn main() {
     // Rerun if themes change
     println!("cargo::rerun-if-changed=themes");
 
+    // On Windows, embed the application icon into the .exe
+    #[cfg(target_os = "windows")]
+    {
+        let ico_path = Path::new("../../docs/icons/windows/app.ico");
+        if ico_path.exists() {
+            let mut res = winresource::WindowsResource::new();
+            res.set_icon(ico_path.to_str().unwrap());
+            if let Err(e) = res.compile() {
+                eprintln!("Warning: Failed to embed Windows icon: {}", e);
+            }
+        }
+    }
+
     // Always generate locale_options.rs - it's required by config.rs at compile time
     // This must run even during publish verification since the include!() macro needs it
     if let Err(e) = generate_locale_options() {
