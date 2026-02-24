@@ -321,7 +321,10 @@ fn append_item(parent: &Submenu, item: &MenuItem, context: &MenuContext) {
             // Dynamic submenus should be resolved at the editor layer before
             // being passed here. If one slips through unresolved, show a
             // placeholder.
-            tracing::warn!("Unresolved DynamicSubmenu '{}' passed to native menu", label);
+            tracing::warn!(
+                "Unresolved DynamicSubmenu '{}' passed to native menu",
+                label
+            );
             let child = Submenu::new(label, true);
             let _ = parent.append(&child);
         }

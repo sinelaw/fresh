@@ -122,12 +122,7 @@ pub trait GuiApplication {
     /// clicked in the native menu.
     ///
     /// Default implementation does nothing.
-    fn on_menu_action(
-        &mut self,
-        _action: &str,
-        _args: &HashMap<String, serde_json::Value>,
-    ) {
-    }
+    fn on_menu_action(&mut self, _action: &str, _args: &HashMap<String, serde_json::Value>) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -433,7 +428,9 @@ impl<A: GuiApplication + 'static> ApplicationHandler for WgpuRunner<A> {
         // If the app signalled a menu model change, rebuild native menus.
         if let Some(updated_menus) = state.app.take_menu_update() {
             let ctx = state.app.menu_context();
-            state.native_menu.update(&updated_menus, &self.config.title, &ctx);
+            state
+                .native_menu
+                .update(&updated_menus, &self.config.title, &ctx);
         }
 
         // Sync native menu item states (enabled/disabled, checkmarks) from
