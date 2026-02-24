@@ -10,11 +10,12 @@ pub fn is_glob_pattern(pattern: &str) -> bool {
 
 /// Check if a pattern is a path pattern (should be matched against the full path, not just filename).
 ///
-/// A pattern is considered a path pattern if it contains `/`, indicating it references
-/// directory structure. Such patterns should be matched using [`path_glob_matches`] against
-/// the full file path rather than [`filename_glob_matches`] against just the filename.
+/// A pattern is considered a path pattern if it contains `/` (or `\` on Windows),
+/// indicating it references directory structure. Such patterns should be matched
+/// using [`path_glob_matches`] against the full file path rather than
+/// [`filename_glob_matches`] against just the filename.
 pub fn is_path_pattern(pattern: &str) -> bool {
-    pattern.contains('/')
+    pattern.contains('/') || pattern.contains('\\')
 }
 
 /// Match a glob pattern against a filename (not a full path).
@@ -82,10 +83,33 @@ fn glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
     p == pattern.len()
 }
 
+/// Check if a byte is a path separator (`/` or `\`).
+///
+/// On Windows, paths use `\` as a separator; on Unix, `/` is used.
+/// For cross-platform glob matching, we treat both as equivalent.
+#[inline]
+fn is_path_sep(b: u8) -> bool {
+    b == b'/' || b == b'\\'
+}
+
+/// Check if two bytes match as path characters, treating `/` and `\` as equivalent.
+#[inline]
+fn path_chars_match(pattern_byte: u8, text_byte: u8) -> bool {
+    if pattern_byte == text_byte {
+        return true;
+    }
+    // Treat `/` and `\` as interchangeable
+    is_path_sep(pattern_byte) && is_path_sep(text_byte)
+}
+
 /// Path-aware glob matching where `*` does not cross `/` but `**` does.
 ///
-/// When `**` is followed by `/`, the trailing `/` is consumed as part of the `**` token,
-/// allowing `**/` to match zero or more complete directory levels.
+/// In addition to `/`, the `\` separator is treated equivalently so that
+/// patterns written with `/` work on Windows paths that use `\`.
+///
+/// When `**` is followed by `/` (or `\`), the trailing separator is consumed
+/// as part of the `**` token, allowing `**/` to match zero or more complete
+/// directory levels.
 fn path_glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
     let mut p = 0;
     let mut t = 0;
@@ -104,8 +128,8 @@ fn path_glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
             while next_p < pattern.len() && pattern[next_p] == b'*' {
                 next_p += 1;
             }
-            // Skip trailing `/` so `**/` matches zero or more directory levels
-            if next_p < pattern.len() && pattern[next_p] == b'/' {
+            // Skip trailing path separator so `**/` matches zero or more directory levels
+            if next_p < pattern.len() && is_path_sep(pattern[next_p]) {
                 next_p += 1;
             }
             dstar_p = Some(next_p);
@@ -116,7 +140,7 @@ fn path_glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
             continue;
         }
 
-        // Check for `*` (single star, does not cross `/`)
+        // Check for `*` (single star, does not cross path separators)
         if p < pattern.len() && pattern[p] == b'*' {
             star_p = Some(p + 1);
             star_t = t;
@@ -124,32 +148,32 @@ fn path_glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
             continue;
         }
 
-        // Check for `?` (matches one non-`/` character)
-        if p < pattern.len() && pattern[p] == b'?' && text[t] != b'/' {
+        // Check for `?` (matches one non-separator character)
+        if p < pattern.len() && pattern[p] == b'?' && !is_path_sep(text[t]) {
             p += 1;
             t += 1;
             continue;
         }
 
-        // Literal character match
-        if p < pattern.len() && pattern[p] == text[t] {
+        // Literal character match (treating `/` and `\` as equivalent)
+        if p < pattern.len() && path_chars_match(pattern[p], text[t]) {
             p += 1;
             t += 1;
             continue;
         }
 
-        // Mismatch — try backtracking to single `*` first (if it won't cross `/`)
+        // Mismatch — try backtracking to single `*` first (if it won't cross a separator)
         if let Some(sp) = star_p {
-            if text[star_t] != b'/' {
+            if !is_path_sep(text[star_t]) {
                 star_t += 1;
                 t = star_t;
                 p = sp;
                 continue;
             }
-            // `*` can't help (would need to cross `/`), fall through to `**`
+            // `*` can't help (would need to cross a separator), fall through to `**`
         }
 
-        // Backtrack to `**` (can cross anything including `/`)
+        // Backtrack to `**` (can cross anything including separators)
         if let Some(dp) = dstar_p {
             dstar_t += 1;
             t = dstar_t;
@@ -333,5 +357,62 @@ mod tests {
         ));
         assert!(path_glob_matches("/**/src/**/*.rs", "/src/lib.rs"));
         assert!(path_glob_matches("/**/src/**/*.rs", "/a/b/src/c/d/foo.rs"));
+    }
+
+    // --- Windows path separator tests ---
+
+    #[test]
+    fn test_is_path_pattern_backslash() {
+        assert!(is_path_pattern("C:\\Users\\**\\rc.*"));
+        assert!(is_path_pattern("src\\*.rs"));
+        assert!(!is_path_pattern("*.conf"));
+    }
+
+    #[test]
+    fn test_path_backslash_separators() {
+        // Windows-style paths with backslash separators
+        assert!(path_glob_matches(
+            "C:\\Users\\**\\rc.*",
+            "C:\\Users\\etc\\rc.conf"
+        ));
+        assert!(path_glob_matches(
+            "C:\\Users\\**\\rc.*",
+            "C:\\Users\\etc\\init\\rc.local"
+        ));
+        assert!(!path_glob_matches(
+            "C:\\Users\\**\\rc.*",
+            "D:\\Users\\etc\\rc.conf"
+        ));
+    }
+
+    #[test]
+    fn test_path_mixed_separators() {
+        // Pattern uses `/` but path uses `\` (common on Windows)
+        assert!(path_glob_matches("/etc/**/rc.*", "\\etc\\rc.conf"));
+        assert!(path_glob_matches("/etc/**/rc.*", "\\etc\\init\\rc.local"));
+
+        // Pattern uses `\` but path uses `/`
+        assert!(path_glob_matches("\\etc\\**\\rc.*", "/etc/rc.conf"));
+        assert!(path_glob_matches("\\etc\\**\\rc.*", "/etc/init/rc.local"));
+    }
+
+    #[test]
+    fn test_path_backslash_single_star_no_crossing() {
+        // Single `*` should not cross `\` separators
+        assert!(path_glob_matches(
+            "C:\\etc\\*.conf",
+            "C:\\etc\\nftables.conf"
+        ));
+        assert!(!path_glob_matches(
+            "C:\\etc\\*.conf",
+            "C:\\etc\\sub\\nftables.conf"
+        ));
+    }
+
+    #[test]
+    fn test_path_backslash_question_mark() {
+        // `?` should not match `\`
+        assert!(path_glob_matches("C:\\etc\\rc.?", "C:\\etc\\rc.d"));
+        assert!(!path_glob_matches("C:\\etc\\?", "C:\\etc\\ab"));
     }
 }
